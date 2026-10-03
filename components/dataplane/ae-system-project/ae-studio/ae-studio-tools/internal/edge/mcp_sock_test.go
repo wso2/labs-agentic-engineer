@@ -38,6 +38,7 @@ import (
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
+	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 )
 
 // fakeUpstream stands in for aep-api's /internal/v1/mcp. It serves whatever
@@ -161,7 +162,26 @@ type mcpHarness struct {
 	github *fakeGitHubAPI
 	client *http.Client
 	logs   *syncBuffer
+	usage  *fakeUsage
 	nextID int
+}
+
+// fakeUsage is the usage outbox: it keeps what the socket hands in.
+type fakeUsage struct {
+	mu      sync.Mutex
+	records []usage.TurnRecord
+}
+
+func (f *fakeUsage) Enqueue(r usage.TurnRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records = append(f.records, r)
+}
+
+func (f *fakeUsage) got() []usage.TurnRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]usage.TurnRecord(nil), f.records...)
 }
 
 type mcpHarnessOpt func(*mcpHarnessConfig)
@@ -206,6 +226,7 @@ func newMCPHarness(t *testing.T, up mcp.Upstream, opts ...mcpHarnessOpt) *mcpHar
 	}
 	gh := newFakeGitHubAPI(t)
 	logs := &syncBuffer{}
+	sink := &fakeUsage{}
 	server := mcp.Server{
 		Remote:   mcp.RemoteGit{Owner: cfg.owner, Token: "gh-test-token", APIBase: gh.URL},
 		Upstream: up,
@@ -217,7 +238,7 @@ func newMCPHarness(t *testing.T, up mcp.Upstream, opts ...mcpHarnessOpt) *mcpHar
 		t.Fatal(err)
 	}
 	srv := &http.Server{
-		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, RoomTokens: cfg.rooms, Snapshots: cfg.snapshots}),
+		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, RoomTokens: cfg.rooms, Snapshots: cfg.snapshots, Usage: sink}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() { _ = srv.Serve(ln) }()
@@ -229,7 +250,7 @@ func newMCPHarness(t *testing.T, up mcp.Upstream, opts ...mcpHarnessOpt) *mcpHar
 		},
 	}}
 	t.Cleanup(client.CloseIdleConnections)
-	return &mcpHarness{t: t, github: gh, client: client, logs: logs}
+	return &mcpHarness{t: t, github: gh, client: client, logs: logs, usage: sink}
 }
 
 // post sends body to path on the socket and answers the status and body.
@@ -522,28 +543,89 @@ func TestRoomToken(t *testing.T) {
 	}
 }
 
-// The routes later tasks serve answer 404 until then; an unknown path is 404.
-func TestMCPSocket_RoutesNotYetServedAre404(t *testing.T) {
+// An unknown path is 404.
+func TestMCPSocket_UnknownPathIs404(t *testing.T) {
 	s := newMCPHarness(t, &fakeUpstream{})
-	get := func(path string) int {
+	for _, path := range []string{"/nope", "/projects/greeter/x"} {
 		req, _ := http.NewRequest(http.MethodGet, "http://mcp"+path, nil)
 		resp, err := s.client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		_ = resp.Body.Close()
-		return resp.StatusCode
-	}
-	for _, path := range []string{"/nope", "/projects/greeter/x"} {
-		if c := get(path); c != http.StatusNotFound {
-			t.Fatalf("GET %s = %d", path, c)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s = %d", path, resp.StatusCode)
 		}
 	}
-	record := `{"turnId":"5f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10","conversationId":"6f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10",` +
-		`"kind":"browser","flow":"design","status":"completed","baseRef":"a","skillsRef":"b",` +
-		`"startedAt":"2026-10-03T10:00:00Z","finishedAt":"2026-10-03T10:01:00Z","model":"m","modelHost":"h",` +
-		`"inputTokens":1,"outputTokens":1,"cacheReadTokens":0,"cacheCreationTokens":0}`
-	if c, body := s.post("/turn-usage", record); c != http.StatusNotFound {
+}
+
+const turnRecordJSON = `{"turnId":"5f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10","project":"greeter","conversationId":"6f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10",` +
+	`"kind":"plan","flow":"design","status":"failed","reason":"shutdown","code":"shutdown","baseRef":"a1","skillsRef":"b2",` +
+	`"startedAt":"2026-10-03T10:00:00Z","finishedAt":"2026-10-03T10:01:00Z","author":{"id":"u1","name":"Ada"},"model":"m","modelHost":"h",` +
+	`"inputTokens":11,"outputTokens":12,"cacheReadTokens":13,"cacheCreationTokens":14,"contextTokens":15}`
+
+// POST /turn-usage hands the one record to the outbox, every field carried
+// over, and answers 202.
+func TestTurnUsage_HandsTheRecordToTheOutbox(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	if c, body := s.post("/turn-usage", turnRecordJSON); c != http.StatusAccepted {
 		t.Fatalf("POST /turn-usage = %d %s", c, body)
+	}
+	got := s.usage.got()
+	if len(got) != 1 {
+		t.Fatalf("outbox = %d records", len(got))
+	}
+	sent, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, have map[string]any
+	if err := json.Unmarshal([]byte(turnRecordJSON), &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(sent, &have); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, have) {
+		t.Fatalf("record = %s\nwant     %s", sent, turnRecordJSON)
+	}
+}
+
+// A marketplace record (no project) without an author is valid; neither key
+// is invented on the way to aep-api.
+func TestTurnUsage_OptionalFieldsStayAbsent(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	record := strings.NewReplacer(`"project":"greeter",`, "", `"author":{"id":"u1","name":"Ada"},`, "",
+		`"reason":"shutdown","code":"shutdown",`, "", `,"contextTokens":15`, "").Replace(turnRecordJSON)
+	if c, body := s.post("/turn-usage", record); c != http.StatusAccepted {
+		t.Fatalf("POST /turn-usage = %d %s", c, body)
+	}
+	got := s.usage.got()
+	if len(got) != 1 || got[0].Author != nil || got[0].Project != "" || got[0].Reason != "" {
+		t.Fatalf("outbox = %+v", got)
+	}
+	sent, _ := json.Marshal(got[0])
+	for _, key := range []string{`"author"`, `"project"`, `"reason"`, `"code"`, `"contextTokens"`} {
+		if strings.Contains(string(sent), key) {
+			t.Fatalf("%s invented: %s", key, sent)
+		}
+	}
+}
+
+// A record the contract refuses is 400 and never reaches the outbox.
+func TestTurnUsage_InvalidRecordIs400(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	for name, body := range map[string]string{
+		"no turnId":   strings.Replace(turnRecordJSON, `"turnId":"5f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10",`, "", 1),
+		"bad kind":    strings.Replace(turnRecordJSON, `"kind":"plan"`, `"kind":"chat"`, 1),
+		"extra field": strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","cost":1`, 1),
+		"a batch":     "[" + turnRecordJSON + "]",
+	} {
+		if c, out := s.post("/turn-usage", body); c != http.StatusBadRequest || !strings.Contains(out, "invalid_request") {
+			t.Fatalf("%s: POST /turn-usage = %d %s", name, c, out)
+		}
+	}
+	if n := len(s.usage.got()); n != 0 {
+		t.Fatalf("outbox = %d records", n)
 	}
 }

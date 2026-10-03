@@ -12,14 +12,79 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
 	TaskJWTScopes     taskJWTContextKey     = "taskJWT.Scopes"
 )
+
+// Defines values for AEStudioTurnRecordKind.
+const (
+	Browser AEStudioTurnRecordKind = "browser"
+	Kickoff AEStudioTurnRecordKind = "kickoff"
+	Plan    AEStudioTurnRecordKind = "plan"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordKind enum.
+func (e AEStudioTurnRecordKind) Valid() bool {
+	switch e {
+	case Browser:
+		return true
+	case Kickoff:
+		return true
+	case Plan:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AEStudioTurnRecordReason.
+const (
+	AgentError AEStudioTurnRecordReason = "agent-error"
+	Internal   AEStudioTurnRecordReason = "internal"
+	Shutdown   AEStudioTurnRecordReason = "shutdown"
+	StreamDied AEStudioTurnRecordReason = "stream-died"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordReason enum.
+func (e AEStudioTurnRecordReason) Valid() bool {
+	switch e {
+	case AgentError:
+		return true
+	case Internal:
+		return true
+	case Shutdown:
+		return true
+	case StreamDied:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AEStudioTurnRecordStatus.
+const (
+	Completed AEStudioTurnRecordStatus = "completed"
+	Failed    AEStudioTurnRecordStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordStatus enum.
+func (e AEStudioTurnRecordStatus) Valid() bool {
+	switch e {
+	case Completed:
+		return true
+	case Failed:
+		return true
+	default:
+		return false
+	}
+}
 
 // AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
 type AEStudioCompletedDependency struct {
@@ -63,6 +128,56 @@ type AEStudioProjectRepository struct {
 	Repo string `json:"repo"`
 }
 
+// AEStudioTurnRecord One finished turn, as the ledger stores it. Idempotent on turnId.
+type AEStudioTurnRecord struct {
+	Author *AEStudioTurnRecordAuthor `json:"author,omitempty"`
+
+	// BaseRef The repo snapshot sha the turn read.
+	BaseRef             string                 `json:"baseRef"`
+	CacheCreationTokens int64                  `json:"cacheCreationTokens"`
+	CacheReadTokens     int64                  `json:"cacheReadTokens"`
+	Code                string                 `json:"code,omitempty"`
+	ContextTokens       int64                  `json:"contextTokens,omitempty"`
+	ConversationID      openapi_types.UUID     `json:"conversationId"`
+	FinishedAt          time.Time              `json:"finishedAt"`
+	Flow                string                 `json:"flow"`
+	InputTokens         int64                  `json:"inputTokens"`
+	Kind                AEStudioTurnRecordKind `json:"kind"`
+	Model               string                 `json:"model"`
+	ModelHost           string                 `json:"modelHost"`
+	OutputTokens        int64                  `json:"outputTokens"`
+
+	// Project Absent on a marketplace turn.
+	Project string                   `json:"project,omitempty"`
+	Reason  AEStudioTurnRecordReason `json:"reason,omitempty"`
+
+	// SkillsRef The Org skills snapshot sha the turn read.
+	SkillsRef string                   `json:"skillsRef"`
+	StartedAt time.Time                `json:"startedAt"`
+	Status    AEStudioTurnRecordStatus `json:"status"`
+	TurnID    openapi_types.UUID       `json:"turnId"`
+}
+
+// AEStudioTurnRecordKind defines model for AEStudioTurnRecord.Kind.
+type AEStudioTurnRecordKind string
+
+// AEStudioTurnRecordReason defines model for AEStudioTurnRecord.Reason.
+type AEStudioTurnRecordReason string
+
+// AEStudioTurnRecordStatus defines model for AEStudioTurnRecord.Status.
+type AEStudioTurnRecordStatus string
+
+// AEStudioTurnRecordAuthor defines model for AEStudioTurnRecordAuthor.
+type AEStudioTurnRecordAuthor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// AEStudioTurnUsageRequest The records of finished turns.
+type AEStudioTurnUsageRequest struct {
+	Records []AEStudioTurnRecord `json:"records"`
+}
+
 // AEStudioWarning A non-fatal note on one path (registry-copied, registry-miss, registry-unreachable, provider-document-fetched, provider-document-unavailable).
 type AEStudioWarning struct {
 	Code    string `json:"code"`
@@ -102,6 +217,9 @@ type CallMcpToolJSONBody = map[string]interface{}
 
 // CompleteAeStudioDependenciesJSONRequestBody defines body for CompleteAeStudioDependencies for application/json ContentType.
 type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletionsRequest
+
+// RecordTurnUsageJSONRequestBody defines body for RecordTurnUsage for application/json ContentType.
+type RecordTurnUsageJSONRequestBody = AEStudioTurnUsageRequest
 
 // CallMcpToolJSONRequestBody defines body for CallMcpTool for application/json ContentType.
 type CallMcpToolJSONRequestBody = CallMcpToolJSONBody
@@ -190,6 +308,11 @@ type ClientInterface interface {
 	// GetAeStudioSkillsRepository request
 	GetAeStudioSkillsRepository(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// RecordTurnUsageWithBody request with any body
+	RecordTurnUsageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RecordTurnUsage(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CallMcpToolWithBody request with any body
 	CallMcpToolWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -234,6 +357,30 @@ func (c *Client) GetAeStudioProjectRepository(ctx context.Context, projectName s
 
 func (c *Client) GetAeStudioSkillsRepository(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAeStudioSkillsRepositoryRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RecordTurnUsageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecordTurnUsageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RecordTurnUsage(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRecordTurnUsageRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -369,6 +516,46 @@ func NewGetAeStudioSkillsRepositoryRequest(server string) (*http.Request, error)
 	return req, nil
 }
 
+// NewRecordTurnUsageRequest calls the generic RecordTurnUsage builder with application/json body
+func NewRecordTurnUsageRequest(server string, body RecordTurnUsageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRecordTurnUsageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRecordTurnUsageRequestWithBody generates requests for RecordTurnUsage with any type of body
+func NewRecordTurnUsageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/ae-studio/turn-usage")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCallMcpToolRequest calls the generic CallMcpTool builder with application/json body
 func NewCallMcpToolRequest(server string, body CallMcpToolJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -462,6 +649,11 @@ type ClientWithResponsesInterface interface {
 
 	// GetAeStudioSkillsRepositoryWithResponse request
 	GetAeStudioSkillsRepositoryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAeStudioSkillsRepositoryResponse, error)
+
+	// RecordTurnUsageWithBodyWithResponse request with any body
+	RecordTurnUsageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error)
+
+	RecordTurnUsageWithResponse(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error)
 
 	// CallMcpToolWithBodyWithResponse request with any body
 	CallMcpToolWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error)
@@ -563,6 +755,37 @@ func (r GetAeStudioSkillsRepositoryResponse) ContentType() string {
 	return ""
 }
 
+type RecordTurnUsageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON404      *Error
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r RecordTurnUsageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RecordTurnUsageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RecordTurnUsageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CallMcpToolResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -627,6 +850,23 @@ func (c *ClientWithResponses) GetAeStudioSkillsRepositoryWithResponse(ctx contex
 		return nil, err
 	}
 	return ParseGetAeStudioSkillsRepositoryResponse(rsp)
+}
+
+// RecordTurnUsageWithBodyWithResponse request with arbitrary body returning *RecordTurnUsageResponse
+func (c *ClientWithResponses) RecordTurnUsageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error) {
+	rsp, err := c.RecordTurnUsageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecordTurnUsageResponse(rsp)
+}
+
+func (c *ClientWithResponses) RecordTurnUsageWithResponse(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error) {
+	rsp, err := c.RecordTurnUsage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRecordTurnUsageResponse(rsp)
 }
 
 // CallMcpToolWithBodyWithResponse request with arbitrary body returning *CallMcpToolResponse
@@ -733,6 +973,39 @@ func ParseGetAeStudioSkillsRepositoryResponse(rsp *http.Response) (*GetAeStudioS
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRecordTurnUsageResponse parses an HTTP response from a RecordTurnUsageWithResponse call
+func ParseRecordTurnUsageResponse(rsp *http.Response) (*RecordTurnUsageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RecordTurnUsageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

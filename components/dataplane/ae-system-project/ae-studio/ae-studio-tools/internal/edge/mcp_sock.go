@@ -25,9 +25,11 @@ import (
 	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
+	"github.com/wso2/aep/ae-studio-tools/internal/gen/aepapi"
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/mcpsock"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
+	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 )
 
 // The MCP socket is served contract-first from
@@ -38,8 +40,8 @@ import (
 // token gate. It is the in-pod agent's only door out of the pod: POST /mcp
 // (the JSON-RPC tool surface, mcp.Server), POST /room-token (the collab room
 // token), and GET /projects/{p} and GET /skills (the snapshots a turn reads,
-// mcp_sock_projects.go). POST /turn-usage is served by Task 3.7 and answers
-// 404 until then.
+// mcp_sock_projects.go), and POST /turn-usage (a finished turn's record,
+// handed to the usage outbox).
 
 const (
 	// mcpSocketBodyBytes caps a request body: aep-api's own cap on the
@@ -66,13 +68,21 @@ type MCPSocketDeps struct {
 	// Snapshots resolves a project or the org's skills repository and writes
 	// the snapshots the agent reads.
 	Snapshots files.Reader
+	// Usage is the outbox the turns' records are handed to (usage.Sender).
+	Usage UsageOutbox
+}
+
+// UsageOutbox takes one finished turn's record for delivery to aep-api; it
+// never blocks on delivery.
+type UsageOutbox interface {
+	Enqueue(usage.TurnRecord)
 }
 
 // mcpSocketHandler is validator → generated server. A path or method the
 // contract does not declare is 404 at the validator; a request that does not
 // match its operation is 400 invalid_request.
 func mcpSocketHandler(d MCPSocketDeps) http.Handler {
-	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, rooms: d.RoomTokens, snapshots: d.Snapshots}, nil, mcpsock.StrictHTTPServerOptions{
+	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, rooms: d.RoomTokens, snapshots: d.Snapshots, usage: d.Usage}, nil, mcpsock.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeMCPSocketRequestError,
 		ResponseErrorHandlerFunc: writeMCPSocketResponseError,
 	})
@@ -93,6 +103,7 @@ type mcpSocketServer struct {
 	mcp       mcp.Server
 	rooms     RoomTokens
 	snapshots files.Reader
+	usage     UsageOutbox
 }
 
 var _ mcpsock.StrictServerInterface = mcpSocketServer{}
@@ -138,22 +149,42 @@ func (s mcpSocketServer) MintRoomToken(ctx context.Context, _ mcpsock.MintRoomTo
 	return mcpsock.MintRoomToken200JSONResponse{Token: tok, ExpiresAt: exp}, nil
 }
 
-// PostTurnUsage is served by Task 3.7; 404 until then.
-func (s mcpSocketServer) PostTurnUsage(context.Context, mcpsock.PostTurnUsageRequestObject) (mcpsock.PostTurnUsageResponseObject, error) {
-	return notServedYetResponse{}, nil
+// PostTurnUsage hands one finished turn's record (validated against the
+// contract) to the outbox and answers 202; delivery to aep-api is the
+// outbox's (usage.Sender).
+func (s mcpSocketServer) PostTurnUsage(_ context.Context, req mcpsock.PostTurnUsageRequestObject) (mcpsock.PostTurnUsageResponseObject, error) {
+	s.usage.Enqueue(turnRecord(*req.Body))
+	return mcpsock.PostTurnUsage202Response{}, nil
 }
 
-// notServedYetResponse is the 404 of an operation the contract declares
-// without one, until its task serves it.
-type notServedYetResponse struct{}
-
-func (notServedYetResponse) VisitPostTurnUsageResponse(w http.ResponseWriter) error {
-	return writeNotFound(w)
-}
-
-func writeNotFound(w http.ResponseWriter) error {
-	notFound(w, nil)
-	return nil
+// turnRecord is the socket's TurnRecord as record-turn-usage takes it: the
+// two contracts declare the same schema.
+func turnRecord(r mcpsock.TurnRecord) usage.TurnRecord {
+	out := usage.TurnRecord{
+		TurnID:              r.TurnID,
+		Project:             r.Project,
+		ConversationID:      r.ConversationID,
+		Kind:                aepapi.AEStudioTurnRecordKind(r.Kind),
+		Flow:                r.Flow,
+		Status:              aepapi.AEStudioTurnRecordStatus(r.Status),
+		Reason:              aepapi.AEStudioTurnRecordReason(r.Reason),
+		Code:                r.Code,
+		BaseRef:             r.BaseRef,
+		SkillsRef:           r.SkillsRef,
+		StartedAt:           r.StartedAt,
+		FinishedAt:          r.FinishedAt,
+		Model:               r.Model,
+		ModelHost:           r.ModelHost,
+		InputTokens:         r.InputTokens,
+		OutputTokens:        r.OutputTokens,
+		CacheReadTokens:     r.CacheReadTokens,
+		CacheCreationTokens: r.CacheCreationTokens,
+		ContextTokens:       r.ContextTokens,
+	}
+	if r.Author != nil {
+		out.Author = &aepapi.AEStudioTurnRecordAuthor{ID: r.Author.ID, Name: r.Author.Name}
+	}
+	return out
 }
 
 // jsonRPCReply is a JSON-RPC 2.0 response carrying the request's id and

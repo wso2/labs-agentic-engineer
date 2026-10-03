@@ -345,6 +345,9 @@ components:
           format: date-time
         author:
           $ref: '#/components/schemas/TurnRecordAuthor'
+          # A pointer under the global prefer-skip-optional-pointer: absent must
+          # omit the key, which omitempty cannot do for a struct value.
+          x-go-type-skip-optional-pointer: false
         model:
           type: string
         modelHost:

@@ -15,5 +15,6 @@ output-options:
   - get-ae-studio-skills-repository
   - complete-ae-studio-dependencies
   - call-mcp-tool
+  - record-turn-usage
   prefer-skip-optional-pointer: true
   name-normalizer: ToCamelCaseWithInitialisms

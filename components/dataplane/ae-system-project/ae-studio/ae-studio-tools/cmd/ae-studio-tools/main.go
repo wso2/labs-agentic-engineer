@@ -22,11 +22,13 @@
 // (edge.MCPSocketRoutes, ae-design-agent's) and the health listener,
 // reporting ready once the public listener and both sockets are bound. The
 // turns aep-api starts on the public listener are relayed to
-// ae-design-agent's Turn socket (AE_TURN_SOCKET, turns.Relay).
+// ae-design-agent's Turn socket (AE_TURN_SOCKET, turns.Relay), and the
+// records of finished turns the agent hands in over the MCP socket go to
+// aep-api through the usage outbox (usage.Sender).
 // SIGTERM (tini forwards it) drains the public and health listeners, keeps
 // both sockets serving through the drain window for ae-collab's final flush
-// and the agent's outbox drain (07 §10), shuts them down, then stops the
-// reaper.
+// and the agent's outbox drain (07 §10), shuts them down while it flushes the
+// usage outbox, then stops the reaper.
 package main
 
 import (
@@ -51,6 +53,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/reaper"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns"
+	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -61,13 +64,15 @@ const reaperStopTimeout = 2 * time.Second
 
 // Shutdown budget, inside the pod's 30 s termination grace (Q-5/D-5):
 //
-//	socketDrainWindow (10 s) + socketShutdownTimeout (15 s) + reaperStopTimeout (2 s) = 27 s < 30 s
+//	socketDrainWindow (10 s)
+//	+ max(socketShutdownTimeout (15 s), usageFlushTimeout (3 s))
+//	+ reaperStopTimeout (2 s) = 27 s < 30 s
 //
 // The public and health listeners drain (listenerDrainTimeout, 5 s) inside the
-// window. Both sockets keep accepting through the one window and are then
-// shut down concurrently, so the second socket adds nothing to the total; a
-// step that must run beside them (Task 3.7's usage flush, at most 3 s) joins
-// that same concurrent group, inside socketShutdownTimeout.
+// window. Both sockets keep accepting through the one window (the agent hands
+// its shutdown turn's record in during it) and are then shut down
+// concurrently, with the usage flush beside them, so neither the second
+// socket nor the flush adds to the total.
 const (
 	// listenerDrainTimeout bounds the public and health listeners' drain. A
 	// relayed turn is a request in flight: the agent gets SIGTERM at the
@@ -85,6 +90,9 @@ const (
 	// socketShutdownTimeout bounds the wait for requests still in flight on
 	// either socket once they stop accepting.
 	socketShutdownTimeout = 15 * time.Second
+	// usageFlushTimeout bounds the final usage send (07 §10): one or more
+	// record-turn-usage calls, run beside the sockets' shutdown.
+	usageFlushTimeout = 3 * time.Second
 )
 
 func main() {
@@ -127,6 +135,10 @@ func run() error {
 		return err
 	}
 	resolver := projects.NewAEPAPIResolver(aepAPI)
+	// The usage outbox: finished turns' records to aep-api's
+	// record-turn-usage, as the publisher, for the process lifetime.
+	usageOutbox := startUsageOutbox(usage.New(usage.NewAEPAPIPost(aepAPI)))
+	defer usageOutbox.stopRun()
 	reader := files.Reader{Engine: engine, Projects: resolver, Org: cfg.OrgHandle}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
 	// GitHub account, the other tools forwarded to aep-api as the publisher,
@@ -141,6 +153,7 @@ func run() error {
 			TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
 		},
 		Snapshots: reader,
+		Usage:     usageOutbox.sender,
 	}
 	gh := github.NewClient(cfg.GitHubPAT)
 	applier := files.Applier{
@@ -260,11 +273,12 @@ func run() error {
 	}
 	// The sockets close last: on SIGTERM they keep accepting through
 	// ae-collab's final flush and the agent's outbox drain, then drain the
-	// requests in flight, concurrently.
+	// requests in flight, concurrently, while the usage outbox sends what
+	// is left.
 	if signaled {
 		time.Sleep(time.Until(drainStart.Add(socketDrainWindow)))
 	}
-	if err := shutdownSockets(filesSock, mcpSock); err != nil {
+	if err := shutdownSockets(serverShutdown(filesSock), serverShutdown(mcpSock), usageOutbox.flush); err != nil {
 		runErr = err
 	}
 	// The listeners are drained, so no request can still be reading; the
@@ -282,27 +296,72 @@ func run() error {
 	return nil
 }
 
-// shutdownSockets shuts the sockets down concurrently under one
-// socketShutdownTimeout and answers the last failure. Task 3.7's usage flush
-// joins this group.
-func shutdownSockets(socks ...*http.Server) error {
+// shutdownSockets runs the shutdown steps (the sockets' and the usage
+// flush) concurrently under one socketShutdownTimeout and answers the last
+// failure.
+func shutdownSockets(steps ...func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), socketShutdownTimeout)
 	defer cancel()
-	errs := make(chan error, len(socks))
-	for _, srv := range socks {
-		go func() {
-			err := srv.Shutdown(ctx)
-			if err != nil {
-				slog.Error("shutdown_failed", "addr", srv.Addr, "error", err)
-			}
-			errs <- err
-		}()
+	errs := make(chan error, len(steps))
+	for _, step := range steps {
+		go func() { errs <- step(ctx) }()
 	}
 	var last error
-	for range socks {
+	for range steps {
 		if err := <-errs; err != nil {
 			last = err
 		}
 	}
 	return last
+}
+
+// serverShutdown is srv's shutdown step, logging a failure.
+func serverShutdown(srv *http.Server) func(context.Context) error {
+	return func(ctx context.Context) error {
+		err := srv.Shutdown(ctx)
+		if err != nil {
+			slog.Error("shutdown_failed", "addr", srv.Addr, "error", err)
+		}
+		return err
+	}
+}
+
+// usageOutbox is the usage sender running in the background for the
+// process lifetime.
+type usageOutbox struct {
+	sender *usage.Sender
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func startUsageOutbox(s *usage.Sender) *usageOutbox {
+	ctx, cancel := context.WithCancel(context.Background())
+	o := &usageOutbox{sender: s, cancel: cancel, done: make(chan struct{})}
+	go func() {
+		defer close(o.done)
+		s.Run(ctx)
+	}()
+	return o
+}
+
+// stopRun stops the background delivery and waits for it; a send in flight
+// is canceled and its records stay pending. Idempotent.
+func (o *usageOutbox) stopRun() {
+	o.cancel()
+	<-o.done
+}
+
+// flush is the shutdown step: stop the background delivery, then send
+// everything pending at once, bounded by usageFlushTimeout. Records the
+// agent hands in after it began are not sent (its outbox drain ends inside
+// the drain window, before it).
+func (o *usageOutbox) flush(ctx context.Context) error {
+	o.stopRun()
+	ctx, cancel := context.WithTimeout(ctx, usageFlushTimeout)
+	defer cancel()
+	if err := o.sender.Flush(ctx); err != nil {
+		slog.Error("usage.flush_failed", "error", err)
+		return err
+	}
+	return nil
 }
