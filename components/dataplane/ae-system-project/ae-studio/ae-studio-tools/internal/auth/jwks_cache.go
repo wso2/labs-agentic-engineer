@@ -78,11 +78,15 @@ func NewJWKSCache(url string) *JWKSCache {
 }
 
 // PublicKeyForKid returns the RSA public key for the given kid, refreshing
-// the cache once on miss before failing.
+// the cache once on miss before failing. A key set that cannot be had at all
+// (nothing cached, or the cache expired, and the fetch fails) wraps
+// ErrIdPUnavailable: no verdict on the token was reached. A kid the key set
+// lacks is a verdict, even when the refresh it triggers fails: the kid is the
+// caller's to choose, so it must never turn into "the IdP is down".
 func (c *JWKSCache) PublicKeyForKid(kid string) (*rsa.PublicKey, error) {
 	jwks, err := c.fetch()
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch JWKS: %w", err)
+		return nil, fmt.Errorf("%w: failed to fetch JWKS: %w", ErrIdPUnavailable, err)
 	}
 	if key := findKey(jwks, kid); key != nil {
 		return convertJWKToPublicKey(key)

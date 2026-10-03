@@ -4,7 +4,9 @@ info:
   description: |-
     Machine API of an org's AE Studio. Caller: aep-api only, with the AE-only
     M2M token (client_credentials, aud and client_id = the pinned client, no
-    org claim) and X-Impersonate-Org naming the pod's org.
+    org claim) and X-Impersonate-Org naming the pod's org. When the IdP's keys
+    cannot be fetched the answer is 503 idp_unavailable with Retry-After (no
+    verdict on the token).
 
     Every request body is capped at 1 MiB, then the caller is authenticated,
     then the request is validated against this spec, before any handler runs.
@@ -40,6 +42,8 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
         '502':
+          $ref: '#/components/responses/Problem'
+        '503':
           $ref: '#/components/responses/Problem'
 components:
   securitySchemes:

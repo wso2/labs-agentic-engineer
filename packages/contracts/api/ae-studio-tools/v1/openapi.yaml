@@ -5,7 +5,9 @@ info:
     Browser API of an org's AE Studio (git-only reads). Callers present a Platform IdP user JWT of the pod's org;
     an M2M token is refused with 401 and a user of another org with 403, and
     both checks run before route matching, so an unknown path is 401/403
-    before it is 404. Errors are RFC 9457 problems (application/problem+json).
+    before it is 404. When the IdP's keys cannot be fetched the answer is 503
+    idp_unavailable with Retry-After (no verdict on the token), also before
+    route matching. Errors are RFC 9457 problems (application/problem+json).
   version: 1.0.0
 servers:
 - url: /v1
@@ -168,7 +170,7 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Unavailable:
-      description: 'Not serving right now (problem codes: disk_full, aep_api_unavailable)'
+      description: 'Not serving right now (problem codes: disk_full, aep_api_unavailable, idp_unavailable)'
       content:
         application/problem+json:
           schema:
