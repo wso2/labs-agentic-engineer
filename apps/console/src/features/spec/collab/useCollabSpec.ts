@@ -366,6 +366,8 @@ export function useCollabSpec(
       setPeers(list);
     };
     awareness?.on("change", onAwareness);
+    // Joining fires no "change", so read the room's current peers once.
+    onAwareness();
 
     // Re-render the list when the FILE SET changes. Watching the whole doc
     // (not just Y.Map('files')) is load-bearing: markdown files are top-level
@@ -441,6 +443,8 @@ export function useCollabSpec(
       unsubscribeToken();
       doc.off("afterAllTransactions", onDocChange);
       awareness?.off("change", onAwareness);
+      // Peers belong to this provider; a rebuild must not carry them over.
+      setPeers([]);
       provider.off("stateless", onStateless);
       // Fail any in-flight flush so a caller (Build) never hangs on teardown.
       for (const p of flushes.values())

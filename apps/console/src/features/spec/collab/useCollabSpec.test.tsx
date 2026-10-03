@@ -58,23 +58,41 @@ interface FakeRoom extends FakeConfig {
   sendStateless: Mock<(payload: string) => void>;
   /** Delivers a stateless message from the server, as the provider would. */
   emitStateless: (message: unknown) => void;
+  /** The provider's awareness map, by client id; a test seeds remote peers here. */
+  awarenessStates: Map<number, unknown>;
+  /** Fires the awareness "change" listeners, as a remote peer joining or leaving would. */
+  emitAwarenessChange: () => void;
 }
 
+/** The awareness state a peer publishes: the `user` field the hook reads. */
+const peerState = (name: string, kind: "user" | "agent") => ({ user: { name, kind } });
+
 const instances: FakeRoom[] = [];
+/** Remote peers already in the room's awareness when the NEXT provider is built. */
+let peersAtJoin: [number, unknown][] = [];
 
 vi.mock("@hocuspocus/provider", () => {
   class FakeProvider {
     document: Y.Doc;
     room: FakeRoom;
-    awareness = { on: () => {}, off: () => {}, getStates: () => new Map() };
+    awarenessStates = new Map<number, unknown>();
+    private awarenessHandlers = new Set<() => void>();
+    awareness = {
+      on: (_event: string, handler: () => void) => this.awarenessHandlers.add(handler),
+      off: (_event: string, handler: () => void) => this.awarenessHandlers.delete(handler),
+      getStates: () => this.awarenessStates,
+    };
     private statelessHandlers = new Set<(data: { payload: string }) => void>();
     constructor(config: FakeConfig) {
       this.document = config.document;
+      peersAtJoin.forEach(([id, state]) => this.awarenessStates.set(id, state));
       this.room = {
         ...config,
         disconnectCalls: 0,
         sendToken: vi.fn(),
         sendStateless: vi.fn(),
+        awarenessStates: this.awarenessStates,
+        emitAwarenessChange: () => this.awarenessHandlers.forEach((h) => h()),
         emitStateless: (message) =>
           this.statelessHandlers.forEach((h) => h({ payload: JSON.stringify(message) })),
       };
@@ -153,6 +171,7 @@ function emitTokenRefresh(token: string) {
 
 beforeEach(() => {
   instances.length = 0;
+  peersAtJoin = [];
   vi.clearAllMocks();
   vi.mocked(renewAccessToken).mockResolvedValue("token");
 });
@@ -717,5 +736,76 @@ describe("useCollabSpec — rebuilds back off while drops keep coming", () => {
       await vi.advanceTimersByTimeAsync(1_000);
     });
     expect(instances).toHaveLength(3);
+  });
+});
+
+// The peer list is UI state over the provider's awareness. It must not outlive
+// the provider: a rebuild across an agent's departure would otherwise keep a
+// ghost "agent" peer (and Build gated) until reload.
+describe("useCollabSpec — peers follow the live provider", () => {
+  beforeEach(() => {
+    instances.length = 0;
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("clears an agent peer when the room is rebuilt because the Room URL changed", () => {
+    const { result, rerender } = renderCollab();
+    act(() => {
+      instances[0]!.awarenessStates.set(900, peerState("Spec Agent", "agent"));
+      instances[0]!.emitAwarenessChange();
+    });
+    expect(result.current.peers.map((p) => p.kind)).toEqual(["agent"]);
+
+    // AE Studio restarts (no Room URL), then comes back; the agent has left.
+    studio = { data: { state: "provisioning" }, isPending: false };
+    rerender();
+    studio = { data: READY, isPending: false };
+    rerender();
+
+    expect(instances).toHaveLength(2);
+    expect(result.current.peers).toEqual([]);
+  });
+
+  it("clears an agent peer when the room is rebuilt after a post-sync drop", async () => {
+    const { result } = renderCollab();
+    act(() => instances[0]!.onSynced());
+    act(() => {
+      instances[0]!.awarenessStates.set(900, peerState("Spec Agent", "agent"));
+      instances[0]!.emitAwarenessChange();
+    });
+    expect(result.current.peers).toHaveLength(1);
+
+    act(() => instances[0]!.onStatus({ status: "disconnected" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(instances).toHaveLength(2);
+    expect(result.current.peers).toEqual([]);
+  });
+
+  it("clears an agent peer when the room is rebuilt after a re-sign-in renewal", async () => {
+    const { result } = renderCollab();
+    act(() => {
+      instances[0]!.awarenessStates.set(900, peerState("Spec Agent", "agent"));
+      instances[0]!.emitAwarenessChange();
+    });
+    expect(result.current.peers).toHaveLength(1);
+
+    act(() => instances[0]!.onAuthenticationFailed({ reason: "permission-denied" }));
+    await act(async () => {});
+
+    expect(instances).toHaveLength(2);
+    expect(result.current.peers).toEqual([]);
+  });
+
+  it("shows a peer already in a new provider's awareness at join, without a change", () => {
+    peersAtJoin = [[900, peerState("Grace", "user")]];
+    const { result } = renderCollab();
+
+    expect(result.current.peers).toEqual([
+      expect.objectContaining({ clientId: 900, name: "Grace", kind: "user" }),
+    ]);
   });
 });
