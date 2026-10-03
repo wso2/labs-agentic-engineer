@@ -27,6 +27,7 @@ import assert from "node:assert/strict";
 import * as Y from "yjs";
 import type { Connection, Document, Hocuspocus } from "@hocuspocus/server";
 import { setDocFile } from "@aep/collab-doc";
+import { originAllowed } from "./pod/listeners.js";
 import { seedBaseline } from "./committer.js";
 import { ApplyConflictError, FilesDeniedError, type FilesClient } from "./files-client.js";
 import { commitHooks } from "./pod/commits.js";
@@ -165,5 +166,22 @@ test("last leave: an internal fault defers too; only a verdict lets the room unl
   } finally {
     verdict.commits.stopRetries();
     verdict.done();
+  }
+});
+
+test("originAllowed: only an exact, listed Origin passes", () => {
+  const listed = "http://console.example.test:5173";
+  const cfg = { allowedOrigins: [listed] };
+  const cases: [string, string | undefined, boolean][] = [
+    ["absent", undefined, false],
+    ["listed", listed, true],
+    ["suffix trick", `${listed}.evil`, false],
+    ["trailing slash", `${listed}/`, false],
+    ["uppercase host", "http://CONSOLE.example.test:5173", false],
+    ["null origin", "null", false],
+    ["different port", "http://console.example.test:5174", false],
+  ];
+  for (const [name, origin, want] of cases) {
+    assert.equal(originAllowed(origin, cfg), want, name);
   }
 });

@@ -187,6 +187,8 @@ interface TestCollab {
   join(listener: "public" | "local", room: string, token: string, params?: Record<string, string>): Promise<Peer>;
   participants(room: string): { name: string; email: string }[];
   rawUpgrade(path: string, o?: { origin?: string }): Promise<{ status: number }>;
+  /** Stop every client socket from reconnecting; call before a server-side close the test outlives. */
+  disarmReconnects(): void;
   close(): Promise<void>;
 }
 
@@ -249,6 +251,14 @@ async function startTestCollab(
   const pod = await startPod(cfg, { clock, log: (l) => lines.push(l), ...(o.cadence ? { cadence: o.cadence } : {}) });
   const peers: { provider: HocuspocusProvider; socket: HocuspocusProviderWebsocket }[] = [];
   const rooms = new Set<string>();
+  // A socket the server closed (pod.close() ends the room sockets before it
+  // flushes) schedules a reconnect `delay` ms after the close, and that timer
+  // survives destroy() and turns the socket back on (provider 4.3). A
+  // reconnect already CONNECTING when destroy() lands makes ws throw, so a
+  // test that closes the pod while peers live disarms them first.
+  const disarm = () => {
+    for (const p of peers) p.socket.connect = () => Promise.resolve();
+  };
 
   return {
     idp,
@@ -299,13 +309,10 @@ async function startTestCollab(
     },
     participants: (room) => [...(roomState(room)?.participants.values() ?? [])],
     rawUpgrade: (path, opts = {}) => wsUpgrade(`${pod.publicUrl}${path}`, opts),
+    disarmReconnects: disarm,
     async close() {
       for (const p of peers) {
-        // A socket the server closed (pod.close() ends the room sockets
-        // before it flushes) schedules a reconnect `delay` ms after the
-        // close, and that timer survives destroy() and turns the socket back
-        // on (provider 4.3), so a reconnect loop would outlive the test.
-        p.socket.connect = () => Promise.resolve();
+        disarm();
         p.provider.destroy();
         p.socket.destroy();
       }
@@ -960,6 +967,7 @@ test("close: no edit reaches a room after its shutdown flush read it, and close 
     await waitFor(() => /Typed before SIGTERM\./.test(markdown(bob.doc)), "the edit to reach the room");
     const apply = s.files.holdNext("apply");
     let closed = false;
+    s.disarmReconnects(); // the sockets close server-side; no client may reconnect mid-flush
     const closing = s.pod.close().then(() => {
       closed = true;
     });
