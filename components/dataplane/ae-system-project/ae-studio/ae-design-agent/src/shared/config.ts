@@ -16,14 +16,11 @@
  * under the License.
  */
 
-import { resolveDatabaseUrl } from "./database-url.js";
 import { loadDotenv, intEnv, boolEnv } from "./env.js";
 
 // Load the nearest .env BEFORE reading process.env, so AGENT_MODEL /
 // AGENT_MAX_STEPS set only in .env are honored (not silently dropped).
 loadDotenv();
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Anthropic `effort` levels (adaptive thinking depth + output spend). */
 const REASONING_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -104,15 +101,5 @@ export const config = {
     issuer: process.env.AGENT_JWT_ISSUER || undefined,
     jwksUrl: process.env.AGENT_JWT_JWKS_URL || undefined,
     secret: process.env.AGENT_JWT_SECRET || undefined,
-  },
-
-  // ConversationStore selection: Postgres when a URL resolves (DATABASE_URL or
-  // discrete DB_*), else the in-memory store (tests/evals). Threads embed
-  // inlined file snapshots, so stored rows have real size — a TTL sweep on
-  // updated_at reclaims them.
-  database: {
-    url: resolveDatabaseUrl(),
-    conversationsTtlMs: intEnv(process.env.CONVERSATIONS_TTL_MS, 7 * DAY_MS),
-    conversationsSweepMs: intEnv(process.env.CONVERSATIONS_SWEEP_MS, 60 * 60 * 1000),
   },
 } as const;

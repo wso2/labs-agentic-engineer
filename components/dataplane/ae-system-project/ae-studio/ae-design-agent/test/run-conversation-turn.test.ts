@@ -882,6 +882,7 @@ test("manifest: NOT emitted when the turn throws (severed/failed stream carries 
     save: async (): Promise<void> => {
       throw new Error("db down");
     },
+    delete: async (): Promise<void> => {},
   };
 
   await assert.rejects(

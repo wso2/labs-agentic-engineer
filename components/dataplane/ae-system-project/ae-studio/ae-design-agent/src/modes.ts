@@ -19,8 +19,8 @@
 /**
  * Which servers this process runs. The pod renders `AE_*` and no
  * `AGENT_JWT_*`; the chart Deployment renders `AGENT_JWT_*` and no `AE_ORG_ID`.
- * So the pod never starts the legacy HS256/JWKS server (or its Postgres
- * store), and the chart never starts the pod listeners. The legacy rule is
+ * So the pod never starts the legacy HS256/JWKS server, and the chart never
+ * starts the pod listeners. The legacy rule is
  * today's: a JWKS URL or a shared secret (`shared/config.ts` `auth`).
  */
 

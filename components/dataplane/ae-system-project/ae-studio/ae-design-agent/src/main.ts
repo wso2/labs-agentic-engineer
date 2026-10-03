@@ -20,9 +20,8 @@
  * The composition root. Two modes, chosen by env (`modes.ts`): the AE Studio
  * pod's listeners (`AE_*`: the `/v1` user gate and the health port), and the
  * legacy SSE server of the chart Deployment (`AGENT_JWT_*`). Each starts only
- * with its own config; boot fails with neither. The legacy server picks a
- * store (Postgres when DATABASE_URL is set, else in-memory), wires the
- * always-on M2M gate and the per-request model factory, mounts the SSE app
+ * with its own config; boot fails with neither. The legacy server keeps
+ * conversations in memory, wires the always-on M2M gate and the per-request model factory, mounts the SSE app
  * and listens. The model is built per turn from the request's key and
  * connection, so there is NO boot-time key or model here.
  *
@@ -31,7 +30,6 @@
  */
 
 import type { Server } from "node:http";
-import pg from "pg";
 import { registerTelemetry } from "ai";
 import { createApp } from "./server.js";
 import { createModel } from "./shared/model.js";
@@ -42,9 +40,7 @@ import { config } from "./shared/config.js";
 import { selectModes } from "./modes.js";
 import { startPodListeners } from "./pod/listeners.js";
 import type { AgentsAuthConfig } from "./shared/auth.js";
-import type { ConversationStore } from "./store/conversation-store.js";
 import { InMemoryConversationStore } from "./store/memory-store.js";
-import { PostgresConversationStore } from "./store/postgres-store.js";
 
 const port = intEnv(process.env.PORT, 4000);
 
@@ -57,30 +53,6 @@ function buildAuthConfig(): AgentsAuthConfig {
     ...(jwksUrl ? { jwksUrl } : {}),
     ...(secret ? { secret } : {}),
   };
-}
-
-async function buildStore(): Promise<ConversationStore> {
-  if (!config.database.url) {
-    process.stdout.write("@aep/ae-design-agent: no Postgres URL — using the in-memory conversation store\n");
-    return new InMemoryConversationStore();
-  }
-  const pool = new pg.Pool({ connectionString: config.database.url });
-  const store = new PostgresConversationStore(pool);
-  await store.init(); // idempotent CREATE TABLE IF NOT EXISTS
-
-  // Periodic TTL sweep — threads embed inlined snapshots, so rows are heavy;
-  // reclaim ones untouched past the retention window.
-  const timer = setInterval(() => {
-    void store.sweepExpired(config.database.conversationsTtlMs).catch((err: unknown) => {
-      process.stderr.write(
-        `conversation TTL sweep failed: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
-    });
-  }, config.database.conversationsSweepMs);
-  timer.unref();
-
-  process.stdout.write("@aep/ae-design-agent: using the Postgres conversation store\n");
-  return store;
 }
 
 async function main(): Promise<void> {
@@ -113,7 +85,7 @@ async function main(): Promise<void> {
   try {
     if (modes.pod) closers.push((await startPodListeners(modes.pod)).close);
     if (modes.legacy) {
-      const server = await startLegacyServer();
+      const server = startLegacyServer();
       closers.push(() => closeLegacyServer(server));
     }
   } catch (err) {
@@ -129,11 +101,10 @@ async function main(): Promise<void> {
   });
 }
 
-/** Today's SSE server, unchanged: store, M2M gate, per-turn model factory. */
-async function startLegacyServer(): Promise<Server> {
-  const store = await buildStore();
+/** Today's SSE server: in-memory store, M2M gate, per-turn model factory. */
+function startLegacyServer(): Server {
   const app = createApp({
-    store,
+    store: new InMemoryConversationStore(),
     // Built PER TURN from the turn's connection (key, format, URL, model).
     buildModel: (conn, ctx) => createModel(conn, ctx),
     auth: buildAuthConfig(), // throws here if neither JWKS nor secret is set (gate is always on)

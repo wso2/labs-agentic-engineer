@@ -94,3 +94,11 @@ test("save upserts; createdAt is preserved, updatedAt advances", async () => {
   assert.equal(second.createdAt.getTime(), first.createdAt.getTime());
   assert.ok(second.updatedAt.getTime() >= second.createdAt.getTime());
 });
+
+test("delete drops the aggregate; deleting an unknown id is a no-op", async () => {
+  const store = new InMemoryConversationStore();
+  await store.save(fresh("c1"));
+  await store.delete("c1");
+  assert.equal(await store.get("c1"), null);
+  await store.delete("nope");
+});

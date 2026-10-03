@@ -18,7 +18,7 @@
 
 /**
  * In-memory `ConversationStore` (a `Map`). `get()` returns a `structuredClone`
- * so `save()` is the SOLE commit point — matching Postgres deserialize-on-read.
+ * so `save()` is the SOLE commit point, as with any serializing adapter.
  * Without the clone the Map hands back the live object and `runTurn`'s in-place
  * `messages` mutation self-commits before `save()` runs, so the eval (the only
  * local driver) could never catch a dropped `save()` or a partial-turn rollback.
@@ -45,5 +45,9 @@ export class InMemoryConversationStore implements ConversationStore {
       updatedAt: now,
     });
     this.conversations.set(c.id, stored);
+  }
+
+  async delete(id: string): Promise<void> {
+    this.conversations.delete(id);
   }
 }

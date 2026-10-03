@@ -20,9 +20,10 @@
  * The conversation repository seam. The whole `Conversation` aggregate is
  * stored/overwritten as ONE unit (load-modify-save), NOT normalized per-message
  * rows — the natural fit for the AI-SDK "persist the array" practice, and
- * history is append-only (§10) so the saved array only ever grows. A Postgres
- * implementation is a single table with a JSONB `messages` column behind this
- * same interface. FILES are never persisted (the repo + the commit service own
+ * history is append-only (§10) so the saved array only ever grows. Adapters:
+ * in memory in the AE Studio pod (`memory-store.ts`; a pod roll starts every
+ * project on a fresh thread) and one JSON file per conversation in the
+ * playground. FILES are never persisted (the repo + the commit service own
  * file truth).
  */
 
@@ -104,10 +105,11 @@ export interface Conversation {
 export interface ConversationStore {
   /**
    * Load the aggregate, or `null` if unknown. Implementations MUST return a deep
-   * copy so `save()` is the sole commit point (matching Postgres
-   * deserialize-on-read; see the in-memory store).
+   * copy so `save()` is the sole commit point (see the in-memory store).
    */
   get(id: string): Promise<Conversation | null>;
   /** Upsert the WHOLE aggregate (last-write-wins for v1). */
   save(c: Conversation): Promise<void>;
+  /** Drop the aggregate (a rotated thread); an unknown id is a no-op. */
+  delete(id: string): Promise<void>;
 }
