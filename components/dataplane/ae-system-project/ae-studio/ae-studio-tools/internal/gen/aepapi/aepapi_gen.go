@@ -18,6 +18,7 @@ import (
 
 const (
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
+	TaskJWTScopes     taskJWTContextKey     = "taskJWT.Scopes"
 )
 
 // AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
@@ -96,8 +97,14 @@ type sreHandoffContextKey string
 // taskJWTContextKey is the context key for taskJWT security scheme
 type taskJWTContextKey string
 
+// CallMcpToolJSONBody defines parameters for CallMcpTool.
+type CallMcpToolJSONBody = map[string]interface{}
+
 // CompleteAeStudioDependenciesJSONRequestBody defines body for CompleteAeStudioDependencies for application/json ContentType.
 type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletionsRequest
+
+// CallMcpToolJSONRequestBody defines body for CallMcpTool for application/json ContentType.
+type CallMcpToolJSONRequestBody = CallMcpToolJSONBody
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -179,6 +186,11 @@ type ClientInterface interface {
 
 	// GetAeStudioProjectRepository request
 	GetAeStudioProjectRepository(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CallMcpToolWithBody request with any body
+	CallMcpToolWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CallMcpTool(ctx context.Context, body CallMcpToolJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) CompleteAeStudioDependenciesWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -207,6 +219,30 @@ func (c *Client) CompleteAeStudioDependencies(ctx context.Context, body Complete
 
 func (c *Client) GetAeStudioProjectRepository(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAeStudioProjectRepositoryRequest(c.Server, projectName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CallMcpToolWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCallMcpToolRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CallMcpTool(ctx context.Context, body CallMcpToolJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCallMcpToolRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +327,46 @@ func NewGetAeStudioProjectRepositoryRequest(server string, projectName string) (
 	return req, nil
 }
 
+// NewCallMcpToolRequest calls the generic CallMcpTool builder with application/json body
+func NewCallMcpToolRequest(server string, body CallMcpToolJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCallMcpToolRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCallMcpToolRequestWithBody generates requests for CallMcpTool with any type of body
+func NewCallMcpToolRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/mcp")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -341,6 +417,11 @@ type ClientWithResponsesInterface interface {
 
 	// GetAeStudioProjectRepositoryWithResponse request
 	GetAeStudioProjectRepositoryWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*GetAeStudioProjectRepositoryResponse, error)
+
+	// CallMcpToolWithBodyWithResponse request with any body
+	CallMcpToolWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error)
+
+	CallMcpToolWithResponse(ctx context.Context, body CallMcpToolJSONRequestBody, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error)
 }
 
 type CompleteAeStudioDependenciesResponse struct {
@@ -405,6 +486,37 @@ func (r GetAeStudioProjectRepositoryResponse) ContentType() string {
 	return ""
 }
 
+type CallMcpToolResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *map[string]interface{}
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r CallMcpToolResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CallMcpToolResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CallMcpToolResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CompleteAeStudioDependenciesWithBodyWithResponse request with arbitrary body returning *CompleteAeStudioDependenciesResponse
 func (c *ClientWithResponses) CompleteAeStudioDependenciesWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteAeStudioDependenciesResponse, error) {
 	rsp, err := c.CompleteAeStudioDependenciesWithBody(ctx, contentType, body, reqEditors...)
@@ -429,6 +541,23 @@ func (c *ClientWithResponses) GetAeStudioProjectRepositoryWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseGetAeStudioProjectRepositoryResponse(rsp)
+}
+
+// CallMcpToolWithBodyWithResponse request with arbitrary body returning *CallMcpToolResponse
+func (c *ClientWithResponses) CallMcpToolWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error) {
+	rsp, err := c.CallMcpToolWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCallMcpToolResponse(rsp)
+}
+
+func (c *ClientWithResponses) CallMcpToolWithResponse(ctx context.Context, body CallMcpToolJSONRequestBody, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error) {
+	rsp, err := c.CallMcpTool(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCallMcpToolResponse(rsp)
 }
 
 // ParseCompleteAeStudioDependenciesResponse parses an HTTP response from a CompleteAeStudioDependenciesWithResponse call
@@ -480,6 +609,39 @@ func ParseGetAeStudioProjectRepositoryResponse(rsp *http.Response) (*GetAeStudio
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest AEStudioProjectRepository
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCallMcpToolResponse parses an HTTP response from a CallMcpToolWithResponse call
+func ParseCallMcpToolResponse(rsp *http.Response) (*CallMcpToolResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CallMcpToolResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

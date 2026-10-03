@@ -19,12 +19,8 @@ package edge
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
@@ -42,8 +38,6 @@ import (
 // no owner or repo field, so the validator refuses a request naming one.
 
 const (
-	// filesSocketMode lets the pod's shared group (fsGroup) connect.
-	filesSocketMode fs.FileMode = 0o660
 	// filesSocketBodyBytes caps a request body; only apply has one (04 §7).
 	filesSocketBodyBytes int64 = 25 << 20
 	// filesSocketRequestBudget bounds one Files socket request, so the pod
@@ -56,42 +50,6 @@ const (
 	// spends its budget waiting on one leaves the clone running for the next.
 	filesSocketRequestBudget = 40 * time.Second
 )
-
-// ListenFilesSocket binds the Files socket at path. A socket file left by a
-// previous run is removed first; any other file at path is an error, never
-// removed. The socket is made 0660; closing the listener unlinks it.
-func ListenFilesSocket(path string) (net.Listener, error) {
-	if err := removeStaleSocket(path); err != nil {
-		return nil, err
-	}
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, fmt.Errorf("files socket: listen: %w", err)
-	}
-	if err := os.Chmod(path, filesSocketMode); err != nil {
-		_ = ln.Close()
-		return nil, fmt.Errorf("files socket: chmod: %w", err)
-	}
-	return ln, nil
-}
-
-// removeStaleSocket removes a socket file at path; nothing there is fine.
-func removeStaleSocket(path string) error {
-	fi, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("files socket: stat: %w", err)
-	}
-	if fi.Mode().Type() != fs.ModeSocket {
-		return fmt.Errorf("files socket: %s exists and is not a socket", path)
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("files socket: remove stale socket: %w", err)
-	}
-	return nil
-}
 
 // filesSocketHandler is validator → generated server. A path or method the
 // contract does not declare is 404 at the validator; a request that does not

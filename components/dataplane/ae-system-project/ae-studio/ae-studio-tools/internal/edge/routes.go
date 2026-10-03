@@ -46,8 +46,8 @@ type Deps struct {
 // route group, each listener → gate → handler. Every gate runs before route
 // matching inside its group, so an unknown path is 401/403 before it is 404.
 // The health probes are on the health listener only. A path not listed here
-// is 404; nothing redirects. The Files socket is a separate listener
-// (FilesSocketRoutes).
+// is 404; nothing redirects. The Files and MCP sockets are separate
+// listeners (FilesSocketRoutes, MCPSocketRoutes).
 func Routes(d Deps) http.Handler {
 	// /v1: browser, Platform IdP user JWT of the pod's org. Gate → validator
 	// → generated server; the read-only Files operations.
@@ -82,6 +82,13 @@ func Routes(d Deps) http.Handler {
 // a. A path ServeMux would redirect is 404, as on the public listener.
 func FilesSocketRoutes(a files.Applier) http.Handler {
 	return withBudget(filesSocketRequestBudget, capBody(filesSocketBodyBytes, uncleanPathNotFound(filesSocketHandler(a), nil)))
+}
+
+// MCPSocketRoutes is the MCP socket's mount table (04 §7): request budget →
+// body cap → validator → generated server (mcp_sock.go). No token gate: the
+// mount is the gate. A path ServeMux would redirect is 404.
+func MCPSocketRoutes(d MCPSocketDeps) http.Handler {
+	return withBudget(mcpSocketRequestBudget, capBody(mcpSocketBodyBytes, uncleanPathNotFound(mcpSocketHandler(d), nil)))
 }
 
 // withBudget runs next under a deadline d from now (or the request's own,

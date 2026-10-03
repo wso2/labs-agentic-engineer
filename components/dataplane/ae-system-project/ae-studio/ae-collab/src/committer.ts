@@ -50,8 +50,8 @@ import type { FlushFailureCause, PodLog } from "./pod/log.js";
 const MAX_CONFLICT_RETRIES = 2;
 /**
  * How long the shutdown flush may take before shutdown goes on without it.
- * It must end inside ae-studio-tools' Files socket drain window
- * (`filesSocketDrainWindow`, 10 s, cmd/ae-studio-tools/main.go): both
+ * It must end inside ae-studio-tools' socket drain window
+ * (`socketDrainWindow`, 10 s, cmd/ae-studio-tools/main.go): both
  * containers get SIGTERM together, and after that window the socket stops
  * accepting.
  */

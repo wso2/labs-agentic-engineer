@@ -57,9 +57,9 @@ func TestHealth_OnlyGETAndKnownPaths(t *testing.T) {
 	}
 }
 
-// /readyz is 200 only once the public listener and the Files socket are both
-// bound, and 503 again once the container drains.
-func TestReadiness_NeedsPublicListenerAndFilesSocket(t *testing.T) {
+// /readyz is 200 only once the public listener and both sockets are bound,
+// and 503 again once the container drains.
+func TestReadiness_NeedsPublicListenerAndSockets(t *testing.T) {
 	var r Readiness
 	h := NewHealth(r.Ready)
 	readyz := func() int {
@@ -75,8 +75,12 @@ func TestReadiness_NeedsPublicListenerAndFilesSocket(t *testing.T) {
 		t.Fatalf("Files socket not bound: readyz = %d", c)
 	}
 	r.FilesSocketBound()
+	if c := readyz(); c != 503 {
+		t.Fatalf("MCP socket not bound: readyz = %d", c)
+	}
+	r.MCPSocketBound()
 	if c := readyz(); c != 200 {
-		t.Fatalf("both bound: readyz = %d", c)
+		t.Fatalf("all bound: readyz = %d", c)
 	}
 	r.Draining()
 	if c := readyz(); c != 503 {

@@ -18,11 +18,13 @@
 // It builds the git engine over the studio-data volume and its reaper, the
 // per-request project resolver (aep-api, with the org's publisher token), and
 // serves the public listener (edge.Routes), the Files socket
-// (edge.FilesSocketRoutes, ae-collab's) and the health listener, reporting
-// ready once the public listener and the Files socket are bound. SIGTERM
-// (tini forwards it) drains the public and health listeners, keeps the Files
-// socket serving for ae-collab's final flush (07 §10), closes it, then stops
-// the reaper.
+// (edge.FilesSocketRoutes, ae-collab's), the MCP socket
+// (edge.MCPSocketRoutes, ae-design-agent's) and the health listener,
+// reporting ready once the public listener and both sockets are bound.
+// SIGTERM (tini forwards it) drains the public and health listeners, keeps
+// both sockets serving through the drain window for ae-collab's final flush
+// and the agent's outbox drain (07 §10), shuts them down, then stops the
+// reaper.
 package main
 
 import (
@@ -41,6 +43,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/platform"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
@@ -53,20 +56,29 @@ import (
 // drain's budget.
 const reaperStopTimeout = 2 * time.Second
 
+// Shutdown budget, inside the pod's 30 s termination grace (Q-5/D-5):
+//
+//	socketDrainWindow (10 s) + socketShutdownTimeout (15 s) + reaperStopTimeout (2 s) = 27 s < 30 s
+//
+// The public and health listeners drain (listenerDrainTimeout, 5 s) inside the
+// window. Both sockets keep accepting through the one window and are then
+// shut down concurrently, so the second socket adds nothing to the total; a
+// step that must run beside them (Task 3.7's usage flush, at most 3 s) joins
+// that same concurrent group, inside socketShutdownTimeout.
 const (
 	// listenerDrainTimeout bounds the public and health listeners' drain.
 	listenerDrainTimeout = 5 * time.Second
-	// filesSocketDrainWindow is how long after SIGTERM the Files socket keeps
-	// accepting: ae-collab gets SIGTERM at the same moment and flushes every
-	// Room through it (07 §10). Coupled to ae-collab's shutdown flush budget
-	// (SHUTDOWN_FLUSH_BUDGET_MS, 8 s, ae-collab/src/committer.ts), which must
-	// end inside this window with a margin; raise both together. Window +
-	// filesSocketShutdownTimeout + reaperStopTimeout = 10 + 15 + 2 s < 30 s grace.
-	filesSocketDrainWindow = 10 * time.Second
-	// filesSocketShutdownTimeout bounds the wait for applies still in flight
-	// once the socket stops accepting. Window + timeout + the reaper's stop
-	// stay inside the pod's 30 s grace period.
-	filesSocketShutdownTimeout = 15 * time.Second
+	// socketDrainWindow is how long after SIGTERM the Files and MCP sockets
+	// keep accepting: ae-collab and ae-design-agent get SIGTERM at the same
+	// moment, ae-collab flushes every Room through the Files socket and the
+	// agent drains its outbox through the MCP socket (07 §10). Coupled to
+	// ae-collab's shutdown flush budget (SHUTDOWN_FLUSH_BUDGET_MS, 8 s,
+	// ae-collab/src/committer.ts) and the agent's outbox drain (8 s), which
+	// must end inside this window with a margin; raise them together.
+	socketDrainWindow = 10 * time.Second
+	// socketShutdownTimeout bounds the wait for requests still in flight on
+	// either socket once they stop accepting.
+	socketShutdownTimeout = 15 * time.Second
 )
 
 func main() {
@@ -109,6 +121,18 @@ func run() error {
 		return err
 	}
 	reader := files.Reader{Engine: engine, Projects: projects.NewAEPAPIResolver(aepAPI), Org: cfg.OrgHandle}
+	// The MCP socket: remote-git in the pod with the gitpat for the org's own
+	// GitHub account, the other tools forwarded to aep-api as the publisher,
+	// and the agent's room token minted as ae-studio-<org>.
+	mcpDeps := edge.MCPSocketDeps{
+		MCP: mcp.Server{
+			Remote:   mcp.RemoteGit{Owner: cfg.GitHubOwner, Token: cfg.GitHubPAT},
+			Upstream: mcp.NewAEPAPIUpstream(aepAPI),
+		},
+		RoomTokens: &platform.ClientCredentials{
+			TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
+		},
+	}
 	gh := github.NewClient(cfg.GitHubPAT)
 	applier := files.Applier{
 		Reader:    reader,
@@ -146,6 +170,11 @@ func run() error {
 		Handler:           edge.FilesSocketRoutes(applier),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	mcpSock := &http.Server{
+		Addr:              cfg.MCPSocket,
+		Handler:           edge.MCPSocketRoutes(mcpDeps),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	healthLn, err := net.Listen("tcp", health.Addr)
 	if err != nil {
@@ -164,7 +193,7 @@ func run() error {
 		return err
 	}
 	slog.Info("public_listening", "port", cfg.ListenPort)
-	filesLn, err := edge.ListenFilesSocket(cfg.FilesSocket)
+	filesLn, err := edge.ListenSocket(cfg.FilesSocket)
 	if err != nil {
 		_ = healthLn.Close()
 		_ = publicLn.Close()
@@ -174,15 +203,28 @@ func run() error {
 		return err
 	}
 	slog.Info("files_socket_listening", "path", cfg.FilesSocket)
+	mcpLn, err := edge.ListenSocket(cfg.MCPSocket)
+	if err != nil {
+		_ = healthLn.Close()
+		_ = publicLn.Close()
+		_ = filesLn.Close()
+		slog.Error("mcp_socket_listen_failed", "path", cfg.MCPSocket, "error", err)
+		stopReaper()
+		<-reaperDone
+		return err
+	}
+	slog.Info("mcp_socket_listening", "path", cfg.MCPSocket)
 
-	serveErr := make(chan error, 3)
+	serveErr := make(chan error, 4)
 	go func() { serveErr <- fmt.Errorf("health listener: %w", health.Serve(healthLn)) }()
 	go func() { serveErr <- fmt.Errorf("public listener: %w", public.Serve(publicLn)) }()
 	go func() { serveErr <- fmt.Errorf("files socket: %w", filesSock.Serve(filesLn)) }()
-	// Every listener is bound, so a probe that sees ready can reach the routes and
-	// ae-collab can reach the socket.
+	go func() { serveErr <- fmt.Errorf("mcp socket: %w", mcpSock.Serve(mcpLn)) }()
+	// Every listener is bound, so a probe that sees ready can reach the routes,
+	// ae-collab the Files socket and ae-design-agent the MCP socket.
 	ready.PublicBound()
 	ready.FilesSocketBound()
+	ready.MCPSocketBound()
 
 	var runErr error
 	signaled := false
@@ -203,15 +245,13 @@ func run() error {
 			runErr = err
 		}
 	}
-	// The Files socket closes last: on SIGTERM it keeps accepting through
-	// ae-collab's final flush, then drains the applies in flight.
+	// The sockets close last: on SIGTERM they keep accepting through
+	// ae-collab's final flush and the agent's outbox drain, then drain the
+	// requests in flight, concurrently.
 	if signaled {
-		time.Sleep(time.Until(drainStart.Add(filesSocketDrainWindow)))
+		time.Sleep(time.Until(drainStart.Add(socketDrainWindow)))
 	}
-	sockCtx, cancelSock := context.WithTimeout(context.Background(), filesSocketShutdownTimeout)
-	defer cancelSock()
-	if err := filesSock.Shutdown(sockCtx); err != nil {
-		slog.Error("shutdown_failed", "addr", filesSock.Addr, "error", err)
+	if err := shutdownSockets(filesSock, mcpSock); err != nil {
 		runErr = err
 	}
 	// The listeners are drained, so no request can still be reading; the
@@ -227,4 +267,29 @@ func run() error {
 	}
 	slog.Info("stopped")
 	return nil
+}
+
+// shutdownSockets shuts the sockets down concurrently under one
+// socketShutdownTimeout and answers the last failure. Task 3.7's usage flush
+// joins this group.
+func shutdownSockets(socks ...*http.Server) error {
+	ctx, cancel := context.WithTimeout(context.Background(), socketShutdownTimeout)
+	defer cancel()
+	errs := make(chan error, len(socks))
+	for _, srv := range socks {
+		go func() {
+			err := srv.Shutdown(ctx)
+			if err != nil {
+				slog.Error("shutdown_failed", "addr", srv.Addr, "error", err)
+			}
+			errs <- err
+		}()
+	}
+	var last error
+	for range socks {
+		if err := <-errs; err != nil {
+			last = err
+		}
+	}
+	return last
 }

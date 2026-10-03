@@ -31,7 +31,8 @@ paths:
         design tools whatever aep-api serves, and `tools/call` of any other name
         is refused here. Two tools are served in the pod
         (get_remote_git_file_contents, search_remote_git_code, owner-guarded),
-        the rest are forwarded to aep-api.
+        the rest are forwarded to aep-api. A notification (no `id`) is accepted
+        with 202 and no body.
       tags:
       - MCP
       requestBody:
@@ -47,6 +48,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: A notification, accepted; no body
         '400':
           $ref: '#/components/responses/Problem'
         '502':
@@ -151,7 +154,7 @@ components:
   responses:
     Problem:
       description: 'RFC 9457 problem. Codes: project_unknown, invalid_record, disk_full,
-        aep_api_unavailable, github_error.'
+        aep_api_unavailable, idp_unavailable, github_error.'
       content:
         application/problem+json:
           schema:

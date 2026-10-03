@@ -23,10 +23,11 @@ import (
 )
 
 // Readiness is the container's /readyz state (08 §2): ready once the public
-// listener and the Files socket are both bound, and not ready again from the
-// moment the container starts draining. Safe for concurrent use.
+// listener, the Files socket and the MCP socket are all bound, and not ready
+// again from the moment the container starts draining. Safe for concurrent
+// use.
 type Readiness struct {
-	public, filesSocket, draining atomic.Bool
+	public, filesSocket, mcpSocket, draining atomic.Bool
 }
 
 // PublicBound records that the public listener is bound.
@@ -35,12 +36,15 @@ func (r *Readiness) PublicBound() { r.public.Store(true) }
 // FilesSocketBound records that the Files socket is bound.
 func (r *Readiness) FilesSocketBound() { r.filesSocket.Store(true) }
 
+// MCPSocketBound records that the MCP socket is bound.
+func (r *Readiness) MCPSocketBound() { r.mcpSocket.Store(true) }
+
 // Draining records that shutdown has begun.
 func (r *Readiness) Draining() { r.draining.Store(true) }
 
 // Ready reports whether a probe should see the container ready.
 func (r *Readiness) Ready() bool {
-	return r.public.Load() && r.filesSocket.Load() && !r.draining.Load()
+	return r.public.Load() && r.filesSocket.Load() && r.mcpSocket.Load() && !r.draining.Load()
 }
 
 // NewHealth serves the probe endpoints on the health port (08 §2), which is

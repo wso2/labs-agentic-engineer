@@ -48,6 +48,18 @@ type Config struct {
 	// FilesSocket is the Files socket's path (04 §7), on the emptyDir shared
 	// with ae-collab.
 	FilesSocket string
+	// MCPSocket is the MCP socket's path (04 §7), served here for
+	// ae-design-agent; TurnSocket is the Turn socket's, which ae-design-agent
+	// serves and this container calls. Both are on the emptyDir the two
+	// containers share.
+	MCPSocket, TurnSocket string
+	// GitHubOwner is the org's connected GitHub account (AE_GITHUB_OWNER):
+	// the only owner the remote-git tools read. Empty refuses every
+	// remote-git call, per call, not at boot.
+	GitHubOwner string
+	// StudioClientID and StudioClientSecret are the ae-studio-<org> client,
+	// which mints the agent's collab room token.
+	StudioClientID, StudioClientSecret string
 }
 
 // ErrSecretRevMismatch means the mounted Secret is not the revision the pod
@@ -135,6 +147,12 @@ func Load(getenv func(string) string) (Config, error) {
 		StorageBudgetBytes: positiveBytes("AE_STORAGE_BUDGET_BYTES"),
 
 		FilesSocket: absPath("AE_FILES_SOCKET"),
+		MCPSocket:   absPath("AE_MCP_SOCKET"),
+		TurnSocket:  absPath("AE_TURN_SOCKET"),
+
+		GitHubOwner:        strings.TrimSpace(getenv("AE_GITHUB_OWNER")),
+		StudioClientID:     req("AE_STUDIO_CLIENT_ID"),
+		StudioClientSecret: req("AE_STUDIO_CLIENT_SECRET"),
 	}
 	c.UserAudiences = splitList(getenv("AE_USER_AUDIENCES"))
 	if len(c.UserAudiences) == 0 {

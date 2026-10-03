@@ -39,7 +39,7 @@ import (
 )
 
 // socketHarness serves FilesSocketRoutes on a real Unix socket bound by
-// ListenFilesSocket, over a file:// origin that aep-api names acme/greeter.
+// ListenSocket, over a file:// origin that aep-api names acme/greeter.
 type socketHarness struct {
 	t        *testing.T
 	path     string
@@ -92,7 +92,7 @@ func newSocketHarness(t *testing.T, seed map[string]string) *socketHarness {
 		Identity:  fixedIdentity{},
 	}
 	path := filepath.Join(shortSocketDir(t), "files.sock")
-	ln, err := ListenFilesSocket(path)
+	ln, err := ListenSocket(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestFilesSocket_ApplyBodyCap(t *testing.T) {
 	}
 }
 
-func TestListenFilesSocket(t *testing.T) {
+func TestListenSocket(t *testing.T) {
 	t.Run("removes a stale socket and sets 0660", func(t *testing.T) {
 		path := filepath.Join(shortSocketDir(t), "files.sock")
 		stale, err := net.Listen("unix", path)
@@ -383,7 +383,7 @@ func TestListenFilesSocket(t *testing.T) {
 		}
 		stale.(*net.UnixListener).SetUnlinkOnClose(false)
 		_ = stale.Close() // the file stays behind, as after a crash
-		ln, err := ListenFilesSocket(path)
+		ln, err := ListenSocket(path)
 		if err != nil {
 			t.Fatalf("over a stale socket: %v", err)
 		}
@@ -401,7 +401,7 @@ func TestListenFilesSocket(t *testing.T) {
 		if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if ln, err := ListenFilesSocket(path); err == nil {
+		if ln, err := ListenSocket(path); err == nil {
 			_ = ln.Close()
 			t.Fatal("bound over a regular file")
 		}
@@ -411,7 +411,7 @@ func TestListenFilesSocket(t *testing.T) {
 	})
 	t.Run("closing unlinks the socket", func(t *testing.T) {
 		path := filepath.Join(shortSocketDir(t), "files.sock")
-		ln, err := ListenFilesSocket(path)
+		ln, err := ListenSocket(path)
 		if err != nil {
 			t.Fatal(err)
 		}

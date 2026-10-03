@@ -15,7 +15,7 @@ test:
 #   gen/filessock    Files socket  models + strict server + embedded spec (ae-collab caller)
 #   gen/mcpsock      MCP socket    models + strict server + embedded spec (ae-design-agent caller)
 #   gen/turnsock     Turn socket   client + models (calls ae-design-agent)
-#   gen/aepapi       aep-api internal spec, the two ae-studio ops: client + models
+#   gen/aepapi       aep-api internal spec, the ops this container calls: client + models
 # The embedded specs (GetSpec) feed the request validators. Generated files are
 # committed; gen-api-check is the CI freshness gate.
 OAPI_CODEGEN          ?= go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0

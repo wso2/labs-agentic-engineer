@@ -37,6 +37,9 @@ func base() map[string]string {
 		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
 		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
 		"AE_FILES_SOCKET": "/run/ae/files/files.sock",
+		"AE_MCP_SOCKET":   "/run/ae/mcp/mcp.sock", "AE_TURN_SOCKET": "/run/ae/mcp/turn.sock",
+		"AE_STUDIO_CLIENT_ID": "ae-studio-default", "AE_STUDIO_CLIENT_SECRET": "studio-secret-value",
+		"AE_GITHUB_OWNER": "Acme-GH",
 	}
 }
 
@@ -87,7 +90,8 @@ func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	_, err := Load(env(map[string]string{}))
 	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
 		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL",
-		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET"} {
+		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET",
+		"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Fatalf("error %v does not name %s", err, k)
 		}
@@ -207,5 +211,43 @@ func TestCheckSecretRev(t *testing.T) {
 		if c.ok != (err == nil) || (!c.ok && !errors.Is(err, ErrSecretRevMismatch)) {
 			t.Fatalf("%+v: err=%v", c, err)
 		}
+	}
+}
+
+// Phase 3 (Q-16): the MCP and Turn sockets and the room-token client are
+// required (fail closed at boot); AE_GITHUB_OWNER is read but may be empty,
+// which refuses every remote-git call instead.
+func TestLoad_MCPSocketKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MCPSocket != "/run/ae/mcp/mcp.sock" || c.TurnSocket != "/run/ae/mcp/turn.sock" ||
+		c.StudioClientID != "ae-studio-default" || c.StudioClientSecret != "studio-secret-value" || c.GitHubOwner != "Acme-GH" {
+		t.Fatalf("MCP socket keys not read")
+	}
+	for _, k := range []string{"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET"} {
+		m := base()
+		m[k] = " "
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), "missing "+k) {
+			t.Fatalf("%s blank: err = %v", k, err)
+		}
+		if strings.Contains(err.Error(), "studio-secret-value") {
+			t.Fatalf("%s blank: error leaks the studio secret", k)
+		}
+	}
+	for _, k := range []string{"AE_MCP_SOCKET", "AE_TURN_SOCKET"} {
+		m := base()
+		m[k] = "run/ae/mcp/x.sock"
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "invalid "+k) {
+			t.Fatalf("%s relative: err = %v", k, err)
+		}
+	}
+	m := base()
+	m["AE_GITHUB_OWNER"] = "  "
+	c, err = Load(env(m))
+	if err != nil || c.GitHubOwner != "" {
+		t.Fatalf("empty owner: %q %v", c.GitHubOwner, err)
 	}
 }
