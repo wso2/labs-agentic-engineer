@@ -83,14 +83,11 @@ type Config struct {
 	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
 	TenantGateMode string
 
-	// SREAgent names the one owning org's observability-plane Secret/Deployment
-	// that aep-api pushes the SRE agent's LLM settings to (the sreagent
-	// reconciler), and doubles as the SRE-handoff shortcut's org
-	// (internal/edge/sre_handoff_gate.go): aep-mcp-server's forwarded bearer
-	// for CreateIssue/ListIssues is checked against the token minted for this
-	// org (org_secrets, not a static env secret). Read from SRE_AGENT_ORG /
-	// SRE_AGENT_NAMESPACE / SRE_AGENT_DEPLOYMENT / SRE_AGENT_SECRET.
-	SREAgent SREAgentConfig
+	// SREHandoff configures the OpenChoreo SRE agent's handoff into AE: the
+	// key it authenticates with, which `aectl sre install` sets. Read from
+	// SRE_HANDOFF_TOKEN (from a Secret only). Each tool call names its org,
+	// which aep-api verifies against the observer's recorded alerts.
+	SREHandoff SREHandoffConfig
 
 	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
 	// JWT that rides the GitHub App OAuth `state` query param (CSRF
@@ -492,43 +489,10 @@ type TemporalConfig struct {
 // Enabled reports whether the Temporal integration is configured.
 func (t TemporalConfig) Enabled() bool { return t.HostPort != "" }
 
-// SREAgentConfig names the observability-plane Secret/Deployment of the ONE
-// org that owns the SRE agent — the push target aep-api's sreagent
-// reconciler writes the agent's LLM settings to. `aectl sre install --org`
-// (Task 15) sets these through the platform Helm chart's sreAgent values.
-type SREAgentConfig struct {
-	Org        string
-	Namespace  string
-	Deployment string
-	Secret     string
-
-	// Seed is the install-time SRE model connection `aectl sre install`
-	// writes without a user token (Task A2's `sre-model-seed` Secret, read
-	// from SRE_AGENT_SEED_API_KEY / SRE_AGENT_SEED_MODEL /
-	// SRE_AGENT_SEED_BASE_URL). It is the only way to set or rotate the SRE
-	// model connection: organization.SreModelConnectionService.ApplySeed
-	// probes it whenever its hash changes and, on success, persists it,
-	// replacing whatever connection is stored. An unset Seed leaves the
-	// stored connection untouched.
-	Seed SREAgentSeed
+// SREHandoffConfig is the SRE handoff's key. It is never logged.
+type SREHandoffConfig struct {
+	Token string
 }
 
-// Enabled reports whether a push target is fully configured. All four
-// fields must be set together — a partial target is not addressable.
-func (c SREAgentConfig) Enabled() bool {
-	return c.Org != "" && c.Namespace != "" && c.Deployment != "" && c.Secret != ""
-}
-
-// SREAgentSeed is the install-time SRE model connection candidate. The key is
-// never logged.
-type SREAgentSeed struct {
-	APIKey  string
-	Model   string
-	BaseURL string
-}
-
-// Present reports whether the seed carries enough to attempt (a key and a
-// model; BaseURL defaults when both are set — see the loader).
-func (s SREAgentSeed) Present() bool {
-	return s.APIKey != "" && s.Model != ""
-}
+// Enabled reports whether the SRE handoff is configured.
+func (c SREHandoffConfig) Enabled() bool { return c.Token != "" }

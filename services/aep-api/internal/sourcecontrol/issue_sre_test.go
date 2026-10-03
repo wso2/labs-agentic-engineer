@@ -353,16 +353,12 @@ func TestSREIdentityReservationPreservesOtherLegacyDedup(t *testing.T) {
 	}
 }
 
-// TestSREHandoffShapedRequestNeedsIncidentContext pins the exact contract
-// internal/edge/sre_handoff_gate.go relies on: aep-mcp-server sends
+// TestSREHandoffShapedRequestNeedsIncidentContext pins the exact contract the
+// SRE handoff's MCP surface (issues/sre_mcp.go) relies on: create_issue sends
 // componentName + actionStatuses straight from the model's tool-call
-// arguments (handoffContext.ts's resolveHandoff), with no dedupe key and no
-// trusted-identity header — there is no generic-extensions transport left to
-// carry one (docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md
-// §2/§5). Without SOME incident context bound onto ctx first, that shape is
-// indistinguishable from a spoofed legacy call and CreateIssue's own
-// anti-spoofing guard rejects it — this reproduces the exact failure the SRE
-// agent hit in production before the edge gate bound one.
+// arguments, with no dedupe key and no trusted-identity header. Without SOME
+// incident context bound onto ctx first, that shape is indistinguishable from
+// a spoofed legacy call and CreateIssue's own anti-spoofing guard rejects it.
 func TestSREHandoffShapedRequestNeedsIncidentContext(t *testing.T) {
 	req := CreateIssueRequest{
 		Title:          "service1 logs an error",
@@ -381,8 +377,8 @@ func TestSREHandoffShapedRequestNeedsIncidentContext(t *testing.T) {
 
 	t.Run("bound incident context: the same request succeeds", func(t *testing.T) {
 		gh := &fakeGitHub{}
-		// "sre-handoff" — must match internal/edge/sre_handoff_gate.go's
-		// sreHandoffIncidentID constant; that file is the one production caller.
+		// "sre-handoff" — must match issues/sre_mcp.go's sreHandoffIncidentID
+		// constant; that surface is the one production caller.
 		ctx := WithIncidentContext(context.Background(), "sre-handoff")
 		result, err := newDedupService(gh).CreateIssue(ctx, "org", "hello", req)
 		if err != nil {

@@ -35,15 +35,15 @@ import (
 //	───────────────────────────────────────────────────────────────────────────────────────────────────
 //	public         /api/v1              Thunder user JWT + org gate                handlers_*.go · tenant_gate.go
 //	               (jwt → orgensure)    (org from the verified token, never input)  ← packages/contracts/api/v1 (source of truth)
-//	               CreateIssue/         OR a long-lived SRE-handoff secret,         sre_handoff_gate.go ·
-//	               ListIssues only      scoped to one configured org — see         auth.SREHandoffVerifier
-//	                                    sre_handoff_gate.go's doc comment for why
 //	internal S2S   /internal/v1/validation/, publisher-cc (iss platform-idp)        internal.go · runnerAuthGate
 //	               /internal/v1/executions/  (INT-6 fence keyed to the run CYCLE     ← packages/contracts/api/internal/v1 (non-public)
 //	               (deny-by-default gate)     id)
 //	internal MCP   /internal/v1/mcp     BFF JWT aud=aep-api-mcp or Thunder          dependencies/mcp_server.go ·
 //	               (POST, JSON-RPC)     publisher CC (org from ocOrgId or           auth.AgentsScopedVerifier (no spec — JSON-RPC)
 //	                                    PublisherClaims.OrgHandle, never request)
+//	               /sre-handoff/mcp     the install-time SRE handoff key           sourcecontrol/issues/sre_mcp.go ·
+//	               (POST, JSON-RPC)     (org from the call, verified against the    auth.SREHandoffVerifier (mounted only
+//	                                    observer's alerts before use)               when SRE_HANDOFF_TOKEN is set)
 //	               /mcp/playground-token  NONE — flag-gated only                   dependencies/playground_token.go
 //	               (POST, local dev)      (PLAYGROUND_TOKEN_ENABLED, off by         (mounted only when the flag is true —
 //	                                      default; docker-compose sets it)          404 by absence otherwise)
@@ -185,6 +185,17 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 		}
 	}
 
+	// ── SRE handoff MCP (POST /internal/v1/sre-handoff/mcp) ─────────────────
+	// The OpenChoreo SRE agent's remediation handoff: two tools that search and
+	// file a project's issues, for the org each call names, once the observer
+	// confirms an alert really fired there (issues/sre_mcp.go).
+	// Guarded by the install-time handoff key, not a Thunder JWT, because the
+	// agent's static MCP header cannot carry a token that expires (see
+	// auth.SREHandoffVerifier). Mounted only when the handoff is configured.
+	if params.SREHandoffAuth != nil && params.SREHandoffMCP != nil {
+		mux.Handle("POST "+internalV1+"/sre-handoff/mcp", params.SREHandoffAuth.Middleware(params.SREHandoffMCP))
+	}
+
 	// ── /api/ user-JWT wrapper ───────────────────────────────────────────────
 	// JIT org-onboarding sits between JWT verification and the org-aware route
 	// handlers. Tenants materialise on first authenticated request; no env var,
@@ -204,12 +215,6 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 			ResourceMetadataURL: params.Config.JWTResourceMetadataURL,
 		})
 	}
-	// sreHandoffOrJWT sits outside jwt: on exactly CreateIssue/ListIssues with
-	// a bearer that verifies against params.SREHandoffAuth, it binds that
-	// verifier's org and skips Thunder JWT verification for that one request
-	// (see sre_handoff_gate.go for why — the OC extensions loader cannot
-	// refresh a short-lived Thunder token). Every other request is unaffected.
-	jwt = sreHandoffOrJWT(params.SREHandoffAuth, jwt)
 	ensureOrg := auth.EnsureOrgMiddleware(params.OrganizationService)
 	// Stamp the configured tenant-gate mode onto every /api/ request context;
 	// humakit.OrgScopedInput.Resolve reads it per-request (ENFORCE default when

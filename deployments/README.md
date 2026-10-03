@@ -55,11 +55,10 @@ make dev-runner
 `make dev-env` also enables the stock OpenChoreo SRE agent (`v1.3.0`, no AE
 patch) on the observability plane and wires its alert → RCA → AE issue
 handoff (`scripts/setup-sre.sh`, `aectl sre install`). The agent speaks
-OpenAI-compatible chat completions only, so aep-api resolves and pushes it a
-model: the org's own **SRE model connection** if one was seeded at install
-(`aectl sre install --llm-api-key-file/--llm-model`; there is no console or
-API save for it), else the org's model connection if it is itself
-OpenAI-compatible, else the agent runs scaled to zero.
+OpenAI-compatible chat completions only, so it has a model of its own, set at
+install (`SRE_LLM_API_KEY_FILE`/`SRE_LLM_MODEL`, passed to `aectl sre install
+--llm-api-key-file/--llm-model`) and written into its Secret; without one it
+waits at 0 replicas.
 `WITH_OBSERVABILITY=0` skips the plane and the SRE agent; `WITH_SRE=0` skips
 only the agent; `WITH_AGENT_MANAGER=0` is the lean profile for SRE work. See
 `docs/developer-guide/sre-handoff-runbook.md`.

@@ -17,7 +17,6 @@
     "packages/ui/*",
     "runners/*",
     "services/aep-api",
-    "services/aep-mcp-server",
     "services/collab"
   ],
   // Each package keeps tests + shared fixtures in its own `test/` dir (never in

@@ -30,7 +30,7 @@ import (
 
 // testMCPURL is the MCP endpoint aectl builds for its default --mcp-hostname
 // and --mcp-port.
-const testMCPURL = "https://aep-mcp.openchoreo.localhost:8443/mcp"
+const testMCPURL = "https://aep-mcp.openchoreo.localhost:8443/internal/v1/sre-handoff/mcp"
 
 func TestLoadSREExtensionAssetsFromRepo(t *testing.T) {
 	assets, err := loadSreExtensionAssets("")

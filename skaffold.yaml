@@ -89,11 +89,6 @@ build:
       docker:
         dockerfile: services/collab/Dockerfile
 
-    - image: ghcr.io/wso2/aep/aep-mcp-server
-      context: .
-      docker:
-        dockerfile: services/aep-mcp-server/Dockerfile
-
     - image: ghcr.io/wso2/aep/console
       context: .
       docker:

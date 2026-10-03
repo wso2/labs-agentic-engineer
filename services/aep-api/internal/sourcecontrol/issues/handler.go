@@ -29,8 +29,9 @@ import (
 
 // Handler serves create-issue and list-issues.
 //
-// These back external handoffs: the SRE agent searches and files through MCP;
-// CreateIssue owns classification and adoption using trusted transport context.
+// The SRE agent's handoff reaches the same issue service through its own MCP
+// surface (sre_mcp.go), not these operations: CreateIssue owns classification
+// and adoption, and only that surface binds the trusted incident context.
 type Handler struct{ issues sourcecontrol.IssueService }
 
 // New returns the slice's handler. issues may be nil, which degrades both ops to
@@ -63,18 +64,7 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		}
 		return nil, apierr.Internal("failed to create issue")
 	}
-	return gen.CreateIssue200JSONResponse(gen.IssueResult{
-		Number:          int64(issue.Number),
-		URL:             issue.URL,
-		NodeID:          issue.NodeID,
-		Deduped:         issue.Deduped,
-		Classification:  issue.Classification,
-		Suppressed:      issue.Suppressed,
-		Reopened:        issue.Reopened,
-		Adopted:         issue.Adopted,
-		AdoptionError:   issue.AdoptionError,
-		RecurrenceCount: issue.RecurrenceCount,
-	}), nil
+	return gen.CreateIssue200JSONResponse(issueResultWire(issue)), nil
 }
 
 func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestObject) (gen.ListIssuesResponseObject, error) {
@@ -94,18 +84,41 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 	ranked := sourcecontrol.RankIssuesByQuery(issues, request.Params.Q)
 	out := make([]gen.IssueInfo, 0, len(ranked))
 	for _, iss := range ranked {
-		out = append(out, gen.IssueInfo{
-			Number:          int64(iss.Number),
-			Title:           iss.Title,
-			Body:            iss.Body,
-			URL:             iss.URL,
-			State:           iss.State,
-			StateReason:     iss.StateReason,
-			Labels:          iss.Labels,
-			AttentionReason: issueAttentionReason(iss.AttentionReason),
-		})
+		out = append(out, issueInfoWire(iss))
 	}
 	return gen.ListIssues200JSONResponse(out), nil
+}
+
+// issueResultWire is a created issue on the wire, for the REST create and the
+// SRE handoff's create_issue tool alike.
+func issueResultWire(issue *sourcecontrol.IssueResult) gen.IssueResult {
+	return gen.IssueResult{
+		Number:          int64(issue.Number),
+		URL:             issue.URL,
+		NodeID:          issue.NodeID,
+		Deduped:         issue.Deduped,
+		Classification:  issue.Classification,
+		Suppressed:      issue.Suppressed,
+		Reopened:        issue.Reopened,
+		Adopted:         issue.Adopted,
+		AdoptionError:   issue.AdoptionError,
+		RecurrenceCount: issue.RecurrenceCount,
+	}
+}
+
+// issueInfoWire is one listed issue on the wire, for the REST list and the SRE
+// handoff's search_related_issues tool alike.
+func issueInfoWire(iss sourcecontrol.IssueInfo) gen.IssueInfo {
+	return gen.IssueInfo{
+		Number:          int64(iss.Number),
+		Title:           iss.Title,
+		Body:            iss.Body,
+		URL:             iss.URL,
+		State:           iss.State,
+		StateReason:     iss.StateReason,
+		Labels:          iss.Labels,
+		AttentionReason: issueAttentionReason(iss.AttentionReason),
+	}
 }
 
 // issueAttentionReason prevents a domain value outside the public contract's

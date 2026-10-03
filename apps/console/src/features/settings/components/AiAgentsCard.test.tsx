@@ -64,7 +64,6 @@ const anthropic: LLMProjection = {
     imageInput: "yes",
     nativePdf: true,
     generatedAgents: true,
-    sreAgent: false,
   },
 };
 
@@ -83,7 +82,6 @@ const ollama: LLMProjection = {
     imageInput: "no",
     nativePdf: false,
     generatedAgents: true,
-    sreAgent: false,
   },
 };
 

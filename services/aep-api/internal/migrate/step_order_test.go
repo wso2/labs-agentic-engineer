@@ -80,6 +80,7 @@ var goldenStepOrder = []string{
 	"phase21_ai_agent_model_endpoints",
 	"phase22_org_sre_model_connections",
 	"phase23_agent_guardrail_applications",
+	"phase24_drop_sre_model_connections",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this

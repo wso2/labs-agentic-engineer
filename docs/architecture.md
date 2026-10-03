@@ -78,7 +78,6 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
   (git ops folded in); domain-oriented modules + vertical slices.
 - `agents` — TS interactive spec agents (Vercel AI SDK).
 - `collab` — TS Yjs collaboration server.
-- `aep-mcp-server` — MCP surface for the SRE/RCA handoff.
 - `runners/` (job image) — TS Claude Agent SDK one-shot pod; one Debian image serves
   both task kinds (ADR-0012).
 - `console` (app) — React frontend.

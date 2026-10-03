@@ -118,9 +118,6 @@ type ModelConnectionService struct {
 
 	// secretRefWriter mirrors a saved key into SM-API. nil-safe.
 	secretRefWriter *SecretRefWriter
-
-	// onChange runs after a committed save or delete of the connection.
-	onChange func(ocOrgID string)
 }
 
 var (
@@ -154,22 +151,6 @@ func (s *ModelConnectionService) WithSecretRefWriter(w *SecretRefWriter) *ModelC
 func (s *ModelConnectionService) WithProbeClient(c *http.Client) *ModelConnectionService {
 	s.probers = newModelProbers(c)
 	return s
-}
-
-// OnChange registers f to run, with the org, after every committed save or
-// delete of the connection: a change can decide whether the SRE agent runs
-// on it (its SREAgent capability). One callback: a second call replaces the
-// first.
-func (s *ModelConnectionService) OnChange(f func(ocOrgID string)) {
-	s.onChange = f
-}
-
-// changed runs the OnChange callback for a committed change of ocOrgID's
-// connection.
-func (s *ModelConnectionService) changed(ocOrgID string) {
-	if s.onChange != nil {
-		s.onChange(ocOrgID)
-	}
 }
 
 // --- reads --------------------------------------------------------------------

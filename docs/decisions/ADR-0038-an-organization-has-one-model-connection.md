@@ -184,6 +184,10 @@ format, and the console card no longer names it.
 
 ## Amendment 2026-09-29 — the SRE agent may use its own connection
 
+**Superseded by [ADR-0040](ADR-0040-the-sre-agent-is-configured-at-install.md):**
+the SRE agent's model is now written into its own Secret at install, and
+aep-api stores no SRE model connection.
+
 The OpenChoreo SRE (RCA) agent is one Deployment per plane, not dispatched
 per-org, so "the" connection above does not quite fit it: an org's default
 connection may be Anthropic-format, which the stock agent (OpenAI-compatible
@@ -205,6 +209,8 @@ for delivery (aep-api pushes the resolved connection into the agent's
 Secret; the agent never reads AE's database).
 
 ## Amendment 2026-10-01 — the SRE model connection is set at install only
+
+**Superseded by [ADR-0040](ADR-0040-the-sre-agent-is-configured-at-install.md).**
 
 Supplying a separate OpenAI-compatible key next to the org's own connection
 was a stop-gap; there is no console row or `/config` section for it anymore.

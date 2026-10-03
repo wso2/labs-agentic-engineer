@@ -19,6 +19,9 @@
 // Trigger: POST /projects/{projectName}/issues, GET /projects/{projectName}/issues.
 // In→out:  bound org + project (+ labels/query) → the created issue, or a ranked list.
 // Ports:   sourcecontrol.IssueService.
-// Invariant: IssueInfo's wire keys are CAPITALIZED — a historical shape the
-// deployed MCP server parses. The contract documents it; do not "fix" it.
+// The SRE agent's handoff reaches the same service through sre_mcp.go: two MCP
+// tools, mounted by edge behind auth.SREHandoffVerifier.
+// Invariant: IssueInfo's wire keys are CAPITALIZED — the shape the SRE
+// handoff's search_related_issues answers too, which the agent's skill reads.
+// The contract documents it; do not "fix" it.
 package issues

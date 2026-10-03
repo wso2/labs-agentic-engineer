@@ -2131,7 +2131,7 @@ type IssueComment struct {
 	URL      string `json:"url"`
 }
 
-// IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
+// IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (a historical shape the SRE handoff's search tool answers too, and the SRE agent's skill reads — do not "fix" without changing both).
 type IssueInfo struct {
 	Body   string   `json:"Body"`
 	Labels []string `json:"Labels"`

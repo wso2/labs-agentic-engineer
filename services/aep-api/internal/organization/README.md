@@ -16,7 +16,7 @@ flowchart LR
     SL["slices — getconfig · patchconfig · testllm · connect/disconnect · rotate/discover idp · listorgs"]
     CORE["config orchestrator + credential / anthropic / model-connection / idp / org services"]
     SL --> CORE
-    CORE --> DB[("organizations · org_credentials · org_model_connections · org_sre_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
+    CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
   end
   CORE -->|AppInstallOps · IssueService| SC[[sourcecontrol]]
   CORE -->|CredentialStore · Resolver| SEC[[platform/secrets]]
@@ -58,9 +58,6 @@ connect-callback controller, and the S2S credentials-refresh.*
   copies a connected org's bytes at boot, the watcher uploads the new mirror and switches the row under
   the card's lock, and retires the old copies on a periodic pass (never at boot) once the org has no
   open cycle),
-  `org_sre_model_connections` (one row per org, absent = none: the OpenAI-compatible base URL, host and
-  model the OpenChoreo SRE agent calls over a Bearer key of its own; the key's bytes in `org_secrets`
-  `sre-model/key`),
   `org_anthropic_credentials` (the optional `coding` Claude subscription only — CHECK
   `org_anthropic_credentials_subscription_only`), `org_agent_settings` (the runtime; one row per org,
   absent = the platform default), `ai_agent_model_endpoints` (the endpoint the Agent Manager govern stage
@@ -127,24 +124,6 @@ connect-callback controller, and the S2S credentials-refresh.*
   key's bytes (`Effective`), its vault reference (`KeyRef`) or the coding credential
   (`ResolveCodingCredential`), all from `org_model_connections`. No consumer outside this domain reads
   the rows for a key.
-- **Which connection the SRE agent runs on is stated once** (`ResolveEffectiveSRE`, read through
-  `SreModelConnectionService.EffectiveSRE`): the SRE model connection when set, else the org's
-  connection when it has the `SREAgent` capability, else none. There is no PATCH /config section or
-  console row for the SRE model connection — `Check`/`Persist` are reachable only from the
-  install-time seed below. Both services' `OnChange` run after every committed change of their
-  connection, so the reconciler's push stays current.
-- **An install-time SRE model seed is the only way to set or rotate it, and is authoritative**
-  (`SreModelConnectionService.ApplySeed`, `sre_model_seed.go`): `aectl sre install` writes the seed as
-  env vars (`config.SREAgentConfig.Seed`, read by the sreagent `Reconciler` through a `Seeder` it does
-  not otherwise depend on). A seed hash that differs from the last one tried is probed through the
-  same Check/Persist path, actor `aectl-seed`, and on success **replaces whatever connection is
-  stored**; a refusal leaves the stored connection (if any) untouched. A hash of the seed's three
-  values under `org_secrets` `sre-model/seed-applied` (`<hash>:applied` or `<hash>:refused`) remembers
-  whether this exact seed was already tried, so a reconciler pass that calls it every tick costs one
-  read once tried; a changed seed (a different model, a rotated key) is tried again. No seed
-  configured means `ApplySeed` is never called, so the stored connection is left alone. A refusal is
-  logged and returned as an outcome, never an error — it must not stop the reconciler from
-  reconciling whatever connection already applies.
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
   `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns

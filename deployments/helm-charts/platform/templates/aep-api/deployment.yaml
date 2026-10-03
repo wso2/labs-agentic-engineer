@@ -17,15 +17,13 @@ spec:
       labels:
         app: aep-api
         app.kubernetes.io/part-of: wso2-agentic-engineer
-      {{- if and .Values.sreAgent.enabled .Values.sreAgent.seed.secretName .Values.sreAgent.seed.hash }}
+      {{- if and .Values.sreAgent.enabled .Values.sreAgent.tokenHash }}
       annotations:
-        # Rolls aep-api when the SRE model seed changes (Task A3): the
-        # SRE_AGENT_SEED_* env below is sourced from sreAgent.seed.secretName
-        # and is fixed at pod start, so rewriting that Secret's data alone
-        # never changes this pod template and the reconciler keeps reading
-        # the old seed. A changed hash (different key/model) changes this
-        # annotation and rolls the pods; an unchanged hash is a no-op.
-        aep.wso2.com/sre-model-seed-hash: {{ .Values.sreAgent.seed.hash | quote }}
+        # Rolls aep-api when the SRE handoff key rotates: SRE_HANDOFF_TOKEN
+        # below is read from sreAgent.tokenSecret at pod start, so rewriting
+        # that Secret alone never changes this pod template. aectl sets the
+        # key's sha256 here; an unchanged key is a no-op re-install.
+        aep.wso2.com/sre-handoff-token-hash: {{ .Values.sreAgent.tokenHash | quote }}
       {{- end }}
     spec:
       serviceAccountName: aep-api
@@ -258,49 +256,19 @@ spec:
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.postgres.user }}:$(POSTGRES_PASSWORD)@postgres.{{ .Release.Namespace }}.svc.cluster.local:5432/{{ .Values.postgres.database }}?sslmode=disable"
             {{- if .Values.sreAgent.enabled }}
-            # SRE-agent push target (config.SREAgentConfig) — the ONE org's
-            # observability-plane Secret/Deployment aep-api's reconciler
-            # pushes the SRE agent's LLM settings to. SRE_AGENT_ORG also
-            # doubles as the SRE-handoff shortcut's org
-            # (auth.SREHandoffVerifier): the shortcut checks aep-mcp-server's
-            # forwarded bearer against the token minted for this org in
-            # org_secrets, not an env secret. Off by default (values.yaml) —
-            # omitting these env vars entirely leaves the reconciler (and the
-            # handoff shortcut) disabled (SREAgentConfig.Enabled() == false).
-            - name: SRE_AGENT_ORG
-              value: {{ .Values.sreAgent.org | quote }}
-            - name: SRE_AGENT_NAMESPACE
-              value: {{ .Values.sreAgent.namespace | quote }}
-            - name: SRE_AGENT_DEPLOYMENT
-              value: {{ .Values.sreAgent.deployment | quote }}
-            - name: SRE_AGENT_SECRET
-              value: {{ .Values.sreAgent.secret | quote }}
-            {{- if .Values.sreAgent.seed.secretName }}
-            # Install-time SRE model seed (Task A1/A2): `aectl sre install`
-            # writes sreAgent.seed.secretName in this namespace so aep-api can
-            # apply an SRE model connection for the owning org without a user
-            # token. optional: true — the reconciler's seed step is a no-op
-            # (config.SREAgentSeed.Present() == false) if any key is absent,
-            # so a Secret missing a key never blocks the pod from starting.
-            - name: SRE_AGENT_SEED_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sreAgent.seed.secretName | quote }}
-                  key: apiKey
-                  optional: true
-            - name: SRE_AGENT_SEED_MODEL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sreAgent.seed.secretName | quote }}
-                  key: model
-                  optional: true
-            - name: SRE_AGENT_SEED_BASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.sreAgent.seed.secretName | quote }}
-                  key: baseURL
-                  optional: true
+            # The OpenChoreo SRE agent's handoff (config.SREHandoffConfig): the
+            # key it authenticates with, which `aectl sre install` writes into
+            # sreAgent.tokenSecret before it enables this. aep-api verifies each
+            # call's org against the observer (OBSERVER_URL above), and refuses
+            # to start the handoff without it. Omitted, the surface is not mounted.
+            {{- if not .Values.observer.baseURL }}
+            {{- fail "sreAgent.enabled needs observer.baseURL: the SRE handoff verifies every call against the observer" }}
             {{- end }}
+            - name: SRE_HANDOFF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.sreAgent.tokenSecret | quote }}
+                  key: token
             {{- end }}
             {{- if .Values.temporal.enabled }}
             # Temporal (devflow workflows). Points the in-process worker at the

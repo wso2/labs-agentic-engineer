@@ -204,11 +204,9 @@ workflow-skill:
 # The SRE agent (deployments/scripts/setup-sre.sh) then wires the OpenChoreo
 # SRE agent's alert → RCA → AE issue handoff onto the observability plane
 # (OpenSearch, Fluent Bit, the logs adapter) the cluster bring-up installed.
-# The agent waits at 0 replicas until an SRE model applies: the SRE override
-# seeded at install (SRE_LLM_API_KEY_FILE + SRE_LLM_MODEL, passed to
-# `aectl sre install`), or else the org's model connection saved in the
-# Console, when it has the SREAgent capability. aep-api then pushes it to the
-# agent, with no re-run needed.
+# Its model is SRE_LLM_API_KEY_FILE + SRE_LLM_MODEL, which `aectl sre install`
+# writes into the agent's Secret; without them the agent waits at 0 replicas
+# until a re-run of setup-sre.sh passes them.
 #
 #   WITH_OBSERVABILITY=0  skips the observability plane, and with it the SRE
 #                         agent (the agent has nothing to read alerts from)
@@ -307,7 +305,6 @@ dev-images:
 		ghcr.io/wso2/aep/aep-api:dev-local \
 		ghcr.io/wso2/aep/agents:dev-local \
 		ghcr.io/wso2/aep/collab:dev-local \
-		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
 		--cluster openchoreo
@@ -350,10 +347,9 @@ dev-update:
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepAgents.image.repository=ghcr.io/wso2/aep/agents --set aepAgents.image.tag=dev-local \
 		--set collab.image.repository=ghcr.io/wso2/aep/collab --set collab.image.tag=dev-local \
-		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local
-	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
+	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and
 # OpenCode, deployments/scripts/build-runner.sh), imports them into k3d, and

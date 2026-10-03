@@ -107,7 +107,6 @@ jobs:
             "aep-api|services/aep-api|services/aep-api/Dockerfile|skills=skills||"
             "agents|.|services/agents/Dockerfile|||"
             "collab|.|services/collab/Dockerfile|||"
-            "aep-mcp-server|.|services/aep-mcp-server/Dockerfile|||"
             "console|.|apps/console/Dockerfile|||"
             "tryit|.|apps/tryit/Dockerfile|||"
             "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile|||"

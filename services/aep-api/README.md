@@ -74,14 +74,10 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
-  `kubeobs` — the observability plane's SRE agent Secret, Deployment and pods (merge patches, no
-  client-go; a Secret call's body never reaches an error or a log).
   `kubeauth` — the bearer/token-file Authorization and cluster-CA transport both share.
 - **supporting:** `app` (public composition **seam** — `Run(Options)`), `config`,
   `migrate` (ordered schema steps), `gen`/`igen` (generated contract types),
-  `arch` (the executable rules), `seed`, `sreagent` (the reconciler that converges the stock
-  OpenChoreo SRE agent's Secret, restart hash and replicas on the owning org's effective SRE
-  connection, and mints its handoff token).
+  `arch` (the executable rules), `seed`.
 
 ## Composition seam (`app.Run(Options)`)
 

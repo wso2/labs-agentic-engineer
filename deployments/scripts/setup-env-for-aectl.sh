@@ -128,7 +128,7 @@ OC_VERSION="1.2.5"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
 
-# Dev control-plane gateway https listener (SRE agent -> aep-mcp-server, see
+# Dev control-plane gateway https listener (SRE agent -> aep-api's handoff, see
 # deployments/scripts/setup-sre.sh / tools/aectl/cmd/sre.go's --mcp-hostname).
 # The wildcard covers every *.openchoreo.localhost hostname the gateway
 # fronts (aep-mcp, observer, rca-agent, ...), issued off the control-plane
@@ -1412,7 +1412,7 @@ echo "   Control Plane"
 # finished by then on a cold cluster — so kubelet SIGKILLs it mid-startup,
 # the restart begins again, and the release never satisfies `--wait`. A longer
 # timeout here does not help: the loop is deterministic, not slow.
-# The local https listener the SRE agent reaches aep-mcp-server through (see
+# The local https listener the SRE agent reaches aep-api's handoff through (see
 # DEV_GATEWAY_TLS_* above). WITH_TLS=1 adds its own "https" listener to
 # gateway-default further down, for the public domain, and the handoff route
 # attaches to that one instead — two listeners may not share the name.

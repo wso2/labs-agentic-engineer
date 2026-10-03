@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
@@ -36,7 +37,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
-	"sigs.k8s.io/yaml"
 
 	k8s "github.com/wso2/aep/aectl/internal/kubernetes"
 	"github.com/wso2/aep/aectl/internal/ui"
@@ -55,10 +55,10 @@ import (
 //   - none is installed: aectl installs the plane and logs charts itself at
 //     --obs-plane-version / --obs-logs-version.
 //
-// The agent's LLM key/model/base URL and its AEP handoff token are pushed by
-// aep-api into the AE-owned sre-agent-aep Secret (rca.extraEnvs) for the
-// --org this command wires up; this command does not carry any LLM
-// credential itself. Prerequisite: `aectl platform install` (it registers
+// The agent's model (--llm-api-key-file/--llm-model/--llm-base-url) and its
+// handoff key are written by this command into the sre-agent-aep Secret
+// (rca.extraEnvs reads it; see sre_model.go). Prerequisite: `aectl platform
+// install` (it registers
 // the openchoreo-rca-agent Thunder client and seeds the OpenBao secrets this
 // reads).
 
@@ -77,7 +77,6 @@ var (
 	sreMCPHost         string
 	sreMCPPort         int
 	sreAssetsRoot      string
-	sreOrg             string
 	srePlatformStore   string
 	sreSkipOCVerCheck  bool
 	// Passed through to the `aectl platform update` this command runs
@@ -87,14 +86,14 @@ var (
 	// because `sre install` happened to run (see runSreInstall's early check).
 	srePlatformChart   string
 	srePlatformVersion string
-	// Install-time SRE model seed (Task A2): when llmAPIKeyFile+llmModel are
-	// both given, this command writes them (plus llmBaseURL) into the
-	// sre-model-seed Secret and tells the platform release about it, so
-	// aep-api can bring the SRE agent's model connection up without a
-	// Console/API save. See resolveSreModelSeed.
+	// The SRE agent's model connection, written straight into its Secret
+	// (see sre_model.go). Required on the first install; a re-run without
+	// them keeps the model the agent already has.
 	sreLLMAPIKeyFile string
 	sreLLMModel      string
 	sreLLMBaseURL    string
+	// sreRotateHandoffToken replaces the handoff key both sides hold.
+	sreRotateHandoffToken bool
 )
 
 var sreCmd = &cobra.Command{
@@ -113,11 +112,15 @@ handoff wiring, the authz grants, and the observability CRs.
 Run 'aectl init' first — it registers the openchoreo-rca-agent Thunder client and
 seeds the OpenBao secrets this command reads via External Secrets.
 
-Requires --platform-chart or --platform-version: this command also flips
-sreAgent.* on the AEP platform release (org, obs namespace, RCA deployment
-name, Secret, MCP hostname) via an internal 'aectl platform update', and a
-pinned chart source keeps that call from silently upgrading the release to
-whatever is latest on GHCR.`,
+The SRE agent's model is set here and nowhere else: --llm-api-key-file and
+--llm-model (required on the first install) are probed, then written into the
+agent's Secret. A re-run without them keeps the model the agent has; a re-run
+with a new key file rotates it.
+
+Requires --platform-chart or --platform-version: this command also turns on
+sreAgent.* on the AEP platform release (org, handoff key, MCP hostname) via
+an internal 'aectl platform update', and a pinned chart source keeps that call
+from silently upgrading the release to whatever is latest on GHCR.`,
 	RunE: runSreInstall,
 }
 
@@ -137,20 +140,19 @@ func init() {
 	f.BoolVar(&sreAEHandoff, "ae-handoff", true, "Enable the RCA->AEP coding-agent handoff (mounts the SRE remediation extension)")
 	f.StringVar(&sreObserverHost, "observer-hostname", "observer.openchoreo.localhost", "Observer gateway hostname")
 	f.StringVar(&sreRcaHost, "rca-hostname", "rca-agent.openchoreo.localhost", "RCA agent gateway hostname")
-	f.StringVar(&sreMCPHost, "mcp-hostname", "aep-mcp.openchoreo.localhost", "aep-mcp-server's https hostname on the control-plane gateway (must match the platform chart's sreAgent.mcpHostname)")
-	f.IntVar(&sreMCPPort, "mcp-port", 8443, "https port of the control-plane gateway listener aep-mcp-server is routed on (k3d publishes 8443)")
-	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
-	f.StringVar(&sreOrg, "org", "", "OpenChoreo org whose SRE agent this install wires up (aep-api pushes that org's LLM key/model and handoff token into the agent's Secret)")
+	f.StringVar(&sreMCPHost, "mcp-hostname", "aep-mcp.openchoreo.localhost", "https hostname aep-api's SRE handoff route answers on, on the control-plane gateway (must match the platform chart's sreAgent.mcpHostname)")
+	f.IntVar(&sreMCPPort, "mcp-port", 8443, "https port of the control-plane gateway listener the SRE handoff route is on (k3d publishes 8443)")
+	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions); default: search upward from the working directory")
 	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.StringVar(&srePlatformChart, "platform-chart", "", "Local path to the AEP platform chart, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --platform-chart; one of --platform-chart/--platform-version is required)")
 	f.StringVar(&srePlatformVersion, "platform-version", "", "AEP platform chart version, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --version; one of --platform-chart/--platform-version is required)")
-	f.StringVar(&sreLLMAPIKeyFile, "llm-api-key-file", "", "Path to a file holding the org's SRE model API key, seeded into the sre-model-seed Secret at install — the only way to set or rotate the SRE agent's model connection (there is no console or API save for it); re-run install with a new key file to rotate (the key is read from this file, never taken as a flag value; must be given with --llm-model)")
-	f.StringVar(&sreLLMModel, "llm-model", "", "Model name for the install-time SRE model seed (e.g. gpt-5.4; must be given with --llm-api-key-file)")
-	f.StringVar(&sreLLMBaseURL, "llm-base-url", "https://api.openai.com/v1", "OpenAI-compatible base URL for the install-time SRE model seed")
+	f.StringVar(&sreLLMAPIKeyFile, "llm-api-key-file", "", "Path to a file holding the SRE agent's OpenAI-compatible API key, probed and written into the agent's Secret — the only way to set or rotate it; required on the first install, a re-run without it keeps the current key (read from this file, never taken as a flag value; must be given with --llm-model)")
+	f.StringVar(&sreLLMModel, "llm-model", "", "The SRE agent's model (e.g. gpt-5.4; must be given with --llm-api-key-file)")
+	f.StringVar(&sreLLMBaseURL, "llm-base-url", "https://api.openai.com/v1", "The SRE agent's OpenAI-compatible base URL (https)")
+	f.BoolVar(&sreRotateHandoffToken, "rotate-handoff-token", false, "Replace the key the SRE agent authenticates to aep-api's handoff with (restarts both)")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 	f.BoolVar(&sreSkipOCVerCheck, "skip-oc-version-check", false, "Skip the OpenChoreo minimum version check (not recommended)")
-	_ = sreInstallCmd.MarkFlagRequired("org")
 }
 
 // sreParams holds everything the value/manifest templates need.
@@ -160,26 +162,21 @@ type sreParams struct {
 	RcaImageRepo, RcaImageTag, RcaPullPolicy                  string
 	AdapterRepo, AdapterTag                                   string
 	ObserverHost, RcaHost                                     string
-	// Handoff wiring. AEMCPURL is aep-mcp-server's MCP endpoint as the agent
-	// reaches it (sreMCPURL), used both for the rendered remediation
+	// Handoff wiring. AEMCPURL is aep-api's SRE handoff MCP endpoint as the
+	// agent reaches it (sreMCPURL), used both for the rendered remediation
 	// mcp.json and as the rca.extraEnvs AEP_MCP_URL value (the agent's
 	// RCA_LLM_API_KEY/RCA_MODEL_NAME/RCA_LLM_BASE_URL/AEP_MCP_TOKEN come from
-	// the sre-agent-aep Secret aep-api owns instead, via secretKeyRef).
+	// the sre-agent-aep Secret this command writes, via secretKeyRef).
 	RcaServiceURL, AEMCPURL string
-	// MCPHostname is aep-mcp-server's https hostname (--mcp-hostname, the
+	// MCPHostname is the handoff route's https hostname (--mcp-hostname, the
 	// same one AEMCPURL was built from), passed to the platform release as
 	// sreAgent.mcpHostname so the chart and this command can't drift.
 	MCPHostname string
 	AEHandoff   bool
-	// Org is the OpenChoreo org whose observability-plane SRE agent aep-api's
-	// reconciler pushes the LLM key/model and handoff token to.
-	Org string
 	// RcaName is the RCA/SRE agent Deployment name, set from
 	// findSREAgentDeployment's discovery (the chart can rename it, e.g.
 	// ai-rca-agent -> sre-agent in 1.2.0). AEPNamespace is the AEP namespace
-	// (--namespace) aep-api's ServiceAccount lives in. Both feed
-	// sreAgentPushRoleTmpl and the platform chart's
-	// sreAgent.{deployment,org,namespace,secret,mcpHostname} values.
+	// (--namespace), where aep-api's copy of the handoff key lives.
 	RcaName, AEPNamespace string
 	// ForceSync is a per-run value (unix seconds) written into every
 	// ExternalSecret's force-sync annotation. ESO re-syncs an ExternalSecret
@@ -189,15 +186,19 @@ type sreParams struct {
 	ForceSync string
 }
 
-// sreMCPURL is aep-mcp-server's MCP endpoint as the SRE agent reaches it:
-// https through the control-plane gateway (the platform chart's
-// aep-mcp-server HTTPRoute), because the agent's extension loader sends the
-// Authorization header only to https URLs. Port 443 is left implicit.
+// sreHandoffMCPPath is aep-api's SRE handoff MCP mount, the one path the
+// platform chart's aep-api-sre-handoff HTTPRoute matches.
+const sreHandoffMCPPath = "/internal/v1/sre-handoff/mcp"
+
+// sreMCPURL is aep-api's SRE handoff MCP endpoint as the SRE agent reaches
+// it: https through the control-plane gateway (the platform chart's
+// aep-api-sre-handoff HTTPRoute), because the agent's extension loader sends
+// the Authorization header only to https URLs. Port 443 is left implicit.
 func sreMCPURL(host string, port int) string {
 	if port == 443 {
-		return "https://" + host + "/mcp"
+		return "https://" + host + sreHandoffMCPPath
 	}
-	return fmt.Sprintf("https://%s:%d/mcp", host, port)
+	return fmt.Sprintf("https://%s:%d%s", host, port, sreHandoffMCPPath)
 }
 
 func runSreInstall(cmd *cobra.Command, args []string) error {
@@ -216,12 +217,18 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
 	}
 
-	// Resolve+validate the install-time SRE model seed before touching the
-	// cluster, so a bad --llm-* flag combination fails fast rather than
-	// after a partially-applied install.
-	seed, err := resolveSreModelSeed(sreLLMAPIKeyFile, sreLLMModel, sreLLMBaseURL)
+	// Resolve and probe the SRE model before touching the cluster, so a bad
+	// --llm-* flag or a rejected key fails before anything is written.
+	model, err := resolveSreModel(sreLLMAPIKeyFile, sreLLMModel, sreLLMBaseURL)
 	if err != nil {
 		return err
+	}
+	if model != nil {
+		ui.Step(fmt.Sprintf("Checking the SRE model key against %s", model.BaseURL))
+		if err := probeSreModel(ctx, &http.Client{}, *model); err != nil {
+			return err
+		}
+		ui.Success("SRE model key accepted")
 	}
 
 	client, err := k8s.NewClient(kubeconfig)
@@ -252,7 +259,6 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ObserverHost:        sreObserverHost,
 		RcaHost:             sreRcaHost,
 		AEHandoff:           sreAEHandoff,
-		Org:                 sreOrg,
 		AEPNamespace:        sreNamespace,
 		ForceSync:           strconv.FormatInt(time.Now().Unix(), 10),
 	}
@@ -330,13 +336,18 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Secrets synced")
 
-	// 3. AE-owned Secret, create-only. Ahead of the Helm step below: the RCA
-	// container's rca.extraEnvs secretKeyRefs need sre-agent-aep to exist
-	// before it starts (its actual content is unset until aep-api's
-	// reconciler pushes into it — that's fine, the container just waits).
-	ui.Step("Applying the AE-owned SRE agent Secret")
-	if err := ensureSREAgentSecret(ctx, client, sreObsNamespace, p); err != nil {
-		return fmt.Errorf("ensure sre-agent-aep secret: %w", err)
+	// 3. The agent's model and the handoff key, ahead of the Helm step below:
+	// the RCA container's rca.extraEnvs secretKeyRefs need sre-agent-aep to
+	// exist before it starts. The handoff key is written to aep-api's side
+	// first, so the agent never holds a key aep-api does not.
+	ui.Step("Writing the SRE agent's model and the handoff key")
+	handoffToken, err := ensureSREHandoffToken(ctx, client, sreNamespace, sreRotateHandoffToken)
+	if err != nil {
+		return err
+	}
+	agentSecret, err := ensureSREAgentSecret(ctx, client, sreObsNamespace, model, handoffToken)
+	if err != nil {
+		return err
 	}
 
 	// 4. Helm: enable the SRE agent on the installed plane, or install both
@@ -383,33 +394,18 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 	// 1.2.0); use the name actually running.
 	p.RcaName = agentDeploy
 
-	// 5. Push Role/RoleBinding scoped to the discovered Deployment name, then
-	// flip the platform release's sreAgent.* values so aep-api's reconciler
-	// knows where to push the agent's LLM key/model/base URL and handoff
-	// token, and so the aep-mcp-server route/grant/policy the agent's
-	// extension needs render.
-	ui.Step("Applying aep-api's push Role and the platform sreAgent.* wiring")
-	if err := applyTemplate(ctx, applier, "sre-push-role", sreObsNamespace, sreAgentPushRoleTmpl, p); err != nil {
-		return fmt.Errorf("apply aep-api-sre-push Role/RoleBinding: %w", err)
+	// 5. Turn on the platform release's sreAgent.* values, so aep-api serves
+	// the handoff with the key above and the route to it renders.
+	// The push Role and seed Secret earlier versions installed are removed:
+	// aep-api no longer writes to the observability plane or reads a seed.
+	ui.Step("Wiring the platform's SRE handoff")
+	if err := removeLegacySREPush(ctx, client, applier, sreObsNamespace, sreNamespace); err != nil {
+		return err
 	}
-	// Write the install-time SRE model seed Secret before the platform
-	// update below tells aep-api its name (sreAgent.seed.secretName), so the
-	// Secret always exists by the time aep-api's reconciler could look for
-	// it.
-	seedSecretName := ""
-	seedHash := ""
-	if seed != nil {
-		ui.Step("Writing the SRE model seed Secret")
-		if err := ensureSREModelSeedSecret(ctx, client, sreNamespace, *seed); err != nil {
-			return fmt.Errorf("write %s secret: %w", sreModelSeedSecretName, err)
-		}
-		seedSecretName = sreModelSeedSecretName
-		seedHash = sreModelSeedHash(*seed)
-	}
-	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, seedSecretName, seedHash); err != nil {
+	if err := updatePlatformSreAgent(ctx, p, srePlatformChart, srePlatformVersion, sreHandoffTokenHash(handoffToken)); err != nil {
 		return fmt.Errorf("wire sreAgent.* on the platform release: %w", err)
 	}
-	ui.Success("Push Role and platform sreAgent.* wiring applied")
+	ui.Success("Platform SRE handoff wired")
 
 	// 6. Best-effort readiness (do NOT wait on the RCA/SRE agent deployment —
 	// it stays unwired until step 7 patches observer-config with
@@ -434,10 +430,25 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		if err := applyExtensionsConfigMap(ctx, client, sreObsNamespace, assets, p.AEMCPURL); err != nil {
 			return fmt.Errorf("apply sre-agent-extensions configmap: %w", err)
 		}
-		_ = rolloutRestart(ctx, client, sreObsNamespace, agentDeploy)
+		agentSecret.Changed = true // the extensions are read at start too
 		ui.Detail(fmt.Sprintf("AE handoff: enabled (mcp=%s, assets=%s)", p.AEMCPURL, assets.RootHint))
 	} else {
 		ui.Detail("AE handoff: disabled (--ae-handoff=false)")
+	}
+	// Without a model the agent cannot start, so it waits at 0 replicas until
+	// a run with --llm-api-key-file/--llm-model gives it one.
+	if !agentSecret.HasModel {
+		if err := scaleSREAgent(ctx, client, sreObsNamespace, agentDeploy, 0); err != nil {
+			return err
+		}
+		ui.Warn("The SRE agent has no model, so it waits at 0 replicas: re-run with --llm-api-key-file and --llm-model.")
+	} else {
+		if err := scaleSREAgent(ctx, client, sreObsNamespace, agentDeploy, 1); err != nil {
+			return err
+		}
+		if agentSecret.Changed {
+			_ = rolloutRestart(ctx, client, sreObsNamespace, agentDeploy)
+		}
 	}
 
 	// 8. Authz grants, plus the route and ClusterObservabilityPlane CR for a
@@ -463,11 +474,11 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		ui.Detail("Log-based alerts may misbehave until the container-logs template maps log as 'wildcard'.")
 	}
 
-	printSreCompletion(p, seed)
+	printSreCompletion(p, model)
 	return nil
 }
 
-func printSreCompletion(p sreParams, seed *sreModelSeed) {
+func printSreCompletion(p sreParams, model *sreModel) {
 	ui.Success("SRE agent + observability plane installed")
 	ui.Section("Security Note")
 	ui.Detail(fmt.Sprintf("AE handoff is %s. RCA feeds pod logs to an LLM (prompt-injection", onOff(p.AEHandoff)))
@@ -478,8 +489,8 @@ func printSreCompletion(p sreParams, seed *sreModelSeed) {
 	ui.Detail("Create an ObservabilityAlertRule per component you want auto-RCA on")
 	ui.Detail("(component UID + name labels, incident.enabled, triggerAiRca: true).")
 	ui.Detail("Guide: docs/developer-guide/sre-handoff-runbook.md")
-	if seed != nil {
-		ui.Detail(fmt.Sprintf("SRE model seed written (model %s @ %s); aep-api probes it and, if it is new, replaces the org's SRE model connection within ~1 minute; a refused seed keeps the current one (aep-api logs sre_model.seed_refused). Check: kubectl -n %s get deploy sre-agent", seed.Model, seed.BaseURL, p.ObsNamespace))
+	if model != nil {
+		ui.Detail(fmt.Sprintf("SRE agent model set to %s @ %s; the agent restarts on it. Check: kubectl -n %s get deploy %s", model.Model, model.BaseURL, p.ObsNamespace, p.RcaName))
 	}
 	fmt.Println()
 }
@@ -505,87 +516,51 @@ func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, 
 	return applier.ApplyYAML(ctx, "aectl-sre", ns, buf.String())
 }
 
-// ensureSREAgentSecret applies sreAgentAEOwnedSecretTmpl only when
-// sre-agent-aep does not already exist. aep-api's reconciler owns its actual
-// content (LLM key/model/base URL, handoff token); a re-run of `aectl sre
-// install` must never clobber values it already pushed.
-func ensureSREAgentSecret(ctx context.Context, client kubernetes.Interface, ns string, p sreParams) error {
-	if _, err := client.CoreV1().Secrets(ns).Get(ctx, "sre-agent-aep", metav1.GetOptions{}); err == nil {
-		return nil // already present; aep-api may have pushed real values here — never overwrite
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get sre-agent-aep secret: %w", err)
-	}
-
-	t, err := template.New("sre-agent-secret").Parse(sreAgentAEOwnedSecretTmpl)
-	if err != nil {
-		return err
-	}
-	var buf bytes.Buffer
-	if err := t.Execute(&buf, p); err != nil {
-		return err
-	}
-	var sec corev1.Secret
-	if err := yaml.Unmarshal(buf.Bytes(), &sec); err != nil {
-		return fmt.Errorf("decode sre-agent-aep secret template: %w", err)
-	}
-	if _, err := client.CoreV1().Secrets(ns).Create(ctx, &sec, metav1.CreateOptions{}); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return nil // race: another install created it first
-		}
-		return fmt.Errorf("create sre-agent-aep secret: %w", err)
-	}
-	return nil
-}
-
-// sreAgentPlatformUpdateConfig builds the platformUpdateConfig that flips
+// sreAgentPlatformUpdateConfig builds the platformUpdateConfig that turns on
 // sreAgent.* on the AEP platform release. Split out from
-// updatePlatformSreAgent so the (sreParams, chartPath, chartVersion) ->
-// platformUpdateConfig mapping — in particular that the chart source always
-// reaches the config — is unit-testable without shelling out to helm.
-// seedSecretName is sreModelSeedSecretName when this run wrote the
-// sre-model-seed Secret, "" otherwise: an install run without --llm-* flags
-// must leave sreAgent.seed.secretName untouched (Never clear an
-// already-seeded org's value just because a later run didn't pass the
-// flags). seedHash is sreModelSeedHash of that same seed (Task A3), set only
-// alongside seedSecretName: it lands on aep-api's pod-template annotation so
-// a changed seed (a rotated key, a different model) rolls aep-api's pods —
-// without it, env sourced from a Secret is fixed at pod start and a Secret
-// rewrite alone never rolls the workload, so aep-api keeps reading the old
-// seed.
-func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, seedSecretName, seedHash string) platformUpdateConfig {
-	sets := []string{
-		"sreAgent.enabled=true",
-		"sreAgent.org=" + p.Org,
-		"sreAgent.namespace=" + p.ObsNamespace,
-		"sreAgent.deployment=" + p.RcaName,
-		"sreAgent.secret=sre-agent-aep",
-		"sreAgent.mcpHostname=" + p.MCPHostname,
-	}
-	if seedSecretName != "" {
-		sets = append(sets, "sreAgent.seed.secretName="+seedSecretName)
-	}
-	if seedHash != "" {
-		sets = append(sets, "sreAgent.seed.hash="+seedHash)
-	}
+// updatePlatformSreAgent so the mapping, in particular that the chart source
+// always reaches the config, is unit-testable without shelling out to helm.
+// tokenHash is the handoff key's sha256 (sreHandoffTokenHash): it lands on
+// aep-api's pod-template annotation, so a rotated key rolls aep-api, whose
+// SRE_HANDOFF_TOKEN env is otherwise fixed at pod start.
+func sreAgentPlatformUpdateConfig(p sreParams, chartPath, chartVersion, tokenHash string) platformUpdateConfig {
 	return platformUpdateConfig{
 		Namespace:    p.AEPNamespace,
 		Release:      defaultPlatformRelease,
 		ChartPath:    chartPath,
 		ChartVersion: chartVersion,
-		HelmSets:     sets,
+		HelmSets: []string{
+			"sreAgent.enabled=true",
+			"sreAgent.tokenSecret=" + sreHandoffSecretName,
+			"sreAgent.tokenHash=" + tokenHash,
+			"sreAgent.mcpHostname=" + p.MCPHostname,
+		},
 	}
 }
 
-// updatePlatformSreAgent flips sreAgent.* on the AEP platform release by
+// updatePlatformSreAgent turns on sreAgent.* on the AEP platform release by
 // calling platformUpdate directly (the same function `aectl platform
-// update`'s cobra RunE calls) — no shared package-level state with that
-// command, and this call's own ctx is honored rather than a fresh
-// context.Background(). chartPath/chartVersion pin the chart source
+// update`'s cobra RunE calls). chartPath/chartVersion pin the chart source
 // (runSreInstall requires one of them up front) so this never falls back to
-// platformUpdate's own unpinned-OCI default. seedSecretName/seedHash are
-// sreAgentPlatformUpdateConfig's own parameters, forwarded as-is.
-func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, seedSecretName, seedHash string) error {
-	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, seedSecretName, seedHash))
+// platformUpdate's own unpinned-OCI default.
+func updatePlatformSreAgent(ctx context.Context, p sreParams, chartPath, chartVersion, tokenHash string) error {
+	return platformUpdate(ctx, sreAgentPlatformUpdateConfig(p, chartPath, chartVersion, tokenHash))
+}
+
+// removeLegacySREPush deletes what earlier versions installed for aep-api to
+// push the agent's model: the aep-api-sre-push Role and RoleBinding on the
+// observability plane, and the sre-model-seed Secret (which held the model
+// key) in the AEP namespace. Each is absent on a fresh install.
+func removeLegacySREPush(ctx context.Context, client kubernetes.Interface, applier *k8s.Applier, obsNS, aepNS string) error {
+	for _, kind := range []string{"RoleBinding", "Role"} {
+		if err := applier.Delete(ctx, "rbac.authorization.k8s.io/v1", kind, obsNS, "aep-api-sre-push"); err != nil {
+			return fmt.Errorf("remove the legacy aep-api-sre-push %s: %w", kind, err)
+		}
+	}
+	if err := client.CoreV1().Secrets(aepNS).Delete(ctx, "sre-model-seed", metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("remove the legacy sre-model-seed secret: %w", err)
+	}
+	return nil
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the

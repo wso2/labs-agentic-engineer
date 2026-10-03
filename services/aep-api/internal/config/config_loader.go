@@ -62,13 +62,8 @@ func Load() (Config, error) {
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
-		SREAgent: SREAgentConfig{
-			Org:        r.readOptionalString("SRE_AGENT_ORG", ""),
-			Namespace:  r.readOptionalString("SRE_AGENT_NAMESPACE", ""),
-			Deployment: r.readOptionalString("SRE_AGENT_DEPLOYMENT", ""),
-			Secret:     r.readOptionalString("SRE_AGENT_SECRET", ""),
-			Seed:       r.sreAgentSeed(),
-		},
+		SREHandoff:               r.sreHandoff(),
+
 		OAuthStateSigningKey: r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
 		BFFPublicURL:         r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
 		TryItCallbackURL:     r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
@@ -319,21 +314,18 @@ func (r *configReader) kubeAPI() KubeAPIConfig {
 	return cfg
 }
 
-// sreAgentSeed reads the install-time seed (SRE_AGENT_SEED_API_KEY /
-// SRE_AGENT_SEED_MODEL / SRE_AGENT_SEED_BASE_URL). The base URL defaults to
-// the OpenAI endpoint, but only once the seed is otherwise present — an
-// absent seed must stay absent (Present() == false), not gain a base URL
-// from the default alone.
-func (r *configReader) sreAgentSeed() SREAgentSeed {
-	seed := SREAgentSeed{
-		APIKey:  r.readOptionalString("SRE_AGENT_SEED_API_KEY", ""),
-		Model:   r.readOptionalString("SRE_AGENT_SEED_MODEL", ""),
-		BaseURL: r.readOptionalString("SRE_AGENT_SEED_BASE_URL", ""),
+// minSREHandoffTokenLen is the shortest handoff key accepted. aectl generates
+// 32 random bytes, hex-encoded; anything far shorter was not made by it.
+const minSREHandoffTokenLen = 32
+
+// sreHandoff reads SRE_HANDOFF_TOKEN, refusing a key too short to be one
+// aectl generated.
+func (r *configReader) sreHandoff() SREHandoffConfig {
+	c := SREHandoffConfig{Token: r.readOptionalString("SRE_HANDOFF_TOKEN", "")}
+	if c.Token != "" && len(c.Token) < minSREHandoffTokenLen {
+		r.errors = append(r.errors, fmt.Errorf("SRE_HANDOFF_TOKEN must be at least %d characters", minSREHandoffTokenLen))
 	}
-	if seed.Present() && seed.BaseURL == "" {
-		seed.BaseURL = "https://api.openai.com/v1"
-	}
-	return seed
+	return c
 }
 
 func (r *configReader) readRequiredString(key string) string {

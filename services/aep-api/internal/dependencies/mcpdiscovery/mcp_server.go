@@ -17,17 +17,15 @@
 package mcpdiscovery
 
 import (
-	"encoding/json"
-	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/mcprpc"
 )
 
 // MCP discovery server. The BFF hosts a minimal Model Context Protocol server
-// over JSON-RPC (Streamable-HTTP transport, non-streaming single-response form:
-// the client POSTs a JSON-RPC request and we answer with application/json). The
+// (platform/mcprpc: JSON-RPC over Streamable HTTP, one request, one
+// application/json answer). The
 // agent services connect as MCP clients and the LLM calls the exposed read-only
 // tools during design so it proposes dependencies against resources/endpoints
 // that ALREADY exist in the org instead of inventing names/shapes.
@@ -48,27 +46,6 @@ import (
 // (ocOrgId claim). The org is read ONLY from that context — never the
 // path/body/header (the source read it from an {orgHandle} path; that is banned
 // here).
-
-const mcpProtocolVersion = "2024-11-05"
-
-type jsonrpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"` // absent for notifications
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
-type jsonrpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
-}
-
-type jsonrpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
 
 // mcpHandler holds the read-only ports the JSON-RPC MCP server exposes.
 type mcpHandler struct {
@@ -118,78 +95,16 @@ func NewMCPHandler(
 			return
 		}
 
-		var req jsonrpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeRPCError(w, nil, -32700, "parse error")
-			return
-		}
-
-		// Notifications (no id) get a 202 with no body — e.g. notifications/initialized.
-		if len(req.ID) == 0 {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-
-		switch req.Method {
-		case "initialize":
-			writeRPCResult(w, req.ID, map[string]any{
-				"protocolVersion": mcpProtocolVersion,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "aep-dependencies", "version": "1.0.0"},
-			})
-		case "ping":
-			writeRPCResult(w, req.ID, map[string]any{})
-		case "tools/list":
-			writeRPCResult(w, req.ID, map[string]any{"tools": mcpTools()})
-		case "tools/call":
+		mcprpc.Server{
+			Name: "aep-dependencies", Version: "1.0.0", Tools: mcpTools(),
 			// Tool executions act on the org's behalf with the BFF's own OC
 			// service identity. Without this marker the OC transport would see
 			// the request's MCP bearer (aud aep-api-mcp — OUR token, not an OC
 			// one) as a forwardable user JWT and every OC-backed lookup would
 			// 401, silently emptying the catalogs (caught live in E2E S3).
-			handleToolCall(w, r.WithContext(auth.WithServiceIdentity(r.Context())), h, orgHandle, req)
-		default:
-			writeRPCError(w, req.ID, -32601, "method not found: "+req.Method)
-		}
+			Call: func(w http.ResponseWriter, r *http.Request, req mcprpc.Request) {
+				handleToolCall(w, r.WithContext(auth.WithServiceIdentity(r.Context())), h, orgHandle, req)
+			},
+		}.Serve(w, r)
 	})
-}
-
-// ---- JSON-RPC / MCP write helpers ------------------------------------------
-
-func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
-	writeJSON(w, jsonrpcResponse{JSONRPC: "2.0", ID: id, Result: result})
-}
-
-func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
-	writeJSON(w, jsonrpcResponse{JSONRPC: "2.0", ID: id, Error: &jsonrpcError{Code: code, Message: msg}})
-}
-
-// writeToolText returns a successful tools/call result with a single text block.
-func writeToolText(w http.ResponseWriter, id json.RawMessage, text string) {
-	writeRPCResult(w, id, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
-	})
-}
-
-// writeToolError returns a tools/call result flagged isError (MCP tool-level error).
-func writeToolError(w http.ResponseWriter, id json.RawMessage, text string) {
-	writeRPCResult(w, id, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
-		"isError": true,
-	})
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("mcp: encode response", "error", err)
-	}
-}
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("{\"error\":%q}", err.Error())
-	}
-	return string(b)
 }

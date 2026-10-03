@@ -17,95 +17,56 @@
 package auth
 
 import (
-	"context"
-	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
-// fakeTokenGetter is a TokenGetter test double standing in for
-// sreagent.Tokens: token/ok/err are returned verbatim from Get, regardless of
-// the org asked for, since these tests only ever exercise one org.
-type fakeTokenGetter struct {
-	token string
-	ok    bool
-	err   error
-}
-
-func (f fakeTokenGetter) Get(_ context.Context, _ string) (string, bool, error) {
-	return f.token, f.ok, f.err
-}
-
-func TestNewSREHandoffVerifier_DisabledWhenUnconfigured(t *testing.T) {
-	t.Parallel()
-	tokens := fakeTokenGetter{token: "s3cr3t", ok: true}
-
-	t.Run("org empty", func(t *testing.T) {
-		if v := NewSREHandoffVerifier("", tokens); v != nil {
-			t.Fatalf("want nil verifier, got %+v", v)
-		}
-	})
-
-	t.Run("tokens nil", func(t *testing.T) {
-		if v := NewSREHandoffVerifier("acme", nil); v != nil {
-			t.Fatalf("want nil verifier, got %+v", v)
-		}
-	})
+func TestNewSREHandoffVerifier_DisabledWithoutToken(t *testing.T) {
+	if v := NewSREHandoffVerifier(""); v != nil {
+		t.Fatalf("want nil verifier, got %+v", v)
+	}
 }
 
 func TestSREHandoffVerifier_Verify(t *testing.T) {
 	t.Parallel()
-	ctx := context.Background()
+	v := NewSREHandoffVerifier("s3cr3t")
+	for name, tc := range map[string]struct {
+		bearer string
+		want   bool
+	}{
+		"matching bearer":           {"Bearer s3cr3t", true},
+		"wrong key":                 {"Bearer wrong", false},
+		"key prefix only":           {"Bearer s3cr3", false},
+		"missing Bearer prefix":     {"s3cr3t", false},
+		"empty header":              {"", false},
+		"Bearer with an empty key":  {"Bearer ", false},
+		"lower-case scheme refused": {"bearer s3cr3t", false},
+	} {
+		if got := v.Verify(tc.bearer); got != tc.want {
+			t.Errorf("%s: Verify(%q) = %v, want %v", name, tc.bearer, got, tc.want)
+		}
+	}
 
-	t.Run("matching bearer binds the configured org", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true})
-		claims, ok := v.Verify(ctx, "Bearer s3cr3t")
-		if !ok {
-			t.Fatal("want verified, got rejected")
-		}
-		if claims.OuHandle != "acme" {
-			t.Fatalf("OuHandle = %q, want acme", claims.OuHandle)
-		}
-	})
+	var nilVerifier *SREHandoffVerifier
+	if nilVerifier.Verify("Bearer s3cr3t") {
+		t.Error("a nil verifier must reject")
+	}
+}
 
-	t.Run("wrong token is rejected", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true})
-		if _, ok := v.Verify(ctx, "Bearer wrong"); ok {
-			t.Fatal("want rejected, got verified")
+func TestSREHandoffVerifier_Middleware(t *testing.T) {
+	t.Parallel()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := NewSREHandoffVerifier("s3cr3t").Middleware(next)
+	for bearer, want := range map[string]int{"Bearer s3cr3t": http.StatusNoContent, "Bearer wrong": http.StatusUnauthorized, "": http.StatusUnauthorized} {
+		r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", bearer)
 		}
-	})
-
-	t.Run("missing Bearer prefix is rejected", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true})
-		if _, ok := v.Verify(ctx, "s3cr3t"); ok {
-			t.Fatal("want rejected, got verified")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("bearer %q: status = %d, want %d", bearer, w.Code, want)
 		}
-	})
-
-	t.Run("empty header is rejected", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{token: "s3cr3t", ok: true})
-		if _, ok := v.Verify(ctx, ""); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
-
-	t.Run("no token minted yet is rejected", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{ok: false})
-		if _, ok := v.Verify(ctx, "Bearer anything"); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
-
-	t.Run("token store error is rejected", func(t *testing.T) {
-		v := NewSREHandoffVerifier("acme", fakeTokenGetter{err: errors.New("store unavailable")})
-		if _, ok := v.Verify(ctx, "Bearer anything"); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
-
-	t.Run("nil verifier always rejects", func(t *testing.T) {
-		var nilVerifier *SREHandoffVerifier
-		if _, ok := nilVerifier.Verify(ctx, "Bearer s3cr3t"); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
+	}
 }

@@ -87,9 +87,6 @@ jobs:
           - name: collab
             dockerfile: services/collab/Dockerfile
             context: .
-          - name: aep-mcp-server
-            dockerfile: services/aep-mcp-server/Dockerfile
-            context: .
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -210,9 +207,6 @@ jobs:
           yq -i '.collab.image.repository = strenv(IMAGE_PREFIX) + "/collab"' /tmp/platform/values.yaml
           yq -i '.collab.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.collab.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.repository = strenv(IMAGE_PREFIX) + "/aep-mcp-server"' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.console.image.repository = strenv(IMAGE_PREFIX) + "/console"' /tmp/platform/values.yaml
           yq -i '.console.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
@@ -259,7 +253,6 @@ jobs:
           - \`ghcr.io/wso2/aep/aep-api:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/agents:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/collab:${{ inputs.version }}\`
-          - \`ghcr.io/wso2/aep/aep-mcp-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker-opencode:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`

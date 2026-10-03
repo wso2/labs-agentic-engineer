@@ -28,14 +28,11 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/platform/mcprpc"
 )
 
 // mcpTool is the MCP tools/list descriptor.
-type mcpTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	InputSchema any    `json:"inputSchema"`
-}
+type mcpTool = mcprpc.Tool
 
 // externalResourceView is the JSON shape returned to the agent for one
 // registered external resource (including zero-consumer Registered rows).
@@ -345,7 +342,7 @@ func mcpTools() []mcpTool {
 }
 
 // handleToolCall dispatches a tools/call request to the matching read-only port.
-func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHandle string, req jsonrpcRequest) {
+func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHandle string, req mcprpc.Request) {
 	var call struct {
 		Name      string `json:"name"`
 		Arguments struct {
@@ -361,7 +358,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(req.Params, &call); err != nil {
-		writeRPCError(w, req.ID, -32602, "invalid params")
+		mcprpc.WriteError(w, req.ID, mcprpc.CodeInvalidParams, "invalid params")
 		return
 	}
 	slog.InfoContext(r.Context(), "mcp tool call", "org", orgHandle, "tool", call.Name, "arg", call.Arguments.Name)
@@ -370,37 +367,37 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 	case "list_external_resources":
 		resources, err := h.resources.List(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list external resources: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list external resources: %v", err))
 			return
 		}
 		views := make([]externalResourceView, 0, len(resources))
 		for i := range resources {
 			views = append(views, toExternalResourceView(&resources[i]))
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"externalResources": views}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"externalResources": views}))
 	case "get_external_resource_schema":
 		if call.Arguments.Name == "" {
-			writeToolError(w, req.ID, "missing required argument: name")
+			mcprpc.WriteToolError(w, req.ID, "missing required argument: name")
 			return
 		}
 		res, err := h.resources.Get(r.Context(), orgHandle, call.Arguments.Name)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("get external resource: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("get external resource: %v", err))
 			return
 		}
 		if res == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"found": false, "name": call.Arguments.Name}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"found": false, "name": call.Arguments.Name}))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"found": true, "externalResource": toExternalResourceView(res)}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"found": true, "externalResource": toExternalResourceView(res)}))
 	case "list_org_endpoints":
 		if h.orgEndpoints == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": []any{}}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"endpoints": []any{}}))
 			return
 		}
 		infos, err := h.orgEndpoints.List(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list org endpoints: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list org endpoints: %v", err))
 			return
 		}
 		views := make([]orgEndpointView, 0, len(infos))
@@ -413,69 +410,69 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 				NamespaceVisible: e.NamespaceVisible(),
 			})
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": views}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"endpoints": views}))
 	case "list_org_component_endpoints":
 		if h.orgEndpoints == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": []any{}}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"endpoints": []any{}}))
 			return
 		}
 		resolved, err := h.orgEndpoints.ListResolved(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list org component endpoints: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list org component endpoints: %v", err))
 			return
 		}
 		views := make([]orgComponentEndpointView, 0, len(resolved))
 		for i := range resolved {
 			views = append(views, toOrgComponentEndpointView(&resolved[i]))
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"endpoints": views}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"endpoints": views}))
 	case "list_platform_resource_types":
 		if h.resourceTypes == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": []any{}}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"resourceTypes": []any{}}))
 			return
 		}
 		types, err := h.resourceTypes.List(r.Context())
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list platform resource types: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list platform resource types: %v", err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"resourceTypes": types}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"resourceTypes": types}))
 	case "list_groups":
 		if h.groupCatalog == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"groups": []any{}}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"groups": []any{}}))
 			return
 		}
 		// orgHandle is the verified ocOrgId claim: the catalog belongs to that
 		// org's environment directory, and no tool argument may choose it.
 		groups, err := h.groupCatalog.ListGroupCatalog(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list groups: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list groups: %v", err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"groups": groups}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"groups": groups}))
 	case "list_guardrail_policies":
 		if h.guardrails == nil {
-			writeToolText(w, req.ID, mustJSON(map[string]any{"guardrails": []any{}}))
+			mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"guardrails": []any{}}))
 			return
 		}
 		// orgHandle is the verified ocOrgId claim: the catalog is that org's
 		// gateway's, and no tool argument may choose it.
 		policies, err := h.guardrails.GuardrailCatalog(r.Context(), orgHandle)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("list guardrail policies: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("list guardrail policies: %v", err))
 			return
 		}
 		if policies == nil {
 			policies = []GuardrailPolicy{}
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"guardrails": policies}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"guardrails": policies}))
 	case "get_remote_git_file_contents":
 		if h.remoteGit == nil {
-			writeToolError(w, req.ID, "remote git reader not configured")
+			mcprpc.WriteToolError(w, req.ID, "remote git reader not configured")
 			return
 		}
 		if call.Arguments.Owner == "" || call.Arguments.Repo == "" {
-			writeToolError(w, req.ID, "missing required arguments: owner and repo")
+			mcprpc.WriteToolError(w, req.ID, "missing required arguments: owner and repo")
 			return
 		}
 		// orgHandle is the verified ocOrgId claim — the reader resolves the org's
@@ -484,47 +481,47 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 		file, err := h.remoteGit.GetFileContents(r.Context(), orgHandle,
 			call.Arguments.Owner, call.Arguments.Repo, call.Arguments.Path, call.Arguments.Ref)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("get remote git file contents: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("get remote git file contents: %v", err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(toRemoteGitFileView(file)))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(toRemoteGitFileView(file)))
 	case "search_remote_git_code":
 		if h.remoteGit == nil {
-			writeToolError(w, req.ID, "remote git reader not configured")
+			mcprpc.WriteToolError(w, req.ID, "remote git reader not configured")
 			return
 		}
 		if call.Arguments.Owner == "" || call.Arguments.Repo == "" || call.Arguments.Query == "" {
-			writeToolError(w, req.ID, "missing required arguments: owner, repo and query")
+			mcprpc.WriteToolError(w, req.ID, "missing required arguments: owner, repo and query")
 			return
 		}
 		hits, err := h.remoteGit.SearchCode(r.Context(), orgHandle,
 			call.Arguments.Owner, call.Arguments.Repo, call.Arguments.Query)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("search remote git code: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("search remote git code: %v", err))
 			return
 		}
 		items := make([]remoteGitSearchHitView, 0, len(hits))
 		for _, hit := range hits {
 			items = append(items, remoteGitSearchHitView{Path: hit.Path, SHA: hit.SHA})
 		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"items": items}))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(map[string]any{"items": items}))
 	case "validate_openapi_spec":
 		if h.validateSpec == nil || h.normalizeSpec == nil {
-			writeToolError(w, req.ID, "spec validator not configured")
+			mcprpc.WriteToolError(w, req.ID, "spec validator not configured")
 			return
 		}
 		if call.Arguments.Content == "" {
-			writeToolError(w, req.ID, "missing required argument: content")
+			mcprpc.WriteToolError(w, req.ID, "missing required argument: content")
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(h.validateAndNormalize([]byte(call.Arguments.Content))))
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(h.validateAndNormalize([]byte(call.Arguments.Content))))
 	case "fetch_openapi_spec":
 		if h.fetchSpec == nil || h.validateSpec == nil || h.normalizeSpec == nil {
-			writeToolError(w, req.ID, "spec fetcher not configured")
+			mcprpc.WriteToolError(w, req.ID, "spec fetcher not configured")
 			return
 		}
 		if call.Arguments.URL == "" {
-			writeToolError(w, req.ID, "missing required argument: url")
+			mcprpc.WriteToolError(w, req.ID, "missing required argument: url")
 			return
 		}
 		raw, err := h.fetchSpec(r.Context(), call.Arguments.URL)
@@ -533,75 +530,75 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			// (e.g. "refusing to fetch from non-public address", "fetch spec:
 			// <transport err>") — surfaced verbatim rather than re-wrapped, to
 			// avoid a doubled "fetch spec: fetch spec: ..." prefix.
-			writeToolError(w, req.ID, err.Error())
+			mcprpc.WriteToolError(w, req.ID, err.Error())
 			return
 		}
 		// Tool-level context-safety cap, tighter than (and layered on top of,
 		// never a substitute for) FetchSpecFromURL's own SSRF-hardened 5 MiB cap.
 		if len(raw) > maxToolSpecBytes {
-			writeToolError(w, req.ID, "spec too large — ask the user for a trimmed spec")
+			mcprpc.WriteToolError(w, req.ID, "spec too large — ask the user for a trimmed spec")
 			return
 		}
 		result := h.validateAndNormalize(raw)
 		if !result.Valid {
-			writeToolError(w, req.ID, fmt.Sprintf("fetched spec failed validation: %s", strings.Join(result.Errors, "; ")))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("fetched spec failed validation: %s", strings.Join(result.Errors, "; ")))
 			return
 		}
 		if len(result.Errors) > 0 {
-			writeToolError(w, req.ID, fmt.Sprintf("normalize fetched spec: %s", strings.Join(result.Errors, "; ")))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("normalize fetched spec: %s", strings.Join(result.Errors, "; ")))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(fetchSpecView{
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(fetchSpecView{
 			Content:    result.NormalizedContent,
 			Operations: result.Operations,
 			SourceURL:  call.Arguments.URL,
 		}))
 	case "slice_openapi_spec":
 		if h.sliceSpec == nil || h.validateSpec == nil {
-			writeToolError(w, req.ID, "spec slicer not configured")
+			mcprpc.WriteToolError(w, req.ID, "spec slicer not configured")
 			return
 		}
 		if len(call.Arguments.Operations) == 0 {
-			writeToolError(w, req.ID, "missing required argument: operations")
+			mcprpc.WriteToolError(w, req.ID, "missing required argument: operations")
 			return
 		}
 		var raw []byte
 		switch {
 		case call.Arguments.URL != "" && call.Arguments.Content != "":
-			writeToolError(w, req.ID, "pass url OR content, not both")
+			mcprpc.WriteToolError(w, req.ID, "pass url OR content, not both")
 			return
 		case call.Arguments.URL != "":
 			if h.fetchSpec == nil {
-				writeToolError(w, req.ID, "spec fetcher not configured")
+				mcprpc.WriteToolError(w, req.ID, "spec fetcher not configured")
 				return
 			}
 			fetched, err := h.fetchSpec(r.Context(), call.Arguments.URL)
 			if err != nil {
-				writeToolError(w, req.ID, err.Error())
+				mcprpc.WriteToolError(w, req.ID, err.Error())
 				return
 			}
 			raw = fetched
 		case call.Arguments.Content != "":
 			raw = []byte(call.Arguments.Content)
 		default:
-			writeToolError(w, req.ID, "missing required argument: url or content")
+			mcprpc.WriteToolError(w, req.ID, "missing required argument: url or content")
 			return
 		}
 		slice, err := h.sliceSpec(raw, call.Arguments.Operations)
 		if err != nil {
-			writeToolError(w, req.ID, err.Error())
+			mcprpc.WriteToolError(w, req.ID, err.Error())
 			return
 		}
 		if len(slice) > maxToolSpecBytes {
-			writeToolError(w, req.ID, "the slice is still too large — name fewer operations")
+			mcprpc.WriteToolError(w, req.ID, "the slice is still too large — name fewer operations")
 			return
 		}
 		ops, err := h.validateSpec(slice)
 		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("slice failed validation: %v", err))
+			mcprpc.WriteToolError(w, req.ID, fmt.Sprintf("slice failed validation: %v", err))
 			return
 		}
-		writeToolText(w, req.ID, mustJSON(sliceSpecView{
+		mcprpc.WriteToolText(w, req.ID, mcprpc.MustJSON(sliceSpecView{
 			Content:    string(slice),
 			Operations: ops,
 			Provenance: sliceProvenanceView{
@@ -612,7 +609,7 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			},
 		}))
 	default:
-		writeRPCError(w, req.ID, -32602, "unknown tool: "+call.Name)
+		mcprpc.WriteError(w, req.ID, mcprpc.CodeInvalidParams, "unknown tool: "+call.Name)
 	}
 }
 

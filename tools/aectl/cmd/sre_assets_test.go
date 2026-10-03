@@ -38,7 +38,7 @@ func renderSreTemplate(t *testing.T, tmpl string, params sreParams) string {
 }
 
 func TestSreAgentValues_ExtraEnvsFromAEOwnedSecret(t *testing.T) {
-	out := renderSreTemplate(t, sreAgentValuesTmpl, sreParams{ObsNamespace: "openchoreo-observability-plane", Org: "default", RcaImageRepo: "ghcr.io/openchoreo/sre-agent", RcaImageTag: "v1.3.0@sha256:abc"})
+	out := renderSreTemplate(t, sreAgentValuesTmpl, sreParams{ObsNamespace: "openchoreo-observability-plane", RcaImageRepo: "ghcr.io/openchoreo/sre-agent", RcaImageTag: "v1.3.0@sha256:abc"})
 	for _, want := range []string{
 		"name: RCA_LLM_API_KEY", "name: RCA_MODEL_NAME", "name: RCA_LLM_BASE_URL", "name: AEP_MCP_TOKEN",
 		"name: sre-agent-aep", "name: EXTENSIONS_DIR", "value: /opt/aep/sre-agent-extensions", "tag: v1.3.0@sha256:abc",
@@ -49,21 +49,6 @@ func TestSreAgentValues_ExtraEnvsFromAEOwnedSecret(t *testing.T) {
 	}
 	if strings.Contains(out, "RCA_LLM_API_KEY_FILE") {
 		t.Error("the stock image reads RCA_LLM_API_KEY from env; no key file")
-	}
-}
-
-func TestSreAgentAEOwnedSecretAndRole(t *testing.T) {
-	sec := renderSreTemplate(t, sreAgentAEOwnedSecretTmpl, sreParams{ObsNamespace: "obs"})
-	for _, k := range []string{"RCA_LLM_API_KEY: \"\"", "RCA_MODEL_NAME: \"\"", "RCA_LLM_BASE_URL: \"\"", "AEP_MCP_TOKEN: \"\""} {
-		if !strings.Contains(sec, k) {
-			t.Errorf("secret missing %s", k)
-		}
-	}
-	role := renderSreTemplate(t, sreAgentPushRoleTmpl, sreParams{ObsNamespace: "obs", AEPNamespace: "wso2-aep", RcaName: "sre-agent"})
-	for _, want := range []string{"resourceNames: [\"sre-agent-aep\"]", "deployments/scale", "resourceNames: [\"sre-agent\"]", "name: aep-api", "namespace: wso2-aep"} {
-		if !strings.Contains(role, want) {
-			t.Errorf("role missing %q", want)
-		}
 	}
 }
 

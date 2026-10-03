@@ -15,8 +15,9 @@
 // under the License.
 
 // issue_search.go — recall-biased ranking for list-issues' q= keyword search.
-// Serves the SRE/RCA handoff (via aep-mcp-server): surface lexically-related
-// issues before filing a new one; precision is the LLM caller's job.
+// Serves the SRE/RCA handoff's search_related_issues tool (issues/sre_mcp.go):
+// surface lexically-related issues before filing a new one; precision is the
+// LLM caller's job.
 
 package sourcecontrol
 

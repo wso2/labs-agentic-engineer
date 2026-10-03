@@ -23,16 +23,13 @@ import (
 
 // TestSreInstallFlags pins `aectl sre install`'s flag surface for the stock
 // ghcr.io/openchoreo/sre-agent image: the patched-image/Anthropic-key flags
-// are gone, --org is required, and the image tracks the v1.3.0 agent and the plane tracks OC 1.2.5.
+// are gone, --org is gone (each handoff call names its org), and the image tracks the v1.3.0 agent and the plane tracks OC 1.2.5.
 func TestSreInstallFlags(t *testing.T) {
 	f := sreInstallCmd.Flags()
-	for _, gone := range []string{"sre-llm-provider", "sre-llm-model", "sre-llm-api-key", "ae-auto-dispatch", "ae-publish-reports", "rca-model"} {
+	for _, gone := range []string{"sre-llm-provider", "sre-llm-model", "sre-llm-api-key", "ae-auto-dispatch", "ae-publish-reports", "rca-model", "org"} {
 		if f.Lookup(gone) != nil {
 			t.Errorf("flag --%s must be removed", gone)
 		}
-	}
-	if f.Lookup("org") == nil {
-		t.Fatal("--org is required")
 	}
 	if got := f.Lookup("rca-image-repo").DefValue; got != "ghcr.io/openchoreo/sre-agent" {
 		t.Errorf("rca-image-repo default = %q", got)

@@ -76,27 +76,6 @@ collab:
       cpu: "500m"
       memory: "512Mi"
 
-# Streamable-HTTP MCP server wrapping aep-api's issue-create + coding-agent
-# dispatch endpoints. The OpenChoreo SRE/RCA agent calls it (AE_API_URL) during
-# the alert->RCA->AEP handoff so it can file issues + dispatch without holding
-# AE's GitHub credentials. Stateless; forwards the caller's bearer to aep-api,
-# which enforces org-scoped auth. Deployed by default (tiny); exercised once the
-# SRE stack is installed via `aep sre install`.
-aepMcpServer:
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/aep-mcp-server
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 3400
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "256Mi"
-
 console:
   replicas: 1
   image:
@@ -295,43 +274,30 @@ postgres:
       cpu: "500m"
       memory: "512Mi"
 
-# SRE-agent push target (config.SREAgentConfig) — names the ONE org's
-# observability-plane Secret/Deployment aep-api's reconciler pushes the SRE
-# agent's LLM settings and minted handoff token to. Off by default.
-# `aectl sre install --org` sets org (and, when needed, the other three) on
-# install.
+# The OpenChoreo SRE agent's handoff into AE (config.SREHandoffConfig). Off by
+# default; `aectl sre install` turns it on. aep-api then serves the agent's two
+# MCP tools, which search and file a project's issues, at
+# /internal/v1/sre-handoff/mcp, and attaches the default "error -> RCA" alert
+# rule to service components. One SRE agent serves every org on its plane, so
+# each call names its org (the alert's namespace), and aep-api acts only after
+# the observer (observer.baseURL, read with aepApi.serviceAuth) confirms that
+# alert really fired.
 #
-# Enabling also exposes aep-mcp-server to the SRE agent over https through the
-# OpenChoreo control-plane gateway (templates/aep-mcp-server/httproute.yaml):
-# the agent's extension loader sends its Authorization header only to https
-# URLs. mcpHostname is that route's hostname; it must fall under the gateway's
-# https listener hostname and certificate SANs, and `aectl sre install
-# --mcp-hostname` must name the same host.
+# The agent authenticates with one random key that aectl generates and writes
+# into tokenSecret (key `token`) here and into the agent's own Secret on the
+# observability plane. tokenHash is that key's sha256, which aectl sets so a
+# rotated key rolls aep-api: env read from a Secret is fixed at pod start.
+#
+# The route reaches aep-api over https through the OpenChoreo control-plane
+# gateway (templates/aep-api/sre-handoff-route.yaml): the agent's extension
+# loader sends its Authorization header only to https URLs. mcpHostname must
+# fall under the gateway's https listener hostname and certificate SANs, and
+# `aectl sre install --mcp-hostname` must name the same host.
 sreAgent:
   enabled: false
-  org: ""
-  namespace: "openchoreo-observability-plane"
-  deployment: "sre-agent"
-  secret: "sre-agent-aep"
+  tokenSecret: "sre-handoff"
+  tokenHash: ""
   mcpHostname: "aep-mcp.openchoreo.localhost"
-  # seed.secretName names a Secret (apiKey/model/baseURL keys) `aectl sre
-  # install` writes in this namespace so aep-api can apply an install-time SRE
-  # model connection for the owning org without a user token (Task A1/A2). ""
-  # (default) wires none of the SRE_AGENT_SEED_* env vars — the reconciler
-  # then never attempts a seed. Only takes effect when sreAgent.enabled.
-  seed:
-    secretName: ""
-    # seed.hash is sha256(baseURL+"\x00"+model+"\x00"+apiKey) hex, computed by
-    # `aectl sre install` for the seed it just wrote (Task A3) — the same
-    # formula as aep-api's seedHash
-    # (services/aep-api/internal/organization/sre_model_seed.go). Stamped onto
-    # aep-api's pod-template annotation below so a changed seed (a rotated
-    # key, a different model) rolls the aep-api pods: env sourced from a
-    # Secret is fixed at pod start, so rewriting the Secret's data alone never
-    # changes this Deployment's pod template and the reconciler would keep
-    # reading the old seed. "" (default) renders no annotation, so an
-    # unchanged seed is a no-op re-install.
-    hash: ""
 
 # Temporal workflow engine that drives the devflow workflows. aep-api runs the
 # worker in-process and dials the frontend below. Backed by the postgres

@@ -89,7 +89,6 @@ var platformServiceChartKeys = []string{
 	"aepApi",
 	"aepAgents",
 	"collab",
-	"aepMcpServer",
 	"console",
 	"tryIt",
 }

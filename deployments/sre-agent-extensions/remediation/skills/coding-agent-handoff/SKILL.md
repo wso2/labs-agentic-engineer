@@ -159,6 +159,12 @@ covers this incident is settled by the platform, not by you writing on it.
   evidence into the issue's own body, not as a comment — a comment can be
   skipped past, a body section cannot. Where it lands is settled; writing it into
   the body you file is yours.
+- **`namespace` comes from the alert, verbatim.** Both tools take the
+  OpenChoreo namespace of the alert you are handling: it is the organization the
+  incident belongs to. Copy it from the alert; never guess or reuse another
+  one. AE checks it, with the `project` and `componentName`, against the alerts
+  OpenChoreo actually recorded, and answers a `403` and files nothing when they
+  do not match a recent alert.
 - **`componentName` is yours to get right.** The key is derived, but this
   argument feeds it, and when the calling process has no identity for this
   incident your value is the only thing that produces a key at all. A wrong one

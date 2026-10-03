@@ -15,7 +15,7 @@
 // under the License.
 
 // Package kubeauth is how the hand-rolled Kubernetes API clients
-// (clients/thunderapp, clients/kubeobs) authenticate: the Authorization header
+// (clients/thunderapp) authenticate: the Authorization header
 // from a static bearer or a service-account token file, and a TLS transport
 // that trusts the cluster CA. Plain net/http, no client-go.
 package kubeauth

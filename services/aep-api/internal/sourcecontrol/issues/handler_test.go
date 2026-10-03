@@ -23,7 +23,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 )
@@ -54,48 +53,13 @@ func (h *host) CreateIssue(_ context.Context, _, _ string, _ secrets.Credential,
 	return &sourcecontrol.IssueResult{Number: 42, URL: "https://github.com/acme/shop/issues/42"}, nil
 }
 
-func TestSREHandlerUsesTrustedContextAndPreservesOutcome(t *testing.T) {
-	gh := &host{}
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, gh, resolver{}))
-	ctx := sourcecontrol.WithIncidentContext(tenant.WithBoundOrg(context.Background(), "acme"), "alert-1")
-	response, err := h.CreateIssue(ctx, gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{
-		Title: "timeout", ComponentName: "checkout", ActionStatuses: []*string{nil}, DedupeKey: "spoof",
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result := response.(gen.CreateIssue200JSONResponse)
-	if result.Number != 42 || result.Classification != "code-level" || result.Adopted || result.AdoptionError == "" {
-		t.Fatalf("outcome = %+v", result)
-	}
-	if gh.created.DedupeKey != "" {
-		t.Fatalf("client key reached host: %q", gh.created.DedupeKey)
-	}
-}
-
-func TestSREHandlerRejectsMissingTrustedIdentity(t *testing.T) {
+// A REST create never carries the handoff's incident context, so the fields
+// only a trusted handoff may send are refused.
+func TestCreateIssueRejectsHandoffFieldsWithoutIncidentContext(t *testing.T) {
 	h := issues.New(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}))
 	_, err := h.CreateIssue(context.Background(), gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
 	apiError, ok := err.(*apierr.Error)
 	if !ok || apiError.Status != 400 {
 		t.Fatalf("invalid incident should be 400, got %v", err)
-	}
-}
-
-// closedDuplicateHost answers the incident lookup with one closed match whose
-// closure reason (a human's "duplicate") is not eligible to recur.
-type closedDuplicateHost struct{ host }
-
-func (*closedDuplicateHost) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
-	return []sourcecontrol.IssueInfo{{Number: 7, State: "closed", StateReason: "duplicate", Labels: []string{"bug", "incident"}}}, nil
-}
-
-func TestSREHandlerReportsIneligibleClosedIncidentAsConflict(t *testing.T) {
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}, resolver{}))
-	ctx := sourcecontrol.WithIncidentContext(tenant.WithBoundOrg(context.Background(), "acme"), "alert-1")
-	_, err := h.CreateIssue(ctx, gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
-	apiError, ok := err.(*apierr.Error)
-	if !ok || apiError.Status != 409 {
-		t.Fatalf("an ineligible closed incident should be 409, got %v", err)
 	}
 }

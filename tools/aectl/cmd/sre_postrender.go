@@ -36,7 +36,7 @@ import (
 //     remediation extension the agent's loader expects; and
 //   - a CA bundle for SSL_CERT_FILE: the image's system bundle plus
 //     cluster-gateway-ca, concatenated in-pod by an initContainer into an
-//     emptyDir, so the agent trusts aep-mcp-server's https endpoint.
+//     emptyDir, so the agent trusts aep-api's https handoff endpoint.
 const (
 	sreExtensionsVolume    = sreExtensionsConfigMap
 	sreExtensionsMountPath = "/opt/aep/sre-agent-extensions"

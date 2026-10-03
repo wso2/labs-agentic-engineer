@@ -36,13 +36,13 @@ type sreExtensionAssets struct {
 	RootHint string
 }
 
-// Asset paths relative to an AE repository checkout. The skill is read from
-// aep-mcp-server's tree (its canonical source) so the MCP tools and the SRE
-// agent's instructions cannot drift apart.
+// Asset paths relative to an AE repository checkout. The skill sits beside the
+// remediation extension's other files; aep-api's handoff tool descriptions
+// (internal/sourcecontrol/issues/sre_mcp_tools.go) are written against it.
 const (
 	sreAssetMCPJSON   = "deployments/sre-agent-extensions/remediation/mcp.json"
 	sreAssetContext   = "deployments/sre-agent-extensions/remediation/CONTEXT.md"
-	sreAssetSkillMD   = "services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md"
+	sreAssetSkillMD   = "deployments/sre-agent-extensions/remediation/skills/coding-agent-handoff/SKILL.md"
 	sreAssetsRootFlag = "--assets-root"
 )
 

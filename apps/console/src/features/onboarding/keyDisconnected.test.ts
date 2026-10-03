@@ -38,7 +38,6 @@ const connection: LLMProjection = {
     imageInput: "no",
     nativePdf: false,
     generatedAgents: true,
-    sreAgent: false,
   },
 };
 

@@ -32,6 +32,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/mcprpc"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -134,6 +135,16 @@ func postRPC(t *testing.T, h http.Handler, org, body string) *httptest.ResponseR
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
+}
+
+// jsonrpcResponse is the wire shape of a JSON-RPC answer, decoded for asserts.
+type jsonrpcResponse struct {
+	ID     json.RawMessage `json:"id"`
+	Result any             `json:"result"`
+	Error  *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
 }
 
 // decodeRPC decodes a 200 JSON-RPC response.
@@ -271,8 +282,8 @@ func TestMCP_Initialize(t *testing.T) {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
 	result := resp.Result.(map[string]any)
-	if result["protocolVersion"] != mcpProtocolVersion {
-		t.Errorf("protocolVersion = %v, want %q", result["protocolVersion"], mcpProtocolVersion)
+	if result["protocolVersion"] != mcprpc.ProtocolVersion {
+		t.Errorf("protocolVersion = %v, want %q", result["protocolVersion"], mcprpc.ProtocolVersion)
 	}
 	if _, ok := result["capabilities"].(map[string]any)["tools"]; !ok {
 		t.Errorf("capabilities missing tools: %+v", result["capabilities"])

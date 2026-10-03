@@ -101,7 +101,6 @@ type LLMCapabilities struct {
 	ImageInput         modelconn.Tristate  `json:"imageInput" enum:"yes,no,unknown"`
 	NativePDF          bool                `json:"nativePdf"`
 	GeneratedAgents    bool                `json:"generatedAgents"`
-	SREAgent           bool                `json:"sreAgent"`
 }
 
 // LLMCapabilitiesFrom projects a connection's capabilities onto the wire.
@@ -112,7 +111,6 @@ func LLMCapabilitiesFrom(c modelconn.Capabilities) LLMCapabilities {
 		ImageInput:         c.ImageInput,
 		NativePDF:          c.NativePDF,
 		GeneratedAgents:    c.GeneratedAgents,
-		SREAgent:           c.SREAgent,
 	}
 }
 
@@ -290,20 +288,6 @@ type LLMPatch struct {
 	BaseURL string           `json:"baseURL,omitempty"`
 	APIKey  string           `json:"apiKey,omitempty"`
 	Model   string           `json:"model,omitempty"`
-}
-
-// SreLlmWrite is the SRE model connection's write shape, used internally by
-// the install-time seed (organization.SreModelConnectionService.ApplySeed):
-// not a PATCH /config section — the seed is the only way to set it. Patched
-// field by field like LLMPatch: an omitted field keeps the saved value. The
-// first save needs all three; a save that moves the connection to another
-// host needs APIKey too (a stored key is never sent to another host). Format
-// and auth are fixed (OpenAI-compatible, Bearer). APIKey is write-only:
-// probed, never echoed.
-type SreLlmWrite struct {
-	BaseURL *string `json:"baseURL,omitempty"`
-	APIKey  *string `json:"apiKey,omitempty"`
-	Model   *string `json:"model,omitempty"`
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:

@@ -797,31 +797,6 @@ importers:
         specifier: 0.28.1
         version: 0.28.1
 
-  services/aep-mcp-server:
-    dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.24.0
-        version: 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
-      express:
-        specifier: ^5.0.0
-        version: 5.2.1
-      zod:
-        specifier: ^4.3.6
-        version: 4.4.3
-    devDependencies:
-      '@types/express':
-        specifier: ^5.0.0
-        version: 5.0.6
-      '@types/node':
-        specifier: ^25.6.0
-        version: 25.9.4
-      tsx:
-        specifier: ^4.21.0
-        version: 4.22.4
-      typescript:
-        specifier: ^5.9.0
-        version: 5.9.3
-
   services/agents:
     dependencies:
       '@aep/agent-stream':
@@ -2399,16 +2374,6 @@ packages:
 
   '@mermaid-js/parser@1.2.0':
     resolution: {integrity: sha512-oYPyv8A4As1yH5Bx+04iQEQxXuIQDe0GKCNSRgao6z8AM9jixXIfP0vsppRLvGf+nKIOb9/LdpWA4YuJiVvESA==}
-
-  '@modelcontextprotocol/sdk@1.29.0':
-    resolution: {integrity: sha512-zo37mZA9hJWpULgkRpowewez1y6ML5GsXJPY8FI0tBBCd77HEvza4jDqRKOXgHNn867PVGCyTdzqpz0izu5ZjQ==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      '@cfworker/json-schema': ^4.1.1
-      zod: ^3.25 || ^4.0
-    peerDependenciesMeta:
-      '@cfworker/json-schema':
-        optional: true
 
   '@modelcontextprotocol/sdk@1.30.0':
     resolution: {integrity: sha512-xKd8OIzlqNzcqcNumGAa6g+PW2kjD5vrpcKOnfldAUPP3j7lnqMPwlTXQm8gF+UwH72z0lqaRbjr9hqGz0eITA==}
@@ -10991,30 +10956,6 @@ snapshots:
     dependencies:
       '@chevrotain/types': 11.1.2
 
-  '@modelcontextprotocol/sdk@1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
-    dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.29)
-      ajv: 8.20.0
-      ajv-formats: 3.0.1(ajv@8.20.0)
-      content-type: 1.0.5
-      cors: 2.8.6
-      cross-spawn: 7.0.6
-      eventsource: 3.0.7
-      eventsource-parser: 3.1.0
-      express: 5.2.1
-      express-rate-limit: 8.5.2(express@5.2.1)
-      hono: 4.12.29
-      jose: 6.2.3
-      json-schema-typed: 8.0.2
-      pkce-challenge: 5.0.1
-      raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
-    optionalDependencies:
-      '@cfworker/json-schema': 4.1.1
-    transitivePeerDependencies:
-      - supports-color
-
   '@modelcontextprotocol/sdk@1.30.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
       '@hono/node-server': 2.1.1(hono@4.13.8)
@@ -15285,7 +15226,7 @@ snapshots:
       jsonwebtoken: 9.0.3
       load-esm: 1.0.3
       mime-types: 2.1.35
-      retry-axios: 2.6.0(axios@1.20.0(debug@4.4.3))
+      retry-axios: 2.6.0(axios@1.20.0)
       tough-cookie: 4.1.4
     transitivePeerDependencies:
       - supports-color
@@ -17438,7 +17379,7 @@ snapshots:
 
   ret@0.5.0: {}
 
-  retry-axios@2.6.0(axios@1.20.0(debug@4.4.3)):
+  retry-axios@2.6.0(axios@1.20.0):
     dependencies:
       axios: 1.20.0(debug@4.4.3)
     optional: true
@@ -18728,6 +18669,7 @@ snapshots:
   zod-to-json-schema@3.25.2(zod@4.4.3):
     dependencies:
       zod: 4.4.3
+    optional: true
 
   zod-to-json-schema@3.25.2(zod@4.6.2):
     dependencies:

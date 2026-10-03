@@ -57,16 +57,6 @@ func TestCapabilitiesOf(t *testing.T) {
 			conn: Connection{Format: FormatOpenAICompatible, Host: AnthropicHost, ImageInput: Unknown},
 			want: Capabilities{GeneratedAgents: true, WebSearch: WebSearchNone, ImageInput: Unknown},
 		},
-		{
-			name: "openai-compatible bearer serves the SRE agent",
-			conn: Connection{Format: FormatOpenAICompatible, Host: "api.openai.com", AuthScheme: AuthBearer},
-			want: Capabilities{GeneratedAgents: true, SREAgent: true, WebSearch: WebSearchNone},
-		},
-		{
-			name: "openai-compatible x-api-key does not",
-			conn: Connection{Format: FormatOpenAICompatible, Host: "gw.example.com", AuthScheme: AuthXAPIKey},
-			want: Capabilities{GeneratedAgents: true, WebSearch: WebSearchNone},
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

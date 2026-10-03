@@ -5,11 +5,10 @@ patch, no forked image) is brought up on the Helm/`aectl` install path.
 
 ## What runs where
 
-- **`aep-mcp-server`** — deployed by the platform chart
-  (`templates/aep-mcp-server/`), always on. Stateless Streamable-HTTP MCP
-  server on port 3400 wrapping aep-api's issue-create + coding-agent dispatch
-  endpoints. It forwards the caller's `Authorization` header to `aep-api`
-  unchanged and holds no credential of its own.
+- **The SRE handoff** — served by aep-api itself, at
+  `/internal/v1/sre-handoff/mcp` (two MCP tools: search and create issues),
+  when `sreAgent.enabled`. See
+  [`services/aep-api/design/sre-handoff.md`](../../../services/aep-api/design/sre-handoff.md).
 - **Observability plane + SRE agent** — installed on demand by
   `aectl sre install` (the OpenChoreo `openchoreo-observability-plane` and
   `observability-logs-opensearch` charts, OC ≥ 1.2.5). Not part of
@@ -61,7 +60,7 @@ which the AE handoff needs. It runs unchanged on the 1.2.5 plane:
   same names, arguments and response shapes;
 - the one gap is closed by aectl ([`rca-agent` role](#rca-agent-role)).
 
-## `aectl sre install --org <org>`
+## `aectl sre install`
 
 Requires OC ≥ 1.2.5, with no upper bound (`minOCVersion`, skippable with
 `--skip-oc-version-check`) and pinning the platform chart
@@ -78,25 +77,20 @@ absent, then installs/upgrades (idempotent). It then:
    per-run `force-sync` annotation, so a re-run's apply always changes the
    spec and ESO syncs immediately rather than waiting out its
    `refreshInterval`.
-2. Creates the **AE-owned Secret** `sre-agent-aep` in the obs namespace,
-   create-only (never overwrites an existing one — a re-run must not
-   clobber what aep-api's reconciler already pushed), with four empty
-   placeholder keys: `RCA_LLM_API_KEY`, `RCA_MODEL_NAME`, `RCA_LLM_BASE_URL`,
-   `AEP_MCP_TOKEN`. Applies the namespaced `Role`
-   `aep-api-sre-push` + `RoleBinding` that let aep-api's `aep-api`
-   ServiceAccount get/update/patch that one Secret, get/patch the discovered
-   Deployment and its `/scale` subresource, and list pods.
+2. Writes the **agent's Secret** `sre-agent-aep` in the obs namespace:
+   `RCA_LLM_API_KEY`, `RCA_MODEL_NAME` (`openai:<model>`) and
+   `RCA_LLM_BASE_URL` from `--llm-api-key-file`/`--llm-model`/`--llm-base-url`
+   (probed first, see [SRE model](#sre-model)), and `AEP_MCP_TOKEN`, the
+   handoff key. The key is generated once (32 random bytes) and reused on a
+   re-run unless `--rotate-handoff-token`; aectl writes it into aep-api's
+   Secret `sre-handoff` in the AE namespace first.
 3. `helm upgrade --install` of the two OpenChoreo charts, with the agent's
    `rca.extraEnvs` carrying `EXTENSIONS_DIR`, `AEP_MCP_URL`,
    `SSL_CERT_FILE=/opt/aep/ca/ca-bundle.crt`, and the four
-   `secretKeyRef`s onto `sre-agent-aep` — so the model, key and MCP token
-   arrive at the agent only through that one Secret, which aep-api's
-   `internal/sreagent.Reconciler` keeps converged with the org's resolved
-   [SRE model connection](../../../services/aep-api/design/sre-model-connection.md)
-   (60-second tick, plus an immediate kick on a changed install-time seed or a
-   Console save of the org's own model connection).
-   The reconciler scales the Deployment to 0 while unconfigured and back to
-   1 once a connection resolves.
+   `secretKeyRef`s onto `sre-agent-aep`, so the model, key and handoff key
+   arrive at the agent only through that one Secret. Without a model the
+   agent is held at 0 replicas; with one, at 1, restarted whenever the
+   Secret changed.
 4. **A Helm post-renderer** (`aectl sre post-render`, a hidden subcommand;
    wired as a Helm-4 plugin when `helm version` is ≥ 4, else the classic
    `--post-renderer <exe> --post-renderer-args ...` form) surgically edits
@@ -116,32 +110,30 @@ absent, then installs/upgrades (idempotent). It then:
      on the agent. aectl cannot read the image's system bundle to bake a
      static copy — a copy would also go stale on cluster-CA rotation — so
      the bundle is built fresh in-pod on every start.
-5. Post-Helm ConfigMap wiring (`observer-config`, `rca-agent-config`) +
+5. The platform release's `sreAgent.*` (`enabled`, `tokenSecret`,
+   `tokenHash`, `mcpHostname`), through an in-process `aectl platform
+   update`, and removal of what earlier versions installed for aep-api to
+   push the model (the `aep-api-sre-push` Role and RoleBinding, the
+   `sre-model-seed` Secret).
+6. Post-Helm ConfigMap wiring (`observer-config`, `rca-agent-config`) +
    a rollout restart so the agent picks up refreshed remediation assets.
-6. Authz grants (`aep-observer-reader`, `rca-agent-dispatch`), the two
+7. Authz grants (`aep-observer-reader`, `rca-agent-dispatch`), the two
    [`rca-agent` role](#rca-agent-role) actions where missing, the
    cross-namespace `observer-mainkgw` HTTPRoute, and the
    `ClusterObservabilityPlane` CR.
-7. The OpenSearch index-template detect/self-heal Job.
+8. The OpenSearch index-template detect/self-heal Job.
 
-### Install-time SRE model seed (opt-in)
+### SRE model
 
-Three flags, orthogonal to everything above: `--llm-api-key-file` (path; the
-key is read from the file, trimmed, and never taken as a flag value or
-logged), `--llm-model` (e.g. `gpt-5.4`), and `--llm-base-url` (default
-`https://api.openai.com/v1`). `--llm-api-key-file` and `--llm-model` must be
-given together — one without the other is an error; neither is unchanged
-behaviour (no seed, no `sreAgent.seed.secretName`).
+Three flags: `--llm-api-key-file` (path; the key is read from the file,
+trimmed, and never taken as a flag value or logged), `--llm-model` (e.g.
+`gpt-5.4`), and `--llm-base-url` (default `https://api.openai.com/v1`, https
+only). The first two go together; one without the other is an error.
 
-When given, aectl create-or-updates a Secret `sre-model-seed` in the **AE
-namespace** (`apiKey`/`model`/`baseURL` keys), ahead of the internal `aectl
-platform update` that flips `sreAgent.*` on the platform release, and adds
-`--set sreAgent.seed.secretName=sre-model-seed` to that update — so the
-Secret always exists by the time aep-api could read it. A run without the
-flags leaves `sreAgent.seed.secretName` alone: it never clears an
-already-seeded org's value. See
-[`sre-model-connection.md`](../../../services/aep-api/design/sre-model-connection.md#install-time-seed)
-for what aep-api does with the seed.
+When given, aectl calls `<base URL>/models` with the key, without following
+redirects, and stops before writing anything if the provider rejects it or
+cannot be reached. A run without them keeps the model `sre-agent-aep` already
+holds; a first install without them leaves the agent at 0 replicas.
 
 ### Prerequisite
 
@@ -157,25 +149,21 @@ to OpenBao as its controller SA (`external-secrets/external-secrets`) — the
 single SA bound to the `eso-reader` role. That SA serves ExternalSecrets in
 *any* namespace, so the obs-namespace `SecretStore` reads `secret/data/aep/*`
 directly. The `aep-secret-reader` policy already covers the `aep/opensearch-*`
-paths. The AE-owned `sre-agent-aep` Secret is separate from all of this: it
-holds no OpenBao-sourced material at create time (aectl creates it empty),
-and its four keys are populated only by aep-api's reconciler, over the
-Kubernetes API, using the namespaced Role above — never through ESO.
+paths. The `sre-agent-aep` and `sre-handoff` Secrets are separate from all
+of this: aectl writes them over the Kubernetes API from its own flags and the
+key it generates, never through ESO.
 
-## Reaching aep-mcp-server over https
+## Reaching aep-api's handoff over https
 
 The agent's `AEP_MCP_URL` (from `rca.extraEnvs`) is the platform
 control-plane gateway's https route:
-`https://<sreAgent.mcpHostname>[:port]/mcp` (default
-`aep-mcp.openchoreo.localhost:8443` in dev). An `HTTPRoute` (`sectionName
-https`) plus a `ReferenceGrant` publish `aep-mcp-server` on that listener; a
-`NetworkPolicy` admits only pods matching the gateway's own label
-(`gateway.networking.k8s.io/gateway-name: gateway-default`) in
-`openchoreo-control-plane` — the agent never reaches the Service directly.
-`Authorization: Bearer ${AEP_MCP_TOKEN}` (the org-bound token aep-api mints
-and pushes) travels in `remediation/mcp.json`'s `headers`; the extension
-loader refuses to send headers to a plaintext URL, which is why this route
-must be https. See
+`https://<sreAgent.mcpHostname>[:port]/internal/v1/sre-handoff/mcp` (default
+host `aep-mcp.openchoreo.localhost:8443` in dev). The platform chart's
+`aep-api-sre-handoff` `HTTPRoute` (`sectionName https`) matches exactly that
+path and sends it to aep-api's Service. `Authorization: Bearer
+${AEP_MCP_TOKEN}` travels in `remediation/mcp.json`'s `headers`; the
+extension loader refuses to send headers to a plaintext URL, which is why
+this route must be https. See
 [`sre-handoff-security.md`](../../../docs/developer-guide/sre-handoff-security.md).
 
 The dev control-plane gateway (`deployments/scripts/setup-env-for-aectl.sh`)
@@ -188,10 +176,10 @@ chart's own `cluster-gateway-selfsigned-issuer` (CA-backed off
 
 | | value |
 |---|---|
-| `AEP_MCP_URL` | `https://<sreAgent.mcpHostname>[:port]/mcp` (gateway route) |
+| `AEP_MCP_URL` | `https://<sreAgent.mcpHostname>[:port]/internal/v1/sre-handoff/mcp` (gateway route) |
 | `SSL_CERT_FILE` | `/opt/aep/ca/ca-bundle.crt` (built in-pod, see above) |
 | RCA/observer/opensearch secrets | OpenBao → ESO in the obs namespace |
-| SRE agent's model/key/token | AE-owned Secret `sre-agent-aep`, pushed by aep-api |
+| SRE agent's model/key/handoff key | `sre-agent-aep`, written by aectl |
 
 ## Local k3d prerequisite: `/etc/machine-id`
 
@@ -254,24 +242,24 @@ Tracked follow-ups:
   remediation handoff always calls `ae_search_related_issues` +
   `ae_create_issue`; AE owns whether that issue is adopted for automated
   code changes (see the handoff runbook's Issue outcomes).
-- **NetworkPolicies are partial** (platform-wide gap). The only one is
-  `templates/aep-mcp-server/networkpolicy.yaml`, rendered with
-  `sreAgent.enabled`: it admits only `gateway-default`'s proxy pods. With
-  the SRE agent off, `aep-mcp-server:3400` is guarded only by aep-api JWT
-  validation.
+- **No NetworkPolicies** on the chart (platform-wide gap). Inside the
+  cluster, aep-api's handoff mount is guarded only by the handoff key.
 - **The logs adapter image is personal** (`tharindulak/...`, see
   [Logs adapter](#logs-adapter)). Mirror it to WSO2/GHCR and pin by digest
   for production, until the case-insensitive match ships upstream
   (`openchoreo/community-modules`).
 - **OpenSearch** is dev-sized (256M heap, no HA); no global LLM cost cap.
   One alert measured about 290k tokens on `gpt-5.4` in the proof.
-- **The sqlite report store is a single point of failure.** See
-  [`sre-model-connection.md`](../../../services/aep-api/design/sre-model-connection.md)
-  — the Deployment's rollout strategy is `Recreate` (a `ReadWriteOnce` PVC
-  backs it), so any push that changes the agent's Secret, including a bad
-  one, tears the running agent down before the replacement starts.
-- Per-org SRE model connection rotation is AE-owned; the agent consumes
-  only the four env values aep-api pushes into `sre-agent-aep`.
+- **The sqlite report store is a single point of failure.** The
+  Deployment's rollout strategy is `Recreate` (a `ReadWriteOnce` PVC backs
+  it), so every restart that picks up a changed Secret tears the running
+  agent down before the replacement starts.
+- **The org is the agent's claim, checked against the observer.** One agent
+  serves every org on its plane; each handoff call names its org and aep-api
+  verifies it against the observer's recent alerts (see
+  [`sre-handoff.md`](../../../services/aep-api/design/sre-handoff.md)). A
+  WSO2 Cloud `wc-…` namespace does not map to an org handle, so the handoff
+  fails closed there.
 - `aectl sre uninstall` deletes the whole observability namespace even
   when `aectl` only adopted an existing plane (`sre_uninstall.go`) — out
   of scope here, flagged for a follow-up.

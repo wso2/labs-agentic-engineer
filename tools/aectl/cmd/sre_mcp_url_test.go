@@ -26,8 +26,8 @@ func TestSreMCPURL(t *testing.T) {
 		port int
 		want string
 	}{
-		{"dev gateway port", "aep-mcp.openchoreo.localhost", 8443, "https://aep-mcp.openchoreo.localhost:8443/mcp"},
-		{"default https port is omitted", "aep-mcp.example.com", 443, "https://aep-mcp.example.com/mcp"},
+		{"dev gateway port", "aep-mcp.openchoreo.localhost", 8443, "https://aep-mcp.openchoreo.localhost:8443/internal/v1/sre-handoff/mcp"},
+		{"default https port is omitted", "aep-mcp.example.com", 443, "https://aep-mcp.example.com/internal/v1/sre-handoff/mcp"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

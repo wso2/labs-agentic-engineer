@@ -74,15 +74,6 @@ type AgentsCardTx interface {
 	// lives.
 	StampConnectionSecretRef(ocOrgID string, ref SecretRefTriplet) error
 
-	// GetSreModelConnection reads the org's SRE model connection, or nil when
-	// absent.
-	GetSreModelConnection(ocOrgID string) (*OrgSreModelConnection, error)
-	// UpsertSreModelConnection writes the whole org_sre_model_connections row,
-	// creating it or replacing its columns.
-	UpsertSreModelConnection(row *OrgSreModelConnection) error
-	// DeleteSreModelConnection removes the row. Idempotent.
-	DeleteSreModelConnection(ocOrgID string) error
-
 	// GetSettings reads the org's agent setting, or nil when absent.
 	GetSettings(ocOrgID string) (*OrgAgentSettings, error)
 	// UpsertSettings writes the whole row, creating it or replacing every column.
@@ -224,26 +215,6 @@ func (t *agentsCardTx) StampConnectionSecretRef(ocOrgID string, ref SecretRefTri
 	return t.tx.Model(&OrgModelConnection{}).
 		Where("oc_org_id = ?", ocOrgID).
 		Updates(stampSecretRefTriplet(ref.Name, ref.KVPath, ref.Property)).Error
-}
-
-// sreModelConnectionColumns are the columns a save rewrites; connected_at is
-// among them because the writer decides it (kept on the same host, reset on
-// another), same as connectionColumns above.
-var sreModelConnectionColumns = []string{"base_url", "host", "model", "connected_at", "updated_at", "updated_by"}
-
-func (t *agentsCardTx) GetSreModelConnection(ocOrgID string) (*OrgSreModelConnection, error) {
-	return getSreModelConnection(t.tx, ocOrgID)
-}
-
-func (t *agentsCardTx) UpsertSreModelConnection(row *OrgSreModelConnection) error {
-	return t.tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "oc_org_id"}},
-		DoUpdates: clause.AssignmentColumns(sreModelConnectionColumns),
-	}).Create(row).Error
-}
-
-func (t *agentsCardTx) DeleteSreModelConnection(ocOrgID string) error {
-	return t.tx.Where("oc_org_id = ?", ocOrgID).Delete(&OrgSreModelConnection{}).Error
 }
 
 func (t *agentsCardTx) GetSettings(ocOrgID string) (*OrgAgentSettings, error) {
