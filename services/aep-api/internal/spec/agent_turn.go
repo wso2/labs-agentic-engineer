@@ -29,6 +29,11 @@ import "time"
 //
 // The in-memory part buffer is deliberately NOT durable (D17) — only the
 // terminal outcome lands here.
+//
+// The table is also the finished-turn ledger (07 §12): every turn an org's AE
+// Studio pod ran lands here once, whole and already finished, through
+// TurnRepository.RecordFinished (record-turn-usage). Those rows never run and
+// never hold the guard.
 type AgentTurn struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
 	OrgID     string `gorm:"index;not null" json:"-"`
@@ -40,6 +45,11 @@ type AgentTurn struct {
 	// derivation: "the last terminal turn of this conversation".
 	ConversationID string `gorm:"index;not null" json:"conversationId"`
 	UseCase        string `gorm:"not null" json:"useCase"`
+
+	// Kind is what started the turn in AE Studio: browser | kickoff | plan
+	// (TurnKind*). The ledger's rows carry it from record-turn-usage; rows the
+	// older in-process engine wrote read the column default, browser.
+	Kind string `gorm:"type:text;not null;default:'browser'" json:"-"`
 
 	// Flow is the `/<skill>` token this turn ran ("design", "start", …); "" for
 	// plain chat. Recorded (#575) because the status read has to find "the
@@ -133,6 +143,12 @@ type AgentTurn struct {
 	// HeartbeatAt is bumped by the running replica (~15s); the sweep fails
 	// rows whose heartbeat went stale (~60s) and releases the D18 guard.
 	HeartbeatAt time.Time `gorm:"index" json:"-"`
+
+	// StartedAt and FinishedAt are when the turn ran, as the AE Studio pod
+	// that ran it reported (record-turn-usage). Zero / nil on rows the older
+	// in-process engine wrote.
+	StartedAt  time.Time  `json:"-"`
+	FinishedAt *time.Time `json:"-"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

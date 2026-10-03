@@ -291,6 +291,12 @@ func (m *memTurnRepo) SumUsageByProject(context.Context, string) (map[string]con
 	return nil, nil
 }
 
+// RecordFinished is the AE Studio ledger write; the in-process engine under
+// test never calls it.
+func (m *memTurnRepo) RecordFinished(context.Context, string, []spec.TurnRecord) error {
+	return nil
+}
+
 func (m *memTurnRepo) TryStart(_ context.Context, t *spec.AgentTurn) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

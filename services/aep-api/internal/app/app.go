@@ -979,6 +979,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// The org's skills library, reconciled before each turn's
 			// snapshot, as every turn's skills have been.
 			AEStudioSkills: aestudio.NewSkillsRepositories(skillSvc, repoService),
+			// The finished-turn ledger the pod hands its turns to; the status
+			// poll, the build gate's design baseline and kickoff read it.
+			TurnLedger: turnRepo,
 		},
 		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,

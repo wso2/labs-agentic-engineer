@@ -83,6 +83,9 @@ type InternalDeps struct {
 	// (spec.CompleteDependencies over the org registry and the guarded URL
 	// fetch); nil answers 503.
 	DependencyCompleter DependencyCompleter
+	// TurnLedger backs record-turn-usage (the finished-turn ledger,
+	// spec.TurnRepository); nil answers 503.
+	TurnLedger TurnLedger
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation

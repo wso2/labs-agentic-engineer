@@ -164,6 +164,16 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
   this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.
+- **`agent_turns` is also the finished-turn ledger** (07 §12). An org's AE Studio tools pod hands
+  over the turns its design agent ran through `record-turn-usage` (`POST
+  /internal/v1/ae-studio/turn-usage`, publisher client token, ≤ 100 records). `RecordFinished`
+  writes each record once (`ON CONFLICT (id) DO NOTHING`, so a resent batch changes nothing) with
+  its `kind` (`browser | kickoff | plan`), `started_at`/`finished_at`, and `cost_usd` stamped at
+  ingest from the `(host, model)` rate then in force. `created_at` is the turn's start, so
+  `Newest`/`NewestCompletedFlow` order ledger rows by when the turn ran, whatever order they
+  arrive in. The edge refuses the whole batch with 404 when any record names a project outside
+  the token's org; a record with no project (a marketplace turn) is stored under
+  `project_id = ''`.
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`

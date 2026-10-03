@@ -25,8 +25,10 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/contracts"
 	"github.com/wso2/aep/aep-api/internal/igen"
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -54,6 +56,12 @@ type ProjectRepositoryLookup interface {
 // (aestudio.SkillsRepositories).
 type SkillsRepositoryLookup interface {
 	Lookup(ctx context.Context, org string) (aestudio.ProjectRepository, error)
+}
+
+// TurnLedger stores an org's finished AE Studio turns, each once
+// (spec.TurnRepository.RecordFinished).
+type TurnLedger interface {
+	RecordFinished(ctx context.Context, org string, recs []spec.TurnRecord) error
 }
 
 // DependencyCompleter completes an org's dependency stub writes
@@ -244,8 +252,97 @@ func notCompletedWarning(w spec.Warning) spec.Warning {
 	}
 }
 
-// RecordTurnUsage is replaced by Task 3.16, which owns the turn ledger. Until
-// then the route is served by the contract and answers 503.
-func (s *internalServer) RecordTurnUsage(_ context.Context, _ igen.RecordTurnUsageRequestObject) (igen.RecordTurnUsageResponseObject, error) {
-	return nil, errServiceUnavailable("turn usage recording not configured")
+// RecordTurnUsage stores the bound org's finished turns in the ledger
+// (07 §12). Every record naming a project must name one of the org's: one that
+// does not refuses the whole batch with 404 and nothing is written (a foreign
+// project and an unknown one answer the same). A record without a project is
+// a marketplace turn and is valid.
+//
+// The tools pod's sender drops a batch answered 400, 404, 413 or 422 and
+// retries every other failure, so a record that can never be stored is a 400
+// here, never a 5xx it would resend forever; only a dependency or store fault
+// is a 5xx.
+func (s *internalServer) RecordTurnUsage(ctx context.Context, request igen.RecordTurnUsageRequestObject) (igen.RecordTurnUsageResponseObject, error) {
+	if s.deps.TurnLedger == nil {
+		return nil, errServiceUnavailable("turn usage recording not configured")
+	}
+	if request.Body == nil {
+		return nil, apierr.BadRequest("request body required")
+	}
+	org := tenant.BoundOrgFromContext(ctx)
+	recs := make([]spec.TurnRecord, 0, len(request.Body.Records))
+	checked := map[string]bool{}
+	for i, r := range request.Body.Records {
+		if err := storableTurnRecord(r); err != nil {
+			return nil, apierr.BadRequest("records[" + strconv.Itoa(i) + "]: " + err.Error())
+		}
+		if r.Project != "" && !checked[r.Project] {
+			if _, err := s.lookupAEStudioProject(ctx, org, r.Project); err != nil {
+				return nil, err
+			}
+			checked[r.Project] = true
+		}
+		recs = append(recs, toTurnRecord(r))
+	}
+	if err := s.deps.TurnLedger.RecordFinished(ctx, org, recs); err != nil {
+		slog.ErrorContext(ctx, "ae-studio turn usage not recorded", "org", org, "count", len(recs), "error", err)
+		return nil, errInternal("failed to record turn usage")
+	}
+	return igen.RecordTurnUsage202Response{}, nil
+}
+
+// storableTurnRecord refuses what the contract admits but the ledger can never
+// store or price: a negative token count, or a NUL byte, which Postgres
+// refuses in text on every attempt.
+func storableTurnRecord(r igen.AEStudioTurnRecord) error {
+	for _, n := range []int64{r.InputTokens, r.OutputTokens, r.CacheReadTokens, r.CacheCreationTokens, r.ContextTokens} {
+		if n < 0 {
+			return errors.New("token counts must not be negative")
+		}
+	}
+	texts := []string{r.Project, r.Flow, r.Code, r.BaseRef, r.SkillsRef, r.Model, r.ModelHost}
+	if r.Author != nil {
+		texts = append(texts, r.Author.ID, r.Author.Name)
+	}
+	for _, t := range texts {
+		if strings.ContainsRune(t, 0) {
+			return errors.New("text fields must not contain a NUL byte")
+		}
+	}
+	return nil
+}
+
+// toTurnRecord is the wire record as the ledger's. contextTokens is optional
+// and never 0 for a turn that measured one, so 0 reads as absent.
+func toTurnRecord(r igen.AEStudioTurnRecord) spec.TurnRecord {
+	rec := spec.TurnRecord{
+		TurnID:         r.TurnID.String(),
+		Project:        r.Project,
+		ConversationID: r.ConversationID.String(),
+		Kind:           string(r.Kind),
+		Flow:           r.Flow,
+		Status:         string(r.Status),
+		Reason:         string(r.Reason),
+		Code:           r.Code,
+		BaseRef:        r.BaseRef,
+		SkillsRef:      r.SkillsRef,
+		StartedAt:      r.StartedAt,
+		FinishedAt:     r.FinishedAt,
+		ModelHost:      r.ModelHost,
+		Usage: contracts.TokenUsage{
+			InputTokens:         r.InputTokens,
+			OutputTokens:        r.OutputTokens,
+			CacheReadTokens:     r.CacheReadTokens,
+			CacheCreationTokens: r.CacheCreationTokens,
+			Model:               r.Model,
+		},
+	}
+	if r.Author != nil {
+		rec.AuthorID, rec.AuthorName = r.Author.ID, r.Author.Name
+	}
+	if r.ContextTokens != 0 {
+		n := r.ContextTokens
+		rec.ContextTokens = &n
+	}
+	return rec
 }

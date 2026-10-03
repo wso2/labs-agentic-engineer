@@ -110,6 +110,46 @@ type TurnTerminal struct {
 	ContextTokens *int64
 }
 
+// AE Studio turn kinds (AgentTurn.Kind, TurnRecord.Kind): what started the
+// turn — a user in the browser, the project kickoff, or a task plan.
+const (
+	TurnKindBrowser = "browser"
+	TurnKindKickoff = "kickoff"
+	TurnKindPlan    = "plan"
+)
+
+// The use_case a ledger row carries until the column goes (Task 3.21): a plan
+// turn keeps the task planner's own value, every other turn the one every
+// genai turn has run under (useCaseGeneral).
+const useCaseTaskPlan = "task-plan"
+
+// TurnRecord is one finished turn as an org's AE Studio pod reports it
+// (record-turn-usage, the contract's AEStudioTurnRecord), already resolved to
+// the org's tenancy by the caller.
+type TurnRecord struct {
+	TurnID string
+	// Project is "" for a marketplace turn, which belongs to no project (C7).
+	Project        string
+	ConversationID string
+	Kind           string // TurnKindBrowser | TurnKindKickoff | TurnKindPlan
+	Flow           string
+	Status         string // completed | failed
+	Reason         string
+	Code           string
+	BaseRef        string
+	SkillsRef      string
+	StartedAt      time.Time
+	FinishedAt     time.Time
+	// AuthorID and AuthorName credit the user who sent the turn; both "" for
+	// a turn nobody sent (a kickoff with no credit, a marketplace turn).
+	AuthorID   string
+	AuthorName string
+	// ModelHost and Usage.Model key the rate the turn is priced at.
+	ModelHost     string
+	Usage         contracts.TokenUsage
+	ContextTokens *int64
+}
+
 // TurnRepository is the agent_turns row store (design D17/D18): the durable
 // turn record, the one-active guard, and the stale-heartbeat sweep. Lookups
 // miss with (nil, nil), matching the house convention.
@@ -170,6 +210,13 @@ type TurnRepository interface {
 	// (reason stream-died, message "replica crashed or hung") and returns the
 	// swept rows so the caller can emit broker terminals.
 	SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error)
+
+	// RecordFinished stores org's finished turns, each exactly once: a record
+	// whose turn id is already stored is skipped, never rewritten, so a
+	// resent batch changes nothing. cost_usd is stamped here from the rates
+	// in force (07 §7). The caller has checked each record's project belongs
+	// to org.
+	RecordFinished(ctx context.Context, org string, recs []TurnRecord) error
 
 	// SumUsageByProject rolls up captured spec/design turn usage per project
 	// across an org (#291), keyed by project id — one half of the Settings →
@@ -272,6 +319,74 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 		return false, res.Error
 	}
 	return res.RowsAffected > 0, nil
+}
+
+func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []TurnRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	rows := make([]AgentTurn, 0, len(recs))
+	for _, rec := range recs {
+		rows = append(rows, r.ledgerRow(org, rec))
+	}
+	return r.db.WithContext(ctx).
+		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).
+		Create(&rows).Error
+}
+
+// ledgerRow is rec as org's agent_turns row, its cost stamped at the rate in
+// force now and frozen there (#291): null when unpriceable (no stamper, no
+// (host, model) rate). created_at is the turn's start, as it was for a row the
+// in-process engine admitted: Newest and NewestCompletedFlow order by it, so
+// a batch's order or a late delivery never makes an older turn the newest.
+func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
+	finished := rec.FinishedAt
+	row := AgentTurn{
+		ID:                  rec.TurnID,
+		OrgID:               org,
+		ProjectID:           rec.Project,
+		ConversationID:      rec.ConversationID,
+		UseCase:             useCaseOfKind(rec.Kind),
+		Kind:                rec.Kind,
+		Flow:                rec.Flow,
+		BaseRef:             rec.BaseRef,
+		SkillsRef:           rec.SkillsRef,
+		Status:              rec.Status,
+		Reason:              rec.Reason,
+		Code:                rec.Code,
+		AuthorID:            rec.AuthorID,
+		AuthorDisplayName:   rec.AuthorName,
+		InputTokens:         rec.Usage.InputTokens,
+		OutputTokens:        rec.Usage.OutputTokens,
+		CacheReadTokens:     rec.Usage.CacheReadTokens,
+		CacheCreationTokens: rec.Usage.CacheCreationTokens,
+		ModelID:             rec.Usage.Model,
+		ModelHost:           rec.ModelHost,
+		ContextTokens:       rec.ContextTokens,
+		StartedAt:           rec.StartedAt,
+		FinishedAt:          &finished,
+		CreatedAt:           rec.StartedAt,
+	}
+	if r.stamper != nil {
+		row.CostUsd = r.stamper.Cost(modelcost.Tokens{
+			Host:                rec.ModelHost,
+			ModelID:             rec.Usage.Model,
+			InputTokens:         rec.Usage.InputTokens,
+			OutputTokens:        rec.Usage.OutputTokens,
+			CacheReadTokens:     rec.Usage.CacheReadTokens,
+			CacheCreationTokens: rec.Usage.CacheCreationTokens,
+		})
+	}
+	return row
+}
+
+// useCaseOfKind is the use_case a ledger row of kind is written with until
+// Task 3.21 drops the NOT NULL column.
+func useCaseOfKind(kind string) string {
+	if kind == TurnKindPlan {
+		return useCaseTaskPlan
+	}
+	return useCaseGeneral
 }
 
 // modelHost reads the host TryStart wrote on the turn at admission. A missing
