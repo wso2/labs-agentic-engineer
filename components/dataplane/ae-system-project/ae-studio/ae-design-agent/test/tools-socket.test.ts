@@ -212,6 +212,26 @@ test("lookup: 404 project_unknown is null; 404 ref_not_found is an error", async
   assert.deepEqual([err.status, err.code], [404, "ref_not_found"]);
 });
 
+test("lookup: the descriptor's idea rides through when the socket answers one", async () => {
+  reset(() => ({
+    status: 200,
+    body: { known: true, headSha: "h1", skillsSha: "s1", references: [], idea: "A greeter that waves" },
+  }));
+  assert.deepEqual(await createToolsSocket(socketPath).lookup("greeter"), {
+    headSha: "h1",
+    skillsSha: "s1",
+    references: [],
+    idea: "A greeter that waves",
+  });
+});
+
+test("lookup: an idea that is not a string is an invalid_response error", async () => {
+  reset(() => ({ status: 200, body: { known: true, headSha: "h1", skillsSha: "s1", references: [], idea: 7 } }));
+  const err = await createToolsSocket(socketPath).lookup("greeter").catch((e: unknown) => e);
+  assert.ok(err instanceof ToolsSocketError);
+  assert.equal(err.code, "invalid_response");
+});
+
 test("lookup: a 200 without the snapshot shape is an invalid_response error", async () => {
   reset(() => ({ status: 200, body: { known: true, headSha: "h1" } }));
   const err = await createToolsSocket(socketPath).lookup("greeter").catch((e: unknown) => e);

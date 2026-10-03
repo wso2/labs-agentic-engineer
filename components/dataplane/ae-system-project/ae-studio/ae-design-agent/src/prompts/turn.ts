@@ -465,14 +465,12 @@ export function toolsetFor(turn: TurnSpec): Toolset {
 }
 
 /**
- * Synthetic Marketplace register project (console `MARKETPLACE_CHAT_PROJECT`).
- * Follow-up answers on this thread are classified as `chat`, not the
- * `/register-external-resource` flow — they still need the draft tool.
+ * Marketplace register chat needs a draft tool the files set does not carry.
+ * Every turn on a marketplace route gets it (07 §6): follow-up answers there
+ * are classified as `chat`, not the `/register-external-resource` flow, and
+ * still need it. On a project route only that flow does.
  */
-export const MARKETPLACE_REGISTER_PROJECT = "__marketplace_register__";
-
-/** Marketplace register chat needs a draft tool the files set does not carry. */
-export function wantsRegisterDraftTool(turn: TurnSpec, projectId?: string): boolean {
-  if (projectId === MARKETPLACE_REGISTER_PROJECT) return true;
+export function wantsRegisterDraftTool(turn: TurnSpec, route: "project" | "marketplace"): boolean {
+  if (route === "marketplace") return true;
   return turn.kind === "flow" && turn.skill === "register-external-resource";
 }

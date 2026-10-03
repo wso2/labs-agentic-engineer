@@ -19,8 +19,9 @@
 /**
  * Workspace-shape input loading (shared-workspace-volume, D4): the ONLY module
  * that reads the shared mount. All three readers take a directory that
- * `snapshot-path.ts` derived and stat-checked — nothing here touches untrusted
- * paths, and nothing here writes.
+ * `snapshot-path.ts` (the pod) or `legacy-workspace.ts` derived and
+ * stat-checked — nothing here touches untrusted paths, and nothing here
+ * writes.
  *
  *  - `readSnapshot(dir)` walks an immutable per-SHA repo snapshot into the
  *    in-memory `files` map a turn runs against (adapted from the proven

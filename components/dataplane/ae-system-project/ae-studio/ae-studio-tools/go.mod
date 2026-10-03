@@ -3,6 +3,7 @@ module github.com/wso2/aep/ae-studio-tools
 go 1.26.0
 
 require (
+	github.com/BurntSushi/toml v1.3.2
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/oapi-codegen/runtime v1.4.2

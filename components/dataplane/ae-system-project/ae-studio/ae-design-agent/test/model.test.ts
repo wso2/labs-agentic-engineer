@@ -32,7 +32,7 @@ import { config } from "../src/shared/config.js";
 import {
   anthropicConnection,
   connectionFingerprint,
-  connectionFromTurn,
+  connectionFromWire,
   createModel,
   maxOutputTokensFor,
   modelCacheBreakpoint,
@@ -164,7 +164,7 @@ test("anthropicConnection is Anthropic's own API: x-api-key, the resolved model,
   assert.equal(anthropicConnection(KEY).model, config.model);
 });
 
-test("connectionFromTurn takes the wire's known fields only, beside the key and the model", () => {
+test("connectionFromWire takes the wire's known fields only, beside the key and the model", () => {
   const wire = {
     format: "openai-compatible",
     baseURL: "https://ollama.com/v1",
@@ -173,7 +173,7 @@ test("connectionFromTurn takes the wire's known fields only, beside the key and 
     capabilities: { ...OLLAMA.capabilities, smuggled: true },
     smuggled: "x",
   } as unknown as TurnConnection;
-  const conn = connectionFromTurn(wire, OLLAMA_KEY, "gpt-oss:20b");
+  const conn = connectionFromWire(wire, OLLAMA_KEY, "gpt-oss:20b");
   assert.deepEqual(Object.keys(conn).sort(), ["apiKey", "authScheme", "baseURL", "capabilities", "format", "model", "outputLimit"]);
   assert.equal("contextWindow" in conn, false);
   assert.deepEqual(conn.capabilities, OLLAMA.capabilities, "capabilities keep their known fields only");

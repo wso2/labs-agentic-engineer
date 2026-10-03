@@ -32,7 +32,7 @@
  * survive an idle ingress.
  *
  * The ONLY turn shape is the workspace shape (§12/D9): the body carries IDs +
- * shas, never file content. `snapshot-path.ts` fences + derives the snapshot
+ * shas, never file content. `legacy-workspace.ts` fences + derives the snapshot
  * dirs (`X-Org-Id` is LOAD-BEARING — the conversation's org segment must equal
  * it, 403 otherwise) and `load-workspace.ts` reads the files + a lazy skill
  * source from the mount. Bodies that inline `files`/`skills` (the pre-§12
@@ -84,14 +84,15 @@ import {
 } from "./conversation/load-workspace.js";
 import { AttachmentRefusedError, fitAttachments, fitReferences } from "./conversation/attachments.js";
 import { codedErrorFrame, turnErrorFrame } from "./conversation/turn-error.js";
-import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/snapshot-path.js";
+import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "./shared/legacy-workspace.js";
 import { createAuthMiddleware, type AgentsAuthConfig } from "./shared/auth.js";
 import { startKeepAlive } from "./shared/keepalive.js";
 import type { McpTransport } from "./shared/mcp-client.js";
 import { config } from "./shared/config.js";
 import {
   anthropicConnection,
-  connectionFromTurn,
+  connectionFromWire,
+  isModelId,
   connectionHost,
   resolveModelId,
   type ModelConnection,
@@ -149,13 +150,6 @@ function bearerMcpTransport(config: McpConfig): McpTransport {
   }) as typeof fetch;
   return { mcpFetch };
 }
-
-/**
- * A model id's shape: printable ASCII without spaces, as every host's ids are
- * (`claude-sonnet-5`, `gpt-oss:20b`, `vendor/model:tag`). Whether the host
- * serves it is the host's answer, not this service's.
- */
-const MODEL_ID = /^[\x21-\x7e]{1,200}$/;
 
 /** Runtime guard for an untrusted `journal` value (#463). */
 function isJournal(v: unknown): v is TurnJournal {
@@ -391,7 +385,7 @@ export function createApp(deps: CreateAppDeps): Express {
     // model (optional): the organization's model for this turn, resolved by the
     // caller. Absent → the service default (AGENT_MODEL); present but not an
     // id's shape → a clean 400 rather than a provider error mid-stream.
-    if (body.model !== undefined && (typeof body.model !== "string" || !MODEL_ID.test(body.model.trim()))) {
+    if (body.model !== undefined && (typeof body.model !== "string" || !isModelId(body.model.trim()))) {
       res.status(400).json({ error: "model must be a model id (printable characters, no spaces)" });
       return;
     }
@@ -408,7 +402,7 @@ export function createApp(deps: CreateAppDeps): Express {
       return;
     }
     const conn: ModelConnection = body.connection
-      ? connectionFromTurn(body.connection, apiKey, modelId)
+      ? connectionFromWire(body.connection, apiKey, modelId)
       : anthropicConnection(apiKey, modelId);
 
     // Reference documents fitted to the connection (attachments.ts). Fitted
@@ -602,7 +596,10 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(references.unreadable.length ? { unreadableReferences: references.unreadable } : {}),
         ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
-        ...(wantsRegisterDraftTool(turn, projectId) ? { registerDraft: true } : {}),
+        // TEMPORARY (phase 3 deletes): the legacy route's marketplace is aep-api's synthetic register project.
+        ...(wantsRegisterDraftTool(turn, projectId === "__marketplace_register__" ? "marketplace" : "project")
+          ? { registerDraft: true }
+          : {}),
         ...(mcp ? { mcp } : {}),
         ...(journal ? { journal: { ...journal, turnId } } : {}),
         ...(eagerSkills ? { eagerSkills } : {}),

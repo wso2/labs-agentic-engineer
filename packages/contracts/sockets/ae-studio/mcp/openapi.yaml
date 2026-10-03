@@ -103,7 +103,8 @@ paths:
         `specs/requirements/references/`, and the Org skills snapshot, and
         answers the shas and the reference document names (sorted). The agent
         reads `/snapshots/projects/{projectName}/{headSha}` and
-        `/snapshots/skills/{skillsSha}`. 404 `project_unknown` means the
+        `/snapshots/skills/{skillsSha}`. `idea` is the project idea from the
+        descriptor at that commit, read best-effort. 404 `project_unknown` means the
         project is not this org's, and then no snapshot is written; 404
         `ref_not_found` means `at` names no commit of the repository. 503
         `disk_full` refuses a new snapshot at 90 % of the studio's storage.
@@ -271,6 +272,13 @@ components:
           description: File names of the project's stored reference documents.
           items:
             type: string
+        idea:
+          type: string
+          description: The project idea captured at creation (`idea` in
+            `specs/.agentic-engineer.toml` at `headSha`), trimmed. The snapshot
+            keeps the dot-led descriptor out of the agent's reads, so this is how
+            a `/start` turn gets it. Absent when the commit has no descriptor,
+            it does not parse, or its idea is blank.
     SkillsSnapshot:
       type: object
       additionalProperties: false

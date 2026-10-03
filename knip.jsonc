@@ -39,7 +39,10 @@
   // `conversations/` (ThreadBook) are imported only by tests until Task 3.12
   // wires the start path to them (`@knipkeep` cannot tag a whole file); 3.12
   // removes these entries. Its `usage/` (the usage outbox) is the same until
-  // Task 3.12 pushes the desk's records into it.
+  // Task 3.12 pushes the desk's records into it. Its `shared/snapshot-path.ts`
+  // (the pod's snapshot dirs) and `shared/connection-env.ts` (the pod's model
+  // connection) are the same until Task 3.12's start path reads them; 3.12
+  // removes those two entries too.
   "ignore": [
     "deployments/**",
     "scripts/**",
@@ -48,6 +51,8 @@
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/turns/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/conversations/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/usage/**",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/snapshot-path.ts",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/connection-env.ts",
     "skills/**"
   ],
   // An export used within its own file is not dead — this codebase deliberately

@@ -238,3 +238,50 @@ func TestSkills_WritesSnapshot(t *testing.T) {
 		t.Fatalf("GET /skills wrote a project snapshot")
 	}
 }
+
+// 07 §1: the lookup answers the idea captured in specs/.agentic-engineer.toml
+// at the snapshotted commit (the agent cannot read the dot-led descriptor
+// itself). No descriptor, or one that does not parse, answers no idea: the
+// read is best-effort, as readProjectIdea was in aep-api.
+func TestLookupIdea(t *testing.T) {
+	h := newLookupHarness(t)
+	type ideaReply struct {
+		Idea *string `json:"idea"`
+	}
+	ideaOf := func(path string) *string {
+		t.Helper()
+		code, body := h.get(path)
+		if code != http.StatusOK {
+			t.Fatalf("GET %s = %d %s", path, code, body)
+		}
+		var r ideaReply
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			t.Fatalf("body: %v\n%s", err, body)
+		}
+		return r.Idea
+	}
+
+	if idea := ideaOf("/projects/greeter"); idea != nil {
+		t.Fatalf("no descriptor: idea = %q, want absent", *idea)
+	}
+	before := h.origin.HeadSHA(t)
+
+	descriptor := "apiVersion = \"agentic-engineer/v1\"\nname = \"greeter\"\ncreatedAt = \"2026-01-01T00:00:00Z\"\nidea = \"A greeter that says \\\"hi\\\"\\nand waves\"\n"
+	h.origin.Commit(t, map[string]string{"specs/.agentic-engineer.toml": descriptor}, "descriptor")
+	if idea := ideaOf("/projects/greeter"); idea == nil || *idea != "A greeter that says \"hi\"\nand waves" {
+		t.Fatalf("descriptor idea = %v", idea)
+	}
+	if idea := ideaOf("/projects/greeter?at=" + before); idea != nil {
+		t.Fatalf("at a commit before the descriptor: idea = %q, want absent", *idea)
+	}
+
+	h.origin.Commit(t, map[string]string{"specs/.agentic-engineer.toml": "idea = \"unterminated\n"}, "corrupt")
+	if idea := ideaOf("/projects/greeter"); idea != nil {
+		t.Fatalf("malformed descriptor: idea = %q, want absent", *idea)
+	}
+
+	h.origin.Commit(t, map[string]string{"specs/.agentic-engineer.toml": "apiVersion = \"agentic-engineer/v1\"\nidea = \"   \"\n"}, "blank")
+	if idea := ideaOf("/projects/greeter"); idea != nil {
+		t.Fatalf("blank idea: idea = %q, want absent", *idea)
+	}
+}

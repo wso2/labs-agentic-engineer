@@ -33,7 +33,8 @@ import (
 
 // LookupProject resolves the project, writes its snapshot at `at` (the tip
 // when omitted) with the stored references overlaid, and the Org skills
-// snapshot, and answers both shas and the reference names.
+// snapshot, and answers both shas, the reference names and the descriptor's
+// idea (omitted when there is none).
 func (s mcpSocketServer) LookupProject(ctx context.Context, req mcpsock.LookupProjectRequestObject) (mcpsock.LookupProjectResponseObject, error) {
 	snap, err := s.snapshots.Snapshot(ctx, req.ProjectName, req.Params.At)
 	if err != nil {
@@ -44,6 +45,7 @@ func (s mcpSocketServer) LookupProject(ctx context.Context, req mcpsock.LookupPr
 		HeadSha:    snap.HeadSHA,
 		SkillsSha:  snap.SkillsSHA,
 		References: snap.References,
+		Idea:       snap.Idea,
 	}, nil
 }
 

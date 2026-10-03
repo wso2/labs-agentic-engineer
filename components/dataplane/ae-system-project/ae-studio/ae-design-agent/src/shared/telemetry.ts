@@ -115,7 +115,7 @@ export function captureTelemetry(): Telemetry | undefined {
  * Defensive by construction: an id that does not match the namespaced shape is
  * returned verbatim. Evals, the playground and lazily-created conversations all
  * use plain ids, and a LABEL must never be able to fail a turn — which is also
- * why this does not reuse `snapshot-path.ts`'s parser, whose job is to reject.
+ * why this does not reuse `legacy-workspace.ts`'s parser, whose job is to reject.
  */
 export function threadLabel(conversationId: string): string {
   const segments = conversationId.split("--");

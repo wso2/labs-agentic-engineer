@@ -100,7 +100,8 @@ off the stream. The plan tool contract (inputs, results, error codes, the
   conversation's `org_` segment must equal it (403 otherwise — the §12 fence).
 - **One turn shape**: `turn` (a `TurnSpec` — what the turn is FOR) + `workspace`
   (IDs + shas; files/skills read from `WORKSPACE_MOUNT_ROOT` snapshots via
-  `snapshot-path.ts` + `load-workspace.ts`). Inline `files`/`skills`, a
+  `legacy-workspace.ts` + `load-workspace.ts`; Task 3.12 deletes the legacy
+  resolver with this server). Inline `files`/`skills`, a
   pre-composed `instruction`, or a caller-chosen `toolset`/`eagerSkills` in the
   body → 400.
   Every successful turn ends with a terminal `manifest` frame (D14:
@@ -127,6 +128,26 @@ off the stream. The plan tool contract (inputs, results, error codes, the
   `src/usage/outbox.ts` holds finished-turn records (cap 200, oldest dropped,
   retry every 2 s, in order) and `drain(timeoutMs)` flushes it at shutdown.
   Not wired yet (Tasks 3.12/3.13).
+- **Turn inputs in the pod** (07 §1, §4, §12; not wired yet, Task 3.12): the
+  pod builds what aep-api used to send. `turns/start-spec.ts`
+  (`turnSpecFor`, port of aep-api's `start_command.go`) classifies the raw
+  instruction: `/<token> [text]` (narrow grammar; `//x`, `/Design`, a
+  mid-message slash stay chat) is a flow, `/start` takes the idea typed
+  inline, else the lookup's `idea` (ae-studio-tools reads the dot-led
+  descriptor the agent cannot); `/start` and flow turns list the lookup's
+  references as `specs/requirements/references/<name>`, chat carries none.
+  `startTurnSummary` appends the resolved idea to a bare `/start`.
+  `turns/turn-spec.ts` holds the web-search gate (`designOrRoomTurn`: the
+  design flow or a Room turn) and the MCP gate (`catalogTurn`: those plus
+  `start`/`amend`/`settle`). `shared/connection-env.ts`
+  (`connectionFromEnv`) builds the connection from `AE_MODEL_CONNECTION`
+  (the `TurnConnection` wire shape plus `model`) and `ANTHROPIC_API_KEY`:
+  either missing → `null` (`no_default_key`), malformed → `ConnectionEnvError`
+  (never quoting the value). `shared/snapshot-path.ts` resolves
+  `<AE_SNAPSHOTS_DIR>/projects/<project>/<headSha>` and
+  `<AE_SNAPSHOTS_DIR>/skills/<skillsSha>` from the lookup's shas (project a
+  DNS label, sha full hex, dir stat-checked). `wantsRegisterDraftTool` keys on
+  the route (`marketplace` → always).
 - **Turn journal** (optional, #463): the caller pushes
   `journal: { text, author?: { id, displayName } }` — the raw client-sent
   instruction + acting user, stored beside the transcript (never woven into
@@ -169,6 +190,7 @@ this service ships only the runtime + its unit tests.
 - One agent per `src/agents/<name>/`; the loop (`run-turn.ts`) is shared.
 - `src/` writes no files **on the turn path**; its only filesystem READS are the
   §12 snapshot dirs (`load-workspace.ts`, paths derived solely by
-  `snapshot-path.ts`). The one write is DevTools retention
+  `snapshot-path.ts` in the pod and `legacy-workspace.ts` in the legacy
+  server). The one write is DevTools retention
   (`shared/devtools-retention.ts`), which prunes the debug capture once at boot
   before the server listens — never while a turn runs, and never a spec file.

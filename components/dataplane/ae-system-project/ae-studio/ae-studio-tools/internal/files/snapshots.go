@@ -30,16 +30,19 @@ import (
 // that failed the check.
 
 // ProjectSnapshot is a known project's snapshot: the commit it is of, the
-// Org skills commit, and the stored reference documents (sorted names),
-// overlaid into the snapshot at repo.ReferenceOverlayDir.
+// Org skills commit, the stored reference documents (sorted names),
+// overlaid into the snapshot at repo.ReferenceOverlayDir, and the project
+// idea from the descriptor at HeadSHA ("" when there is none).
 type ProjectSnapshot struct {
 	HeadSHA, SkillsSHA string
 	References         []string
+	Idea               string
 }
 
 // Snapshot resolves project, writes its snapshot at at (empty: the
 // default-branch tip, fetched) with the stored references overlaid, and
-// writes the Org skills snapshot at the skills repository's tip. An unknown
+// writes the Org skills snapshot at the skills repository's tip, and reads
+// the descriptor's idea at the same commit (projectIdea). An unknown
 // project is projects.ErrUnknown before anything touches the disk; at must
 // be a hex object name (ErrPathInvalid). A refused admission is
 // repo.ErrDiskFull.
@@ -71,7 +74,7 @@ func (r Reader) Snapshot(ctx context.Context, project, at string) (*ProjectSnaps
 	if refs == nil {
 		refs = []string{}
 	}
-	return &ProjectSnapshot{HeadSHA: head, SkillsSHA: skills, References: refs}, nil
+	return &ProjectSnapshot{HeadSHA: head, SkillsSHA: skills, References: refs, Idea: r.projectIdea(ctx, ref, head)}, nil
 }
 
 // SkillsSnapshot resolves the org's skills repository through aep-api (every

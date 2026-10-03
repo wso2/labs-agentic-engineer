@@ -212,11 +212,17 @@ export function createToolsSocket(socketPath: string, options: ToolsSocketOption
         !isString(body.headSha) ||
         !isString(body.skillsSha) ||
         !Array.isArray(body.references) ||
-        !body.references.every(isString)
+        !body.references.every(isString) ||
+        (body.idea !== undefined && !isString(body.idea))
       ) {
         throw malformed("lookup", reply);
       }
-      return { headSha: body.headSha, skillsSha: body.skillsSha, references: body.references };
+      return {
+        headSha: body.headSha,
+        skillsSha: body.skillsSha,
+        references: body.references,
+        ...(body.idea !== undefined ? { idea: body.idea } : {}),
+      };
     },
 
     async skills() {

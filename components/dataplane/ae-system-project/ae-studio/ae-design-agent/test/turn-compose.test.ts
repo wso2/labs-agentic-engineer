@@ -347,19 +347,16 @@ test("the tool set is derived from the kind", () => {
   assert.equal(toolsetFor({ kind: "flow", skill: "design" }), "files");
 });
 
-test("only the register-external-resource flow gets the draft tool", () => {
-  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "register-external-resource" }), true);
-  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "design" }), false);
-  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "x" }), false);
-  assert.equal(wantsRegisterDraftTool({ kind: "start" }), false);
+test("on a project route only the register-external-resource flow gets the draft tool", () => {
+  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "register-external-resource" }, "project"), true);
+  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "design" }, "project"), false);
+  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "x" }, "project"), false);
+  assert.equal(wantsRegisterDraftTool({ kind: "start" }, "project"), false);
 });
 
-test("every turn on the synthetic register project gets the draft tool", () => {
-  assert.equal(
-    wantsRegisterDraftTool({ kind: "chat", text: "Answer to \"auth?\": PAT" }, "__marketplace_register__"),
-    true,
-  );
-  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "x" }, "weather-api"), false);
+test("every turn on a marketplace route gets the draft tool, keyed on the route not a project id", () => {
+  assert.equal(wantsRegisterDraftTool({ kind: "chat", text: "Answer to \"auth?\": PAT" }, "marketplace"), true);
+  assert.equal(wantsRegisterDraftTool({ kind: "flow", skill: "register-external-resource" }, "marketplace"), true);
 });
 
 /**

@@ -24,13 +24,16 @@
  * scheme, key, model id, limits, capabilities) and `createModel` switches on
  * its `format`, so a new format is one new branch here — no call-site changes.
  *
- * The connection arrives per turn: the key in the `X-Model-Key` header, the
- * rest in the turn body's `connection` and `model`, all resolved by aep-api
- * from the organization's one connection. What a connection supports is
- * aep-api's `capabilities`, read here and never re-derived from the host.
- * `config.model` (`AGENT_MODEL`) is only the default for a caller that sends
- * no model. Every provider request goes out through `guardedFetch`, which
- * refuses a host that resolves to a non-public address.
+ * In the AE Studio pod the organization's one connection comes from the
+ * pod env (`connection-env.ts`: `AE_MODEL_CONNECTION` and the
+ * `ANTHROPIC_API_KEY` secret, both rendered by aep-api). The legacy server
+ * still takes it per turn: the key in the `X-Model-Key` header, the rest in
+ * the turn body's `connection` and `model`. Both build it with
+ * `connectionFromWire`. What a connection supports is aep-api's
+ * `capabilities`, read here and never re-derived from the host.
+ * `config.model` (`AGENT_MODEL`) is only the default for a legacy caller that
+ * sends no model. Every provider request goes out through `guardedFetch`,
+ * which refuses a host that resolves to a non-public address.
  */
 
 import type { LanguageModel } from "ai";
@@ -104,12 +107,21 @@ export function anthropicConnection(apiKey: string, model?: string): ModelConnec
 }
 
 /**
- * The turn's connection from the wire: the body's `connection` (validated by
- * `isTurnConnection`) with the header's key and the resolved model. Rebuilt
- * field by field, so nothing a caller smuggled beside the known fields rides
- * along.
+ * A model id's shape: printable ASCII without spaces, as every host's ids are
+ * (`claude-sonnet-5`, `gpt-oss:20b`, `vendor/model:tag`). Whether the host
+ * serves it is the host's answer, not this service's.
  */
-export function connectionFromTurn(wire: TurnConnection, apiKey: string, model: string): ModelConnection {
+export function isModelId(model: string): boolean {
+  return /^[\x21-\x7e]{1,200}$/.test(model);
+}
+
+/**
+ * A connection from its wire shape (`TurnConnection`, validated by
+ * `isTurnConnection`: `AE_MODEL_CONNECTION`, or the legacy turn body's
+ * `connection`) with the key and the model. Rebuilt field by field, so
+ * nothing beside the known fields rides along.
+ */
+export function connectionFromWire(wire: TurnConnection, apiKey: string, model: string): ModelConnection {
   return {
     format: wire.format,
     baseURL: wire.baseURL,
