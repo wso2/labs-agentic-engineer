@@ -186,3 +186,11 @@ test("a JSON body that does not parse is 400 invalid_turn", async () => {
     await edge.close();
   }
 });
+
+test("a run with no one to interview (the playground's phase verbs) tells the agent so; the pod's never does", async () => {
+  const note = "No interview is possible in this run";
+  const headless = await oneTurn({ headless: true }, { instruction: "/design" });
+  assert.match(JSON.stringify(headless.firstUser?.content), new RegExp(note));
+  const pod = await oneTurn({}, { instruction: "/design" });
+  assert.doesNotMatch(JSON.stringify(pod.firstUser?.content), new RegExp(note));
+});

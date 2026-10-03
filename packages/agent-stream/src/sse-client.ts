@@ -17,30 +17,25 @@
  */
 
 /**
- * The reference SSE consumer — exactly what a browser fold is. POSTs one turn and
- * yields each raw `StreamPart` frame until `[DONE]`, buffered across chunk
- * boundaries. The JSON payload is always a single physical line (`data: <json>`),
+ * The reference SSE consumer — exactly what a browser fold is. Starts one turn,
+ * streams it, and yields each raw `StreamPart` frame until `[DONE]`, buffered
+ * across chunk boundaries. The JSON payload is always a single physical line (`data: <json>`),
  * since the SDK `JSON.stringify`s each part (embedded newlines are escaped), but a
- * frame is a multi-line SSE record: the BFF prefixes an `id: <index>` line (for
- * `Last-Event-ID` resume) ahead of the `data:` line, and the agents service emits
- * the bare `data:` line. So a frame is parsed line-by-line — the `data:` line(s)
+ * frame is a multi-line SSE record: an `id: <index>` line (for `Last-Event-ID`
+ * resume) may precede the `data:` line. So a frame is parsed line-by-line — the `data:` line(s)
  * are the payload; `id:`/`event:` metadata and `: keep-alive` comment lines carry
  * no payload and are skipped.
  */
 
-import { SSE_DONE, type TurnRequest } from "./contracts/sse-events.js";
+import { SSE_DONE, type TurnAim } from "./contracts/sse-events.js";
 import type { StreamPart } from "./stream-types.js";
 
-// The turn-request body is the shared contract type (one definition, no drift).
-export type { TurnRequest };
-
-export interface StreamTurnOptions {
-  /**
-   * Extra request headers merged over `content-type`. The caller (BFF, eval,
-   * playground) supplies the M2M `Authorization: Bearer <jwt>` and the
-   * `X-Model-Key` here — this reader is transport-only and holds no creds.
-   */
-  headers?: Record<string, string>;
+/** A `/v1` turn start body (the design agent's `CreateTurnRequest`, JSON form). */
+export interface TurnStartBody {
+  /** Verbatim: `/<command>` lines are parsed by the design agent. */
+  instruction: string;
+  target?: string;
+  aim?: TurnAim;
 }
 
 /**
@@ -122,20 +117,58 @@ export async function* parseSseStream(
   }
 }
 
-export async function* streamTurn(
+/**
+ * Why `startAndStreamTurn` started no turn: the `/v1` refusal's status and its
+ * code (a problem's `code`, or a TurnConflict's, e.g. `conversation_rotated`).
+ */
+export class TurnRefusedError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    detail: string,
+  ) {
+    super(`turn refused: HTTP ${status} ${code}${detail ? `: ${detail}` : ""}`);
+    this.name = "TurnRefusedError";
+  }
+}
+
+async function refusal(res: Response): Promise<TurnRefusedError> {
+  const text = await res.text().catch(() => "");
+  let body: { code?: unknown; detail?: unknown; message?: unknown } = {};
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    // not JSON: the status alone names the refusal
+  }
+  const code = typeof body.code === "string" ? body.code : `http_${res.status}`;
+  const detail = typeof body.detail === "string" ? body.detail : typeof body.message === "string" ? body.message : "";
+  return new TurnRefusedError(res.status, code, detail);
+}
+
+/**
+ * One browser turn on the design agent's `/v1` edge (the console's flow, for
+ * server-side callers such as the playground and the evals): `POST
+ * /v1/projects/{project}/conversations/{conversationId}/turns`, then `GET
+ * /v1/projects/{project}/turns/{turnId}/stream?from=0`, yielding each part
+ * until `[DONE]`. A refused start throws `TurnRefusedError` and opens no
+ * stream. `headers` carries the caller's credential; this reader holds none.
+ */
+export async function* startAndStreamTurn(
   baseUrl: string,
-  id: string,
-  body: TurnRequest,
-  opts: StreamTurnOptions = {},
-): AsyncIterable<StreamPart> {
-  const res = await fetch(`${baseUrl}/conversations/${encodeURIComponent(id)}/turns`, {
+  project: string,
+  conversationId: string,
+  body: TurnStartBody,
+  headers: Record<string, string> = {},
+): AsyncGenerator<StreamPart, SseStreamEnd> {
+  const projectUrl = `${baseUrl}/v1/projects/${encodeURIComponent(project)}`;
+  const started = await fetch(`${projectUrl}/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...opts.headers },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`turn failed: HTTP ${res.status} ${text}`);
-  }
-  yield* parseSseStream(res.body);
+  if (started.status !== 202) throw await refusal(started);
+  const { turnId } = (await started.json()) as { turnId: string };
+  const res = await fetch(`${projectUrl}/turns/${encodeURIComponent(turnId)}/stream?from=0`, { headers });
+  if (!res.ok || !res.body) throw await refusal(res);
+  return yield* parseSseStream(res.body);
 }

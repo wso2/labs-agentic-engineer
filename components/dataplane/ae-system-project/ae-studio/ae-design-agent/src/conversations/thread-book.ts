@@ -22,7 +22,8 @@
  * replaces it and drops the old thread's messages, which are never listed or
  * served again. The book holds only the current id, its creator and the last
  * turn's context size; the messages stay behind the `ConversationStore` port.
- * Nothing outlives the process: after a pod roll every project starts fresh.
+ * Nothing outlives the process: after a pod roll every project starts fresh
+ * (a local run may `resume` a thread it kept).
  *
  * Auto-rotation ports `A/spec/context_rotation.go`: a send is admitted only
  * to the current thread, and a thread whose last measured context is past
@@ -74,6 +75,20 @@ export class ThreadBook {
   /** The project's current thread, opened (credited to `by`) when there is none. */
   current(project: string, by?: string): ThreadView {
     return view(this.threads.get(project) ?? this.open(project, by));
+  }
+
+  /**
+   * Adopt `conversationId` as the project's current thread when it has none:
+   * a local run (the playground) keeps its thread across processes, its
+   * messages behind a file store. The pod never calls this. A project that
+   * already has a thread keeps it.
+   */
+  resume(project: string, conversationId: string): ThreadView {
+    const open = this.threads.get(project);
+    if (open) return view(open);
+    const thread: Thread = { id: conversationId, createdAt: this.now() };
+    this.threads.set(project, thread);
+    return view(thread);
   }
 
   /** Replace the project's current thread with a fresh one credited to `by`. */

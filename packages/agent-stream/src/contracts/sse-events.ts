@@ -25,7 +25,7 @@
  * design agent's `/v1` edge), the eval, and the playground share ONE
  * definition of: the emitted event catalog, the payloads carried inside the
  * frames (`OpResult`, the per-tool `*Input` shapes), the reviewable `Change`
- * projection, and the turn-request body (`TurnRequest`).
+ * projection, and the turn facts (`TurnSpec`, `TurnAim`, `TurnAttachment`).
  *
  * Ownership: this module is the leaf source of truth for the wire, published by
  * the `@aep/agent-stream` package so the producer (the agents service SSE
@@ -304,8 +304,8 @@ export interface DeclarePlanInput {
 
 // --- Skills (progressive disclosure, ADR-0002) ------------------------------
 //
-// Skills are GUIDANCE, not code, and they never travel on the wire: the turn's
-// `WorkspaceRef.skillsRef` names an immutable `_skills` snapshot on the shared
+// Skills are GUIDANCE, not code, and they never travel on the wire: the
+// turn's skills snapshot (named by the project lookup) sits on the shared
 // mount, and the service reads the catalog (and, lazily, the bodies) from
 // there. The system prompt shows only a name+description catalog; the agent
 // pulls a body on demand via the `loadSkill` tool. The body enters context only
@@ -361,34 +361,6 @@ export type LoadSkillReferenceResult =
   | { ok: true; name: string; path: string; content: string }
   | { ok: false; name: string; path: string; error: string; available: string[] };
 
-// --- MCP discovery (caller-supplied, dependency-management migration Phase 5) -
-//
-// The org's dependency-discovery MCP server (aep-api
-// `internal/feature/dependencies/mcp_server.go`, mounted at `POST
-// /internal/v1/mcp`) lists read-only tools (list_external_resources,
-// get_external_resource_schema, list_org_endpoints,
-// list_platform_resource_types) so the main agent proposes `dependencies`
-// entries that reuse resources/endpoints already registered in the org instead
-// of inventing new names/shapes. Mirrors `WorkspaceRef`: the CALLER (the BFF)
-// resolves the endpoint and mints a short-lived, org-bound bearer token, and
-// pushes both in the turn payload; the service never reads either from its own
-// env. Omitted → no `tools/list` fetch and no discovery tools registered
-// (byte-identical to a turn without `mcp`).
-
-/** Caller-supplied MCP discovery endpoint for this turn. */
-export interface McpConfig {
-  /** The MCP JSON-RPC endpoint (aep-api's `/internal/v1/mcp`, org-bound). */
-  url: string;
-  /**
-   * Bearer token for that endpoint. Short-lived (minted per call, ~5 min TTL on
-   * the aep-api side, `AudienceMCP`/`aep-api-mcp`) — a turn that outlives it sees
-   * the discovery tools 401 partway through; `loadMcpTools` degrades that to "no
-   * tools" up front, but a mid-turn `tools/call` 401 surfaces as a failed tool
-   * call (best-effort, not retried).
-   */
-  token: string;
-}
-
 // --- The reviewable change (§7) ---------------------------------------------
 
 /**
@@ -408,33 +380,6 @@ export interface Change {
   /** addFile payload. */
   content?: string;
   result: OpResult;
-}
-
-// --- The turn request (the `POST /conversations/:id/turns` body) -------------
-
-/**
- * The shared-volume workspace reference (shared-workspace-volume, D9): IDs +
- * shas only — **no filesystem path ever crosses the boundary**. The
- * agents service derives
- * `$WORKSPACE_MOUNT_ROOT/repos/<org>/<proj>/<repoSlug>/snapshots/<ref>/` (and
- * the `_skills` analog) itself from these fields, so a hostile payload has no
- * path input to traverse: the tenancy fence is structural, not validated-in.
- */
-export interface WorkspaceRef {
-  /**
-   * The namespaced conversation id, `org_<orgId>--proj_<projectId>--<useCase>--<uuid>`.
-   * Must equal the URL `:id`; supplies the org/proj path segments and the org
-   * value asserted against the caller's `X-Org-Id` claim (the IDOR fence).
-   */
-  conversationId: string;
-  /** Per-dispatch uuid (turn attribution/tracing; never used in path derivation). */
-  turnId: string;
-  /** The repo directory segment (`git_repositories.repo_slug`; validated slug format). */
-  repoSlug: string;
-  /** 40-hex committed base sha — the turn reads `snapshots/<ref>/`. */
-  ref: string;
-  /** 40-hex `_skills` head sha — skills load from `_skills/org-skills/snapshots/<skillsRef>/`. */
-  skillsRef: string;
 }
 
 /**
@@ -525,33 +470,6 @@ export interface TurnAim {
 }
 
 export type TurnAimIntent = "change" | "discuss";
-
-/**
- * A turn's display record (#463): the raw client-sent instruction and the
- * acting user. `author` mirrors the console's live author shape
- * (`{id: email, displayName}`) so a rehydrated row is attributable — and
- * self-vs-teammate distinguishable — exactly like a live one; it is omitted
- * for M2M callers with no human identity.
- */
-export interface TurnJournal {
-  text: string;
-  author?: { id: string; displayName: string };
-  /**
-   * File NAMES attached to this message (#428) — never bytes. The display read
-   * replaces a user row's content with `text`, so without these a reload would
-   * show the agent discussing a document that appears nowhere in the thread.
-   * Names only: the journal is a DISPLAY record, and a chip is not a download.
-   */
-  attachments?: string[];
-  /**
-   * What this message was aimed at (#666). Journaled for the same reason as
-   * attachment names: the console renders it as a tag above the message, and
-   * without the journal a reload would leave "make this shorter" with nothing
-   * saying what "this" was. A record of the words but not the target is not a
-   * record of what happened.
-   */
-  anchor?: TurnAnchor;
-}
 
 /**
  * One chat attachment (#428): conversation-scoped model content the user
@@ -754,103 +672,6 @@ export interface PlanContextFile {
   /** Historical `tasks/<n>.md` name — kept so the model's mental layout is unchanged. */
   path: string;
   body: string;
-}
-
-/**
- * The turn-request body (D9/§12): the body carries a `WorkspaceRef` and the
- * service reads the file snapshot AND the skills from the shared read-only
- * mount — no file content or skill bodies ever cross the wire.
- *
- * `filesChangedExternally` flags an out-of-band edit so the server prepends a
- * CURRENT-STATE-authoritative note. The producer (server) validates an
- * untrusted body against this shape; the eval client (and the BFF) construct
- * it — one definition, no drift.
- */
-export interface TurnRequest {
-  /**
-   * What this turn is for. The agents service composes the instruction text
-   * from it — see `TurnSpec`.
-   */
-  turn: TurnSpec;
-  /**
-   * The spec-bundle path this turn should write to, when the caller pins one.
-   * The service renders it into the instruction; callers never format it.
-   */
-  target?: string;
-  /**
-   * The previous turn of this conversation FAILED (D20): its changes never
-   * reached git, though the conversation history claims they did. The service
-   * prepends the note that reconciles the two.
-   */
-  previousTurnFailed?: boolean;
-  /**
-   * No interview is possible in this run (the playground's headless phases):
-   * the service tells the agent to generate on stated assumptions rather than
-   * calling the question tools.
-   */
-  headless?: boolean;
-  /**
-   * The model this turn runs on: the organization's chosen model id, resolved
-   * by the caller per turn. Absent → the service's default (`AGENT_MODEL`),
-   * which is what a local caller such as the playground relies on.
-   */
-  model?: string;
-  /**
-   * The connection `model` is served from (aep-api resolves it per turn, the
-   * key rides `X-Model-Key`). Absent → Anthropic's own API with the key as
-   * `x-api-key`.
-   */
-  connection?: TurnConnection;
-  /** Where to read files + skills from the shared mount (IDs + shas only). */
-  workspace: WorkspaceRef;
-  filesChangedExternally?: boolean;
-  /**
-   * Caller-supplied MCP discovery endpoint for this turn (dependency-management
-   * migration Phase 5). Present → the turn loop fetches `tools/list` from it
-   * (best-effort) and registers each as a dynamic tool, merged under a
-   * shadow-guard so a discovered tool can never shadow a built-in one. Omitted →
-   * no fetch, no discovery tools (byte-identical to an mcp-free turn).
-   */
-  mcp?: McpConfig;
-  /**
-   * The turn's display record (#463): the raw client-sent instruction (exactly
-   * what the sender's UI rendered as the user bubble) plus a best-effort acting
-   * user. Journaled beside the transcript and served for user rows on the
-   * get-conversation read — never woven into the model prompt. Omitted (older
-   * callers, evals) → no journal entry; the read falls back to the raw stored
-   * message for that turn.
-   */
-  journal?: TurnJournal;
-  /**
-   * Give this turn a `web_search` tool (external-dependency-discovery #252) —
-   * lets the model verify a candidate external API/SDK actually exists before
-   * proposing a `dependencies` entry for it. The caller (BFF) sets this true
-   * under the SAME condition as `mcp` (design-generate or any collab
-   * room-scoped turn), but unlike `mcp` it needs no BFF-minted credential.
-   * Which tool it is follows the connection's `capabilities.webSearch`; with
-   * `none`, or omitted/false, the tool map is byte-identical to a turn
-   * without it.
-   */
-  webSearch?: boolean;
-  /**
-   * Chat attachments for THIS turn (#428) — bytes inline, see `TurnAttachment`.
-   * Absent/empty → the turn's messages are byte-identical to one built before
-   * this field existed.
-   */
-  attachments?: TurnAttachment[];
-  /**
-   * Where the person reading this turn's prose is sitting (#580). The right
-   * vocabulary belongs to the SURFACE, not to the skill: in a local run the
-   * user is standing in the repo, so `design.cell` is the right word; in the
-   * console it names nothing on screen. The agents service inlines the
-   * surface's narration skill into the system prompt — see
-   * `buildNarrationBlock`. Omitted → no narration policy, and the prompt is
-   * byte-identical to a turn without it (the playground's case).
-   *
-   * This is the one turn property that genuinely cannot be derived: it is who
-   * is asking, not what is being asked for.
-   */
-  surface?: Surface;
 }
 
 /**

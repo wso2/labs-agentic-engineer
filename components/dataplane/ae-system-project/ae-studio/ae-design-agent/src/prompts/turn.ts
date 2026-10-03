@@ -113,7 +113,7 @@ const AIM_RESOLVE_RULE =
 const AIM_FENCE_RULE =
   "The selection is the subject, not a cage: make the requested change at the named place. Touch other parts only where this change makes them wrong — consistency, never improvement — and leave everything else exactly as it is. If the right fix lies somewhere other than the selection, make it there and say so plainly in your reply.";
 
-/** No interview is possible (the playground's headless phases). */
+/** No interview is possible (`TurnStarterDeps.headless`: the playground's phase verbs). */
 const HEADLESS_NOTE =
   "\n\nNo interview is possible in this run: do not call ask_question or ask_questions. Generate on stated assumptions and mark each assumption as assumed in the document.";
 

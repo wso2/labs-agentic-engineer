@@ -168,3 +168,14 @@ test("context tokens noted for a thread that is no longer current are ignored", 
   threads.noteContextTokens("greeter", old.conversationId, 190_000);
   assert.equal(await threads.admit("greeter", fresh.conversationId, WINDOW), "ok");
 });
+
+test("resume adopts a kept thread id as the current thread; an open thread is never replaced", async () => {
+  const { store, threads } = book();
+  await store.save(conversation("kept-id"));
+  assert.equal(threads.resume("p", "kept-id").conversationId, "kept-id");
+  assert.equal(threads.current("p").conversationId, "kept-id");
+  assert.equal(await threads.admit("p", "kept-id", WINDOW), "ok");
+  assert.ok((await threads.history("p", "kept-id"))!.length > 0, "its history is served");
+  // Once the project has a thread, resume answers it and changes nothing.
+  assert.equal(threads.resume("p", "other-id").conversationId, "kept-id");
+});

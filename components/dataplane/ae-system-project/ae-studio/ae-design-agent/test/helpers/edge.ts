@@ -70,6 +70,8 @@ export interface EdgeOptions {
   /** The skills snapshot's files. */
   skillFiles?: Record<string, string>;
   keepAliveMs?: number;
+  /** The starter's `headless` (no one answers questions in this run). */
+  headless?: boolean;
   /** Replaces the local IdP's key set (an unreachable IdP). */
   jwks?: JWTVerifyGetKey;
 }
@@ -145,6 +147,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
     ...(opts.collabLocalUrl ? { room: localRoomJoiner({ url: opts.collabLocalUrl, orgHandle: ORG_HANDLE, tools }) } : {}),
     surface: "console",
     orgId: ORG_ID,
+    ...(opts.headless ? { headless: true } : {}),
   });
   const cfg = loadPodConfig({
     AE_ORG_ID: ORG_ID,

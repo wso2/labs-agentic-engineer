@@ -48,12 +48,10 @@ export type {
   LoadSkillReferenceInput,
   LoadSkillReferenceResult,
   Change,
-  TurnRequest,
   TurnSpec,
   TurnKind,
   PlanScope,
   PlanContextFile,
-  TurnJournal,
   TurnAttachment,
   TurnConnection,
   ModelCapabilities,
@@ -67,8 +65,6 @@ export type {
   TurnAnchorNode,
   TurnAim,
   TurnAimIntent,
-  WorkspaceRef,
-  McpConfig,
   ManifestPart,
   TurnUsage,
   Toolset,
@@ -241,8 +237,9 @@ export {
 } from "./json-schema.js";
 
 // --- The reference SSE reader ------------------------------------------------
-// `streamTurn` = fetch + parse (server-side callers: evals, playground).
+// `startAndStreamTurn` = start a `/v1` turn + stream it (server-side callers:
+// evals, playground).
 // `parseSseStream` = parse only, for a caller that owns its own fetch (the
 // console adds auth + a `{useCase,...}` body + pre-stream status mapping).
-export { streamTurn, parseSseStream } from "./sse-client.js";
-export type { SseStreamEnd, StreamTurnOptions } from "./sse-client.js";
+export { startAndStreamTurn, parseSseStream, TurnRefusedError } from "./sse-client.js";
+export type { SseStreamEnd, TurnStartBody } from "./sse-client.js";

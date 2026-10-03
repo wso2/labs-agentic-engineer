@@ -153,6 +153,12 @@ export interface TurnStarterDeps {
   surface?: Surface;
   /** The pod's org, named on provider log lines. */
   orgId?: string;
+  /**
+   * No one answers questions in this run, so every turn is told to generate
+   * on stated assumptions (the playground's one-shot phase verbs). The pod
+   * never sets it: a browser always has a person behind it.
+   */
+  headless?: boolean;
 }
 
 function shuttingDown(): TurnStartError {
@@ -467,6 +473,7 @@ export class TurnStarter {
       // ran on another snapshot than this one.
       previousTurnFailed: last?.status === "failed",
       ...(l.input.aim ? { aim: l.input.aim } : {}),
+      ...(this.deps.headless ? { headless: true } : {}),
     });
     const filesChangedExternally = last !== null && last.baseRef !== l.material.baseRef;
     try {
