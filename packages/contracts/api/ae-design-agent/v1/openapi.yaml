@@ -53,7 +53,8 @@ paths:
       operationId: rotate-conversation
       summary: Start a new conversation for the whole project
       description: Demotes the current thread and mints a fresh one. Rotation is
-        project-wide, every member sees the new thread.
+        project-wide, every member sees the new thread. Refused while a turn runs
+        for the project (its save would recreate the demoted thread).
       tags:
       - Conversations
       parameters:
@@ -71,6 +72,13 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: A turn is running for the project (TurnConflict turn_in_progress,
+            with activeTurnId).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
         '503':
           $ref: '#/components/responses/Unavailable'
   /projects/{projectName}/conversations/{conversationId}/messages:
@@ -244,6 +252,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ReplayTruncated'
         '503':
           $ref: '#/components/responses/Unavailable'
   /marketplace/conversations:
@@ -391,6 +401,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ReplayTruncated'
         '503':
           $ref: '#/components/responses/Unavailable'
 components:
@@ -426,15 +438,16 @@ components:
     From:
       name: from
       in: query
-      description: Replay from this absolute frame index (wins over Last-Event-ID)
+      description: Replay from this absolute frame index. Wins over Last-Event-ID.
       schema:
         type: integer
         minimum: 0
     LastEventId:
       name: Last-Event-ID
       in: header
-      description: SSE reconnect cursor, the last frame id the client saw. Opaque;
-        a non-numeric value is ignored (full replay). `from` wins when both are sent.
+      description: SSE reconnect cursor, the last frame id the client saw; the
+        stream resumes at the frame after it. Honoured only without `from` (`from`
+        wins when both are sent). A non-numeric value is ignored (full replay).
       schema:
         type: string
   responses:
@@ -457,6 +470,14 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/Problem'
+    ReplayTruncated:
+      description: 'The running turn overflowed its replay buffer, so a replay would
+        have a gap (problem code: replay_truncated). Attach again after the turn
+        ends.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
     TooLarge:
       description: 'The request body or an attachment is over its cap (problem code:
         payload_too_large)'
@@ -465,7 +486,9 @@ components:
           schema:
             $ref: '#/components/schemas/Problem'
     Unavailable:
-      description: 'Not serving right now (problem codes: idp_unavailable, shutting_down)'
+      description: 'Not serving right now (problem codes: idp_unavailable, shutting_down;
+        on a turn start also tools_unavailable, when the studio''s tools sidecar does
+        not answer the project or skills lookup)'
       headers:
         Retry-After:
           description: Seconds to wait before retrying.
@@ -570,6 +593,7 @@ components:
           type: string
         id:
           type: string
+          description: The sender's verified user token `sub`.
     TurnAnchor:
       type: object
       additionalProperties: false
@@ -745,8 +769,8 @@ components:
           description: The display line of the message that started the turn.
         authorId:
           type: string
-          description: Who started the turn, email-anchored; empty when no human
-            can be named.
+          description: Who started the turn, the verified user token's `sub`; empty
+            when no human can be named.
         authorDisplayName:
           type: string
         createdAt:
