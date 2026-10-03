@@ -154,6 +154,14 @@ test("a tailer that falls 1024 frames behind is dropped without a terminal", asy
   assert.notEqual(got.at(-1)?.part, "[DONE]");
 });
 
+test("dispose releases the stored frames", async () => {
+  const buf = new ReplayBuffer();
+  buf.append(text(0));
+  buf.end({ type: "turn-completed" });
+  buf.dispose();
+  assert.deepEqual(await take(buf.attach(0)), []);
+});
+
 test("dispose ends live tailers", async () => {
   const buf = new ReplayBuffer();
   buf.append(text(0));

@@ -123,9 +123,11 @@ export class ReplayBuffer {
     this.endTailers();
   }
 
-  /** End every live tailer (the owner dropped the buffer). */
+  /** End every live tailer and release the stored frames (the owner dropped the buffer). */
   dispose(): void {
     this.endTailers();
+    this.frames.length = 0;
+    this.bytes = 0;
   }
 
   /**

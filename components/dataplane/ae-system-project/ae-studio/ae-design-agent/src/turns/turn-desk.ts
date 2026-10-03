@@ -120,7 +120,6 @@ interface Turn {
   scopeKey: string;
   meta: TurnMeta;
   status: TurnStatus;
-  buffer: ReplayBuffer;
   controller: AbortController;
   capTimer: ReturnType<typeof setTimeout>;
   finishedAtMs?: number;
@@ -191,7 +190,6 @@ export class TurnDesk {
         authorDisplayName: meta.author?.name ?? "",
         createdAt: new Date(this.now()).toISOString(),
       },
-      buffer,
       controller,
       capTimer: setTimeout(() => {
         this.finish(turn, { status: "failed", reason: "stream-died", message: "the turn ran past the 30-minute cap", ...noRefs });
@@ -284,8 +282,9 @@ export class TurnDesk {
     this.prune();
 
     const end: TurnEndPart = reason ? { type: "turn-failed", reason, ...detail } : { type: "turn-completed" };
-    turn.buffer.end(end);
+    // The buffer lives only in `buffers`, so a retained status keeps no frames.
     const id = turn.status.turnId;
+    this.buffers.get(id)?.buffer.end(end);
     const expire = setTimeout(() => {
       this.buffers.get(id)?.buffer.dispose();
       this.buffers.delete(id);

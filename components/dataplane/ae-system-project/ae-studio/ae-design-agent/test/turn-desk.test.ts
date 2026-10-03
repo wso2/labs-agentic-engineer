@@ -18,6 +18,8 @@
 
 import { afterEach, beforeEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
+import { setFlagsFromString } from "node:v8";
+import { runInNewContext } from "node:vm";
 import type { ReplayFrame } from "../src/turns/replay-buffer.js";
 import {
   TURN_CAP_MS,
@@ -194,6 +196,34 @@ test("attach from N yields frames N.. exactly once; after retention it is gone",
   clock.advance(2);
   assert.equal(desk.attach(t.turnId, 0), null);
   assert.equal(desk.attach("4b4e1f1a-0000-4000-8000-000000000000", 0), null, "unknown turn");
+});
+
+/** A real collection (Node exposes `gc` once the flag is set). */
+async function collectGarbage(): Promise<void> {
+  setFlagsFromString("--expose-gc");
+  const gc = runInNewContext("gc") as () => void;
+  for (let i = 0; i < 3; i++) {
+    gc();
+    await new Promise((r) => setImmediate(r));
+  }
+}
+
+test("past buffer retention the frames are released; the status is still served", async () => {
+  const clock = fakeClock();
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  let frame: WeakRef<object> | undefined;
+  const t = desk.start(proj, meta(), async (emit) => {
+    const part = { type: "text-delta", id: "t", delta: "x".repeat(1024) };
+    frame = new WeakRef(part);
+    emit(part);
+    return done();
+  });
+  await settle();
+  clock.advance(120_001);
+  await collectGarbage();
+  assert.equal(frame?.deref(), undefined, "the desk no longer holds the turn's frames");
+  assert.equal(desk.attach(t.turnId, 0), null);
+  assert.equal(desk.status(t.turnId)?.status, "completed");
 });
 
 test("a watcher attached mid-turn tails live frames and ends with the terminal", async () => {
