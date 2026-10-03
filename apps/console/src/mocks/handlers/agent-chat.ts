@@ -49,7 +49,9 @@ import {
 } from "../../features/agent-chat/lib/chatAttachments";
 import { isAcceptedAttachment } from "../../lib/attachments";
 import {
+  activeKickoffTurn,
   activeTeammateTurn,
+  mockKickoffTurnId,
   multiuserHistory,
   teammateTurnHistory,
   type ChatScenario,
@@ -144,6 +146,15 @@ function rejectAttachments(files: File[]): string | null {
 function chatScenario(): ChatScenario | null {
   return localStorage.getItem("aep:mock:chat") as ChatScenario | null;
 }
+
+// The project scenario (`aep:mock:project`, see fixtures/project.ts) whose
+// kickoff is still running.
+function projectScenarioIsFresh(): boolean {
+  return localStorage.getItem("aep:mock:project") === "fresh";
+}
+
+// Projects whose mock kickoff has streamed to its end, and so no longer runs.
+const finishedKickoffs = new Set<string>();
 
 function sse(frames: unknown[]): Response {
   const encoder = new TextEncoder();
@@ -304,395 +315,29 @@ export const agentChatHandlers = [
   }),
 
   http.get(`${V1}/projects/:projectName/turns/active`, ({ params }) => {
+    const projectName = params.projectName as string;
     if (chatScenario() === "teammate-turn") {
-      const projectName = params.projectName as string;
       return HttpResponse.json(activeTeammateTurn(projectName, threadFor(projectName)));
+    }
+    // A fresh project's kickoff (#562) runs from creation until its stream
+    // has played once: the console's spec leg, workspace and rail read agent
+    // activity from here.
+    if (projectScenarioIsFresh() && !finishedKickoffs.has(projectName)) {
+      const kickoff = activeKickoffTurn(projectName, threadFor(projectName));
+      turnInstruction.set(kickoff.turnId, kickoff.instruction);
+      return HttpResponse.json(kickoff);
     }
     return new HttpResponse(null, { status: 204 });
   }),
 
   http.get(`${V1}/projects/:projectName/turns/:turnId/stream`, ({ params }) => {
+    const projectName = String(params.projectName);
     const turnId = String(params.turnId);
-    const instruction = turnInstruction.get(turnId) ?? "";
-    const failing = instruction.includes("fail");
-    // The /design run declares its plan (#576) — and owns its own failure
-    // variant ("/design fail" dies mid-write, leaving the wreckage), so it is
-    // checked before the generic failing stream.
-    if (instruction.trim().startsWith("/design")) {
-      return sse(designPlanFrames(turnId, failing));
-    }
-    if (instruction.includes("usage limit")) {
-      const resetAt = new Date(Date.now() + 10 * 60_000).toISOString();
-      const host = "ollama.com";
-      return sse([
-        { type: "error", code: "provider_limit", error: `${host}'s usage limit is reached.`, host, resetAt },
-        { type: "turn-failed", reason: "agent-error", code: "provider_limit", host, resetAt, message: "429 Too Many Requests" },
-      ]);
-    }
-    if (failing) {
-      return sse([
-        { type: "text-delta", delta: "Let me try that…" },
-        { type: "turn-failed", message: "Mock turn failure (instruction contained 'fail')." },
-      ]);
-    }
-    const registerFrames = registerChatFrames(
-      instruction,
-      String(params.projectName),
-      turnId,
-    );
-    if (registerFrames) {
-      return sse(registerFrames);
-    }
-    // Grilling scenarios (ADR-0012 / #270) — keyed on the /start flow command
-    // or a typed trigger, never on a mere mention of "grill" in an edit
-    // instruction (the retired GRILLING_DIRECTIVE died with #373).
-    // An answer turn (instruction begins with the shared answer prefix) falls
-    // through to the normal generation stream below.
-    const isAnswer =
-      instruction.startsWith(ANSWER_PREFIX) || instruction.startsWith(ANSWERS_PREFIX);
-    if (!isAnswer) {
-      const grillSingle = instruction.trim().startsWith("/start") || /\bgrill me\b/i.test(instruction);
-      const grillBatch = /\ball at once\b|\bask me everything\b/i.test(instruction);
-      if (grillBatch) {
-        // A full interview — long enough to exercise the form's scrolling.
-        const input = {
-          questions: [
-            {
-              question: "Who is the primary user of this app?",
-              detail:
-                "This shapes onboarding, permissions, and how much admin tooling the spec needs — it's the single biggest scope decision, so I'm asking it first.",
-              options: [
-                {
-                  label: "Individual consumers",
-                  description:
-                    "People sign themselves up and get a personal workspace. Onboarding stays lightweight (email or social login, no org setup), but every account manages itself — there is no central admin who can provision or remove users.",
-                  recommended: true,
-                },
-                {
-                  label: "Internal teams",
-                  description:
-                    "An organization rolls the app out to its staff. That means SSO, org-managed access, and an admin who controls membership — more setup work up front, but access control and offboarding come for free.",
-                },
-                {
-                  label: "Both from day one",
-                  description:
-                    "Two onboarding paths, two permission models, and pricing that has to serve both. Roughly doubles the v1 scope; usually only worth it when both audiences are already committed.",
-                },
-                {
-                  label: "Something else",
-                  description: "Describe a different primary user in the text field below.",
-                  freeText: true,
-                },
-              ],
-            },
-            {
-              question: "Which platform matters most first?",
-              detail:
-                "The first platform decides the UI stack and review/release process; the others can follow later without rework if we pick one now.",
-              options: [
-                {
-                  label: "Web",
-                  description:
-                    "Ships fastest: one responsive app, instant updates, no store review. Works on phones through the browser, though without push notifications or offline polish.",
-                  recommended: true,
-                },
-                {
-                  label: "Mobile",
-                  description:
-                    "Native iOS/Android first. Best for push notifications, camera/location use, and on-the-go sessions — but store review slows iteration and it needs its own release pipeline.",
-                },
-                {
-                  label: "Both",
-                  description:
-                    "Web and mobile in parallel. Every feature is designed, built, and tested twice, so v1 takes noticeably longer — choose this only if mobile-only users are core to launch.",
-                },
-              ],
-            },
-            {
-              question: "Which capabilities are in scope for v1?",
-              detail:
-                "Everything selected here becomes a section of the requirements spec; anything unselected is explicitly deferred so the first release stays small.",
-              multiSelect: true,
-              options: [
-                {
-                  label: "Accounts",
-                  description:
-                    "User registration, profiles, and session handling. Almost every other capability builds on this, so leaving it out only makes sense for a fully anonymous tool.",
-                },
-                {
-                  label: "Payments",
-                  description:
-                    "Checkout, receipts, and a payment provider integration (e.g. Stripe). Brings compliance and refund flows with it — the most expensive item on this list.",
-                },
-                {
-                  label: "Notifications",
-                  description:
-                    "Email or in-app alerts when something needs the user's attention. Cheap to add once accounts exist; pointless before there are events worth notifying about.",
-                },
-                {
-                  label: "Search",
-                  description:
-                    "Full-text search across the app's content. Valuable once data volume grows, but v1 can usually ship with simple filtering instead.",
-                },
-              ],
-            },
-            {
-              question: "How should users sign in?",
-              detail:
-                "Sign-in method affects both the signup conversion rate and how much credential handling the backend has to own.",
-              options: [
-                {
-                  label: "Email + password",
-                  description:
-                    "Works for everyone with no third-party dependency, but we own password reset, breach protection, and rate limiting ourselves.",
-                },
-                {
-                  label: "Social login",
-                  description:
-                    "Sign in with Google/GitHub — no passwords to store and the fastest signup flow. Users without those accounts are locked out unless we add email later.",
-                  recommended: true,
-                },
-                {
-                  label: "SSO only",
-                  description:
-                    "Enterprise identity providers (SAML/OIDC) only. Right when an organization mandates it; wrong for self-serve consumers, who can't sign up at all.",
-                },
-              ],
-            },
-            {
-              question: "What is the pricing model?",
-              detail:
-                "Pricing decides whether billing infrastructure is in the v1 spec at all, and how accounts and limits are modeled.",
-              options: [
-                {
-                  label: "Free",
-                  description:
-                    "No billing code in v1 — the whole payments surface disappears from scope. Monetization can be layered on later once usage proves out.",
-                  recommended: true,
-                },
-                {
-                  label: "Subscription",
-                  description:
-                    "Recurring plans with trials, upgrades, and dunning. Predictable revenue, but it drags billing, plan gating, and invoicing into the first release.",
-                },
-                {
-                  label: "One-off purchase",
-                  description:
-                    "Pay once per item or unlock. Simpler than subscriptions, but still needs checkout, receipts, and refund handling in v1.",
-                },
-              ],
-            },
-            {
-              question: "Where does the data live?",
-              detail:
-                "The storage choice fixes the backup, migration, and multi-tenancy story — it's hard to reverse once real data exists.",
-              options: [
-                {
-                  label: "Managed Postgres",
-                  description:
-                    "One relational database run by a cloud provider. Boring, well-understood, easy to hire for, and scales past v1 without a rewrite.",
-                  recommended: true,
-                },
-                {
-                  label: "SQLite per tenant",
-                  description:
-                    "Each customer gets an isolated file database. Great isolation and trivially cheap at small scale, but cross-tenant reporting and migrations get harder.",
-                },
-                {
-                  label: "Third-party BaaS",
-                  description:
-                    "Firebase/Supabase-style hosted backend. Fastest to a demo, but data model and auth become coupled to the vendor — migrating away later is real work.",
-                },
-              ],
-            },
-            {
-              question: "Which integrations matter?",
-              detail:
-                "Each integration adds an external dependency to the spec — credentials, webhooks, and failure handling — so only pick the ones launch actually needs.",
-              multiSelect: true,
-              options: [
-                {
-                  label: "Slack",
-                  description: "Post updates into channels. Needs a Slack app + OAuth install flow.",
-                },
-                {
-                  label: "Email",
-                  description: "Transactional mail (invites, digests) through a provider like SES or Resend.",
-                },
-                {
-                  label: "Calendar",
-                  description: "Create/read Google or Outlook events; the heaviest of the three to get right.",
-                },
-                {
-                  label: "None yet",
-                  description:
-                    "Ship self-contained and add integrations when users ask — keeps v1 free of external moving parts.",
-                  recommended: true,
-                },
-              ],
-            },
-            {
-              question: "What is the launch timeline?",
-              detail:
-                "The timeline calibrates how aggressively the spec cuts scope — a shorter runway means fewer capabilities make the v1 list.",
-              options: [
-                {
-                  label: "2 weeks",
-                  description: "A demo-quality slice: one happy path, mocked edges, no polish. Good for validating interest only.",
-                },
-                {
-                  label: "1 month",
-                  description:
-                    "A real but minimal product: the core flow production-ready, secondary features stubbed or deferred.",
-                  recommended: true,
-                },
-                {
-                  label: "A quarter",
-                  description:
-                    "Room for the full selected scope plus polish — at the cost of three months before any user feedback arrives.",
-                },
-              ],
-            },
-            {
-              question: "How important is offline support?",
-              detail:
-                "Offline changes the data architecture fundamentally (local store + sync + conflict resolution), so it must be decided before the design phase, not after.",
-              options: [
-                {
-                  label: "Not needed",
-                  description: "The app assumes a connection; a dropped network just shows a retry state. Simplest by far.",
-                  recommended: true,
-                },
-                {
-                  label: "Nice to have",
-                  description:
-                    "Read-only caching of recently viewed data — useful on flaky connections without full sync complexity.",
-                },
-                {
-                  label: "Critical",
-                  description:
-                    "Full offline editing with background sync and conflict resolution. Roughly doubles the data-layer work; only pick if users routinely work disconnected.",
-                },
-              ],
-            },
-            {
-              question: "What should the app be called?",
-              detail:
-                "The name lands in the spec title, the repo, and the UI shell — there are no sensible presets, so type whatever you have in mind.",
-              options: [],
-            },
-            {
-              question: "Who administers the workspace?",
-              detail:
-                "The admin model decides whether v1 needs a roles/permissions system or can treat every user the same.",
-              options: [
-                {
-                  label: "A single owner",
-                  description:
-                    "The creator holds all admin rights — invite, remove, configure. No roles UI needed in v1.",
-                  recommended: true,
-                },
-                {
-                  label: "Multiple admins",
-                  description:
-                    "Owners can grant admin to others, which means a roles model, permission checks, and an audit story.",
-                },
-                {
-                  label: "No admin concept",
-                  description:
-                    "Every member is equal. Fine for small trusted groups; risky once anyone can delete shared data.",
-                },
-              ],
-            },
-          ],
-        };
-        // Stream the batch as chunked tool-input deltas (matching the real
-        // provider) so mock mode exercises the progressive question rendering
-        // (#270 latency): questions appear one by one, ~250ms per chunk.
-        const inputJson = JSON.stringify(input);
-        const CHUNK = 180;
-        const deltas = [];
-        for (let i = 0; i < inputJson.length; i += CHUNK) {
-          deltas.push({ type: "tool-input-delta", id: `qs-${turnId}`, delta: inputJson.slice(i, i + CHUNK) });
-        }
-        return sse([
-          { type: "text-delta", delta: "Let me pin the idea down — a few questions:" },
-          { type: "tool-input-start", id: `qs-${turnId}`, toolName: "ask_questions" },
-          ...deltas,
-          { type: "tool-input-end", id: `qs-${turnId}` },
-          { type: "tool-call", toolCallId: `qs-${turnId}`, toolName: "ask_questions", input },
-          {
-            type: "tool-result",
-            toolName: "ask_questions",
-            toolCallId: `qs-${turnId}`,
-            input,
-            output: { status: "awaiting_user_response" },
-          },
-          { type: "turn-completed" },
-        ]);
-      }
-      if (grillSingle) {
-        const input = {
-          question: "Who is the primary user of this app?",
-          detail:
-            "This shapes onboarding, permissions, and how much admin tooling the spec needs — it's the single biggest scope decision, so I'm asking it first.",
-          options: [
-            {
-              label: "Individual consumers",
-              description:
-                "People sign themselves up and get a personal workspace. Onboarding stays lightweight (email or social login, no org setup), but every account manages itself — there is no central admin who can provision or remove users.",
-              recommended: true,
-            },
-            {
-              label: "Internal teams",
-              description:
-                "An organization rolls the app out to its staff. That means SSO, org-managed access, and an admin who controls membership — more setup work up front, but access control and offboarding come for free.",
-            },
-            {
-              label: "Both from day one",
-              description:
-                "Two onboarding paths, two permission models, and pricing that has to serve both. Roughly doubles the v1 scope; usually only worth it when both audiences are already committed.",
-            },
-          ],
-          multiSelect: false,
-        };
-        return sse([
-          { type: "text-delta", delta: "Before I write anything, let me pin the idea down." },
-          { type: "tool-call", toolCallId: `q-${turnId}`, toolName: "ask_question", input },
-          {
-            type: "tool-result",
-            toolName: "ask_question",
-            toolCallId: `q-${turnId}`,
-            input,
-            output: { status: "awaiting_user_response", question: input.question },
-          },
-          { type: "turn-completed" },
-        ]);
-      }
-    }
-    return sse([
-      { type: "text-delta", delta: "Joining the spec workspace… " },
-      { type: "text-delta", delta: "I'll create the requirements now." },
-      // Streamed tool input: the panel shows "Creating prd.md" as soon
-      // as the path resolves, then flips to "Created" on the tool-result.
-      { type: "tool-input-start", id: "tc-1", toolName: "addFile" },
-      {
-        type: "tool-input-delta",
-        id: "tc-1",
-        delta: '{"path":"specs/requirements/prd.md","content":"# Requirements',
-      },
-      { type: "tool-input-delta", id: "tc-1", delta: '\\n\\n## Overview\\nA simple todo app.' },
-      { type: "tool-input-end", id: "tc-1" },
-      {
-        type: "tool-result",
-        toolName: "addFile",
-        toolCallId: "tc-1",
-        input: { path: "specs/requirements/prd.md" },
-        output: { ok: true, op: "add", path: "specs/requirements/prd.md", status: "applied" },
-      },
-      { type: "text-delta", delta: "\n\nDone — the change is live in the shared doc." },
-      { type: "turn-completed" },
-    ]);
+    const response = streamTurn(projectName, turnId);
+    // The kickoff stops running once its stream has played to the end.
+    return turnId === mockKickoffTurnId(projectName)
+      ? onStreamEnd(response, () => finishedKickoffs.add(projectName))
+      : response;
   }),
 
   http.get(`${V1}/projects/:projectName/turns/:turnId`, ({ params }) => {
@@ -714,3 +359,400 @@ export const agentChatHandlers = [
     } satisfies TurnStatus);
   }),
 ];
+
+/** The scripted SSE stream of one mock turn, chosen by the line that started it. */
+function streamTurn(projectName: string, turnId: string): Response {
+  const instruction = turnInstruction.get(turnId) ?? "";
+  const failing = instruction.includes("fail");
+  // The /design run declares its plan (#576) — and owns its own failure
+  // variant ("/design fail" dies mid-write, leaving the wreckage), so it is
+  // checked before the generic failing stream.
+  if (instruction.trim().startsWith("/design")) {
+    return sse(designPlanFrames(turnId, failing));
+  }
+  if (instruction.includes("usage limit")) {
+    const resetAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const host = "ollama.com";
+    return sse([
+      { type: "error", code: "provider_limit", error: `${host}'s usage limit is reached.`, host, resetAt },
+      { type: "turn-failed", reason: "agent-error", code: "provider_limit", host, resetAt, message: "429 Too Many Requests" },
+    ]);
+  }
+  if (failing) {
+    return sse([
+      { type: "text-delta", delta: "Let me try that…" },
+      { type: "turn-failed", message: "Mock turn failure (instruction contained 'fail')." },
+    ]);
+  }
+  const registerFrames = registerChatFrames(
+    instruction,
+    projectName,
+    turnId,
+  );
+  if (registerFrames) {
+    return sse(registerFrames);
+  }
+  // Grilling scenarios (ADR-0012 / #270) — keyed on the /start flow command
+  // or a typed trigger, never on a mere mention of "grill" in an edit
+  // instruction (the retired GRILLING_DIRECTIVE died with #373).
+  // An answer turn (instruction begins with the shared answer prefix) falls
+  // through to the normal generation stream below.
+  const isAnswer =
+    instruction.startsWith(ANSWER_PREFIX) || instruction.startsWith(ANSWERS_PREFIX);
+  if (!isAnswer) {
+    const grillSingle = instruction.trim().startsWith("/start") || /\bgrill me\b/i.test(instruction);
+    const grillBatch = /\ball at once\b|\bask me everything\b/i.test(instruction);
+    if (grillBatch) {
+      // A full interview — long enough to exercise the form's scrolling.
+      const input = {
+        questions: [
+          {
+            question: "Who is the primary user of this app?",
+            detail:
+              "This shapes onboarding, permissions, and how much admin tooling the spec needs — it's the single biggest scope decision, so I'm asking it first.",
+            options: [
+              {
+                label: "Individual consumers",
+                description:
+                  "People sign themselves up and get a personal workspace. Onboarding stays lightweight (email or social login, no org setup), but every account manages itself — there is no central admin who can provision or remove users.",
+                recommended: true,
+              },
+              {
+                label: "Internal teams",
+                description:
+                  "An organization rolls the app out to its staff. That means SSO, org-managed access, and an admin who controls membership — more setup work up front, but access control and offboarding come for free.",
+              },
+              {
+                label: "Both from day one",
+                description:
+                  "Two onboarding paths, two permission models, and pricing that has to serve both. Roughly doubles the v1 scope; usually only worth it when both audiences are already committed.",
+              },
+              {
+                label: "Something else",
+                description: "Describe a different primary user in the text field below.",
+                freeText: true,
+              },
+            ],
+          },
+          {
+            question: "Which platform matters most first?",
+            detail:
+              "The first platform decides the UI stack and review/release process; the others can follow later without rework if we pick one now.",
+            options: [
+              {
+                label: "Web",
+                description:
+                  "Ships fastest: one responsive app, instant updates, no store review. Works on phones through the browser, though without push notifications or offline polish.",
+                recommended: true,
+              },
+              {
+                label: "Mobile",
+                description:
+                  "Native iOS/Android first. Best for push notifications, camera/location use, and on-the-go sessions — but store review slows iteration and it needs its own release pipeline.",
+              },
+              {
+                label: "Both",
+                description:
+                  "Web and mobile in parallel. Every feature is designed, built, and tested twice, so v1 takes noticeably longer — choose this only if mobile-only users are core to launch.",
+              },
+            ],
+          },
+          {
+            question: "Which capabilities are in scope for v1?",
+            detail:
+              "Everything selected here becomes a section of the requirements spec; anything unselected is explicitly deferred so the first release stays small.",
+            multiSelect: true,
+            options: [
+              {
+                label: "Accounts",
+                description:
+                  "User registration, profiles, and session handling. Almost every other capability builds on this, so leaving it out only makes sense for a fully anonymous tool.",
+              },
+              {
+                label: "Payments",
+                description:
+                  "Checkout, receipts, and a payment provider integration (e.g. Stripe). Brings compliance and refund flows with it — the most expensive item on this list.",
+              },
+              {
+                label: "Notifications",
+                description:
+                  "Email or in-app alerts when something needs the user's attention. Cheap to add once accounts exist; pointless before there are events worth notifying about.",
+              },
+              {
+                label: "Search",
+                description:
+                  "Full-text search across the app's content. Valuable once data volume grows, but v1 can usually ship with simple filtering instead.",
+              },
+            ],
+          },
+          {
+            question: "How should users sign in?",
+            detail:
+              "Sign-in method affects both the signup conversion rate and how much credential handling the backend has to own.",
+            options: [
+              {
+                label: "Email + password",
+                description:
+                  "Works for everyone with no third-party dependency, but we own password reset, breach protection, and rate limiting ourselves.",
+              },
+              {
+                label: "Social login",
+                description:
+                  "Sign in with Google/GitHub — no passwords to store and the fastest signup flow. Users without those accounts are locked out unless we add email later.",
+                recommended: true,
+              },
+              {
+                label: "SSO only",
+                description:
+                  "Enterprise identity providers (SAML/OIDC) only. Right when an organization mandates it; wrong for self-serve consumers, who can't sign up at all.",
+              },
+            ],
+          },
+          {
+            question: "What is the pricing model?",
+            detail:
+              "Pricing decides whether billing infrastructure is in the v1 spec at all, and how accounts and limits are modeled.",
+            options: [
+              {
+                label: "Free",
+                description:
+                  "No billing code in v1 — the whole payments surface disappears from scope. Monetization can be layered on later once usage proves out.",
+                recommended: true,
+              },
+              {
+                label: "Subscription",
+                description:
+                  "Recurring plans with trials, upgrades, and dunning. Predictable revenue, but it drags billing, plan gating, and invoicing into the first release.",
+              },
+              {
+                label: "One-off purchase",
+                description:
+                  "Pay once per item or unlock. Simpler than subscriptions, but still needs checkout, receipts, and refund handling in v1.",
+              },
+            ],
+          },
+          {
+            question: "Where does the data live?",
+            detail:
+              "The storage choice fixes the backup, migration, and multi-tenancy story — it's hard to reverse once real data exists.",
+            options: [
+              {
+                label: "Managed Postgres",
+                description:
+                  "One relational database run by a cloud provider. Boring, well-understood, easy to hire for, and scales past v1 without a rewrite.",
+                recommended: true,
+              },
+              {
+                label: "SQLite per tenant",
+                description:
+                  "Each customer gets an isolated file database. Great isolation and trivially cheap at small scale, but cross-tenant reporting and migrations get harder.",
+              },
+              {
+                label: "Third-party BaaS",
+                description:
+                  "Firebase/Supabase-style hosted backend. Fastest to a demo, but data model and auth become coupled to the vendor — migrating away later is real work.",
+              },
+            ],
+          },
+          {
+            question: "Which integrations matter?",
+            detail:
+              "Each integration adds an external dependency to the spec — credentials, webhooks, and failure handling — so only pick the ones launch actually needs.",
+            multiSelect: true,
+            options: [
+              {
+                label: "Slack",
+                description: "Post updates into channels. Needs a Slack app + OAuth install flow.",
+              },
+              {
+                label: "Email",
+                description: "Transactional mail (invites, digests) through a provider like SES or Resend.",
+              },
+              {
+                label: "Calendar",
+                description: "Create/read Google or Outlook events; the heaviest of the three to get right.",
+              },
+              {
+                label: "None yet",
+                description:
+                  "Ship self-contained and add integrations when users ask — keeps v1 free of external moving parts.",
+                recommended: true,
+              },
+            ],
+          },
+          {
+            question: "What is the launch timeline?",
+            detail:
+              "The timeline calibrates how aggressively the spec cuts scope — a shorter runway means fewer capabilities make the v1 list.",
+            options: [
+              {
+                label: "2 weeks",
+                description: "A demo-quality slice: one happy path, mocked edges, no polish. Good for validating interest only.",
+              },
+              {
+                label: "1 month",
+                description:
+                  "A real but minimal product: the core flow production-ready, secondary features stubbed or deferred.",
+                recommended: true,
+              },
+              {
+                label: "A quarter",
+                description:
+                  "Room for the full selected scope plus polish — at the cost of three months before any user feedback arrives.",
+              },
+            ],
+          },
+          {
+            question: "How important is offline support?",
+            detail:
+              "Offline changes the data architecture fundamentally (local store + sync + conflict resolution), so it must be decided before the design phase, not after.",
+            options: [
+              {
+                label: "Not needed",
+                description: "The app assumes a connection; a dropped network just shows a retry state. Simplest by far.",
+                recommended: true,
+              },
+              {
+                label: "Nice to have",
+                description:
+                  "Read-only caching of recently viewed data — useful on flaky connections without full sync complexity.",
+              },
+              {
+                label: "Critical",
+                description:
+                  "Full offline editing with background sync and conflict resolution. Roughly doubles the data-layer work; only pick if users routinely work disconnected.",
+              },
+            ],
+          },
+          {
+            question: "What should the app be called?",
+            detail:
+              "The name lands in the spec title, the repo, and the UI shell — there are no sensible presets, so type whatever you have in mind.",
+            options: [],
+          },
+          {
+            question: "Who administers the workspace?",
+            detail:
+              "The admin model decides whether v1 needs a roles/permissions system or can treat every user the same.",
+            options: [
+              {
+                label: "A single owner",
+                description:
+                  "The creator holds all admin rights — invite, remove, configure. No roles UI needed in v1.",
+                recommended: true,
+              },
+              {
+                label: "Multiple admins",
+                description:
+                  "Owners can grant admin to others, which means a roles model, permission checks, and an audit story.",
+              },
+              {
+                label: "No admin concept",
+                description:
+                  "Every member is equal. Fine for small trusted groups; risky once anyone can delete shared data.",
+              },
+            ],
+          },
+        ],
+      };
+      // Stream the batch as chunked tool-input deltas (matching the real
+      // provider) so mock mode exercises the progressive question rendering
+      // (#270 latency): questions appear one by one, ~250ms per chunk.
+      const inputJson = JSON.stringify(input);
+      const CHUNK = 180;
+      const deltas = [];
+      for (let i = 0; i < inputJson.length; i += CHUNK) {
+        deltas.push({ type: "tool-input-delta", id: `qs-${turnId}`, delta: inputJson.slice(i, i + CHUNK) });
+      }
+      return sse([
+        { type: "text-delta", delta: "Let me pin the idea down — a few questions:" },
+        { type: "tool-input-start", id: `qs-${turnId}`, toolName: "ask_questions" },
+        ...deltas,
+        { type: "tool-input-end", id: `qs-${turnId}` },
+        { type: "tool-call", toolCallId: `qs-${turnId}`, toolName: "ask_questions", input },
+        {
+          type: "tool-result",
+          toolName: "ask_questions",
+          toolCallId: `qs-${turnId}`,
+          input,
+          output: { status: "awaiting_user_response" },
+        },
+        { type: "turn-completed" },
+      ]);
+    }
+    if (grillSingle) {
+      const input = {
+        question: "Who is the primary user of this app?",
+        detail:
+          "This shapes onboarding, permissions, and how much admin tooling the spec needs — it's the single biggest scope decision, so I'm asking it first.",
+        options: [
+          {
+            label: "Individual consumers",
+            description:
+              "People sign themselves up and get a personal workspace. Onboarding stays lightweight (email or social login, no org setup), but every account manages itself — there is no central admin who can provision or remove users.",
+            recommended: true,
+          },
+          {
+            label: "Internal teams",
+            description:
+              "An organization rolls the app out to its staff. That means SSO, org-managed access, and an admin who controls membership — more setup work up front, but access control and offboarding come for free.",
+          },
+          {
+            label: "Both from day one",
+            description:
+              "Two onboarding paths, two permission models, and pricing that has to serve both. Roughly doubles the v1 scope; usually only worth it when both audiences are already committed.",
+          },
+        ],
+        multiSelect: false,
+      };
+      return sse([
+        { type: "text-delta", delta: "Before I write anything, let me pin the idea down." },
+        { type: "tool-call", toolCallId: `q-${turnId}`, toolName: "ask_question", input },
+        {
+          type: "tool-result",
+          toolName: "ask_question",
+          toolCallId: `q-${turnId}`,
+          input,
+          output: { status: "awaiting_user_response", question: input.question },
+        },
+        { type: "turn-completed" },
+      ]);
+    }
+  }
+  return sse([
+    { type: "text-delta", delta: "Joining the spec workspace… " },
+    { type: "text-delta", delta: "I'll create the requirements now." },
+    // Streamed tool input: the panel shows "Creating prd.md" as soon
+    // as the path resolves, then flips to "Created" on the tool-result.
+    { type: "tool-input-start", id: "tc-1", toolName: "addFile" },
+    {
+      type: "tool-input-delta",
+      id: "tc-1",
+      delta: '{"path":"specs/requirements/prd.md","content":"# Requirements',
+    },
+    { type: "tool-input-delta", id: "tc-1", delta: '\\n\\n## Overview\\nA simple todo app.' },
+    { type: "tool-input-end", id: "tc-1" },
+    {
+      type: "tool-result",
+      toolName: "addFile",
+      toolCallId: "tc-1",
+      input: { path: "specs/requirements/prd.md" },
+      output: { ok: true, op: "add", path: "specs/requirements/prd.md", status: "applied" },
+    },
+    { type: "text-delta", delta: "\n\nDone — the change is live in the shared doc." },
+    { type: "turn-completed" },
+  ]);
+}
+
+/** The same response, calling `ended` once its body has been read to the end. */
+function onStreamEnd(response: Response, ended: () => void): Response {
+  if (!response.body) return response;
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      flush() {
+        ended();
+      },
+    }),
+  );
+  return new HttpResponse(body, { headers: response.headers });
+}

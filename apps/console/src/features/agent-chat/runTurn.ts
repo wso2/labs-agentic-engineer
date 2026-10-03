@@ -156,7 +156,7 @@ function settleFromTurnStatus(
  * Resolves true when this view saw the turn end (and settled its bubble),
  * false when it detached or could not learn the end — the caller's cue that
  * its log may hold a turn that is not settled. Never rejects for a stream
- * failure.
+ * failure; an error thrown while folding a frame (a console bug) rejects.
  */
 export async function attachAndFoldTurn(
   chatKey: string,
@@ -442,18 +442,25 @@ export async function attachAndFoldTurn(
     let stalls = 0;
     for (;;) {
       let delivered = 0;
+      // Set only while a frame is being folded: an error thrown then is a bug
+      // in the fold, not a broken stream, and must never be retried past.
+      let folding = false;
       try {
         const body = await openTurnStream(projectName, turnId, from, signal);
         for await (const frame of parseSseFrames(body)) {
           if (signal.aborted) return false;
+          if (frame.id !== undefined && frame.id < from) continue; // already folded before the drop
+          folding = true;
+          fold(frame.part);
+          folding = false;
+          // Past this frame only once it is folded.
           if (frame.id === undefined) resumable = false;
-          else if (frame.id < from) continue; // already folded before the drop
           else from = frame.id + 1;
           delivered += 1;
-          fold(frame.part);
         }
       } catch (err) {
         if (signal.aborted) return false; // unmount/navigation — not a failure
+        if (folding) throw err;
         if (isTurnStreamReplayTruncated(err)) {
           if (await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion)) {
             return !signal.aborted;
@@ -472,8 +479,9 @@ export async function attachAndFoldTurn(
           await sleep(attachBackoffMs(notFound - 1), signal);
           continue;
         }
-        // Any other refusal or no answer: the pod may be restarting. It
-        // counts as an attach that delivered nothing.
+        // Any other refusal, no answer, or the stream breaking mid-read: the
+        // pod may be restarting. It counts as an attach that delivered nothing
+        // new past `from`.
       }
       if (sawTerminal || !resumable) break;
       stalls = delivered > 0 ? 0 : stalls + 1;

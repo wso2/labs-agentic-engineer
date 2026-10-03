@@ -44,10 +44,12 @@ vi.mock("./api/turns.js", async (importOriginal) => {
 // tool-input and exercise the file-card lifecycle; it returns null by default,
 // which is "no path yet" — no card.
 let queuedParts: StreamPart[] = [];
+// When set, the mocked frames carry their buffer index as the pod's would.
+let framesCarryIds = false;
 const mockReadToolInputPath = vi.fn<(buf: string) => string | null>(() => null);
 vi.mock("@aep/agent-stream", () => ({
   parseSseFrames: async function* () {
-    for (const part of queuedParts) yield { part };
+    for (const [id, part] of queuedParts.entries()) yield framesCarryIds ? { id, part } : { part };
   },
   // `path` is read off the frame when a test supplies one, so a test can settle
   // a SPECIFIC file; the fixed default keeps the older card tests unchanged.
@@ -90,7 +92,13 @@ vi.mock("./providerWait.js", () => ({
 
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
-import { addMessage, dropQuestionMessage, upsertQuestionMessage, upsertToolMessage } from "./chatStore.js";
+import {
+  addMessage,
+  appendAssistantText,
+  dropQuestionMessage,
+  upsertQuestionMessage,
+  upsertToolMessage,
+} from "./chatStore.js";
 import { clearRegisterDraft, peekRegisterDraft } from "./registerDraftStore.js";
 import { upsertPlanMessage } from "./chatStore.js";
 import { clearPlan, peekPlan } from "./planStore.js";
@@ -632,5 +640,38 @@ describe("attachAndFoldTurn — a failure the agents service named", () => {
     mockGetTurn.mockResolvedValue({ status: "failed", reason: "agent-error", code: "output_truncated", message });
     await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
     expect(addMessage).toHaveBeenCalledWith(KEY, { role: "error", content: message });
+  });
+});
+
+// A fold that throws is a bug in the console, not a broken stream: it must
+// surface, never count as a dropped stream and resume past the frame it failed on.
+describe("attachAndFoldTurn — a fold error", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    notified.length = 0;
+    framesCarryIds = true;
+    queuedParts = [
+      { type: "text-delta", delta: "a" } as StreamPart,
+      { type: "text-delta", delta: "b" } as StreamPart,
+      { type: "turn-completed" } as StreamPart,
+    ];
+    mockOpenTurnStream.mockResolvedValue(new ReadableStream());
+  });
+
+  afterEach(() => {
+    framesCarryIds = false;
+  });
+
+  it("surfaces the error and is not retried past", async () => {
+    vi.mocked(appendAssistantText).mockImplementationOnce(() => {
+      throw new Error("fold bug");
+    });
+
+    await expect(attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal)).rejects.toThrow("fold bug");
+
+    expect(mockOpenTurnStream).toHaveBeenCalledTimes(1);
+    expect(appendAssistantText).toHaveBeenCalledTimes(1);
+    expect(mockGetTurn).not.toHaveBeenCalled();
+    expect(notified).toEqual([]);
   });
 });

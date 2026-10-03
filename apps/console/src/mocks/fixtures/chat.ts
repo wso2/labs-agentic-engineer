@@ -112,6 +112,31 @@ export const teammateTurnHistory: MockConversationMessage[] = [
  * project's current thread. No `instruction`: its triggering message is
  * already in the rehydrated history above.
  */
+/** The platform's kickoff turn id for a project in mock mode. */
+export function mockKickoffTurnId(projectName: string): string {
+  return `mock-turn-kickoff-${projectName}`;
+}
+
+/**
+ * The kickoff the platform fires at project creation (#562), running, for a
+ * `fresh` project's GET .../turns/active. No human started it, so it names no
+ * author; its line is the `/start` command it runs.
+ */
+export function activeKickoffTurn(projectName: string, conversationId: string): TurnStatus {
+  return {
+    turnId: mockKickoffTurnId(projectName),
+    project: projectName,
+    conversationId,
+    kind: "kickoff",
+    flow: "start",
+    status: "running",
+    instruction: "/start",
+    authorId: "",
+    authorDisplayName: "",
+    createdAt: new Date().toISOString(),
+  };
+}
+
 export function activeTeammateTurn(projectName: string, conversationId: string): TurnStatus {
   return {
     turnId: MOCK_TEAMMATE_TURN_ID,

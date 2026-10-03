@@ -141,8 +141,8 @@ export const projectStatuses: Record<
 > = {
   // Just created from a prompt. The kickoff fires server-side at creation
   // (#562), so the honest fresh project has an agent already working and
-  // nothing committed yet — which is exactly the state `exists`/`version`/
-  // `dirty` cannot describe, and the reason `agent` is on the wire.
+  // nothing committed yet. The running kickoff is the pod's to report
+  // (GET .../turns/active, handlers/agent-chat.ts), not this aggregate's.
   fresh: {
     phase: "prompt",
     repoStatus: "ready",
@@ -151,7 +151,7 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "pending",
-    spec: { ...noSpec, agent: "working" },
+    spec: noSpec,
     build: idleBuild,
     deploy: noDeploy,
   },
