@@ -118,7 +118,8 @@ var sentinelPrefixes = []string{
 
 // planFailure builds the record for a PlanMilestone error, nil for no error.
 // The planning turn retries unbounded on a blip (MaxAttempts 0) and fails on
-// the first permanent source-control answer.
+// the first permanent answer (planPermanent, the same test planErr applies);
+// only a source-control one is `repository-unavailable`.
 func planFailure(err error, attempt int) *delivery.RunFailure {
 	if err == nil {
 		return nil
@@ -131,9 +132,9 @@ func planFailure(err error, attempt int) *delivery.RunFailure {
 		FirstAt:   now,
 		LastAt:    now,
 		Detail:    delivery.ScrubFailureDetail(err.Error()),
-		Permanent: sourcecontrol.IsPermanent(err),
+		Permanent: planPermanent(err),
 	}
-	if f.Permanent {
+	if sourcecontrol.IsPermanent(err) {
 		f.Code = delivery.RunFailureCodeRepositoryUnavailable
 	}
 	return f

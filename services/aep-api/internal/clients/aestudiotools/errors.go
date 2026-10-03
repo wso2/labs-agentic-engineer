@@ -55,7 +55,6 @@ type StatusError struct {
 	Detail string
 }
 
-//deadcode:keep wired in Task 3.17
 func (e *StatusError) Error() string {
 	msg := fmt.Sprintf("ae studio: %s answered %d", e.Op, e.Status)
 	if e.Code != "" {
@@ -70,8 +69,6 @@ func (e *StatusError) Error() string {
 // IsPermanent reports whether retrying the same call cannot succeed: a
 // misconfigured AE-only client, a refused reference, or any other 4xx
 // except 408 and 429. Temporal activities return such errors non-retryable.
-//
-//deadcode:keep wired in Task 3.17
 func IsPermanent(err error) bool {
 	if errors.Is(err, ErrAEStudioMisconfigured) || errors.Is(err, ErrReferenceRejected) {
 		return true
@@ -98,8 +95,6 @@ type answer struct {
 }
 
 // readAnswer reads and closes a non-2xx response.
-//
-//deadcode:keep wired in Task 3.17
 func readAnswer(resp *http.Response) answer {
 	defer func() { _ = resp.Body.Close() }()
 	a := answer{status: resp.StatusCode}
@@ -120,8 +115,6 @@ func readAnswer(resp *http.Response) answer {
 
 // authRefused is a refusal of the AE-only token itself: a 401, or a 403 that
 // is not the pod's owner_refused verdict on the request.
-//
-//deadcode:keep wired in Task 3.17
 func (a answer) authRefused() bool {
 	return a.status == http.StatusUnauthorized || (a.status == http.StatusForbidden && a.code != "owner_refused")
 }
@@ -129,8 +122,6 @@ func (a answer) authRefused() bool {
 // gatewayGone is an answer no pod handler wrote (no problem body) on a
 // status that means the route or its backend is gone: the cached endpoint
 // may be stale.
-//
-//deadcode:keep wired in Task 3.17
 func (a answer) gatewayGone() bool {
 	if a.problem {
 		return false
@@ -143,8 +134,6 @@ func (a answer) gatewayGone() bool {
 }
 
 // toError maps a non-auth refusal of op to the error callers branch on.
-//
-//deadcode:keep wired in Task 3.17
 func (a answer) toError(op string) error {
 	switch {
 	case a.status == http.StatusConflict && a.code == "turn_in_progress":

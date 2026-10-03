@@ -42,8 +42,6 @@ type References interface {
 // after the body went out, the token is dropped and the call is
 // ErrAEStudioUnavailable (send again). PutReferences owns body: an io.Closer
 // is closed on return, which releases a producer writing into an io.Pipe.
-//
-//deadcode:keep wired in Task 3.17 (reference uploads through the pod)
 func (a *Adapter) PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error {
 	if c, ok := body.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
@@ -65,8 +63,6 @@ func (a *Adapter) PutReferences(ctx context.Context, ref RepoRef, contentType st
 
 // expectContinue makes the transport wait for the pod's 100 Continue (or its
 // refusal) before it sends the upload.
-//
-//deadcode:keep wired in Task 3.17
 func expectContinue(_ context.Context, req *http.Request) error {
 	req.Header.Set("Expect", "100-continue")
 	return nil
@@ -80,13 +76,10 @@ type unsentBody struct {
 	touched atomic.Bool
 }
 
-//deadcode:keep wired in Task 3.17
 func (b *unsentBody) Read(p []byte) (int, error) {
 	b.touched.Store(true)
 	return b.r.Read(p)
 }
 
 // unsent is true while no byte of the upload has been read.
-//
-//deadcode:keep wired in Task 3.17
 func (b *unsentBody) unsent() bool { return !b.touched.Load() }

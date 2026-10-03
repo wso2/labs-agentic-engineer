@@ -46,7 +46,6 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/platform/designspec"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -177,13 +176,6 @@ type FilesService interface {
 	// SetRegisteredResourceReader wires the org resource registry Apply copies
 	// a Registered External resource from when a batch lands a stub naming one.
 	SetRegisteredResourceReader(r RegisteredResourceReader)
-	// PutReferences replaces the project's reference documents — the files
-	// attached on the create view. They are NOT spec files and never enter the
-	// repo (console ADR-0017); the workspace engine stores them beside the
-	// mirror and overlays them into each turn's snapshot. Hence a method on
-	// this service rather than a path through Apply: the specs/ write scope,
-	// the baseSha preconditions, and the commit itself all mean nothing here.
-	PutReferences(ctx context.Context, orgID, projectID string, docs []gitfs.ReferenceDoc) error
 }
 
 type service struct {
@@ -242,17 +234,6 @@ func (s *service) resolveRef(ctx context.Context, orgID, projectID string) (sour
 		return sourcecontrol.RepoRef{}, err
 	}
 	return sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
-}
-
-// PutReferences replaces the project's stored reference documents. Validation
-// (names, per-file size, count) belongs to the engine, which owns the store and
-// is the only thing that can enforce it — this is a thin ref-resolving pass.
-func (s *service) PutReferences(ctx context.Context, orgID, projectID string, docs []gitfs.ReferenceDoc) error {
-	ref, err := s.resolveRef(ctx, orgID, projectID)
-	if err != nil {
-		return err
-	}
-	return s.git.Workspace().PutReferences(ctx, ref, docs)
 }
 
 // List returns every blob at the branch tip, filtered to those whose path has

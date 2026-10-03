@@ -21,135 +21,136 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
-	"path"
+	"net/http"
+	"net/textproto"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // referencesField is the multipart field the console repeats once per document.
 const referencesField = "files"
 
-// PutProjectReferences stores the reference documents attached on the create
-// view. They are transient turn inputs, never committed (console ADR-0017), so
-// this deliberately does NOT go through the Files API's apply: there is no
-// commit, no baseSha precondition, and no specs/ path scope to honour — the
-// engine owns the store and overlays it into each turn's snapshot.
+// PutProjectReferences passes the reference documents attached on the create
+// view through to the org's AE Studio pod, which stores them (09 §1). They
+// are transient turn inputs, never committed (console ADR-0017); the pod
+// validates them (count, size, type) and replaces the whole set, so a retry
+// after a partial failure converges rather than accumulating.
 //
-// The upload replaces the whole set, so a retry after a partial failure
-// converges rather than accumulating.
+// The strict server hands this handler a *multipart.Reader, so the bytes
+// cannot pass through as they came: each `files` part is re-streamed, chunk by
+// chunk, into a new multipart body under the same field and file name (R21).
+// No part is buffered whole. A body that breaks off mid-part aborts the pod's
+// upload with the same error, so the pod never stores a truncated set.
 func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProjectReferencesRequestObject) (gen.PutProjectReferencesResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
-	docs, err := readReferenceParts(request.Body)
+	if request.Body == nil {
+		return nil, apierr.BadRequest("missing '" + referencesField + "' field")
+	}
+	ref, _, err := spec.RepoRefFor(ctx, h.repos, org, request.ProjectName)
 	if err != nil {
-		return nil, err
+		return nil, mapReferenceError(ctx, err)
 	}
-	if err := h.files.PutReferences(ctx, org, request.ProjectName, docs); err != nil {
-		return nil, mapReferenceError(err)
+
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	copied := make(chan error, 1)
+	go func() {
+		err := copyReferenceParts(request.Body, mw)
+		_ = pw.CloseWithError(err) // nil closes the body cleanly
+		copied <- err
+	}()
+	// PutReferences closes pr on return, which unblocks the copy if the pod
+	// answered before reading everything.
+	putErr := h.refs.PutReferences(ctx, ref, mw.FormDataContentType(), pr)
+	// Wait for the copy: it reads the request body, which must not be read
+	// after this handler returns.
+	if copyErr := <-copied; copyErr != nil && !errors.Is(copyErr, io.ErrClosedPipe) {
+		return nil, apierr.BadRequest("can't decode multipart body: " + copyErr.Error())
 	}
+	if putErr != nil {
+		return nil, mapReferenceError(ctx, putErr)
+	}
+
 	// Release the kickoff a create with `referencesPending` held (#562): the
 	// documents are now in front of the agent, so the interview can start.
-	// Idempotent on "has this project ever run a turn", which is what makes a
-	// re-upload safe — it replaces the stored set without starting a second
-	// interview over the first.
+	// Idempotent (the ledger guard and the deterministic turn id), which is
+	// what makes a re-upload safe.
 	if h.kickoff != nil {
 		h.kickoff.Kickoff(ctx, org, request.ProjectName)
 	}
 	return gen.PutProjectReferences204Response{}, nil
 }
 
-// readReferenceParts drains the multipart body into memory. Bounded twice: the
-// engine's per-document cap is enforced on the bytes read here — with one byte
-// past it read deliberately, because io.LimitReader ends a capped read with
-// io.EOF, which is indistinguishable from a small file ending, and silently
-// storing a truncated PDF is worse than refusing the upload.
-func readReferenceParts(body *multipart.Reader) ([]gitfs.ReferenceDoc, error) {
-	if body == nil {
-		return nil, apierr.BadRequest("missing '" + referencesField + "' field")
-	}
-	var docs []gitfs.ReferenceDoc
-	byStoredName := map[string]string{}
+// copyReferenceParts copies every `files` part of in into out, keeping each
+// part's file name and content type, then closes out. Other fields are
+// skipped, as the pod accepts only `files`.
+func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 	for {
-		part, err := body.NextPart()
+		part, err := in.NextPart()
 		if errors.Is(err, io.EOF) {
-			break
+			return out.Close()
 		}
 		if err != nil {
-			return nil, apierr.BadRequest("can't decode multipart body: " + err.Error())
+			return err
 		}
 		if part.FormName() != referencesField {
 			continue
 		}
-		// Refuse early rather than buffering an eleventh document only for the
-		// engine to reject the set.
-		if len(docs) >= gitfs.MaxReferenceCount {
-			return nil, apierr.BadRequest(fmt.Sprintf(
-				"at most %d reference documents per project", gitfs.MaxReferenceCount))
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", multipart.FileContentDisposition(referencesField, part.FileName()))
+		if ct := part.Header.Get("Content-Type"); ct != "" {
+			header.Set("Content-Type", ct)
 		}
-		content, err := io.ReadAll(io.LimitReader(part, gitfs.MaxReferenceBytes+1))
+		w, err := out.CreatePart(header)
 		if err != nil {
-			return nil, apierr.BadRequest("read upload: " + err.Error())
+			return err
 		}
-		// Sanitizing can map two DIFFERENT uploads onto one stored name
-		// ("My Notes.md" and "my-notes.md"). The engine rejects the batch for
-		// the duplicate, so surface the collision here where both original
-		// names are still known — "duplicate name" alone leaves the caller
-		// guessing which two of their files collided. The console screens for
-		// this before uploading; this is the API's own guard.
-		name := sanitizeReferenceName(part.FileName())
-		if prior, ok := byStoredName[name]; ok {
-			return nil, apierr.BadRequest(fmt.Sprintf(
-				"%q and %q both become %q — rename one", prior, part.FileName(), name))
+		if _, err := io.Copy(w, part); err != nil {
+			return err
 		}
-		byStoredName[name] = part.FileName()
-		if len(content) > gitfs.MaxReferenceBytes {
-			return nil, apierr.BadRequest(fmt.Sprintf(
-				"%q exceeds the %d MiB per-document limit", name, gitfs.MaxReferenceBytes>>20))
-		}
-		docs = append(docs, gitfs.ReferenceDoc{Name: name, Content: content})
 	}
-	if len(docs) == 0 {
-		return nil, apierr.BadRequest("no reference documents in the request")
-	}
-	return docs, nil
 }
 
-// sanitizeReferenceName reduces a browser-supplied file name to the bare,
-// store-safe name. The client sends a plain name today, but the field is
-// attacker-controlled: path.Base strips any directory a crafted part carries
-// (including a Windows-style one, which path.Base would otherwise keep whole),
-// and the stem loses everything outside the engine's allowed alphabet. The
-// engine validates the result again and is the authority — this only stops a
-// recoverable name from being refused for punctuation the user never typed.
-func sanitizeReferenceName(raw string) string {
-	name := path.Base(strings.ReplaceAll(strings.TrimSpace(raw), `\`, "/"))
-	ext := strings.ToLower(path.Ext(name))
-	stem := strings.TrimSuffix(name, path.Ext(name))
-	var b strings.Builder
-	for _, r := range strings.ToLower(stem) {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	cleaned := strings.Trim(b.String(), "-.")
-	if cleaned == "" {
-		cleaned = "document"
-	}
-	return cleaned + ext
-}
+// Problem codes of the pod's refusals.
+const (
+	codeAEStudioMisconfigured = "ae_studio_misconfigured"
+	codeAEStudioUnavailable   = "ae_studio_unavailable"
+	codeGitHubNotConnected    = "github_not_connected"
+	codeRequestTooLarge       = "request_too_large"
+)
 
-// mapReferenceError puts a rejected upload on 400 and lets everything else
-// (disk admission, a missing project, I/O) travel the shared files mapping.
-func mapReferenceError(err error) error {
-	if errors.Is(err, gitfs.ErrReferenceRejected) {
-		return apierr.BadRequest(err.Error())
+// mapReferenceError maps what the pod (or the project lookup) answered onto
+// the envelope. A misconfigured AE-only client is an operator fault: 503
+// with its own code and no Retry-After (C3).
+func mapReferenceError(ctx context.Context, err error) error {
+	var se *aestudiotools.StatusError
+	switch {
+	case errors.Is(err, spec.ErrProjectRepoNotFound):
+		return apierr.NotFound("project repository not found")
+	case errors.Is(err, aestudiotools.ErrReferenceRejected):
+		return apierr.BadRequest(strings.TrimPrefix(err.Error(), aestudiotools.ErrReferenceRejected.Error()+": "))
+	case errors.Is(err, aestudiotools.ErrAEStudioMisconfigured):
+		return apierr.New(http.StatusServiceUnavailable, codeAEStudioMisconfigured,
+			"AE Studio is not configured on this platform — contact your platform admin", nil)
+	case errors.Is(err, aestudiotools.ErrAEStudioUnavailable):
+		return apierr.New(http.StatusServiceUnavailable, codeAEStudioUnavailable,
+			"AE Studio is not ready — try again in a few seconds", nil)
+	case errors.Is(err, aestudiotools.ErrAEStudioAbsent):
+		return apierr.New(http.StatusConflict, codeGitHubNotConnected, "connect GitHub to continue", nil)
+	case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge:
+		return apierr.New(http.StatusRequestEntityTooLarge, codeRequestTooLarge, "the reference documents are too large", nil)
+	case errors.As(err, &se):
+		slog.WarnContext(ctx, "references: AE Studio refused the upload", "status", se.Status, "code", se.Code)
+		return apierr.BadGateway(fmt.Sprintf("AE Studio refused the upload (%d)", se.Status))
+	default:
+		slog.ErrorContext(ctx, "references: upload failed", "error", err)
+		return apierr.Internal("internal error")
 	}
-	return mapFilesError(err)
 }

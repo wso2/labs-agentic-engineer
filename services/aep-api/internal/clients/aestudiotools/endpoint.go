@@ -65,7 +65,6 @@ func newEndpointCache(next Endpoints) *endpointCache {
 	return &endpointCache{next: next, now: time.Now, targets: map[string]cachedTarget{}}
 }
 
-//deadcode:keep wired in Task 3.17
 func (c *endpointCache) resolve(ctx context.Context, org string) (Target, error) {
 	c.mu.Lock()
 	hit, ok := c.targets[org]
@@ -84,8 +83,6 @@ func (c *endpointCache) resolve(ctx context.Context, org string) (Target, error)
 }
 
 // drop forgets the org's Target, so the next call resolves it again.
-//
-//deadcode:keep wired in Task 3.17
 func (c *endpointCache) drop(org string) {
 	c.mu.Lock()
 	delete(c.targets, org)

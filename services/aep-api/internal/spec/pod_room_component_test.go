@@ -23,12 +23,10 @@ package spec_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -147,22 +145,6 @@ func TestStartTurn_NonCollabTurnIgnoresTheRoom(t *testing.T) {
 	r.waitTerminal(t, r.startTurn(t, convUUID, "", "hi"))
 	if calls != 0 {
 		t.Fatalf("locator calls = %d, want 0 for a non-collab turn", calls)
-	}
-}
-
-// The kickoff is room-scoped, so it fails fast when the pod is not ready (as
-// phase 3 will): the project reports never-started and offers Retry.
-func TestStartKickoff_PodUnavailableStartsNoTurn(t *testing.T) {
-	r := newGenaiRig(t, map[string]string{
-		spec.DescriptorPath: descriptorTOML(t, testIdea),
-	}, withConversations(&memConversationRepo{}), withRooms(refusingRoom{err: spec.ErrAEStudioUnavailable}))
-
-	ctx := auth.WithAuthToken(t.Context(), "bearer-from-the-create-request")
-	if _, err := r.svc.StartKickoff(ctx, testOrg, testProj); !errors.Is(err, spec.ErrAEStudioUnavailable) {
-		t.Fatalf("StartKickoff error = %v, want ErrAEStudioUnavailable", err)
-	}
-	if n := r.fake.turns(t); n != 0 {
-		t.Fatalf("dispatched turns = %d, want 0", n)
 	}
 }
 

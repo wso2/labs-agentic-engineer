@@ -351,9 +351,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		GitHub:      credService,
 		OC:          aeStudioOC(ocConfig),
 	})
-	// The org pods' machine API (/internal/v1), as aep-api's AE-only client.
+	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
+	// the kickoff and Plan turns and the reference uploads run through it.
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
-	_ = studioTools // TEMPORARY: first consumers (kickoff, Plan, reference uploads) arrive in Task 3.17
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
 	// projects and saves it, and coding dispatch copies the runtime onto the run
@@ -548,9 +548,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
-	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
-		agentLLMForTurns, agentsvcClient, issueService, deliveryIssues, workspaceEngine,
-		task.SkillsRepoResolver(skillsRepoForTurns))
+	taskPlan := task.NewPlanService(repoService, artifactSvcGit, studioTools, issueService, deliveryIssues)
 
 	// Eagerly provision each org's skills repo on project creation.
 	projectService.SetSkillsProvisioner(skillSvc)
@@ -563,11 +561,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(filesSvc))
 
 	// The journey starts itself (#562): creation fires `/start` server-side,
-	// so the user lands on a project whose agent is already interviewing them
-	// instead of a dashboard asking them to press a button. Wired after the
-	// descriptor writer above because that is the order the create path runs
-	// them in — the turn reads the idea from the file that write commits.
-	projectService.SetKickoffStarter(genaiSvc)
+	// in the org's AE Studio pod, so the user lands on a project whose agent
+	// is already interviewing them instead of a dashboard asking them to press
+	// a button. Wired after the descriptor writer above because that is the
+	// order the create path runs them in — the turn reads the idea from the
+	// file that write commits. The finished-turn ledger is its guard.
+	kickoff := spec.NewKickoffService(studioTools, repoService, turnRepo)
+	projectService.SetKickoffStarter(kickoff)
 	// …and the status poll reports whether it is still running, which is the
 	// one thing the git-derived spec fields cannot say.
 	projectService.SetSpecTurnSource(turnRepo)
@@ -1106,7 +1106,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
 		GenAI:       genaiSvc,
-		Files:       filesSvc,
+		References:  studioTools,
+		Repos:       repoService,
+		Kickoff:     kickoff,
 		Artifacts:   artifactSvcGit,
 		Skills:      skillSvc,
 		SkillMut:    skillMutationSvc,

@@ -18,6 +18,8 @@ package spec
 
 import (
 	"context"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 )
 
 // Deps is what this domain must be handed to exist: typed ports / services,
@@ -30,8 +32,13 @@ type Deps struct {
 	// GenAI is the committed-truth turn orchestrator behind the five turn ops
 	// (create / get / active / stream / rehydrate).
 	GenAI *Service
-	// Files is the spec-workspace read+apply service (references upload; in-process adapters).
-	Files FilesService
+	// References is the org pods' reference-document store (references upload).
+	References aestudiotools.References
+	// Repos resolves a project to its repository (references upload).
+	Repos ProjectRepos
+	// Kickoff fires the kickoff a create held for its reference documents.
+	// Nil: an upload fires none.
+	Kickoff *KickoffService
 	// Artifacts is the spec-version tag reader (list-project-tags).
 	Artifacts ArtifactService
 	// Skills is the org-scoped skills catalogue reader (list / get / updates / sync).

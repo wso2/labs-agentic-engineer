@@ -18,65 +18,32 @@ package files
 
 import (
 	"context"
-	"errors"
 
-	"github.com/wso2/aep/aep-api/internal/platform/apierr"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // Handler serves the files feature's one remaining operation, the reference
-// documents upload. The spec file reads and writes now run in the per-org
-// AE Studio pod. The operation is org-scoped: the tenant gate bound the token
-// org before it runs.
+// documents upload. The operation is org-scoped: the tenant gate bound the
+// token org before it runs.
 type Handler struct {
-	files   spec.FilesService
+	refs    aestudiotools.References
+	repos   spec.ProjectRepos
 	kickoff kickoffStarter
 }
 
 // kickoffStarter fires a project's opening `/start` turn (#562). The
 // references upload is the SECOND of its two triggers: a create that declared
 // documents were coming holds the kickoff, because they are the primary brief
-// and an interview run before they land is conducted blind. *spec.Service
-// satisfies it; the port is declared here so the slice keeps no genai edge.
-// Nil is a documented no-op.
+// and an interview run before they land is conducted blind.
+// *spec.KickoffService satisfies it. Nil is a documented no-op.
 type kickoffStarter interface {
 	Kickoff(ctx context.Context, orgID, projectID string)
 }
 
-// New returns the slice's handler.
-func New(files spec.FilesService) *Handler {
-	return &Handler{files: files}
-}
-
-// WithKickoffStarter wires the held kickoff the references upload releases.
-// Chained rather than added to New: every other caller of this handler is
-// unrelated to project creation, and a fourth positional dependency on the
-// constructor would say otherwise.
-func (h *Handler) WithKickoffStarter(k kickoffStarter) *Handler {
-	h.kickoff = k
-	return h
-}
-
-// mapFilesError maps the files service's typed errors onto the envelope —
-// the strict-server port of the feature's Huma-era mapper.
-func mapFilesError(err error) error {
-	switch {
-	case errors.Is(err, spec.ErrProjectRepoNotFound):
-		return apierr.NotFound("project repository not found")
-	case errors.Is(err, spec.ErrFileNotFound):
-		return apierr.NotFound("file not found")
-	case errors.Is(err, spec.ErrPathInvalid):
-		return apierr.BadRequest(err.Error())
-	case errors.Is(err, sourcecontrol.ErrRefNotFastForward):
-		// Workspace.Mutate exhausted its CAS retries: the ref tip moved under
-		// us on every attempt. That is a concurrent-write conflict, not a
-		// server fault — surface it as a retryable 409, never a 500.
-		return apierr.Conflict("the repository changed during the write; retry")
-	case errors.Is(err, gitfs.ErrDiskAdmission):
-		return apierr.ServiceUnavailable("workspace disk is full — try again in a few minutes, or contact your platform admin")
-	default:
-		return apierr.Internal("internal error")
-	}
+// NewHandler returns the slice's handler: refs is the org pods' reference
+// store, repos resolves the project's repository, kickoff fires the held
+// kickoff (nil: none).
+func NewHandler(refs aestudiotools.References, repos spec.ProjectRepos, kickoff kickoffStarter) *Handler {
+	return &Handler{refs: refs, repos: repos, kickoff: kickoff}
 }

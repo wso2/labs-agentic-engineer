@@ -16,7 +16,7 @@
 
 // Package taskplan holds the BFF side of the task-planning tool contract
 // (docs/design/tasks-github-native.md §10.3): the Go wire structs + decoders
-// for the self-contained tool-RESULT frames the plan tap consumes (this file),
+// for the ok tool results the plan tap consumes as the pod's task-op events (this file),
 // and the tasks/<issueNumber>.md context-file renderer (context_file.go). The
 // tool INPUTS are validated agent-side against the published JSON Schemas
 // (packages/contracts/schemas/{plan-task,update-task}.schema.json, registered
@@ -83,19 +83,6 @@ type UpdateTaskOk struct {
 	Op  string        `json:"op"` // "update"
 	Ref TaskRef       `json:"ref"`
 	Set UpdateTaskSet `json:"set"`
-}
-
-// ToolResultOK peeks at a tool-result output's discriminant fields so the tap
-// can branch without fully decoding: (ok, op). Unparseable output is an error.
-func ToolResultOK(raw json.RawMessage) (ok bool, op string, err error) {
-	var head struct {
-		OK bool   `json:"ok"`
-		Op string `json:"op"`
-	}
-	if err := json.Unmarshal(raw, &head); err != nil {
-		return false, "", fmt.Errorf("task tool result: %w", err)
-	}
-	return head.OK, head.Op, nil
 }
 
 // DecodePlanTaskOk decodes a successful planTask result. It errors unless

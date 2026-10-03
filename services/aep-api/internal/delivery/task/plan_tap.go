@@ -17,40 +17,38 @@
 package task
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"iter"
 	"log/slog"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/platform/taskplan"
 )
 
-// planDrainIdleTimeout aborts the upstream drain if no bytes arrive for this
-// long. The agents service emits keep-alives ~every 15s, so a longer silence
-// means a hung turn — and the drain holds the per-project plan lock (§6, released
-// when Stream returns), so without this a hang pins plan_in_progress until a BFF
-// restart.
+// planDrainIdleTimeout aborts a Plan turn's stream when no event arrives for
+// this long. The pod sends a keep-alive every 15 s while the turn runs, so a
+// longer silence means a hung pod, and the planning activity would otherwise
+// hold its 30-minute timeout for a turn that is not coming back. Keep-alives
+// reset it like any other event: a turn reading files for minutes between
+// two Tasks is alive (D-2).
 const planDrainIdleTimeout = 90 * time.Second
 
-// planTapMaxLineBytes ceilings one SSE frame. Frames are tool-call JSON, orders
-// of magnitude under this; the ceiling exists so a delimiter-less upstream
-// cannot grow the read buffer without bound.
-const planTapMaxLineBytes = 4 * 1024 * 1024
+// errPlanTurnSilent is a Plan turn whose stream sent nothing, not even a
+// keep-alive, for planDrainIdleTimeout. Retryable: the next attempt reattaches
+// or starts afresh.
+var errPlanTurnSilent = errors.New("plan: the turn sent nothing for the idle deadline")
 
-// planTap streams the agents-service SSE verbatim to the client while parsing
-// tool-result frames and performing the GitHub writes for planTask/updateTask
-// as they pass (§6). It survives client disconnect: forwarding stops but reading
-// continues, so the upstream turn drains to completion and every write lands.
-//
-// The tap acts on the self-contained tool-RESULT frame (output echoes the
-// normalized fields), only when output.ok is true (phase-1 rule).
+// planTap reads a Plan turn's event stream from the org's AE Studio pod and
+// performs the GitHub writes for planTask/updateTask as they pass (§6). The
+// pod projects the agent's successful task tool results to `task-op` events
+// (07 §12); the tap decodes each with the same taskplan decoders the raw
+// tool results used.
 //
 // Every issue it mints is PROSE in a MILESTONE: the milestone number rides the
 // create call (so a plan costs 1+N calls, never create-then-patch), the `aep`
@@ -59,7 +57,10 @@ const planTapMaxLineBytes = 4 * 1024 * 1024
 // title slug against the milestone's existing issues plus this run's creations —
 // which is also what makes a crash re-run land no duplicates.
 type planTap struct {
-	ctx       context.Context // detached — survives client disconnect (drain, §6)
+	// ctx carries the writes. Detached from the caller's cancellation, so a
+	// write in flight when the activity is cancelled still lands; it keeps
+	// the values, among them the activity's progress beat.
+	ctx       context.Context
 	orgID     string
 	projectID string
 	issues    IssueClient
@@ -102,21 +103,18 @@ type planTap struct {
 	// run planned for it, so dependency lines carry real issue numbers.
 	componentToNumber map[string]int
 
-	// idleTimeout overrides planDrainIdleTimeout (tests set a small value). Zero
-	// uses the default.
-	idleTimeout time.Duration
-
+	// failures counts the GitHub writes the tap could not land.
 	failures int
 }
 
-// newPlanTap builds a tap with every map initialised. Callers set the milestone,
-// the preloaded state and the app paths.
 // storiesFor resolves a component's in-scope story citations for the stamp;
 // nil when the scope carries none for it.
 func (t *planTap) storiesFor(component string) []int {
 	return t.componentStories[strings.ToLower(strings.TrimSpace(component))]
 }
 
+// newPlanTap builds a tap with every map initialised. Callers set the milestone,
+// the preloaded state and the app paths.
 func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient, writer *delivery.IssueWriter) *planTap {
 	return &planTap{
 		ctx:               ctx,
@@ -133,166 +131,82 @@ func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient
 	}
 }
 
-// scanCompleteLines yields only NEWLINE-TERMINATED lines, delimiter included.
+// Stream reads the turn's events to the end, performing each task-op's
+// GitHub write as it passes, and reports how the turn ended: nil for a
+// completed turn, the pod's failure for a failed one, the stream's own error
+// when it broke off, or errPlanTurnSilent when the idle watchdog fired.
 //
-// Both halves matter here. Keeping the delimiter is what lets the tap forward
-// the upstream's bytes verbatim — the client is reading SSE, where the newline
-// is the framing, and bufio.ScanLines would strip it (and any \r with it).
-// Refusing the undelimited remainder at EOF is what stops a severed upstream
-// from putting a half-written `data: {…` frame on the wire: at that point the
-// bytes are consumed and dropped, not emitted.
-func scanCompleteLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	if i := bytes.IndexByte(data, '\n'); i >= 0 {
-		return i + 1, data[:i+1], nil
-	}
-	if atEOF {
-		// Consume the partial so Scan terminates instead of spinning on it.
-		return len(data), nil, nil
-	}
-	return 0, nil, nil // need more bytes to complete the line
-}
-
-// streamPartFrame is the minimal shape of an agents-service SSE frame the tap
-// reads: the raw StreamPart (type + the self-contained tool output).
-type streamPartFrame struct {
-	Type   string          `json:"type"`
-	Output json.RawMessage `json:"output"`
-}
-
-// Stream forwards the upstream body to w verbatim while tapping tool frames —
-// each line is consumed (GitHub write) before it is forwarded, so a delivered
-// ok tool-result implies the corresponding issue write already landed. It
-// closes body on return. Forwarding stops on the first client write error; the
-// read loop continues so the upstream drains and all GitHub writes land (§6). An
-// idle-read watchdog aborts the drain (closing body) if the upstream goes silent
-// past the idle deadline, so a hung turn can't pin the per-project plan lock.
-func (t *planTap) Stream(body io.ReadCloser, w io.Writer, flush func()) {
-	defer body.Close()
-
-	idle := t.idleTimeout
-	if idle <= 0 {
-		idle = planDrainIdleTimeout
-	}
-	// Watchdog: reset on every read; on expiry close body to unblock the pending
-	// read and end the drain. atomic flag distinguishes an idle-abort from a
-	// clean EOF so it surfaces in the write-failure accounting.
-	var idleAborted atomic.Bool
-	activity := make(chan struct{}, 1)
+// Every event, keep-alives included, resets the watchdog and reports progress
+// on t.ctx, which the planning activity turns into a heartbeat (04 §5, D-2).
+// On expiry the watchdog calls abort, which must end the stream (cancel the
+// context the stream was started under, closing its body). GitHub write
+// failures are not Stream's answer; they are counted in t.failures.
+func (t *planTap) Stream(events iter.Seq2[aestudiotools.TurnEvent, error], abort func()) error {
+	var silent atomic.Bool
+	alive := make(chan struct{}, 1)
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() {
-		timer := time.NewTimer(idle)
+		timer := time.NewTimer(planDrainIdleTimeout)
 		defer timer.Stop()
 		for {
 			select {
 			case <-stop:
 				return
-			case <-activity:
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(idle)
+			case <-alive:
+				timer.Reset(planDrainIdleTimeout)
 			case <-timer.C:
-				idleAborted.Store(true)
-				_ = body.Close()
+				silent.Store(true)
+				abort()
 				return
 			}
 		}
 	}()
 
-	// Bound the per-line read. bufio.Reader.ReadBytes grows until it finds the
-	// delimiter, so an upstream that never sends one — a wedged agents-service, a
-	// corrupted stream — would grow it until the BFF dies. Scanner takes an
-	// explicit ceiling and reports hitting it. (Siblings: agent_progress.go 1MiB,
-	// usage_capture.go 16MiB.)
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 8*1024), planTapMaxLineBytes)
-	scanner.Split(scanCompleteLines)
-	clientAlive := true
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		// Reset the idle watchdog on any read return (bytes or a keep-alive line).
+	for ev, err := range events {
+		if silent.Load() {
+			return errPlanTurnSilent
+		}
+		if err != nil {
+			return err
+		}
 		select {
-		case activity <- struct{}{}:
+		case alive <- struct{}{}:
 		default:
 		}
-		// Consume BEFORE forwarding: an ok tool-result frame reaching the
-		// client means its GitHub write already landed, so the FE can
-		// refresh its task list on that frame and see the issue (§8).
-		t.consume(line)
-		if clientAlive {
-			if _, werr := w.Write(line); werr != nil {
-				clientAlive = false
-			} else {
-				flush()
+		delivery.ReportProgress(t.ctx)
+		switch ev.Type {
+		case aestudiotools.EventTaskOp:
+			t.consume(ev)
+		case aestudiotools.EventResult:
+			if ev.Status != "completed" {
+				return fmt.Errorf("plan: the turn %s (%s): %s", ev.Status, ev.Code, ev.Message)
 			}
+			return nil
 		}
 	}
-	// Only a delimited line is a whole frame. ReadBytes used to hand back the
-	// trailing partial together with its error, and the loop forwarded it before
-	// noticing — so severing the upstream mid-frame (which the idle watchdog
-	// below does on purpose) wrote a half-written `data: {…` to the client. The
-	// console drops unparseable frames, so this was survivable, but a proxy
-	// should not emit a frame it did not finish reading.
-	//
-	// A scan error also ENDS the drain, where the old unbounded ReadBytes would
-	// have kept going — so it is counted like the idle abort below rather than
-	// only logged. Anything past the offending frame is unread, which means
-	// GitHub writes the turn intended may not have landed, and the terminal
-	// surface has to say so.
-	if err := scanner.Err(); err != nil {
-		t.failures++
-		slog.WarnContext(t.ctx, "task.planTap: upstream stream ended mid-frame — drain stopped, remaining frames unread",
-			"error", err, "maxLineBytes", planTapMaxLineBytes)
+	if silent.Load() {
+		return errPlanTurnSilent
 	}
-	if idleAborted.Load() {
-		// Record the aborted drain so the terminal surface reports it; the plan
-		// lock releases as PlanSession.Stream returns (its defer).
-		t.failures++
-		slog.WarnContext(t.ctx, "plan tap: upstream idle past deadline — drain aborted, plan lock released", "idleTimeout", idle)
-	}
-	// Terminal in-band surface of mid-stream write failures (§6, the OPEN item):
-	// an SSE comment line (ignored by StreamPart readers) so the failure count is
-	// visible in the raw stream / logs without corrupting the frame protocol.
-	if t.failures > 0 && clientAlive {
-		_, _ = fmt.Fprintf(w, ": aep-plan-write-failures %d\n\n", t.failures)
-		flush()
-	}
+	return errors.New("plan: the turn stream ended without a result")
 }
 
-// consume parses one SSE line and, if it is a successful task tool-result,
-// performs the corresponding GitHub write.
-func (t *planTap) consume(line []byte) {
-	data, ok := strings.CutPrefix(strings.TrimSpace(string(line)), "data:")
-	if !ok {
-		return
-	}
-	data = strings.TrimSpace(data)
-	if data == "" || data == "[DONE]" {
-		return
-	}
-	var frame streamPartFrame
-	if err := json.Unmarshal([]byte(data), &frame); err != nil {
-		return // partial / non-JSON / keep-alive
-	}
-	if frame.Type != "tool-result" || len(frame.Output) == 0 {
-		return
-	}
-	ok, op, err := taskplan.ToolResultOK(frame.Output)
-	if err != nil || !ok {
-		return // skip ok:false and non-task results (self-correction, other tools)
-	}
-	switch op {
+// consume performs the GitHub write a task-op describes. The pod sends only
+// the agent's successful planTask/updateTask results; the decoders still
+// refuse anything that is not one, so a malformed op mints nothing.
+func (t *planTap) consume(ev aestudiotools.TurnEvent) {
+	switch ev.Op {
 	case "plan":
-		if out, derr := taskplan.DecodePlanTaskOk(frame.Output); derr == nil {
+		if out, err := taskplan.DecodePlanTaskOk(ev.Output); err == nil {
 			t.handlePlan(out)
+		} else {
+			slog.WarnContext(t.ctx, "plan tap: undecodable planTask op skipped", "error", err)
 		}
 	case "update":
-		if out, derr := taskplan.DecodeUpdateTaskOk(frame.Output); derr == nil {
+		if out, err := taskplan.DecodeUpdateTaskOk(ev.Output); err == nil {
 			t.handleUpdate(out)
+		} else {
+			slog.WarnContext(t.ctx, "plan tap: undecodable updateTask op skipped", "error", err)
 		}
 	}
 }

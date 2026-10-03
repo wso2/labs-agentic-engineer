@@ -18,55 +18,22 @@ package spec_test
 
 import (
 	"bytes"
-	"mime/multipart"
-	"net/http"
-	"net/http/httptest"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
-// The reference-document upload (#383 / console ADR-0017), end to end through
-// the real handler chain: multipart in, bytes in the off-git store, and — the
-// property the whole design rests on — those bytes appearing inside a turn's
-// snapshot even though nothing was ever committed.
-
-func referenceUpload(t *testing.T, docs map[string][]byte) (string, []byte) {
-	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	// Sorted for determinism; a map's range order would make a failure
-	// unreproducible.
-	for _, name := range sortedKeys(docs) {
-		part, err := w.CreateFormFile("files", name)
-		if err != nil {
-			t.Fatalf("create part %q: %v", name, err)
-		}
-		if _, err := part.Write(docs[name]); err != nil {
-			t.Fatalf("write part %q: %v", name, err)
-		}
-	}
-	if err := w.Close(); err != nil {
-		t.Fatalf("close multipart writer: %v", err)
-	}
-	return w.FormDataContentType(), buf.Bytes()
-}
-
-func sortedKeys(m map[string][]byte) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j] < out[j-1]; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
-		}
-	}
-	return out
-}
+// The workspace engine's reference store (#383 / console ADR-0017) that the
+// old in-process turns read: bytes in the off-git store and — the property the
+// design rests on — those bytes appearing inside a turn's snapshot even though
+// nothing was ever committed. The upload itself goes to the org's AE Studio
+// pod now (spec/files); these pin the store until the old turns go (Task
+// 3.21).
 
 // workspaceRefForRig is the mount ref the rig's repo row resolves to — the same
 // derivation newFilesRig's GitRepository feeds the service. CloneURL and
@@ -82,11 +49,19 @@ func (r *filesRig) workspaceRef() gitfs.RepoRef {
 	}
 }
 
-func (r *filesRig) putReferences(t *testing.T, docs map[string][]byte) *httptest.ResponseRecorder {
+// putReferences replaces the stored set through the engine, in name order.
+func (r *filesRig) putReferences(t *testing.T, docs map[string][]byte) error {
 	t.Helper()
-	ct, body := referenceUpload(t, docs)
-	return r.h.AsOrg(filesTestOrg).PostRaw(
-		"/api/v1/projects/"+filesTestProj+"/references", ct, body)
+	names := make([]string, 0, len(docs))
+	for n := range docs {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	set := make([]gitfs.ReferenceDoc, 0, len(names))
+	for _, n := range names {
+		set = append(set, gitfs.ReferenceDoc{Name: n, Content: docs[n]})
+	}
+	return r.engine.PutReferences(t.Context(), r.workspaceRef(), set)
 }
 
 // The load-bearing test of the whole feature. The bytes are uploaded, NOTHING
@@ -100,8 +75,8 @@ func TestPutReferences_StoredOffGitAndOverlaidIntoTheSnapshot(t *testing.T) {
 	// them, and the store must not.
 	pdf := []byte("%PDF-1.4\n\xff\xfe\x00 binary")
 
-	if rec := r.putReferences(t, map[string][]byte{"claim-form.pdf": pdf}); rec.Code != http.StatusNoContent {
-		t.Fatalf("upload code %d, want 204: %s", rec.Code, rec.Body.String())
+	if err := r.putReferences(t, map[string][]byte{"claim-form.pdf": pdf}); err != nil {
+		t.Fatalf("upload: %v", err)
 	}
 
 	// Nothing committed — the repo is untouched.
@@ -161,8 +136,8 @@ func TestEnsure_OverlaysReferencesUploadedAfterTheSnapshotExists(t *testing.T) {
 	}
 
 	// Now upload, and run the turn's Ensure against the same sha.
-	if rec := r.putReferences(t, map[string][]byte{"brief.md": []byte("# Brief")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("upload code %d: %s", rec.Code, rec.Body.String())
+	if err := r.putReferences(t, map[string][]byte{"brief.md": []byte("# Brief")}); err != nil {
+		t.Fatalf("upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("second ensure: %v", err)
@@ -184,14 +159,14 @@ func TestEnsure_RefreshesAReplacedReferenceInAnExistingSnapshot(t *testing.T) {
 	ref := r.workspaceRef()
 	sha := r.remote.HeadSHA(t)
 
-	if rec := r.putReferences(t, map[string][]byte{"brief.md": []byte("old")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("first upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"brief.md": []byte("old")}); err != nil {
+		t.Fatalf("first upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("first ensure: %v", err)
 	}
-	if rec := r.putReferences(t, map[string][]byte{"brief.md": []byte("corrected and longer")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("second upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"brief.md": []byte("corrected and longer")}); err != nil {
+		t.Fatalf("second upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("second ensure: %v", err)
@@ -219,15 +194,15 @@ func TestEnsure_RetiresAReferenceDroppedByAReplacementUpload(t *testing.T) {
 	ref := r.workspaceRef()
 	sha := r.remote.HeadSHA(t)
 
-	if rec := r.putReferences(t, map[string][]byte{"old.md": []byte("superseded")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("first upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"old.md": []byte("superseded")}); err != nil {
+		t.Fatalf("first upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("first ensure: %v", err)
 	}
 	// A different NAME, so the old one is dropped rather than overwritten.
-	if rec := r.putReferences(t, map[string][]byte{"new.md": []byte("current")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("second upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"new.md": []byte("current")}); err != nil {
+		t.Fatalf("second upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("second ensure: %v", err)
@@ -258,8 +233,8 @@ func TestEnsure_RestoresACommittedReferenceTheOverlayHadMasked(t *testing.T) {
 	sha := r.remote.HeadSHA(t)
 
 	// Mask the committed file with a transient one of the same name.
-	if rec := r.putReferences(t, map[string][]byte{"brief.md": []byte("transient override")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("mask upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"brief.md": []byte("transient override")}); err != nil {
+		t.Fatalf("mask upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("first ensure: %v", err)
@@ -274,8 +249,8 @@ func TestEnsure_RestoresACommittedReferenceTheOverlayHadMasked(t *testing.T) {
 	}
 
 	// Now drop it from the store — the committed content must come back.
-	if rec := r.putReferences(t, map[string][]byte{"other.md": []byte("something else")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("replacement upload code %d", rec.Code)
+	if err := r.putReferences(t, map[string][]byte{"other.md": []byte("something else")}); err != nil {
+		t.Fatalf("replacement upload: %v", err)
 	}
 	if err := r.engine.Ensure(t.Context(), ref, sha); err != nil {
 		t.Fatalf("second ensure: %v", err)
@@ -322,11 +297,11 @@ func TestEnsure_DoesNotDeleteCommittedV1References(t *testing.T) {
 // can no longer see (the console lists references nowhere after create).
 func TestPutReferences_ReplacesThePreviousSet(t *testing.T) {
 	r := newFilesRig(t, nil)
-	if rec := r.putReferences(t, map[string][]byte{"old.md": []byte("old")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("first upload code %d: %s", rec.Code, rec.Body.String())
+	if err := r.putReferences(t, map[string][]byte{"old.md": []byte("old")}); err != nil {
+		t.Fatalf("first upload: %v", err)
 	}
-	if rec := r.putReferences(t, map[string][]byte{"new.md": []byte("new")}); rec.Code != http.StatusNoContent {
-		t.Fatalf("second upload code %d: %s", rec.Code, rec.Body.String())
+	if err := r.putReferences(t, map[string][]byte{"new.md": []byte("new")}); err != nil {
+		t.Fatalf("second upload: %v", err)
 	}
 
 	names, err := r.engine.ListReferences(t.Context(), r.workspaceRef())
@@ -343,9 +318,8 @@ func TestPutReferences_ReplacesThePreviousSet(t *testing.T) {
 func TestPutReferences_UnsupportedTypeIs400(t *testing.T) {
 	r := newFilesRig(t, nil)
 
-	rec := r.putReferences(t, map[string][]byte{"spec.docx": []byte("PK\x03\x04")})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code %d, want 400 for .docx: %s", rec.Code, firstBytes(rec.Body.String(), 200))
+	if err := r.putReferences(t, map[string][]byte{"spec.docx": []byte("PK\x03\x04")}); !errors.Is(err, gitfs.ErrReferenceRejected) {
+		t.Fatalf("err = %v, want ErrReferenceRejected for .docx", err)
 	}
 	names, _ := r.engine.ListReferences(t.Context(), r.workspaceRef())
 	if len(names) != 0 {
@@ -353,17 +327,14 @@ func TestPutReferences_UnsupportedTypeIs400(t *testing.T) {
 	}
 }
 
-// The per-document cap is checked on the REAL bytes. It reads one byte past the
-// limit deliberately: a plain io.LimitReader ends at EOF, which is
-// indistinguishable from a small file ending, and silently storing a truncated
-// PDF is worse than refusing the upload.
+// The per-document cap is checked on the REAL bytes: an oversized document is
+// refused, never stored truncated.
 func TestPutReferences_OversizedDocumentIs400_NotTruncated(t *testing.T) {
 	r := newFilesRig(t, nil)
 	huge := bytes.Repeat([]byte("A"), gitfs.MaxReferenceBytes+1)
 
-	rec := r.putReferences(t, map[string][]byte{"big.pdf": huge})
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("code %d, want 400 for an oversized document: %s", rec.Code, firstBytes(rec.Body.String(), 200))
+	if err := r.putReferences(t, map[string][]byte{"big.pdf": huge}); !errors.Is(err, gitfs.ErrReferenceRejected) {
+		t.Fatalf("err = %v, want ErrReferenceRejected for an oversized document", err)
 	}
 	names, _ := r.engine.ListReferences(t.Context(), r.workspaceRef())
 	if len(names) != 0 {
@@ -376,13 +347,13 @@ func TestPutReferences_OversizedDocumentIs400_NotTruncated(t *testing.T) {
 func TestPutReferences_TraversalNameIsContained(t *testing.T) {
 	r := newFilesRig(t, nil)
 
-	rec := r.putReferences(t, map[string][]byte{"../../../etc/passwd.md": []byte("nope")})
+	putErr := r.putReferences(t, map[string][]byte{"../../../etc/passwd.md": []byte("nope")})
 	// Either rejected outright or reduced to a bare name — never written
 	// outside the store.
 	names, _ := r.engine.ListReferences(t.Context(), r.workspaceRef())
 	for _, n := range names {
 		if strings.Contains(n, "/") || strings.Contains(n, "..") {
-			t.Fatalf("stored an escaping name %q (upload code %d)", n, rec.Code)
+			t.Fatalf("stored an escaping name %q (upload err %v)", n, putErr)
 		}
 	}
 	dir, err := gitfs.ReferenceStoreDir(r.engine.Root(), r.workspaceRef())

@@ -45,6 +45,7 @@ import (
 
 	"go.temporal.io/sdk/temporal"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -88,10 +89,35 @@ const errTypePermanentPlan = "PermanentPlanFailure"
 // turn wrapped around git and GitHub calls, so the failures worth telling apart
 // are exactly the ones sourceControlErr already names.
 func planErr(err error) error {
-	if err == nil || !sourcecontrol.IsPermanent(err) {
-		return err
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, aestudiotools.ErrAEStudioMisconfigured):
+		// C3: aep-api's own AE-only client cannot call the pod. An operator
+		// fixes that, never a retry, so it fails under its own type.
+		return temporal.NewNonRetryableApplicationError(err.Error(), errTypeAEStudioMisconfigured, err)
+	case planPermanent(err):
+		return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentPlan, err)
 	}
-	return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentPlan, err)
+	// Everything else is retried, ErrTurnInProgress among it (05 §5): a
+	// different turn running for the project is a wait, not a failure.
+	return err
+}
+
+// errTypeAEStudioMisconfigured is the ApplicationError type of a planning
+// turn aep-api's AE-only client could not start (C3).
+const errTypeAEStudioMisconfigured = "ae_studio_misconfigured"
+
+// planPermanent reports whether repeating a planning round trip cannot
+// change its answer: a permanent source-control failure, or an AE Studio
+// answer that is one (aestudiotools.IsPermanent: a misconfigured client, a
+// 4xx of the pod). An org with no AE Studio is permanent too: it has no
+// GitHub token, and only a person connecting GitHub changes that, so the run
+// fails on its first attempt instead of retrying unseen.
+func planPermanent(err error) bool {
+	return sourcecontrol.IsPermanent(err) ||
+		aestudiotools.IsPermanent(err) ||
+		errors.Is(err, aestudiotools.ErrAEStudioAbsent)
 }
 
 // errTypePermanentDeploy is the ApplicationError type a permanent deploy failure

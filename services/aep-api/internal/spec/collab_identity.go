@@ -35,7 +35,8 @@ type collabUserClaims struct {
 
 // parseDisplayIdentity extracts a display name + email from a Bearer token for
 // collab presence. Signature verification happens upstream; this is best-effort
-// projection and returns empty strings on any parse failure.
+// projection and returns empty strings on any parse failure. The name rule
+// is displayName's (display_identity.go).
 func parseDisplayIdentity(authHeader string) (name, email string) {
 	if authHeader == "" {
 		return "", ""
@@ -48,17 +49,7 @@ func parseDisplayIdentity(authHeader string) (name, email string) {
 	if _, _, err := jwt.NewParser().ParseUnverified(parts[1], claims); err != nil {
 		return "", ""
 	}
-	name = claims.Name
-	if name == "" {
-		given := strings.TrimSpace(claims.GivenName)
-		family := strings.TrimSpace(claims.FamilyName)
-		if strings.EqualFold(family, "user") {
-			family = ""
-		}
-		name = strings.TrimSpace(given + " " + family)
-	}
-	if name == "" {
-		name, _ = claims.GetSubject()
-	}
+	subject, _ := claims.GetSubject()
+	name = displayName(claims.Name, claims.GivenName, claims.FamilyName, subject)
 	return name, claims.Email
 }

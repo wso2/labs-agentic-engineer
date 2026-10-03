@@ -97,13 +97,13 @@ func TestPlanTap_AgainstRealIssueService_CostsOneCallPerTask(t *testing.T) {
 	tap.milestone = 9
 	tap.appPaths = map[string]string{"user-service": "src/user", "order-service": "src/order"}
 
-	var sink strings.Builder
-	tap.Stream(stream(
-		toolResult(planOK("user-service", "Implement user-service", nil)),
-		toolResult(planOK("order-service", "Implement order-service", []string{"user-service"})),
-		toolResult(planOK("cart-service", "Implement cart-service", []string{"order-service"})),
-		"data: [DONE]\n\n",
-	), &sink, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planOK("user-service", "Implement user-service", nil)),
+		taskOp(planOK("order-service", "Implement order-service", []string{"user-service"})),
+		taskOp(planOK("cart-service", "Implement cart-service", []string{"order-service"})),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if tap.failures != 0 {
 		t.Fatalf("plan reported %d write failures", tap.failures)

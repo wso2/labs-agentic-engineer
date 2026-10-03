@@ -45,7 +45,8 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
-| `Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn |
+| `KickoffService.Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn in the org's AE Studio pod |
+| `aestudiotools.Turns` · `aestudiotools.References` | needs | `clients/aestudiotools` — the org pod's `/internal/v1` turns (kickoff) and reference store (the references upload, a pass-through) |
 | `TurnRepository.Newest` | offers | `projects` — the status poll's `spec.agent`: is an agent working on the spec right now |
 | `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
@@ -131,16 +132,21 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   the instruction and derives the flow's eager skills from the spec, so a console CTA, a typed command and
   a playground run produce identical turns (components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0003). This domain holds NO prompt
   text; the flow token is kept here because it also gates web search and MCP minting for design turns.
-- **The kickoff** (`kickoff.go`) — the project's opening `/start`, fired server-side at creation so the
-  journey starts itself instead of waiting on a Generate-spec click. Room-scoped like every console turn,
-  carrying the creating user's bearer (which is what lets the agent join the spec room), on the project's
-  current thread. Idempotent on "has this project ever run a turn", because it has two triggers: project
-  create, and the references upload a create with `referencesPending` held it for. Runs INLINE, so the
-  create answers only once the turn row exists — that is what keeps `spec.agent == "never-started"`
-  meaning "no turn has ever run" rather than also "starting right now", which no surface could tell
-  apart. (`""` is a different fact: a turn HAS run and the newest one completed.) Bounded
-  (20s) and error-swallowing: a kickoff that cannot start never fails the creation, and the spec
-  view's empty state offers it instead.
+- **The kickoff** (`kickoff.go`, `KickoffService`) — the project's opening `/start`, fired server-side
+  at creation so the journey starts itself instead of waiting on a Generate-spec click. It is a `start`
+  turn in the org's AE Studio pod (`aestudiotools.Turns`), credited to the verified caller
+  (`display_identity.go`: the claims' subject and display name, never the raw bearer). It has two
+  triggers, project create and the references upload a create with `referencesPending` held it for, so
+  it is idempotent twice: the finished-turn ledger (`Newest`) refuses a project that already ran a turn,
+  and the turn id is uuidv5 of `org/project`, so a retry while the interview runs reattaches to it. The
+  start is INLINE (the create answers once the pod has the turn); the stream is then followed in the
+  background only to log the outcome. Bounded (20s on aep-api's side; the pod runs the turn on) and
+  error-swallowing: a kickoff that cannot start never fails the creation, and the spec view's empty
+  state offers it instead.
+- **The references upload** (`files/references.go`) — a pass-through to the org's pod, which stores and
+  validates the documents. The strict server hands over a `*multipart.Reader`, so each `files` part is
+  re-streamed through an `io.Pipe` (same field, name and content type, never buffered whole); a body
+  that breaks off aborts the pod's upload. The held kickoff fires only on the pod's `2xx`.
 - **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
   design was written?" is answered by reading the requirements at the commit the newest successful
   `/design` turn recorded reading the project at, and comparing that reduction against today's —

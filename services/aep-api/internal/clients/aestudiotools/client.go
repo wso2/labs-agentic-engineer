@@ -97,8 +97,6 @@ type call func(ctx context.Context, c *gen.Client, impersonateOrg string, auth g
 // owner_refused) is dropped and the call sent once more with a fresh one when
 // replayable says the request can be sent again; refused again, the call is
 // ErrAEStudioMisconfigured and logs ae_studio.auth_failed {org, status}.
-//
-//deadcode:keep wired in Task 3.17
 func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable func() bool) (*http.Response, error) {
 	target, err := a.endpoints.resolve(ctx, org)
 	if err != nil {
@@ -139,11 +137,9 @@ func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable 
 }
 
 // always is the replayable of a request whose body is rebuilt on each send.
-//
-//deadcode:keep wired in Task 3.17
 func always() bool { return true }
 
-//deadcode:keep wired in Task 3.17
+// bearer sets the AE-only client's token on a request.
 func bearer(tok string) gen.RequestEditorFn {
 	return func(_ context.Context, req *http.Request) error {
 		req.Header.Set("Authorization", "Bearer "+tok)
@@ -153,8 +149,6 @@ func bearer(tok string) gen.RequestEditorFn {
 
 // tokenFailed logs a misconfigured AE-only client, value-free: missing
 // credentials once per process (C5, Q-13), a refused client every time.
-//
-//deadcode:keep wired in Task 3.17
 func (a *Adapter) tokenFailed(ctx context.Context, org string, err error) error {
 	switch {
 	case errors.Is(err, errClientCredentialsMissing):
@@ -171,8 +165,6 @@ func (a *Adapter) tokenFailed(ctx context.Context, org string, err error) error 
 // cancellation is returned as is; anything else (a dial error, a broken
 // connection, a deadline) is ErrAEStudioUnavailable and drops the org's
 // cached Target, which may be stale.
-//
-//deadcode:keep wired in Task 3.17
 func (a *Adapter) transportFailed(ctx context.Context, org, op string, err error) error {
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return fmt.Errorf("ae studio: %s: %w", op, ctx.Err())
@@ -182,15 +174,11 @@ func (a *Adapter) transportFailed(ctx context.Context, org, op string, err error
 }
 
 // unary bounds a unary call by the call timeout.
-//
-//deadcode:keep wired in Task 3.17
 func (a *Adapter) unary(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, a.callTimeout)
 }
 
 // validRef refuses a RepoRef the pod could not route.
-//
-//deadcode:keep wired in Task 3.17
 func validRef(ref RepoRef) error {
 	if ref.Org == "" || ref.Owner == "" || ref.Repo == "" {
 		return fmt.Errorf("ae studio: incomplete repo ref %+v", ref)

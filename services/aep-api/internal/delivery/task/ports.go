@@ -18,11 +18,8 @@ package task
 
 import (
 	"context"
-	"io"
 
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -102,20 +99,6 @@ type VersionReader interface {
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)
 }
 
-// GitReader is the workspace-backed git surface the plan turn drives: the
-// snapshot refs (Head), the lineage diff (Workspace.Diff between a Task's
-// lineage tag and the current tag, §6), and per-op secrets.
-// sourcecontrol.GitOpsService satisfies it.
-type GitReader interface {
-	Workspace() sourcecontrol.Workspace
-	Resolver() secrets.Resolver
-}
-
-// SkillsRepoResolver returns the org _skills git row used as the plan
-// turn's SkillsRef snapshot source. Production wires the same reconcile
-// resolver as genai turns so the library is not first-touch-only.
-type SkillsRepoResolver func(ctx context.Context, orgID string) (*sourcecontrol.GitRepository, error)
-
 // ExecutionReader is the read side of the executions rows (the platform-owned
 // half), consumed org-scoped by the read path to fuse derived status. It is the
 // delivery.ExecutionRepository scoped methods — the shared kernel, not the
@@ -124,18 +107,6 @@ type ExecutionReader interface {
 	LatestPerKindScoped(ctx context.Context, orgID, repo string, issueNumber int) (map[string]*delivery.Execution, error)
 	LatestPerKindForRepoScoped(ctx context.Context, orgID, repo string) (map[int]map[string]*delivery.Execution, error)
 	ListByIssueScoped(ctx context.Context, orgID, repo string, issueNumber int) ([]delivery.Execution, error)
-}
-
-// AgentLLMResolver resolves the org's model connection and its key for the
-// plan turn. An empty key with a nil error means "org has none" → the plan
-// turn raises ErrNoModelConnection. An alias, so the composition root wires
-// the one resolver the spec turns use.
-type AgentLLMResolver = spec.AgentLLMResolver
-
-// TurnClient is the agents-service turn client — the plan turn POSTs a
-// toolset:"task-plan" turn and streams raw StreamPart frames back for the tap.
-type TurnClient interface {
-	Turn(ctx context.Context, conversationID, orgID, modelKey string, req agentsvc.TurnRequest) (io.ReadCloser, error)
 }
 
 // Adopter hands an issue to the coding agent: file it under the deployed

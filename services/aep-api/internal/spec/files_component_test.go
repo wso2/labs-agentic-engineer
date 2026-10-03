@@ -14,12 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Shared rig for the references component tests: the REAL contract-first
-// handler chain (strict server via componenttest) over the production gitrepo
+// Shared rig for the files service component tests: the production gitrepo
 // gateway, with the REAL gitfs Workspace engine mirroring a REAL bare file://
 // origin (pure workspacetest fixture). Only the repo row + credential resolver
-// are faked. The Files API read/apply endpoints are gone (the pod serves
-// them); the spec.FilesService stays for aep-api's in-process adapters.
+// are faked. The Files API read/apply endpoints and the references upload run
+// in the pod; the spec.FilesService stays for aep-api's in-process adapters.
 package spec_test
 
 import (
@@ -30,8 +29,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/edge"
-	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
 	"github.com/wso2/aep/aep-api/internal/platform/gittest"
@@ -80,7 +77,6 @@ func (filesStubResolver) Resolve(context.Context, string) (secrets.Credential, e
 // ---- harness ----
 
 type filesRig struct {
-	h      *componenttest.Harness
 	svc    spec.FilesService
 	remote *gittest.Remote
 	engine *gitfs.Engine
@@ -103,10 +99,7 @@ func newFilesRig(t *testing.T, seed map[string]string) *filesRig {
 	engine := workspacetest.NewEngine(t)
 	gitOps := sourcecontrol.NewGitOpsService(filesStubResolver{}, engine)
 	svc := spec.NewFilesService(filesStubRepoResolver{rec: rec}, gitOps)
-	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{
-		Spec: mustSpecHandlers(t, spec.Deps{Files: svc}),
-	}})
-	return &filesRig{h: h, svc: svc, remote: remote, engine: engine}
+	return &filesRig{svc: svc, remote: remote, engine: engine}
 }
 
 // mirrorRevParse resolves rev inside the ENGINE's bare mirror (not the origin)
@@ -127,11 +120,4 @@ func (r *filesRig) mirrorRevParse(t *testing.T, rev string) string {
 		t.Fatalf("mirror rev-parse %s: %v\n%s", rev, err, out)
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func firstBytes(s string, n int) string {
-	if len(s) > n {
-		return s[:n]
-	}
-	return s
 }

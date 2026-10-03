@@ -17,15 +17,18 @@
 package task
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"iter"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -37,10 +40,6 @@ func newTestTap(issues *fakeIssues) *planTap {
 	tap.milestone = 5
 	tap.appPaths = map[string]string{"order-service": "src/order-service"}
 	return tap
-}
-
-func toolResult(output string) string {
-	return fmt.Sprintf("data: {\"type\":\"tool-result\",\"output\":%s}\n\n", output)
 }
 
 func planOK(component, title string, deps []string) string {
@@ -55,28 +54,50 @@ func updateByTitleBody(title, body string) string {
 	return fmt.Sprintf(`{"ok":true,"op":"update","ref":{"title":%q},"set":{"body":%q}}`, title, body)
 }
 
-func stream(frames ...string) io.ReadCloser {
-	return io.NopCloser(strings.NewReader(strings.Join(frames, "")))
+// taskOp is one task-op line of the pod's turn stream: the ok output of a
+// planTask or updateTask call, op taken from it.
+func taskOp(output string) aestudiotools.TurnEvent {
+	var head struct {
+		Op string `json:"op"`
+	}
+	_ = json.Unmarshal([]byte(output), &head)
+	return aestudiotools.TurnEvent{Type: aestudiotools.EventTaskOp, Op: head.Op, Output: json.RawMessage(output)}
 }
 
-type failWriter struct{}
+var (
+	keepAlive = aestudiotools.TurnEvent{Type: aestudiotools.EventKeepAlive}
+	completed = aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "completed"}
+)
 
-func (failWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("client gone") }
+// turn is a pod turn stream of evs, ending with a completed result unless
+// evs ends with a result of its own.
+func turn(evs ...aestudiotools.TurnEvent) iter.Seq2[aestudiotools.TurnEvent, error] {
+	if len(evs) == 0 || evs[len(evs)-1].Type != aestudiotools.EventResult {
+		evs = append(evs, completed)
+	}
+	return func(yield func(aestudiotools.TurnEvent, error) bool) {
+		for _, ev := range evs {
+			if !yield(ev, nil) {
+				return
+			}
+		}
+	}
+}
+
+func noAbort() {}
 
 // A planned Task is ONE call: prose body, the arming label + the `development`
-// kind, and the
-// milestone assigned at creation. Nothing structured is written into the body —
-// the milestone is the version pin and the label is the population marker, so a
-// machine block would be a second source of truth nobody reads.
+// kind, and the milestone assigned at creation. Nothing structured is written
+// into the body — the milestone is the version pin and the label is the
+// population marker, so a machine block would be a second source of truth
+// nobody reads.
 func TestPlanTap_PlanMintsProseIssueIntoTheMilestone(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Implement order-service", []string{"user-service"})),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(taskOp(planOK("order-service", "Implement order-service", []string{"user-service"}))), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.created) != 1 {
 		t.Fatalf("expected 1 issue created, got %d", len(issues.created))
@@ -109,10 +130,6 @@ func TestPlanTap_PlanMintsProseIssueIntoTheMilestone(t *testing.T) {
 	if !strings.Contains(got.Body, "Depends on the `user-service` task") {
 		t.Errorf("body lost its unresolved dependency line:\n%s", got.Body)
 	}
-	// The stream must have been forwarded verbatim.
-	if !strings.Contains(buf.String(), "[DONE]") {
-		t.Errorf("stream not forwarded verbatim")
-	}
 }
 
 // A dependency whose own Task was planned earlier in the SAME turn resolves to
@@ -120,13 +137,13 @@ func TestPlanTap_PlanMintsProseIssueIntoTheMilestone(t *testing.T) {
 func TestPlanTap_DependsOnResolvesToIssueNumber(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("user-service", "Implement user-service", nil)),
-		toolResult(planOK("order-service", "Implement order-service", []string{"user-service"})),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planOK("user-service", "Implement user-service", nil)),
+		taskOp(planOK("order-service", "Implement order-service", []string{"user-service"})),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.created) != 2 {
 		t.Fatalf("expected 2 issues, got %d", len(issues.created))
@@ -137,68 +154,36 @@ func TestPlanTap_DependsOnResolvesToIssueNumber(t *testing.T) {
 	}
 }
 
-// orderWriter snapshots the fake's created-count at the moment each line is
-// forwarded to the client.
-type orderWriter struct {
-	issues        *fakeIssues
-	createdAtLine []int
-	buf           bytes.Buffer
-}
-
-func (w *orderWriter) Write(p []byte) (int, error) {
-	w.createdAtLine = append(w.createdAtLine, len(w.issues.created))
-	return w.buf.Write(p)
-}
-
-// The FE refreshes its task list the moment an ok tool-result frame arrives, so
-// the tap MUST perform the GitHub write BEFORE forwarding that frame (§6/§8) —
-// otherwise the row cannot materialize in the pending section on that refresh.
-func TestPlanTap_WritesLandBeforeFrameIsForwarded(t *testing.T) {
+// Only task-op lines carry work: a keep-alive mints nothing, and the pod
+// projects only ok tool results (an ok:false never reaches the tap). A
+// task-op whose output is not a successful result is still refused by the
+// decoders rather than minted.
+func TestPlanTap_OnlyASuccessfulTaskOpMints(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	w := &orderWriter{issues: issues}
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Implement order-service", nil)),
-		"data: [DONE]\n\n",
-	), w, func() {})
-
-	if len(w.createdAtLine) == 0 {
-		t.Fatal("nothing forwarded")
+	if err := tap.Stream(turn(
+		keepAlive,
+		taskOp(`{"ok":false,"op":"plan","code":"UNKNOWN_COMPONENT","message":"nope"}`),
+		aestudiotools.TurnEvent{Type: "something-new", Output: json.RawMessage(planOK("x", "Implement x", nil))},
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
 	}
-	// Line 0 is the planTask tool-result: the issue must already exist.
-	if w.createdAtLine[0] != 1 {
-		t.Errorf("issue created AFTER its result frame was forwarded (created=%d at forward time)", w.createdAtLine[0])
-	}
-	if !strings.Contains(w.buf.String(), "[DONE]") {
-		t.Errorf("stream not forwarded verbatim")
-	}
-}
-
-func TestPlanTap_PlanNotOK_NoCreate(t *testing.T) {
-	issues := newFakeIssues()
-	tap := newTestTap(issues)
-	var buf bytes.Buffer
-
-	tap.Stream(stream(
-		toolResult(`{"ok":false,"op":"plan","code":"UNKNOWN_COMPONENT","message":"nope","knownComponents":["a"]}`),
-	), &buf, func() {})
-
 	if len(issues.created) != 0 {
-		t.Fatalf("ok:false planTask must not create an issue, got %d", len(issues.created))
+		t.Fatalf("created %d issues, want none", len(issues.created))
 	}
 }
 
 func TestPlanTap_UpdateByTitle_SetsBody(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Implement order-service", nil)),
-		toolResult(updateByTitleBody("Implement order-service", "## Scope\nWrite the order service.")),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planOK("order-service", "Implement order-service", nil)),
+		taskOp(updateByTitleBody("Implement order-service", "## Scope\nWrite the order service.")),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.created) != 1 {
 		t.Fatalf("expected 1 issue, got %d", len(issues.created))
@@ -220,12 +205,12 @@ func TestPlanTap_UpdateByIssueNumber_PreExisting(t *testing.T) {
 	tap := newTestTap(issues)
 	tap.state[42] = plannedTask{Component: "user-service", Rationale: "orig"}
 	tap.contextNumbers[42] = true // #42 was preloaded into the turn's context
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(`{"ok":true,"op":"update","ref":{"issueNumber":42},"set":{"body":"## Scope\nnew scope","rationale":"revised"}}`),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(`{"ok":true,"op":"update","ref":{"issueNumber":42},"set":{"body":"## Scope\nnew scope","rationale":"revised"}}`),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	got := issues.bodyOf(42)
 	if !strings.Contains(got, "new scope") || !strings.Contains(got, "revised") {
@@ -237,18 +222,18 @@ func TestPlanTap_UpdateByIssueNumber_PreExisting(t *testing.T) {
 // fence: an updateTask{issueNumber} pointing at an issue NOT preloaded into the
 // turn's context (e.g. a human bug report sharing the id space) must NOT be
 // written — no title/body edit, no attention label — and must be recorded in the
-// write-failure accounting so the terminal surface reports it.
+// write-failure accounting.
 func TestPlanTap_UpdateByIssueNumber_OutOfContext_NoWrite(t *testing.T) {
 	issues := newFakeIssues()
 	// #999 exists on the repo but was never part of the plan context (unrelated).
 	issues.seed(sourcecontrol.IssueInfo{Number: 999, Title: "Prod bug: checkout 500", Body: "Users can't check out.", State: "open"})
 	tap := newTestTap(issues) // contextNumbers is empty → 999 is out of context
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(`{"ok":true,"op":"update","ref":{"issueNumber":999},"set":{"body":"## Scope\nclobbered","title":"clobbered"}}`),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(`{"ok":true,"op":"update","ref":{"issueNumber":999},"set":{"body":"## Scope\nclobbered","title":"clobbered"}}`),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	// The unrelated issue is untouched — body, title, and labels unchanged.
 	if got := issues.bodyOf(999); got != "Users can't check out." {
@@ -260,28 +245,24 @@ func TestPlanTap_UpdateByIssueNumber_OutOfContext_NoWrite(t *testing.T) {
 	if len(issues.labelsOf(999)) != 0 {
 		t.Errorf("out-of-context issue must not be labeled, got %v", issues.labelsOf(999))
 	}
-	// The skipped op is recorded and surfaced.
 	if tap.failures != 1 {
 		t.Errorf("out-of-context update must be recorded as a write-failure, got %d", tap.failures)
-	}
-	if !strings.Contains(buf.String(), "aep-plan-write-failures 1") {
-		t.Errorf("expected terminal in-band failure surface, got %q", buf.String())
 	}
 }
 
 func TestPlanTap_Rename_RemapsTitleRef(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Old title", nil)),
+	if err := tap.Stream(turn(
+		taskOp(planOK("order-service", "Old title", nil)),
 		// Rename via updateTask (ref.title is the canonical pre-rename title).
-		toolResult(`{"ok":true,"op":"update","ref":{"title":"Old title"},"set":{"title":"New title"}}`),
+		taskOp(`{"ok":true,"op":"update","ref":{"title":"Old title"},"set":{"title":"New title"}}`),
 		// A subsequent update addressing the NEW title must resolve.
-		toolResult(updateByTitleBody("New title", "## Scope\nafter rename")),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+		taskOp(updateByTitleBody("New title", "## Scope\nafter rename")),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if issues.byNumber[100].Title != "New title" {
 		t.Errorf("expected title renamed, got %q", issues.byNumber[100].Title)
@@ -294,13 +275,13 @@ func TestPlanTap_Rename_RemapsTitleRef(t *testing.T) {
 func TestPlanTap_Dedupe_SamePlanTwice(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Implement order-service", nil)),
-		toolResult(planOK("order-service", "Implement order-service", nil)),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planOK("order-service", "Implement order-service", nil)),
+		taskOp(planOK("order-service", "Implement order-service", nil)),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.created) != 1 {
 		t.Fatalf("duplicate planTask (same title slug) must dedupe to one create, got %d", len(issues.created))
@@ -314,13 +295,13 @@ func TestPlanTap_DedupesAgainstTheMilestonesExistingTitles(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
 	tap.existingSlugs[titleSlug("Implement order-service")] = true
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "  implement ORDER-service!  ", nil)),
-		toolResult(planOK("user-service", "Implement user-service", nil)),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planOK("order-service", "  implement ORDER-service!  ", nil)),
+		taskOp(planOK("user-service", "Implement user-service", nil)),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.created) != 1 {
 		t.Fatalf("want exactly the ONE new Task minted, got %d: %+v", len(issues.created), issues.created)
@@ -341,12 +322,12 @@ func TestPlanTap_WriteFailure_CommentsAndCounts(t *testing.T) {
 	tap.state[42] = plannedTask{Component: "user-service"}
 	tap.contextNumbers[42] = true // in-context; the failure is at the GitHub write
 	issues.failEditBody = true
-	var buf bytes.Buffer
 
-	tap.Stream(stream(
-		toolResult(`{"ok":true,"op":"update","ref":{"issueNumber":42},"set":{"body":"x"}}`),
-		"data: [DONE]\n\n",
-	), &buf, func() {})
+	if err := tap.Stream(turn(
+		taskOp(`{"ok":true,"op":"update","ref":{"issueNumber":42},"set":{"body":"x"}}`),
+	), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
 
 	if len(issues.comments[42]) != 1 || !strings.Contains(issues.comments[42][0], "failed to apply") {
 		t.Errorf("expected one write-failure comment on the issue, got %v", issues.comments[42])
@@ -354,69 +335,121 @@ func TestPlanTap_WriteFailure_CommentsAndCounts(t *testing.T) {
 	if tap.failures != 1 {
 		t.Errorf("expected 1 recorded failure, got %d", tap.failures)
 	}
-	if !strings.Contains(buf.String(), "aep-plan-write-failures 1") {
-		t.Errorf("expected terminal in-band failure surface, got %q", buf.String())
-	}
 }
 
-func TestPlanTap_DrainOnDisconnect(t *testing.T) {
+// A turn the pod ends `failed` is an error, carrying the pod's code: the
+// planning activity retries it rather than settling a half-planned milestone
+// as done. What it planned before failing stays minted.
+func TestPlanTap_AFailedTurnIsAnError(t *testing.T) {
 	issues := newFakeIssues()
 	tap := newTestTap(issues)
 
-	// The client writer errors immediately (disconnect), but the tap must keep
-	// reading upstream and perform the GitHub write.
-	tap.Stream(stream(
-		toolResult(planOK("order-service", "Implement order-service", nil)),
-		"data: [DONE]\n\n",
-	), failWriter{}, func() {})
-
+	err := tap.Stream(turn(
+		taskOp(planOK("order-service", "Implement order-service", nil)),
+		aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "failed", Code: "shutdown", Message: "the studio is shutting down"},
+	), noAbort)
+	if err == nil || !strings.Contains(err.Error(), "shutdown") {
+		t.Fatalf("err = %v, want the turn's failure with its code", err)
+	}
 	if len(issues.created) != 1 {
-		t.Fatalf("tap must drain and create the issue even after client disconnect, got %d", len(issues.created))
+		t.Fatalf("created %d issues, want the one planned before the failure", len(issues.created))
 	}
 }
 
-// hangingBody blocks on Read until Close is called (a hung agents turn sending
-// no bytes / keep-alives), then returns EOF — the idle watchdog's Close unblocks it.
-type hangingBody struct {
-	closed chan struct{}
-	once   sync.Once
+// A stream that breaks (the adapter yields an error: the pod went away, a
+// malformed line) is an error, never a quiet success.
+func TestPlanTap_ABrokenStreamIsAnError(t *testing.T) {
+	tap := newTestTap(newFakeIssues())
+	broken := func(yield func(aestudiotools.TurnEvent, error) bool) {
+		if !yield(keepAlive, nil) {
+			return
+		}
+		yield(aestudiotools.TurnEvent{}, aestudiotools.ErrAEStudioUnavailable)
+	}
+
+	if err := tap.Stream(broken, noAbort); !errors.Is(err, aestudiotools.ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want the stream's error", err)
+	}
 }
 
-func newHangingBody() *hangingBody { return &hangingBody{closed: make(chan struct{})} }
-
-func (b *hangingBody) Read([]byte) (int, error) {
-	<-b.closed
-	return 0, io.EOF
-}
-func (b *hangingBody) Close() error {
-	b.once.Do(func() { close(b.closed) })
-	return nil
-}
-
-// TestPlanTap_IdleDeadline_AbortsHungDrain pins the gate-review idle-read
-// deadline: a turn that goes silent past the idle timeout must abort the drain
-// (so the per-project plan lock releases) rather than block forever, and record
-// the abort in the write-failure accounting.
-func TestPlanTap_IdleDeadline_AbortsHungDrain(t *testing.T) {
+// Every event — keep-alives included — reports progress, so the planning
+// activity heartbeats per event rather than only on its own clock (D-2/Q-8).
+func TestPlanTap_EveryEventReportsProgress(t *testing.T) {
+	var beats atomic.Int32
+	ctx := delivery.WithProgress(context.Background(), func() { beats.Add(1) })
 	issues := newFakeIssues()
-	tap := newTestTap(issues)
-	tap.idleTimeout = 20 * time.Millisecond
-	var buf bytes.Buffer
+	tap := newPlanTap(ctx, "org1", "proj1", issues, issues.writer())
 
-	done := make(chan struct{})
-	go func() {
-		tap.Stream(newHangingBody(), &buf, func() {})
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Stream did not abort a hung drain — the plan lock would be pinned")
+	if err := tap.Stream(turn(keepAlive, taskOp(planOK("a", "Implement a", nil)), keepAlive), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
 	}
-	if tap.failures != 1 {
-		t.Errorf("an idle-aborted drain must be recorded as a write-failure, got %d", tap.failures)
+	if got := beats.Load(); got != 4 { // two keep-alives, one task-op, the result
+		t.Fatalf("progress beats = %d, want 4 (one per event)", got)
 	}
-	if !strings.Contains(buf.String(), "aep-plan-write-failures 1") {
-		t.Errorf("expected terminal in-band failure surface, got %q", buf.String())
+}
+
+// silentUntilAborted is a turn that sends nothing until abort is called.
+func silentUntilAborted(aborted <-chan struct{}) iter.Seq2[aestudiotools.TurnEvent, error] {
+	return func(yield func(aestudiotools.TurnEvent, error) bool) {
+		<-aborted
+		yield(aestudiotools.TurnEvent{}, context.Canceled)
 	}
+}
+
+// A turn that goes silent past the idle deadline — no task-op, no keep-alive
+// — is aborted, so a hung pod cannot pin the planning activity for its whole
+// 30-minute timeout. The abort ends the stream (closing its body) and is
+// reported as its own error, not as the read error the abort caused.
+func TestPlanTap_IdleWatchdogAbortsASilentTurn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tap := newTestTap(newFakeIssues())
+		aborted := make(chan struct{})
+		start := time.Now()
+
+		err := tap.Stream(silentUntilAborted(aborted), func() { close(aborted) })
+
+		if !errors.Is(err, errPlanTurnSilent) {
+			t.Fatalf("err = %v, want errPlanTurnSilent", err)
+		}
+		if waited := time.Since(start); waited != planDrainIdleTimeout {
+			t.Fatalf("aborted after %v, want exactly the %v idle deadline", waited, planDrainIdleTimeout)
+		}
+	})
+}
+
+// A Plan turn that reads files for two minutes between two Tasks sends only
+// keep-alives in that time. They are proof of life: the watchdog resets on
+// each, so the turn is NOT aborted and the Task planned after the quiet
+// stretch is minted (D-2/Q-8).
+func TestPlanTap_KeepAlivesHoldAQuietTurnOpen(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		issues := newFakeIssues()
+		tap := newTestTap(issues)
+		abortCalled := false
+		quiet := func(yield func(aestudiotools.TurnEvent, error) bool) {
+			if !yield(taskOp(planOK("a", "Implement a", nil)), nil) {
+				return
+			}
+			for elapsed := time.Duration(0); elapsed < 2*time.Minute; elapsed += 15 * time.Second {
+				time.Sleep(15 * time.Second)
+				if !yield(keepAlive, nil) {
+					return
+				}
+			}
+			if !yield(taskOp(planOK("b", "Implement b", nil)), nil) {
+				return
+			}
+			yield(completed, nil)
+		}
+
+		if err := tap.Stream(quiet, func() { abortCalled = true }); err != nil {
+			t.Fatalf("Stream: %v", err)
+		}
+		if abortCalled {
+			t.Fatal("a turn sending keep-alives was aborted")
+		}
+		if len(issues.created) != 2 {
+			t.Fatalf("created %d issues, want both Tasks", len(issues.created))
+		}
+	})
 }

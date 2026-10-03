@@ -36,6 +36,13 @@ type Claims struct {
 	OuHandle string
 	OuName   string
 	OuId     string
+	// Display claims of the verified token: who to credit a user's work to
+	// (spec.displayIdentity holds the name rule). Empty when the IdP sends
+	// none.
+	Name       string
+	Email      string
+	GivenName  string
+	FamilyName string
 }
 
 // ResolveOuHandle returns the canonical OC org handle from a verified
@@ -72,6 +79,27 @@ func ClaimsFromContext(ctx context.Context) *Claims {
 	return c
 }
 
+// claimsOf projects a verified token onto Claims.
+//
+// tc.Sub, not tc.Subject: TokenClaims declares its own `Sub string json:"sub"`
+// at depth 0, which shadows the embedded jwt.RegisteredClaims.Subject (same
+// tag, deeper) — encoding/json decodes ONLY the shallower field, so the
+// promoted Subject is always empty on this edge (found via e2e: turn commits
+// fell back to the credential identity).
+func claimsOf(tc *jwtassertion.TokenClaims) *Claims {
+	return &Claims{
+		Subject:    tc.Sub,
+		ClientID:   tc.ClientID,
+		OuHandle:   tc.OuHandle,
+		OuName:     tc.OuName,
+		OuId:       tc.OuId,
+		Name:       tc.Name,
+		Email:      tc.Email,
+		GivenName:  tc.GivenName,
+		FamilyName: tc.FamilyName,
+	}
+}
+
 // JWTConfig configures the inbound JWT verifier. It is a thin shim over
 // jwtassertion.Config with the same fields.
 type JWTConfig struct {
@@ -103,22 +131,8 @@ func JWTMiddleware(cfg JWTConfig) func(http.Handler) http.Handler {
 	})
 	return func(next http.Handler) http.Handler {
 		return verifier(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			tc := jwtassertion.GetTokenClaims(r.Context())
-			if tc != nil {
-				// tc.Sub, not tc.Subject: TokenClaims declares its own
-				// `Sub string json:"sub"` at depth 0, which shadows the
-				// embedded jwt.RegisteredClaims.Subject (same tag, deeper) —
-				// encoding/json decodes ONLY the shallower field, so the
-				// promoted Subject is always empty on this edge (found via
-				// e2e: turn commits fell back to the credential identity).
-				ctx := WithClaims(r.Context(), &Claims{
-					Subject:  tc.Sub,
-					ClientID: tc.ClientID,
-					OuHandle: tc.OuHandle,
-					OuName:   tc.OuName,
-					OuId:     tc.OuId,
-				})
-				r = r.WithContext(ctx)
+			if tc := jwtassertion.GetTokenClaims(r.Context()); tc != nil {
+				r = r.WithContext(WithClaims(r.Context(), claimsOf(tc)))
 			}
 			next.ServeHTTP(w, r)
 		}))

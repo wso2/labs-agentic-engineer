@@ -102,8 +102,6 @@ type Turns interface {
 // ErrTurnInProgress. The stream is bounded by ctx only; ranging over it to
 // the end, or breaking off, closes it, and it can be ranged over once. A
 // stream that ends without a result is ErrAEStudioUnavailable.
-//
-//deadcode:keep wired in Task 3.17 (kickoff and Plan through the pod)
 func (a *Adapter) StartTurn(ctx context.Context, ref RepoRef, req TurnRequest) (iter.Seq2[TurnEvent, error], error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -121,7 +119,6 @@ func (a *Adapter) StartTurn(ctx context.Context, ref RepoRef, req TurnRequest) (
 	return a.turnEvents(ctx, ref.Org, resp.Body), nil
 }
 
-//deadcode:keep wired in Task 3.17
 func turnBody(req TurnRequest) (gen.TurnRequest, error) {
 	id, err := uuid.Parse(req.TurnID)
 	if err != nil {
@@ -151,8 +148,6 @@ func turnBody(req TurnRequest) (gen.TurnRequest, error) {
 
 // turnEvents reads the NDJSON stream, one event per non-empty line, until
 // the result. It closes body when the range ends.
-//
-//deadcode:keep wired in Task 3.17
 func (a *Adapter) turnEvents(ctx context.Context, org string, body io.ReadCloser) iter.Seq2[TurnEvent, error] {
 	used := false
 	return func(yield func(TurnEvent, error) bool) {

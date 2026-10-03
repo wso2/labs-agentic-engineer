@@ -18,9 +18,12 @@ package run
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/activity"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // MAKING A CANCEL REACH THE WORK, not just the waiting.
@@ -109,4 +112,18 @@ func heartbeating(ctx context.Context, fn func(context.Context) error) error {
 		}
 	}()
 	return fn(ctx)
+}
+
+// withTurnBeats installs the progress beat a long agent turn reports per event
+// (delivery.ReportProgress): each report records a heartbeat whose details
+// are the number of events so far. Outside an activity there is nothing to
+// beat, and ctx is returned unchanged.
+func withTurnBeats(ctx context.Context) context.Context {
+	if !activity.IsActivity(ctx) {
+		return ctx
+	}
+	var events atomic.Int64
+	return delivery.WithProgress(ctx, func() {
+		activity.RecordHeartbeat(ctx, int(events.Add(1)))
+	})
 }

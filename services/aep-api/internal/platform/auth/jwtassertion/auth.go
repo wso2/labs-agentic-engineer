@@ -42,6 +42,11 @@ type TokenClaims struct {
 	// GrantType is the OAuth grant the token was issued under. Thunder stamps
 	// it on every token it issues; a client_credentials token is a machine's.
 	GrantType string `json:"grant_type"`
+	// Display claims (OIDC standard), read for crediting a user's work.
+	Name       string `json:"name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	GivenName  string `json:"given_name,omitempty"`
+	FamilyName string `json:"family_name,omitempty"`
 	// Task JWT–specific custom claims. Empty for User and Service JWTs.
 	OcOrgID   string `json:"ocOrgId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`

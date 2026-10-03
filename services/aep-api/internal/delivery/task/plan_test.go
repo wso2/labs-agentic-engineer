@@ -20,35 +20,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
+	"github.com/google/uuid"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// contextPaths lists the task-context paths a dispatched plan turn carried.
-func contextPaths(turn agentsvc.TurnSpec) []string {
-	out := make([]string, 0, len(turn.TaskContext))
-	for _, f := range turn.TaskContext {
-		out = append(out, f.Path)
-	}
-	return out
-}
-
-func (p planVersions) BuildScopeAtTag(context.Context, string, string, string) (spec.BuildScope, error) {
-	return p.scope, nil
-}
+// SERVICE tier for the plan path over the in-memory pod (aestudiotest.Fake):
+// the Plan turn runs in the org's AE Studio pod, aep-api states what to plan
+// and mints what the pod's task-op lines describe.
 
 type planVersions struct {
 	specTag string
@@ -62,192 +49,122 @@ func (p planVersions) ListSpecVersionTags(context.Context, string, string) (*spe
 	return &spec.TagList{Tags: []string{p.specTag}, Latest: p.specTag}, nil
 }
 
-// capturingTurn records the TurnRequest and replays a canned upstream stream
-// (an immediate [DONE] unless the test scripts frames).
-type capturingTurn struct {
-	req    *agentsvc.TurnRequest
-	script string
+func (p planVersions) BuildScopeAtTag(context.Context, string, string, string) (spec.BuildScope, error) {
+	return p.scope, nil
 }
 
-func (c *capturingTurn) Turn(_ context.Context, _, _, _ string, req agentsvc.TurnRequest) (io.ReadCloser, error) {
-	c.req = &req
-	body := c.script
-	if body == "" {
-		body = "data: [DONE]\n\n"
-	}
-	return io.NopCloser(strings.NewReader(body)), nil
-}
-
-type nilResolver struct{}
-
-func (nilResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return nil, nil
-}
-
-// planRig is the workspace-shaped plan harness: a real engine over real
-// file:// origins for the project repo and the org _skills repo.
+// planRig is a plan service over the fake pod, for project proj1 of org1
+// whose repository is github.com/acme/widgets.
 type planRig struct {
-	fx           *workspacetest.Fixture
-	skillsOrigin *gittest.Remote
-	turn         *capturingTurn
-	issues       *fakeIssues
-	svc          *PlanService
+	pod    *aestudiotest.Fake
+	issues *fakeIssues
+	svc    *PlanService
 }
 
-// rigScope is the phase scope newPlanRig's version reader serves — zero by
-// default (legacy scope-less planning); a test that needs a phase sets it and
-// restores it.
-var rigScope spec.BuildScope
-
-func newPlanRig(t *testing.T, seed map[string]string, specTag string) *planRig {
+func newPlanRig(t *testing.T, versions planVersions) *planRig {
 	t.Helper()
-	fx := workspacetest.New(t, seed)
-	skillsOrigin := gittest.NewRemote(t, gittest.WithSeed(map[string]string{
-		"skills/task-planning/SKILL.md": "---\nname: task-planning\ndescription: plan tasks\nmetadata:\n  aep:\n    kind: platform\n---\n# Task planning",
-	}, "seed skills"))
-	repoRow := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: fx.Origin.URL(),
-		DefaultBranch: "main", RepoSlug: workspacetest.DefaultSlug, Status: "ready"}
-	skillsRow := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: spec.SkillsRepoSentinelProjectID,
-		RepoURL: skillsOrigin.URL(), DefaultBranch: "main", RepoSlug: "org-skills", Status: "ready"}
-
-	turn := &capturingTurn{}
+	pod := aestudiotest.New()
 	issues := newFakeIssues()
-	svc := NewPlanService(
-		fakeRepos{repo: repoRow},
-		planVersions{specTag: specTag, scope: rigScope},
-		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (spec.AgentLLM, error) {
-			return spec.AgentLLM{Key: "sk-test", Connection: planConnection}, nil
-		},
-		turn,
-		issues,
-		issues.writer(),
-		fx.Engine,
-		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil },
-	)
-	return &planRig{fx: fx, skillsOrigin: skillsOrigin, turn: turn, issues: issues, svc: svc}
+	row := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"}
+	svc := NewPlanService(fakeRepos{repo: row}, versions, pod, issues, issues.writer())
+	return &planRig{pod: pod, issues: issues, svc: svc}
 }
 
-// planConnection is the org's model connection in the plan rig: not Anthropic,
-// so the plan turn is shown riding whatever connection the resolver returns.
-var planConnection = modelconn.Connection{
-	Format:     modelconn.FormatOpenAICompatible,
-	BaseURL:    "https://ollama.com/v1",
-	Host:       modelconn.OllamaHost,
-	Model:      "gpt-oss:20b",
-	AuthScheme: modelconn.AuthBearer,
-	ImageInput: modelconn.Unknown,
-}
-
-// start plans into milestone 7 and returns the dispatched turn request.
-func (r *planRig) start(t *testing.T) *agentsvc.TurnRequest {
+// plan plans into milestone 7 and returns the one turn the pod saw.
+func (r *planRig) plan(t *testing.T) aestudiotest.TurnCall {
 	t.Helper()
 	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
 		t.Fatalf("PlanIntoMilestone: %v", err)
 	}
-	if r.turn.req == nil {
-		t.Fatal("turn was never started")
+	calls := r.pod.TurnCalls()
+	if len(calls) != 1 {
+		t.Fatalf("pod saw %d turns, want 1", len(calls))
 	}
-	return r.turn.req
+	return calls[0]
 }
 
-// TestPlanIntoMilestone_DispatchesWorkspaceShape pins the plan dispatch: no
-// inline files or skills — a WorkspaceRef naming the repo snapshot at HEAD and
-// the _skills snapshot, toolset task-plan, snapshots materialized on the mount.
-func TestPlanIntoMilestone_DispatchesWorkspaceShape(t *testing.T) {
-	r := newPlanRig(t, map[string]string{
-		"specs/design/design.md":                              "# design",
-		"specs/design/components/hello-world-api/design.json": `{"name":"hello-world-api"}`,
-		"specs/requirements/prd.md":                           "# reqs",
-	}, "v1")
-	req := r.start(t)
+// The Plan turn starts in the project's pod: kind plan, the project named,
+// a fresh UUID turn id per plan, and no credit (no run records a requester).
+func TestPlanMilestone_StartsAPlanTurnInThePod(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v1"})
+	call := r.plan(t)
 
-	// The tool set is DERIVED by the agents service from kind:"plan" — the BFF
-	// states what the turn is for and stops there.
-	if req.Turn.Kind != agentsvc.TurnKindPlan {
-		t.Errorf("turn kind = %q, want %q", req.Turn.Kind, agentsvc.TurnKindPlan)
+	if call.Ref != (aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets"}) {
+		t.Errorf("ref = %+v, want the project's repository in org1", call.Ref)
 	}
-	// The planner runs on the org's connection and model, like every spec agent.
-	if req.Model != "gpt-oss:20b" {
-		t.Errorf("turn model = %q, want the org's model", req.Model)
+	req := call.Request
+	if req.Kind != aestudiotools.TurnKindPlan || req.Project != "proj1" {
+		t.Errorf("request = %+v, want a plan turn for proj1", req)
 	}
-	if req.Connection == nil || *req.Connection != *agentsvc.ConnectionFor(planConnection) {
-		t.Errorf("turn connection = %+v, want the org's connection", req.Connection)
+	if _, err := uuid.Parse(req.TurnID); err != nil {
+		t.Errorf("turn id %q is not a UUID", req.TurnID)
 	}
-	ws := req.Workspace
-	if ws.Ref != r.fx.Origin.HeadSHA(t) {
-		t.Errorf("workspace ref = %q, want origin head %q", ws.Ref, r.fx.Origin.HeadSHA(t))
+	if req.Credit != (aestudiotools.Credit{}) {
+		t.Errorf("credit = %+v, want none (the run records no requester)", req.Credit)
 	}
-	if ws.SkillsRef != r.skillsOrigin.HeadSHA(t) {
-		t.Errorf("skillsRef = %q, want skills head %q", ws.SkillsRef, r.skillsOrigin.HeadSHA(t))
+	if req.Scope != nil || len(req.TaskContext) != 0 {
+		t.Errorf("scope/context = %+v/%+v, want none for a scope-less first pass", req.Scope, req.TaskContext)
 	}
-	if ws.RepoSlug != workspacetest.DefaultSlug {
-		t.Errorf("repoSlug = %q", ws.RepoSlug)
+
+	// A second plan is a second turn: plan turn ids are never reused.
+	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(ws.ConversationID, "org_org1--proj_proj1--task-plan--") {
-		t.Errorf("conversationId = %q", ws.ConversationID)
+	if calls := r.pod.TurnCalls(); calls[0].Request.TurnID == calls[1].Request.TurnID {
+		t.Error("two plans shared a turn id")
 	}
-	if ws.TurnID == "" {
-		t.Error("turnId must be set")
+}
+
+// The pod's task-op lines are the plan: two planTask results mint two issues
+// in the milestone.
+func TestPlanMilestone_TwoTaskOpsMintTwoIssues(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v1"})
+	r.pod.ScriptTurn(
+		taskOp(planOK("user-service", "Implement user-service", nil)),
+		keepAlive,
+		taskOp(planOK("order-service", "Implement order-service", []string{"user-service"})),
+	)
+	r.plan(t)
+
+	if len(r.issues.created) != 2 {
+		t.Fatalf("created %d issues, want 2", len(r.issues.created))
 	}
-	// Both snapshots are materialized before dispatch (agents reads them).
-	repoSnap, err := gitfs.SnapshotDir(r.fx.Engine.Root(),
-		gitfs.RepoRef{OrgID: "org1", ProjectID: "proj1", RepoSlug: workspacetest.DefaultSlug}, ws.Ref)
-	if err != nil {
-		t.Fatalf("repo snapshot dir: %v", err)
-	}
-	skillsSnap, err := gitfs.SnapshotDir(r.fx.Engine.Root(),
-		gitfs.RepoRef{OrgID: "org1", ProjectID: spec.SkillsRepoSentinelProjectID, RepoSlug: "org-skills"}, ws.SkillsRef)
-	if err != nil {
-		t.Fatalf("skills snapshot dir: %v", err)
-	}
-	for _, dir := range []string{repoSnap, skillsSnap} {
-		if st, err := os.Stat(dir); err != nil || !st.IsDir() {
-			t.Errorf("snapshot dir not materialized: %s (%v)", dir, err)
+	for _, c := range r.issues.created {
+		if c.Milestone == nil || *c.Milestone != 7 {
+			t.Errorf("%q: milestone = %v, want 7", c.Title, c.Milestone)
 		}
 	}
-	if _, err := os.Stat(skillsSnap + "/skills/task-planning/SKILL.md"); err != nil {
-		t.Errorf("task-planning flow skill missing from skills snapshot: %v", err)
+}
+
+// Build-first: no version, no plan, and nothing reaches the pod.
+func TestPlanMilestone_RequiresAVersion(t *testing.T) {
+	r := newPlanRig(t, planVersions{})
+	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); !errors.Is(err, ErrNoSpecVersion) {
+		t.Fatalf("err = %v, want ErrNoSpecVersion", err)
 	}
-	if len(req.Turn.TaskContext) != 0 {
-		t.Errorf("no existing tasks — the turn must carry no task context: %+v", req.Turn.TaskContext)
+	if n := len(r.pod.TurnCalls()); n != 0 {
+		t.Fatalf("pod saw %d turns, want none", n)
 	}
 }
 
-// A stale _skills row over a gone repo must surface as the typed
-// ErrSkillsRepoUnavailable (which the plan path settles the run on), never an
-// anonymous wrap — and the turn must not start.
-func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
-	fx := workspacetest.New(t, map[string]string{
-		"specs/design/design.md":                              "# design",
-		"specs/design/components/hello-world-api/design.json": `{"name":"hello-world-api"}`,
-		"specs/requirements/prd.md":                           "# reqs",
-	})
-	repoRow := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: fx.Origin.URL(),
-		DefaultBranch: "main", RepoSlug: workspacetest.DefaultSlug, Status: "ready"}
-	staleSkills := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: spec.SkillsRepoSentinelProjectID,
-		RepoURL: "file:///nonexistent/skills-repo-gone.git", DefaultBranch: "main", RepoSlug: "org-skills", Status: "ready"}
+// One turn per project is the pod's lock now: a different turn running is
+// ErrTurnInProgress, which the planning activity retries (05 §5).
+func TestPlanMilestone_ATurnInProgressSurfaces(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v1"})
+	r.pod.FailOp(aestudiotest.OpStartTurn, fmt.Errorf("%w (active turn x)", aestudiotools.ErrTurnInProgress))
 
-	turn := &capturingTurn{}
-	planIssues := newFakeIssues()
-	svc := NewPlanService(
-		fakeRepos{repo: repoRow},
-		planVersions{specTag: "v1"},
-		sourcecontrol.NewGitOpsService(nilResolver{}, fx.Engine),
-		func(context.Context, string) (spec.AgentLLM, error) { return spec.AgentLLM{Key: "sk-test"}, nil },
-		turn,
-		planIssues,
-		planIssues.writer(),
-		fx.Engine,
-		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return staleSkills, nil },
-	)
-
-	err := svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7)
-	if !errors.Is(err, ErrSkillsRepoUnavailable) {
-		t.Fatalf("PlanIntoMilestone error = %v, want ErrSkillsRepoUnavailable", err)
+	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); !errors.Is(err, aestudiotools.ErrTurnInProgress) {
+		t.Fatalf("err = %v, want ErrTurnInProgress", err)
 	}
-	if turn.req != nil {
-		t.Error("plan turn dispatched despite an unavailable skills repo")
+}
+
+// A turn the pod ends failed is a failed plan.
+func TestPlanMilestone_AFailedTurnIsAnError(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v1"})
+	r.pod.ScriptTurn(aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "failed", Code: "agent-error"})
+
+	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err == nil {
+		t.Fatal("a failed plan turn returned no error")
 	}
 }
 
@@ -255,8 +172,8 @@ func TestPlanIntoMilestone_SkillsRepoGone_TypedError(t *testing.T) {
 // query: the version's own issues are the additive-only dedupe set (§6 plans
 // fresh from the new spec, so nothing carries over from the previous version),
 // and the version's gate and validation issues are not the planner's to touch.
-func TestPlanIntoMilestone_ContextIsTheMilestonesOwnWork(t *testing.T) {
-	r := newPlanRig(t, map[string]string{"specs/design/design.md": "# design\n"}, "v2")
+func TestPlanMilestone_ContextIsTheMilestonesOwnWork(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v2"})
 
 	// The version's own milestone: one Task already planned (a re-plan or a
 	// crash re-run), one gate, one ledger-only human issue, and the version's
@@ -293,30 +210,22 @@ func TestPlanIntoMilestone_ContextIsTheMilestonesOwnWork(t *testing.T) {
 		State: "open", Labels: []string{delivery.LabelAgentWork, delivery.KindDevelopment},
 	}, 6)
 
-	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
-		t.Fatalf("PlanIntoMilestone: %v", err)
+	call := r.plan(t)
+	paths := make([]string, 0, len(call.Request.TaskContext))
+	for _, f := range call.Request.TaskContext {
+		paths = append(paths, f.Path)
 	}
-	paths := contextPaths(r.turn.req.Turn)
-	for _, want := range []string{"tasks/201.md", "tasks/205.md"} {
-		if !slices.Contains(paths, want) {
-			t.Errorf("%s is the milestone's own work and is missing from the plan context: %v", want, paths)
-		}
-	}
-	for _, leaked := range []string{"tasks/202.md", "tasks/203.md", "tasks/204.md", "tasks/199.md"} {
-		if slices.Contains(paths, leaked) {
-			t.Errorf("%s leaked into the plan context — only the milestone's agent work is context: %v", leaked, paths)
-		}
+	if !slices.Equal(paths, []string{"tasks/201.md", "tasks/205.md"}) {
+		t.Errorf("plan context = %v, want exactly the milestone's own agent work, in path order", paths)
 	}
 }
 
 // The plan path settles the run it armed on a failed plan, so a write the tap
 // could not land has to surface as an ERROR rather than a warning.
-func TestPlanIntoMilestone_WriteFailureIsAnError(t *testing.T) {
-	r := newPlanRig(t, map[string]string{"specs/design/design.md": "# design\n"}, "v2")
+func TestPlanMilestone_WriteFailureIsAnError(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v2"})
 	r.issues.failCreate = true
-	r.turn.script = "data: {\"type\":\"tool-result\",\"output\":" +
-		`{"ok":true,"op":"plan","component":"hello-world-api","title":"Implement hello-world-api","dependsOn":[],"origin":"spec-plan","rationale":"go"}` +
-		"}\n\ndata: [DONE]\n\n"
+	r.pod.ScriptTurn(taskOp(planOK("hello-world-api", "Implement hello-world-api", nil)))
 
 	err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7)
 	if err == nil {
@@ -327,35 +236,25 @@ func TestPlanIntoMilestone_WriteFailureIsAnError(t *testing.T) {
 	}
 }
 
-// TestPlanIntoMilestone_DeltaScopeAndStamp pins the scope-native plan (#369):
-// the instruction carries the platform-computed milestone scope with
-// per-story coverage, and a created Task is stamped with its component's
-// claimed stories — zero LLM discretion on either.
-func TestPlanIntoMilestone_DeltaScopeAndStamp(t *testing.T) {
-	rigScope = spec.BuildScope{
+// The scope-native plan (#369): the turn carries the platform-computed
+// milestone scope with per-story coverage, and a created Task is stamped with
+// its component's claimed stories — zero LLM discretion on either.
+func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v2", scope: spec.BuildScope{
 		Tag: "v2", InScope: []int{1, 2},
 		StoryTitles:      map[int]string{1: "As a user, I want A.", 2: "As a user, I want B."},
 		ComponentStories: map[string][]int{"svc": {1, 2}},
-	}
-	defer func() { rigScope = spec.BuildScope{} }()
+	}})
+	r.pod.ScriptTurn(taskOp(`{"ok":true,"op":"plan","component":"svc","title":"Build svc","dependsOn":[],"origin":"spec-plan","rationale":"core"}`))
 
-	r := newPlanRig(t, map[string]string{"specs/design/design.md": "# d\n"}, "v2")
-	r.turn.script = "data: {\"type\":\"tool-result\",\"output\":" +
-		`{"ok":true,"op":"plan","component":"svc","title":"Build svc","dependsOn":[],"origin":"spec-plan","rationale":"core"}` +
-		"}\n\ndata: [DONE]\n\n"
-	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
-		t.Fatalf("PlanIntoMilestone: %v", err)
-	}
-
-	scope := r.turn.req.Turn.Scope
+	scope := r.plan(t).Request.Scope
 	if scope == nil {
 		t.Fatalf("turn carries no milestone scope")
 	}
 	if scope.Tag != "v2" {
 		t.Errorf("scope tag = %q, want v2", scope.Tag)
 	}
-	want := agentsvc.PlanStory{Number: 1, Title: "As a user, I want A.", Covered: false}
-	if !slices.Contains(scope.Stories, want) {
+	if want := (aestudiotools.PlanStory{Number: 1, Title: "As a user, I want A.", Covered: false}); !slices.Contains(scope.Stories, want) {
 		t.Errorf("scope missing the uncovered story: %+v", scope.Stories)
 	}
 
