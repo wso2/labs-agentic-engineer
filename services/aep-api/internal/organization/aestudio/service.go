@@ -134,14 +134,24 @@ type Deps struct {
 
 // Service installs and converges each org's AE Studio (ticket 08 §9, §10).
 type Service struct {
-	cfg         config.AEStudioConfig
-	orgSecrets  interface{ List(context.Context, string) ([]organization.OrgSecretRef, error) }
-	orgs        interface{ GetByName(context.Context, string) (*organization.Organization, error) }
-	profiles    interface{ GetProfileByOrgID(context.Context, string) (*organization.OrganizationIDPProfile, error) }
-	connections interface{ Connection(context.Context, string) (modelconn.Connection, bool, error) }
-	github      interface{ Status(context.Context, string) (*organization.Projection, error) }
-	oc          OC
-	now         func() time.Time
+	cfg        config.AEStudioConfig
+	orgSecrets interface {
+		List(context.Context, string) ([]organization.OrgSecretRef, error)
+	}
+	orgs interface {
+		GetByName(context.Context, string) (*organization.Organization, error)
+	}
+	profiles interface {
+		GetProfileByOrgID(context.Context, string) (*organization.OrganizationIDPProfile, error)
+	}
+	connections interface {
+		Connection(context.Context, string) (modelconn.Connection, bool, error)
+	}
+	github interface {
+		Status(context.Context, string) (*organization.Projection, error)
+	}
+	oc  OC
+	now func() time.Time
 
 	notConfiguredOnce sync.Once
 

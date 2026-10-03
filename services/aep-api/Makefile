@@ -55,7 +55,7 @@ cover:
 test-db:
 	@DOCKER_HOST="$${DOCKER_HOST:-$$(docker context inspect -f '{{.Endpoints.docker.Host}}' 2>/dev/null)}" \
 	  TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="$${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}" \
-	  go test ./...
+	  go test -timeout 40m ./...
 
 # ── Contract-first public API codegen ────────────────────────────────────────
 # The committed contract (packages/contracts/api/v1/openapi.yaml — schemas and

@@ -140,6 +140,9 @@ jobs:
       - name: License header check
         run: make license-check
 
+      - name: Image name lists agree
+        run: make check-image-names
+
   # ── The `bal library` tool ──────────────────────────────────────────────────
   # A job of its own rather than steps in `verify`: the toolchain is JDK 21 +
   # Gradle, which nothing else in this repo needs, and a red Java suite should

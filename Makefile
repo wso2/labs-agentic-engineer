@@ -13,6 +13,7 @@
 #   make typecheck    typecheck TS (tsc) + Go (go vet)
 #   make license      add license headers to all in-scope sources
 #   make license-check  fail if any in-scope source is missing a header
+#   make check-image-names  fail if the chart's platform image lists disagree
 #   make tools        install pinned Go tools (golangci-lint)
 #   make clean        remove build output and caches
 
@@ -48,7 +49,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool
+.PHONY: install gen build dev test lint eval-ui typecheck license license-check check-image-names tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool
 
 install:
 	$(PNPM) install
@@ -131,6 +132,9 @@ license:
 
 license-check:
 	@git ls-files | $(LICENSE_MATCH) | tr '\n' '\0' | xargs -0 $(ADDLICENSE) -check -f $(LICENSE_HEADER)
+
+check-image-names:
+	@deployments/scripts/check-image-names.sh
 
 tools:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
