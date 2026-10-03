@@ -210,3 +210,9 @@ func notCompletedWarning(w spec.Warning) spec.Warning {
 		return w
 	}
 }
+
+// RecordTurnUsage is replaced by Task 3.16, which owns the turn ledger. Until
+// then the route is served by the contract and answers 503.
+func (s *internalServer) RecordTurnUsage(_ context.Context, _ igen.RecordTurnUsageRequestObject) (igen.RecordTurnUsageResponseObject, error) {
+	return nil, errServiceUnavailable("turn usage recording not configured")
+}

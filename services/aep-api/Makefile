@@ -67,12 +67,16 @@ test-db:
 # is the CI freshness gate.
 CONTRACT_DIR          = ../../packages/contracts/api/v1
 INTERNAL_CONTRACT_DIR = ../../packages/contracts/api/internal/v1
+# The ae-studio-tools internal contract: gen-api also generates aep-api's client
+# for it (internal/clients/aestudiotools/gen).
+TOOLS_INTERNAL_CONTRACT_DIR = ../../packages/contracts/api/ae-studio-tools/internal/v1
 gen-api:
 	@$(OAPI_CODEGEN) -config internal/gen/oapi-codegen-models.yaml $(CONTRACT_DIR)/openapi.yaml
 	@$(OAPI_CODEGEN) -config internal/gen/oapi-codegen-server.yaml $(CONTRACT_DIR)/openapi.yaml
 	@$(OAPI_CODEGEN) -config internal/igen/oapi-codegen.yaml $(INTERNAL_CONTRACT_DIR)/openapi.yaml
-	@gofmt -w internal/gen/models_gen.go internal/gen/server_gen.go internal/igen/igen_gen.go
-	@echo "API types + strict server (with embedded spec) regenerated"
+	@$(OAPI_CODEGEN) -config internal/clients/aestudiotools/gen/oapi-codegen.yaml $(TOOLS_INTERNAL_CONTRACT_DIR)/openapi.yaml
+	@gofmt -w internal/gen/models_gen.go internal/gen/server_gen.go internal/igen/igen_gen.go internal/clients/aestudiotools/gen/client_gen.go
+	@echo "API types + strict server (with embedded spec) and the ae-studio-tools client regenerated"
 
 # The ae-studio ResourceType is go:embed'd from a committed copy of
 # components/.../ae-studio/resourcetype.yaml (go:embed cannot cross the module
@@ -94,8 +98,8 @@ rt-copy-check:
 # CI freshness gate: regenerate, then fail if anything tracked drifted — a
 # contract edit without `make gen-api`, or a hand-edit of generated output.
 gen-api-check: gen-api rt-copy-check
-	@if ! git diff --exit-code --quiet -- internal/gen/ internal/igen/; then \
-		git diff --stat -- internal/gen/ internal/igen/ | cat; \
+	@if ! git diff --exit-code --quiet -- internal/gen/ internal/igen/ internal/clients/aestudiotools/gen/ || [ -n "$$(git ls-files --others --exclude-standard -- internal/clients/aestudiotools/gen/)" ]; then \
+		git diff --stat -- internal/gen/ internal/igen/ internal/clients/aestudiotools/gen/ | cat; \
 		echo ""; \
 		echo "Generated API code is stale w.r.t. packages/contracts/api/v1."; \
 		echo "Run 'make gen-api' in services/aep-api and commit the changes."; \

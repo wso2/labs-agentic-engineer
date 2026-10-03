@@ -239,6 +239,7 @@ var internalOpGates = map[string]internalOpGate{
 	"sre-create-rca-report":            {credential: sreHandoffCredential},
 	"get-ae-studio-project-repository": {credential: aeStudioCredential},
 	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
+	"record-turn-usage":                {credential: aeStudioCredential},
 }
 
 // internalGate is /internal/v1's deny-by-default gate (internalOpGates), one

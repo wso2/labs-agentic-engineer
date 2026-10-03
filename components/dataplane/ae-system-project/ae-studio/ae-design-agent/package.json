@@ -16,6 +16,7 @@
     "./conversation/load-workspace": "./src/conversation/load-workspace.ts"
   },
   "scripts": {
+    "gen": "openapi-typescript ../../../../../packages/contracts/api/ae-design-agent/v1/openapi.yaml -o src/generated/api.d.ts && openapi-typescript ../../../../../packages/contracts/sockets/ae-studio/mcp/openapi.yaml -o src/generated/mcp-socket.d.ts && openapi-typescript ../../../../../packages/contracts/sockets/ae-studio/turn/openapi.yaml -o src/generated/turn-socket.d.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",

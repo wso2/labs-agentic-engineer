@@ -1,0 +1,15 @@
+# Strict server + types + embedded spec for the MCP socket, generated from
+# packages/contracts/sockets/ae-studio/mcp. Run via `make gen-api`.
+package: mcpsock
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/gen/mcpsock/mcpsock_gen.go
+output-options:
+  skip-prune: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

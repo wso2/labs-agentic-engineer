@@ -1,0 +1,14 @@
+# Client + models for the ae-studio-tools internal API (aep-api is the caller),
+# generated from packages/contracts/api/ae-studio-tools/internal/v1. Callers map
+# by HTTP status. Run via `make gen-api`.
+package: gen
+generate:
+  client: true
+  models: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/clients/aestudiotools/gen/client_gen.go
+output-options:
+  skip-prune: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

@@ -1,0 +1,246 @@
+openapi: 3.0.3
+info:
+  title: ae-studio Turn socket
+  description: |-
+    Unix-socket API between ae-studio-tools and ae-design-agent inside one AE
+    Studio pod (socket path in AE_TURN_SOCKET, served by ae-design-agent, mode
+    0660). The mount is the gate, so there is no security scheme. ae-studio-tools
+    calls it to run the turns aep-api starts (kickoff and plan). A turn keeps
+    running when the caller goes away. Errors are RFC 9457 problems
+    (application/problem+json) except the 409 turn_in_progress JSON body.
+  version: 1.0.0
+servers:
+- url: /
+tags:
+- name: Turns
+  description: Start a turn and follow it as NDJSON.
+paths:
+  /turns:
+    post:
+      operationId: start-turn
+      summary: Start (or reattach to) a turn and stream its result
+      description: |-
+        The answer is `application/x-ndjson`, one JSON object per line: zero or
+        more TaskOpFrame, KeepAliveFrame every 15 s, then one ResultFrame.
+      tags:
+      - Turns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnRequest'
+      responses:
+        '200':
+          description: The turn's NDJSON stream (frames TaskOpFrame, KeepAliveFrame,
+            ResultFrame)
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '409':
+          description: A different turn runs for the project (TurnInProgress),
+            or the studio has no default model key (problem code no_default_key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnInProgress'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+components:
+  responses:
+    Problem:
+      description: 'RFC 9457 problem. Codes: invalid_turn, project_unknown, no_default_key,
+        shutting_down.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+    TurnRequest:
+      type: object
+      additionalProperties: false
+      description: Starts one turn that is not a browser chat turn, a kickoff
+        (`start`) or a plan. Idempotent on turnId, a retry reattaches to the
+        running turn. A different turnId while a turn runs is 409.
+      required:
+      - turnId
+      - project
+      - kind
+      - credit
+      properties:
+        turnId:
+          type: string
+          format: uuid
+        project:
+          type: string
+          description: Project name (DNS-label slug)
+        kind:
+          type: string
+          enum:
+          - start
+          - plan
+        credit:
+          $ref: '#/components/schemas/TurnCredit'
+        scope:
+          $ref: '#/components/schemas/PlanScope'
+        taskContext:
+          type: array
+          description: The existing-Task renders of a plan turn. Platform state,
+            not repository files.
+          items:
+            $ref: '#/components/schemas/PlanContextFile'
+        text:
+          type: string
+          description: The free text of the turn (the project idea of a start turn).
+    TurnCredit:
+      type: object
+      additionalProperties: false
+      description: Who the turn's commits and records are credited to.
+      required:
+      - userId
+      - name
+      - email
+      properties:
+        userId:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+    PlanScope:
+      type: object
+      additionalProperties: false
+      description: The milestone a plan turn covers and which of its stories
+        already have Tasks.
+      required:
+      - tag
+      - stories
+      properties:
+        tag:
+          type: string
+        stories:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanStory'
+    PlanStory:
+      type: object
+      additionalProperties: false
+      required:
+      - number
+      - covered
+      properties:
+        number:
+          type: integer
+        title:
+          type: string
+        covered:
+          type: boolean
+          description: The story already has Tasks, the planner leaves it alone.
+    PlanContextFile:
+      type: object
+      additionalProperties: false
+      description: One existing-Task render under its tasks/<n>.md name.
+      required:
+      - path
+      - body
+      properties:
+        path:
+          type: string
+        body:
+          type: string
+    TurnInProgress:
+      type: object
+      additionalProperties: false
+      description: 409 body, a different turn already runs for the project.
+      required:
+      - code
+      - activeTurnId
+      properties:
+        code:
+          type: string
+          enum:
+          - turn_in_progress
+        activeTurnId:
+          type: string
+          format: uuid
+    TaskOpFrame:
+      type: object
+      additionalProperties: false
+      description: One line of the turn stream, a Task operation the agent produced.
+      required:
+      - type
+      - op
+      - output
+      properties:
+        type:
+          type: string
+          enum:
+          - task-op
+        op:
+          type: string
+          enum:
+          - plan
+          - update
+        output:
+          type: object
+          additionalProperties: true
+          description: The operation's payload, as the plan or update tool emitted it.
+    KeepAliveFrame:
+      type: object
+      additionalProperties: false
+      description: One line of the turn stream, sent every 15 s.
+      required:
+      - type
+      properties:
+        type:
+          type: string
+          enum:
+          - keep-alive
+    ResultFrame:
+      type: object
+      additionalProperties: false
+      description: The last line of the turn stream. A shutdown ends a running turn
+        with status failed and code shutdown.
+      required:
+      - type
+      - status
+      properties:
+        type:
+          type: string
+          enum:
+          - result
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+        code:
+          type: string
+        message:
+          type: string

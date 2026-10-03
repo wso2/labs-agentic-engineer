@@ -256,6 +256,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /ae-studio/turn-usage:
+    post:
+      operationId: record-turn-usage
+      summary: Record finished turns (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod hands over the records of the turns that
+        ran in its design agent. The org is the publisher client token's
+        ouHandle. Idempotent on `turnId`: a record already stored is kept, not
+        written twice. A record's `project`, when present, must be one of the
+        org's projects; a record without `project` is a marketplace turn and is
+        valid. When any record names a project that is unknown or not the org's,
+        the whole batch is refused with 404 and no row is written.
+      tags:
+      - AE Studio
+      security:
+      - publisherCC: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioTurnUsageRequest'
+        required: true
+      responses:
+        '202':
+          description: Accepted
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: A record names a project that is unknown or not the org's.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
   /mcp:
     post:
       operationId: call-mcp-tool
@@ -692,6 +729,115 @@ components:
       - path
       - code
       - message
+    AEStudioTurnUsageRequest:
+      description: The records of finished turns.
+      type: object
+      additionalProperties: false
+      properties:
+        records:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AEStudioTurnRecord'
+      required:
+      - records
+    AEStudioTurnRecord:
+      type: object
+      additionalProperties: false
+      description: One finished turn, as the ledger stores it. Idempotent on turnId.
+      required:
+      - turnId
+      - conversationId
+      - kind
+      - flow
+      - status
+      - baseRef
+      - skillsRef
+      - startedAt
+      - finishedAt
+      - model
+      - modelHost
+      - inputTokens
+      - outputTokens
+      - cacheReadTokens
+      - cacheCreationTokens
+      properties:
+        turnId:
+          type: string
+          format: uuid
+        project:
+          type: string
+          description: Absent on a marketplace turn.
+        conversationId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - browser
+          - kickoff
+          - plan
+        flow:
+          type: string
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+        reason:
+          type: string
+          enum:
+          - agent-error
+          - stream-died
+          - shutdown
+          - internal
+        code:
+          type: string
+        baseRef:
+          type: string
+          description: The repo snapshot sha the turn read.
+        skillsRef:
+          type: string
+          description: The Org skills snapshot sha the turn read.
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/AEStudioTurnRecordAuthor'
+        model:
+          type: string
+        modelHost:
+          type: string
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        cacheReadTokens:
+          type: integer
+          format: int64
+        cacheCreationTokens:
+          type: integer
+          format: int64
+        contextTokens:
+          type: integer
+          format: int64
+    AEStudioTurnRecordAuthor:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object

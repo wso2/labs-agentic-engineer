@@ -12,6 +12,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"path"
@@ -19,16 +21,159 @@ import (
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
 	AeOnlyScopes aeOnlyContextKey = "aeOnly.Scopes"
 )
 
+// Defines values for KeepAliveFrameType.
+const (
+	KeepAlive KeepAliveFrameType = "keep-alive"
+)
+
+// Valid indicates whether the value is a known member of the KeepAliveFrameType enum.
+func (e KeepAliveFrameType) Valid() bool {
+	switch e {
+	case KeepAlive:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResultFrameStatus.
+const (
+	Completed ResultFrameStatus = "completed"
+	Failed    ResultFrameStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the ResultFrameStatus enum.
+func (e ResultFrameStatus) Valid() bool {
+	switch e {
+	case Completed:
+		return true
+	case Failed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ResultFrameType.
+const (
+	Result ResultFrameType = "result"
+)
+
+// Valid indicates whether the value is a known member of the ResultFrameType enum.
+func (e ResultFrameType) Valid() bool {
+	switch e {
+	case Result:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskOpFrameOp.
+const (
+	TaskOpFrameOpPlan   TaskOpFrameOp = "plan"
+	TaskOpFrameOpUpdate TaskOpFrameOp = "update"
+)
+
+// Valid indicates whether the value is a known member of the TaskOpFrameOp enum.
+func (e TaskOpFrameOp) Valid() bool {
+	switch e {
+	case TaskOpFrameOpPlan:
+		return true
+	case TaskOpFrameOpUpdate:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TaskOpFrameType.
+const (
+	TaskOp TaskOpFrameType = "task-op"
+)
+
+// Valid indicates whether the value is a known member of the TaskOpFrameType enum.
+func (e TaskOpFrameType) Valid() bool {
+	switch e {
+	case TaskOp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TurnInProgressCode.
+const (
+	TurnInProgressCodeTurnInProgress TurnInProgressCode = "turn_in_progress"
+)
+
+// Valid indicates whether the value is a known member of the TurnInProgressCode enum.
+func (e TurnInProgressCode) Valid() bool {
+	switch e {
+	case TurnInProgressCodeTurnInProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for TurnRequestKind.
+const (
+	TurnRequestKindPlan  TurnRequestKind = "plan"
+	TurnRequestKindStart TurnRequestKind = "start"
+)
+
+// Valid indicates whether the value is a known member of the TurnRequestKind enum.
+func (e TurnRequestKind) Valid() bool {
+	switch e {
+	case TurnRequestKindPlan:
+		return true
+	case TurnRequestKindStart:
+		return true
+	default:
+		return false
+	}
+}
+
 // GitHubIdentity defines model for GitHubIdentity.
 type GitHubIdentity struct {
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
+}
+
+// KeepAliveFrame One line of the turn stream, sent every 15 s.
+type KeepAliveFrame struct {
+	Type KeepAliveFrameType `json:"type"`
+}
+
+// KeepAliveFrameType defines model for KeepAliveFrame.Type.
+type KeepAliveFrameType string
+
+// PlanContextFile One existing-Task render under its tasks/<n>.md name.
+type PlanContextFile struct {
+	Body string `json:"body"`
+	Path string `json:"path"`
+}
+
+// PlanScope The milestone a plan turn covers and which of its stories already have Tasks.
+type PlanScope struct {
+	Stories []PlanStory `json:"stories"`
+	Tag     string      `json:"tag"`
+}
+
+// PlanStory defines model for PlanStory.
+type PlanStory struct {
+	// Covered The story already has Tasks, the planner leaves it alone.
+	Covered bool   `json:"covered"`
+	Number  int    `json:"number"`
+	Title   string `json:"title,omitempty"`
 }
 
 // Problem defines model for Problem.
@@ -40,8 +185,88 @@ type Problem struct {
 	Type   string `json:"type"`
 }
 
+// ReferenceUpload defines model for ReferenceUpload.
+type ReferenceUpload struct {
+	// Files The reference documents, at most 5 MiB each.
+	Files []openapi_types.File `json:"files"`
+}
+
+// ResultFrame The last line of the turn stream. A shutdown ends a running turn with status failed and code shutdown.
+type ResultFrame struct {
+	Code    string            `json:"code,omitempty"`
+	Message string            `json:"message,omitempty"`
+	Status  ResultFrameStatus `json:"status"`
+	Type    ResultFrameType   `json:"type"`
+}
+
+// ResultFrameStatus defines model for ResultFrame.Status.
+type ResultFrameStatus string
+
+// ResultFrameType defines model for ResultFrame.Type.
+type ResultFrameType string
+
+// TaskOpFrame One line of the turn stream, a Task operation the agent produced.
+type TaskOpFrame struct {
+	Op TaskOpFrameOp `json:"op"`
+
+	// Output The operation's payload, as the plan or update tool emitted it.
+	Output map[string]interface{} `json:"output"`
+	Type   TaskOpFrameType        `json:"type"`
+}
+
+// TaskOpFrameOp defines model for TaskOpFrame.Op.
+type TaskOpFrameOp string
+
+// TaskOpFrameType defines model for TaskOpFrame.Type.
+type TaskOpFrameType string
+
+// TurnCredit Who the turn's commits and records are credited to.
+type TurnCredit struct {
+	Email  string `json:"email"`
+	Name   string `json:"name"`
+	UserID string `json:"userId"`
+}
+
+// TurnInProgress 409 body, a different turn already runs for the project.
+type TurnInProgress struct {
+	ActiveTurnID openapi_types.UUID `json:"activeTurnId"`
+	Code         TurnInProgressCode `json:"code"`
+}
+
+// TurnInProgressCode defines model for TurnInProgress.Code.
+type TurnInProgressCode string
+
+// TurnRequest Starts one turn that is not a browser chat turn, a kickoff (`start`) or a plan. Idempotent on turnId, a retry reattaches to the running turn. A different turnId while a turn runs is 409.
+type TurnRequest struct {
+	// Credit Who the turn's commits and records are credited to.
+	Credit TurnCredit      `json:"credit"`
+	Kind   TurnRequestKind `json:"kind"`
+
+	// Project Project name (DNS-label slug)
+	Project string `json:"project"`
+
+	// Scope The milestone a plan turn covers and which of its stories already have Tasks.
+	Scope PlanScope `json:"scope,omitempty"`
+
+	// TaskContext The existing-Task renders of a plan turn. Platform state, not repository files.
+	TaskContext []PlanContextFile `json:"taskContext,omitempty"`
+
+	// Text The free text of the turn (the project idea of a start turn).
+	Text   string             `json:"text,omitempty"`
+	TurnID openapi_types.UUID `json:"turnId"`
+}
+
+// TurnRequestKind defines model for TurnRequest.Kind.
+type TurnRequestKind string
+
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
+
+// Owner defines model for Owner.
+type Owner = string
+
+// Repo defines model for Repo.
+type Repo = string
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -55,11 +280,35 @@ type GetGithubIdentityParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// PutRepoReferencesParams defines parameters for PutRepoReferences.
+type PutRepoReferencesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// StartRepoTurnParams defines parameters for StartRepoTurn.
+type StartRepoTurnParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
+type PutRepoReferencesMultipartRequestBody = ReferenceUpload
+
+// StartRepoTurnJSONRequestBody defines body for StartRepoTurn for application/json ContentType.
+type StartRepoTurnJSONRequestBody = TurnRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(w http.ResponseWriter, r *http.Request, params GetGithubIdentityParams)
+	// Replace a project's stored reference documents
+	// (PUT /repos/{owner}/{repo}/references)
+	PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams)
+	// Start (or reattach to) a kickoff or plan turn and stream its result
+	// (POST /repos/{owner}/{repo}/turns)
+	StartRepoTurn(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params StartRepoTurnParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -113,6 +362,144 @@ func (siw *ServerInterfaceWrapper) GetGithubIdentity(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetGithubIdentity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutRepoReferences operation middleware
+func (siw *ServerInterfaceWrapper) PutRepoReferences(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutRepoReferencesParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutRepoReferences(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// StartRepoTurn operation middleware
+func (siw *ServerInterfaceWrapper) StartRepoTurn(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params StartRepoTurnParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.StartRepoTurn(w, r, owner, repo, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -243,6 +630,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/github/identity", wrapper.GetGithubIdentity)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/references", wrapper.PutRepoReferences)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/turns", wrapper.StartRepoTurn)
 
 	return m
 }
@@ -355,11 +744,290 @@ func (response GetGithubIdentity503ApplicationProblemPlusJSONResponse) VisitGetG
 	return err
 }
 
+type PutRepoReferencesRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params PutRepoReferencesParams
+	Body   *multipart.Reader
+}
+
+type PutRepoReferencesResponseObject interface {
+	VisitPutRepoReferencesResponse(w http.ResponseWriter) error
+}
+
+type PutRepoReferences204Response struct {
+}
+
+func (response PutRepoReferences204Response) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type PutRepoReferences400ApplicationProblemPlusJSONResponse Problem
+
+func (response PutRepoReferences400ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRepoReferences401ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response PutRepoReferences401ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRepoReferences403ApplicationProblemPlusJSONResponse Problem
+
+func (response PutRepoReferences403ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRepoReferences404ApplicationProblemPlusJSONResponse Problem
+
+func (response PutRepoReferences404ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRepoReferences413ApplicationProblemPlusJSONResponse Problem
+
+func (response PutRepoReferences413ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutRepoReferences503ApplicationProblemPlusJSONResponse Problem
+
+func (response PutRepoReferences503ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurnRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params StartRepoTurnParams
+	Body   *StartRepoTurnJSONRequestBody
+}
+
+type StartRepoTurnResponseObject interface {
+	VisitStartRepoTurnResponse(w http.ResponseWriter) error
+}
+
+type StartRepoTurn200ApplicationXNdjsonResponse struct {
+	Body          io.Reader
+	ContentLength int64
+}
+
+func (response StartRepoTurn200ApplicationXNdjsonResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	if response.ContentLength != 0 {
+		w.Header().Set("Content-Length", fmt.Sprint(response.ContentLength))
+	}
+	w.WriteHeader(200)
+
+	if closer, ok := response.Body.(io.ReadCloser); ok {
+		defer closer.Close()
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		// If w doesn't support flushing, fall back to io.Copy.
+		_, err := io.Copy(w, response.Body)
+		return err
+	}
+	// text/event-stream messages are typically small; use a
+	// modest buffer and flush after each chunk so clients see
+	// events immediately instead of waiting on OS buffering.
+	buf := make([]byte, 4096)
+	for {
+		n, err := response.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			flusher.Flush()
+		}
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+type StartRepoTurn400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response StartRepoTurn400ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn401ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn401ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn403ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn403ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn404ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn404ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn409JSONResponse TurnInProgress
+
+func (response StartRepoTurn409JSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn409ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn409ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn502ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn502ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type StartRepoTurn503ApplicationProblemPlusJSONResponse Problem
+
+func (response StartRepoTurn503ApplicationProblemPlusJSONResponse) VisitStartRepoTurnResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(ctx context.Context, request GetGithubIdentityRequestObject) (GetGithubIdentityResponseObject, error)
+	// Replace a project's stored reference documents
+	// (PUT /repos/{owner}/{repo}/references)
+	PutRepoReferences(ctx context.Context, request PutRepoReferencesRequestObject) (PutRepoReferencesResponseObject, error)
+	// Start (or reattach to) a kickoff or plan turn and stream its result
+	// (POST /repos/{owner}/{repo}/turns)
+	StartRepoTurn(ctx context.Context, request StartRepoTurnRequestObject) (StartRepoTurnResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -417,28 +1085,126 @@ func (sh *strictHandler) GetGithubIdentity(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// PutRepoReferences operation middleware
+func (sh *strictHandler) PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams) {
+	var request PutRepoReferencesRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	if reader, err := r.MultipartReader(); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode multipart body: %w", err))
+		return
+	} else {
+		request.Body = reader
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutRepoReferences(ctx, request.(PutRepoReferencesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutRepoReferences")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutRepoReferencesResponseObject); ok {
+		if err := validResponse.VisitPutRepoReferencesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// StartRepoTurn operation middleware
+func (sh *strictHandler) StartRepoTurn(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params StartRepoTurnParams) {
+	var request StartRepoTurnRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body StartRepoTurnJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.StartRepoTurn(ctx, request.(StartRepoTurnRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "StartRepoTurn")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(StartRepoTurnResponseObject); ok {
+		if err := validResponse.VisitStartRepoTurnResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"5rhtm7GN2ZK8ksHtlsnY7VefVv8JAAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

@@ -13,6 +13,8 @@ test:
 #   gen/             /internal/v1  models + strict server + embedded spec (aep-api caller)
 #   gen/v1           /v1           models + strict server + embedded spec (browser)
 #   gen/filessock    Files socket  models + strict server + embedded spec (ae-collab caller)
+#   gen/mcpsock      MCP socket    models + strict server + embedded spec (ae-design-agent caller)
+#   gen/turnsock     Turn socket   client + models (calls ae-design-agent)
 #   gen/aepapi       aep-api internal spec, the two ae-studio ops: client + models
 # The embedded specs (GetSpec) feed the request validators. Generated files are
 # committed; gen-api-check is the CI freshness gate.
@@ -24,9 +26,11 @@ gen-api:
 	@$(OAPI_CODEGEN) -config internal/gen/oapi-codegen-internal.yaml $(INTERNAL_CONTRACT_DIR)/openapi.yaml
 	@$(OAPI_CODEGEN) -config internal/gen/v1/oapi-codegen.yaml $(CONTRACTS_DIR)/api/ae-studio-tools/v1/openapi.yaml
 	@$(OAPI_CODEGEN) -config internal/gen/filessock/oapi-codegen.yaml $(CONTRACTS_DIR)/sockets/ae-studio/files/openapi.yaml
+	@$(OAPI_CODEGEN) -config internal/gen/mcpsock/oapi-codegen.yaml $(CONTRACTS_DIR)/sockets/ae-studio/mcp/openapi.yaml
+	@$(OAPI_CODEGEN) -config internal/gen/turnsock/oapi-codegen.yaml $(CONTRACTS_DIR)/sockets/ae-studio/turn/openapi.yaml
 	@$(OAPI_CODEGEN) -config internal/gen/aepapi/oapi-codegen.yaml $(CONTRACTS_DIR)/api/internal/v1/openapi.yaml
-	@gofmt -w internal/gen/internal_gen.go internal/gen/v1/v1_gen.go internal/gen/filessock/filessock_gen.go internal/gen/aepapi/aepapi_gen.go
-	@echo "internal, /v1, Files socket (strict servers + embedded specs) and aep-api client regenerated"
+	@gofmt -w internal/gen/internal_gen.go internal/gen/v1/v1_gen.go internal/gen/filessock/filessock_gen.go internal/gen/mcpsock/mcpsock_gen.go internal/gen/turnsock/turnsock_gen.go internal/gen/aepapi/aepapi_gen.go
+	@echo "internal, /v1, Files and MCP sockets (strict servers + embedded specs), Turn socket client and aep-api client regenerated"
 
 # CI freshness gate: regenerate, then fail if anything tracked drifted (a
 # contract edit without `make gen-api`, or a hand-edit of generated output).

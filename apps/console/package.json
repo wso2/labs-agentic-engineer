@@ -15,7 +15,7 @@
     "test:browser": "vitest run --config vitest.browser.config.ts",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "gen": "openapi-typescript ../../packages/contracts/api/v1/openapi.yaml -o src/generated/aep-api.d.ts && openapi-typescript ../../packages/contracts/api/ae-studio-tools/v1/openapi.yaml -o src/generated/ae-studio-tools.d.ts && tsr generate"
+    "gen": "openapi-typescript ../../packages/contracts/api/v1/openapi.yaml -o src/generated/aep-api.d.ts && openapi-typescript ../../packages/contracts/api/ae-studio-tools/v1/openapi.yaml -o src/generated/ae-studio-tools.d.ts && openapi-typescript ../../packages/contracts/api/ae-design-agent/v1/openapi.yaml -o src/generated/ae-design-agent.d.ts && tsr generate"
   },
   "dependencies": {
     "@aep/agent-stream": "workspace:*",
