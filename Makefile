@@ -342,7 +342,6 @@ dev-images:
 	# cache hit or not; re-importing an image the cluster already has is cheap.
 	k3d image import \
 		ghcr.io/wso2/aep/aep-api:dev-local \
-		ghcr.io/wso2/aep/ae-design-agent:dev-local \
 		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
@@ -408,13 +407,12 @@ dev-update:
 	cd tools/aectl && go build -o aectl-skaffold .
 	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
-		--set aepAgents.image.repository=ghcr.io/wso2/aep/ae-design-agent --set aepAgents.image.tag=dev-local \
 		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
 		$(AE_STUDIO_IMAGE_SET)
 	./tools/aectl/aectl-skaffold platform sync-clients
-	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
+	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and
 # OpenCode, deployments/scripts/build-runner.sh), imports them into k3d, and

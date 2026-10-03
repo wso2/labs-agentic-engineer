@@ -295,7 +295,6 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    | Vault path | Secret (namespace `wso2-aep`) | Key |
    |---|---|---|
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
-   | `aep/agents-jwt-secret` | `aep-agents-secrets` | `AGENTS_JWT_SECRET` |
    | `aep/webhook-secret` | `aep-webhook-secrets` | `GITHUB_WEBHOOK_SECRET` |
    | `aep/openbao-token` | `aep-openbao-secrets` | `OPENBAO_TOKEN` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |

@@ -89,11 +89,10 @@ var (
 
 // platformServiceChartKeys are the values.yaml keys of the services whose
 // image the platform chart pins — the ones --image-tag re-points. They are
-// chart value keys, not Deployment names (aepAgents is Deployment
-// aep-agents), so they follow values.yaml rather than the cluster.
+// chart value keys, not Deployment names (tryIt is Deployment
+// aep-tryit), so they follow values.yaml rather than the cluster.
 var platformServiceChartKeys = []string{
 	"aepApi",
-	"aepAgents",
 	"aepMcpServer",
 	"console",
 	"tryIt",
@@ -989,7 +988,6 @@ var requiredOpenBaoPaths = []string{
 	"aep/openbao-token",
 	"aep/postgres-password",
 	"aep/task-signing-key",
-	"aep/agents-jwt-secret",
 	"aep/webhook-secret",
 	"aep/opensearch-username",
 	"aep/opensearch-password",
@@ -1120,11 +1118,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate signing key: %w", err)
 	}
-	agentsJWTSecret, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate agents JWT secret: %w", err)
-	}
 	webhookSecret, err := bootstrap.GeneratePassword(32)
 	if err != nil {
 		sp.Fail("Secret generation failed")
@@ -1151,7 +1144,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
 		{"aep/task-signing-key", signingKey},
-		{"aep/agents-jwt-secret", agentsJWTSecret},
 		{"aep/webhook-secret", webhookSecret},
 		{"aep/opensearch-username", "admin"},
 		{"aep/opensearch-password", openSearchPassword},

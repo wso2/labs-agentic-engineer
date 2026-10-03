@@ -204,9 +204,6 @@ jobs:
           yq -i '.aepApi.image.repository = strenv(IMAGE_PREFIX) + "/aep-api"' /tmp/platform/values.yaml
           yq -i '.aepApi.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aepApi.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.repository = strenv(IMAGE_PREFIX) + "/agents"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.collab.image.repository = strenv(IMAGE_PREFIX) + "/collab"' /tmp/platform/values.yaml
           yq -i '.collab.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.collab.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml

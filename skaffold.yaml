@@ -79,11 +79,6 @@ build:
           ignore:
             - services/aep-api/bin/**
 
-    - image: ghcr.io/wso2/aep/ae-design-agent
-      context: .
-      docker:
-        dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
-
     - image: ghcr.io/wso2/aep/aep-mcp-server
       context: .
       docker:

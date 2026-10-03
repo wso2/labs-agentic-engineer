@@ -175,17 +175,7 @@ spec:
               value: "aep-system-client"
             - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
               value: {{ .Values.thunder.systemResourceIdentifier | default (printf "%s/mcp" .Values.console.thunderPublicURL) | quote }}
-            - name: AGENTS_SVC_BASE_URL
-              value: "http://aep-agents.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepAgents.port }}"
             - name: AGENT_PLATFORM_URL
-              value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
-            # Design-turn MCP discovery: the agents service calls back into the
-            # BFF's own /internal/v1/mcp to list the org catalog
-            # (list_external_resources / list_platform_resource_types). Without
-            # it mcpForTurn attaches no `mcp` block, the design agent sees no
-            # catalog at all, and it invents resourceTypes that fail at build.
-            # Same in-cluster address as AGENT_PLATFORM_URL above.
-            - name: AEP_API_INTERNAL_BASE_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             # The Claude Code runner image, used by both task kinds.
             - name: AGENT_RUNNER_IMAGE
@@ -288,11 +278,6 @@ spec:
             {{- end }}
 
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
-            - name: AGENTS_SVC_JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: aep-agents-secrets
-                  key: AGENTS_JWT_SECRET
             - name: GITHUB_WEBHOOK_SECRET
               valueFrom:
                 secretKeyRef:

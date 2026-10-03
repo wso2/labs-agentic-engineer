@@ -1,6 +1,6 @@
 ---
 # Shared git-workspaces volume — bare repo mirrors + per-SHA snapshots.
-# aep-api is the sole writer; agents mounts it read-only. ReadWriteOnce with
+# aep-api is the sole writer and reader. ReadWriteOnce with
 # co-located pods (shared-label hostname podAffinity). See
 # services/aep-api/design/shared-workspace-volume.md.
 apiVersion: v1

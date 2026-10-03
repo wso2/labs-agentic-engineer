@@ -40,7 +40,6 @@ var (
 	// For local images: load into the node runtime first (k3d image import /
 	// kind load docker-image), then set --pull-policy Never.
 	updateAepApiImage    string
-	updateAgentsImage    string
 	updateMcpServerImage string
 	updateConsoleImage   string
 )
@@ -83,7 +82,6 @@ func init() {
 	f.StringArrayVar(&updateHelmSets, "set", nil, "Additional helm --set overrides (repeatable)")
 
 	f.StringVar(&updateAepApiImage, "aep-api-image", "", "aep-api image as repo:tag  (e.g. ghcr.io/wso2/aep/aep-api:v1.2)")
-	f.StringVar(&updateAgentsImage, "agents-image", "", "agents image as repo:tag")
 	f.StringVar(&updateMcpServerImage, "mcp-server-image", "", "aep-mcp-server image as repo:tag")
 	f.StringVar(&updateConsoleImage, "console-image", "", "console image as repo:tag")
 }
@@ -132,7 +130,6 @@ func buildUpdateArgs() ([]string, error) {
 
 	overrides := []serviceImageOverride{
 		{"aepApi", updateAepApiImage},
-		{"aepAgents", updateAgentsImage},
 		{"aepMcpServer", updateMcpServerImage},
 		{"console", updateConsoleImage},
 	}

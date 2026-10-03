@@ -32,26 +32,6 @@ aepApi:
     baseURL: ""
     tokenSecret: ""
 
-aepAgents:
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/ae-design-agent
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 9090
-  logLevel: "info"
-  model: "claude-sonnet-5"
-  maxSteps: 20
-  bodyLimit: "10mb"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "1"
-      memory: "512Mi"
-
-
 # Streamable-HTTP MCP server wrapping aep-api's issue-create + coding-agent
 # dispatch endpoints. The OpenChoreo SRE/RCA agent calls it (AE_API_URL) during
 # the alert->RCA->AEP handoff so it can file issues + dispatch without holding
@@ -276,7 +256,7 @@ openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
 
-# Shared git workspaces (RWO PVC + co-located pods). aep-api writes; agents mounts RO.
+# Shared git workspaces (RWO PVC + co-located pods). aep-api is the sole user.
 # See services/aep-api/design/shared-workspace-volume.md.
 workspaces:
   storage: "10Gi"
