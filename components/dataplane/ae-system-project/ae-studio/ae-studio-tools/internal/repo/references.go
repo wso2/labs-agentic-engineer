@@ -103,8 +103,6 @@ func validateReferenceName(name string) error {
 // a half-failed retry's documents with no surface to notice them. The set is
 // staged in tmp/ and renamed into place, so an overlay never reads a
 // half-written set. A new set passes admission (DiskAdmissionRefusePct).
-//
-//deadcode:keep wired in Task 3.5 (PUT /internal/v1/repos/{owner}/{repo}/references)
 func (e *Engine) PutReferences(_ context.Context, r OwnerRepo, docs []ReferenceDoc) (err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	dest, err := ReferenceStoreDir(e.root, r)

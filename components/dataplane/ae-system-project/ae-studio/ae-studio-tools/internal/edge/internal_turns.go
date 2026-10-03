@@ -23,16 +23,9 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 )
 
-// The two ops the contract gained for phase 3. Their behaviour lands with the
-// tasks that own them (references: Task 3.5, turns: Task 3.6); until then the
-// route answers 503 so the contract is served in full and nothing is silently
-// accepted.
-
-// PutRepoReferences is replaced by Task 3.5.
-func (s internalServer) PutRepoReferences(_ context.Context, _ gen.PutRepoReferencesRequestObject) (gen.PutRepoReferencesResponseObject, error) {
-	return gen.PutRepoReferences503ApplicationProblemPlusJSONResponse(
-		newProblem(http.StatusServiceUnavailable, "not_implemented", "reference storage is not served yet")), nil
-}
+// The turns op the contract gained for phase 3. Its behaviour lands with
+// Task 3.6; until then the route answers 503 so the contract is served in
+// full and nothing is silently accepted.
 
 // StartRepoTurn is replaced by Task 3.6.
 func (s internalServer) StartRepoTurn(_ context.Context, _ gen.StartRepoTurnRequestObject) (gen.StartRepoTurnResponseObject, error) {

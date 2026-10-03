@@ -74,6 +74,9 @@ type harness struct {
 	// projects is aep-api as the Files reader sees it; empty unless
 	// withProjects seeds it.
 	projects *projectstest.Fake
+	// engine is the studio-data engine behind the Files reader and the
+	// reference store.
+	engine *repo.Engine
 }
 
 // harnessDeps is what the options adjust before Routes is built.
@@ -128,15 +131,18 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		IDPIssuer: testIssuer, IDPJWKSURL: idp.URL,
 		UserAudiences: []string{"aep-console-client"},
 		M2MClientID:   testClientID,
+		GitHubOwner:   "Acme-GH",
 	}
 	h.logBuf = captureLogs(t)
 	h.handler = Routes(Deps{
-		Cfg:      cfg,
-		Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
-		GitHub:   deps.gh,
-		Webhook:  WebhookHandler(testWebhookSecret, webhook.Unwired()),
-		Files:    files.Reader{Engine: engine, Projects: h.projects, Org: cfg.OrgHandle},
+		Cfg:        cfg,
+		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
+		GitHub:     deps.gh,
+		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
+		Files:      files.Reader{Engine: engine, Projects: h.projects, Org: cfg.OrgHandle},
+		References: engine,
 	})
+	h.engine = engine
 	return h
 }
 

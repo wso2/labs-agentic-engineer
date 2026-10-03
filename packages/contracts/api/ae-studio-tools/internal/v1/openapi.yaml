@@ -8,8 +8,10 @@ info:
     cannot be fetched the answer is 503 idp_unavailable with Retry-After (no
     verdict on the token).
 
-    Every request body is capped at 1 MiB, then the caller is authenticated,
-    then the request is validated against this spec, before any handler runs.
+    Every request body is capped (1 MiB, 80 MiB for put-repo-references),
+    then the caller is authenticated, then the request is validated against
+    this spec, before any handler runs. A multipart body is the exception: its
+    handler reads and checks the parts itself.
     Errors are RFC 9457 problems (application/problem+json).
   version: 1.0.0
 servers:
@@ -112,7 +114,11 @@ paths:
       summary: Replace a project's stored reference documents
       description: |-
         The whole stored set is replaced by the sent files. At most 10 files, each
-        at most 5 MiB, 80 MiB in total.
+        at most 5 MiB, 80 MiB in total. Each file is stored under its file name
+        reduced to a bare, lower-case name; two files that reduce to the same
+        name, a type the models cannot read, or no file at all is refused. The
+        owner must be the org's connected GitHub account, else 403
+        owner_refused and nothing is stored.
       tags:
       - Repos
       parameters:
@@ -140,7 +146,12 @@ paths:
         '401':
           $ref: '#/components/responses/Problem'
         '403':
-          $ref: '#/components/responses/Problem'
+          description: 'The gate refused the caller, or the owner is not the org''s
+            connected GitHub account (problem code: owner_refused).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '404':
           $ref: '#/components/responses/Problem'
         '413':

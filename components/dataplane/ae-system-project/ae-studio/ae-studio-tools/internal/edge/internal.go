@@ -32,18 +32,37 @@ import (
 // The /internal/v1 route group is served contract-first from
 // packages/contracts/api/ae-studio-tools/internal/v1: the generated strict
 // server in internal/gen, behind a request validator over the same contract
-// (embedded in the binary). routes.go puts the body cap and the M2M gate in
-// front of it, so nothing here runs for an unauthenticated caller.
+// (embedded in the binary). routes.go puts the per-op body cap and the M2M
+// gate in front of it, so nothing here runs for an unauthenticated caller.
 
 const (
 	internalV1 = "/internal/v1"
-	// internalBodyBytes caps every /internal/v1 request body (ticket 04 §10).
+	// internalBodyBytes caps every /internal/v1 request body (ticket 04 §10)
+	// unless internalBodyCaps names the operation.
 	internalBodyBytes int64 = 1 << 20
+	// referencesBodyBytes caps a references upload: 10 files × 5 MiB plus
+	// the multipart framing, with room to spare (09 §1). The handler checks
+	// the parts themselves.
+	referencesBodyBytes int64 = 80 << 20
 )
+
+// internalBodyCaps lists the operations allowed more than internalBodyBytes,
+// by operationId.
+var internalBodyCaps = map[string]int64{
+	"put-repo-references": referencesBodyBytes,
+}
+
+// internalRouteFinder matches a request to an /internal/v1 contract
+// operation: the cap table's lookup and the validator's.
+var internalRouteFinder routeFinder = mustRouter("internal", gen.GetSpec).FindRoute
 
 // internalServer implements gen.StrictServerInterface.
 type internalServer struct {
 	gh github.Identity
+	// refs is the reference store; githubOwner the org's connected GitHub
+	// account (AE_GITHUB_OWNER), the only owner whose repos it stores for.
+	refs        ReferenceStore
+	githubOwner string
 }
 
 var _ gen.StrictServerInterface = internalServer{}
@@ -51,8 +70,8 @@ var _ gen.StrictServerInterface = internalServer{}
 // internalHandler is the gated part of the group: validator → mux holding the
 // generated routes. A path or method the contract does not declare is 404 at
 // the validator; the mux's catch-all keeps any miss behind it a problem body.
-func internalHandler(gh github.Identity) http.Handler {
-	strict := gen.NewStrictHandlerWithOptions(internalServer{gh: gh}, nil, gen.StrictHTTPServerOptions{
+func internalHandler(find routeFinder, s internalServer) http.Handler {
+	strict := gen.NewStrictHandlerWithOptions(s, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeRequestError,
 		ResponseErrorHandlerFunc: writeResponseError,
 	})
@@ -63,7 +82,23 @@ func internalHandler(gh github.Identity) http.Handler {
 		ErrorHandlerFunc: writeRequestError,
 	})
 	mux.Handle(internalV1+"/", http.HandlerFunc(notFound))
-	return requestValidator(mustRouter("internal", gen.GetSpec).FindRoute, "validation_failed", mux)
+	return requestValidator(find, "validation_failed", mux)
+}
+
+// capOpBody bounds a request body before anything reads it, at the matched
+// operation's entry in caps, else at def (a route miss gets def too). It
+// runs ahead of the gate, as capBody does, so an unauthenticated caller
+// cannot make the pod read more than the operation allows.
+func capOpBody(find routeFinder, caps map[string]int64, def int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := def
+		if route, _, err := find(r); err == nil && route.Operation != nil {
+			if c, ok := caps[route.Operation.OperationID]; ok {
+				limit = c
+			}
+		}
+		capBody(limit, next).ServeHTTP(w, r)
+	})
 }
 
 // capBody bounds a request body before anything reads it: a declared

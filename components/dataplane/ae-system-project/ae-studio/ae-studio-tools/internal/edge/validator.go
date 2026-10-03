@@ -54,6 +54,10 @@ func mustRouter(name string, spec func() (*openapi3.T, error)) routers.Router {
 // never reaches next. A request that does not match its operation is 400 with
 // invalidCode, the group's problem code for a malformed request. Security is
 // not checked here: the gate in front already did.
+//
+// A multipart body is not read here: kin would buffer the whole upload to
+// decode every part. The operation's handler streams and checks the parts
+// itself (the references upload, internal_references.go).
 func requestValidator(find routeFinder, invalidCode string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := find(r)
@@ -65,7 +69,10 @@ func requestValidator(find routeFinder, invalidCode string, next http.Handler) h
 			Request:    r,
 			PathParams: pathParams,
 			Route:      route,
-			Options:    &openapi3filter.Options{AuthenticationFunc: openapi3filter.NoopAuthenticationFunc},
+			Options: &openapi3filter.Options{
+				AuthenticationFunc: openapi3filter.NoopAuthenticationFunc,
+				ExcludeRequestBody: hasMultipartBody(route),
+			},
 		}
 		if err := openapi3filter.ValidateRequest(r.Context(), input); err != nil {
 			var maxErr *http.MaxBytesError
@@ -78,4 +85,14 @@ func requestValidator(find routeFinder, invalidCode string, next http.Handler) h
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// hasMultipartBody reports whether the matched operation declares a
+// multipart/form-data request body.
+func hasMultipartBody(route *routers.Route) bool {
+	if route == nil || route.Operation == nil || route.Operation.RequestBody == nil || route.Operation.RequestBody.Value == nil {
+		return false
+	}
+	_, ok := route.Operation.RequestBody.Value.Content["multipart/form-data"]
+	return ok
 }

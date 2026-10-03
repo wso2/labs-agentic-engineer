@@ -40,6 +40,9 @@ type Deps struct {
 	Webhook http.Handler
 	// Files serves the /v1 read-only Files operations.
 	Files files.Reader
+	// References stores the reference documents aep-api uploads on
+	// /internal/v1 (the git engine).
+	References ReferenceStore
 }
 
 // Routes is the public listener's mount table (ticket 04 §1): one row per
@@ -53,16 +56,18 @@ func Routes(d Deps) http.Handler {
 	// → generated server; the read-only Files operations.
 	v1 := auth.UserGate(d.Verifier, d.Cfg.UserAudiences, d.Cfg.OrgID, d.Cfg.OrgHandle)
 	m2mGate := auth.M2MGate(d.Verifier, d.Cfg.M2MClientID, d.Cfg.OrgID)
-	// /internal/v1: aep-api, AE-only M2M + X-Impersonate-Org. Body cap →
-	// gate → validator → generated server; every request is access-logged.
+	// /internal/v1: aep-api, AE-only M2M + X-Impersonate-Org. Per-op body
+	// cap → gate → validator → generated server; every request is
+	// access-logged.
 	internal := func(next http.Handler) http.Handler {
-		return accessLog(capBody(internalBodyBytes, m2mGate(next)))
+		return accessLog(capOpBody(internalRouteFinder, internalBodyCaps, internalBodyBytes, m2mGate(next)))
 	}
+	internalSrv := internalServer{gh: d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner}
 	nf := http.HandlerFunc(notFound)
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/", v1(v1Handler(d.Files)))
-	mux.Handle("/internal/v1/", internal(internalHandler(d.GitHub)))
+	mux.Handle("/internal/v1/", internal(internalHandler(internalRouteFinder, internalSrv)))
 	// The bare group roots are exact entries so the mux does not redirect
 	// them to the subtree; each is gated, then 404.
 	mux.Handle("/v1", v1(nf))

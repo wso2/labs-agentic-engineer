@@ -158,7 +158,8 @@ func run() error {
 			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 			GitHub:   gh,
 			Webhook:  edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
-			Files:    reader,
+			Files:      reader,
+			References: engine,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
