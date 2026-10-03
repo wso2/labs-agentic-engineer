@@ -37,6 +37,9 @@ import {
   peekChatOpenRequest,
   replaceMessages,
 } from "./chatStore";
+import { projectKeys } from "../projects/api/keys";
+import { TurnInProgressError } from "./api/turns";
+import { projectScope } from "./chatScope";
 import { useAnchoredTurn } from "./useAnchoredTurn";
 
 const ORG = "acme";
@@ -57,9 +60,14 @@ vi.mock("./api/conversations", async (importOriginal) => {
 });
 
 const mockStartTurn = vi.fn();
+const mockReadTurnStatus = vi.fn();
 vi.mock("./api/turns", async (importOriginal) => {
   const real = await importOriginal<typeof import("./api/turns")>();
-  return { ...real, startTurn: (...a: unknown[]) => mockStartTurn(...a) };
+  return {
+    ...real, // TurnInProgressError stays REAL — the hook instanceof-checks it
+    startTurn: (...a: unknown[]) => mockStartTurn(...a),
+    readTurnStatus: (...a: unknown[]) => mockReadTurnStatus(...a),
+  };
 });
 
 // The detached fold (#666): resolved by the test, so "the turn is running" is
@@ -73,8 +81,11 @@ vi.mock("./currentUser", () => ({
   useCurrentAuthor: () => ({ id: "u-1", displayName: "Ann" }),
 }));
 
+let queryClient: QueryClient;
+
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  queryClient = qc;
   return function Wrapper({ children }: { children: React.ReactNode }) {
     return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
   };
@@ -91,7 +102,7 @@ beforeEach(() => {
   replaceMessages(KEY, []);
   mockFetchCurrent.mockResolvedValue("conv-1");
   mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
-  mockFold.mockResolvedValue(undefined);
+  mockFold.mockResolvedValue(true);
 });
 
 describe("useAnchoredTurn", () => {
@@ -99,7 +110,7 @@ describe("useAnchoredTurn", () => {
     const { result } = await mountReady();
     await result.current.send("make this shorter", { anchor: ANCHOR, intent: "change" });
 
-    expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", {
+    expect(mockStartTurn).toHaveBeenCalledWith(projectScope(PROJECT), "conv-1", {
       instruction: "make this shorter",
       aiming: { anchor: ANCHOR, intent: "change" },
     });
@@ -183,7 +194,7 @@ describe("useAnchoredTurn", () => {
     const { result } = await mountReady();
     await result.current.send("make this shorter", { anchor: ANCHOR, intent: "change" });
 
-    expect(mockFold).toHaveBeenCalledWith(KEY, PROJECT, "turn-1", expect.anything());
+    expect(mockFold).toHaveBeenCalledWith(KEY, projectScope(PROJECT), "turn-1", expect.anything());
     // The dispatch has resolved, and the log is STILL held — by the fold.
     expect(canReplaceLog(KEY)).toBe(false);
 
@@ -206,5 +217,41 @@ describe("useAnchoredTurn", () => {
     const { result } = await mountReady();
     expect(await result.current.send("   ", { anchor: ANCHOR, intent: "change" })).toBe(false);
     expect(mockStartTurn).not.toHaveBeenCalled();
+  });
+
+  // Decision 10 §4: a refused send is not a failure of the message. The turn
+  // that refused it is the thing to watch, so the console attaches it — here
+  // through the active-turn cache the mounted panel's watch reads — and gives
+  // the words back to the caller.
+  describe("when another turn is running (409 turn_in_progress)", () => {
+    const RUNNING = { turnId: "t-9", conversationId: "conv-1", kind: "browser", status: "running" };
+
+    it("withdraws the row, hands the turn to the panel and opens it", async () => {
+      mockStartTurn.mockRejectedValue(new TurnInProgressError("t-9"));
+      mockReadTurnStatus.mockResolvedValue({ kind: "status", status: RUNNING });
+      const before = peekChatOpenRequest(KEY);
+      const { result } = await mountReady();
+
+      expect(await result.current.send("shorter", { anchor: ANCHOR, intent: "change" })).toBe(false);
+
+      expect(getMessages(KEY).filter((m) => m.role === "user")).toHaveLength(0);
+      expect(getMessages(KEY).some((m) => m.role === "error")).toBe(false);
+      expect(queryClient.getQueryData(projectKeys.activeTurn(PROJECT))).toEqual(RUNNING);
+      expect(peekChatOpenRequest(KEY)).toBeGreaterThan(before);
+      expect(mockFold).not.toHaveBeenCalled();
+    });
+  });
+
+  // attachAndFoldTurn answers false when it could not learn how the turn ended.
+  // With the panel closed nothing else reads the thread, so the row would sit
+  // in_flight with no word on it: the panel is asked to open, and its mount
+  // rehydrates and re-attaches.
+  it("opens the panel when the fold could not learn how the turn ended", async () => {
+    mockFold.mockResolvedValue(false);
+    const before = peekChatOpenRequest(KEY);
+    const { result } = await mountReady();
+    await result.current.send("make this shorter", { anchor: ANCHOR, intent: "change" });
+
+    await waitFor(() => expect(peekChatOpenRequest(KEY)).toBeGreaterThan(before));
   });
 });

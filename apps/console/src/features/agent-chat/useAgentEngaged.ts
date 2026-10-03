@@ -17,7 +17,8 @@
  */
 
 import { useCallback, useSyncExternalStore } from "react";
-import { chatKeyFor, getMessages, subscribe, type ChatMessage } from "./chatStore.js";
+import { chatKeyForScope, type ChatScope } from "./chatScope.js";
+import { getMessages, subscribe, type ChatMessage } from "./chatStore.js";
 import { answerableQuestionIds } from "./questionCards.js";
 
 /**
@@ -64,9 +65,9 @@ export function agentEngaged(messages: ChatMessage[]): boolean {
  */
 export function useAgentEngaged(
   org: string,
-  projectName: string | undefined,
+  scope: ChatScope | undefined,
 ): boolean {
-  const chatKey = projectName ? chatKeyFor(org, projectName) : null;
+  const chatKey = scope ? chatKeyForScope(org, scope) : null;
   return useSyncExternalStore(
     useCallback(
       (fn: () => void) => (chatKey ? subscribe(chatKey, fn) : () => {}),

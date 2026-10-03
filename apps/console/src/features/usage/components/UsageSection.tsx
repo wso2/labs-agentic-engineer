@@ -87,7 +87,15 @@ export function UsageSection() {
   );
 }
 
-function ProjectCard({ card }: { card: ProjectUsageCard }) {
+// Marketplace register turns belong to no project; the API reports their spend
+// under the empty project key (which it also treats as a deleted slug).
+function isMarketplaceCard(card: ProjectUsageCard): boolean {
+  return card.projectName === "";
+}
+
+function ProjectCard({ card: reported }: { card: ProjectUsageCard }) {
+  const marketplace = isMarketplaceCard(reported);
+  const card = marketplace ? { ...reported, displayName: "Marketplace", deleted: false } : reported;
   return (
     <Card variant="outlined" sx={{ opacity: card.deleted ? 0.6 : 1 }}>
       <CardContent
@@ -103,7 +111,7 @@ function ProjectCard({ card }: { card: ProjectUsageCard }) {
             {card.displayName}
           </Typography>
           <Typography variant="caption" color="text.secondary" noWrap>
-            {card.projectName}
+            {marketplace ? "Resource registration" : card.projectName}
             {card.usage.model && ` · ${card.usage.model}`}
             {card.usage.costUsd === null && card.usage.host && ` via ${card.usage.host}`}
           </Typography>

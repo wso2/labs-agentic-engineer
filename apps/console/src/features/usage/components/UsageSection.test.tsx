@@ -110,6 +110,31 @@ describe("UsageSection", () => {
     expect(screen.getByText("not priced · billed by ollama.com")).toBeTruthy();
   });
 
+  it("labels the project-less usage key as the marketplace, not a deleted project", () => {
+    // Marketplace register turns belong to no project; the API reports them
+    // under the empty key, which it also reads as a deleted slug.
+    mockResult = {
+      isPending: false,
+      isError: false,
+      data: {
+        projects: [
+          {
+            projectName: "",
+            displayName: "",
+            deleted: true,
+            usage: usage(2.5),
+            phases: phasesOf(usage(2.5)),
+          },
+        ],
+      },
+    };
+    render(<UsageSection />);
+    expect(screen.getByText("Marketplace")).toBeTruthy();
+    expect(screen.getByText("Resource registration · claude-fable-5")).toBeTruthy();
+    expect(screen.queryByText("Deleted project")).toBeNull();
+    expect(screen.getByText("$2.50")).toBeTruthy();
+  });
+
   it("marks deleted projects and falls back to tokens when no cost is stamped", () => {
     mockResult = {
       isPending: false,

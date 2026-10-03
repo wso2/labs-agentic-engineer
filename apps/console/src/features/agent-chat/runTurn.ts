@@ -52,6 +52,7 @@ import {
 } from "./planStore.js";
 import { extractStreamingQuestions, isQuestionTool, parseQuestionsInput } from "./questionCards.js";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure.js";
+import type { ChatScope } from "./chatScope.js";
 import { clearProviderWait, setProviderWait } from "./providerWait.js";
 import {
   getTurn,
@@ -160,7 +161,7 @@ function settleFromTurnStatus(
  */
 export async function attachAndFoldTurn(
   chatKey: string,
-  projectName: string,
+  scope: ChatScope,
   turnId: string,
   signal: AbortSignal,
   onCompleted?: () => void,
@@ -446,7 +447,7 @@ export async function attachAndFoldTurn(
       // in the fold, not a broken stream, and must never be retried past.
       let folding = false;
       try {
-        const body = await openTurnStream(projectName, turnId, from, signal);
+        const body = await openTurnStream(scope, turnId, from, signal);
         for await (const frame of parseSseFrames(body)) {
           if (signal.aborted) return false;
           if (frame.id !== undefined && frame.id < from) continue; // already folded before the drop
@@ -462,7 +463,7 @@ export async function attachAndFoldTurn(
         if (signal.aborted) return false; // unmount/navigation — not a failure
         if (folding) throw err;
         if (isTurnStreamReplayTruncated(err)) {
-          if (await settleWhenEnded(chatKey, projectName, turnId, signal, onCompleted, askedQuestion)) {
+          if (await settleWhenEnded(chatKey, scope, turnId, signal, onCompleted, askedQuestion)) {
             return !signal.aborted;
           }
           break; // the pod no longer holds the turn: the severed-stream handling below
@@ -470,7 +471,7 @@ export async function attachAndFoldTurn(
         if (isTurnStreamNotFound(err)) {
           // Past the replay retention, or not streamable yet: the turn's
           // status says how it ended.
-          const read = await readTurnStatus(projectName, turnId);
+          const read = await readTurnStatus(scope, turnId);
           if (read.kind === "status" && settleFromTurnStatus(chatKey, turnId, read.status, onCompleted, askedQuestion)) {
             return true;
           }
@@ -509,7 +510,7 @@ export async function attachAndFoldTurn(
   // The stream could not be resumed — one authoritative read settles the
   // bubble (and is itself a "terminal frame arrived" for turn-end purposes:
   // the fallback read IS how this turn's end is observed here).
-  const status = await getTurn(projectName, turnId);
+  const status = await getTurn(scope, turnId);
   return settleFromTurnStatus(chatKey, turnId, status, onCompleted, askedQuestion);
 }
 
@@ -524,14 +525,14 @@ export async function attachAndFoldTurn(
  */
 async function settleWhenEnded(
   chatKey: string,
-  projectName: string,
+  scope: ChatScope,
   turnId: string,
   signal: AbortSignal,
   onCompleted: (() => void) | undefined,
   askedQuestion: boolean,
 ): Promise<boolean> {
   for (;;) {
-    const read = await readTurnStatus(projectName, turnId);
+    const read = await readTurnStatus(scope, turnId);
     if (signal.aborted) return true;
     if (read.kind === "gone") return false;
     if (read.kind === "status" && settleFromTurnStatus(chatKey, turnId, read.status, onCompleted, askedQuestion)) {

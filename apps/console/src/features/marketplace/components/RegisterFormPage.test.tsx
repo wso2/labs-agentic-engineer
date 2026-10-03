@@ -32,16 +32,15 @@ vi.mock("@tanstack/react-router", () => ({
   ),
 }));
 
-const mockRotate = vi.fn<(projectName: string) => Promise<string>>(
+const mockRotate = vi.fn<(scope: unknown, chatKey: string) => Promise<string>>(
   async () => "fresh-conversation-id",
 );
 vi.mock("../../agent-chat/api/conversations", async (importOriginal) => {
   const real = await importOriginal<typeof import("../../agent-chat/api/conversations")>();
   return {
     ...real,
-    rotateConversation: (projectName: string) => mockRotate(projectName),
-    rotateCurrentConversation: async (_qc: unknown, projectName: string) =>
-      mockRotate(projectName),
+    rotateCurrentConversation: async (_qc: unknown, scope: unknown, chatKey: string) =>
+      mockRotate(scope, chatKey),
   };
 });
 
@@ -111,7 +110,6 @@ vi.mock("../../agent-chat/components/AgentChatPanel", () => ({
 import { REGISTER_EXTERNAL_RESOURCE_COMMAND } from "@aep/contracts/commands";
 import {
   addMessage,
-  chatKeyFor,
   consumePendingSeed,
   getMessages,
   peekPendingSeed,
@@ -121,7 +119,7 @@ import {
   clearRegisterDraft,
   publishRegisterDraft,
 } from "../../agent-chat/registerDraftStore";
-import { MARKETPLACE_CHAT_PROJECT } from "../constants";
+import { MARKETPLACE_SCOPE, chatKeyForScope } from "../../agent-chat/chatScope";
 import { RegisterFormPage } from "./RegisterFormPage";
 
 function resetState() {
@@ -197,7 +195,7 @@ function renderPage(ui: ReactElement) {
 }
 
 function registerChatKey() {
-  return chatKeyFor("acme", MARKETPLACE_CHAT_PROJECT);
+  return chatKeyForScope("acme", MARKETPLACE_SCOPE);
 }
 
 async function waitForComposerSeed() {
@@ -555,7 +553,7 @@ describe("RegisterFormPage", () => {
     const prompt = "Register Stripe as a payments API.";
     renderPage(<RegisterFormPage prompt={prompt} />);
     await waitForComposerSeed();
-    expect(mockRotate).toHaveBeenCalledWith(MARKETPLACE_CHAT_PROJECT);
+    expect(mockRotate).toHaveBeenCalledWith(MARKETPLACE_SCOPE, registerChatKey());
     expect(peekPendingSeed(registerChatKey())).toEqual({
       message: `${REGISTER_EXTERNAL_RESOURCE_COMMAND} ${prompt}`,
       guarded: true,
@@ -575,7 +573,7 @@ describe("RegisterFormPage", () => {
     });
     renderPage(<RegisterFormPage prompt="Register Stripe as a payments API." />);
     await waitForComposerSeed();
-    expect(mockRotate).toHaveBeenCalledWith(MARKETPLACE_CHAT_PROJECT);
+    expect(mockRotate).toHaveBeenCalledWith(MARKETPLACE_SCOPE, registerChatKey());
     expect(getMessages(registerChatKey())).toEqual([]);
   });
 
@@ -618,7 +616,7 @@ describe("RegisterFormPage", () => {
     renderPage(<RegisterFormPage prompt="" />);
     const env = screen.getByLabelText("development · API_KEY");
     fireEvent.change(env, { target: { value: "human-secret" } });
-    const chatKey = chatKeyFor("acme", MARKETPLACE_CHAT_PROJECT);
+    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE);
     act(() => {
       publishRegisterDraft(chatKey, {
         description: "Patched description",
@@ -642,7 +640,7 @@ describe("RegisterFormPage", () => {
   it("fills non-secret fields from the draft after answers", () => {
     renderPage(<RegisterFormPage prompt="an API" />);
     act(() => {
-      publishRegisterDraft(chatKeyFor("acme", MARKETPLACE_CHAT_PROJECT), {
+      publishRegisterDraft(chatKeyForScope("acme", MARKETPLACE_SCOPE), {
         name: "stripe",
         provider: "Stripe",
         description: "Payments API",
@@ -666,7 +664,7 @@ describe("RegisterFormPage", () => {
 
   it("does not change a human-typed env value when a later draft patches description only", () => {
     renderPage(<RegisterFormPage prompt="an API" />);
-    const chatKey = chatKeyFor("acme", MARKETPLACE_CHAT_PROJECT);
+    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE);
     act(() => {
       publishRegisterDraft(chatKey, {
         name: "stripe",
@@ -757,7 +755,7 @@ describe("RegisterFormPage edit mode", () => {
     expect(screen.getByLabelText("The agent is working on this resource")).toBeInTheDocument();
 
     act(() => {
-      addMessage(chatKeyFor("acme", MARKETPLACE_CHAT_PROJECT), {
+      addMessage(chatKeyForScope("acme", MARKETPLACE_SCOPE), {
         role: "question",
         turnId: "t1",
         toolCallId: "tc1",

@@ -35,6 +35,7 @@ import {
   replaceMessages,
   upsertQuestionMessage,
 } from "./chatStore";
+import { projectScope } from "./chatScope";
 import { useAgentChat } from "./useAgentChat";
 import { useConversationLog } from "./useConversationLog";
 
@@ -50,8 +51,8 @@ vi.mock("./api/conversations", async (importOriginal) => {
     ...real,
     fetchCurrentConversationId: (...a: unknown[]) => mockFetchCurrent(...a),
     rotateConversation: (...a: unknown[]) => mockRotate(...a),
-    rotateCurrentConversation: async (_qc: unknown, projectName: string) =>
-      mockRotate(projectName),
+    rotateCurrentConversation: async (_qc: unknown, scope: { project: string }) =>
+      mockRotate(scope.project),
   };
 });
 
@@ -118,7 +119,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     // silently shadowed everything teammates had said since.
     addMessage(KEY, { role: "user", content: "stale local fork", status: "completed" });
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
     await waitFor(() => {
@@ -126,7 +127,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
       expect(contents).toContain("from the server");
       expect(contents).not.toContain("stale local fork");
     });
-    expect(mockGetHistory).toHaveBeenCalledWith(PROJECT, "conv-1");
+    expect(mockGetHistory).toHaveBeenCalledWith(projectScope(PROJECT), "conv-1");
   });
 
   // The re-created-project bug: the local cache is keyed by org/project NAME,
@@ -137,7 +138,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     addMessage(KEY, { role: "user", content: "the dead project's log", status: "completed" });
     mockGetHistory.mockResolvedValue([]);
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
     await waitFor(() => expect(getMessages(KEY)).toEqual([]));
@@ -147,7 +148,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     addMessage(KEY, { role: "user", content: "still worth painting", status: "completed" });
     mockGetHistory.mockResolvedValue(null); // transient failure
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
     await waitFor(() => expect(mockGetHistory).toHaveBeenCalled());
@@ -157,7 +158,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
   });
 
   it("sends against the RESOLVED id, never a local mint", async () => {
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
@@ -169,7 +170,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     // send, and passed explicitly rather than omitted so the wire shape is one
     // code path.
     await waitFor(() =>
-      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", { instruction: "hello", files: [] }),
+      expect(mockStartTurn).toHaveBeenCalledWith(projectScope(PROJECT), "conv-1", { instruction: "hello", files: [] }),
     );
   });
 
@@ -183,7 +184,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     const unregister = registerDeterministicFlush(KEY, async () => {
       order.push("flush");
     });
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockImplementation(async () => {
@@ -205,7 +206,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     const unregister = registerDeterministicFlush(KEY, async () => {
       throw new Error("the committer is down");
     });
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockResolvedValue({ turnId: "turn-1" });
@@ -214,14 +215,14 @@ describe("useAgentChat — the shared thread (#430)", () => {
     });
 
     await waitFor(() =>
-      expect(mockStartTurn).toHaveBeenCalledWith(PROJECT, "conv-1", { instruction: "hello", files: [] }),
+      expect(mockStartTurn).toHaveBeenCalledWith(projectScope(PROJECT), "conv-1", { instruction: "hello", files: [] }),
     );
     unregister();
   });
 
   it("holds sends until the thread id resolves", async () => {
     mockFetchCurrent.mockReturnValue(new Promise(() => {})); // never resolves
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
 
     expect(result.current.conversationReady).toBe(false);
     await act(async () => {
@@ -243,7 +244,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
         : Promise.resolve(SERVER_HISTORY),
     );
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     // A teammate rotated: the send 409s, the re-resolve answers the NEW id.
@@ -261,7 +262,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
       ).toBe(true);
     });
     // The invalidation re-resolves and the effect rehydrates the fresh thread.
-    await waitFor(() => expect(mockGetHistory).toHaveBeenCalledWith(PROJECT, "conv-2"));
+    await waitFor(() => expect(mockGetHistory).toHaveBeenCalledWith(projectScope(PROJECT), "conv-2"));
     releaseFreshHistory([]);
   });
 
@@ -270,7 +271,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     mockRotate.mockResolvedValue("conv-9");
     mockGetHistory.mockResolvedValue([]); // the fresh thread is empty
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     act(() => result.current.newConversation());
@@ -292,7 +293,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
     // Keep the attachment open so the running state is observable.
     mockAttach.mockReturnValue(new Promise(() => {}));
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.activeTurnId).toBe("t-77"));
     expect(result.current.isSending).toBe(true);
@@ -311,7 +312,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
       kind: "browser",
     });
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
     await waitFor(() => expect(mockGetActive).toHaveBeenCalled());
 
@@ -324,7 +325,7 @@ describe("useAgentChat — the shared thread (#430)", () => {
   // Local-only rows are the ONE copy of a failed send's text — a refocus
   // rehydrate must not wash them out (the review's finding 6).
   it("preserves failed-send rows across a replace", async () => {
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     mockStartTurn.mockRejectedValue(new Error("502 upstream"));
@@ -384,7 +385,7 @@ describe("useAgentChat — a local send in flight", () => {
       () => new Promise<{ turnId: string }>((res) => { resolveDispatch = (turnId) => res({ turnId }); }),
     );
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     act(() => {
@@ -415,7 +416,7 @@ describe("useAgentChat — a local send in flight", () => {
       () => new Promise<{ turnId: string }>((res) => { resolveDispatch = (turnId) => res({ turnId }); }),
     );
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversationReady).toBe(true));
 
     act(() => {
@@ -530,7 +531,7 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
 
   it("keeps a question the fold painted when a later surface mounts the log", async () => {
     const Wrapper = createWrapper(); // ONE QueryClient — both surfaces share it
-    const panel = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: Wrapper });
+    const panel = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: Wrapper });
     await waitFor(() => expect(panel.result.current.conversationReady).toBe(true));
     await waitFor(() =>
       expect(getMessages(KEY).some((m) => m.role === "question")).toBe(true),
@@ -591,7 +592,7 @@ describe("useAgentChat — a send refused because a turn is running", () => {
     mockStartTurn.mockRejectedValue(new TurnInProgressError("t-9"));
     mockReadTurnStatus.mockResolvedValue({ kind: "status", status: blocking() });
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.historyReady).toBe(true));
 
     let sent: boolean | undefined;
@@ -609,8 +610,8 @@ describe("useAgentChat — a send refused because a turn is running", () => {
       expect(result.current.notice).toBe("Another turn is running — send again when it finishes"),
     );
     await waitFor(() => expect(result.current.activeTurnId).toBe("t-9"));
-    expect(mockReadTurnStatus).toHaveBeenCalledWith(PROJECT, "t-9");
-    expect(mockAttach).toHaveBeenCalledWith(KEY, PROJECT, "t-9", expect.anything(), expect.any(Function));
+    expect(mockReadTurnStatus).toHaveBeenCalledWith(projectScope(PROJECT), "t-9");
+    expect(mockAttach).toHaveBeenCalledWith(KEY, projectScope(PROJECT), "t-9", expect.anything(), expect.any(Function));
     expect(mockAttach).toHaveBeenCalledTimes(1);
   });
 
@@ -623,7 +624,7 @@ describe("useAgentChat — a send refused because a turn is running", () => {
       status: blocking({ turnId: "t-plan", kind: "plan", conversationId: "conv-plan" }),
     });
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.historyReady).toBe(true));
 
     await act(async () => {
@@ -639,7 +640,7 @@ describe("useAgentChat — a send refused because a turn is running", () => {
     const { TurnInProgressError } = await import("./api/turns");
     mockStartTurn.mockRejectedValue(new TurnInProgressError(undefined));
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.historyReady).toBe(true));
     await waitFor(() => expect(mockGetActive).toHaveBeenCalled());
 
@@ -660,7 +661,7 @@ describe("useAgentChat — a send refused because a turn is running", () => {
     let finish: (settled: boolean) => void = () => {};
     mockAttach.mockReturnValue(new Promise<boolean>((r) => { finish = r; }));
 
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.historyReady).toBe(true));
     await act(async () => {
       await result.current.send("hello");
@@ -689,7 +690,7 @@ describe("useAgentChat — an unsettled fold", () => {
 
   it("rehydrates the thread instead of reporting a lost stream", async () => {
     mockAttach.mockResolvedValue(false);
-    const { result } = renderHook(() => useAgentChat(ORG, PROJECT), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.historyReady).toBe(true));
     const reads = mockGetHistory.mock.calls.length;
 

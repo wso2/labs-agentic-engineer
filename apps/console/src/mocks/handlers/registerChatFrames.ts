@@ -18,7 +18,7 @@
 
 import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
 import { REGISTER_EXTERNAL_RESOURCE_COMMAND } from "@aep/contracts/commands";
-import { MARKETPLACE_CHAT_PROJECT } from "../../features/marketplace/constants";
+import type { ChatScope } from "../../features/agent-chat/chatScope";
 
 const UNSURE_REMAINDER = "an API";
 
@@ -104,7 +104,7 @@ function unsureQuestionFrames(turnId: string): unknown[] {
  */
 export function registerChatFrames(
   instruction: string,
-  projectName?: string,
+  scopeKind: ChatScope["kind"] = "project",
   turnId = "mock-turn",
 ): unknown[] | null {
   const trimmed = instruction.trim();
@@ -115,7 +115,7 @@ export function registerChatFrames(
     }
     return sureDraftFrames(turnId);
   }
-  if (projectName === MARKETPLACE_CHAT_PROJECT && isAnswer(instruction)) {
+  if (scopeKind === "marketplace" && isAnswer(instruction)) {
     return sureDraftFrames(turnId);
   }
   return null;

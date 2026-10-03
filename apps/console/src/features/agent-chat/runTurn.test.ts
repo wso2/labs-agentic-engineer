@@ -92,6 +92,7 @@ vi.mock("./providerWait.js", () => ({
 
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
+import { projectScope } from "./chatScope.js";
 import {
   addMessage,
   appendAssistantText,
@@ -119,14 +120,14 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
 
   it("notifies turn-end with 'completed' on a turn-completed terminal frame", async () => {
     queuedParts = [{ type: "turn-completed" } as StreamPart];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "completed" }]);
   });
 
   it("calls onCompleted exactly once on a turn-completed terminal frame", async () => {
     queuedParts = [{ type: "text-delta", delta: "done" }, { type: "turn-completed" } as StreamPart];
     const onCompleted = vi.fn();
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal, onCompleted);
     expect(onCompleted).toHaveBeenCalledTimes(1);
     expect(mockGetTurn).not.toHaveBeenCalled(); // the frame is the terminal; no fallback poll
   });
@@ -134,27 +135,27 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
   it("never calls onCompleted for a failed turn", async () => {
     queuedParts = [{ type: "turn-failed", reason: "agent-error", message: "boom" } as StreamPart];
     const onCompleted = vi.fn();
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal, onCompleted);
     expect(onCompleted).not.toHaveBeenCalled();
   });
 
   it("notifies turn-end with 'failed' on a turn-failed terminal frame", async () => {
     queuedParts = [{ type: "turn-failed", message: "boom" } as StreamPart];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "failed" }]);
   });
 
   it("notifies turn-end via the poll fallback when the stream is severed with no terminal frame", async () => {
     queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart]; // severed before a terminal
     mockGetTurn.mockResolvedValue({ status: "completed" });
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "completed" }]);
   });
 
   it("notifies turn-end 'failed' via the poll fallback when the authoritative poll says failed", async () => {
     queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart];
     mockGetTurn.mockResolvedValue({ status: "failed", message: "oops" });
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(notified).toEqual([{ key: KEY, status: "failed" }]);
   });
 
@@ -162,7 +163,7 @@ describe("attachAndFoldTurn — turn-end notification (#252 Task 5)", () => {
     const ac = new AbortController();
     queuedParts = []; // aborted before any frame arrives
     ac.abort();
-    await attachAndFoldTurn(KEY, "proj1", "t1", ac.signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", ac.signal);
     expect(notified).toEqual([]);
     expect(mockGetTurn).not.toHaveBeenCalled();
   });
@@ -189,7 +190,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     queuedParts = [{ type: "turn-completed" } as StreamPart];
     mockReadTurnStatus.mockResolvedValue({ kind: "status", status: { status: "running" } });
 
-    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     await vi.runAllTimersAsync();
     await done;
 
@@ -207,7 +208,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     mockOpenTurnStream.mockRejectedValue(attachErr);
     mockReadTurnStatus.mockResolvedValue({ kind: "status", status: { status: "completed" } });
 
-    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     await vi.runAllTimersAsync();
     await done;
 
@@ -230,7 +231,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
         .mockResolvedValueOnce(status("completed"));
       const onCompleted = vi.fn();
 
-      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+      const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal, onCompleted);
       await vi.runAllTimersAsync();
       await done;
 
@@ -251,7 +252,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
         .mockResolvedValueOnce(status("completed"));
       const onCompleted = vi.fn();
 
-      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal, onCompleted);
+      const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal, onCompleted);
       await vi.runAllTimersAsync();
       await done;
 
@@ -268,7 +269,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
       mockReadTurnStatus.mockResolvedValue({ kind: "gone" });
       mockGetTurn.mockResolvedValue(null);
 
-      const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+      const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
       await vi.runAllTimersAsync();
       await done;
 
@@ -283,7 +284,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
       mockReadTurnStatus.mockResolvedValue(status("running"));
       const ac = new AbortController();
 
-      const done = attachAndFoldTurn(KEY, "proj1", "t1", ac.signal);
+      const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", ac.signal);
       await vi.advanceTimersByTimeAsync(5_000);
       const before = mockReadTurnStatus.mock.calls.length;
       ac.abort();
@@ -305,7 +306,7 @@ describe("attachAndFoldTurn — pre-stream 404 re-attach (#3)", () => {
     mockOpenTurnStream.mockRejectedValue(new Error("Failed to attach to the turn stream")); // no status
     mockGetTurn.mockResolvedValue(null);
 
-    const done = attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    const done = attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     await vi.runAllTimersAsync();
 
     await expect(done).resolves.toBe(false);
@@ -362,7 +363,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
   it("stops the spinner at tool-input-end, with NO verdict yet", async () => {
     mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batch(["c1"]);
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
 
     const cards = cardsFor("c1");
     expect(cards.map((c) => c.status)).toEqual(["streaming", "done", "done"]);
@@ -379,7 +380,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
   it("settles the FIRST file before the last file's call — the batch no longer blocks it", async () => {
     mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batch(["c1", "c2", "c3"]);
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
 
     const calls = vi.mocked(upsertToolMessage).mock.calls.map(([, m]) => m);
     const c1Done = calls.findIndex((m) => m.toolCallId === "c1" && m.status === "done");
@@ -392,7 +393,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
   it("ticks the FIRST file mid-batch when its verdict rides its own call", async () => {
     mockReadToolInputPath.mockReturnValue("specs/design/domain-model.md");
     queuedParts = batchSettledPerCall(["c1", "c2", "c3"]);
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
 
     const calls = vi.mocked(upsertToolMessage).mock.calls.map(([, m]) => m);
     const c1Ticked = calls.findIndex((m) => m.toolCallId === "c1" && m.ok === true);
@@ -411,7 +412,7 @@ describe("attachAndFoldTurn — a file card settles on its OWN input-end, not th
       { type: "tool-input-delta", id: "c1", delta: "{" } as StreamPart,
       { type: "tool-input-end", id: "c1" } as StreamPart,
     ];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(upsertToolMessage).not.toHaveBeenCalled();
   });
 });
@@ -440,7 +441,7 @@ describe("attachAndFoldTurn — draftExternalResource publishes a register draft
         input: draft,
       } as StreamPart,
     ];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(peekRegisterDraft(KEY)).toEqual(draft);
     expect(upsertToolMessage).not.toHaveBeenCalled();
   });
@@ -474,7 +475,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
       { type: "tool-call", toolCallId: "p2", toolName: "declare_plan", input: wave2 },
       { type: "turn-failed", message: "died" },
     ] as StreamPart[];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(peekPlan(KEY)?.entries.map((e) => e.path)).toEqual([CELL, OVERVIEW, PORTAL]);
     expect(vi.mocked(upsertPlanMessage).mock.calls.map(([, m]) => [m.toolCallId, m.added, m.grew]))
       .toEqual([
@@ -509,7 +510,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
       { type: "tool-input-delta", id: "f2", delta: '{"path":"specs/design/domain-model.md"' },
       { type: "turn-failed", message: "died mid-write" },
     ] as StreamPart[];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     const plan = peekPlan(KEY);
     expect(plan?.wreckage).toBe(true);
     expect(plan?.entries.map((e) => e.status)).toEqual(["done", "error", "planned"]);
@@ -527,7 +528,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
       { type: "tool-input-end", id: "r1" },
       { type: "turn-failed", message: "died" },
     ] as StreamPart[];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     const plan = peekPlan(KEY);
     expect(plan?.entries[0]?.status).toBe("planned");
     expect(plan?.writingPath).toBe(null);
@@ -538,7 +539,7 @@ describe("attachAndFoldTurn — declare_plan folds into the plan store (#576)", 
       { type: "tool-call", toolCallId: "p1", toolName: "declare_plan", input: { paths: [CELL] } },
       { type: "turn-completed" },
     ] as StreamPart[];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(peekPlan(KEY)).toBe(null);
   });
 });
@@ -562,7 +563,7 @@ describe("attachAndFoldTurn — a question call the schema rejected is not a car
       { type: "tool-call", toolCallId: "q-good", toolName: "ask_question", input: good },
       { type: "turn-completed" },
     ] as StreamPart[];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     // The prefix DID reach the log as a streaming card before the verdict…
     const streamed = vi.mocked(upsertQuestionMessage).mock.calls.map(([, m]) => m);
     expect(streamed.some((m) => m.toolCallId === "q-bad" && m.streaming)).toBe(true);
@@ -592,7 +593,7 @@ describe("attachAndFoldTurn — a provider wait is status until the model answer
       { type: "text-delta", delta: "hi" },
       { type: "turn-completed" } as StreamPart,
     ];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     const set = waitOps.indexOf("set:ollama.com");
     expect(set).toBeGreaterThan(-1);
     expect(waitOps.filter((op) => op.startsWith("set:"))).toHaveLength(1);
@@ -602,7 +603,7 @@ describe("attachAndFoldTurn — a provider wait is status until the model answer
 
   it("never sets a wait on a turn without one", async () => {
     queuedParts = [{ type: "start-step" }, { type: "text-delta", delta: "hi" }, { type: "turn-completed" } as StreamPart];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(waitOps.some((op) => op.startsWith("set:"))).toBe(false);
   });
 });
@@ -620,7 +621,7 @@ describe("attachAndFoldTurn — a failure the agents service named", () => {
       { type: "error", code: "provider_limit", error: `ollama.com's usage limit is reached. Try again after ${resetAt}.`, host: "ollama.com", resetAt } as StreamPart,
       { type: "turn-failed", reason: "agent-error", code: "provider_limit", host: "ollama.com", resetAt, message: "raw" } as StreamPart,
     ];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(addMessage).toHaveBeenCalledTimes(1);
     const row = vi.mocked(addMessage).mock.calls[0]![1] as { role: string; content: string };
     expect(row.role).toBe("error");
@@ -630,7 +631,7 @@ describe("attachAndFoldTurn — a failure the agents service named", () => {
 
   it("still rows an uncoded error frame", async () => {
     queuedParts = [{ type: "error", error: "boom" }, { type: "turn-failed", message: "stream ended without a manifest" } as StreamPart];
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(addMessage).toHaveBeenCalledTimes(2);
   });
 
@@ -638,7 +639,7 @@ describe("attachAndFoldTurn — a failure the agents service named", () => {
     const message = "The model's output limit (8192 tokens per step) cut off addFile before it finished, so nothing was written.";
     queuedParts = [{ type: "text-delta", delta: "partial" } as StreamPart];
     mockGetTurn.mockResolvedValue({ status: "failed", reason: "agent-error", code: "output_truncated", message });
-    await attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal);
     expect(addMessage).toHaveBeenCalledWith(KEY, { role: "error", content: message });
   });
 });
@@ -667,7 +668,7 @@ describe("attachAndFoldTurn — a fold error", () => {
       throw new Error("fold bug");
     });
 
-    await expect(attachAndFoldTurn(KEY, "proj1", "t1", new AbortController().signal)).rejects.toThrow("fold bug");
+    await expect(attachAndFoldTurn(KEY, projectScope("proj1"), "t1", new AbortController().signal)).rejects.toThrow("fold bug");
 
     expect(mockOpenTurnStream).toHaveBeenCalledTimes(1);
     expect(appendAssistantText).toHaveBeenCalledTimes(1);

@@ -32,6 +32,7 @@ import {
   replaceMessages,
   setPendingSeed,
 } from "../chatStore";
+import { MARKETPLACE_SCOPE, projectScope } from "../chatScope";
 
 const ORG = "acme";
 const PROJECT = "proj1";
@@ -110,7 +111,7 @@ vi.mock("../useTurnEndDependencyRefresh", () => ({
 type PanelProps = ComponentProps<typeof AgentChatPanel>;
 
 function panelProps(overrides: Partial<PanelProps> = {}): PanelProps {
-  return { org: ORG, projectName: PROJECT, onClose: () => {}, ...overrides };
+  return { org: ORG, scope: projectScope(PROJECT), onClose: () => {}, ...overrides };
 }
 
 // The panel reads the spec file list (flow stepper, #372) through
@@ -588,9 +589,9 @@ describe("AgentChatPanel — a question does not move the user", () => {
     );
   });
 
-  it("does not navigate when specWorkspace is off — register chat has no spec", () => {
+  it("has no spec link for the marketplace scope — register chat has no spec", () => {
     addMessage(KEY, { role: "question", turnId: "t1", toolCallId: "tc1", questions: QUESTION });
-    renderPanel({ specWorkspace: false });
+    renderPanel({ scope: MARKETPLACE_SCOPE });
 
     expect(screen.queryByTestId("questions-pointer")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Open spec workspace" })).not.toBeInTheDocument();

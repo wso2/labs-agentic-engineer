@@ -26,14 +26,19 @@ import {
   clearFailedSends,
   flushRoomBeforeDispatch,
   hasStreamFold,
+  removeMessage,
   requestChatOpen,
   setTurnStatus,
   settleUserMessage,
 } from "./chatStore.js";
+import { projectKeys } from "../projects/api/keys.js";
+import { findBlockingTurn } from "./blockingTurn.js";
+import { projectScope } from "./chatScope.js";
 import { attachAndFoldTurn } from "./runTurn.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import {
   ConversationRotatedError,
+  TurnInProgressError,
   startTurn,
   type TurnAiming,
 } from "./api/turns.js";
@@ -113,7 +118,7 @@ export function useAnchoredTurn(
       // document the user is editing.
       await flushRoomBeforeDispatch(chatKey);
       try {
-        const { turnId } = await startTurn(projectName, conversationId, {
+        const { turnId } = await startTurn(projectScope(projectName), conversationId, {
           instruction: text,
           aiming,
         });
@@ -125,7 +130,17 @@ export function useAnchoredTurn(
         // own attach paths make the same check in the other direction.
         if (!hasStreamFold(chatKey)) {
           const releaseFold = claimStreamFold(chatKey);
-          void attachAndFoldTurn(chatKey, projectName, turnId, new AbortController().signal)
+          void attachAndFoldTurn(chatKey, projectScope(projectName), turnId, new AbortController().signal)
+            .then((settled) => {
+              // The fold could not learn how the turn ended. With the panel
+              // closed nothing else reads the thread, so the row would sit
+              // in_flight with no word on it; the panel's mount rehydrates
+              // and re-attaches a turn that still runs.
+              if (!settled) {
+                void queryClient.invalidateQueries({ queryKey: projectKeys.activeTurn(projectName) });
+                requestChatOpen(chatKey);
+              }
+            })
             .catch(() => {
               setTurnStatus(chatKey, turnId, "failed");
               addMessage(chatKey, {
@@ -137,6 +152,16 @@ export function useAnchoredTurn(
         }
         return true;
       } catch (err) {
+        // Another turn is running (10 §4): nothing is wrong with this message.
+        // The row withdraws, the words go back to the caller, and the running
+        // turn is handed to the panel's active-turn watch — which is what
+        // attaches it — by opening the panel onto it.
+        if (err instanceof TurnInProgressError) {
+          removeMessage(chatKey, messageId);
+          await findBlockingTurn(queryClient, projectScope(projectName), err.activeTurnId);
+          requestChatOpen(chatKey);
+          return false;
+        }
         // The row the user can already see becomes the failed one — a second
         // copy beside it would read as two sends.
         settleUserMessage(chatKey, messageId, { failed: true });

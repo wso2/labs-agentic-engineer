@@ -18,7 +18,6 @@
 
 import { REGISTER_EXTERNAL_RESOURCE_COMMAND } from "@aep/contracts/commands";
 import { describe, expect, it, vi } from "vitest";
-import { MARKETPLACE_CHAT_PROJECT } from "../../features/marketplace/constants";
 
 // Same literals as @aep/agent-stream. Vitest cannot load that barrel here
 // (dist pulls @aep/excalidraw-dsl, which has no dist in this worktree).
@@ -55,7 +54,7 @@ describe("registerChatFrames", () => {
   it("emits the sure draft on a marketplace answer turn", () => {
     const frames = registerChatFrames(
       `${ANSWER_PREFIX}What should this resource be called?": stripe`,
-      MARKETPLACE_CHAT_PROJECT,
+      "marketplace",
     );
     const json = framesJson(frames);
     expect(json).toContain("draftExternalResource");
@@ -65,7 +64,7 @@ describe("registerChatFrames", () => {
   it("does not emit a register draft on a real-project answer turn", () => {
     const frames = registerChatFrames(
       `${ANSWER_PREFIX}Who is the primary user of this app?": Individual consumers`,
-      "todo-app",
+      "project",
     );
     expect(frames).toBeNull();
   });

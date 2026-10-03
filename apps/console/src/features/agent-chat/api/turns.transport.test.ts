@@ -32,6 +32,7 @@ vi.mock("../../../auth/token", () => ({
 }));
 
 const { setAeStudioUrls, AeStudioNotReadyError } = await import("../../../api/aeStudio");
+const { projectScope, MARKETPLACE_SCOPE } = await import("../chatScope");
 const {
   ConversationRotatedError,
   TurnInProgressError,
@@ -41,6 +42,7 @@ const {
   isTurnStreamNotFound,
   isTurnStreamReplayTruncated,
   openTurnStream,
+  readConversationMessages,
   readTurnStatus,
   startTurn,
 } = await import("./turns");
@@ -109,7 +111,7 @@ const anchor = {
 describe("startTurn on the design agent", () => {
   it("posts JSON to the pod's conversation turns with the user's token, and no collab or workspace field", async () => {
     const seen = acceptTurns();
-    await expect(startTurn("p", "c", { instruction: "tidy the requirements" })).resolves.toEqual({
+    await expect(startTurn(projectScope("p"), "c", { instruction: "tidy the requirements" })).resolves.toEqual({
       turnId: "t-1",
     });
     expect(seen).toHaveLength(1);
@@ -120,13 +122,13 @@ describe("startTurn on the design agent", () => {
 
   it("puts the anchor and intent beside the instruction, never inside it", async () => {
     const seen = acceptTurns();
-    await startTurn("p", "c", { instruction: "shorter please", aiming: { anchor, intent: "change" } });
+    await startTurn(projectScope("p"), "c", { instruction: "shorter please", aiming: { anchor, intent: "change" } });
     expect(seen[0]!.json).toEqual({ instruction: "shorter please", anchor, intent: "change" });
   });
 
   it("switches to multipart when files ride along: every file, the anchor as a JSON part, no collab", async () => {
     const seen = acceptTurns();
-    await startTurn("p", "c", {
+    await startTurn(projectScope("p"), "c", {
       instruction: "what is wrong here?",
       files: [fileOf("error.png"), fileOf("rows.csv", "a,b")],
       aiming: { anchor, intent: "discuss" },
@@ -143,25 +145,25 @@ describe("startTurn on the design agent", () => {
 
   it("sends JSON when the files array is empty", async () => {
     const seen = acceptTurns();
-    await startTurn("p", "c", { instruction: "hello", files: [] });
+    await startTurn(projectScope("p"), "c", { instruction: "hello", files: [] });
     expect(seen[0]!.json).toEqual({ instruction: "hello" });
   });
 
   it("throws AeStudioNotReadyError before AE Studio is ready", async () => {
     setAeStudioUrls(null);
-    await expect(startTurn("p", "c", { instruction: "hi" })).rejects.toBeInstanceOf(AeStudioNotReadyError);
+    await expect(startTurn(projectScope("p"), "c", { instruction: "hi" })).rejects.toBeInstanceOf(AeStudioNotReadyError);
   });
 });
 
 describe("startTurn refusals", () => {
   it("names a rotated thread (TurnConflict conversation_rotated)", async () => {
     refuse(409, { code: "conversation_rotated" }, false);
-    await expect(startTurn("p", "c", { instruction: "hi" })).rejects.toBeInstanceOf(ConversationRotatedError);
+    await expect(startTurn(projectScope("p"), "c", { instruction: "hi" })).rejects.toBeInstanceOf(ConversationRotatedError);
   });
 
   it("carries the running turn's id on turn_in_progress", async () => {
     refuse(409, { code: "turn_in_progress", activeTurnId: "t-running" }, false);
-    const err = await startTurn("p", "c", { instruction: "hi" }).catch((e: unknown) => e);
+    const err = await startTurn(projectScope("p"), "c", { instruction: "hi" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(TurnInProgressError);
     expect(err).toMatchObject({ activeTurnId: "t-running", status: 409, code: "turn_in_progress" });
     expect((err as Error).message).toMatch(/already running/);
@@ -169,7 +171,7 @@ describe("startTurn refusals", () => {
 
   it("sends the user to Settings when the org has no default model key", async () => {
     refuse(409, problem(409, "no_default_key", "the organization has no default model key"));
-    const err = await startTurn("p", "c", { instruction: "hi" }).catch((e: unknown) => e);
+    const err = await startTurn(projectScope("p"), "c", { instruction: "hi" }).catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 409, code: "no_default_key" });
     expect((err as Error).message).toMatch(/model connection/i);
     expect((err as Error).message).toMatch(/Settings/);
@@ -177,28 +179,28 @@ describe("startTurn refusals", () => {
 
   it("says the studio's tools are not answering on 503 tools_unavailable", async () => {
     refuse(503, problem(503, "tools_unavailable", "the studio's tools are not answering"));
-    const err = await startTurn("p", "c", { instruction: "hi" }).catch((e: unknown) => e);
+    const err = await startTurn(projectScope("p"), "c", { instruction: "hi" }).catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 503, code: "tools_unavailable" });
     expect((err as Error).message).toMatch(/try again/i);
   });
 
   it("says AE Studio is restarting on 503 shutting_down", async () => {
     refuse(503, problem(503, "shutting_down", "the design agent is shutting down"));
-    const err = await startTurn("p", "c", { instruction: "hi" }).catch((e: unknown) => e);
+    const err = await startTurn(projectScope("p"), "c", { instruction: "hi" }).catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 503, code: "shutting_down" });
     expect((err as Error).message).toMatch(/restarting/i);
   });
 
   it("passes the pod's own sentence through for a rejected attachment", async () => {
     refuse(400, problem(400, "attachment_rejected", "a.exe: unsupported type"));
-    await expect(startTurn("p", "c", { instruction: "hi", files: [fileOf("a.exe")] })).rejects.toThrow(
+    await expect(startTurn(projectScope("p"), "c", { instruction: "hi", files: [fileOf("a.exe")] })).rejects.toThrow(
       "a.exe: unsupported type",
     );
   });
 
   it("falls back to a generic sentence when the pod does not answer", async () => {
     server.use(http.post(TURNS, () => HttpResponse.error()));
-    await expect(startTurn("p", "c", { instruction: "hi" })).rejects.toThrow(/start the agent turn/);
+    await expect(startTurn(projectScope("p"), "c", { instruction: "hi" })).rejects.toThrow(/start the agent turn/);
   });
 });
 
@@ -250,13 +252,13 @@ describe("turn status and stream on the design agent", () => {
 
   it("reads one turn, null when the pod no longer holds it", async () => {
     server.use(http.get(`${DESIGN}/v1/projects/p/turns/t-1`, () => HttpResponse.json({ ...status, status: "completed" })));
-    await expect(getTurn("p", "t-1")).resolves.toMatchObject({ status: "completed" });
+    await expect(getTurn(projectScope("p"), "t-1")).resolves.toMatchObject({ status: "completed" });
     server.use(
       http.get(`${DESIGN}/v1/projects/p/turns/t-1`, () =>
         HttpResponse.json(problem(404, "turn_unknown", "no such turn"), { status: 404 }),
       ),
     );
-    await expect(getTurn("p", "t-1")).resolves.toBeNull();
+    await expect(getTurn(projectScope("p"), "t-1")).resolves.toBeNull();
   });
 
   // The truncated-replay wait must tell "the turn is gone" from "the pod did
@@ -264,19 +266,19 @@ describe("turn status and stream on the design agent", () => {
   it("tells a turn the pod no longer holds (404) from a read that failed for now", async () => {
     const turnUrl = `${DESIGN}/v1/projects/p/turns/t-1`;
     server.use(http.get(turnUrl, () => HttpResponse.json({ ...status, status: "completed" })));
-    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "status", status: { ...status, status: "completed" } });
+    await expect(readTurnStatus(projectScope("p"), "t-1")).resolves.toEqual({ kind: "status", status: { ...status, status: "completed" } });
 
     server.use(http.get(turnUrl, () => HttpResponse.json(problem(404, "turn_unknown", "no such turn"), { status: 404 })));
-    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "gone" });
+    await expect(readTurnStatus(projectScope("p"), "t-1")).resolves.toEqual({ kind: "gone" });
 
     server.use(http.get(turnUrl, () => HttpResponse.json(problem(503, "shutting_down", "rolling"), { status: 503 })));
-    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
+    await expect(readTurnStatus(projectScope("p"), "t-1")).resolves.toEqual({ kind: "unavailable" });
 
     server.use(http.get(turnUrl, () => HttpResponse.error()));
-    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
+    await expect(readTurnStatus(projectScope("p"), "t-1")).resolves.toEqual({ kind: "unavailable" });
 
     setAeStudioUrls(null);
-    await expect(readTurnStatus("p", "t-1")).resolves.toEqual({ kind: "unavailable" });
+    await expect(readTurnStatus(projectScope("p"), "t-1")).resolves.toEqual({ kind: "unavailable" });
   });
 
   it("attaches to the stream from the given frame, with the user's token", async () => {
@@ -289,7 +291,7 @@ describe("turn status and stream on the design agent", () => {
         });
       }),
     );
-    const body = await openTurnStream("p", "t-1", 3, new AbortController().signal);
+    const body = await openTurnStream(projectScope("p"), "t-1", 3, new AbortController().signal);
     expect(await new Response(body).text()).toContain("turn-completed");
     expect(seen).toEqual({ from: "3", auth: "Bearer tok" });
   });
@@ -300,7 +302,7 @@ describe("turn status and stream on the design agent", () => {
         HttpResponse.json(problem(404, "turn_unknown", "gone"), { status: 404 }),
       ),
     );
-    const gone = await openTurnStream("p", "t-1", 0, new AbortController().signal).catch((e: unknown) => e);
+    const gone = await openTurnStream(projectScope("p"), "t-1", 0, new AbortController().signal).catch((e: unknown) => e);
     expect(isTurnStreamNotFound(gone)).toBe(true);
     expect(isTurnStreamReplayTruncated(gone)).toBe(false);
 
@@ -309,7 +311,7 @@ describe("turn status and stream on the design agent", () => {
         HttpResponse.json(problem(409, "replay_truncated", "overflowed"), { status: 409 }),
       ),
     );
-    const truncated = await openTurnStream("p", "t-1", 0, new AbortController().signal).catch((e: unknown) => e);
+    const truncated = await openTurnStream(projectScope("p"), "t-1", 0, new AbortController().signal).catch((e: unknown) => e);
     expect(isTurnStreamReplayTruncated(truncated)).toBe(true);
     expect(isTurnStreamNotFound(truncated)).toBe(false);
   });
@@ -329,7 +331,7 @@ describe("getConversationMessages on the design agent", () => {
         }),
       ),
     );
-    await expect(getConversationMessages("p", "c")).resolves.toEqual([
+    await expect(getConversationMessages(projectScope("p"), "c")).resolves.toEqual([
       { role: "user", content: "hi", author: { id: "sub-1", displayName: "Ada" }, attachments: ["a.md"] },
       { role: "assistant", content: "hello" },
     ]);
@@ -337,9 +339,9 @@ describe("getConversationMessages on the design agent", () => {
 
   it("answers [] for a known thread with no turns, null for an unknown one", async () => {
     server.use(http.get(url, () => HttpResponse.json({ messages: [] })));
-    await expect(getConversationMessages("p", "c")).resolves.toEqual([]);
+    await expect(getConversationMessages(projectScope("p"), "c")).resolves.toEqual([]);
     server.use(http.get(url, () => HttpResponse.json(problem(404, "conversation_unknown", "no"), { status: 404 })));
-    await expect(getConversationMessages("p", "c")).resolves.toBeNull();
+    await expect(getConversationMessages(projectScope("p"), "c")).resolves.toBeNull();
   });
 
   // The rehydrate runs on mount, poll and refocus; while AE Studio restarts
@@ -347,8 +349,82 @@ describe("getConversationMessages on the design agent", () => {
   // rejecting into a trigger that has no catch.
   it("answers null while AE Studio is not ready or does not answer", async () => {
     server.use(http.get(url, () => HttpResponse.error()));
-    await expect(getConversationMessages("p", "c")).resolves.toBeNull();
+    await expect(getConversationMessages(projectScope("p"), "c")).resolves.toBeNull();
     setAeStudioUrls(null);
-    await expect(getConversationMessages("p", "c")).resolves.toBeNull();
+    await expect(getConversationMessages(projectScope("p"), "c")).resolves.toBeNull();
+  });
+});
+
+// The marketplace register chat runs on the org-level /v1/marketplace/* routes:
+// the same turn surface with no project in the path.
+describe("the marketplace scope on the design agent", () => {
+  const MARKET = `${DESIGN}/v1/marketplace`;
+  const status = {
+    turnId: "t-1",
+    conversationId: "c-1",
+    kind: "browser",
+    flow: "",
+    status: "running",
+    instruction: "hi",
+    authorId: "sub-1",
+    authorDisplayName: "Ada",
+    createdAt: "2026-10-03T00:00:00Z",
+  };
+
+  it("starts a turn in the marketplace conversation, with the user's token", async () => {
+    let seen: { auth: string | null; body: unknown } | null = null;
+    server.use(
+      http.post(`${MARKET}/conversations/c-1/turns`, async ({ request }) => {
+        seen = { auth: request.headers.get("authorization"), body: await request.json() };
+        return HttpResponse.json({ turnId: "t-1" }, { status: 202 });
+      }),
+    );
+    await expect(startTurn(MARKETPLACE_SCOPE, "c-1", { instruction: "register stripe" })).resolves.toEqual({
+      turnId: "t-1",
+    });
+    expect(seen).toEqual({ auth: "Bearer tok", body: { instruction: "register stripe" } });
+  });
+
+  it("names the running turn on a 409 turn_in_progress", async () => {
+    server.use(
+      http.post(`${MARKET}/conversations/c-1/turns`, () =>
+        HttpResponse.json({ code: "turn_in_progress", activeTurnId: "t-9" }, { status: 409 }),
+      ),
+    );
+    await expect(startTurn(MARKETPLACE_SCOPE, "c-1", { instruction: "x" })).rejects.toMatchObject({
+      name: "TurnInProgressError",
+      activeTurnId: "t-9",
+    });
+  });
+
+  it("reads a turn's status, its stream from a frame, and its conversation's messages", async () => {
+    let from: string | null = null;
+    server.use(
+      http.get(`${MARKET}/turns/t-1`, () => HttpResponse.json({ ...status, status: "completed" })),
+      http.get(`${MARKET}/turns/t-1/stream`, ({ request }) => {
+        from = new URL(request.url).searchParams.get("from");
+        return new HttpResponse("data: {}\n\n", { headers: { "Content-Type": "text/event-stream" } });
+      }),
+      http.get(`${MARKET}/conversations/c-1/messages`, () =>
+        HttpResponse.json({ messages: [{ role: "assistant", content: "hello" }] }),
+      ),
+    );
+    await expect(getTurn(MARKETPLACE_SCOPE, "t-1")).resolves.toMatchObject({ status: "completed" });
+    await expect(openTurnStream(MARKETPLACE_SCOPE, "t-1", 4, new AbortController().signal)).resolves.toBeTruthy();
+    expect(from).toBe("4");
+    await expect(getConversationMessages(MARKETPLACE_SCOPE, "c-1")).resolves.toEqual([
+      { role: "assistant", content: "hello" },
+    ]);
+  });
+
+  it("tells a conversation the pod does not know (404) from one it did not answer for", async () => {
+    server.use(
+      http.get(`${MARKET}/conversations/c-gone/messages`, () =>
+        HttpResponse.json(problem(404, "conversation_unknown", "no"), { status: 404 }),
+      ),
+      http.get(`${MARKET}/conversations/c-down/messages`, () => HttpResponse.json(problem(503, "x", "no"), { status: 503 })),
+    );
+    await expect(readConversationMessages(MARKETPLACE_SCOPE, "c-gone")).resolves.toEqual({ kind: "gone" });
+    await expect(readConversationMessages(MARKETPLACE_SCOPE, "c-down")).resolves.toEqual({ kind: "unavailable" });
   });
 });

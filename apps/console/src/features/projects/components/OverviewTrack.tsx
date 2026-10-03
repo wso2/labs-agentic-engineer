@@ -22,6 +22,7 @@ import { createLink } from "@tanstack/react-router";
 import type { Theme } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { useSession } from "../../../auth/SessionContext";
+import { projectScope } from "../../agent-chat/chatScope";
 import { useAgentEngaged } from "../../agent-chat/useAgentEngaged";
 import { useActiveTurn } from "../../agent-chat/api/useActiveTurn";
 import { useConversationLog } from "../../agent-chat/useConversationLog";
@@ -361,7 +362,7 @@ export function OverviewTrack({
   // browser reads "nothing has started" over someone else's open question.
   const org = useSession().orgHandle ?? "default";
   useConversationLog(org, projectName);
-  const engaged = useAgentEngaged(org, projectName);
+  const engaged = useAgentEngaged(org, projectName ? projectScope(projectName) : undefined);
   // Whether an agent is working right now comes from the pod that runs it.
   const activeTurn = useActiveTurn(projectName).data;
   const { legs, summary } = trackView(status, engaged, activeTurn);

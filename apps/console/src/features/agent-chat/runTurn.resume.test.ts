@@ -37,6 +37,7 @@ vi.mock("./api/turns.js", async (importOriginal) => {
 
 import { attachAndFoldTurn } from "./runTurn";
 import { TurnStreamAttachError } from "./api/turns.js";
+import { projectScope } from "./chatScope.js";
 import { addMessage, getMessages, replaceMessages, type ChatMessage } from "./chatStore.js";
 import { clearPlan } from "./planStore.js";
 
@@ -107,7 +108,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockResolvedValueOnce(sse(frames(5, 6), true));
     const onCompleted = vi.fn();
 
-    await attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal, onCompleted);
+    await attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal, onCompleted);
 
     expect(mockOpenTurnStream.mock.calls.map((c) => c[2])).toEqual([0, 5]);
     expect(toolRows()).toHaveLength(1);
@@ -124,7 +125,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockResolvedValueOnce(sse(frames(0, 5)))
       .mockResolvedValueOnce(sse(frames(4, 6), true)); // overlaps ids 4 and 5
 
-    await attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal);
 
     expect(mockOpenTurnStream.mock.calls.map((c) => c[2])).toEqual([0, 6]);
     expect(toolRows()).toHaveLength(1);
@@ -137,7 +138,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockResolvedValueOnce(sse(frames(2, 3)))
       .mockResolvedValueOnce(sse(frames(4, 6), true));
 
-    await attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal);
 
     expect(mockOpenTurnStream.mock.calls.map((c) => c[2])).toEqual([0, 2, 4]);
     expect(toolRows()).toHaveLength(1);
@@ -152,10 +153,10 @@ describe("attachAndFoldTurn — resume with ?from", () => {
     mockReadTurnStatus.mockResolvedValue({ kind: "status", status: { status: "completed" } });
     const onCompleted = vi.fn();
 
-    await expect(attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal, onCompleted)).resolves.toBe(true);
+    await expect(attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal, onCompleted)).resolves.toBe(true);
 
     expect(mockOpenTurnStream.mock.calls.map((c) => c[2])).toEqual([0, 3]);
-    expect(mockReadTurnStatus).toHaveBeenCalledWith("p", TURN);
+    expect(mockReadTurnStatus).toHaveBeenCalledWith(projectScope("p"), TURN);
     expect(userRow()).toMatchObject({ status: "completed" });
     expect(onCompleted).toHaveBeenCalledTimes(1);
   });
@@ -169,7 +170,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       status: { status: "failed", reason: "agent-error", message: "boom" },
     });
 
-    await attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal);
+    await attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal);
 
     expect(userRow()).toMatchObject({ status: "failed" });
     expect(getMessages(KEY).filter((m) => m.role === "error")).toHaveLength(1);
@@ -181,7 +182,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockRejectedValue(new TurnStreamAttachError(404));
     mockReadTurnStatus.mockResolvedValue({ kind: "gone" });
 
-    await expect(attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal)).resolves.toBe(false);
+    await expect(attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal)).resolves.toBe(false);
 
     expect(mockOpenTurnStream).toHaveBeenCalledTimes(2);
     expect(mockReadTurnStatus).toHaveBeenCalledTimes(1);
@@ -195,7 +196,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockRejectedValueOnce(new TurnStreamAttachError(503))
       .mockResolvedValueOnce(sse(frames(5, 6), true));
 
-    const done = attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal);
+    const done = attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal);
     await vi.runAllTimersAsync();
     await done;
 
@@ -211,7 +212,7 @@ describe("attachAndFoldTurn — resume with ?from", () => {
       .mockRejectedValue(new TurnStreamAttachError(503));
     mockGetTurn.mockResolvedValue({ status: "running" });
 
-    const done = attachAndFoldTurn(KEY, "p", TURN, new AbortController().signal);
+    const done = attachAndFoldTurn(KEY, projectScope("p"), TURN, new AbortController().signal);
     await vi.runAllTimersAsync();
     // Unsettled: the caller learns its log holds a turn that has not ended.
     await expect(done).resolves.toBe(false);

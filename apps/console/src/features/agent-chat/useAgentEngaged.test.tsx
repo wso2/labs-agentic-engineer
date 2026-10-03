@@ -29,6 +29,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { addMessage, chatKeyFor, getMessages, replaceMessages } from "./chatStore";
+import { projectScope } from "./chatScope";
 import { agentEngaged, useAgentEngaged } from "./useAgentEngaged";
 
 const ORG = "acme";
@@ -115,7 +116,7 @@ describe("useAgentEngaged", () => {
   beforeEach(() => replaceMessages(KEY, []));
 
   it("tracks the log as the exchange opens and closes", () => {
-    const { result } = renderHook(() => useAgentEngaged(ORG, PROJECT));
+    const { result } = renderHook(() => useAgentEngaged(ORG, projectScope(PROJECT)));
     expect(result.current).toBe(false);
 
     act(() => askQuestion());
@@ -134,7 +135,7 @@ describe("useAgentEngaged", () => {
 
   it("ignores another project's exchange", () => {
     askQuestion();
-    const { result } = renderHook(() => useAgentEngaged(ORG, "other-project"));
+    const { result } = renderHook(() => useAgentEngaged(ORG, projectScope("other-project")));
     expect(result.current).toBe(false);
   });
 });

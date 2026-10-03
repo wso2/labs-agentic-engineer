@@ -241,61 +241,45 @@ export const agentChatHandlers = [
     return HttpResponse.json(threadView(fresh), { status: 201 });
   }),
 
-  http.post(`${V1}/projects/:projectName/conversations/:conversationId/turns`, async ({ request, params }) => {
-    // Two content types (#428): JSON as before, multipart when the message
-    // carries attachments. Reading `request.json()` unconditionally would throw
-    // on the multipart body, so the branch is on the header, not a try/catch.
-    const isMultipart = (request.headers.get("content-type") ?? "").includes("multipart/form-data");
-    let instruction = "";
-    let attachments: string[] = [];
-    // What the message was aimed at (#666), if anything. Recorded into the
-    // journal so a reload paints the tag again — which is the whole reason the
-    // anchor is journaled rather than being a live-session nicety.
-    let anchor: unknown;
-    if (isMultipart) {
-      const form = await request.formData();
-      instruction = String(form.get("instruction") ?? "");
-      const anchorPart = form.get("anchor");
-      try {
-        if (anchorPart instanceof Blob) anchor = JSON.parse(await anchorPart.text());
-        else if (typeof anchorPart === "string" && anchorPart) anchor = JSON.parse(anchorPart);
-      } catch {
-        // The real server answers a malformed part with its structured 400; a
-        // mock that throws instead fails the request with no response at all.
-        return problem(400, "invalid_turn", "anchor must be valid JSON");
-      }
-      const files = form.getAll("files").filter((f): f is File => f instanceof File);
-      // The server's own guard, mirrored: the console screens first, so a
-      // rejection reaching here means a hostile or buggy client. Modelled so the
-      // 400 path is exercisable in mock mode rather than only in production.
-      const rejection = rejectAttachments(files);
-      if (rejection) {
-        return problem(400, "attachment_rejected", rejection);
-      }
-      attachments = files.map((f) => f.name);
-    } else {
-      const body = (await request.json()) as { instruction?: string; anchor?: unknown };
-      instruction = body.instruction ?? "";
-      anchor = body.anchor;
-    }
-    // The real server refuses a blank instruction BEFORE the turn row exists
-    // (the shared TurnSpec validator rejects an empty chat turn), so mock mode
-    // must too — otherwise an attachment-only send looks supported here and
-    // 400s in production.
-    if (instruction.trim() === "") {
-      return problem(400, "invalid_turn", "instruction is required");
-    }
-    turnCounter += 1;
-    const turnId = `mock-turn-${instanceId}-${turnCounter}`;
-    turnInstruction.set(turnId, instruction);
-    // Record it the way the journal would, so a reload shows the chips again.
-    appendToJournal(params.conversationId as string, {
-      role: "user",
-      content: instruction,
-      ...(attachments.length > 0 ? { attachments } : {}),
-      ...(anchor ? { anchor } : {}),
-    });
-    return HttpResponse.json({ turnId }, { status: 202 });
+  http.post(`${V1}/projects/:projectName/conversations/:conversationId/turns`, ({ request, params }) =>
+    acceptTurn(request, String(params.conversationId), false),
+  ),
+
+  // The marketplace register chat (org-level, no project): same turn surface,
+  // on its own conversations.
+  http.post(`${V1}/marketplace/conversations`, () => {
+    threadCounter += 1;
+    return HttpResponse.json(
+      { conversationId: `mock-market-${instanceId}-${threadCounter}` },
+      { status: 201 },
+    );
+  }),
+
+  http.post(`${V1}/marketplace/conversations/:conversationId/turns`, ({ request, params }) =>
+    acceptTurn(request, String(params.conversationId), true),
+  ),
+
+  http.get(`${V1}/marketplace/conversations/:conversationId/messages`, ({ params }) =>
+    HttpResponse.json({ messages: readJournal()[String(params.conversationId)] ?? [] }),
+  ),
+
+  http.get(`${V1}/marketplace/turns/:turnId/stream`, ({ params }) => streamTurn(true, String(params.turnId))),
+
+  http.get(`${V1}/marketplace/turns/:turnId`, ({ params }) => {
+    const turnId = String(params.turnId);
+    const now = new Date().toISOString();
+    return HttpResponse.json({
+      turnId,
+      conversationId: marketplaceTurnConversation.get(turnId) ?? "",
+      kind: "browser",
+      flow: "",
+      status: "completed",
+      instruction: turnInstruction.get(turnId) ?? "",
+      authorId: "",
+      authorDisplayName: "",
+      createdAt: now,
+      finishedAt: now,
+    } satisfies TurnStatus);
   }),
 
   http.get(`${V1}/projects/:projectName/conversations/:conversationId/messages`, ({ params }) => {
@@ -333,7 +317,7 @@ export const agentChatHandlers = [
   http.get(`${V1}/projects/:projectName/turns/:turnId/stream`, ({ params }) => {
     const projectName = String(params.projectName);
     const turnId = String(params.turnId);
-    const response = streamTurn(projectName, turnId);
+    const response = streamTurn(false, turnId);
     // The kickoff stops running once its stream has played to the end.
     return turnId === mockKickoffTurnId(projectName)
       ? onStreamEnd(response, () => finishedKickoffs.add(projectName))
@@ -360,8 +344,69 @@ export const agentChatHandlers = [
   }),
 ];
 
+const marketplaceTurnConversation = new Map<string, string>();
+
+/** Start a turn on a mock conversation — a project's or the marketplace's. */
+async function acceptTurn(request: Request, conversationId: string, marketplace: boolean): Promise<Response> {
+  // Two content types (#428): JSON as before, multipart when the message
+  // carries attachments. Reading `request.json()` unconditionally would throw
+  // on the multipart body, so the branch is on the header, not a try/catch.
+  const isMultipart = (request.headers.get("content-type") ?? "").includes("multipart/form-data");
+  let instruction = "";
+  let attachments: string[] = [];
+  // What the message was aimed at (#666), if anything. Recorded into the
+  // journal so a reload paints the tag again — which is the whole reason the
+  // anchor is journaled rather than being a live-session nicety.
+  let anchor: unknown;
+  if (isMultipart) {
+    const form = await request.formData();
+    instruction = String(form.get("instruction") ?? "");
+    const anchorPart = form.get("anchor");
+    try {
+      if (anchorPart instanceof Blob) anchor = JSON.parse(await anchorPart.text());
+      else if (typeof anchorPart === "string" && anchorPart) anchor = JSON.parse(anchorPart);
+    } catch {
+      // The real server answers a malformed part with its structured 400; a
+      // mock that throws instead fails the request with no response at all.
+      return problem(400, "invalid_turn", "anchor must be valid JSON");
+    }
+    const files = form.getAll("files").filter((f): f is File => f instanceof File);
+    // The server's own guard, mirrored: the console screens first, so a
+    // rejection reaching here means a hostile or buggy client. Modelled so the
+    // 400 path is exercisable in mock mode rather than only in production.
+    const rejection = rejectAttachments(files);
+    if (rejection) {
+      return problem(400, "attachment_rejected", rejection);
+    }
+    attachments = files.map((f) => f.name);
+  } else {
+    const body = (await request.json()) as { instruction?: string; anchor?: unknown };
+    instruction = body.instruction ?? "";
+    anchor = body.anchor;
+  }
+  // The real server refuses a blank instruction BEFORE the turn row exists
+  // (the shared TurnSpec validator rejects an empty chat turn), so mock mode
+  // must too — otherwise an attachment-only send looks supported here and
+  // 400s in production.
+  if (instruction.trim() === "") {
+    return problem(400, "invalid_turn", "instruction is required");
+  }
+  turnCounter += 1;
+  const turnId = `mock-turn-${instanceId}-${turnCounter}`;
+  turnInstruction.set(turnId, instruction);
+  if (marketplace) marketplaceTurnConversation.set(turnId, conversationId);
+  // Record it the way the journal would, so a reload shows the chips again.
+  appendToJournal(conversationId, {
+    role: "user",
+    content: instruction,
+    ...(attachments.length > 0 ? { attachments } : {}),
+    ...(anchor ? { anchor } : {}),
+  });
+  return HttpResponse.json({ turnId }, { status: 202 });
+}
+
 /** The scripted SSE stream of one mock turn, chosen by the line that started it. */
-function streamTurn(projectName: string, turnId: string): Response {
+function streamTurn(marketplace: boolean, turnId: string): Response {
   const instruction = turnInstruction.get(turnId) ?? "";
   const failing = instruction.includes("fail");
   // The /design run declares its plan (#576) — and owns its own failure
@@ -386,7 +431,7 @@ function streamTurn(projectName: string, turnId: string): Response {
   }
   const registerFrames = registerChatFrames(
     instruction,
-    projectName,
+    marketplace ? "marketplace" : "project",
     turnId,
   );
   if (registerFrames) {

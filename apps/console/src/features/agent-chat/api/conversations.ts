@@ -26,6 +26,8 @@ import type { QueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/ae-design-agent";
 import { designAgent } from "../../../api/aeStudio";
 import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
+import { scopeName, type ChatScope } from "../chatScope";
+import { startMarketplaceConversation } from "./marketplaceConversation";
 
 export type ProjectConversationView = components["schemas"]["ProjectConversationView"];
 
@@ -63,16 +65,22 @@ export async function rotateConversation(projectName: string): Promise<string> {
 }
 
 /** Rotate the project's current thread and stamp the new id into the query cache. */
+/**
+ * Start a fresh conversation for the scope and make it the one the chat
+ * resolves. `chatKey` names where a marketplace conversation's id is
+ * remembered; a project's rotation is the server's.
+ */
 export async function rotateCurrentConversation(
   queryClient: QueryClient,
-  projectName: string,
+  scope: ChatScope,
+  chatKey: string,
 ): Promise<string> {
-  const fresh = await rotateConversation(projectName);
-  queryClient.setQueryData(conversationKeys.current(projectName), fresh);
+  const fresh =
+    scope.kind === "project" ? await rotateConversation(scope.project) : await startMarketplaceConversation(chatKey);
+  queryClient.setQueryData(conversationKeys.current(scopeName(scope)), fresh);
   return fresh;
 }
 
-/** Query keys for the thread (react-query). */
 export const conversationKeys = {
   current: (projectName: string) => ["agent-conversation", projectName] as const,
   /**

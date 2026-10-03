@@ -19,6 +19,7 @@
 import type { components } from "../../../generated/ae-design-agent";
 import { designAgent } from "../../../api/aeStudio";
 import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
+import type { ChatScope } from "../chatScope";
 
 // The chat's turn calls, on the org's design agent (ae-design-agent /v1 in the
 // AE Studio pod, reached through designAgent()): start a turn in the
@@ -154,31 +155,36 @@ function isAbort(error: unknown): boolean {
  * refusal or no answer, AeStudioNotReadyError before AE Studio is `ready`.
  */
 export async function startTurn(
-  projectName: string,
+  scope: ChatScope,
   conversationId: string,
   input: TurnStartInput,
 ): Promise<{ turnId: string }> {
   const client = designAgent();
   const files = input.files ?? [];
-  const result = await client
-    .POST("/projects/{projectName}/conversations/{conversationId}/turns", {
-      params: { path: { projectName, conversationId } },
-      // Raw bytes, not base64-in-JSON: base64 inflates ~33% and would shave
-      // the real 15 MiB budget the composer screens against. openapi-fetch
-      // passes FormData through untouched (the browser sets the boundary);
-      // the generated request type describes the JSON shape, not the wire.
-      body: files.length > 0 ? (turnFormData(input, files) as unknown as { instruction: string }) : turnBody(input),
-    })
-    .catch((error: unknown) => {
-      if (isAbort(error)) throw error;
-      throw new TurnStartError("Failed to start the agent turn — AE Studio did not answer.", undefined, undefined);
-    });
+  // Raw bytes, not base64-in-JSON: base64 inflates ~33% and would shave
+  // the real 15 MiB budget the composer screens against. openapi-fetch
+  // passes FormData through untouched (the browser sets the boundary);
+  // the generated request type describes the JSON shape, not the wire.
+  const body = files.length > 0 ? (turnFormData(input, files) as unknown as { instruction: string }) : turnBody(input);
+  const post =
+    scope.kind === "project"
+      ? client.POST("/projects/{projectName}/conversations/{conversationId}/turns", {
+          params: { path: { projectName: scope.project, conversationId } },
+          body,
+        })
+      : client.POST("/marketplace/conversations/{conversationId}/turns", {
+          params: { path: { conversationId } },
+          body,
+        });
+  const result = await post.catch((error: unknown) => {
+    if (isAbort(error)) throw error;
+    throw new TurnStartError("Failed to start the agent turn — AE Studio did not answer.", undefined, undefined);
+  });
   const { data, error, response } = result;
   if (error !== undefined || data === undefined) throw startRefusal(response.status, error);
   return { turnId: data.turnId };
 }
 
-/** Who sent a message: `id` is the sender's verified token `sub`, the console's "me" id. */
 export type ConversationMessageAuthor = components["schemas"]["ConversationMessageAuthor"];
 
 export interface ConversationMessage {
@@ -287,38 +293,49 @@ function mapAnchor(raw: unknown): TurnAnchor | null {
  * answers the current thread before its first turn with `[]`, and keeps 404
  * for unknown ids, where wiping the cache would destroy information.
  */
-export async function getConversationMessages(
-  projectName: string,
-  conversationId: string,
-): Promise<ConversationMessage[] | null> {
-  const data = await readOrNull(() =>
-    designAgent().GET("/projects/{projectName}/conversations/{conversationId}/messages", {
-      params: { path: { projectName, conversationId } },
-    }),
-  );
-  if (!data) return null;
-  return data.messages
-    .map(mapConversationMessage)
-    .filter((m): m is ConversationMessage => m !== null);
-}
+export type ConversationMessagesRead =
+  | { kind: "messages"; messages: ConversationMessage[] }
+  | { kind: "gone" }
+  | { kind: "unavailable" };
 
 /**
- * A read whose every failure means "unknown": a refusal, no answer, or AE
- * Studio not `ready` (its URLs are dropped while it restarts) all answer
- * null, so the background triggers that make these reads (mount, poll,
- * refocus) keep what they have instead of rejecting. Aborts pass through.
+ * One read of a conversation's history, telling "the pod does not know this
+ * conversation" (404 — a marketplace conversation outlives a pod roll only in
+ * the browser's memory of its id) from "the pod did not answer".
  */
-async function readOrNull<T>(
-  call: () => Promise<{ data?: T | undefined; error?: unknown; response: Response }>,
-): Promise<NonNullable<T> | null> {
+export async function readConversationMessages(
+  scope: ChatScope,
+  conversationId: string,
+): Promise<ConversationMessagesRead> {
   try {
-    const { data, error, response } = await call();
-    if (error !== undefined || data == null || response.status === 204) return null;
-    return data;
+    const client = designAgent();
+    const { data, response } =
+      scope.kind === "project"
+        ? await client.GET("/projects/{projectName}/conversations/{conversationId}/messages", {
+            params: { path: { projectName: scope.project, conversationId } },
+          })
+        : await client.GET("/marketplace/conversations/{conversationId}/messages", {
+            params: { path: { conversationId } },
+          });
+    if (data !== undefined) {
+      return {
+        kind: "messages",
+        messages: data.messages.map(mapConversationMessage).filter((m): m is ConversationMessage => m !== null),
+      };
+    }
+    return response.status === 404 ? { kind: "gone" } : { kind: "unavailable" };
   } catch (err) {
     if (isAbort(err)) throw err;
-    return null;
+    return { kind: "unavailable" };
   }
+}
+
+export async function getConversationMessages(
+  scope: ChatScope,
+  conversationId: string,
+): Promise<ConversationMessage[] | null> {
+  const read = await readConversationMessages(scope, conversationId);
+  return read.kind === "messages" ? read.messages : null;
 }
 
 /**
@@ -339,8 +356,8 @@ export async function getActiveTurn(projectName: string): Promise<TurnStatus | n
 }
 
 /** One turn's status, or null when the pod no longer holds it (404) or the read failed. */
-export async function getTurn(projectName: string, turnId: string): Promise<TurnStatus | null> {
-  const read = await readTurnStatus(projectName, turnId);
+export async function getTurn(scope: ChatScope, turnId: string): Promise<TurnStatus | null> {
+  const read = await readTurnStatus(scope, turnId);
   return read.kind === "status" ? read.status : null;
 }
 
@@ -355,11 +372,15 @@ export type TurnStatusRead =
   | { kind: "gone" }
   | { kind: "unavailable" };
 
-export async function readTurnStatus(projectName: string, turnId: string): Promise<TurnStatusRead> {
+export async function readTurnStatus(scope: ChatScope, turnId: string): Promise<TurnStatusRead> {
   try {
-    const { data, response } = await designAgent().GET("/projects/{projectName}/turns/{turnId}", {
-      params: { path: { projectName, turnId } },
-    });
+    const client = designAgent();
+    const { data, response } =
+      scope.kind === "project"
+        ? await client.GET("/projects/{projectName}/turns/{turnId}", {
+            params: { path: { projectName: scope.project, turnId } },
+          })
+        : await client.GET("/marketplace/turns/{turnId}", { params: { path: { turnId } } });
     if (data !== undefined) return { kind: "status", status: data };
     return response.status === 404 ? { kind: "gone" } : { kind: "unavailable" };
   } catch (err) {
@@ -368,12 +389,6 @@ export async function readTurnStatus(projectName: string, turnId: string): Promi
   }
 }
 
-/**
- * Thrown when the turn-stream attach fails before a byte of the stream:
- * `status` (0 when the pod did not answer) and the problem's `code` tell a
- * turn past its retention (404) from a replay with a gap (409
- * replay_truncated) and from everything else.
- */
 export class TurnStreamAttachError extends Error {
   readonly status: number;
   readonly code: string | undefined;
@@ -403,16 +418,24 @@ export function isTurnStreamReplayTruncated(err: unknown): boolean {
  * parseSseStream.
  */
 export async function openTurnStream(
-  projectName: string,
+  scope: ChatScope,
   turnId: string,
   from: number,
   signal: AbortSignal,
 ): Promise<ReadableStream<Uint8Array>> {
-  const { data, error, response } = await designAgent().GET("/projects/{projectName}/turns/{turnId}/stream", {
-    params: { path: { projectName, turnId }, query: { from } },
-    parseAs: "stream",
-    signal,
-  });
+  const client = designAgent();
+  const { data, error, response } =
+    scope.kind === "project"
+      ? await client.GET("/projects/{projectName}/turns/{turnId}/stream", {
+          params: { path: { projectName: scope.project, turnId }, query: { from } },
+          parseAs: "stream",
+          signal,
+        })
+      : await client.GET("/marketplace/turns/{turnId}/stream", {
+          params: { path: { turnId }, query: { from } },
+          parseAs: "stream",
+          signal,
+        });
   if (error !== undefined || !data) {
     throw new TurnStreamAttachError(response.status, apiErrorCode(error));
   }

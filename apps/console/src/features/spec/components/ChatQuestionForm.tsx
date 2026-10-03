@@ -20,7 +20,7 @@ import { useState } from "react";
 import { Box, Button, Stack, Typography } from "@wso2/oxygen-ui";
 import { Sparkles } from "@wso2/oxygen-ui-icons-react";
 import type { AskQuestionInput, QuestionAnswer } from "@aep/agent-stream";
-import { chatKeyFor, setPendingSeed } from "../../agent-chat/chatStore";
+import { setPendingSeed } from "../../agent-chat/chatStore";
 import {
   applyNote,
   applySelection,
@@ -37,15 +37,14 @@ import { QuestionBlock } from "./SpecQuestionForm";
  * (that path flags *assumed* in a spec document).
  */
 export function ChatQuestionForm({
-  org,
-  projectName,
+  chatKey,
   questions,
   streaming = false,
   submitting = false,
   onSubmitted,
 }: {
-  org: string;
-  projectName: string;
+  /** The chat the answers go back to, as the next turn. */
+  chatKey: string;
   questions: AskQuestionInput[];
   streaming?: boolean;
   /** Answers are in flight — keep this pane, freeze the widgets. */
@@ -67,14 +66,14 @@ export function ChatQuestionForm({
       ...(a.freeText?.trim() ? { freeText: a.freeText.trim() } : {}),
     }));
     onSubmitted?.();
-    setPendingSeed(chatKeyFor(org, projectName), serializeQuestionAnswer(questions, cleaned));
+    setPendingSeed(chatKey, serializeQuestionAnswer(questions, cleaned));
   };
 
   const skip = () => {
     if (frozen) return;
     onSubmitted?.();
     setPendingSeed(
-      chatKeyFor(org, projectName),
+      chatKey,
       "Skip these questions — stop interviewing and proceed with your best assumptions, stating them.",
     );
   };

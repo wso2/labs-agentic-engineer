@@ -16,13 +16,14 @@
  * under the License.
  */
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { projectKeys } from "../projects/api/keys.js";
+import { MARKETPLACE_SCOPE, chatKeyForScope, projectScope, scopeName, type ChatScope } from "./chatScope.js";
+import { findBlockingTurn } from "./blockingTurn.js";
 import {
   addMessage,
   clearFailedSends,
-  chatKeyFor,
   dropTurnOutput,
   ensureUserMessage,
   flushRoomBeforeDispatch,
@@ -40,7 +41,6 @@ import {
 import {
   ConversationRotatedError,
   TurnInProgressError,
-  readTurnStatus,
   startTurn,
   type TurnStatus,
 } from "./api/turns.js";
@@ -50,6 +50,7 @@ import {
   fetchCurrentConversationId,
   rotateCurrentConversation,
 } from "./api/conversations.js";
+import { resolveMarketplaceConversation } from "./api/marketplaceConversation.js";
 import { attachAndFoldTurn } from "./runTurn.js";
 import {
   applyConversationHistory,
@@ -74,6 +75,10 @@ import { useCurrentAuthor } from "./currentUser.js";
 // (lexicon: "What the chat shows while an agent works").
 const TURN_RUNNING_NOTE = "Another turn is running — send again when it finishes";
 const PLAN_RUNNING_NOTE = "Planning is running…";
+
+// The marketplace chat's conversation did not survive a pod roll.
+const CONVERSATION_RESTARTED_NOTE =
+  "Your earlier conversation is no longer available, so this one starts fresh.";
 
 // The active-turn query's cadence (5 s while a turn runs, else 12 s)…
 // …except while the panel has NOTHING on screen, where the same lag is the
@@ -185,8 +190,18 @@ export interface AgentChat {
   newConversation: () => void;
 }
 
-export function useAgentChat(org: string, projectName: string): AgentChat {
-  const chatKey = chatKeyFor(org, projectName);
+export function useAgentChat(org: string, scopeArg: ChatScope): AgentChat {
+  // The project's name, or "" for a scope with no project (the marketplace),
+  // for the reads that exist only per project (the active turn).
+  const projectName = scopeArg.kind === "project" ? scopeArg.project : "";
+  // Callers build the scope inline, so its identity changes every render; the
+  // callbacks and effects below key on this stable one instead.
+  const scope = useMemo<ChatScope>(
+    () => (scopeArg.kind === "project" ? projectScope(projectName) : MARKETPLACE_SCOPE),
+    [scopeArg.kind, projectName],
+  );
+  const chatKey = chatKeyForScope(org, scope);
+  const scopeKey = scopeName(scope);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
     () => getMessages(chatKey),
@@ -263,8 +278,13 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   // effect never runs, so none of its triggers exist, and without this the
   // composer would stay disabled until a remount.
   const conversation = useQuery({
-    queryKey: conversationKeys.current(projectName),
-    queryFn: () => fetchCurrentConversationId(projectName),
+    queryKey: conversationKeys.current(scopeKey),
+    queryFn: () =>
+      scope.kind === "project"
+        ? fetchCurrentConversationId(scope.project)
+        : resolveMarketplaceConversation(chatKey, () =>
+            addMessage(chatKey, { role: "error", content: CONVERSATION_RESTARTED_NOTE }),
+          ),
     staleTime: Infinity,
     refetchOnWindowFocus: "always",
   });
@@ -320,11 +340,13 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   // is a no-op: `fetchConversationHistory` answers null and the existing
   // triggers (refocus, cold mount) remain the recovery path.
   const onTurnCompleted = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectName) });
-    if (conversationId) {
-      void fetchConversationHistory(queryClient, projectName, conversationId);
+    if (scope.kind === "project") {
+      void queryClient.invalidateQueries({ queryKey: projectKeys.detail(scope.project) });
     }
-  }, [queryClient, projectName, conversationId]);
+    if (conversationId) {
+      void fetchConversationHistory(queryClient, scope, conversationId);
+    }
+  }, [queryClient, scope, conversationId]);
 
   // D6: server truth replaces the local paint-cache — ALWAYS, not only when
   // the cache is empty (the pre-#430 rule, correct for a private thread and
@@ -351,11 +373,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       // Through the SHARED cache entry (#606), not a bare fetch: the spec
       // workspace and the overview's spec card observe the same key, so this
       // read serves them too instead of racing a second identical request.
-      const history = await fetchConversationHistory(queryClient, projectName, conversationId);
+      const history = await fetchConversationHistory(queryClient, scope, conversationId);
       if (signal.aborted) return;
       applyConversationHistory(chatKey, history);
     },
-    [chatKey, projectName, conversationId, queryClient],
+    [chatKey, scope, conversationId, queryClient],
   );
 
   // A fold is over. Every reader of the running turn re-asks now rather than
@@ -366,10 +388,12 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const afterFold = useCallback(
     (settled: boolean, signal: AbortSignal) => {
       if (signal.aborted) return;
-      void queryClient.invalidateQueries({ queryKey: projectKeys.activeTurn(projectName) });
+      if (scope.kind === "project") {
+        void queryClient.invalidateQueries({ queryKey: projectKeys.activeTurn(scope.project) });
+      }
       if (!settled) void rehydrate(signal);
     },
-    [queryClient, projectName, rehydrate],
+    [queryClient, scope, rehydrate],
   );
 
   // Attach to a running turn (ours or a teammate's, or the platform's own
@@ -391,7 +415,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       if (startedBy) ensureUserMessage(chatKey, startedBy);
       let settled = false;
       try {
-        settled = await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCompleted);
+        settled = await attachAndFoldTurn(chatKey, scope, turnId, signal, onTurnCompleted);
       } catch {
         // the fold settles what it can; the history below is the fallback
       } finally {
@@ -403,7 +427,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       }
       afterFold(settled, signal);
     },
-    [chatKey, projectName, onTurnCompleted, markAttached, afterFold],
+    [chatKey, scope, onTurnCompleted, markAttached, afterFold],
   );
 
   // A running turn is attachable only when it belongs to THIS thread. A
@@ -416,11 +440,11 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     (active: { conversationId: string }): boolean => {
       if (active.conversationId === conversationId) return true;
       void queryClient.invalidateQueries({
-        queryKey: conversationKeys.current(projectName),
+        queryKey: conversationKeys.current(scopeKey),
       });
       return false;
     },
-    [conversationId, queryClient, projectName],
+    [conversationId, queryClient, scopeKey],
   );
 
   useEffect(() => {
@@ -432,10 +456,12 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
 
     // Pre-#430 identity cleanup: the FE-minted conversation uuid is dead —
     // nothing reads it, and leaving it would leak one key per project forever.
-    try {
-      localStorage.removeItem(`aep.chat.conv.${org}.${projectName}`);
-    } catch {
-      // best-effort
+    if (scope.kind === "project") {
+      try {
+        localStorage.removeItem(`aep.chat.conv.${org}.${scope.project}`);
+      } catch {
+        // best-effort
+      }
     }
 
     // Mount (or rotation — a new id re-runs this effect): rehydrate; the
@@ -460,7 +486,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       void queryClient.invalidateQueries({
-        queryKey: conversationKeys.current(projectName),
+        queryKey: conversationKeys.current(scopeKey),
       });
       void rehydrate(ac.signal);
     };
@@ -475,7 +501,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       setIsSending(false);
       setActiveTurnId(undefined);
     };
-  }, [chatKey, org, projectName, conversationId, queryClient, markAttached, markSending, rehydrate]);
+  }, [chatKey, org, scope, scopeKey, conversationId, queryClient, markAttached, markSending, rehydrate]);
 
   // The foreign-turn watch: a turn this browser did not send — a teammate's,
   // or the platform's own kickoff at project creation — or one a refused send
@@ -499,28 +525,24 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   }, [historyReady, runningTurn, runningTurnAt, chatKey, attachableOrReResolve, rehydrate, attach]);
 
   // A send refused because a turn is running: name that turn, show the note,
-  // and let the watch above attach it so the user watches it run.
+  // and attach it so the user watches it run. A project's watch above attaches
+  // it from the active-turn cache; a marketplace chat has no such read, so it
+  // attaches the named turn itself.
   const showBlockingTurn = useCallback(
     async (turnId: string | undefined) => {
-      let blocking: TurnStatus | null | undefined;
-      if (turnId) {
-        const read = await readTurnStatus(projectName, turnId);
-        blocking = read.kind === "status" ? read.status : null;
-        if (blocking?.status === "running") {
-          queryClient.setQueryData(projectKeys.activeTurn(projectName), blocking);
-        }
-      } else {
-        await queryClient.refetchQueries({ queryKey: projectKeys.activeTurn(projectName) });
-        blocking = queryClient.getQueryData<TurnStatus | null>(projectKeys.activeTurn(projectName));
-      }
+      const blocking = await findBlockingTurn(queryClient, scope, turnId);
       // Ended in the meantime: a send would go through now, nothing to say.
-      if (blocking?.status !== "running") return;
+      if (!blocking) return;
       setBlockingNote({
         turnId: blocking.turnId,
         text: blocking.kind === "plan" ? PLAN_RUNNING_NOTE : TURN_RUNNING_NOTE,
       });
+      const signal = abortRef.current?.signal;
+      if (scope.kind === "marketplace" && signal && !signal.aborted) {
+        void attach(blocking, signal);
+      }
     },
-    [projectName, queryClient],
+    [scope, queryClient, attach],
   );
 
   const send = useCallback(
@@ -555,7 +577,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
       await flushRoomBeforeDispatch(chatKey);
       let turnId: string;
       try {
-        ({ turnId } = await startTurn(projectName, conversationId, { instruction: text, files }));
+        ({ turnId } = await startTurn(scope, conversationId, { instruction: text, files }));
       } catch (err) {
         markSending(false);
         setIsSending(false);
@@ -563,7 +585,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         // message, so it is not marked failed — its words stay in the
         // composer (the caller keeps the draft on a refused send) and the
         // row withdraws. The user watches the running turn instead.
-        if (err instanceof TurnInProgressError) {
+        if (err instanceof TurnInProgressError && (scope.kind === "project" || err.activeTurnId)) {
           removeMessage(chatKey, messageId);
           void showBlockingTurn(err.activeTurnId);
           return false;
@@ -581,7 +603,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         // in the local cache and wash out with it, correctly).
         if (err instanceof ConversationRotatedError) {
           void queryClient.invalidateQueries({
-            queryKey: conversationKeys.current(projectName),
+            queryKey: conversationKeys.current(scopeKey),
           });
         }
         return false;
@@ -614,7 +636,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         markAttached(true);
         let settled = false;
         try {
-          settled = await attachAndFoldTurn(chatKey, projectName, turnId, signal, onTurnCompleted);
+          settled = await attachAndFoldTurn(chatKey, scope, turnId, signal, onTurnCompleted);
         } catch {
           // the fold settles what it can; the history below is the fallback
         } finally {
@@ -630,7 +652,8 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
     },
     [
       chatKey,
-      projectName,
+      scope,
+      scopeKey,
       conversationId,
       isSending,
       author,
@@ -650,7 +673,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
   const newConversation = useCallback(() => {
     void (async () => {
       try {
-        await rotateCurrentConversation(queryClient, projectName);
+        await rotateCurrentConversation(queryClient, scope, chatKey);
         replaceMessages(chatKey, []);
       } catch (err) {
         addMessage(chatKey, {
@@ -659,7 +682,7 @@ export function useAgentChat(org: string, projectName: string): AgentChat {
         });
       }
     })();
-  }, [chatKey, projectName, queryClient]);
+  }, [chatKey, scope, queryClient]);
 
   return {
     messages,

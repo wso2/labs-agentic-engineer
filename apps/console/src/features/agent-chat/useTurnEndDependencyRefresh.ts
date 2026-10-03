@@ -42,12 +42,14 @@ import { scheduleFreshnessPoll } from "../spec/api/dependencyFreshness.js";
  */
 export function useTurnEndDependencyRefresh(
   chatKey: string,
-  projectName: string,
+  projectName: string | undefined,
 ): void {
   const queryClient = useQueryClient();
   const cancelPollRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    // The marketplace chat has no project whose dependencies could go stale.
+    if (projectName === undefined) return;
     const unsubscribe = subscribeTurnEnd(chatKey, () => {
       cancelPollRef.current?.();
       cancelPollRef.current = scheduleFreshnessPoll(

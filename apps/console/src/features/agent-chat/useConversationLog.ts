@@ -42,6 +42,7 @@ import {
   getMessages,
   replaceMessages,
 } from "./chatStore.js";
+import { projectScope, scopeName, type ChatScope } from "./chatScope.js";
 import { projectableHistory } from "./history.js";
 import { rehydratePlanFromHistory } from "./planStore.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
@@ -61,12 +62,12 @@ import { getConversationMessages, type ConversationMessage } from "./api/turns.j
  */
 export function fetchConversationHistory(
   queryClient: QueryClient,
-  projectName: string,
+  scope: ChatScope,
   conversationId: string,
 ): Promise<ConversationMessage[] | null> {
   return queryClient.fetchQuery({
-    queryKey: conversationKeys.messages(projectName, conversationId),
-    queryFn: () => getConversationMessages(projectName, conversationId),
+    queryKey: conversationKeys.messages(scopeName(scope), conversationId),
+    queryFn: () => getConversationMessages(scope, conversationId),
     staleTime: 0,
   });
 }
@@ -139,7 +140,7 @@ export function useConversationLog(
 
   const history = useQuery({
     queryKey: conversationKeys.messages(projectName ?? "", conversationId ?? ""),
-    queryFn: () => getConversationMessages(projectName!, conversationId!),
+    queryFn: () => getConversationMessages(projectScope(projectName!), conversationId!),
     enabled: Boolean(projectName && conversationId),
     // The thread only moves when a turn ends, and every surface that mounts
     // this has a trigger for that. A time-based staleness would refetch on

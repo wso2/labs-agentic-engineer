@@ -47,7 +47,6 @@ import {
 } from "../../agent-chat/api/conversations";
 import {
   addMessage,
-  chatKeyFor,
   getMessages,
   replaceMessages,
   setPendingSeed,
@@ -68,7 +67,7 @@ import {
   useRegisterExternalResource,
   useUpdateExternalResource,
 } from "../api/queries";
-import { MARKETPLACE_CHAT_PROJECT } from "../constants";
+import { MARKETPLACE_SCOPE, chatKeyForScope } from "../../agent-chat/chatScope";
 import { isRegisteredExternal } from "../kind";
 import { applyRegisterDraft } from "../lib/registerDraft";
 import {
@@ -226,7 +225,7 @@ export function RegisterFormPage({
   const [docs, setDocs] = useState<ResourceDocRow[]>([]);
   const [prefilledName, setPrefilledName] = useState<string | null>(null);
 
-  const chatKey = chatKeyFor(orgHandle ?? "default", MARKETPLACE_CHAT_PROJECT);
+  const chatKey = chatKeyForScope(orgHandle ?? "default", MARKETPLACE_SCOPE);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
     () => getMessages(chatKey),
@@ -290,7 +289,7 @@ export function RegisterFormPage({
     let cancelled = false;
     void (async () => {
       try {
-        await rotateCurrentConversation(queryClient, MARKETPLACE_CHAT_PROJECT);
+        await rotateCurrentConversation(queryClient, MARKETPLACE_SCOPE, chatKey);
       } catch (err) {
         if (cancelled) return;
         addMessage(chatKey, {
@@ -500,8 +499,7 @@ export function RegisterFormPage({
           )}
           {showQuestions?.length ? (
             <ChatQuestionForm
-              org={orgHandle ?? "default"}
-              projectName={MARKETPLACE_CHAT_PROJECT}
+              chatKey={chatKey}
               questions={showQuestions}
               streaming={pendingQuestion?.streaming === true}
               submitting={questionsSubmitting}
@@ -802,8 +800,7 @@ export function RegisterFormPage({
           >
             <AgentChatPanel
               org={orgHandle ?? "default"}
-              projectName={MARKETPLACE_CHAT_PROJECT}
-              specWorkspace={false}
+              scope={MARKETPLACE_SCOPE}
               onClose={() => setChatOpen(false)}
             />
           </Collapse>
