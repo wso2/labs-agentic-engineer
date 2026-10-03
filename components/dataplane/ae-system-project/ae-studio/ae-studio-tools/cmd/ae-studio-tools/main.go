@@ -123,7 +123,8 @@ func run() error {
 	reader := files.Reader{Engine: engine, Projects: projects.NewAEPAPIResolver(aepAPI), Org: cfg.OrgHandle}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
 	// GitHub account, the other tools forwarded to aep-api as the publisher,
-	// and the agent's room token minted as ae-studio-<org>.
+	// the agent's room token minted as ae-studio-<org>, and the project and
+	// skills snapshots the agent reads.
 	mcpDeps := edge.MCPSocketDeps{
 		MCP: mcp.Server{
 			Remote:   mcp.RemoteGit{Owner: cfg.GitHubOwner, Token: cfg.GitHubPAT},
@@ -132,6 +133,7 @@ func run() error {
 		RoomTokens: &platform.ClientCredentials{
 			TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
 		},
+		Snapshots: reader,
 	}
 	gh := github.NewClient(cfg.GitHubPAT)
 	applier := files.Applier{

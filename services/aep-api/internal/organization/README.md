@@ -31,7 +31,7 @@ flowchart LR
 | `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
 | `rotateidp` `discoveridp` | rotate the publisher client secret / OIDC discovery | `POST .../config:rotate-idp-secret` etc. |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
-| `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine | `StudioConverger` · `AEStudioStatusReader` |
+| `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
 model-connection / idp services, the model key rename watcher (`ModelKeyRename`), and the

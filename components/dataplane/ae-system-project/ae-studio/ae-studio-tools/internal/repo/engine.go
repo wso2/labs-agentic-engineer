@@ -23,6 +23,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -56,6 +57,10 @@ type Engine struct {
 	// diskUsagePct is the last UsagePct recorded by the reaper (-1 =
 	// unknown). It feeds DiskFullError.UsedPct.
 	diskUsagePct atomic.Int32
+	// usageGauge, when set (reaper.New), answers the live studio-data
+	// pressure for admission (DiskAdmissionRefusePct). Without it admission
+	// reads diskUsagePct.
+	usageGauge func() int
 	// onENOSPC, when set (reaper.New), runs on detected ENOSPC before
 	// DiskFullError is returned. It must not block: it runs on the failing
 	// request's goroutine.
@@ -88,10 +93,11 @@ const (
 )
 
 // New builds an Engine rooted at root, minting remote tokens from cred (nil
-// for credential-less origins): creates repos/, tmp/, trash/ and
-// writes the askpass shim. root is made absolute so git child processes are
-// immune to cwd changes. layout is RootFound when abs already existed as a
-// directory before layout creation, RootCreated when New created it.
+// for credential-less origins): creates repos/, tmp/, trash/,
+// snapshots/projects/ and snapshots/skills/ and writes the askpass shim. root
+// is made absolute so git child processes are immune to cwd changes. layout
+// is RootFound when abs already existed as a directory before layout
+// creation, RootCreated when New created it.
 func New(root string, cred Credential) (*Engine, RootLayout, error) {
 	abs, err := absPath(root)
 	if err != nil {
@@ -106,7 +112,7 @@ func New(root string, cred Credential) (*Engine, RootLayout, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, "", fmt.Errorf("repo: stat root %q: %w", abs, err)
 	}
-	for _, d := range []string{ReposDir(abs), TmpDir(abs), TrashDir(abs)} {
+	for _, d := range []string{ReposDir(abs), TmpDir(abs), TrashDir(abs), ProjectSnapshotsDir(abs), SkillsSnapshotsDir(abs)} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return nil, "", fmt.Errorf("repo: create %s: %w", d, err)
 		}
@@ -134,6 +140,28 @@ func (e *Engine) DiskUsagePct() int {
 		return 0
 	}
 	return int(v)
+}
+
+// SetUsageGauge registers the live pressure source admission reads
+// (reaper.New wires its UsagePct, so admission sees the clones and snapshots
+// written since the last sweep). Call it before the engine serves.
+func (e *Engine) SetUsageGauge(fn func() int) { e.usageGauge = fn }
+
+// DiskAdmissionRefusePct is the pressure at which new snapshots and
+// reference uploads are refused (ticket 20 §2). Commits, tags and reads are
+// never gated.
+const DiskAdmissionRefusePct = 90
+
+// admit refuses a new snapshot or reference upload at DiskAdmissionRefusePct.
+func (e *Engine) admit() error {
+	pct := e.DiskUsagePct()
+	if e.usageGauge != nil {
+		pct = e.usageGauge()
+	}
+	if pct >= DiskAdmissionRefusePct {
+		return fmt.Errorf("%w (usage=%d%%)", ErrDiskAdmission, pct)
+	}
+	return nil
 }
 
 // SetOnENOSPC registers the emergency handler invoked when mapDiskErr detects
@@ -261,6 +289,29 @@ func (e *Engine) git(ctx context.Context, opts execOpts, args ...string) ([]byte
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return stdout.Bytes(), nil
+}
+
+// gitStream runs one git command and hands its stdout to consume as a stream
+// (a snapshot's `git archive` is never buffered whole). The rest of stdout is
+// drained so the child never blocks on a full pipe, then the child is reaped;
+// a git failure wins over consume's error, as it is the cause.
+func (e *Engine) gitStream(ctx context.Context, opts execOpts, consume func(io.Reader) error, args ...string) error {
+	cmd := e.buildCmd(ctx, opts, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("git %s: stdout pipe: %w", strings.Join(args, " "), err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("git %s: start: %w", strings.Join(args, " "), err)
+	}
+	consumeErr := consume(out)
+	_, _ = io.Copy(io.Discard, out)
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return consumeErr
 }
 
 func (e *Engine) buildCmd(ctx context.Context, opts execOpts, args ...string) *exec.Cmd {
@@ -591,9 +642,10 @@ func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs in
 
 // ----- trash primitives (consumed by the reaper, design D12) -----
 
-// TrashRepo renames the repo's whole on-disk subtree (git/, repo.lock,
-// snapshots/) into trash/<id> — the O(1) phase-1 of the two-phase delete. A
-// missing subtree is a no-op. Mid-flight readers keep working through open
+// TrashRepo renames the repo's whole on-disk subtree (git/, repo.lock) into
+// trash/<id> — the O(1) phase-1 of the two-phase delete. A project's
+// snapshots are not under it: the snapshot-age pass and budget eviction
+// reclaim them (TrashSnapshot). A missing subtree is a no-op. Mid-flight readers keep working through open
 // fds (POSIX inode semantics); the next engine op on the ref self-heals by
 // re-cloning.
 func (e *Engine) TrashRepo(ctx context.Context, ref RepoRef) error {

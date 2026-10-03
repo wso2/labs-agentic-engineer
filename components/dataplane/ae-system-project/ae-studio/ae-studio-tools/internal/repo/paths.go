@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // The mount layout (design §4). All helpers are pure functions of the
@@ -29,8 +30,17 @@ import (
 //
 //	<root>/repos/<org>/<project>/<repoSlug>/git/       bare clone (never checked out)
 //	<root>/repos/<org>/<project>/<repoSlug>/repo.lock  flock: SH reads, EX fetch/push/ref-move
+//	<root>/snapshots/projects/<project>/<sha>/         immutable plain-file tree of a project commit
+//	<root>/snapshots/skills/<sha>/                     immutable plain-file tree of an Org skills commit
+//	<root>/references/<owner>/<repo>/                  a repo's stored reference documents (never committed)
 //	<root>/trash/<id>/                                 two-phase delete staging
-//	<root>/tmp/                                        atomic clone staging, askpass shim
+//	<root>/tmp/                                        atomic clone and snapshot staging, askpass shim
+//
+// ae-design-agent mounts only <root>/snapshots (subPath, read-only), so it
+// never sees a mirror or a reference store. The bind pins the snapshots dir's
+// inode: nothing may remove or rename it or its projects/ and skills/
+// children, or the agent sees an empty tree until it restarts. Only <sha>
+// leaves are ever removed (TrashSnapshot).
 
 // segmentPattern is the allowed shape of one path segment (org, project,
 // slug): dot, dash, underscore, alphanumerics — no separators, no traversal.
@@ -68,6 +78,57 @@ func TrashDir(root string) string { return filepath.Join(root, "trash") }
 
 // TmpDir is <root>/tmp — atomic clone staging and the askpass shim.
 func TmpDir(root string) string { return filepath.Join(root, "tmp") }
+
+// SkillsProject is the project path segment of the org's skills repository
+// clone (repos/<org>/_skills/<slug>). A project name is a DNS label, so no
+// project can take it.
+const SkillsProject = "_skills"
+
+// SnapshotsDir is <root>/snapshots, the dir ae-design-agent mounts.
+func SnapshotsDir(root string) string { return filepath.Join(root, "snapshots") }
+
+// ProjectSnapshotsDir is <root>/snapshots/projects.
+func ProjectSnapshotsDir(root string) string { return filepath.Join(SnapshotsDir(root), "projects") }
+
+// SkillsSnapshotsDir is <root>/snapshots/skills.
+func SkillsSnapshotsDir(root string) string { return filepath.Join(SnapshotsDir(root), "skills") }
+
+// SnapshotDir is the immutable tree <root>/snapshots/projects/<project>/<sha>
+// (the agent reads it as /snapshots/projects/<project>/<sha>).
+func SnapshotDir(root, project, sha string) (string, error) {
+	if err := validateSegment("project", project); err != nil {
+		return "", err
+	}
+	if !isHex40(sha) {
+		return "", fmt.Errorf("repo: invalid snapshot sha %q (want full 40-hex)", sha)
+	}
+	return filepath.Join(ProjectSnapshotsDir(root), project, sha), nil
+}
+
+// SkillsSnapshotDir is the immutable tree <root>/snapshots/skills/<sha>.
+func SkillsSnapshotDir(root, sha string) (string, error) {
+	if !isHex40(sha) {
+		return "", fmt.Errorf("repo: invalid snapshot sha %q (want full 40-hex)", sha)
+	}
+	return filepath.Join(SkillsSnapshotsDir(root), sha), nil
+}
+
+// ReferencesDir is <root>/references, the reference document stores.
+func ReferencesDir(root string) string { return filepath.Join(root, "references") }
+
+// ReferenceStoreDir is <root>/references/<owner>/<repo>, lower-cased: GitHub
+// names are case-insensitive, so one repository has one store whichever
+// spelling a caller has.
+func ReferenceStoreDir(root string, r OwnerRepo) (string, error) {
+	owner, name := strings.ToLower(r.Owner), strings.ToLower(r.Repo)
+	if err := validateSegment("owner", owner); err != nil {
+		return "", err
+	}
+	if err := validateSegment("repo", name); err != nil {
+		return "", err
+	}
+	return filepath.Join(ReferencesDir(root), owner, name), nil
+}
 
 // RepoDir is <root>/repos/<org>/<project>/<repoSlug> — the renamable
 // parent holding git/ and repo.lock.

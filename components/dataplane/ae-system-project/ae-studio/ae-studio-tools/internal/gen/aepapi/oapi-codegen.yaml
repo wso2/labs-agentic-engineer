@@ -12,6 +12,7 @@ output: internal/gen/aepapi/aepapi_gen.go
 output-options:
   include-operation-ids:
   - get-ae-studio-project-repository
+  - get-ae-studio-skills-repository
   - complete-ae-studio-dependencies
   - call-mcp-tool
   prefer-skip-optional-pointer: true

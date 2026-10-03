@@ -99,8 +99,14 @@ paths:
       summary: Resolve a project and write its snapshots
       description: |-
         Resolves the repository, writes the repo snapshot at `at` (the head when
-        omitted) and the Org skills snapshot, and answers the shas and the
-        reference documents stored for the project.
+        omitted, fetched) with the stored reference documents overlaid at
+        `specs/requirements/references/`, and the Org skills snapshot, and
+        answers the shas and the reference document names (sorted). The agent
+        reads `/snapshots/projects/{projectName}/{headSha}` and
+        `/snapshots/skills/{skillsSha}`. 404 `project_unknown` means the
+        project is not this org's, and then no snapshot is written; 404
+        `ref_not_found` means `at` names no commit of the repository. 503
+        `disk_full` refuses a new snapshot at 90 % of the studio's storage.
       tags:
       - Snapshots
       parameters:
@@ -119,6 +125,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProjectSnapshot'
+        '400':
+          $ref: '#/components/responses/Problem'
         '404':
           $ref: '#/components/responses/Problem'
         '502':
@@ -129,6 +137,9 @@ paths:
     get:
       operationId: get-skills
       summary: Write the Org skills snapshot
+      description: |-
+        Resolves the org's skills repository, writes its snapshot at the tip
+        and answers the sha; the agent reads `/snapshots/skills/{skillsSha}`.
       tags:
       - Snapshots
       responses:
@@ -153,8 +164,9 @@ components:
         type: string
   responses:
     Problem:
-      description: 'RFC 9457 problem. Codes: project_unknown, invalid_record, disk_full,
-        aep_api_unavailable, idp_unavailable, github_error.'
+      description: 'RFC 9457 problem. Codes: project_unknown, ref_not_found, path_invalid,
+        invalid_request, invalid_record, disk_full, aep_api_unavailable, idp_unavailable,
+        github_error.'
       content:
         application/problem+json:
           schema:

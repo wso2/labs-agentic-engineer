@@ -14,7 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package projects resolves an AE Studio project to its GitHub repository.
+// Package projects resolves an AE Studio project, and the org's skills
+// library, to its GitHub repository.
 // The answer comes from aep-api on every call and is never cached in the pod
 // (ticket 04 §2): a project moved or removed in AEP is seen on the next call,
 // and an answer for one call is never reused for another.
@@ -55,16 +56,22 @@ var (
 	ErrMisconfigured = errors.New("publisher credentials rejected")
 )
 
-// Resolver maps a project name to its repository.
+// Resolver maps a project name to its repository, and the org to its skills
+// repository.
 type Resolver interface {
 	Resolve(ctx context.Context, project string) (Repository, error)
+	// ResolveSkills answers the org's skills repository (aep-api reconciles
+	// the org's skills library first). It is never ErrUnknown: an org with no
+	// skills repository is ErrUnavailable, as a turn cannot run without it.
+	ResolveSkills(ctx context.Context) (Repository, error)
 }
 
 // NewAEPAPIResolver resolves through aep-api's
-// GET /internal/v1/ae-studio/projects/{projectName}/repository. c carries the
-// org's publisher token (platform.NewAEPAPI), which scopes the answer to the
-// pod's org. It takes the raw-op interface: the decision is the HTTP status,
-// never a parsed error body (Q-2).
+// GET /internal/v1/ae-studio/projects/{projectName}/repository and
+// GET /internal/v1/ae-studio/skills/repository. c carries the org's publisher
+// token (platform.NewAEPAPI), which scopes the answer to the pod's org. It
+// takes the raw-op interface: the decision is the HTTP status, never a parsed
+// error body (Q-2).
 func NewAEPAPIResolver(c aepapi.ClientInterface) Resolver {
 	return &aepAPIResolver{c: c}
 }
@@ -77,6 +84,32 @@ type aepAPIResolver struct{ c aepapi.ClientInterface }
 // ErrMisconfigured, anything else or a transport failure → ErrUnavailable.
 func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repository, error) {
 	resp, err := r.c.GetAeStudioProjectRepository(ctx, project)
+	rep, err := repositoryAnswer(resp, err)
+	if errors.Is(err, errNotFound) {
+		return Repository{}, fmt.Errorf("%w: %q", ErrUnknown, project)
+	}
+	return rep, err
+}
+
+// ResolveSkills is Resolve's mapping for the org's skills repository, except
+// that a 404 (the org has none) is ErrUnavailable.
+func (r *aepAPIResolver) ResolveSkills(ctx context.Context) (Repository, error) {
+	resp, err := r.c.GetAeStudioSkillsRepository(ctx)
+	rep, err := repositoryAnswer(resp, err)
+	if errors.Is(err, errNotFound) {
+		return Repository{}, fmt.Errorf("%w: aep-api has no skills repository for the org", ErrUnavailable)
+	}
+	return rep, err
+}
+
+// errNotFound marks aep-api's 404 for the caller to name.
+var errNotFound = errors.New("aep-api answered 404")
+
+// repositoryAnswer maps one repository lookup's response by status: 200 →
+// the repository (every field set), 404 → errNotFound, 401/403 or a rejected
+// publisher client → ErrUnavailable and ErrMisconfigured, anything else or a
+// transport failure → ErrUnavailable.
+func repositoryAnswer(resp *http.Response, err error) (Repository, error) {
 	if err != nil {
 		if errors.Is(err, platform.ErrClientRejected) {
 			return Repository{}, fmt.Errorf("%w: %w: %w", ErrUnavailable, ErrMisconfigured, err)
@@ -87,7 +120,7 @@ func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repositor
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return Repository{}, fmt.Errorf("%w: %q", ErrUnknown, project)
+		return Repository{}, errNotFound
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return Repository{}, fmt.Errorf("%w: %w: aep-api answered %d", ErrUnavailable, ErrMisconfigured, resp.StatusCode)
 	default:

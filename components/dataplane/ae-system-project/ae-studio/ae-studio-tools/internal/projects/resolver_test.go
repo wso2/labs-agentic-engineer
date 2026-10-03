@@ -173,3 +173,50 @@ func TestResolver_TokenEndpointDownIsUnavailableOnly(t *testing.T) {
 		t.Fatalf("err = %v, want ErrUnavailable only", err)
 	}
 }
+
+// ResolveSkills asks aep-api for the org's skills repository on every call,
+// mapped by status like Resolve, except that a 404 (the org has none) is
+// ErrUnavailable: it is not a denial of any project, and a turn cannot run
+// without its skills.
+func TestResolver_ResolveSkills(t *testing.T) {
+	var calls atomic.Int32
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path != "/internal/v1/ae-studio/skills/repository" || r.Method != http.MethodGet {
+			t.Errorf("%s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		s := int(status.Load())
+		w.WriteHeader(s)
+		if s == http.StatusOK {
+			_, _ = w.Write([]byte(`{"owner":"acme-gh","repo":"org-skills","defaultBranch":"main","cloneUrl":"https://github.com/acme-gh/org-skills.git"}`))
+		}
+	}))
+	defer srv.Close()
+	r := NewAEPAPIResolver(mustClient(t, srv.URL, "tok"))
+
+	got, err := r.ResolveSkills(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Repository{"acme-gh", "org-skills", "main", "https://github.com/acme-gh/org-skills.git"}); got != want {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	_, _ = r.ResolveSkills(context.Background())
+	if calls.Load() != 2 {
+		t.Fatalf("calls = %d; no cache: every call asks aep-api", calls.Load())
+	}
+	for _, s := range []int{http.StatusNotFound, http.StatusServiceUnavailable, http.StatusInternalServerError} {
+		status.Store(int32(s))
+		_, err = r.ResolveSkills(context.Background())
+		if !errors.Is(err, ErrUnavailable) || errors.Is(err, ErrUnknown) || errors.Is(err, ErrMisconfigured) {
+			t.Fatalf("%d: err = %v, want ErrUnavailable only", s, err)
+		}
+	}
+	status.Store(http.StatusForbidden)
+	if _, err = r.ResolveSkills(context.Background()); !errors.Is(err, ErrUnavailable) || !errors.Is(err, ErrMisconfigured) {
+		t.Fatalf("403: err = %v, want ErrUnavailable and ErrMisconfigured", err)
+	}
+}

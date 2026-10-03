@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/mcpsock"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
@@ -35,10 +36,10 @@ import (
 // ae-design-agent is its only caller (the socket's emptyDir is mounted into
 // that container and this one only, and the socket is 0660), so there is no
 // token gate. It is the in-pod agent's only door out of the pod: POST /mcp
-// (the JSON-RPC tool surface, mcp.Server) and POST /room-token (the collab
-// room token). The contract's other operations are served by later tasks
-// (GET /projects/{p} and GET /skills: Task 3.4; POST /turn-usage: Task 3.7)
-// and answer 404 until then.
+// (the JSON-RPC tool surface, mcp.Server), POST /room-token (the collab room
+// token), and GET /projects/{p} and GET /skills (the snapshots a turn reads,
+// mcp_sock_projects.go). POST /turn-usage is served by Task 3.7 and answers
+// 404 until then.
 
 const (
 	// mcpSocketBodyBytes caps a request body: aep-api's own cap on the
@@ -62,13 +63,16 @@ type RoomTokens interface {
 type MCPSocketDeps struct {
 	MCP        mcp.Server
 	RoomTokens RoomTokens
+	// Snapshots resolves a project or the org's skills repository and writes
+	// the snapshots the agent reads.
+	Snapshots files.Reader
 }
 
 // mcpSocketHandler is validator → generated server. A path or method the
 // contract does not declare is 404 at the validator; a request that does not
 // match its operation is 400 invalid_request.
 func mcpSocketHandler(d MCPSocketDeps) http.Handler {
-	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, rooms: d.RoomTokens}, nil, mcpsock.StrictHTTPServerOptions{
+	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, rooms: d.RoomTokens, snapshots: d.Snapshots}, nil, mcpsock.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeMCPSocketRequestError,
 		ResponseErrorHandlerFunc: writeMCPSocketResponseError,
 	})
@@ -86,8 +90,9 @@ const mcpSocketInvalidCode = "invalid_request"
 
 // mcpSocketServer implements the MCP socket operations.
 type mcpSocketServer struct {
-	mcp   mcp.Server
-	rooms RoomTokens
+	mcp       mcp.Server
+	rooms     RoomTokens
+	snapshots files.Reader
 }
 
 var _ mcpsock.StrictServerInterface = mcpSocketServer{}
@@ -133,34 +138,14 @@ func (s mcpSocketServer) MintRoomToken(ctx context.Context, _ mcpsock.MintRoomTo
 	return mcpsock.MintRoomToken200JSONResponse{Token: tok, ExpiresAt: exp}, nil
 }
 
-// LookupProject is served by Task 3.4; 404 until then.
-func (s mcpSocketServer) LookupProject(context.Context, mcpsock.LookupProjectRequestObject) (mcpsock.LookupProjectResponseObject, error) {
-	return mcpsock.LookupProject404ApplicationProblemPlusJSONResponse{
-		ProblemApplicationProblemPlusJSONResponse: mcpsock.ProblemApplicationProblemPlusJSONResponse(notServedYet()),
-	}, nil
-}
-
-// GetSkills is served by Task 3.4; 404 until then.
-func (s mcpSocketServer) GetSkills(context.Context, mcpsock.GetSkillsRequestObject) (mcpsock.GetSkillsResponseObject, error) {
-	return notServedYetResponse{}, nil
-}
-
 // PostTurnUsage is served by Task 3.7; 404 until then.
 func (s mcpSocketServer) PostTurnUsage(context.Context, mcpsock.PostTurnUsageRequestObject) (mcpsock.PostTurnUsageResponseObject, error) {
 	return notServedYetResponse{}, nil
 }
 
-func notServedYet() mcpsock.Problem {
-	return mcpSocketProblem(http.StatusNotFound, "not_found", "no such route")
-}
-
 // notServedYetResponse is the 404 of an operation the contract declares
 // without one, until its task serves it.
 type notServedYetResponse struct{}
-
-func (notServedYetResponse) VisitGetSkillsResponse(w http.ResponseWriter) error {
-	return writeNotFound(w)
-}
 
 func (notServedYetResponse) VisitPostTurnUsageResponse(w http.ResponseWriter) error {
 	return writeNotFound(w)

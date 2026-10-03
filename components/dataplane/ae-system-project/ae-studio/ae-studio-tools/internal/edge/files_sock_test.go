@@ -435,6 +435,11 @@ func (r deadlineResolver) Resolve(ctx context.Context, project string) (projects
 	return projects.Repository{}, fmt.Errorf("%w: %q", projects.ErrUnknown, project)
 }
 
+// ResolveSkills is never called by the Files socket.
+func (r deadlineResolver) ResolveSkills(context.Context) (projects.Repository, error) {
+	return projects.Repository{}, projects.ErrUnavailable
+}
+
 // Every socket request runs under the pod's own budget, so the pod always
 // answers before ae-collab's per-call deadline (REQUEST_TIMEOUT_MS) gives up.
 func TestFilesSocket_RequestsRunUnderTheBudget(t *testing.T) {

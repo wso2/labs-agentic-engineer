@@ -26,6 +26,11 @@ import (
 // ErrDiskFull is the sentinel underneath DiskFullError (errors.Is).
 var ErrDiskFull = errors.New("repo: disk full")
 
+// ErrDiskAdmission refuses a new snapshot or reference upload at
+// DiskAdmissionRefusePct. It is an ErrDiskFull (errors.Is), so callers answer
+// it as disk_full.
+var ErrDiskAdmission = fmt.Errorf("%w: admission refused", ErrDiskFull)
+
 // DiskFullError names the workspace root and last-recorded usage after an
 // ENOSPC was observed and the reaper emergency sweep was triggered.
 type DiskFullError struct {

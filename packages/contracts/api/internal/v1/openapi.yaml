@@ -216,6 +216,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /ae-studio/skills/repository:
+    get:
+      operationId: get-ae-studio-skills-repository
+      summary: Resolve the org's skills repository (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this before it writes the Org
+        skills snapshot of a turn; it keeps no cache. The org is the publisher
+        client token's ouHandle. aep-api reconciles the org's skills library
+        first (the platform skills shipped since it was provisioned land in it),
+        then answers the org's skills repository. 404 when the org has none;
+        503 when the library could not be reconciled.
+      tags:
+      - AE Studio
+      security:
+      - publisherCC: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioProjectRepository'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The org has no skills repository.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
   /ae-studio/dependency-completions:
     post:
       operationId: complete-ae-studio-dependencies

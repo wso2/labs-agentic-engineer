@@ -231,15 +231,25 @@ func (r Reader) resolve(ctx context.Context, project string) (projects.Repositor
 	if err != nil {
 		return projects.Repository{}, repo.RepoRef{}, err
 	}
+	ref, err := r.cloneRef(rep, project)
+	if err != nil {
+		return projects.Repository{}, repo.RepoRef{}, err
+	}
+	return rep, ref, nil
+}
+
+// cloneRef addresses rep's clone under the pod's org as project (the
+// project's name, or repo.SkillsProject for the org skills repository).
+func (r Reader) cloneRef(rep projects.Repository, project string) (repo.RepoRef, error) {
 	slug := naming.SlugForURL("https://github.com/" + rep.Owner + "/" + rep.Repo)
 	if slug == "" {
-		return projects.Repository{}, repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
+		return repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
 	}
 	cloneURL, err := withoutUserinfo(rep.CloneURL)
 	if err != nil {
-		return projects.Repository{}, repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
+		return repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
 	}
-	return rep, repo.RepoRef{
+	return repo.RepoRef{
 		Org:           r.Org,
 		Project:       project,
 		RepoSlug:      slug,

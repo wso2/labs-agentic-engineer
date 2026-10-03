@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -446,5 +447,111 @@ func TestToIgenCompletions_BoundsTheAnswer(t *testing.T) {
 func TestCompletionsAnswerBudget_InsideThePodsReadCap(t *testing.T) {
 	if maxCompletionsAnswerBytes >= 32<<20 {
 		t.Fatalf("budget %d is not inside the pod's 32 MiB read cap", maxCompletionsAnswerBytes)
+	}
+}
+
+// fakeSkillsRepos answers the org skills lookup from rows keyed by org and
+// records the org it was asked for.
+type fakeSkillsRepos struct {
+	rows   map[string]aestudio.ProjectRepository
+	err    error
+	gotOrg []string
+}
+
+func (f *fakeSkillsRepos) Lookup(_ context.Context, org string) (aestudio.ProjectRepository, error) {
+	f.gotOrg = append(f.gotOrg, org)
+	if f.err != nil {
+		return aestudio.ProjectRepository{}, f.err
+	}
+	row, ok := f.rows[org]
+	if !ok {
+		return aestudio.ProjectRepository{}, aestudio.ErrSkillsRepositoryNotFound
+	}
+	return row, nil
+}
+
+// get-ae-studio-skills-repository rides the ae-studio/ gate: only the org's
+// publisher client token, and the org is its ouHandle. The 200 body is
+// exactly AEStudioProjectRepository; an org without a skills repository is
+// 404; a library that could not be reconciled is 503.
+func TestInternalRoutes_AEStudioSkillsRepository(t *testing.T) {
+	stack := newInternalStack(t)
+	const path = "/internal/v1/ae-studio/skills/repository"
+	skills := &fakeSkillsRepos{rows: map[string]aestudio.ProjectRepository{"acme": {
+		Owner: "acme-gh", Repo: "org-skills", DefaultBranch: "main",
+		CloneURL: "https://github.com/acme-gh/org-skills.git",
+	}}}
+	build := func(mut func(*InternalDeps)) http.Handler {
+		deps := stack.deps
+		deps.AEStudioSkills = skills
+		if mut != nil {
+			mut(&deps)
+		}
+		return NewHandler(AppParams{InternalDeps: deps})
+	}
+	on := build(nil)
+	userJWT := "Bearer " + stack.sign(auth.PublisherClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    pubIssuer,
+			Audience:  jwt.ClaimStrings{"aep-console"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+		OuHandle: "acme",
+	})
+	cases := []struct {
+		name, bearer string
+		h            http.Handler
+		want         int
+	}{
+		{name: "publisher token of the org", bearer: "Bearer " + stack.mint("acme"), want: 200},
+		{name: "org with no skills repository", bearer: "Bearer " + stack.mint("evil"), want: 404},
+		{name: "no bearer", want: 401},
+		{name: "user JWT", bearer: userJWT, want: 401},
+		{name: "no lookup configured", h: build(func(d *InternalDeps) { d.AEStudioSkills = nil }), bearer: "Bearer " + stack.mint("acme"), want: 503},
+		{name: "library not reconciled", h: build(func(d *InternalDeps) {
+			d.AEStudioSkills = &fakeSkillsRepos{err: fmt.Errorf("%w: github down", aestudio.ErrSkillsUnavailable)}
+		}), bearer: "Bearer " + stack.mint("acme"), want: 503},
+		{name: "lookup fails", h: build(func(d *InternalDeps) {
+			d.AEStudioSkills = &fakeSkillsRepos{err: errors.New("db down")}
+		}), bearer: "Bearer " + stack.mint("acme"), want: 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := tc.h
+			if h == nil {
+				h = on
+			}
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			if tc.bearer != "" {
+				req.Header.Set("Authorization", tc.bearer)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
+			}
+			if tc.want != 200 && strings.Contains(rec.Body.String(), "-gh") {
+				t.Fatalf("a refused request leaked the repository: %s", rec.Body)
+			}
+			if tc.want != 200 {
+				return
+			}
+			var got map[string]string
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("body: %v\n%s", err, rec.Body)
+			}
+			want := map[string]string{
+				"owner": "acme-gh", "repo": "org-skills", "defaultBranch": "main",
+				"cloneUrl": "https://github.com/acme-gh/org-skills.git",
+			}
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("body = %v, want %v", got, want)
+			}
+		})
+	}
+	for _, org := range skills.gotOrg {
+		if org != "acme" && org != "evil" {
+			t.Errorf("lookup got org %q; the org must come from the verified token", org)
+		}
 	}
 }

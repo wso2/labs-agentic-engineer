@@ -37,7 +37,7 @@ import (
 
 // The AE Studio route group (/internal/v1/ae-studio/…): an org's AE Studio
 // tools pod resolves a project to its GitHub repository on every request
-// (04 §2), and has the dependency stubs of a save completed here (04 §4), so
+// (04 §2) and the org's skills repository on every turn (07 §6), and has the dependency stubs of a save completed here (04 §4), so
 // the registry read and the fetch of a model-chosen URL never run in the pod
 // that holds the org's git credential. internalGate admits only the org's publisher client token here and
 // binds its ouHandle as the org; the org is always read from the context,
@@ -48,6 +48,12 @@ import (
 // (aestudio.ProjectRepositories).
 type ProjectRepositoryLookup interface {
 	Lookup(ctx context.Context, org, project string) (aestudio.ProjectRepository, error)
+}
+
+// SkillsRepositoryLookup resolves an org to its skills repository
+// (aestudio.SkillsRepositories).
+type SkillsRepositoryLookup interface {
+	Lookup(ctx context.Context, org string) (aestudio.ProjectRepository, error)
 }
 
 // DependencyCompleter completes an org's dependency stub writes
@@ -106,6 +112,33 @@ func (s *internalServer) GetAeStudioProjectRepository(ctx context.Context, reque
 		return nil, err
 	}
 	return igen.GetAeStudioProjectRepository200JSONResponse{
+		Owner:         repo.Owner,
+		Repo:          repo.Repo,
+		DefaultBranch: repo.DefaultBranch,
+		CloneURL:      repo.CloneURL,
+	}, nil
+}
+
+// GetAeStudioSkillsRepository answers the bound org's skills repository,
+// reconciled first. An org with none is a 404; a library that could not be
+// reconciled is a logged 503.
+func (s *internalServer) GetAeStudioSkillsRepository(ctx context.Context, _ igen.GetAeStudioSkillsRepositoryRequestObject) (igen.GetAeStudioSkillsRepositoryResponseObject, error) {
+	if s.deps.AEStudioSkills == nil {
+		return nil, errServiceUnavailable("skills repository lookup not configured")
+	}
+	org := tenant.BoundOrgFromContext(ctx)
+	repo, err := s.deps.AEStudioSkills.Lookup(ctx, org)
+	switch {
+	case errors.Is(err, aestudio.ErrSkillsRepositoryNotFound):
+		return nil, errNotFound("skills repository not found")
+	case errors.Is(err, aestudio.ErrSkillsUnavailable):
+		slog.WarnContext(ctx, "ae-studio skills library not reconciled", "org", org, "error", err)
+		return nil, errServiceUnavailable("org skills repository unavailable")
+	case err != nil:
+		slog.ErrorContext(ctx, "ae-studio skills repository lookup failed", "org", org, "error", err)
+		return nil, errInternal("failed to resolve skills repository")
+	}
+	return igen.GetAeStudioSkillsRepository200JSONResponse{
 		Owner:         repo.Owner,
 		Repo:          repo.Repo,
 		DefaultBranch: repo.DefaultBranch,

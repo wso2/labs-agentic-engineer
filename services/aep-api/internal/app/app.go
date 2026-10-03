@@ -973,6 +973,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// project to its repository on every request.
 			PublisherTokens:      publisherVerifier,
 			AEStudioRepositories: aestudio.NewProjectRepositories(repoService),
+			// The org's skills library, reconciled before each turn's
+			// snapshot, as every turn's skills have been.
+			AEStudioSkills: aestudio.NewSkillsRepositories(skillSvc, repoService),
 		},
 		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,

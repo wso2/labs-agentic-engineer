@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 )
 
@@ -166,13 +167,18 @@ type mcpHarness struct {
 type mcpHarnessOpt func(*mcpHarnessConfig)
 
 type mcpHarnessConfig struct {
-	owner string
-	rooms fakeRoomTokens
+	owner     string
+	rooms     fakeRoomTokens
+	snapshots files.Reader
 }
 
 func withOwner(o string) mcpHarnessOpt { return func(c *mcpHarnessConfig) { c.owner = o } }
 
 func withRoomTokens(r fakeRoomTokens) mcpHarnessOpt { return func(c *mcpHarnessConfig) { c.rooms = r } }
+
+func withSnapshots(r files.Reader) mcpHarnessOpt {
+	return func(c *mcpHarnessConfig) { c.snapshots = r }
+}
 
 // syncBuffer is a log sink safe for the server's goroutines.
 type syncBuffer struct {
@@ -211,7 +217,7 @@ func newMCPHarness(t *testing.T, up mcp.Upstream, opts ...mcpHarnessOpt) *mcpHar
 		t.Fatal(err)
 	}
 	srv := &http.Server{
-		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, RoomTokens: cfg.rooms}),
+		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, RoomTokens: cfg.rooms, Snapshots: cfg.snapshots}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() { _ = srv.Serve(ln) }()
@@ -528,7 +534,7 @@ func TestMCPSocket_RoutesNotYetServedAre404(t *testing.T) {
 		_ = resp.Body.Close()
 		return resp.StatusCode
 	}
-	for _, path := range []string{"/projects/greeter", "/skills", "/nope"} {
+	for _, path := range []string{"/nope", "/projects/greeter/x"} {
 		if c := get(path); c != http.StatusNotFound {
 			t.Fatalf("GET %s = %d", path, c)
 		}

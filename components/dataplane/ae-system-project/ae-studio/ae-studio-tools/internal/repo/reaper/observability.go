@@ -22,7 +22,8 @@ import (
 )
 
 // logSweep emits the per-sweep usage line. It is value-free: byte counts, the
-// usage percentage and the number of evicted repos, never a repo name.
+// usage percentage and the number of evicted snapshots and repos, never a
+// name.
 func (r *Reaper) logSweep(ctx context.Context, pct, evicted int) {
 	slog.InfoContext(ctx, "reaper.sweep",
 		"usedBytes", r.engine.UsedBytes(),

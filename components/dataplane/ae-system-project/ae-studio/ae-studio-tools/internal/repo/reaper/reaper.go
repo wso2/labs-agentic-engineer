@@ -18,18 +18,23 @@
 // (moved from services/aep-api/internal/platform/gitfs/reaper; ticket 20 §3).
 // The volume is a cache of GitHub: a pod roll wipes it and every repo
 // re-clones on first use. One pod serves one org and runs one reaper, so there
-// is no leader lock. Four passes per sweep, each isolated (one failing never
+// is no leader lock. Five passes per sweep, each isolated (one failing never
 // stops the next):
 //
 //  1. tmp reclamation: purge tmp/ entries older than TrashMaxAge, skipping
 //     the engine's askpass shim;
 //  2. trash reclamation: purge trash/<id> entries older than TrashMaxAge;
-//  3. git maintenance: repack/prune/pack-refs on loose- or pack-heavy
+//  3. snapshot age: trash snapshot <sha> leaves unused for longer than
+//     SnapshotMaxAge that are not their mirror's current HEAD;
+//  4. git maintenance: repack/prune/pack-refs on loose- or pack-heavy
 //     mirrors under the repo's EX flock (before the budget, so eviction sees
 //     reclaimed space);
-//  4. budget: du (block usage) of the root against the one budget; from 85 %
-//     purge trash, then evict mirrors least recently fetched first down to
-//     70 %.
+//  5. budget: du (block usage) of the root against the one budget; from 85 %
+//     purge trash, then evict snapshots least recently used first, then
+//     mirrors least recently fetched first, down to 70 %.
+//
+// No pass removes or renames snapshots/ or its projects/ and skills/ dirs:
+// ae-design-agent's subPath mount pins that inode, so only <sha> leaves go.
 //
 // A forced sweep follows an ENOSPC, which the engine only sees when the
 // node's disk fills: the studio-data emptyDir's sizeLimit is enforced by
@@ -55,16 +60,20 @@ import (
 )
 
 // Config is the reaper's knobs. Budget comes from AE_STORAGE_BUDGET_BYTES;
-// zero Interval and TrashMaxAge take the defaults below.
+// zero Interval, TrashMaxAge and SnapshotMaxAge take the defaults below.
 type Config struct {
-	Budget      int64
-	Interval    time.Duration
-	TrashMaxAge time.Duration
+	Budget         int64
+	Interval       time.Duration
+	TrashMaxAge    time.Duration
+	SnapshotMaxAge time.Duration
 }
 
 const (
 	defaultInterval    = 5 * time.Minute
 	defaultTrashMaxAge = time.Hour
+	// defaultSnapshotMaxAge is above the 30-min turn cap, so a snapshot a
+	// running turn reads is never age-reaped under it.
+	defaultSnapshotMaxAge = time.Hour
 )
 
 // Reaper runs the sweep on cfg.Interval, and on demand after an ENOSPC.
@@ -81,7 +90,8 @@ type Reaper struct {
 }
 
 // New builds the reaper over engine's root and registers its forced-sweep
-// request as the engine's ENOSPC handler. Call it before the engine serves.
+// request as the engine's ENOSPC handler and its UsagePct as the engine's
+// admission gauge. Call it before the engine serves.
 // It panics on a non-positive Budget: config.Load guarantees one.
 func New(engine *repo.Engine, cfg Config) *Reaper {
 	if cfg.Budget <= 0 {
@@ -93,8 +103,12 @@ func New(engine *repo.Engine, cfg Config) *Reaper {
 	if cfg.TrashMaxAge <= 0 {
 		cfg.TrashMaxAge = defaultTrashMaxAge
 	}
+	if cfg.SnapshotMaxAge <= 0 {
+		cfg.SnapshotMaxAge = defaultSnapshotMaxAge
+	}
 	r := &Reaper{engine: engine, cfg: cfg, force: make(chan struct{}, 1), statfs: statfsUsage}
 	engine.SetOnENOSPC(r.requestForceSweep)
+	engine.SetUsageGauge(r.UsagePct)
 	return r
 }
 
@@ -144,10 +158,11 @@ func (r *Reaper) sweep(ctx context.Context) {
 	}
 }
 
-// sweepOnce runs the four passes, publishes UsagePct onto the engine (it
-// feeds DiskFullError) and logs the reaper.sweep line. It returns the evicted
-// repos as "org/project/slug" and the joined errors of the passes that
-// failed; a failed pass never stops the next one.
+// sweepOnce runs the five passes, publishes UsagePct onto the engine (it
+// feeds DiskFullError) and logs the reaper.sweep line. It returns what the
+// budget evicted (snapshots as their path under the root, then repos as
+// "org/project/slug") and the joined errors of the passes that failed; a
+// failed pass never stops the next one.
 func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 	var errs []error
 	pass := func(name string, fn func(context.Context) error) {
@@ -161,6 +176,7 @@ func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 	var evicted []string
 	pass("tmp-reclamation", r.reclaimTmp)
 	pass("trash-reclamation", r.reclaimTrash)
+	pass("snapshot-age", r.reapSnapshots)
 	pass("git-maintenance", func(ctx context.Context) error {
 		_, err := r.maintainRepos(ctx)
 		return err

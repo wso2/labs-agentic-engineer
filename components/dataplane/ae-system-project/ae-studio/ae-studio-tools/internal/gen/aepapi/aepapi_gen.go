@@ -187,6 +187,9 @@ type ClientInterface interface {
 	// GetAeStudioProjectRepository request
 	GetAeStudioProjectRepository(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetAeStudioSkillsRepository request
+	GetAeStudioSkillsRepository(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CallMcpToolWithBody request with any body
 	CallMcpToolWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -219,6 +222,18 @@ func (c *Client) CompleteAeStudioDependencies(ctx context.Context, body Complete
 
 func (c *Client) GetAeStudioProjectRepository(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetAeStudioProjectRepositoryRequest(c.Server, projectName)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetAeStudioSkillsRepository(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetAeStudioSkillsRepositoryRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +342,33 @@ func NewGetAeStudioProjectRepositoryRequest(server string, projectName string) (
 	return req, nil
 }
 
+// NewGetAeStudioSkillsRepositoryRequest generates requests for GetAeStudioSkillsRepository
+func NewGetAeStudioSkillsRepositoryRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/ae-studio/skills/repository")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewCallMcpToolRequest calls the generic CallMcpTool builder with application/json body
 func NewCallMcpToolRequest(server string, body CallMcpToolJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -418,6 +460,9 @@ type ClientWithResponsesInterface interface {
 	// GetAeStudioProjectRepositoryWithResponse request
 	GetAeStudioProjectRepositoryWithResponse(ctx context.Context, projectName string, reqEditors ...RequestEditorFn) (*GetAeStudioProjectRepositoryResponse, error)
 
+	// GetAeStudioSkillsRepositoryWithResponse request
+	GetAeStudioSkillsRepositoryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAeStudioSkillsRepositoryResponse, error)
+
 	// CallMcpToolWithBodyWithResponse request with any body
 	CallMcpToolWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error)
 
@@ -486,6 +531,38 @@ func (r GetAeStudioProjectRepositoryResponse) ContentType() string {
 	return ""
 }
 
+type GetAeStudioSkillsRepositoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AEStudioProjectRepository
+	JSON404      *Error
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetAeStudioSkillsRepositoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetAeStudioSkillsRepositoryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetAeStudioSkillsRepositoryResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CallMcpToolResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -541,6 +618,15 @@ func (c *ClientWithResponses) GetAeStudioProjectRepositoryWithResponse(ctx conte
 		return nil, err
 	}
 	return ParseGetAeStudioProjectRepositoryResponse(rsp)
+}
+
+// GetAeStudioSkillsRepositoryWithResponse request returning *GetAeStudioSkillsRepositoryResponse
+func (c *ClientWithResponses) GetAeStudioSkillsRepositoryWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetAeStudioSkillsRepositoryResponse, error) {
+	rsp, err := c.GetAeStudioSkillsRepository(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetAeStudioSkillsRepositoryResponse(rsp)
 }
 
 // CallMcpToolWithBodyWithResponse request with arbitrary body returning *CallMcpToolResponse
@@ -613,6 +699,46 @@ func ParseGetAeStudioProjectRepositoryResponse(rsp *http.Response) (*GetAeStudio
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetAeStudioSkillsRepositoryResponse parses an HTTP response from a GetAeStudioSkillsRepositoryWithResponse call
+func ParseGetAeStudioSkillsRepositoryResponse(rsp *http.Response) (*GetAeStudioSkillsRepositoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetAeStudioSkillsRepositoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AEStudioProjectRepository
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
 		var dest Error

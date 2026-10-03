@@ -77,6 +77,8 @@ type InternalDeps struct {
 	// AEStudioRepositories backs get-ae-studio-project-repository; nil
 	// answers 503.
 	AEStudioRepositories ProjectRepositoryLookup
+	// AEStudioSkills backs get-ae-studio-skills-repository; nil answers 503.
+	AEStudioSkills SkillsRepositoryLookup
 	// DependencyCompleter backs complete-ae-studio-dependencies
 	// (spec.CompleteDependencies over the org registry and the guarded URL
 	// fetch); nil answers 503.
@@ -238,6 +240,7 @@ var internalOpGates = map[string]internalOpGate{
 	"sre-create-issue":                 {credential: sreHandoffCredential},
 	"sre-create-rca-report":            {credential: sreHandoffCredential},
 	"get-ae-studio-project-repository": {credential: aeStudioCredential},
+	"get-ae-studio-skills-repository":  {credential: aeStudioCredential},
 	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
 	"record-turn-usage":                {credential: aeStudioCredential},
 }
