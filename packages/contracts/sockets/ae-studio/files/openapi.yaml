@@ -140,6 +140,12 @@ components:
           type: string
         code:
           type: string
+        path:
+          type: string
+          description: On an apply's path_invalid, the one path the write rules
+            refused (specs/ only, canonical, at most 5 MiB, no path twice, never
+            written and deleted, not a platform-landed document); absent when
+            the refusal is not about one path.
     ProjectLookup:
       type: object
       additionalProperties: false

@@ -34,7 +34,7 @@ import * as Y from "yjs";
 import WebSocket from "ws";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
 import { startFakeFilesSocket, type FakeFilesSocket } from "./fake-files-socket.js";
-import { fragmentToMarkdown } from "@aep/collab-doc";
+import { fragmentToMarkdown, setDocFile } from "@aep/collab-doc";
 import { dropRoomState, roomState } from "./rooms.js";
 import { RESTARTING } from "./pod/commits.js";
 import type { PodConfig } from "./pod/config.js";
@@ -289,15 +289,14 @@ async function startTestCollab(
     rawUpgrade: (path, opts = {}) => wsUpgrade(`${pod.publicUrl}${path}`, opts),
     async close() {
       for (const p of peers) {
+        // A socket the server closed (pod.close() ends the room sockets
+        // before it flushes) schedules a reconnect `delay` ms after the
+        // close, and that timer survives destroy() and turns the socket back
+        // on (provider 4.3), so a reconnect loop would outlive the test.
+        p.socket.connect = () => Promise.resolve();
         p.provider.destroy();
         p.socket.destroy();
       }
-      // A socket the server closed (pod.close() ends room sockets before it
-      // flushes) schedules its reconnect `delay` ms after the close, and that
-      // timer survives destroy() and turns the socket back on. Destroy again
-      // once it has fired, so no reconnect loop outlives the test.
-      await new Promise((r) => setTimeout(r, FAST_RETRY.maxDelay));
-      for (const p of peers) p.socket.destroy();
       await pod.close();
       await files.close();
       await idp.close();
@@ -810,6 +809,23 @@ test("a last leave whose final flush meets an outage keeps the room loaded; the 
     assert.match(markdown(bob.doc), /Typed last\./);
     assert.deepEqual(await flush(bob, "f"), { type: "flushed", id: "f" });
     assert.match(s.files.file(PRD_PATH)!, /Typed last\./);
+  } finally {
+    await s.close();
+  }
+});
+
+test("a last leave with one refused path commits the room's other edits, then unloads", async () => {
+  const s = await startTestCollab();
+  try {
+    const ann = await s.join("public", ROOM, s.idp.userToken());
+    typeInto(ann.doc, "Saved at the last leave.");
+    setDocFile(ann.doc, "notes/scratch.json", '{"not":"a spec"}');
+    await new Promise((r) => setTimeout(r, 100)); // the updates reach the server
+    ann.provider.destroy();
+    await waitFor(() => roomState(ROOM) === undefined, "the room to unload");
+    assert.match(s.files.file(PRD_PATH)!, /Saved at the last leave\./);
+    assert.equal(s.files.file("notes/scratch.json"), undefined);
+    assert.equal(events(s, "room_final_flush_deferred").length, 0);
   } finally {
     await s.close();
   }

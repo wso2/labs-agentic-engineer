@@ -42,7 +42,14 @@ const aepAPIRetryAfter = "5"
 func filesProblem(ctx context.Context, op, project string, err error) problemResponse {
 	switch {
 	case errors.Is(err, files.ErrPathInvalid):
-		return problemResponse{status: http.StatusBadRequest, code: "path_invalid", detail: "the request names a path or ref this API refuses"}
+		// An apply's refusal of one path names it, so the Room can set that
+		// path aside and save the rest.
+		var refused *files.PathRefusedError
+		path := ""
+		if errors.As(err, &refused) {
+			path = refused.Path
+		}
+		return problemResponse{status: http.StatusBadRequest, code: "path_invalid", detail: "the request names a path or ref this API refuses", path: path}
 	case errors.Is(err, files.ErrFileNotFound):
 		return problemResponse{status: http.StatusNotFound, code: "path_not_found", detail: "no such file at this commit"}
 	case errors.Is(err, repo.ErrRefNotFound):
@@ -106,12 +113,14 @@ type problemResponse struct {
 	status       int
 	code, detail string
 	retryAfter   string
+	// path is the one path an apply's write rules refused, or "".
+	path string
 }
 
 func (p problemResponse) write(w http.ResponseWriter) error {
 	if p.retryAfter != "" {
 		w.Header().Set("Retry-After", p.retryAfter)
 	}
-	problem.Write(w, p.status, p.code, p.detail)
+	problem.WriteWithPath(w, p.status, p.code, p.detail, p.path)
 	return nil
 }

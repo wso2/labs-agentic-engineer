@@ -15,7 +15,7 @@
 // under the License.
 
 // Package problem writes ae-studio-tools' error body, application/problem+json
-// {type, title, status, detail, code}. It is a leaf so that both the auth gates
+// {type, title, status, detail, code[, path]}. It is a leaf so that both the auth gates
 // and the edge routes can answer with it without an import cycle.
 package problem
 
@@ -27,9 +27,20 @@ import (
 // Write sends one problem response. detail is a fixed, value-free sentence:
 // callers never put a token, a claim value or a secret in it.
 func Write(w http.ResponseWriter, status int, code, detail string) {
+	WriteWithPath(w, status, code, detail, "")
+}
+
+// WriteWithPath is Write with the `path` extension member: the one file path
+// the problem is about (the caller's own request path, never a secret);
+// omitted when empty.
+func WriteWithPath(w http.ResponseWriter, status int, code, detail, path string) {
+	body := map[string]any{
+		"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail, "code": code,
+	}
+	if path != "" {
+		body["path"] = path
+	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"type": "about:blank", "title": http.StatusText(status), "status": status, "detail": detail, "code": code,
-	})
+	_ = json.NewEncoder(w).Encode(body)
 }

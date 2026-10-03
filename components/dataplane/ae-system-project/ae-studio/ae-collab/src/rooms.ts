@@ -36,6 +36,12 @@ export interface RoomState {
   flushing: Promise<void>;
   /** `path\0sha` of every blob this room committed: a conflict on one is the room's own write, not an outside change. */
   committed: Set<string>;
+  /**
+   * Changes the pod's write rules refused, by path: the refused content, or
+   * `null` for a refused delete. Set aside (never resent) while the doc still
+   * holds exactly that; a change to the file tries it again.
+   */
+  refused: Map<string, string | null>;
 }
 
 const rooms = new Map<string, RoomState>();
@@ -56,6 +62,7 @@ export function ensureRoomState(
     participants: new Map(),
     flushing: Promise.resolve(),
     committed: new Set(),
+    refused: new Map(),
   };
   rooms.set(documentName, fresh);
   return fresh;

@@ -81,6 +81,24 @@ export interface FakeFilesSocket {
 
 /** The pod's request body cap (04 §7). */
 const BODY_LIMIT = 25 << 20;
+/** The pod's per-file write cap. */
+const MAX_FILE_BYTES = 5 << 20;
+
+/**
+ * The first path of the batch the pod's write rules refuse (specs/ only, at
+ * most 5 MiB, never written and deleted), as the pod names it in its 400.
+ */
+function refusedPath(request: Schemas["ApplyRequest"]): string | undefined {
+  const written = new Set<string>();
+  for (const w of request.writes) {
+    if (!w.path.startsWith("specs/") || Buffer.byteLength(w.content, "utf8") > MAX_FILE_BYTES) return w.path;
+    written.add(w.path);
+  }
+  for (const d of request.deletes) {
+    if (!d.path.startsWith("specs/") || written.has(d.path)) return d.path;
+  }
+  return undefined;
+}
 /** The project path segment: a DNS-label slug, as the contract requires. */
 const PROJECT_NAME = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const ROUTE = /^\/projects\/([^/]+)(\/bundle|\/apply)?$/;
@@ -105,13 +123,14 @@ function json(res: http.ServerResponse, status: number, body: unknown): void {
   send(res, status, "application/json", JSON.stringify(body));
 }
 
-function problem(res: http.ServerResponse, status: number, code: string): void {
+function problem(res: http.ServerResponse, status: number, code: string, path?: string): void {
   const body: Schemas["Problem"] = {
     type: "about:blank",
     title: http.STATUS_CODES[status] ?? "Error",
     status,
     code,
     detail: code,
+    ...(path ? { path } : {}),
   };
   // The pod answers aep_api_unavailable with Retry-After: 5.
   const headers: Record<string, string> =
@@ -186,6 +205,8 @@ export async function startFakeFilesSocket(
   };
 
   const apply = (res: http.ServerResponse, request: Schemas["ApplyRequest"]) => {
+    const refused = refusedPath(request);
+    if (refused !== undefined) return problem(res, 400, "path_invalid", refused);
     const conflicts: Schemas["Conflict"][] = [];
     for (const change of [...request.writes, ...request.deletes]) {
       const current = tree.get(change.path);

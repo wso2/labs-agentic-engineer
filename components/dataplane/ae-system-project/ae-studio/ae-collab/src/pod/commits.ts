@@ -136,11 +136,13 @@ export function commitHooks(deps: CommitHookDeps) {
         try {
           await flushRoom(flushDepsFor(deps, document), documentName, document, true);
         } catch (err) {
-          // Only a verdict lets the room unload with its edits: it will not
-          // change on a retry. Anything else (an outage, conflicts that kept
-          // coming, a fault of ours) keeps the doc loaded: a throw makes
-          // Hocuspocus skip the unload, and the retry takes it from there.
-          // The empty message keeps Hocuspocus from printing it.
+          // Only a verdict on the whole flush lets the room unload with its
+          // edits (the project is gone, say): it will not change on a retry.
+          // One refused path is not one: the flush sets it aside and saves
+          // the rest. Anything else (an outage, conflicts that kept coming, a
+          // fault of ours) keeps the doc loaded: a throw makes Hocuspocus skip
+          // the unload, and the retry takes it from there. The empty message
+          // keeps Hocuspocus from printing it.
           if (err instanceof FilesDeniedError) return;
           deps.log({ msg: "room_final_flush_deferred", source: "ae-collab" });
           scheduleRetry(instance, document, deps.retry.firstMs);

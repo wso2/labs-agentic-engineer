@@ -46,6 +46,23 @@ var (
 	errConflictSentinel = errors.New("precondition conflict")
 )
 
+// PathRefusedError is a write-rule refusal of one path of an apply. It wraps
+// ErrPathInvalid; Path is the refused path, which the Files socket names in
+// its 400 so the Room can set that path aside and save the rest.
+type PathRefusedError struct {
+	Path string
+	Err  error
+}
+
+func (e *PathRefusedError) Error() string { return e.Err.Error() }
+
+func (e *PathRefusedError) Unwrap() error { return e.Err }
+
+// refusePath wraps a write-rule error with the path it refuses.
+func refusePath(p string, err error) error {
+	return &PathRefusedError{Path: p, Err: err}
+}
+
 // WriteOp is one file write. BaseSHA empty means "must not exist yet".
 type WriteOp struct {
 	Path, Content, BaseSHA string
@@ -113,7 +130,8 @@ type Applier struct {
 // design.json skeletons; soft validation and the security design's coverage
 // notices become Warnings. Commits are not gated by any of them.
 //
-// Errors: ErrPathInvalid for a request the write rules refuse, the
+// Errors: ErrPathInvalid for a request the write rules refuse (a
+// *PathRefusedError when one path is the cause), the
 // projects lookup's errors (projects.ErrUnknown also when the completions
 // call answers 404 for the project), ErrApplyConflict, or a *RepoError from the engine
 // (wrapping repo.ErrDiskFull, repo.ErrRefNotFastForward after the retries, or
@@ -142,7 +160,7 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 	for _, c := range completions {
 		for _, p := range sortedPaths(c.Files) {
 			if seen[p] {
-				return nil, nil, fmt.Errorf("%w: %s is written by the platform for this dependency and cannot be written or deleted in the same request", ErrPathInvalid, p)
+				return nil, nil, refusePath(p, fmt.Errorf("%w: %s is written by the platform for this dependency and cannot be written or deleted in the same request", ErrPathInvalid, p))
 			}
 		}
 	}
@@ -248,22 +266,22 @@ func validateApply(req ApplyRequest) (map[string]bool, error) {
 	seen := map[string]bool{}
 	for _, w := range req.Writes {
 		if err := validatePath(w.Path); err != nil {
-			return nil, err
+			return nil, refusePath(w.Path, err)
 		}
 		if len(w.Content) > maxFileBytes {
-			return nil, fmt.Errorf("%w: %s exceeds %d bytes", ErrPathInvalid, w.Path, maxFileBytes)
+			return nil, refusePath(w.Path, fmt.Errorf("%w: %s exceeds %d bytes", ErrPathInvalid, w.Path, maxFileBytes))
 		}
 		if seen[w.Path] {
-			return nil, fmt.Errorf("%w: %s appears more than once", ErrPathInvalid, w.Path)
+			return nil, refusePath(w.Path, fmt.Errorf("%w: %s appears more than once", ErrPathInvalid, w.Path))
 		}
 		seen[w.Path] = true
 	}
 	for _, d := range req.Deletes {
 		if err := validatePath(d.Path); err != nil {
-			return nil, err
+			return nil, refusePath(d.Path, err)
 		}
 		if seen[d.Path] {
-			return nil, fmt.Errorf("%w: %s is both written and deleted", ErrPathInvalid, d.Path)
+			return nil, refusePath(d.Path, fmt.Errorf("%w: %s is both written and deleted", ErrPathInvalid, d.Path))
 		}
 		seen[d.Path] = true
 	}

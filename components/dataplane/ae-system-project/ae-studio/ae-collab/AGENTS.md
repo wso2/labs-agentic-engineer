@@ -115,7 +115,12 @@ the document: no other connection holds a room whose load failed.
   the room loaded (no unload) and retries it every 5 s doubling to 60 s while
   nobody is in it, until it lands (then the room unloads), a rejoin or an
   unload, or shutdown, which flushes it itself. A verdict
-  (`FilesDeniedError`) is reported with its message.
+  (`FilesDeniedError`) is reported with its message, except a write-rule
+  refusal of one path (the pod names it on its `path_invalid`: outside
+  `specs/`, over 5 MiB): that change is set aside (not resent until the file
+  changes), the rest of the flush is saved, and every `flush-warnings` restates
+  the path as unsaved while it stays so. A room whose only unsaved changes are
+  refused ones may unload.
 - **One flush per room at a time**: the debounced store, `flush`, the last
   leave, a retry and shutdown queue on the room (`RoomState.flushing`), so a
   later one diffs against the baseline the earlier one left.

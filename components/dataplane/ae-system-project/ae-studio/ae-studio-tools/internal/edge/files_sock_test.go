@@ -457,3 +457,38 @@ func TestFilesSocket_RequestsRunUnderTheBudget(t *testing.T) {
 		t.Fatalf("budget %s must end before ae-collab's 45 s per-call deadline", filesSocketRequestBudget)
 	}
 }
+
+// A write-rule refusal of one path names it, so ae-collab can set that path
+// aside and commit the rest; a refusal of the request as a whole names none.
+func TestFilesSocket_ApplyRefusalNamesThePath(t *testing.T) {
+	h := newSocketHarness(t, map[string]string{"specs/a.md": "a"})
+	big := strings.Repeat("x", (5<<20)+1)
+	cases := []struct{ name, body, path string }{
+		{"outside specs", `{"writes":[{"path":"specs/b.md","content":"b","baseSha":""},{"path":"notes/x.md","content":"x","baseSha":""}],"deletes":[],"message":"m"}`, "notes/x.md"},
+		{"oversize", `{"writes":[{"path":"specs/big.md","content":"` + big + `","baseSha":""}],"deletes":[],"message":"m"}`, "specs/big.md"},
+		{"delete outside specs", `{"writes":[],"deletes":[{"path":"README.md","baseSha":""}],"message":"m"}`, "README.md"},
+		{"written and deleted", `{"writes":[{"path":"specs/a.md","content":"b","baseSha":""}],"deletes":[{"path":"specs/a.md","baseSha":""}],"message":"m"}`, "specs/a.md"},
+		{"empty", `{"writes":[],"deletes":[],"message":"m"}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := h.post("/projects/greeter/apply", c.body)
+			if r.Code != http.StatusBadRequest || problemCode(t, r) != "path_invalid" {
+				t.Fatalf("got %d %s", r.Code, r.Body)
+			}
+			var p struct {
+				Path *string `json:"path"`
+			}
+			if err := json.Unmarshal([]byte(r.Body), &p); err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if p.Path != nil {
+				got = *p.Path
+			}
+			if got != c.path || (c.path == "" && p.Path != nil) {
+				t.Fatalf("path = %v, want %q (body %s)", p.Path, c.path, r.Body)
+			}
+		})
+	}
+}

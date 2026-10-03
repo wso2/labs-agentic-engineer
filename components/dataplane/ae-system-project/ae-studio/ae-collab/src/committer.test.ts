@@ -453,7 +453,7 @@ test("a file the room created and undid during the refetch, also created outside
   assert.equal(fake.file(X), "outside plan", "the outside file stays on origin");
   assert.equal(room.text(X), "outside plan", "and the room gains HEAD's copy");
   assert.deepEqual(sent, []);
-  assert.deepEqual(pendingChanges(room.doc, roomState(room.name)!, true), { writes: [], deletes: [], held: [] });
+  assert.deepEqual(pendingChanges(room.doc, roomState(room.name)!, true), { writes: [], deletes: [], held: [], refused: [] });
 });
 
 // ---------------------------------------------------------------------------
@@ -510,4 +510,68 @@ test("no committer log line carries a room name, a path or content", async () =>
   await flushRoom({ files, log: (l) => lines.push(l) }, room.name, room.doc);
   assert.ok(lines.some((l) => l.msg === "room_flush_committed"));
   assert.doesNotMatch(JSON.stringify(lines), /acme|shop|prd|PRD|specs\//);
+});
+
+// M-4: a path the pod's write rules refuse (named in the 400) is set aside;
+// the room's other edits still commit, every client hears which path was not
+// saved, and the refused content is not resent until it changes.
+test("a path the write rules refuse is reported and set aside; the room's other edits commit", async () => {
+  const fake = await fakeSocket(SEED);
+  const rec = recording(createFilesClient(fake.path));
+  const room = await seededRoom(rec.files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  room.edit("notes/todo.json", '{"not":"a spec"}');
+  const sent: ApplyWarning[][] = [];
+  const deps = { files: rec.files, onWarnings: (w: ApplyWarning[]) => sent.push(w) };
+
+  await flushRoom(deps, room.name, room.doc, true);
+  assert.equal(fake.file(ARCH), '{"v":2}', "the other edit committed");
+  assert.equal(fake.file("notes/todo.json"), undefined);
+  assert.equal(fake.commits().length, 1);
+  assert.deepEqual(
+    sent.at(-1)?.map((w) => w.path),
+    ["notes/todo.json"],
+    "the refused path is reported",
+  );
+  assert.equal(pendingChanges(room.doc, roomState(room.name)!, true).writes.length, 0, "nothing committable is left");
+
+  // The refused content is not resent; a later edit elsewhere commits, and
+  // the refused path is reported again (it is still unsaved).
+  const batches = rec.batches.length;
+  room.edit(PRD, "# PRD\n\nEdited.");
+  await flushRoom(deps, room.name, room.doc, true);
+  assert.equal(rec.batches.length, batches + 1);
+  assert.deepEqual(rec.batches.at(-1)!.writes.map((w) => w.path), [PRD]);
+  assert.deepEqual(sent.at(-1)?.map((w) => w.path), ["notes/todo.json"]);
+
+  // Changed, it is tried again (and refused again: the path is the problem).
+  room.edit("notes/todo.json", '{"still":"not a spec"}');
+  await flushRoom(deps, room.name, room.doc, true);
+  assert.equal(rec.batches.at(-1)!.writes.map((w) => w.path).join(), "notes/todo.json");
+  assert.equal(fake.commits().length, 2);
+});
+
+test("an oversize file is refused by path while a small edit beside it commits", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, "x".repeat((5 << 20) + 1));
+  room.edit(PRD, "# PRD\n\nSmall edit.");
+  const sent: ApplyWarning[][] = [];
+  await flushRoom({ files, onWarnings: (w) => sent.push(w) }, room.name, room.doc, true);
+  assert.match(fake.file(PRD)!, /Small edit\./);
+  assert.equal(fake.file(ARCH), '{"v":1}');
+  assert.deepEqual(sent.at(-1)?.map((w) => w.path), [ARCH]);
+  const message = sent.at(-1)![0]!.message;
+  assert.doesNotMatch(message, /xxxx/, "the warning carries no content");
+});
+
+test("a refusal that names no path is still a verdict for the whole flush", async () => {
+  const fake = await fakeSocket(SEED);
+  const files = createFilesClient(fake.path);
+  const room = await seededRoom(files, "spec-acme-shop", "shop");
+  room.edit(ARCH, '{"v":2}');
+  fake.failNext(400, "path_invalid", "apply");
+  await assert.rejects(flushRoom({ files }, room.name, room.doc, true), FilesDeniedError);
+  assert.equal(pendingChanges(room.doc, roomState(room.name)!, true).writes.length, 1, "nothing set aside");
 });

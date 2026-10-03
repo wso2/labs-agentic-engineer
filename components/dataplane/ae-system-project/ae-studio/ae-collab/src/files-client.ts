@@ -126,12 +126,15 @@ export class ApplyConflictError extends Error {
  * A verdict: any 4xx except 408/425/429 (and except the 409s above). The
  * same call will get the same answer, so it is never tagged transient.
  * `code` is the problem code, or `http_<status>` when the body had none.
+ * `path` is the one path an apply's write rules refused, when the pod named
+ * one (`path_invalid`): the rest of the batch may still be saved.
  */
 export class FilesDeniedError extends Error {
   constructor(
     readonly code: string,
     readonly status: number,
     detail = "",
+    readonly path?: string,
   ) {
     super(`files socket denied (${status} ${code})${detail ? `: ${detail}` : ""}`);
     this.name = "FilesDeniedError";
@@ -200,26 +203,30 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** The problem `code` and `detail`, or `http_<status>` for a non-problem body. */
-function problemOf(reply: Reply): { code: string; detail: string } {
+/**
+ * The problem `code`, `detail` and refused `path`, or `http_<status>` for a
+ * non-problem body.
+ */
+function problemOf(reply: Reply): { code: string; detail: string; path?: string } {
   const body = parseJSON(reply.text);
   if (isRecord(body) && typeof body.code === "string" && body.code) {
     const detail = typeof body.detail === "string" ? body.detail : "";
-    return { code: body.code, detail: detail.slice(0, MAX_DETAIL) };
+    const path = typeof body.path === "string" && body.path ? body.path : undefined;
+    return { code: body.code, detail: detail.slice(0, MAX_DETAIL), ...(path ? { path } : {}) };
   }
   return { code: `http_${reply.status}`, detail: "" };
 }
 
 /** Maps a non-2xx reply to its class (ApplyConflictError is checked by apply). */
 function failure(reply: Reply): FilesDeniedError | FilesUnavailableError {
-  const { code, detail } = problemOf(reply);
+  const { code, detail, path } = problemOf(reply);
   const transient =
     reply.status >= 500 ||
     RETRYABLE_4XX.has(reply.status) ||
     (reply.status === 409 && code === "not_fast_forward");
   return transient
     ? new FilesUnavailableError(code, reply.status, detail)
-    : new FilesDeniedError(code, reply.status, detail);
+    : new FilesDeniedError(code, reply.status, detail, path);
 }
 
 /** A 2xx whose body is not what the contract promises: the pod is broken, not denying. */

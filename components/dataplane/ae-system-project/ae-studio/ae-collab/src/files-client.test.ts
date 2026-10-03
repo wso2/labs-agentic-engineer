@@ -230,3 +230,21 @@ test("not_fast_forward is an outage (retry later), not a conflict", async () => 
     await fake.close();
   }
 });
+
+test("a write-rule refusal carries the one path the pod named", async () => {
+  const fake = await startFakeFilesSocket({ files: {} });
+  try {
+    const err = await createFilesClient(fake.path)
+      .apply("greeter", { writes: [{ path: "notes/a.md", content: "x", baseSha: "" }], deletes: [], message: "m" })
+      .catch((e: unknown) => e);
+    assert.ok(err instanceof FilesDeniedError);
+    assert.equal(err.code, "path_invalid");
+    assert.equal(err.path, "notes/a.md");
+    fake.failNext(400, "path_invalid", "apply");
+    const pathless = await createFilesClient(fake.path).apply("greeter", EMPTY).catch((e: unknown) => e);
+    assert.ok(pathless instanceof FilesDeniedError);
+    assert.equal(pathless.path, undefined);
+  } finally {
+    await fake.close();
+  }
+});

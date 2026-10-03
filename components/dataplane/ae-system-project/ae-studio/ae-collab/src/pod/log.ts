@@ -41,6 +41,7 @@ export interface PodLogLine {
     | "room_flush_committed"
     | "room_flush_held"
     | "room_flush_conflict"
+    | "room_flush_path_refused"
     | "room_flush_failed"
     | "room_final_flush_deferred"
     | "room_shutdown_flush_over_budget";

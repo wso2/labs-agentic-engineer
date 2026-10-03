@@ -27,6 +27,8 @@
 // `disk_full` and `not_fast_forward` included) leaves the baseline where it
 // was, so the next flush retries the same changes. Conflicts are doc-wins over
 // the paths the room changed, bounded and REPORTED (#86 d6); see adoptHead.
+// One path the pod's write rules refuse (named in its 400: outside specs/,
+// over 5 MiB) is set aside and reported, and the rest of the flush is saved.
 
 import type { Document } from "@hocuspocus/server";
 import { deleteDocFile, hasPendingAgentMarks, isMarkdownPath, readDocFile, setDocFile, snapshotDoc } from "@aep/collab-doc";
@@ -54,6 +56,11 @@ const MAX_CONFLICT_RETRIES = 2;
  * accepting.
  */
 export const SHUTDOWN_FLUSH_BUDGET_MS = 8_000;
+
+/** Told about every path the pod's write rules refused, while it stays unsaved. */
+const REFUSED =
+  "AE Studio cannot save this file (a file must be under specs/ and at most 5 MiB); the room's " +
+  "other edits were saved, and this one stays unsaved here until the file is changed or removed.";
 
 /** Told to every path a flush saved over a commit made outside the room. */
 const OVERWRITTEN =
@@ -123,17 +130,20 @@ export function seedBaseline(state: RoomState, doc: Document, files: readonly Sp
  * The diff between the live doc and the room's baseline. Interim flushes
  * (`force: false`) HOLD files with pending agentInsertion marks — unreviewed
  * agent text never reaches git mid-session; the forced session-end flush
- * commits everything (accept-by-default; the serializer strips marks).
+ * commits everything (accept-by-default; the serializer strips marks). A
+ * change the pod's write rules refused is set aside (`refused`) while the
+ * doc still holds exactly what was refused: it is not committable as it is.
  */
 export function pendingChanges(
   doc: Document,
   state: RoomState,
   force: boolean,
-): { writes: ApplyWrite[]; deletes: ApplyDelete[]; held: string[] } {
+): { writes: ApplyWrite[]; deletes: ApplyDelete[]; held: string[]; refused: string[] } {
   const current = snapshotDoc(doc);
   const writes: ApplyWrite[] = [];
   const deletes: ApplyDelete[] = [];
   const held: string[] = [];
+  const refused: string[] = [];
   for (const [path, content] of Object.entries(current)) {
     // A room seeded before the reference exclusion existed may still hold
     // reference-document entries — they never flush (see isReferenceDocPath).
@@ -143,6 +153,10 @@ export function pendingChanges(
     // Emptied md fragments write as empty (top-level fragments cannot be
     // deleted from a Y.Doc); empty NEW files are noise — skip them.
     if (!base && content === "") continue;
+    if (state.refused.get(path) === content) {
+      refused.push(path);
+      continue;
+    }
     if (!force && isMarkdownPath(path) && hasPendingAgentMarks(doc, path)) {
       held.push(path);
       continue;
@@ -157,9 +171,31 @@ export function pendingChanges(
     if (isReferenceDocPath(path)) continue;
     if (isMarkdownPath(path)) continue; // fragments never vanish; guard anyway
     if (base.sha === "") continue; // never reached git — nothing to delete
+    if (state.refused.get(path) === null) {
+      refused.push(path);
+      continue;
+    }
     deletes.push({ path, baseSha: base.sha });
   }
-  return { writes, deletes, held };
+  return { writes, deletes, held, refused };
+}
+
+/**
+ * Sets aside the change to `path` the pod refused, when the batch made one:
+ * true when it did (the flush goes on without it), false for a path the
+ * batch does not hold (the refusal stays a verdict on the whole flush).
+ */
+function setAside(state: RoomState, writes: readonly ApplyWrite[], deletes: readonly ApplyDelete[], path: string): boolean {
+  const write = writes.find((w) => w.path === path);
+  if (write) {
+    state.refused.set(path, write.content);
+    return true;
+  }
+  if (deletes.some((d) => d.path === path)) {
+    state.refused.set(path, null);
+    return true;
+  }
+  return false;
 }
 
 function trailers(state: RoomState): string {
@@ -270,11 +306,17 @@ export function flushRoom(
 
 async function flushOnce(deps: FlushDeps, state: RoomState, doc: Document, force: boolean): Promise<void> {
   const overwritten = new Set<string>();
+  let setAsideNow = false;
+  const refusedWarnings = (paths: readonly string[]): ApplyWarning[] => paths.map((path) => ({ path, message: REFUSED }));
   try {
-    for (let attempt = 0; ; attempt++) {
-      const { writes, deletes, held } = pendingChanges(doc, state, force);
+    for (let attempt = 0; ; ) {
+      const { writes, deletes, held, refused } = pendingChanges(doc, state, force);
       if (held.length > 0) deps.log?.({ msg: "room_flush_held", source: "ae-collab", held: held.length });
-      if (writes.length === 0 && deletes.length === 0) return;
+      if (writes.length === 0 && deletes.length === 0) {
+        // Nothing committable is left; a path set aside by this flush is still news.
+        if (setAsideNow) deps.onWarnings?.(refusedWarnings(refused));
+        return;
+      }
       let outcome;
       try {
         outcome = await deps.files.apply(state.projectName, {
@@ -283,7 +325,15 @@ async function flushOnce(deps: FlushDeps, state: RoomState, doc: Document, force
           message: "collab session" + trailers(state),
         });
       } catch (err) {
+        // One path the write rules refuse must not wedge the room: set it
+        // aside and save the rest. Each pass removes a path, so this ends.
+        if (err instanceof FilesDeniedError && err.path !== undefined && setAside(state, writes, deletes, err.path)) {
+          deps.log?.({ msg: "room_flush_path_refused", source: "ae-collab" });
+          setAsideNow = true;
+          continue;
+        }
         if (!(err instanceof ApplyConflictError) || attempt >= MAX_CONFLICT_RETRIES) throw err;
+        attempt++;
         deps.log?.({ msg: "room_flush_conflict", source: "ae-collab", writes: writes.length, deletes: deletes.length });
         const adopted = adoptHead(doc, state, err.conflicts, await deps.files.bundle(state.projectName));
         for (const path of adopted.overwritten) overwritten.add(path);
@@ -296,10 +346,20 @@ async function flushOnce(deps: FlushDeps, state: RoomState, doc: Document, force
         const sha = shas.get(w.path) ?? "";
         state.baseline.set(w.path, { content: w.content, sha });
         state.committed.add(`${w.path}\0${sha}`);
+        state.refused.delete(w.path);
       }
-      for (const d of deletes) state.baseline.delete(d.path);
+      for (const d of deletes) {
+        state.baseline.delete(d.path);
+        state.refused.delete(d.path);
+      }
       deps.log?.({ msg: "room_flush_committed", source: "ae-collab", writes: writes.length, deletes: deletes.length });
-      deps.onWarnings?.([...outcome.warnings, ...[...overwritten].map((path) => ({ path, message: OVERWRITTEN }))]);
+      deps.onWarnings?.([
+        ...outcome.warnings,
+        ...[...overwritten].map((path) => ({ path, message: OVERWRITTEN })),
+        // Every commit restates what is still unsaved, so an empty list
+        // means nothing is (the console clears its Alert).
+        ...refusedWarnings(refused),
+      ]);
       return;
     }
   } catch (err) {
