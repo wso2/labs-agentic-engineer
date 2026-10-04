@@ -18,7 +18,10 @@ package task
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -242,8 +245,15 @@ func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber in
 	commentsCh := r.oneIssueCommentsAsync(ctx, orgID, projectID, issueNumber)
 
 	issue, err := r.issues.GetIssue(ctx, orgID, projectID, issueNumber)
-	if err != nil || issue == nil {
+	switch {
+	case errors.Is(err, sourcecontrol.ErrIssueNotFound), sourcecontrol.IsHTTPStatus(err, http.StatusNotFound),
+		err == nil && issue == nil:
 		return nil, ErrTaskNotFound
+	case err != nil:
+		// Not a verdict on the issue: AE Studio or GitHub could not answer,
+		// and the edge says which (503 / 409 / 429) rather than a 404 that
+		// would tell the reader the Task is gone.
+		return nil, fmt.Errorf("get issue %d: %w", issueNumber, err)
 	}
 
 	execs, err := r.execs.LatestPerKindScoped(ctx, orgID, repoFullName, issueNumber)

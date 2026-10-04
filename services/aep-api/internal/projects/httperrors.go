@@ -90,7 +90,7 @@ func MapProjectError(err error) error {
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}
-	return apierr.Internal("internal error")
+	return apierr.WithCause(apierr.Internal("internal error"), err)
 }
 
 // paymentRequiredMessage strips the "payment required: " sentinel prefix so the
@@ -124,7 +124,7 @@ func MapComponentError(err error, internalMsg string) error {
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}
-	return apierr.Internal(internalMsg)
+	return apierr.WithCause(apierr.Internal(internalMsg), err)
 }
 
 // errFromStatus maps a sentinel-classified HTTP status (e.g. an OpenChoreo

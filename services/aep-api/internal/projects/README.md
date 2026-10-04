@@ -181,11 +181,12 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
-- **Everything after the OC project + repo is best-effort.** Skills provisioning, the webhook, and the
-  project descriptor are each logged-and-continued on failure: none of them may destroy a creation the
-  user already committed to. The one exception stays the repo-NAME conflict, which can never succeed on
-  retry and so compensates the project away and fails. A missing descriptor costs the user one question
-  from the `/start` skill, nothing more.
+- **Everything after the OC project + repo is best-effort; the repo is not.** Skills provisioning, the
+  webhook, and the project descriptor are each logged-and-continued on failure: none of them may destroy
+  a creation the user already committed to. A failed repo create compensates the project away and fails
+  the create with the repo error unchanged (05 §7): a name conflict reads as one, and an AE Studio answer
+  reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`). A missing
+  descriptor costs the user one question from the `/start` skill, nothing more.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal
@@ -195,8 +196,11 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   four sources concurrently — spec from a fetch-free local-mirror snapshot, build from the newest
   `milestone_runs` row (a version's delivery IS its run), deploy from the project's `development`
   USER-COMPONENT release bindings, and the newest `agent_turns` row — with no GitHub API, Temporal
-  query, or origin fetch. Any source failure fails the whole read (the console keeps last-good); the
-  one carve-out: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500.
+  query, or origin fetch. Any source failure fails the whole read (the console keeps last-good), with
+  two carve-outs: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500;
+  and the org's AE Studio being absent, unavailable or misconfigured (the snapshot, the deploy count or
+  the design-staleness baseline) answers 200 with `spec.availability = "unavailable"`, the git-derived
+  spec facts and the flat hasSpec/hasDesign/specStatus/phase unset, build and deploy intact (05 §6).
 - **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
   and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a
   project's life, git says the project is untouched. The newest turn row says otherwise, and folds to three

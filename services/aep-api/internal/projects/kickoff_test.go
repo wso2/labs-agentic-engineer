@@ -116,14 +116,15 @@ func TestCreateProject_HoldsTheKickoffWhileReferencesAreComing(t *testing.T) {
 
 // The kickoff hangs off the repo branch, after the descriptor commit that
 // carries the idea — so a project whose repo never provisioned has nothing to
-// read the idea from and nothing to interview against.
+// read the idea from and nothing to interview against. (The create itself
+// fails and compensates: TestCreateProject_RepoFailureCompensates.)
 func TestCreateProject_NoKickoffWithoutARepo(t *testing.T) {
 	t.Parallel()
 	k := &fakeKickoff{}
 	svc := createSvcWithKickoff(t, k, &fakeDescriptorWriter{}, errors.New("github is down"))
 
-	if _, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"}); err != nil {
-		t.Fatalf("a failed repo provision must not fail the create: %v", err)
+	if _, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"}); err == nil {
+		t.Fatal("a failed repo provision must fail the create")
 	}
 	if calls, _, _ := k.seen(); calls != 0 {
 		t.Fatalf("kickoffs = %d, want 0 when the repo never provisioned", calls)

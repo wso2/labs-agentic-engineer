@@ -1087,6 +1087,24 @@ func (e SkillUpdateState) Valid() bool {
 	}
 }
 
+// Defines values for SpecStageAvailability.
+const (
+	SpecStageAvailabilityAvailable   SpecStageAvailability = "available"
+	SpecStageAvailabilityUnavailable SpecStageAvailability = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the SpecStageAvailability enum.
+func (e SpecStageAvailability) Valid() bool {
+	switch e {
+	case SpecStageAvailabilityAvailable:
+		return true
+	case SpecStageAvailabilityUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskDetailExecutorClass.
 const (
 	TaskDetailExecutorClassCoding     TaskDetailExecutorClass = "coding"
@@ -2260,7 +2278,7 @@ type ProjectStatus struct {
 	HasSpec   bool        `json:"hasSpec"`
 	HasTasks  bool        `json:"hasTasks"`
 
-	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec.
+	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec. "" on a ready repo whose spec facts are unavailable (spec.availability).
 	Phase string `json:"phase"`
 
 	// RepoErrorMessage Set when phase is repo-error.
@@ -2973,6 +2991,9 @@ type SpecStage struct {
 	// Agent How the project's agent history stands (#562), derived from the newest finished `agent_turns` row (the finished-turn ledger). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `failed` — the newest turn ended in failure and none has finished since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Whether a turn is running right now is the org's AE Studio pod's to say (its active-turn read), not this field's.
 	Agent string `json:"agent"`
 
+	// Availability Whether the git-derived facts below could be read (05 §6). `unavailable` — the org's AE Studio could not answer for the repository (GitHub not connected, AE Studio restarting or misconfigured): exists, version, dirty, design and designOutdated are then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus / phase fields are left unset. The build and deploy stages and `agent` are unaffected, and the poll still answers 200. The console renders the spec leg as "Spec status unavailable".
+	Availability SpecStageAvailability `json:"availability"`
+
 	// Design Design files exist for the spec (gates the Spec view's design button).
 	Design bool `json:"design"`
 
@@ -2990,6 +3011,9 @@ type SpecStage struct {
 	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
+
+// SpecStageAvailability Whether the git-derived facts below could be read (05 §6). `unavailable` — the org's AE Studio could not answer for the repository (GitHub not connected, AE Studio restarting or misconfigured): exists, version, dirty, design and designOutdated are then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus / phase fields are left unset. The build and deploy stages and `agent` are unaffected, and the poll still answers 200. The console renders the spec leg as "Spec status unavailable".
+type SpecStageAvailability string
 
 // StatusMsg defines model for StatusMsg.
 type StatusMsg struct {

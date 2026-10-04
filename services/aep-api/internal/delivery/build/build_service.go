@@ -42,14 +42,21 @@ import (
 // edge-mapped failures; the api layer (handlers_build.go) copies it onto the
 // flat envelope. Neutral on purpose: this feature must not depend on an HTTP
 // framework. Details carries the spec gate's per-file breakdown
-// (field=path, message=CODE: msg).
+// (field=path, message=CODE: msg). Err, on a server-side failure, is the
+// failure behind it: never on the wire, it keeps the chain intact so the edge
+// can still recognise an AE Studio answer (unavailable, not connected) the
+// git or GitHub call returned.
 type EdgeError struct {
 	Status  int
 	Message string
 	Details []gen.ErrorDetail
+	Err     error
 }
 
 func (e *EdgeError) Error() string { return e.Message }
+
+// Unwrap exposes Err to errors.Is / errors.As.
+func (e *EdgeError) Unwrap() error { return e.Err }
 
 // ErrBuildAlreadyRunning is the "a dev run is already live for this project"
 // sentinel the core build sequence returns. The HTTP edge maps it to a 409; the
@@ -267,7 +274,7 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 		}
 		prov, pfails, perr := s.coord.BuildProvisionInputs(ctx, orgID, projectID, inputs)
 		if perr != nil {
-			return "", nil, &EdgeError{Status: 502, Message: "prepare inputs: " + perr.Error()}
+			return "", nil, &EdgeError{Status: 502, Message: "prepare inputs: " + perr.Error(), Err: perr}
 		}
 		if len(pfails) > 0 {
 			return "", pfails, nil
@@ -283,7 +290,7 @@ func (s *Service) Run(ctx context.Context, orgID, projectID string, inputs []Bui
 	// BEFORE the tag-cut so an unresolved external dependency never reaches it.
 	gateFailures, gerr := s.dependencyGateFailures(ctx, orgID, projectID)
 	if gerr != nil {
-		return "", nil, &EdgeError{Status: 500, Message: "check dependency gate: " + gerr.Error()}
+		return "", nil, &EdgeError{Status: 500, Message: "check dependency gate: " + gerr.Error(), Err: gerr}
 	}
 	if len(gateFailures) > 0 {
 		return "", gateFailures, nil
@@ -379,7 +386,7 @@ func mapPreTagError(err error) error {
 	case errors.Is(err, ErrResourceCatalogUnavailable):
 		return &EdgeError{Status: 503, Message: err.Error()}
 	default:
-		return &EdgeError{Status: 500, Message: "apply build inputs: " + err.Error()}
+		return &EdgeError{Status: 500, Message: "apply build inputs: " + err.Error(), Err: err}
 	}
 }
 
@@ -410,6 +417,6 @@ func mapTagError(err error) error {
 	case errors.Is(err, spec.ErrVersionNameInvalid):
 		return &EdgeError{Status: 400, Message: err.Error()}
 	default:
-		return &EdgeError{Status: 500, Message: "tag spec: " + err.Error()}
+		return &EdgeError{Status: 500, Message: "tag spec: " + err.Error(), Err: err}
 	}
 }

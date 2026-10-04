@@ -471,24 +471,35 @@ func TestCreateProject_OCErrorShortCircuits(t *testing.T) {
 	}
 }
 
-func TestCreateProject_RepoFailureIsBestEffort(t *testing.T) {
+// A failed repo create stops the project create and compensates the OC
+// project (05 §7), with the repo error unchanged so the edge can speak for an
+// AE Studio answer (409 github_not_connected / 503 ae_studio_unavailable).
+func TestCreateProject_RepoFailureCompensates(t *testing.T) {
 	t.Parallel()
+	deleted := 0
 	oc := &ocmocks.ProjectClientMock{
 		CreateProjectFunc: func(_ context.Context, _ string, req *gen.CreateProjectRequest) (*gen.Project, error) {
 			return &gen.Project{Name: req.Name}, nil
 		},
+		DeleteProjectFunc: func(context.Context, string, string) error {
+			deleted++
+			return nil
+		},
 	}
 	repoSvc := &fakeRepoSvc{
 		CreateRepoFunc: func(context.Context, string, string, string, string) (*sourcecontrol.GitRepository, error) {
-			return nil, errors.New("github down")
+			return nil, fmt.Errorf("create github repo: %w", sourcecontrol.ErrAEStudioUnavailable)
 		},
 	}
 	webhooks := &fakeWebhookSvc{}
 	svc := NewProjectService(oc, repoSvc, webhooks, nil, nil)
 
 	p, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"})
-	if err != nil || p == nil {
-		t.Fatalf("repo provisioning failure must not fail project creation: p=%v err=%v", p, err)
+	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) || p != nil {
+		t.Fatalf("a failed repo create must fail the project create with its error: p=%v err=%v", p, err)
+	}
+	if deleted != 1 {
+		t.Fatalf("compensations = %d, want 1", deleted)
 	}
 	if webhooks.calls != 0 {
 		t.Fatalf("webhook must not be registered when repo creation failed, got %d calls", webhooks.calls)
@@ -976,6 +987,8 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 				Version: tc.fx.snap.SpecVersion,
 				Dirty:   tc.fx.snap.SpecDirty,
 				Design:  tc.fx.snap.HasDesign,
+				// A snapshot that read is the spec facts available.
+				Availability: gen.SpecStageAvailabilityAvailable,
 			}
 			if st.Spec != want {
 				t.Errorf("spec stage = %+v, want %+v", st.Spec, want)

@@ -5820,7 +5820,8 @@ components:
             Repo and artifact rungs only: no-repo, repo-cloning, repo-error,
             prompt (no spec), spec (spec, no design), tasks (both). "tasks" is
             terminal — delivery state lives in the build and deploy aggregates,
-            which is what a caller should render past the spec.
+            which is what a caller should render past the spec. "" on a ready
+            repo whose spec facts are unavailable (spec.availability).
           type: string
         repoErrorMessage:
           description: Set when phase is repo-error.
@@ -7381,6 +7382,19 @@ components:
             and offering to restart it would supersede a live interview. Whether a turn is running
             right now is the org's AE Studio pod's to say (its active-turn read), not this field's.
           type: string
+        availability:
+          description: >-
+            Whether the git-derived facts below could be read (05 §6). `unavailable` — the org's
+            AE Studio could not answer for the repository (GitHub not connected, AE Studio
+            restarting or misconfigured): exists, version, dirty, design and designOutdated are
+            then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus /
+            phase fields are left unset. The build and deploy stages and `agent` are unaffected,
+            and the poll still answers 200. The console renders the spec leg as "Spec status
+            unavailable".
+          enum:
+          - available
+          - unavailable
+          type: string
         design:
           description: Design files exist for the spec (gates the Spec view's design button).
           type: boolean
@@ -7415,6 +7429,7 @@ components:
       - dirty
       - design
       - agent
+      - availability
       type: object
     StatusMsg:
       additionalProperties: false

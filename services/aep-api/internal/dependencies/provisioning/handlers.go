@@ -317,7 +317,7 @@ func mapProvisionError(err error) error {
 	case errors.Is(err, dependencies.ErrProvisionFailed):
 		return apierr.BadGateway(err.Error())
 	}
-	return apierr.Internal("provisioning failed")
+	return apierr.WithCause(apierr.Internal("provisioning failed"), err)
 }
 
 func toExternalResourceDTOs(views []ExternalResourceView) []gen.ExternalResourceDTO {

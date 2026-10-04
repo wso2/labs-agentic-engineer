@@ -201,21 +201,26 @@ func TestPutProjectReferences_ABrokenUploadAbortsThePodUpload(t *testing.T) {
 }
 
 // What the pod's refusals mean to the caller. No kickoff fires on any of them.
+// The AE Studio answers are not this slice's to map (Q-9): they leave it with
+// the sentinel in the chain, and the edge's classifier gives them their
+// status, code and Retry-After (edge TestGitBackedOps_MapAEStudioErrors).
 func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
 	cases := []struct {
 		name       string
 		err        error
 		wantStatus int
 		wantCode   string
+		// wantSentinel: an AE Studio answer the edge speaks for.
+		wantSentinel error
 	}{
-		{"rejected", fmt.Errorf("%w: x.exe: not an allowed type", sourcecontrol.ErrReferenceRejected), http.StatusBadRequest, apierr.CodeBadRequest},
-		// C3: an operator fault, not a blip: 503 with its own code and no Retry-After.
-		{"misconfigured", sourcecontrol.ErrAEStudioMisconfigured, http.StatusServiceUnavailable, "ae_studio_misconfigured"},
-		{"unavailable", sourcecontrol.ErrAEStudioUnavailable, http.StatusServiceUnavailable, "ae_studio_unavailable"},
-		{"absent", sourcecontrol.ErrAEStudioAbsent, http.StatusConflict, "github_not_connected"},
-		{"too large", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusRequestEntityTooLarge}, http.StatusRequestEntityTooLarge, "request_too_large"},
-		{"owner not allowed", fmt.Errorf("%w (put-repo-references)", sourcecontrol.ErrOwnerNotAllowed), http.StatusBadGateway, apierr.CodeBadGateway},
-		{"anything else", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusBadRequest, Code: "validation_failed"}, http.StatusBadGateway, apierr.CodeBadGateway},
+		{name: "rejected", err: fmt.Errorf("%w: x.exe: not an allowed type", sourcecontrol.ErrReferenceRejected), wantStatus: http.StatusBadRequest, wantCode: apierr.CodeBadRequest},
+		{name: "misconfigured", err: sourcecontrol.ErrAEStudioMisconfigured, wantSentinel: sourcecontrol.ErrAEStudioMisconfigured},
+		{name: "unavailable", err: sourcecontrol.ErrAEStudioUnavailable, wantSentinel: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "absent", err: sourcecontrol.ErrAEStudioAbsent, wantSentinel: sourcecontrol.ErrAEStudioAbsent},
+		{name: "too large", err: &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusRequestEntityTooLarge}, wantStatus: http.StatusRequestEntityTooLarge, wantCode: "request_too_large"},
+		// Q-8: the edge answers 409 owner_not_allowed, no longer a 502 here.
+		{name: "owner not allowed", err: fmt.Errorf("%w (put-repo-references)", sourcecontrol.ErrOwnerNotAllowed), wantSentinel: sourcecontrol.ErrOwnerNotAllowed},
+		{name: "anything else", err: &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusBadRequest, Code: "validation_failed"}, wantStatus: http.StatusBadGateway, wantCode: apierr.CodeBadGateway},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -225,9 +230,16 @@ func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
 			h := NewHandler(f, memRepos(t, "default", "p", "https://github.com/acme/greeter"), kick)
 
 			_, err := h.PutProjectReferences(tenantCtx("default"), multipartRequest(t, map[string][]byte{"a.md": []byte("a")}))
-			var ae *apierr.Error
-			if !errors.As(err, &ae) || ae.Status != tc.wantStatus || ae.Code != tc.wantCode {
-				t.Fatalf("err = %#v, want %d %s", err, tc.wantStatus, tc.wantCode)
+			if tc.wantSentinel != nil {
+				var ae *apierr.Error
+				if !errors.Is(err, tc.wantSentinel) || (errors.As(err, &ae) && ae.Status < http.StatusInternalServerError) {
+					t.Fatalf("err = %#v, want %v kept in the chain behind no 4xx verdict", err, tc.wantSentinel)
+				}
+			} else {
+				var ae *apierr.Error
+				if !errors.As(err, &ae) || ae.Status != tc.wantStatus || ae.Code != tc.wantCode {
+					t.Fatalf("err = %#v, want %d %s", err, tc.wantStatus, tc.wantCode)
+				}
 			}
 			if kick.calls != 0 {
 				t.Fatal("a refused upload must not fire the kickoff")

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
@@ -69,14 +70,35 @@ func writeErrorEnvelope(w http.ResponseWriter, status int, code, msg string, det
 // writeResponseError is the strict handler's ResponseErrorHandlerFunc: a typed
 // *apiError writes its own status/code; anything else is an unclassified
 // failure and becomes an opaque 500 (never leaking the internal cause).
+//
+// Before either, an AE Studio answer anywhere in the chain speaks for itself
+// (classifyAEStudio) — unless a slice already gave the request a 4xx verdict
+// of its own, which stands. A slice's 5xx fallback carries its cause
+// (apierr.WithCause), so "internal error" never hides a 503 or a 409.
 func writeResponseError(w http.ResponseWriter, r *http.Request, err error) {
 	var ae *apiError
-	if errors.As(err, &ae) {
-		writeErrorEnvelope(w, ae.Status, ae.Code, ae.Message, ae.Details)
+	typed := errors.As(err, &ae)
+	if !typed || ae.Status >= http.StatusInternalServerError {
+		if c := classifyAEStudio(err); c != nil {
+			slog.WarnContext(r.Context(), "ae studio answer", "path", r.URL.Path, "status", c.Status, "code", c.Code)
+			writeAPIError(w, c)
+			return
+		}
+	}
+	if typed {
+		writeAPIError(w, ae)
 		return
 	}
 	slog.ErrorContext(r.Context(), "unclassified handler error", "path", r.URL.Path, "err", err)
 	writeErrorEnvelope(w, http.StatusInternalServerError, CodeInternal, "internal error", nil)
+}
+
+// writeAPIError writes a typed error, with its Retry-After when it has one.
+func writeAPIError(w http.ResponseWriter, ae *apiError) {
+	if ae.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(ae.RetryAfter))
+	}
+	writeErrorEnvelope(w, ae.Status, ae.Code, ae.Message, ae.Details)
 }
 
 // writeRequestError is the strict handler's RequestErrorHandlerFunc and the

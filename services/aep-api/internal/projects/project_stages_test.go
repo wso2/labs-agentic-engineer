@@ -86,7 +86,7 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 	}
 	st := mustStatus(t, fx)
 
-	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true}); st.Spec != want {
+	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true, Availability: gen.SpecStageAvailabilityAvailable}); st.Spec != want {
 		t.Errorf("spec = %+v, want %+v", st.Spec, want)
 	}
 

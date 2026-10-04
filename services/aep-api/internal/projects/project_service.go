@@ -312,7 +312,7 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	// promotes through, before anything else is attached to it.
 	//
 	// FATAL, and compensating — the only other failure in this function that is
-	// (the repo-name conflict below). Both share a shape: retrying the create
+	// (the repo provisioning failure below). Both share a shape: retrying the create
 	// cannot fix them, because OpenChoreo now answers 409. Leaving the project
 	// in place instead would leave a project that looks healthy in every status
 	// it reports and cannot deploy a single component.
@@ -374,89 +374,86 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	if s.repoSvc != nil {
 		repoInfo, createErr := s.repoSvc.CreateRepo(ctx, orgName, project.Name, req.Name, req.RepoName)
 		if createErr != nil {
-			// A repo name that already exists — user-chosen or derived from
-			// the project name — can never succeed on retry: compensate the
-			// OC project away and fail the create so the user picks another
-			// name. Every other repo failure stays best-effort (clone happens
-			// async and can be retried).
-			if sourcecontrol.IsRepoNameConflict(createErr) {
-				s.compensateCreate(ctx, orgName, project.Name, "repo name conflict")
-				return nil, createErr
+			// Any repo failure stops the create and compensates the OC
+			// project away (05 §7): a project without its repository has
+			// nothing to hold its spec, and nothing repairs it later. The
+			// error is returned unchanged, so a name conflict still reads as
+			// one (the user picks another name) and an AE Studio answer —
+			// GitHub not connected, AE Studio restarting — reaches the edge
+			// that speaks for it (409 / 503).
+			s.compensateCreate(ctx, orgName, project.Name, "repo provisioning failure")
+			return nil, createErr
+		}
+		// Build credentials are now pre-staged per WorkflowRun as a K8s
+		// Secret named `<workflowRunName>-git-secret` in
+		// workflows-<orgID> immediately before each dispatch — see
+		// docs/design/build-credential-injection.md. Project creation
+		// no longer participates in any secret provisioning;
+		// OcSecretRefName is unused on new flows.
+		if repoInfo == nil {
+			slog.ErrorContext(ctx, "nil repoInfo on CreateRepo", "project", project.Name)
+		}
+		// Register the per-repo webhook so the BFF starts receiving events
+		// (pull_request, push, issue_comment) on this repo. Best-effort.
+		if s.webhookSvc != nil {
+			if _, hookErr := s.webhookSvc.Register(ctx, orgName, project.Name); hookErr != nil {
+				slog.ErrorContext(ctx, "failed to register webhook on repo",
+					"project", project.Name, "error", hookErr)
 			}
-			slog.ErrorContext(ctx, "failed to provision repo", "project", project.Name, "error", createErr)
-			// Don't fail project creation — clone happens async and can be retried.
-		} else {
-			// Build credentials are now pre-staged per WorkflowRun as a K8s
-			// Secret named `<workflowRunName>-git-secret` in
-			// workflows-<orgID> immediately before each dispatch — see
-			// docs/design/build-credential-injection.md. Project creation
-			// no longer participates in any secret provisioning;
-			// OcSecretRefName is unused on new flows.
-			if repoInfo == nil {
-				slog.ErrorContext(ctx, "nil repoInfo on CreateRepo", "project", project.Name)
+		}
+		// Stamp the project descriptor. This is the ONLY durable copy of
+		// the idea the user typed — it is what the /start flow reads back
+		// to generate requirements from, on any device and any client.
+		// Written even with an empty prompt: the file is also the marker
+		// that says "an Agentic Engineer project lives here".
+		//
+		// Best-effort, like every other post-create step above: a write
+		// failure must not destroy a creation the user already committed
+		// to, and /start degrades by asking for the idea instead.
+		if s.descriptors != nil {
+			if derr := s.descriptors.WriteDescriptor(ctx, orgName, project.Name, project.Name, req.Prompt); derr != nil {
+				slog.ErrorContext(ctx, "failed to write project descriptor (project usable; /start will ask for the idea)",
+					"project", project.Name, "error", derr)
 			}
-			// Register the per-repo webhook so the BFF starts receiving events
-			// (pull_request, push, issue_comment) on this repo. Best-effort.
-			if s.webhookSvc != nil {
-				if _, hookErr := s.webhookSvc.Register(ctx, orgName, project.Name); hookErr != nil {
-					slog.ErrorContext(ctx, "failed to register webhook on repo",
-						"project", project.Name, "error", hookErr)
-				}
-			}
-			// Stamp the project descriptor. This is the ONLY durable copy of
-			// the idea the user typed — it is what the /start flow reads back
-			// to generate requirements from, on any device and any client.
-			// Written even with an empty prompt: the file is also the marker
-			// that says "an Agentic Engineer project lives here".
-			//
-			// Best-effort, like every other post-create step above: a write
-			// failure must not destroy a creation the user already committed
-			// to, and /start degrades by asking for the idea instead.
-			if s.descriptors != nil {
-				if derr := s.descriptors.WriteDescriptor(ctx, orgName, project.Name, project.Name, req.Prompt); derr != nil {
-					slog.ErrorContext(ctx, "failed to write project descriptor (project usable; /start will ask for the idea)",
-						"project", project.Name, "error", derr)
-				}
-			}
+		}
 
-			// Seed `.claude/skills/` so a clone carries the org's coding
-			// guidance before any design or task exists. ASYNC for the same
-			// reason the skills-repo provisioning above is: this may have to
-			// create the org repo on first touch (its read path provisions
-			// lazily), and GitHub repo creation must not sit in the create
-			// latency the user waits on. Best-effort — every later refresh at
-			// design save and at dispatch is diff-first, so a project that
-			// misses this seed heals on its first build.
-			if s.skillMirrorSvc != nil {
-				mirror, projectName := s.skillMirrorSvc, project.Name
-				async.Go(context.Background(), "project skills seed", func(context.Context) {
-					bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					if merr := mirror.SyncProjectSkills(bg, orgName, projectName); merr != nil {
-						slog.WarnContext(bg, "skills: project mirror seed failed (heals on the next refresh)",
-							"org", orgName, "project", projectName, "error", merr)
-					}
-				})
-			}
+		// Seed `.claude/skills/` so a clone carries the org's coding
+		// guidance before any design or task exists. ASYNC for the same
+		// reason the skills-repo provisioning above is: this may have to
+		// create the org repo on first touch (its read path provisions
+		// lazily), and GitHub repo creation must not sit in the create
+		// latency the user waits on. Best-effort — every later refresh at
+		// design save and at dispatch is diff-first, so a project that
+		// misses this seed heals on its first build.
+		if s.skillMirrorSvc != nil {
+			mirror, projectName := s.skillMirrorSvc, project.Name
+			async.Go(context.Background(), "project skills seed", func(context.Context) {
+				bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				if merr := mirror.SyncProjectSkills(bg, orgName, projectName); merr != nil {
+					slog.WarnContext(bg, "skills: project mirror seed failed (heals on the next refresh)",
+						"org", orgName, "project", projectName, "error", merr)
+				}
+			})
+		}
 
-			// The journey starts itself (#562): fire `/start` rather than
-			// land the user on a dashboard asking them to press a button for
-			// work the platform can already do. AFTER the descriptor commit
-			// above — that file is where the turn reads the idea from — and
-			// BEFORE this call returns, so the client arrives at a project
-			// whose turn already exists rather than one that looks unstarted
-			// for the couple of seconds the dispatch takes.
-			//
-			// HELD when the caller says reference documents are still coming:
-			// they are the primary brief, and a kickoff dispatched before the
-			// upload would interview the user about a document the agent
-			// never saw. The references call fires it instead. An abandoned
-			// upload therefore leaves the project un-started, which the spec
-			// card offers as a CTA — the honest outcome, and better than an
-			// interview conducted blind.
-			if s.kickoff != nil && !req.ReferencesPending {
-				s.kickoff.Kickoff(ctx, orgName, project.Name)
-			}
+		// The journey starts itself (#562): fire `/start` rather than
+		// land the user on a dashboard asking them to press a button for
+		// work the platform can already do. AFTER the descriptor commit
+		// above — that file is where the turn reads the idea from — and
+		// BEFORE this call returns, so the client arrives at a project
+		// whose turn already exists rather than one that looks unstarted
+		// for the couple of seconds the dispatch takes.
+		//
+		// HELD when the caller says reference documents are still coming:
+		// they are the primary brief, and a kickoff dispatched before the
+		// upload would interview the user about a document the agent
+		// never saw. The references call fires it instead. An abandoned
+		// upload therefore leaves the project un-started, which the spec
+		// card offers as a CTA — the honest outcome, and better than an
+		// interview conducted blind.
+		if s.kickoff != nil && !req.ReferencesPending {
+			s.kickoff.Kickoff(ctx, orgName, project.Name)
 		}
 	}
 

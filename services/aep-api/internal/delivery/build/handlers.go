@@ -94,7 +94,7 @@ func (h *Handler) ListProjectBuilds(ctx context.Context, request gen.ListProject
 	org := tenant.BoundOrgFromContext(ctx)
 	list, err := h.svc.List(ctx, org, request.ProjectName)
 	if err != nil {
-		return nil, apierr.Internal("list builds")
+		return nil, apierr.WithCause(apierr.Internal("list builds"), err)
 	}
 	return gen.ListProjectBuilds200JSONResponse(toBuildList(list)), nil
 }
@@ -109,7 +109,7 @@ func (h *Handler) GetBuildPreflight(ctx context.Context, request gen.GetBuildPre
 	}
 	pf, err := h.preflight.Preflight(ctx, org, request.ProjectName)
 	if err != nil {
-		return nil, apierr.Internal("compute build preflight: " + err.Error())
+		return nil, apierr.WithCause(apierr.Internal("compute build preflight: "+err.Error()), err)
 	}
 	return gen.GetBuildPreflight200JSONResponse(toBuildPreflight(pf)), nil
 }
@@ -128,19 +128,21 @@ func mapBuildRunError(err error) error {
 	if errors.Is(err, ErrValidationRunLive) {
 		return apierr.Conflict(ErrValidationRunLive.Error())
 	}
+	// A server-side answer keeps err as its cause (apierr.WithCause): the edge
+	// speaks for an AE Studio failure behind it.
 	var ee *EdgeError
 	if !errors.As(err, &ee) {
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 	switch ee.Status {
 	case http.StatusBadRequest:
 		return apierr.New(http.StatusBadRequest, "validation_failed", ee.Message, ee.Details)
 	case http.StatusServiceUnavailable:
-		return apierr.ServiceUnavailable(ee.Message)
+		return apierr.WithCause(apierr.ServiceUnavailable(ee.Message), err)
 	case http.StatusBadGateway:
-		return apierr.BadGateway(ee.Message)
+		return apierr.WithCause(apierr.BadGateway(ee.Message), err)
 	default:
-		return errFromStatus(ee.Status, ee.Message)
+		return apierr.WithCause(errFromStatus(ee.Status, ee.Message), err)
 	}
 }
 

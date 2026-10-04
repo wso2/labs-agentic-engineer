@@ -238,7 +238,7 @@ func mapRunError(err error) error {
 		// Nothing was cancelled and the caller may retry — a 503, not a 500.
 		return apierr.ServiceUnavailable("the workflow engine is unavailable — nothing was cancelled")
 	default:
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 }
 

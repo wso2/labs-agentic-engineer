@@ -373,5 +373,5 @@ func mapSkillError(err error) error {
 	case errors.Is(err, spec.ErrSkillNotFound):
 		return apierr.NotFound("skill not found")
 	}
-	return apierr.Internal("internal error")
+	return apierr.WithCause(apierr.Internal("internal error"), err)
 }

@@ -197,11 +197,18 @@ func (s *SkillService) List(ctx context.Context, orgID string) ([]Skill, error) 
 // (name, kind, description, ...). Platform skills list READ-ONLY (the page
 // shows the generation-flow guidance for inspection); org + imported are
 // editable and deletable per SkillEditable/SkillDeletable — both are pure
-// kind checks; Enabled comes straight through from catalog()'s own
-// manifest cross-reference (loadCatalog), so a single catalog() read still
+// kind checks; Enabled comes straight through from the catalog's own
+// manifest cross-reference (loadCatalog), so a single catalog read still
 // covers everything this projection needs.
+//
+// Unlike catalog(), a read failure is RETURNED: the skills page is a person
+// asking, and an empty list would tell them their library is gone when AE
+// Studio is only restarting or GitHub is not connected (05 §5).
 func (s *SkillService) ListSummaries(ctx context.Context, orgID string) ([]SkillSummary, error) {
-	skills := s.catalog(ctx, orgID)
+	skills, err := s.readCatalog(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]SkillSummary, 0, len(skills))
 	for _, sk := range skills {
 		out = append(out, SkillSummary{
@@ -241,20 +248,29 @@ func (s *SkillService) RepoWebURL(ctx context.Context, orgID string) string {
 // any git/provisioning failure so a transient outage never fails a design/task
 // run. §12.
 func (s *SkillService) catalog(ctx context.Context, orgID string) []Skill {
-	if !s.configured() || orgID == "" {
-		return nil
-	}
-	repo, err := s.ensureSkillsRepo(ctx, orgID)
+	skills, err := s.readCatalog(ctx, orgID)
 	if err != nil {
-		slog.WarnContext(ctx, "skills: ensure repo failed — serving empty", "org", orgID, "error", err)
-		return nil
-	}
-	skills, err := s.loadCatalog(ctx, orgID, repo)
-	if err != nil {
-		slog.WarnContext(ctx, "skills: load catalog failed — serving empty", "org", orgID, "error", err)
+		slog.WarnContext(ctx, "skills: read catalog failed — serving empty", "org", orgID, "error", err)
 		return nil
 	}
 	return skills
+}
+
+// readCatalog is the org's skills at the branch tip, or the failure that
+// prevented the read. An unconfigured store or an empty org reads as empty.
+func (s *SkillService) readCatalog(ctx context.Context, orgID string) ([]Skill, error) {
+	if !s.configured() || orgID == "" {
+		return nil, nil
+	}
+	repo, err := s.ensureSkillsRepo(ctx, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("ensure skills repo: %w", err)
+	}
+	skills, err := s.loadCatalog(ctx, orgID, repo)
+	if err != nil {
+		return nil, fmt.Errorf("load skills catalog: %w", err)
+	}
+	return skills, nil
 }
 
 // loadEntriesAndManifest reads skills/ at the fetched branch tip through the

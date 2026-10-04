@@ -359,6 +359,25 @@ func TestClaimVersion_AdmissionRaceLost_IsAConflict(t *testing.T) {
 	}
 }
 
+// From 4.13: AE Studio failing the milestone mint is still a 502 to the build
+// slice, but the sentinel rides it (EdgeError.Err) and survives the handler's
+// mapping (apierr.WithCause), so the edge answers 503 / 409 rather than 502.
+func TestClaimVersion_AEStudioFailureKeepsItsSentinel(t *testing.T) {
+	for _, sentinel := range []error{sourcecontrol.ErrAEStudioAbsent, sourcecontrol.ErrAEStudioUnavailable} {
+		h := newPlanHarness(t)
+		h.pod.FailOrg("acme", sentinel)
+
+		_, err := h.svc.claimVersion(context.Background(), "acme", "shop", spec.BuildScope{Tag: "v3"})
+		var ee *EdgeError
+		if !errors.As(err, &ee) || ee.Status != 502 || !errors.Is(err, sentinel) {
+			t.Fatalf("err = %v, want a 502 EdgeError carrying %v", err, sentinel)
+		}
+		if mapped := mapBuildRunError(err); !errors.Is(mapped, sentinel) {
+			t.Fatalf("mapBuildRunError lost the sentinel: %v", mapped)
+		}
+	}
+}
+
 // ---- supersede ---------------------------------------------------------------
 
 // §6: before v<N+1> exists, v<N>'s still-open work is closed with a superseded

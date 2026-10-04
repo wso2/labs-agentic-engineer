@@ -43,7 +43,7 @@ func (h *Handler) ListProjectTags(ctx context.Context, request gen.ListProjectTa
 		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
 			return nil, apierr.NotFound("project repository not found")
 		default:
-			return nil, apierr.Internal("internal error")
+			return nil, apierr.WithCause(apierr.Internal("internal error"), err)
 		}
 	}
 	return gen.ListProjectTags200JSONResponse(gen.TagList{

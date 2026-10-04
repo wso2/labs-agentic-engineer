@@ -118,17 +118,13 @@ func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 	}
 }
 
-// Problem codes of the pod's refusals.
-const (
-	codeAEStudioMisconfigured = "ae_studio_misconfigured"
-	codeAEStudioUnavailable   = "ae_studio_unavailable"
-	codeGitHubNotConnected    = "github_not_connected"
-	codeRequestTooLarge       = "request_too_large"
-)
+// codeRequestTooLarge is the envelope code of an upload the pod refused for size.
+const codeRequestTooLarge = "request_too_large"
 
 // mapReferenceError maps what the pod (or the project lookup) answered onto
-// the envelope. A misconfigured AE-only client is an operator fault: 503
-// with its own code and no Retry-After (C3).
+// the envelope. The AE Studio answers (absent, unavailable, misconfigured,
+// owner not allowed) are not mapped here: they stay in the chain and the
+// edge's one classifier speaks for them, Retry-After included (Q-9).
 func mapReferenceError(ctx context.Context, err error) error {
 	var se *aestudiotools.StatusError
 	switch {
@@ -136,26 +132,13 @@ func mapReferenceError(ctx context.Context, err error) error {
 		return apierr.NotFound("project repository not found")
 	case errors.Is(err, sourcecontrol.ErrReferenceRejected):
 		return apierr.BadRequest(strings.TrimPrefix(err.Error(), sourcecontrol.ErrReferenceRejected.Error()+": "))
-	case errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured):
-		return apierr.New(http.StatusServiceUnavailable, codeAEStudioMisconfigured,
-			"AE Studio is not configured on this platform — contact your platform admin", nil)
-	case errors.Is(err, sourcecontrol.ErrAEStudioUnavailable):
-		return apierr.New(http.StatusServiceUnavailable, codeAEStudioUnavailable,
-			"AE Studio is not ready — try again in a few seconds", nil)
-	case errors.Is(err, sourcecontrol.ErrAEStudioAbsent):
-		return apierr.New(http.StatusConflict, codeGitHubNotConnected, "connect GitHub to continue", nil)
-	case errors.Is(err, sourcecontrol.ErrOwnerNotAllowed):
-		// The pod refuses a repository outside the org's GitHub account
-		// (Task 4.17 gives it its own 409 code).
-		slog.WarnContext(ctx, "references: AE Studio refused the upload", "status", http.StatusForbidden, "code", "owner_not_allowed")
-		return apierr.BadGateway(fmt.Sprintf("AE Studio refused the upload (%d)", http.StatusForbidden))
 	case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge:
 		return apierr.New(http.StatusRequestEntityTooLarge, codeRequestTooLarge, "the reference documents are too large", nil)
 	case errors.As(err, &se):
 		slog.WarnContext(ctx, "references: AE Studio refused the upload", "status", se.Status, "code", se.Code)
-		return apierr.BadGateway(fmt.Sprintf("AE Studio refused the upload (%d)", se.Status))
+		return apierr.WithCause(apierr.BadGateway(fmt.Sprintf("AE Studio refused the upload (%d)", se.Status)), err)
 	default:
 		slog.ErrorContext(ctx, "references: upload failed", "error", err)
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 }

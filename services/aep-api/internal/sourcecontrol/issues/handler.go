@@ -120,7 +120,7 @@ func CreateError(err error) error {
 	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		return apierr.NotFound("project repo not found")
 	}
-	return apierr.Internal("failed to create issue")
+	return apierr.WithCause(apierr.Internal("failed to create issue"), err)
 }
 
 // ListError maps an IssueService.ListIssues failure onto the error envelope,
@@ -129,7 +129,7 @@ func ListError(err error) error {
 	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		return apierr.NotFound("project repo not found")
 	}
-	return apierr.Internal("failed to list issues")
+	return apierr.WithCause(apierr.Internal("failed to list issues"), err)
 }
 
 // SplitLabels parses the comma-separated `labels` query param, dropping blanks.

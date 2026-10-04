@@ -35,8 +35,22 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
+
+// specFactsUnavailable reports whether a git read failed because the org's AE
+// Studio cannot answer for its repositories right now: GitHub is not
+// connected, the pod is not serving, or aep-api's own client is refused (Q-12).
+// The poll degrades on these (spec.availability = "unavailable", build and
+// deploy intact) rather than failing, because they are the org's state, not a
+// fault in this read, and the delivery stages still have true answers (05 §6).
+// Every other git failure still fails the poll.
+func specFactsUnavailable(err error) bool {
+	return errors.Is(err, sourcecontrol.ErrAEStudioAbsent) ||
+		errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) ||
+		errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured)
+}
 
 // Stage status vocabularies (the contract enums).
 const (
@@ -237,7 +251,13 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	}
 	g.Go(func() error {
 		var err error
-		if snap, err = s.artifactSvc.StatusSnapshot(gctx, orgName, projectName); err != nil {
+		snap, err = s.artifactSvc.StatusSnapshot(gctx, orgName, projectName)
+		switch {
+		case specFactsUnavailable(err):
+			// nil snap: the spec facts are unavailable (below).
+			snap = nil
+			return nil
+		case err != nil:
 			return fmt.Errorf("git snapshot: %w", err)
 		}
 		return nil
@@ -273,6 +293,10 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 			// strict join is for outages. Degrade to an unknown denominator
 			// instead of bricking every poll.
 			return nil
+		case specFactsUnavailable(err):
+			// AE Studio cannot answer for the repo: the denominator is
+			// unknown, the deploy stage's own facts still stand.
+			return nil
 		case err != nil:
 			return fmt.Errorf("component count at %s: %w", deployVer, err)
 		}
@@ -294,24 +318,38 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	// retired per-call reads — minus their per-poll origin fetches.
 	// Staleness is checked only when a design exists — nothing can be behind
 	// the requirements before it has been written, and this keeps the extra
-	// tree read off every pre-design poll.
+	// tree read off every pre-design poll. The baseline read shares the
+	// snapshot's degrade: AE Studio failing either leaves the spec facts
+	// unavailable.
 	outdated := false
-	if snap.HasDesign {
+	if snap != nil && snap.HasDesign {
 		stale, err := s.designOutdated(ctx, orgName, projectName, snap.RequirementsFingerprint)
-		if err != nil {
+		switch {
+		case specFactsUnavailable(err):
+			snap = nil
+		case err != nil:
 			return err
+		default:
+			outdated = stale
 		}
-		outdated = stale
 	}
-	status.Spec = gen.SpecStage{
-		Exists:         snap.HasSpec,
-		Version:        snap.SpecVersion,
-		Dirty:          snap.SpecDirty,
-		Design:         snap.HasDesign,
-		Agent:          specAgentOf(s.specTurns, newestTurn),
-		DesignOutdated: outdated,
+	agent := specAgentOf(s.specTurns, newestTurn)
+	if snap == nil {
+		slog.WarnContext(ctx, "project status: AE Studio cannot answer for the repo; spec facts unavailable",
+			"org", orgName, "project", projectName)
+		status.Spec = gen.SpecStage{Agent: agent, Availability: gen.SpecStageAvailabilityUnavailable}
+	} else {
+		status.Spec = gen.SpecStage{
+			Exists:         snap.HasSpec,
+			Version:        snap.SpecVersion,
+			Dirty:          snap.SpecDirty,
+			Design:         snap.HasDesign,
+			Agent:          agent,
+			DesignOutdated: outdated,
+			Availability:   gen.SpecStageAvailabilityAvailable,
+		}
+		applyFlatArtifactFields(status, snap)
 	}
-	applyFlatArtifactFields(status, snap)
 
 	// Build stage: the newest DEV RUN (ListByProject is newest-first).
 	//
