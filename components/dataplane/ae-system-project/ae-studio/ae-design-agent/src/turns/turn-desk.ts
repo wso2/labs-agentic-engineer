@@ -120,6 +120,14 @@ export class TurnInProgressError extends Error {
   }
 }
 
+/** The desk is shutting down (`abortAll` ran): it starts no new turn. */
+export class DeskClosedError extends Error {
+  constructor() {
+    super("the turn desk is shutting down");
+    this.name = "DeskClosedError";
+  }
+}
+
 type Ending = Omit<TurnOutcome, "status"> & { status: "completed" | "failed" };
 
 interface Turn {
@@ -151,6 +159,8 @@ export class TurnDesk {
   /** Attachable buffers by turn id (retention independent of the status). */
   private readonly buffers = new Map<string, BufferEntry>();
   private readonly last = new Map<string, { status: "completed" | "failed"; baseRef: string }>();
+  /** Set by `abortAll`: a start after it would run past the shutdown with no terminal and no record. */
+  private closed = false;
 
   constructor(opts: { now?: () => number; capMs?: number; onFinished: (rec: TurnRecord) => void }) {
     this.now = opts.now ?? Date.now;
@@ -162,7 +172,8 @@ export class TurnDesk {
    * Start a turn, or reattach: a `turnId` the desk still knows (running, or
    * finished and retained) in the same scope returns `reattached: true` and
    * starts nothing. Without a `turnId` the desk makes a uuid. Throws
-   * `TurnInProgressError` when the scope runs another turn.
+   * `TurnInProgressError` when the scope runs another turn, and
+   * `DeskClosedError` for a new turn once `abortAll` has run.
    */
   start(scope: Scope, meta: TurnMeta, run: TurnRun, turnId?: string): { turnId: string; reattached: boolean } {
     this.prune();
@@ -174,6 +185,7 @@ export class TurnDesk {
         return { turnId, reattached: true };
       }
     }
+    if (this.closed) throw new DeskClosedError();
     const busy = this.running.get(key);
     if (busy) throw new TurnInProgressError(busy.status.turnId);
 
@@ -247,8 +259,14 @@ export class TurnDesk {
     return facts ? { ...facts } : null;
   }
 
-  /** End every running turn with `turn-failed {reason}` and abort its run; waits briefly for the runs to settle. */
+  /**
+   * Close the desk to new turns, end every running turn with `turn-failed
+   * {reason}` and abort its run; waits briefly for the runs to settle. A start
+   * still preparing (its lookup in flight) when this runs is refused when it
+   * reaches `start`, so no turn outlives the shutdown.
+   */
   async abortAll(reason: "shutdown"): Promise<void> {
+    this.closed = true;
     const turns = [...this.running.values()];
     for (const turn of turns) {
       this.finish(turn, { status: "failed", reason, ...refsOf(turn.meta) });

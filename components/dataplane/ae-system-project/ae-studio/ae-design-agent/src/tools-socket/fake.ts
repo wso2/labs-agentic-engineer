@@ -92,6 +92,7 @@ export class FakeToolsSocket implements ToolsSocket {
   private failures = 0;
   private failStatus = 503;
   private held: Promise<void> | null = null;
+  private lookupHeld: Promise<void> | null = null;
 
   constructor(opts: FakeToolsSocketOptions = {}) {
     this.projects = opts.projects ?? {};
@@ -114,6 +115,18 @@ export class FakeToolsSocket implements ToolsSocket {
     return {
       release: () => {
         this.held = null;
+        release();
+      },
+    };
+  }
+
+  /** `lookup` calls wait until `release()` (a cold tools sidecar). */
+  holdLookups(): { release(): void } {
+    let release!: () => void;
+    this.lookupHeld = new Promise<void>((resolve) => (release = resolve));
+    return {
+      release: () => {
+        this.lookupHeld = null;
         release();
       },
     };
@@ -160,6 +173,7 @@ export class FakeToolsSocket implements ToolsSocket {
 
   async lookup(project: string, at?: string): Promise<ProjectSnapshot | null> {
     this.lookups.push(at === undefined ? { project } : { project, at });
+    if (this.lookupHeld) await this.lookupHeld;
     const known = this.projects[project];
     // The project resolves first, as on the socket: an unknown project is null whatever `at` says.
     if (known && at !== undefined && this.missingRefs.has(at)) {

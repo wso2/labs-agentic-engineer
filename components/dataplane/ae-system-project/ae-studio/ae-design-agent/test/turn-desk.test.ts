@@ -22,6 +22,7 @@ import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import type { ReplayFrame } from "../src/turns/replay-buffer.js";
 import {
+  DeskClosedError,
   TURN_CAP_MS,
   TurnDesk,
   TurnInProgressError,
@@ -464,6 +465,16 @@ test("abortAll ends every running turn with shutdown, hands over records, frees 
   }
   assert.deepEqual(records.map((r) => r.reason), ["shutdown", "shutdown"]);
   assert.equal(desk.active(proj), null);
+});
+
+test("after abortAll the desk starts no new turn, but a known turn id still reattaches (R2-I1)", async () => {
+  const desk = new TurnDesk({ onFinished: () => {} });
+  const before = desk.start(proj, meta(), untilAborted, KICKOFF_ID);
+  await desk.abortAll("shutdown");
+  assert.throws(() => desk.start(proj, meta(), untilAborted), DeskClosedError);
+  assert.throws(() => desk.start({ kind: "marketplace", conversationId: "c2" }, meta({ conversationId: "c2" }), untilAborted), DeskClosedError);
+  assert.equal(desk.active(proj), null);
+  assert.deepEqual(desk.start(proj, meta(), untilAborted, before.turnId), { turnId: KICKOFF_ID, reattached: true });
 });
 
 test("abortAll does not wait for a runner that ignores the abort", async () => {

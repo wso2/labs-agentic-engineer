@@ -63,7 +63,7 @@ import { projectSnapshotDir, skillsSnapshotDir } from "../shared/snapshot-path.j
 import type { ConversationStore } from "../store/conversation-store.js";
 import { ToolsSocketError, type ProjectSnapshot, type ToolsSocket } from "../tools-socket/client.js";
 import { startTurnSummary, turnSpecFor } from "./start-spec.js";
-import { TurnDesk, TurnInProgressError, type Scope, type TurnMeta, type TurnOutcome, type TurnRun } from "./turn-desk.js";
+import { DeskClosedError, TurnDesk, TurnInProgressError, type Scope, type TurnMeta, type TurnOutcome, type TurnRun } from "./turn-desk.js";
 import { catalogTurn, designOrRoomTurn } from "./turn-spec.js";
 
 /** The longest instruction a turn takes (aep-api's `createTurnMaxInstructionBytes`). */
@@ -217,8 +217,9 @@ export class TurnStarter {
 
   /**
    * Refuse every later start with `503 shutting_down` (07 §10). Flipped at
-   * SIGTERM before `desk.abortAll` (`pod/shutdown.ts`), since the desk itself
-   * does not stop a later start.
+   * SIGTERM before `desk.abortAll` (`pod/shutdown.ts`). A start already past
+   * its first check (awaiting the lookup or the snapshot read) is refused
+   * again at `launch`, and the desk itself refuses once `abortAll` ran.
    */
   refuse(): void {
     this.refusing = true;
@@ -476,12 +477,16 @@ export class TurnStarter {
       ...(this.deps.headless ? { headless: true } : {}),
     });
     const filesChangedExternally = last !== null && last.baseRef !== l.material.baseRef;
+    // The start awaited the lookup and the snapshot read since `admissible`:
+    // the pod may have begun shutting down meanwhile.
+    if (this.refusing) throw shuttingDown();
     try {
       return desk.start(l.scope, meta, this.run(l, { turnId, summary, instruction, filesChangedExternally }), turnId);
     } catch (err) {
       if (err instanceof TurnInProgressError) {
         throw new TurnStartError(409, "turn_in_progress", "a turn is already running", err.activeTurnId);
       }
+      if (err instanceof DeskClosedError) throw shuttingDown();
       throw err;
     }
   }

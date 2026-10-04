@@ -103,6 +103,33 @@ test("SIGTERM during a turn: refuse, end it (SSE and Turn socket), hand its reco
   }
 });
 
+test("a start whose lookup is held open across SIGTERM never launches a turn (R2-I1)", async () => {
+  const edge = await startEdge({ models: [mockModel([{ kind: "text", text: "late" }], { delayMs: 60_000 })] });
+  try {
+    const tok = await edge.token();
+    const conv = (await (await call(edge, `/v1/projects/${PROJECT}/conversations/current`, tok)).json()) as { conversationId: string };
+    const held = edge.tools.holdLookups();
+    const lookupsBefore = edge.tools.lookups.length;
+    const server = postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "plan", credit: ANN });
+    const browser = call(edge, `/v1/projects/${PROJECT}/conversations/${conv.conversationId}/turns`, tok, { json: { instruction: "hi" } });
+    await until(() => edge.tools.lookups.length === lookupsBefore + 2, "both starts to reach their lookup");
+
+    edge.turns.refuse();
+    await edge.desk.abortAll("shutdown");
+    held.release();
+
+    const s = await server;
+    assert.equal(s.status, 503);
+    assert.equal((await s.json()).code, "shutting_down");
+    const b = await browser;
+    assert.equal(b.status, 503);
+    assert.equal(((await b.json()) as { code: string }).code, "shutting_down");
+    assert.equal(edge.desk.active({ kind: "project", project: PROJECT }), null, "no turn runs past the shutdown");
+  } finally {
+    await edge.close();
+  }
+});
+
 test("shutdown order: refuse, abort, drain, close; abort + drain end ≤ 8 s after the start; an incomplete drain is logged", async () => {
   const steps: string[] = [];
   const logs: ShutdownLogLine[] = [];
