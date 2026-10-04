@@ -203,3 +203,28 @@ func TestPhase24AgentTurnsLedger_FreshSchema(t *testing.T) {
 		}
 	}
 }
+
+// On a table already in the ledger's shape, phase24 runs on every boot and
+// must take no lock that blocks the other replica's ledger writes or reads
+// (R1-M2): no ACCESS EXCLUSIVE (DROP COLUMN, the key swap) and no full-table
+// UPDATE/DELETE. A concurrent transaction holds SHARE on agent_turns, which
+// conflicts with both; the re-run must still finish.
+func TestPhase24AgentTurnsLedger_ARerunTakesNoTableLock(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	holder := db.Begin()
+	if holder.Error != nil {
+		t.Fatalf("begin: %v", holder.Error)
+	}
+	defer holder.Rollback()
+	if err := holder.Exec(`LOCK TABLE agent_turns IN SHARE MODE`).Error; err != nil {
+		t.Fatalf("hold SHARE: %v", err)
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := migrate.RunPhase24AgentTurnsLedger(runCtx, db); err != nil {
+		t.Fatalf("a re-run on the ledger's shape waited on a table lock: %v", err)
+	}
+}

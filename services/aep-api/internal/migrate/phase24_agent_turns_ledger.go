@@ -54,8 +54,19 @@ const phase24Before = "0002-01-01"
 //
 // Idempotent: each part is guarded on the shape it changes, so a re-run (and a
 // fresh schema, which AutoMigrate builds in the final shape) changes nothing.
+// It runs on every boot, so it first reads the catalog and, when the tables
+// are already in the ledger's shape, returns without a statement on
+// agent_turns: the backfills scan the whole table and the drops take ACCESS
+// EXCLUSIVE, which would stall a second replica's ledger writes on a roll.
 func RunPhase24AgentTurnsLedger(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		done, err := phase24Done(tx)
+		if err != nil {
+			return fmt.Errorf("phase24_agent_turns_ledger: %w", err)
+		}
+		if done {
+			return nil
+		}
 		if err := phase24AgentTurns(tx); err != nil {
 			return fmt.Errorf("phase24_agent_turns_ledger: %w", err)
 		}
@@ -64,6 +75,36 @@ func RunPhase24AgentTurnsLedger(ctx context.Context, db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+// phase24Done reports whether the catalog already shows the ledger's shape:
+// agent_turns absent, or present with none of the engine's columns, no
+// one-active guard and the (org_id, id) key; and project_conversations gone.
+// Catalog reads only, so it takes no lock on agent_turns.
+func phase24Done(tx *gorm.DB) (bool, error) {
+	if hasTable(tx, "project_conversations") {
+		return false, nil
+	}
+	if !hasTable(tx, "agent_turns") {
+		return true, nil
+	}
+	for _, col := range phase24EngineColumns {
+		if hasColumn(tx, "agent_turns", col) {
+			return false, nil
+		}
+	}
+	var guards int64
+	if err := tx.Raw(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'ux_agent_turns_active'`).Scan(&guards).Error; err != nil {
+		return false, fmt.Errorf("look up the active-turn guard: %w", err)
+	}
+	if guards > 0 {
+		return false, nil
+	}
+	_, cols, err := phase24PrimaryKey(tx)
+	if err != nil {
+		return false, err
+	}
+	return cols == "org_id,id", nil
 }
 
 func phase24AgentTurns(tx *gorm.DB) error {
@@ -93,6 +134,9 @@ func phase24AgentTurns(tx *gorm.DB) error {
 		return fmt.Errorf("drop the active-turn guard: %w", err)
 	}
 	for _, col := range phase24EngineColumns {
+		if !hasColumn(tx, "agent_turns", col) {
+			continue
+		}
 		if err := tx.Exec(`ALTER TABLE agent_turns DROP COLUMN IF EXISTS ` + col).Error; err != nil {
 			return fmt.Errorf("drop %s: %w", col, err)
 		}
@@ -102,6 +146,28 @@ func phase24AgentTurns(tx *gorm.DB) error {
 
 // phase24WidenKey moves the primary key to (org_id, id) unless it is there.
 func phase24WidenKey(tx *gorm.DB) error {
+	name, cols, err := phase24PrimaryKey(tx)
+	if err != nil {
+		return err
+	}
+	if cols == "org_id,id" {
+		return nil
+	}
+	if name != "" {
+		if err := tx.Exec(`ALTER TABLE agent_turns DROP CONSTRAINT "` + name + `"`).Error; err != nil {
+			return fmt.Errorf("drop the primary key %s: %w", name, err)
+		}
+	}
+	if err := tx.Exec(`ALTER TABLE agent_turns ADD PRIMARY KEY (org_id, id)`).Error; err != nil {
+		return fmt.Errorf("add the (org_id, id) primary key: %w", err)
+	}
+	return nil
+}
+
+// phase24PrimaryKey reads agent_turns' primary key from the catalog: its
+// constraint name ("" when there is none) and its columns in key order,
+// comma-joined.
+func phase24PrimaryKey(tx *gorm.DB) (name, cols string, err error) {
 	var key []struct {
 		Name   string
 		Column string
@@ -113,22 +179,14 @@ func phase24WidenKey(tx *gorm.DB) error {
 		  JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
 		 WHERE c.conrelid = 'agent_turns'::regclass AND c.contype = 'p'
 		 ORDER BY k.ord`).Scan(&key).Error; err != nil {
-		return fmt.Errorf("read the primary key: %w", err)
+		return "", "", fmt.Errorf("read the primary key: %w", err)
 	}
-	cols := make([]string, 0, len(key))
+	names := make([]string, 0, len(key))
 	for _, k := range key {
-		cols = append(cols, k.Column)
-	}
-	if strings.Join(cols, ",") == "org_id,id" {
-		return nil
+		names = append(names, k.Column)
 	}
 	if len(key) > 0 {
-		if err := tx.Exec(`ALTER TABLE agent_turns DROP CONSTRAINT "` + key[0].Name + `"`).Error; err != nil {
-			return fmt.Errorf("drop the primary key %s: %w", key[0].Name, err)
-		}
+		name = key[0].Name
 	}
-	if err := tx.Exec(`ALTER TABLE agent_turns ADD PRIMARY KEY (org_id, id)`).Error; err != nil {
-		return fmt.Errorf("add the (org_id, id) primary key: %w", err)
-	}
-	return nil
+	return name, strings.Join(names, ","), nil
 }
