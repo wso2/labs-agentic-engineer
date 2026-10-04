@@ -45,6 +45,7 @@ import {
 import { projectScope, scopeName, type ChatScope } from "./chatScope.js";
 import { projectableHistory } from "./history.js";
 import { rehydratePlanFromHistory } from "./planStore.js";
+import { usePodQueryOptions } from "../ae-studio/api/queries.js";
 import { conversationKeys, fetchCurrentConversationId } from "./api/conversations.js";
 import { getConversationMessages, type ConversationMessage } from "./api/turns.js";
 
@@ -126,22 +127,29 @@ export function useConversationLog(
   const queryClient = useQueryClient();
   const chatKey = projectName ? chatKeyFor(org, projectName) : null;
 
+  // Both reads go to the design agent in the org's AE Studio pod, so they wait
+  // for AE Studio `ready` (a pod roll is `provisioning`) and run when it comes,
+  // with the pod's retry pacing.
+  const pod = usePodQueryOptions();
+
   // Same query as `useAgentChat`'s, so the id resolves once per project however
   // many surfaces are mounted. `refetchOnWindowFocus: "always"` is the recovery
   // path when the resolve failed outright: with no id there is nothing to read.
   const conversation = useQuery({
+    ...pod,
     queryKey: conversationKeys.current(projectName ?? ""),
     queryFn: () => fetchCurrentConversationId(projectName!),
-    enabled: Boolean(projectName),
+    enabled: pod.enabled && Boolean(projectName),
     staleTime: Infinity,
     refetchOnWindowFocus: "always",
   });
   const conversationId = conversation.data;
 
   const history = useQuery({
+    ...pod,
     queryKey: conversationKeys.messages(projectName ?? "", conversationId ?? ""),
     queryFn: () => getConversationMessages(projectScope(projectName!), conversationId!),
-    enabled: Boolean(projectName && conversationId),
+    enabled: pod.enabled && Boolean(projectName && conversationId),
     // The thread only moves when a turn ends, and every surface that mounts
     // this has a trigger for that. A time-based staleness would refetch on
     // every remount of a workspace the user is tabbing around in.

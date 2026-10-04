@@ -72,9 +72,10 @@ vi.mock("./api/turns", async (importOriginal) => {
   };
 });
 
-// AE Studio is `ready`: the active-turn query runs.
+// AE Studio is `ready` unless a test says otherwise: the pod reads run.
+let podReady = true;
 vi.mock("../ae-studio/api/queries", () => ({
-  usePodQueryOptions: () => ({ enabled: true, retryDelay: () => 0 }),
+  usePodQueryOptions: () => ({ enabled: podReady, retryDelay: () => 0 }),
 }));
 
 const mockAttach = vi.fn();
@@ -103,6 +104,38 @@ const SERVER_HISTORY = [
   { role: "user", content: "from the server", author: { id: "u2", displayName: "Grace" } },
   { role: "assistant", content: "server reply" },
 ];
+
+describe("useAgentChat — the resolve waits for AE Studio ready (R3-I1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    replaceMessages(KEY, []);
+    mockGetHistory.mockResolvedValue(SERVER_HISTORY);
+    mockGetActive.mockResolvedValue(null);
+  });
+  afterEach(() => {
+    podReady = true;
+  });
+
+  it("a pod roll (provisioning → ready) resolves the conversation with no focus event", async () => {
+    // Before `ready` the design agent cannot be reached (designAgent() throws).
+    podReady = false;
+    mockFetchCurrent.mockImplementation(async () => {
+      if (!podReady) throw new Error("AE Studio is not ready");
+      return "conv-1";
+    });
+    const { result, rerender } = renderHook(() => useAgentChat(ORG, projectScope(PROJECT)), { wrapper: createWrapper() });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(mockFetchCurrent).not.toHaveBeenCalled();
+    expect(result.current.conversationError).toBe(false);
+
+    podReady = true; // AE Studio's query answers `ready`: the gate re-renders
+    rerender();
+    await waitFor(() => expect(result.current.conversationReady).toBe(true));
+    expect(result.current.conversationError).toBe(false);
+  });
+});
 
 describe("useAgentChat — the shared thread (#430)", () => {
   beforeEach(() => {

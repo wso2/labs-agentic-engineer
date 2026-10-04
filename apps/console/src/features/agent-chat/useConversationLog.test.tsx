@@ -56,6 +56,12 @@ vi.mock("./api/turns", async (importOriginal) => {
   return { ...real, getConversationMessages: (...a: unknown[]) => mockGetHistory(...a) };
 });
 
+// AE Studio's readiness: the pod reads wait for `ready` (usePodQueryOptions).
+let podReady = true;
+vi.mock("../ae-studio/api/queries", () => ({
+  usePodQueryOptions: () => ({ enabled: podReady, retryDelay: () => 0 }),
+}));
+
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return function Wrapper({ children }: { children: React.ReactNode }) {
@@ -80,10 +86,33 @@ const AWAITING_ANSWERS = [
 ];
 
 beforeEach(() => {
+  podReady = true;
   vi.clearAllMocks();
   replaceMessages(KEY, []);
   mockFetchCurrent.mockResolvedValue("conv-1");
   mockGetHistory.mockResolvedValue(AWAITING_ANSWERS);
+});
+
+describe("useConversationLog — gated on AE Studio ready (R3-I1)", () => {
+  it("asks nothing while AE Studio is provisioning, then resolves once it is ready, with no focus event", async () => {
+    // The design agent is unreachable before `ready` (designAgent() throws).
+    podReady = false;
+    mockFetchCurrent.mockImplementation(async () => {
+      if (!podReady) throw new Error("AE Studio is not ready");
+      return "conv-1";
+    });
+    const { result, rerender } = renderHook(() => useConversationLog(ORG, PROJECT), { wrapper: createWrapper() });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(mockFetchCurrent).not.toHaveBeenCalled();
+    expect(mockGetHistory).not.toHaveBeenCalled();
+
+    podReady = true;
+    rerender();
+    await waitFor(() => expect(result.current.historyReady).toBe(true));
+    expect(mockGetHistory).toHaveBeenCalledWith(expect.anything(), "conv-1");
+  });
 });
 
 describe("useConversationLog — a log without the chat panel (#606)", () => {

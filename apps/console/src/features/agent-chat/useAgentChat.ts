@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { usePodQueryOptions } from "../ae-studio/api/queries.js";
 import { projectKeys } from "../projects/api/keys.js";
 import { MARKETPLACE_SCOPE, chatKeyForScope, projectScope, scopeName, type ChatScope } from "./chatScope.js";
 import { findBlockingTurn } from "./blockingTurn.js";
@@ -276,8 +277,12 @@ export function useAgentChat(org: string, scopeArg: ChatScope): AgentChat {
   // that freshness (a focus refetch normally skips fresh data) — it is the
   // RECOVERY path when the resolve failed outright: with no id the main
   // effect never runs, so none of its triggers exist, and without this the
-  // composer would stay disabled until a remount.
+  // composer would stay disabled until a remount. The design agent answers
+  // only while AE Studio is `ready`: the pod gate holds the resolve until then
+  // and runs it when `ready` comes, so a pod roll needs no tab switch.
+  const pod = usePodQueryOptions();
   const conversation = useQuery({
+    ...pod,
     queryKey: conversationKeys.current(scopeKey),
     queryFn: () =>
       scope.kind === "project"
