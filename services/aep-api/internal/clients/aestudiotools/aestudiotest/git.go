@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -37,24 +38,26 @@ import (
 // validation_failed.
 var errInvalidCommit = errors.New("aestudiotest: invalid commit request")
 
-// errInvalidBundleFilter is a read-bundle request the pod refuses with 400
-// validation_failed: an ext outside the contract pattern, or more than 20.
-var errInvalidBundleFilter = errors.New("aestudiotest: invalid read-bundle filter")
-
 // bundleExtPattern is the contract's `ext` item pattern (ae-studio-tools
 // internal/v1 openapi.yaml, read-bundle).
 var bundleExtPattern = regexp.MustCompile(`^\.[A-Za-z0-9._-]{1,32}$`)
 
 const maxBundleExts = 20
 
+// invalidBundleFilter is the error a pod 400 validation_failed becomes in
+// production (permanent, so sourcecontrol.IsPermanent classifies it alike).
+func invalidBundleFilter() error {
+	return &aestudiotools.StatusError{Op: OpReadBundle, Status: 400, Code: "validation_failed", Detail: "invalid read-bundle filter"}
+}
+
 // validBundleFilter refuses what the pod's request validator answers 400 to.
 func validBundleFilter(filter sourcecontrol.BundleFilter) error {
 	if len(filter.Exts) > maxBundleExts {
-		return errInvalidBundleFilter
+		return invalidBundleFilter()
 	}
 	for _, e := range filter.Exts {
 		if !bundleExtPattern.MatchString(e) {
-			return errInvalidBundleFilter
+			return invalidBundleFilter()
 		}
 	}
 	return nil
@@ -185,6 +188,9 @@ func (f *Fake) read(op string, ref sourcecontrol.RepoRef, at string, filter sour
 	if err := f.begin(Call{Op: op, Ref: ref, At: at, Local: o.Local, Filter: filter}); err != nil {
 		return nil, err
 	}
+	if err := validBundleFilter(filter); err != nil { // the pod validates before any git work
+		return nil, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	st, err := f.content(ref)
@@ -235,9 +241,6 @@ func (f *Fake) ReadFile(_ context.Context, ref sourcecontrol.RepoRef, at, path s
 func (f *Fake) ReadBundle(_ context.Context, ref sourcecontrol.RepoRef, at string, filter sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
 	c, err := f.read(OpReadBundle, ref, at, filter, opts)
 	if err != nil {
-		return nil, "", err
-	}
-	if err := validBundleFilter(filter); err != nil {
 		return nil, "", err
 	}
 	files := map[string]string{}

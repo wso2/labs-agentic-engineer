@@ -528,3 +528,36 @@ func TestFake_References(t *testing.T) {
 		t.Fatalf("a refused upload changed the set: %v", got)
 	}
 }
+
+// ReadBundle refuses an ext the contract pattern rejects, or more than 20, as
+// the pod's validator does (before any repo resolution, a permanent 400); a
+// valid filter reads.
+func TestFake_ReadBundleValidatesExts(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"specs/a.json": "1", "specs/b.md": "2"})
+	tooMany := make([]string, 21)
+	for i := range tooMany {
+		tooMany[i] = ".json"
+	}
+	for name, exts := range map[string][]string{
+		"path suffix": {"/design.json"},
+		"no dot":      {"json"},
+		"empty":       {""},
+		"too many":    tooMany,
+	} {
+		_, _, err := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "specs/", Exts: exts})
+		var se *aestudiotools.StatusError
+		if !errors.As(err, &se) || se.Status != 400 || se.Code != "validation_failed" || !sourcecontrol.IsPermanent(err) {
+			t.Errorf("%s: err = %v, want a permanent 400 validation_failed", name, err)
+		}
+	}
+	missing := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "absent"}
+	if _, _, err := f.ReadBundle(ctx, missing, "", sourcecontrol.BundleFilter{Exts: []string{"x"}}); !sourcecontrol.IsPermanent(err) {
+		t.Errorf("invalid filter on a missing repo: err = %v, want the 400 before resolution", err)
+	}
+	files, _, err := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "specs/", Exts: []string{".json"}})
+	if err != nil || len(files) != 1 || files["specs/a.json"] != "1" {
+		t.Fatalf("valid filter: files=%v err=%v", files, err)
+	}
+}
