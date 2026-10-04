@@ -143,8 +143,7 @@ type ComponentClient interface {
 
 	// Build (workflow runs). `runName` is the WorkflowRun metadata.name; if
 	// empty the OC client auto-generates one via NewBuildRunName. Callers
-	// that need to know the name ahead of time (so they can stage a
-	// per-WorkflowRun build Secret) MUST pass it.
+	// that need to know the name ahead of time MUST pass it.
 	// secretRef sets parameters.repository.secretRef so the dockerfile-builder
 	// workflow synthesises the git Secret from the org's github-pat
 	// SecretReference (named by BuildCredentialsService). Empty leaves it
@@ -1159,10 +1158,10 @@ func (c *componentClient) TriggerBuildAtCommit(ctx context.Context, orgName, pro
 // from `pull_request.closed`'s merge_commit_sha.
 //
 // When runName is empty the BFF gets a fresh NewBuildRunName-shaped name —
-// retained for tests / call sites that don't need to pre-stage anything.
-// Production callers (dispatch path, console "Build" button) pass runName
-// because they staged the per-WorkflowRun build Secret with that name
-// upfront.
+// retained for tests / call sites that don't need to know the name ahead of
+// time. Production callers (dispatch path, console "Build" button) pass
+// runName; the build itself only references the org's github-pat
+// SecretReference, nothing is staged under that name.
 func (c *componentClient) triggerBuildInner(ctx context.Context, orgName, projectName, componentName, commitSHA, secretRef, runName string) (*gen.WorkflowRun, error) {
 	scopedComp := ScopedComponentName(projectName, componentName)
 

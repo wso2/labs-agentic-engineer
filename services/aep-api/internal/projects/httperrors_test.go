@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 )
 
@@ -77,6 +78,20 @@ func TestMapComponentError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "failed to list components") {
 		t.Fatalf("500 must carry the supplied internal message: %v", err)
+	}
+}
+
+// A manual build in an org with no GitHub connection is a state conflict the
+// caller can fix by connecting, not a server fault: 409, not 500.
+func TestMapComponentError_DisconnectedOrgIsConflict(t *testing.T) {
+	t.Parallel()
+	err := MapComponentError(fmt.Errorf("trigger-build: stage-build-secret: %w", organization.ErrOrgDisconnected), "failed to trigger build")
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
+	}
+	if ae.Status != http.StatusConflict || ae.Code != apierr.CodeConflict {
+		t.Fatalf("got status=%d code=%q, want 409 conflict", ae.Status, ae.Code)
 	}
 }
 

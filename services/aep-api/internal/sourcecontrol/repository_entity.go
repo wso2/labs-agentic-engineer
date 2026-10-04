@@ -60,12 +60,9 @@ type GitRepository struct {
 	// Populated at repo provision. Used to deregister on repo cleanup or
 	// re-register on rotation.
 	WebhookID *int64 `json:"webhookId,omitempty"`
-	// OcSecretRefName is unused on new rows: the build flow
-	// (docs/design/build-credential-injection.md) pre-stages a
-	// per-WorkflowRun K8s Secret named `<workflowRunName>-git-secret`
-	// directly in workflows-<ocOrgID> and passes secretRef="" to the
-	// workflow. Retained for the JSON contract and as a column on
-	// older rows.
+	// OcSecretRefName is unused on new rows: a build references the org's
+	// github-pat SecretReference (BuildCredentialsService), not a per-repo
+	// one. Retained for the JSON contract and as a column on older rows.
 	OcSecretRefName *string `gorm:"column:oc_secret_ref_name" json:"ocSecretRefName,omitempty"`
 	// RepoSlug is the SecretReference slug — `lower(<owner>-<repo>)`. Used
 	// for OpenBao path keying (`secret/aep/{ocOrgId}/git/{repoSlug}`) and

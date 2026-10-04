@@ -138,11 +138,10 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	}
 
 	// Compute the per-repo slug from the GitHub clone URL — used by
-	// StageBuildSecret to validate (ocOrgId, repoSlug) ownership. The
-	// build credential itself is now pre-staged per WorkflowRun directly
-	// as a K8s Secret in workflows-<ocOrgID> (see
-	// docs/design/build-credential-injection.md), so no SecretReference
-	// name is computed here; OcSecretRefName is left nil on new rows.
+	// StageBuildSecret to validate (ocOrgId, repoSlug) ownership. A build
+	// references the org's github-pat SecretReference, not a per-repo one, so
+	// no SecretReference name is computed here; OcSecretRefName is left nil on
+	// new rows.
 	repoSlug := RepoSlugFor(cloneURL)
 
 	// The repo is ready the moment GitHub has it: the mirror is created

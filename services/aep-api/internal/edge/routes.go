@@ -18,7 +18,6 @@ package edge
 
 import (
 	"net/http"
-
 )
 
 // route is one row of aep-api's mount table: a ServeMux pattern, who calls

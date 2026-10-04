@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/ocerr"
 	"github.com/wso2/aep/aep-api/internal/platform/validate"
@@ -121,6 +122,11 @@ func paymentRequiredMessage(err error) string {
 // logs-unavailable, 404 openapi-not-found) are handled at the call site before
 // delegating here.
 func MapComponentError(err error, internalMsg string) error {
+	if errors.Is(err, organization.ErrOrgDisconnected) {
+		// The org has no github-pat reference (never connected, or
+		// disconnected): a state the caller fixes by connecting GitHub.
+		return apierr.Conflict("GitHub is not connected for this organization; connect GitHub before triggering a build")
+	}
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}

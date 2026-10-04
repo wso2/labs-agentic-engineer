@@ -32,7 +32,8 @@ import (
 
 const (
 	// forwardBudget bounds one Forward, retries included: it must end inside
-	// GitHub's 10 s delivery timeout so GitHub sees our answer (04 §8).
+	// GitHub's 10 s delivery window (a delivery not answered in 10 s is marked
+	// failed) so GitHub sees our answer (04 §8).
 	forwardBudget = 8 * time.Second
 	// forwardRetries is how many times a transport error or a 5xx is retried.
 	forwardRetries = 2
@@ -55,8 +56,10 @@ type ingester interface {
 }
 
 // Forwarder hands a verified delivery to aep-api's ingest-webhook-event
-// (flow 6, ticket 04 §8), synchronously: there is no buffer in the pod, GitHub
-// redelivers what was not taken.
+// (flow 6, ticket 04 §8), synchronously: there is no buffer in the pod. GitHub
+// does not redeliver by itself: a 503 marks the delivery failed, and it is
+// redelivered only by hand (or by an API call), so what aep-api did not take
+// waits there.
 type Forwarder struct {
 	client  ingester
 	budget  time.Duration
@@ -76,7 +79,7 @@ func NewForwarder(c ingester) *Forwarder {
 //
 // nil: aep-api took the delivery (2xx: dispatched, held or duplicate) or
 // refused it for good (any other 4xx, e.g. 404 repository_unknown); GitHub
-// redelivering it would change nothing. ErrUpstreamUnavailable: a transport
+// redelivering it by hand would change nothing. ErrUpstreamUnavailable: a transport
 // error or a 5xx on the first try and both retries, or a 401, 403 or 429 (the
 // pod's credentials or rate, not the delivery, were refused; not retried
 // here). Each try gets an equal share of what is left of the budget, so a

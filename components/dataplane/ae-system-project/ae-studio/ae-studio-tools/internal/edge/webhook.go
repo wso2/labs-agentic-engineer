@@ -34,14 +34,16 @@ import (
 const (
 	// webhookBodyBytes is GitHub's maximum delivery size (ticket 04 §8).
 	webhookBodyBytes int64 = 25 << 20
-	// webhookReadTimeout bounds the body read. GitHub gives up on a delivery
-	// after 10 s, so a body still arriving after that is never one GitHub
-	// waits on; a sender trickling bytes cannot hold a connection longer.
+	// webhookReadTimeout bounds the body read. GitHub's delivery window is
+	// 10 s (a delivery unanswered by then is marked failed), so a body still
+	// arriving after that is never one GitHub waits on; a sender trickling
+	// bytes cannot hold a connection longer.
 	webhookReadTimeout = 10 * time.Second
 	// webhookConcurrency caps the deliveries in flight (read, verified or
 	// being forwarded). One org's repositories deliver a few events at a time;
-	// 8 bodies at the 25 MiB cap are 200 MiB, a fifth of the tools
-	// container's 1 GiB memory limit, which it shares with the git engine.
+	// 8 bodies at the 25 MiB cap are 200 MiB, but io.ReadAll grows its buffer
+	// by doubling, so peak is about twice that (~400 MiB): under half of the
+	// tools container's 1 GiB memory limit, which it shares with the git engine.
 	webhookConcurrency = 8
 	// webhookLogRunes bounds the delivery id and event name in a log line:
 	// both are sender-chosen headers, logged before the signature is known.
@@ -50,7 +52,8 @@ const (
 
 // WebhookForwarder hands a verified delivery to aep-api (webhook.Forwarder):
 // it answers aep-api's last status (0 when not reached) and
-// webhook.ErrUpstreamUnavailable when GitHub should retry.
+// webhook.ErrUpstreamUnavailable when the delivery should show as failed in
+// GitHub (503; GitHub does not retry it, a person can redeliver it).
 type WebhookForwarder interface {
 	Forward(ctx context.Context, delivery, event string, body []byte) (int, error)
 }
