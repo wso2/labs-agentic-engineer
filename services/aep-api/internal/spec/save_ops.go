@@ -58,7 +58,7 @@ var tagRetryAttempts = []time.Duration{
 // bounded by tagRetryAttempts. `name` carries the name actually cut back out.
 func (s *artifactService) createVersionTag(
 	ctx context.Context,
-	ref sourcecontrol.RepoRef,
+	ref sourcecontrol.WorkspaceRef,
 	tags *[]sourcecontrol.TagInfo,
 	name *string,
 	message, commitSHA string,

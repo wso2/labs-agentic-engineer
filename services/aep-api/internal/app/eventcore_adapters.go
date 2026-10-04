@@ -25,7 +25,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/eventcore"
 	"github.com/wso2/aep/aep-api/internal/delivery/runread"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -227,8 +226,8 @@ func (l eventcoreRepoLister) ListAll(ctx context.Context) ([]eventcore.RepoRef, 
 	}
 	out := make([]eventcore.RepoRef, 0, len(rows))
 	for i := range rows {
-		owner, name := naming.OwnerRepoFromURL(rows[i].RepoURL)
-		if owner == "" || name == "" {
+		owner, name, perr := sourcecontrol.ParseOwnerRepo(rows[i].RepoURL)
+		if perr != nil {
 			continue
 		}
 		out = append(out, eventcore.RepoRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID, FullName: owner + "/" + name})

@@ -22,7 +22,6 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -297,7 +296,10 @@ func (c *Catalog) resolveRepoCoords(ctx context.Context, orgHandle, project stri
 	if gr == nil {
 		return
 	}
-	owner, repo := naming.OwnerRepoFromURL(gr.RepoURL)
+	owner, repo, perr := sourcecontrol.ParseOwnerRepo(gr.RepoURL)
+	if perr != nil {
+		return
+	}
 	oce.Owner, oce.Repo, oce.Branch = owner, repo, gr.DefaultBranch
 	if comp != nil {
 		oce.Subdir = comp.AppPath

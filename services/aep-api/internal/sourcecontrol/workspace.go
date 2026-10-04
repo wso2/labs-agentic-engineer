@@ -37,8 +37,8 @@ type (
 	// SnapshotProvider materializes the immutable per-SHA snapshot dirs the
 	// agents mount reads. See gitfs.SnapshotProvider.
 	SnapshotProvider = gitfs.SnapshotProvider
-	// RepoRef addresses one repo on the workspace mount.
-	RepoRef = gitfs.RepoRef
+	// WorkspaceRef addresses one repo on the workspace mount.
+	WorkspaceRef = gitfs.RepoRef
 	// Tx is the staged write overlay handed to a Mutate fn.
 	Tx = gitfs.Tx
 	// Snapshot is a read-only view of one commit's tree.
@@ -65,7 +65,7 @@ var (
 	ErrPathNotFound = gitfs.ErrPathNotFound
 )
 
-// WorkspaceRefFor derives the mount RepoRef from a git_repositories row —
+// WorkspaceRefFor derives the mount WorkspaceRef from a git_repositories row —
 // the path key is a pure function of the DB row, never of client input
 // (design D6). orgID is passed explicitly (not read off the row) so callers
 // keep addressing exactly the org they authenticated. The slug comes from
@@ -74,13 +74,13 @@ var (
 // (design §4: repos/<orgId>/_skills/org-skills/; the agents service derives
 // the skills snapshot path structurally from that fixed name). The default
 // branch falls back to "main".
-func WorkspaceRefFor(orgID string, repo *GitRepository, cred secrets.Credential) RepoRef {
+func WorkspaceRefFor(orgID string, repo *GitRepository, cred secrets.Credential) WorkspaceRef {
 	slug := repo.WorkspaceSlug()
 	branch := repo.DefaultBranch
 	if branch == "" {
 		branch = "main"
 	}
-	return RepoRef{
+	return WorkspaceRef{
 		OrgID:         orgID,
 		ProjectID:     repo.ProjectID,
 		RepoSlug:      slug,
@@ -92,10 +92,10 @@ func WorkspaceRefFor(orgID string, repo *GitRepository, cred secrets.Credential)
 
 // ResolveWorkspaceRef is WorkspaceRefFor with the credential resolved from
 // the org resolver — the one call consumers start every read/write from.
-func ResolveWorkspaceRef(ctx context.Context, resolver secrets.Resolver, orgID string, repo *GitRepository) (RepoRef, error) {
+func ResolveWorkspaceRef(ctx context.Context, resolver secrets.Resolver, orgID string, repo *GitRepository) (WorkspaceRef, error) {
 	cred, err := resolver.Resolve(ctx, orgID)
 	if err != nil {
-		return RepoRef{}, fmt.Errorf("resolve credential: %w", err)
+		return WorkspaceRef{}, fmt.Errorf("resolve credential: %w", err)
 	}
 	return WorkspaceRefFor(orgID, repo, cred), nil
 }

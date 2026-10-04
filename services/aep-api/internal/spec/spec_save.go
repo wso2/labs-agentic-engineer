@@ -261,7 +261,7 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 // commit has been garbage-collected would be unfixable by the user, and the
 // staleness it might have caught is visible in the rail either way.
 func (s *artifactService) staleDesignRefusal(
-	ctx context.Context, ref sourcecontrol.RepoRef, orgID, projectID, commit string,
+	ctx context.Context, ref sourcecontrol.WorkspaceRef, orgID, projectID, commit string,
 ) error {
 	if s.designBaseline == nil {
 		return nil
@@ -292,7 +292,7 @@ func (s *artifactService) staleDesignRefusal(
 
 // specTreeUnchanged reports whether the specs/ subtrees at the two commits are
 // content-identical (path→blob-sha comparison, sha-addressed local reads).
-func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontrol.RepoRef, commit, tagCommit string) (bool, error) {
+func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontrol.WorkspaceRef, commit, tagCommit string) (bool, error) {
 	headEntries, _, err := s.git.Workspace().List(ctx, ref, commit)
 	if err != nil {
 		return false, fmt.Errorf("list tree at %s: %w", commit, err)

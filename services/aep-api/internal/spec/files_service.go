@@ -228,10 +228,10 @@ func (s *service) repoRow(ctx context.Context, orgID, projectID string) (*source
 // resolveRef derives the workspace-mount address every operation starts from:
 // the repo row keyed by the AUTHENTICATED org (never client input) plus the
 // org credential for mirror freshening and pushes.
-func (s *service) resolveRef(ctx context.Context, orgID, projectID string) (sourcecontrol.RepoRef, error) {
+func (s *service) resolveRef(ctx context.Context, orgID, projectID string) (sourcecontrol.WorkspaceRef, error) {
 	repo, err := s.repoRow(ctx, orgID, projectID)
 	if err != nil {
-		return sourcecontrol.RepoRef{}, err
+		return sourcecontrol.WorkspaceRef{}, err
 	}
 	return sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
 }

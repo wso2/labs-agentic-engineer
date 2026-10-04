@@ -116,14 +116,14 @@ type hookedWorkspace struct {
 	BeforeMutateFn func(attempt int)
 }
 
-func (h *hookedWorkspace) Tag(ctx context.Context, ref sourcecontrol.RepoRef, spec sourcecontrol.TagSpec) error {
+func (h *hookedWorkspace) Tag(ctx context.Context, ref sourcecontrol.WorkspaceRef, spec sourcecontrol.TagSpec) error {
 	if h.BeforeTag != nil {
 		h.BeforeTag(spec)
 	}
 	return h.Workspace.Tag(ctx, ref, spec)
 }
 
-func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.RepoRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (sourcecontrol.CommitResult, error) {
+func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.WorkspaceRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (sourcecontrol.CommitResult, error) {
 	if h.BeforeMutateFn == nil {
 		return h.Workspace.Mutate(ctx, ref, fn, opts)
 	}
@@ -184,7 +184,7 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 }
 
 // workspaceRef derives the same mount RepoRef production resolves for the row.
-func (r *rig) workspaceRef() sourcecontrol.RepoRef {
+func (r *rig) workspaceRef() sourcecontrol.WorkspaceRef {
 	return sourcecontrol.WorkspaceRefFor(r.org, r.rec, stubCred{})
 }
 

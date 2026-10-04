@@ -17,6 +17,8 @@
 package sourcecontrol
 
 import (
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
@@ -57,6 +59,21 @@ type GitRepository struct {
 	// github_project_id cache column is removed by the tasks_github_native
 	// migration and no longer modeled.
 }
+
+// RepoSlugFor returns the canonical repo slug for a GitHub HTTPS clone URL: the
+// `owner/repo` path lowercased with `/` replaced by `-`, "" when the URL does
+// not match. It is the single entry point for slug derivation from a URL.
+func RepoSlugFor(url string) string {
+	m := repoURLPattern.FindStringSubmatch(url)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.ToLower(strings.ReplaceAll(m[1], "/", "-"))
+}
+
+// repoURLPattern extracts `<owner>/<repo>` from a GitHub HTTPS URL, with or
+// without a `.git` suffix.
+var repoURLPattern = regexp.MustCompile(`github\.com/([^/]+/[^/]+?)(?:\.git)?/?$`)
 
 // WorkspaceSlug returns the on-disk directory leaf for this repo row on the
 // shared workspace volume — a pure function of the row's identity, delegating to

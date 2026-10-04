@@ -14,15 +14,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package reaper
+package codingagent
 
 import (
+	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
+	"github.com/wso2/aep/aep-api/internal/config"
 )
 
 // mkRecording lays down runs/<org>/<cycle>/{events.1.ndjson,state.json} with
@@ -32,7 +34,7 @@ import (
 // started rather than the moment it last wrote).
 func mkRecording(t *testing.T, root, org, cycle string, size int, when time.Time) string {
 	t.Helper()
-	dir := filepath.Join(gitfs.RunsDir(root), org, cycle)
+	dir := filepath.Join(filepath.Join(root, "runs"), org, cycle)
 	mkFile(t, filepath.Join(dir, "events.1.ndjson"), size)
 	mkFile(t, filepath.Join(dir, "state.json"), 64)
 	chtimes(t, filepath.Join(dir, "events.1.ndjson"), when)
@@ -53,9 +55,9 @@ func TestReapRecordings_RemovesAgedAndKeepsFresh(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
-	cfg := testCfg()
+	cfg := config.WorkspaceConfig{}
 	cfg.RecordingMaxAge = 30 * 24 * time.Hour
-	r, root := newSyntheticReaper(t, cfg, nil)
+	r, root := newRetention(t, cfg)
 	r.now = func() time.Time { return now }
 
 	aged := mkRecording(t, root, "acme", "cycle-old", 128, now.Add(-31*24*time.Hour))
@@ -78,9 +80,9 @@ func TestReapRecordings_AgesFromTheNEWESTFileInTheDirectory(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
-	cfg := testCfg()
+	cfg := config.WorkspaceConfig{}
 	cfg.RecordingMaxAge = 30 * 24 * time.Hour
-	r, root := newSyntheticReaper(t, cfg, nil)
+	r, root := newRetention(t, cfg)
 	r.now = func() time.Time { return now }
 
 	dir := mkRecording(t, root, "acme", "cycle-long", 128, now.Add(-40*24*time.Hour))
@@ -103,11 +105,11 @@ func TestReapRecordings_QuotaEvictsOldestFirst(t *testing.T) {
 
 	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
 	payload := blockPayloadSize(t) // what duDir charges for one mkFile
-	cfg := testCfg()
+	cfg := config.WorkspaceConfig{}
 	cfg.RecordingMaxAge = 30 * 24 * time.Hour
 	// Two recordings' worth (each holds two files), so a third puts the org over.
 	cfg.OrgQuotaBytes = 4 * payload
-	r, root := newSyntheticReaper(t, cfg, nil)
+	r, root := newRetention(t, cfg)
 	r.now = func() time.Time { return now }
 
 	oldest := mkRecording(t, root, "acme", "cycle-1", 64, now.Add(-72*time.Hour))
@@ -131,28 +133,54 @@ func TestReapRecordings_QuotaEvictsOldestFirst(t *testing.T) {
 func TestReapRecordings_NoRunsTreeIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	r, _ := newSyntheticReaper(t, testCfg(), nil)
+	r, _ := newRetention(t, config.WorkspaceConfig{})
 	if err := r.reapRecordings(context.Background()); err != nil {
 		t.Fatalf("reapRecordings on a volume with no runs/: %v", err)
 	}
 }
 
-// TestSweepRunsRecordingRetention proves the pass is actually wired into the
-// sweep, not merely callable: an unregistered pass is a retention policy that
-// never runs.
-func TestSweepRunsRecordingRetention(t *testing.T) {
-	t.Parallel()
+func newRetention(t *testing.T, cfg config.WorkspaceConfig) (*RecordingRetention, string) {
+	t.Helper()
+	root := t.TempDir()
+	return NewRecordingRetention(root, cfg), root
+}
 
-	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
-	cfg := testCfg()
-	cfg.RecordingMaxAge = 30 * 24 * time.Hour
-	r, root := newSyntheticReaper(t, cfg, staticLister{})
-	r.now = func() time.Time { return now }
-	r.diskUsage = func(string) (uint64, uint64, uint64, uint64, error) {
-		return 1000, 900, 1000, 1000, nil // well under the watermark
+func mkFile(t *testing.T, path string, size int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", path, err)
 	}
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
 
-	aged := mkRecording(t, root, "acme", "cycle-old", 128, now.Add(-40*24*time.Hour))
-	r.Sweep(context.Background())
-	mustNotExist(t, aged)
+func chtimes(t *testing.T, path string, when time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatalf("chtimes %s: %v", path, err)
+	}
+}
+
+// blockPayloadSize returns the bytes duDir charges for one mkFile payload
+// (allocated blocks, not apparent size).
+func blockPayloadSize(t *testing.T) int64 {
+	t.Helper()
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "probe"), 1)
+	return duDir(dir)
+}
+
+func mustExist(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected %s to exist: %v", path, err)
+	}
+}
+
+func mustNotExist(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected %s to be gone, stat err=%v", path, err)
+	}
 }

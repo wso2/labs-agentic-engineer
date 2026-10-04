@@ -111,7 +111,7 @@ func audienceIncludesCoding(audience []string) bool {
 // whole sync: one bad file must not block every OTHER project's skill guidance
 // from refreshing (that specific component simply loses its pins for this
 // pass — it re-establishes them once it is next saved).
-func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontrol.RepoRef) (map[string]bool, error) {
+func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontrol.WorkspaceRef) (map[string]bool, error) {
 	keep := func(rel string) bool {
 		return strings.HasPrefix(rel, designComponentsPrefix) && strings.HasSuffix(rel, designJSONSuffix)
 	}

@@ -1598,6 +1598,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	if workspaceReaper != nil {
 		watchers = append(watchers, workspaceReaper)
 	}
+	// Run-recording retention (age + per-org quota over <root>/runs). It left the
+	// workspace reaper with the recordings pass and so holds no leader lock:
+	// aep-api runs one replica over the RWO /workspaces volume, and phase 5 deletes
+	// the recordings tree. Skipped when Fake() leaves no workspace root.
+	if cfg.Workspace.Root != "" {
+		watchers = append(watchers, codingagent.NewRecordingRetention(cfg.Workspace.Root, cfg.Workspace))
+	}
 	// The pod-truth watcher: it classifies each dispatched cycle from the Pod
 	// OpenChoreo rendered for it, records a terminal agent reason when the agent
 	// died without a pull request (or the run's failure record, when its model

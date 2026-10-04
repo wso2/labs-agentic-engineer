@@ -27,22 +27,16 @@
 //  3. snapshot age-reap — trash snapshots/<sha> dirs older than
 //     SnapshotMaxAge that are not the mirror's current HEAD (immutability
 //     makes this safe: no leases, no heartbeats);
-//  4. recording retention — purge runs/<orgId>/<cycleId> coding-agent feed
-//     recordings older than RecordingMaxAge (30 days), then hold each org
-//     under OrgQuotaBytes oldest-first (local + idempotent). This tree is the
-//     one part of the mount that is NOT rebuildable, which is why its window
-//     is days rather than hours and why it is never evicted for disk pressure
-//     (ADR-0027);
-//  5. orphan reconciliation — set-difference the on-disk repos/… tree
+//  4. orphan reconciliation — set-difference the on-disk repos/… tree
 //     against the DB rows, with a 2×interval mtime grace (leader-only);
-//  6. git maintenance — repack/prune/pack-refs on loose-/pack-heavy mirrors
+//  5. git maintenance — repack/prune/pack-refs on loose-/pack-heavy mirrors
 //     under EX flock (leader-only; before quota so eviction sees reclaimed space);
-//  7. quota/LRU eviction — statfs high-watermark + per-org quota; snapshots
+//  6. quota/LRU eviction — statfs high-watermark + per-org quota; snapshots
 //     evicted first (oldest mtime), then whole mirrors LRU by git/ mtime,
 //     until under the low watermark (leader-only). It walks repos/ only:
-//     recordings are bounded by pass 4 instead.
+//     run recordings are not its concern (codingagent.RecordingRetention).
 //
-// The leader gate for passes 5–7 is a non-blocking flock on
+// The leader gate for passes 4–6 is a non-blocking flock on
 // <root>/.reaper.lock — replicas that lose it skip the global passes for the
 // tick and retry next tick.
 package reaper
@@ -108,11 +102,6 @@ type Reaper struct {
 	// the filesystem backing the workspace root). Defaults to syscall.Statfs;
 	// tests inject a fake to simulate watermark pressure.
 	diskUsage func(path string) (total, avail, inodesTotal, inodesFree uint64, err error)
-	// now is the clock seam. It exists for the recording-retention pass, whose
-	// window is THIRTY DAYS: a test cannot wait one out and a test that back-dates
-	// files instead is asserting os.Chtimes rather than the rule. Defaults to
-	// time.Now.
-	now func() time.Time
 }
 
 // New wires the reaper over the engine's workspace root. Zero/negative cfg
@@ -129,9 +118,6 @@ func New(engine *gitfs.Engine, repos RepoLister, cfg config.WorkspaceConfig, rea
 	}
 	if cfg.TrashMaxAge <= 0 {
 		cfg.TrashMaxAge = time.Hour
-	}
-	if cfg.RecordingMaxAge <= 0 {
-		cfg.RecordingMaxAge = 30 * 24 * time.Hour
 	}
 	if cfg.DiskHighPct <= 0 {
 		cfg.DiskHighPct = 85
@@ -152,7 +138,6 @@ func New(engine *gitfs.Engine, repos RepoLister, cfg config.WorkspaceConfig, rea
 		ready:       ready,
 		leaderLease: 2 * cfg.ReapInterval,
 		diskUsage:   statfsUsage,
-		now:         time.Now,
 	}
 }
 
@@ -187,7 +172,6 @@ func (r *Reaper) Sweep(ctx context.Context) {
 	r.pass(ctx, "tmp-reclamation", r.reclaimTmp)
 	r.pass(ctx, "trash-reclamation", r.reclaimTrash)
 	r.pass(ctx, "snapshot-age-reap", r.reapSnapshots)
-	r.pass(ctx, "recording-retention", r.reapRecordings)
 
 	var maintained, evictions int
 	// Global passes run on at most one replica per tick: non-blocking leader

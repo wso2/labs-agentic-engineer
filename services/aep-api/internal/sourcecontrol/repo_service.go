@@ -23,7 +23,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
@@ -150,7 +149,7 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	// as a K8s Secret in workflows-<ocOrgID> (see
 	// docs/design/build-credential-injection.md), so no SecretReference
 	// name is computed here; OcSecretRefName is left nil on new rows.
-	repoSlug := naming.SlugForURL(cloneURL)
+	repoSlug := RepoSlugFor(cloneURL)
 
 	// The repo is ready the moment GitHub has it: the shared-volume bare
 	// mirror is created lazily on first gitfs access (ensureMirror), so
@@ -213,7 +212,7 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		RepoURL:       cloneURL,
 		DefaultBranch: "main",
 		Status:        "ready", // mirror is lazy — ensureMirror on first gitfs access
-		RepoSlug:      naming.SlugForURL(cloneURL),
+		RepoSlug:      RepoSlugFor(cloneURL),
 	}
 	if err := s.repo.Create(ctx, gitRepo); err != nil {
 		// A concurrent caller (e.g. the skills list + updates-badge requests

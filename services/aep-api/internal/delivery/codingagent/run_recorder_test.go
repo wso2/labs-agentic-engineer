@@ -31,7 +31,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
 // fakeClock is ONE clock shared by the recorder and its log source, which is
@@ -317,7 +316,7 @@ func (f *recorderFixture) session(t *testing.T, attempt int) *recordingSession {
 // pod is gone, so what it says has to agree with the events beside it.
 func (f *recorderFixture) meta(t *testing.T) recordingMeta {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join(gitfs.RunsDir(f.root), "acme", "c1", recordingStateFile))
+	b, err := os.ReadFile(filepath.Join(filepath.Join(f.root, "runs"), "acme", "c1", recordingStateFile))
 	if err != nil {
 		t.Fatalf("read state.json: %v", err)
 	}
@@ -771,7 +770,7 @@ func TestRecorder_ReDispatchWritesASecondAttemptFileAndLeavesTheFirst(t *testing
 		t.Fatal("a Running pod ended the retry's session")
 	}
 
-	dir := filepath.Join(gitfs.RunsDir(f.root), "acme", "c1")
+	dir := filepath.Join(filepath.Join(f.root, "runs"), "acme", "c1")
 	for _, name := range []string{"events.1.ndjson", "events.2.ndjson"} {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Fatalf("expected %s: %v", name, err)

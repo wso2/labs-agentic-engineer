@@ -62,7 +62,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
 // recordingStateFile is the per-cycle state document. It is a file rather than
@@ -120,7 +119,7 @@ func NewRecordingStore(workspaceRoot string, maxCycleBytes int64) *RecordingStor
 	if maxCycleBytes < 0 {
 		maxCycleBytes = 0
 	}
-	return &RecordingStore{root: gitfs.RunsDir(workspaceRoot), maxCycleBytes: maxCycleBytes}
+	return &RecordingStore{root: filepath.Join(workspaceRoot, "runs"), maxCycleBytes: maxCycleBytes}
 }
 
 // recordingMeta is state.json.

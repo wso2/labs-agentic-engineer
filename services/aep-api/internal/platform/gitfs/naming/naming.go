@@ -52,31 +52,16 @@ const SkillsRepoDirName = "org-skills"
 // `https://github.com/owner/repo` and `.../repo.git`.
 var repoURLPattern = regexp.MustCompile(`github\.com/([^/]+/[^/]+?)(?:\.git)?/?$`)
 
-// SlugForURL returns the canonical repo slug for a GitHub HTTPS URL — the
+// slugForURL returns the canonical repo slug for a GitHub HTTPS URL — the
 // `owner/repo` path lowercased with `/` replaced by `-`. Returns "" if the URL
 // doesn't match the GitHub HTTPS pattern (caller decides whether to backfill or
 // fail). Mirrors phase2.md §9.1.
-func SlugForURL(repoURL string) string {
+func slugForURL(repoURL string) string {
 	m := repoURLPattern.FindStringSubmatch(repoURL)
 	if len(m) < 2 {
 		return ""
 	}
 	return strings.ToLower(strings.ReplaceAll(m[1], "/", "-"))
-}
-
-// OwnerRepoFromURL extracts (owner, repo) from a GitHub HTTPS URL, preserving
-// the original case (unlike SlugForURL, which lowercases). Returns empty strings
-// if the URL doesn't match.
-func OwnerRepoFromURL(repoURL string) (owner, repo string) {
-	m := repoURLPattern.FindStringSubmatch(repoURL)
-	if len(m) < 2 {
-		return "", ""
-	}
-	parts := strings.SplitN(m[1], "/", 2)
-	if len(parts) != 2 {
-		return "", ""
-	}
-	return parts[0], parts[1]
 }
 
 // WorkspaceSlug returns the on-disk directory leaf for a repo row on the shared
@@ -94,5 +79,5 @@ func WorkspaceSlug(projectID, repoSlug, repoURL string) string {
 	if repoSlug != "" {
 		return repoSlug
 	}
-	return SlugForURL(repoURL)
+	return slugForURL(repoURL)
 }

@@ -125,7 +125,7 @@ func (s *artifactService) BuildVersionFacts(ctx context.Context, orgID, projectI
 // one commit. Best-effort by design: a resource row is an EXTRA the tree cannot
 // show, so a read that fails costs that row and never the whole answer — the
 // build click must not fail because one design.json would not parse.
-func (s *artifactService) designAt(ctx context.Context, ref sourcecontrol.RepoRef, commit string) map[string]bool {
+func (s *artifactService) designAt(ctx context.Context, ref sourcecontrol.WorkspaceRef, commit string) map[string]bool {
 	if commit == "" {
 		return nil
 	}

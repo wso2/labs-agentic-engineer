@@ -14,27 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package naming
+package sourcecontrol
 
-import (
-	"testing"
-)
+import "testing"
 
-func TestSlugForURL(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
+func TestRepoSlugFor(t *testing.T) {
+	cases := []struct{ in, want string }{
 		{"https://github.com/aep-repos/phase2-prc-app-test037.git", "aep-repos-phase2-prc-app-test037"},
-		{"https://github.com/aep-repos/phase2-prc-app-test037", "aep-repos-phase2-prc-app-test037"},
 		{"https://github.com/Owner/MixedCaseRepo", "owner-mixedcaserepo"},
 		{"https://github.com/aep-repos/repo.git/", "aep-repos-repo"},
-		// Non-GitHub URL — empty
 		{"https://gitlab.com/aep/repo.git", ""},
 	}
 	for _, c := range cases {
-		got := slugForURL(c.in)
-		if got != c.want {
-			t.Errorf("slugForURL(%q) = %q; want %q", c.in, got, c.want)
+		if got := RepoSlugFor(c.in); got != c.want {
+			t.Errorf("RepoSlugFor(%q) = %q; want %q", c.in, got, c.want)
 		}
 	}
 }

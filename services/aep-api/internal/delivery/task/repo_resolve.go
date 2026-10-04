@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -39,8 +38,8 @@ func resolveProjectRepo(ctx context.Context, repos RepoResolver, orgID, projectI
 	if repo == nil {
 		return nil, "", "", ErrProjectRepoNotFound
 	}
-	owner, name = naming.OwnerRepoFromURL(repo.RepoURL)
-	if owner == "" || name == "" {
+	owner, name, err = sourcecontrol.ParseOwnerRepo(repo.RepoURL)
+	if err != nil {
 		return nil, "", "", ErrProjectRepoNotFound
 	}
 	return repo, owner, name, nil

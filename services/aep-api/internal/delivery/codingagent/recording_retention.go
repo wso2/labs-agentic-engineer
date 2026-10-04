@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package reaper
+package codingagent
 
 // recordings.go — retention for the coding-agent run recordings under
 // <root>/runs/<orgId>/<cycleId>.
@@ -39,21 +39,23 @@ package reaper
 //     small (a 55-minute run wrote about 300KB) and the age window is what
 //     ordinarily bounds the tree.
 //
-// It runs on EVERY replica, alongside the other local reclamation passes, for
-// the same reason they do: both rules are idempotent and derive entirely from
-// what is on disk, so two replicas racing reach the same answer. (aep-api runs
-// single-replica anyway — the volume is ReadWriteOnce — so the distinction is
-// theoretical here and the pass is written not to depend on it.)
+// It holds no leader lock (it left the workspace reaper, which elects one
+// replica for its global passes): both rules are idempotent and derive entirely
+// from what is on disk, so replicas racing reach the same answer. aep-api runs
+// single-replica anyway — the volume is ReadWriteOnce. Phase 5 deletes the
+// recordings tree and this file with it.
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"syscall"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
+	"github.com/wso2/aep/aep-api/internal/config"
 )
 
 // recordingCandidate is one cycle's recording directory, as this pass sees it.
@@ -65,9 +67,61 @@ type recordingCandidate struct {
 	sizeAll int64
 }
 
+// RecordingRetention is the background watcher that applies the age and quota
+// rules to the run recordings under <root>/runs.
+type RecordingRetention struct {
+	root     string
+	maxAge   time.Duration
+	quota    int64
+	interval time.Duration
+	now      func() time.Time
+}
+
+// NewRecordingRetention builds the watcher over the workspace mount root, using
+// cfg.ReapInterval, cfg.RecordingMaxAge and cfg.OrgQuotaBytes.
+func NewRecordingRetention(root string, cfg config.WorkspaceConfig) *RecordingRetention {
+	maxAge, interval := cfg.RecordingMaxAge, cfg.ReapInterval
+	if maxAge <= 0 {
+		maxAge = 30 * 24 * time.Hour
+	}
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	return &RecordingRetention{
+		root:     root,
+		maxAge:   maxAge,
+		quota:    cfg.OrgQuotaBytes,
+		interval: interval,
+		now:      time.Now,
+	}
+}
+
+// Run sweeps once at start (a pod restarting into a full volume must not wait a
+// whole interval) and then on every tick until ctx is canceled.
+func (r *RecordingRetention) Run(ctx context.Context) {
+	r.sweep(ctx)
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.sweep(ctx)
+		}
+	}
+}
+
+// sweep runs one retention pass; a failure is logged and the next tick retries.
+func (r *RecordingRetention) sweep(ctx context.Context) {
+	if err := r.reapRecordings(ctx); err != nil {
+		slog.WarnContext(ctx, "recording retention: pass failed", "error", err)
+	}
+}
+
 // reapRecordings purges aged recordings and then holds each org under quota.
-func (r *Reaper) reapRecordings(ctx context.Context) error {
-	runsDir := gitfs.RunsDir(r.engine.Root())
+func (r *RecordingRetention) reapRecordings(ctx context.Context) error {
+	runsDir := filepath.Join(r.root, "runs")
 	orgs, err := os.ReadDir(runsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -76,7 +130,7 @@ func (r *Reaper) reapRecordings(ctx context.Context) error {
 		return err
 	}
 	now := r.now()
-	maxAge := r.cfg.RecordingMaxAge
+	maxAge := r.maxAge
 	for _, org := range orgs {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -101,7 +155,7 @@ func (r *Reaper) reapRecordings(ctx context.Context) error {
 }
 
 // recordingsIn lists one org's cycle directories with their age and size.
-func (r *Reaper) recordingsIn(orgDir, org string) []recordingCandidate {
+func (r *RecordingRetention) recordingsIn(orgDir, org string) []recordingCandidate {
 	entries, err := os.ReadDir(orgDir)
 	if err != nil {
 		return nil
@@ -128,8 +182,8 @@ func (r *Reaper) recordingsIn(orgDir, org string) []recordingCandidate {
 // with no marker saying where it was cut is exactly the thing the recording
 // state machine refuses to serve, and a truncated file would have no way to say
 // so.
-func (r *Reaper) holdRecordingQuota(ctx context.Context, org string, kept []recordingCandidate, orgBytes int64) {
-	if r.cfg.OrgQuotaBytes <= 0 || orgBytes <= r.cfg.OrgQuotaBytes {
+func (r *RecordingRetention) holdRecordingQuota(ctx context.Context, org string, kept []recordingCandidate, orgBytes int64) {
+	if r.quota <= 0 || orgBytes <= r.quota {
 		return
 	}
 	sort.Slice(kept, func(i, j int) bool {
@@ -138,10 +192,10 @@ func (r *Reaper) holdRecordingQuota(ctx context.Context, org string, kept []reco
 		}
 		return kept[i].newest.Before(kept[j].newest)
 	})
-	slog.InfoContext(ctx, "reaper: org over quota on run recordings — evicting oldest",
-		"org", org, "usageBytes", orgBytes, "quotaBytes", r.cfg.OrgQuotaBytes)
+	slog.InfoContext(ctx, "recording retention: org over quota on run recordings — evicting oldest",
+		"org", org, "usageBytes", orgBytes, "quotaBytes", r.quota)
 	for _, c := range kept {
-		if orgBytes <= r.cfg.OrgQuotaBytes || ctx.Err() != nil {
+		if orgBytes <= r.quota || ctx.Err() != nil {
 			return
 		}
 		if r.removeRecording(ctx, c, "quota") {
@@ -156,12 +210,12 @@ func (r *Reaper) holdRecordingQuota(ctx context.Context, org string, kept []reco
 // its canonical path instantly while readers finish, and a recording has no
 // canonical path to free and no writer racing for it — the only writer is a
 // session for a cycle that is, by the age gate, at least a month over.
-func (r *Reaper) removeRecording(ctx context.Context, c recordingCandidate, why string) bool {
+func (r *RecordingRetention) removeRecording(ctx context.Context, c recordingCandidate, why string) bool {
 	if err := os.RemoveAll(c.path); err != nil {
-		slog.WarnContext(ctx, "reaper: purge run recording failed", "path", c.path, "error", err)
+		slog.WarnContext(ctx, "recording retention: purge run recording failed", "path", c.path, "error", err)
 		return false
 	}
-	slog.InfoContext(ctx, "reaper: purged run recording",
+	slog.InfoContext(ctx, "recording retention: purged run recording",
 		"org", c.org, "cycle", c.cycle, "reason", why, "bytes", c.sizeAll)
 	return true
 }
@@ -189,4 +243,26 @@ func newestMTime(dir string) time.Time {
 		}
 	}
 	return newest
+}
+
+// duDir sums allocated blocks (st_blocks*512) for regular files under path.
+// Errors are skipped: a concurrent removal mid-walk is normal.
+func duDir(path string) int64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // skip unreadable entries, keep walking
+		}
+		if d.Type().IsRegular() {
+			if info, err := d.Info(); err == nil {
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					total += st.Blocks * 512
+				} else {
+					total += info.Size()
+				}
+			}
+		}
+		return nil
+	})
+	return total
 }

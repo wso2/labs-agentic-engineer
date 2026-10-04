@@ -23,7 +23,6 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
 // TestRecordingStore_StateMachine walks the states the console branches on. The
@@ -58,7 +57,7 @@ func TestRecordingStore_StateMachine(t *testing.T) {
 	}
 
 	// Losing the events under a state.json that says they are there is `lost`.
-	if err := os.Remove(filepath.Join(gitfs.RunsDir(root), "acme", "c1", "events.1.ndjson")); err != nil {
+	if err := os.Remove(filepath.Join(filepath.Join(root, "runs"), "acme", "c1", "events.1.ndjson")); err != nil {
 		t.Fatalf("remove events: %v", err)
 	}
 	if got := store.State("acme", "c1"); got != gen.RunCycleViewRecordingLost {
@@ -148,7 +147,7 @@ func TestRecordingStore_ReadFromStopsAtTheLastCompleteLine(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 	// Simulate a write the reader catches half-way through.
-	path := filepath.Join(gitfs.RunsDir(root), "acme", "c1", "events.1.ndjson")
+	path := filepath.Join(filepath.Join(root, "runs"), "acme", "c1", "events.1.ndjson")
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		t.Fatalf("open: %v", err)

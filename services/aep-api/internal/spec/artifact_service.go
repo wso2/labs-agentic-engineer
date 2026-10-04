@@ -105,7 +105,7 @@ var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
 // CommitSHA when set (validated, never a ref read), else the current HEAD via
 // the workspace mirror (the engine fetches origin first, so an unpinned save
 // never sees a lagging ref).
-func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontrol.RepoRef, req SaveRequest) (string, error) {
+func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontrol.WorkspaceRef, req SaveRequest) (string, error) {
 	if req.CommitSHA != "" {
 		if !commitSHAPattern.MatchString(req.CommitSHA) {
 			return "", fmt.Errorf("%w: %q is not a commit sha", ErrArtifactPathInvalid, req.CommitSHA)
@@ -305,14 +305,14 @@ func (s *artifactService) requireReadyRepo(ctx context.Context, orgID, projectID
 // readyRef resolves the ready repo row + its workspace-mount address in one
 // step — every entrypoint's resolution (reads, saves, discards). orgID is the
 // authenticated org; the mount path is derived from the row alone (design D6).
-func (s *artifactService) readyRef(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, sourcecontrol.RepoRef, error) {
+func (s *artifactService) readyRef(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, sourcecontrol.WorkspaceRef, error) {
 	repo, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
-		return nil, sourcecontrol.RepoRef{}, err
+		return nil, sourcecontrol.WorkspaceRef{}, err
 	}
 	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
 	if err != nil {
-		return nil, sourcecontrol.RepoRef{}, err
+		return nil, sourcecontrol.WorkspaceRef{}, err
 	}
 	return repo, ref, nil
 }
