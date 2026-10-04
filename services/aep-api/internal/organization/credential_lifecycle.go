@@ -89,15 +89,6 @@ func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) erro
 		}
 	}
 
-	// Drop every per-WorkflowRun build Secret in this org's WP namespace
-	// so a disconnected org's tokens don't linger inside the cluster.
-	// Best-effort.
-	if s.buildSecretCleaner != nil {
-		if err := s.buildSecretCleaner.DeleteBuildSecretsForOrg(ctx, ocOrgID); err != nil {
-			slog.WarnContext(ctx, "disconnect: wp secret delete failed", "ocOrgId", ocOrgID, "error", err)
-		}
-	}
-
 	slog.InfoContext(ctx, "credentials.disconnected", "ocOrgId", ocOrgID, "kind", row.Kind)
 	return nil
 }

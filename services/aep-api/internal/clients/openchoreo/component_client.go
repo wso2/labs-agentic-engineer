@@ -146,9 +146,9 @@ type ComponentClient interface {
 	// that need to know the name ahead of time (so they can stage a
 	// per-WorkflowRun build Secret) MUST pass it.
 	// secretRef sets parameters.repository.secretRef so the dockerfile-builder
-	// workflow synthesises the git Secret from the org's SecretReference
-	// (provisioned by BuildCredentialsService). Empty leaves it blank — the
-	// build clones unauthenticated (public repos only).
+	// workflow synthesises the git Secret from the org's github-pat
+	// SecretReference (named by BuildCredentialsService). Empty leaves it
+	// blank — the build clones unauthenticated (public repos only).
 	TriggerBuild(ctx context.Context, orgName, projectName, componentName, secretRef, runName string) (*gen.WorkflowRun, error)
 	// TriggerBuildAtCommit creates a WorkflowRun pinned to commitSHA via
 	// params.repository.revision.commit. Mirrors agent-manager's pattern at

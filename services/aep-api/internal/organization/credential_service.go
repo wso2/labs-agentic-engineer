@@ -49,29 +49,11 @@ import (
 //
 // The Resolver (used at runtime by every git operation) doesn't change at
 // connect time — it just reads whatever this service has persisted.
-// BuildSecretCleaner cleans up the per-org build-credential Secret in the
-// org's workflow-plane namespace. Implemented by BuildCredentialsService;
-// kept as an interface here so CredentialService doesn't import a
-// concrete struct from a sibling file (no real circular import today,
-// but keeps the seam minimal and testable).
-//
-// Each WP-Secret-cleanup concern (build, anthropic, future providers)
-// has its own narrowly-typed interface so cred services only depend on
-// what they own.
-type BuildSecretCleaner interface {
-	DeleteBuildSecretsForOrg(ctx context.Context, ocOrgID string) error
-}
-
 type CredentialService struct {
 	repo      OrgCredentialRepository
 	store     secrets.CredentialStore
 	minter    *secrets.AppTokenMinter
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
-
-	// buildSecretCleaner is invoked from the Disconnect cascade so a
-	// disconnected org's WP build Secret doesn't outlive its credential
-	// row. nil is a graceful no-op (tests, off-cluster runs).
-	buildSecretCleaner BuildSecretCleaner
 
 	// secretRefWriter mirrors the PAT into SM-API on Connect and clears it on
 	// Disconnect. nil-safe — no-op when the writer isn't configured
@@ -205,15 +187,6 @@ func projectionFromRow(r *OrgCredential) *Projection {
 		p.SelectedRepos = []string(r.SelectedRepos)
 	}
 	return p
-}
-
-// WithBuildSecretCleaner injects the post-disconnect cleanup hook for
-// the per-org build-credential Secret. Wired by main after both services
-// are constructed; nil-safe so tests don't have to pass one. Returns the
-// receiver to allow chained construction.
-func (s *CredentialService) WithBuildSecretCleaner(cleaner BuildSecretCleaner) *CredentialService {
-	s.buildSecretCleaner = cleaner
-	return s
 }
 
 // WithSecretRefWriter injects the SM-API writer. When set, the PAT-mode

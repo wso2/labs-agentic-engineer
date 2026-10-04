@@ -24,7 +24,34 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// (fakeResolver and fakeCred re-used from build_credentials_service_test.go)
+// fakeResolver dispatches a fixed Credential or returns a fixed error.
+type fakeResolver struct {
+	cred secrets.Credential
+	err  error
+}
+
+func (f *fakeResolver) Resolve(ctx context.Context, ocOrgID string) (secrets.Credential, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.cred, nil
+}
+
+// fakeCred returns a constant token + expiry.
+type fakeCred struct {
+	token string
+	exp   time.Time
+	err   error
+}
+
+func (c *fakeCred) Token(context.Context) (string, time.Time, error) {
+	return c.token, c.exp, c.err
+}
+func (c *fakeCred) Identity() secrets.Identity { return secrets.Identity{} }
+func (c *fakeCred) RepoOwner() string          { return "" }
+func (c *fakeCred) WebhookStrategy() secrets.WebhookStrategy {
+	return secrets.WebhookPerRepo
+}
 
 func TestRefresh_Happy(t *testing.T) {
 	expiry := time.Now().Add(time.Hour)

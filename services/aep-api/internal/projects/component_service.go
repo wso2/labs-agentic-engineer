@@ -82,8 +82,8 @@ type ComponentService interface {
 	GetBuildLogs(ctx context.Context, orgName, projectName, componentName, buildName string, sinceMillis int64) (*gen.BuildLogs, error)
 }
 
-// BuildSecretStager pre-stages the org's build git Secret on the workflow
-// plane and returns the secretRef the build WorkflowRun consumes. Consumer-
+// BuildSecretStager returns the secretRef the build WorkflowRun consumes: the
+// org's github-pat SecretReference name, never a value. Consumer-
 // side port over BuildCredentialsService; a thin composition-root adapter
 // maps the concrete *StageResult to the secretRef string so the component
 // feature need not import that services type.
@@ -364,9 +364,9 @@ func (s *componentService) EnsureComponent(ctx context.Context, orgName, project
 		AutoDeploy: false,
 	}
 
-	// repository.secretRef stays empty: build credentials are pre-staged per
-	// WorkflowRun (build-credential-injection.md), so the Component's workflow
-	// param carries no SecretReference.
+	// repository.secretRef stays empty here: each build WorkflowRun names the
+	// org's github-pat SecretReference itself (TriggerBuild), so the
+	// Component's workflow param carries none.
 	if _, err := s.CreateComponent(ctx, orgName, projectName, &openchoreo.CreateComponentRequest{
 		Name:        k8sName,
 		DisplayName: comp.Name,

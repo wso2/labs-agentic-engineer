@@ -39,6 +39,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
@@ -48,6 +49,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/patch"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 const submitThunderSecret = "thunder-issued-once"
@@ -234,6 +236,7 @@ type submitFixture struct {
 	vault   *submitVault
 	thunder *submitThunder
 	rows    organization.OrgSecretRepository
+	db      *gorm.DB
 	logs    *bytes.Buffer
 	calls   []string
 	writes  map[string]int
@@ -324,7 +327,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	slog.SetDefault(slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	return &submitFixture{svc: svc, log: log, vault: vault, thunder: thunder, rows: rows, logs: logs}
+	return &submitFixture{svc: svc, log: log, vault: vault, thunder: thunder, rows: rows, db: db, logs: logs}
 }
 
 // patch submits the gitpat and records the steps it ran in f.calls.
@@ -529,5 +532,36 @@ func TestSubmit_DisconnectRemovesTheGitHubSecretsAndReconnectRestoresThem(t *tes
 	pat2, hook2 := f.row(t, organization.OrgSecretGitHubPAT), f.row(t, organization.OrgSecretGitHubWebhookSecret)
 	if pat2 == "" || hook2 == "" || pat2 == pat1 || hook2 == hook1 || !f.vault.live[pat2] || !f.vault.live[hook2] {
 		t.Fatalf("reconnect rows pat %q→%q hook %q→%q, live %v", pat1, pat2, hook1, hook2, f.vault.live)
+	}
+}
+
+// A build clones with the github-pat reference the submit recorded, and a
+// disconnected org (06 §9 removes the row) gets ErrOrgDisconnected — never
+// an empty secretRef.
+func TestSubmit_BuildReferencesTheGitpatUntilDisconnect(t *testing.T) {
+	f := newSubmitFixture(t)
+	ctx := userCtx(submitOU.String())
+	repos := sourcecontrol.NewRepoRepository(f.db)
+	if err := repos.Create(context.Background(), &sourcecontrol.GitRepository{
+		OrgID: "default", ProjectID: "greeter", RepoURL: "https://github.com/ghorg/greeter", Status: "ready", RepoSlug: "ghorg-greeter",
+	}); err != nil {
+		t.Fatalf("seed repo: %v", err)
+	}
+	builds := organization.NewBuildCredentialsService(repos, f.rows)
+
+	if err := f.patch(ctx, "ghorg", "pat-1"); err != nil {
+		t.Fatal(err)
+	}
+	pat := f.row(t, organization.OrgSecretGitHubPAT)
+	res, err := builds.StageBuildSecret(ctx, "default", "ghorg-greeter", "run-1")
+	if err != nil || pat == "" || res.SecretRef != pat {
+		t.Fatalf("connected build: res=%+v err=%v, want the github-pat reference %q", res, err, pat)
+	}
+
+	if _, err := f.svc.DisconnectGitProvider(ctx, "default"); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	if _, err := builds.StageBuildSecret(ctx, "default", "ghorg-greeter", "run-2"); !errors.Is(err, organization.ErrOrgDisconnected) {
+		t.Fatalf("disconnected build: err = %v, want ErrOrgDisconnected", err)
 	}
 }

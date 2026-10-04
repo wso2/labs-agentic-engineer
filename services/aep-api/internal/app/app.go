@@ -200,10 +200,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the dependency catalogs and provisioners and the deploy path author
 	// through this one (AE Studio builds its own, aeStudioOC).
 	resourceClient := openchoreo.NewResourceClient(ocConfig)
-	// GitSecret client lands the per-org build git credential on the workflow
-	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
-	// for both cloud (CP/WP split) and local k3d — one unified path.
-	gitSecretClient := openchoreo.NewGitSecretClient(ocConfig)
 	// SecretReference client for ai-agent model access (component_service.go's
 	// EnsureComponent → wireModelAccess): always goes through OC's own
 	// SecretReference CRUD directly (docs/glossary.md's SecretReference
@@ -282,8 +278,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
-	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
-	credService.WithBuildSecretCleaner(buildCredService)
+	// Builds clone with the org's github-pat SecretReference, read from its
+	// org_secrets row: aep-api passes the reference name, never the value.
+	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)
 	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)
 	// The org's model connection as every consumer outside organization reads
 	// it: the spec agents and task planning (the connection and its key), the
@@ -440,12 +437,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	projectService.SetEndpointGate(endpointGate)
 	organizationService := organization.NewOrganizationService(orgRepo, namespaceClient)
-	// componentService takes repoSvc + buildCredSvc so TriggerBuild can
-	// pre-stage the per-WorkflowRun build Secret in workflows-<orgID>
-	// before the WorkflowRun is created (see
-	// docs/design/build-credential-injection.md). buildCredService is never nil
-	// (NewBuildCredentialsService always returns a value; its gitSecrets are
-	// nil-safe internally), so the stager is always wired.
+	// componentService takes repoSvc + buildCredSvc so TriggerBuild can pass
+	// the org's github-pat SecretReference as the WorkflowRun's
+	// repository.secretRef. buildCredService is never nil, so the stager is
+	// always wired.
 	buildStager := buildSecretStagerAdapter{svc: buildCredService}
 	// modelConnections already satisfies projects.ModelKeyResolver
 	// structurally (KeyPathRef has the exact same signature) — no adapter
@@ -1694,9 +1689,6 @@ func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID,
 	res, err := a.svc.StageBuildSecret(ctx, ocOrgID, repoSlug, workflowRunName)
 	if err != nil {
 		return "", err
-	}
-	if res == nil {
-		return "", nil
 	}
 	return res.SecretRef, nil
 }

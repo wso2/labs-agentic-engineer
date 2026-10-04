@@ -30,10 +30,9 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
-// stagedRef is the secretRef our fake stager returns (mirrors the real per-org
-// build GitSecret name, orgcreds.BuildGitSecretName — a literal here so the
-// codingagent package holds no orgcreds import).
-const stagedRef = "aep-component-build-git-secret"
+// stagedRef is the secretRef our fake stager returns (the shape of the org's
+// github-pat SecretReference name the real stager reads from org_secrets).
+const stagedRef = "default-github-pat-3f9a"
 
 // buildTrigger captures the args of the last TriggerBuildAtCommit call.
 type buildTrigger struct {

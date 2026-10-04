@@ -662,11 +662,10 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   latest cycle is read and builds are counted per merge SHA, so an earlier or superseded merge is never
   rebuilt. It runs on every replica like the other sweeps; with more than one, two could heal the same
   merge on one tick (the second trigger collides on the run name) — accepted while the api runs one.
-- **The build clone credential is staged once per fan-out, never per component — and only when a build is
-  owed.** The fan-out counts first, so a duplicate of an already-built merge stages nothing. It is ONE per-org
-  object and OpenChoreo has no update verb, so staging is delete-then-create; staging inside the fan-out's
-  per-component goroutines had them racing to delete and recreate the same object, and the loser dispatched
-  a build with an empty `secretRef` that cloned anonymously and died at checkout against a private repo.
+- **The build clone credential is resolved once per fan-out, never per component — and only when a build is
+  owed.** The fan-out counts first, so a duplicate of an already-built merge resolves nothing. Staging is a
+  read of the org's `github-pat` SecretReference name (no value passes through aep-api); an org with no
+  reference is refused (`ErrOrgDisconnected`), never dispatched with an empty `secretRef`.
 - **The kernel names no feature.** The root holds only types/ports/Temporal infra; it never imports a
   sub-package (`root ⊥ slice`), and the domain never imports `internal/feature/*`.
 - **`*run.Supervisor` stays a nil-safe concrete type**, not an interface, at the composition root — the

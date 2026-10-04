@@ -90,15 +90,6 @@ func patHappyGitHub(t testing.TB, login, name, email string) *stubGitHub {
 	return gh
 }
 
-// fakeBuildCleaner records DeleteBuildSecretsForOrg calls from the Disconnect
-// cascade.
-type fakeBuildCleaner struct{ orgs []string }
-
-func (f *fakeBuildCleaner) DeleteBuildSecretsForOrg(_ context.Context, ocOrgID string) error {
-	f.orgs = append(f.orgs, ocOrgID)
-	return nil
-}
-
 // getRow reads the raw credential row for assertions the projection hides
 // (webhook_secrets, drift columns).
 func getRow(t testing.TB, db *gorm.DB, ocOrgID string) organization.OrgCredential {
@@ -276,8 +267,6 @@ func TestDisconnect_ClearsRowAndSecrets_DB(t *testing.T) {
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
 	svc, store := newCredSvcDB(t, db, gh)
-	cleaner := &fakeBuildCleaner{}
-	svc.WithBuildSecretCleaner(cleaner)
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
@@ -291,9 +280,6 @@ func TestDisconnect_ClearsRowAndSecrets_DB(t *testing.T) {
 	}
 	if _, err := store.Get(ctx, "acme", "github/pat"); !errors.Is(err, secrets.ErrSecretNotFound) {
 		t.Fatalf("PAT must be GC'd from the store, got err %v", err)
-	}
-	if len(cleaner.orgs) != 1 || cleaner.orgs[0] != "acme" {
-		t.Fatalf("build-secret cleaner calls: %v", cleaner.orgs)
 	}
 }
 

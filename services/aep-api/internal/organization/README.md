@@ -141,7 +141,9 @@ S2S credentials-refresh.*
 - **Consumers mount the reference an org secret's row records, not its triplet** (R7,
   `RecordedOrgSecretRef`): `KeyRef` and `ResolveCodingCredential` take the `default-key` /
   `coding-agent-key` name, coding dispatch the `github-pat` (key `token`) and `ae-publisher-client`
-  names, so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
+  names, a component build (`StageBuildSecret`) the `github-pat` name as `repository.secretRef`
+  (the checkout reads key `password`; no value passes through aep-api, no row is
+  `ErrOrgDisconnected` with no triplet fallback), so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
   only the name and the key (C10), so `KeyRef` carries no vault path. The ai-agent model access,
   which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
   stamped triplet whole, live by construction (a reference a committed stamp names is retired only

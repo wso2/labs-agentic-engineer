@@ -172,13 +172,12 @@ type ProjectRepos interface {
 	GetRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 }
 
-// BuildSecretStager pre-stages the org's build git credential on the workflow
-// plane and returns the secretRef the build WorkflowRun consumes so its
-// checkout-source step can clone a PRIVATE repo (the local plane sets
-// GITHUB_REPO_VISIBILITY=private, so project builds need it). A nil error with
-// an empty secretRef means degrade-to-unauthenticated (correct for the public
-// repos aep creates by default); a non-nil error is an ownership/disconnect
-// refusal or a transient failure that must block the build. Consumer-side port:
+// BuildSecretStager returns the secretRef the build WorkflowRun consumes (the
+// org's github-pat SecretReference name) so its checkout-source step can clone
+// a PRIVATE repo (the local plane sets GITHUB_REPO_VISIBILITY=private, so
+// project builds need it). A nil error always carries a reference; a non-nil
+// error is an ownership/disconnect refusal or a transient failure that must
+// block the build. Consumer-side port:
 // the composition root maps the concrete *orgcreds.BuildCredentialsService's
 // *StageResult onto the secretRef string (the same adapter feature/component
 // uses), so this feature holds no orgcreds import. Optional — nil skips staging.
