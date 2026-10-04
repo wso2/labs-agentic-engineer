@@ -100,11 +100,9 @@ type ApplyResult struct {
 	Warnings  []Warning
 }
 
-// Conflict is one failed baseSha precondition. CurrentSHA is empty when the
-// path does not exist at the tip.
-type Conflict struct {
-	Path, BaseSHA, CurrentSHA string
-}
+// Conflict is one failed baseSha precondition (repo.CheckPreconditions).
+// CurrentSHA is empty when the path does not exist at the tip.
+type Conflict = repo.Conflict
 
 // Applier is the Files write path: the one atomic apply, over the same
 // project resolution and engine as the reads. Completer and Identity are
@@ -165,6 +163,7 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 		}
 	}
 
+	preWrites, preDeletes := preconditionsOf(req)
 	var conflicts []Conflict
 	var files []Meta
 	var warnings []Warning
@@ -174,15 +173,12 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 
 		// The committed base tree this attempt builds on: path → blob sha,
 		// the input to every per-file baseSha precondition.
-		current := map[string]string{}
-		if werr := tx.Base().Walk("", func(rel, blobSHA string) error {
-			current[rel] = blobSHA
-			return nil
-		}); werr != nil {
-			return fmt.Errorf("walk base tree: %w", werr)
+		current, werr := repo.BaseBlobs(tx.Base())
+		if werr != nil {
+			return werr
 		}
 
-		conflicts = checkPreconditions(req, current)
+		conflicts = repo.CheckPreconditions(current, preWrites, preDeletes)
 		if len(conflicts) > 0 {
 			return errConflictSentinel // fn error aborts Mutate: no retry, the 409 path
 		}
@@ -254,6 +250,20 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 		return nil, nil, repoError(ref, fmt.Errorf("apply: %w", err))
 	}
 	return &ApplyResult{CommitSHA: res.CommitSHA, Changed: res.Changed, Files: files, Warnings: warnings}, nil, nil
+}
+
+// preconditionsOf is req's baseSha expectations in the engine's terms (the
+// check reads paths and shas only, never content).
+func preconditionsOf(req ApplyRequest) ([]repo.CommitWrite, []repo.CommitDelete) {
+	writes := make([]repo.CommitWrite, len(req.Writes))
+	for i, w := range req.Writes {
+		writes[i] = repo.CommitWrite{Path: w.Path, BaseSHA: w.BaseSHA}
+	}
+	deletes := make([]repo.CommitDelete, len(req.Deletes))
+	for i, d := range req.Deletes {
+		deletes[i] = repo.CommitDelete{Path: d.Path, BaseSHA: d.BaseSHA}
+	}
+	return writes, deletes
 }
 
 // validateApply applies the write rules to the whole request and returns

@@ -19,8 +19,9 @@
 // refspec fetch, never checked out), plumbing reads (rev-parse / ls-tree /
 // cat-file), and plumbing writes via a throwaway index (read-tree /
 // update-index / write-tree / commit-tree / `push --force-with-lease`). It is
-// moved from aep-api's gitfs (which stays until phase 4); snapshots, tags,
-// references and diffs return with their callers in phases 3 and 4.
+// moved from aep-api's gitfs (which stays until phase 4); snapshots,
+// references, tags and the baseSha Commit returned with their callers in
+// phases 3 and 4.
 package repo
 
 import (
@@ -35,6 +36,12 @@ var (
 	// exhausts its attempts because origin kept advancing (the analog of the
 	// retired REST fast-forward-only ref-update rejection).
 	ErrRefNotFastForward = errors.New("github ref: update is not a fast-forward")
+	// ErrTagAlreadyExists is returned by Tag when the tag name is already
+	// taken (locally after fetch, or rejected by origin on push).
+	ErrTagAlreadyExists = errors.New("tag already exists")
+	// ErrCommitConflict is returned by Commit when a baseSha precondition
+	// fails against the tip the commit builds on; nothing is applied.
+	ErrCommitConflict = errors.New("commit conflict: stale baseSha")
 	// ErrRefNotFound is returned when `at` (branch, tag, or sha) does not
 	// resolve to a commit — the later phases map it to 404.
 	ErrRefNotFound = errors.New("git ref not found")
@@ -53,6 +60,11 @@ type Workspace interface {
 	// is verified and returned verbatim. Branch/tag addressing fetches origin
 	// first; raw shas read local objects, fetching only when missing.
 	Head(ctx context.Context, ref RepoRef, at string) (sha string, err error)
+	// HeadLocal is Head("") without the origin fetch: the default-branch tip
+	// the mirror already holds. The mirror is authoritative for every commit
+	// the engine writes (Mutate/Commit update it before returning), so only
+	// out-of-band pushes are missed until the next fetch-bearing op.
+	HeadLocal(ctx context.Context, ref RepoRef) (sha string, err error)
 	// List returns every blob in the tree at `at` (recursive) plus the
 	// resolved commit SHA.
 	List(ctx context.Context, ref RepoRef, at string) (entries []Entry, headSHA string, err error)
@@ -70,6 +82,23 @@ type Workspace interface {
 	// immediately with that error — no retry (the caller's 409 path). A
 	// no-change fn returns CommitResult{Changed: false} without committing.
 	Mutate(ctx context.Context, ref RepoRef, fn func(Tx) error, opts CommitOpts) (CommitResult, error)
+	// Commit is Mutate with per-path baseSha preconditions (CheckPreconditions)
+	// checked against the tip each attempt builds on: writes and deletes land
+	// as one commit, or a failed precondition answers its conflicts with
+	// ErrCommitConflict and nothing is applied. It runs the engine's commit
+	// only: no scaffolding, soft validation or completions.
+	Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, deletes []CommitDelete, message string, author *GitIdentity) (CommitResult, []Conflict, error)
+
+	// Tag creates an annotated tag at spec.Target ("" = default-branch tip)
+	// and pushes it. A taken name (seen after fetch, or rejected by origin on
+	// push) returns ErrTagAlreadyExists.
+	Tag(ctx context.Context, ref RepoRef, spec TagSpec) error
+	// ListTags returns the tags whose name starts with prefix, with the
+	// PEELED commit sha, after fetching origin.
+	ListTags(ctx context.Context, ref RepoRef, prefix string) ([]TagInfo, error)
+	// ListTagsLocal is ListTags without the origin fetch: it serves whatever
+	// the mirror already holds (every tag Tag cuts is there).
+	ListTagsLocal(ctx context.Context, ref RepoRef, prefix string) ([]TagInfo, error)
 }
 
 // Tx is the staged overlay handed to a Mutate fn. Write/Delete record
@@ -135,6 +164,29 @@ type CommitOpts struct {
 type CommitResult struct {
 	CommitSHA string
 	Changed   bool
+}
+
+// TagSpec describes one annotated tag. Target is a commit sha (or any
+// resolvable ref; "" targets the default-branch tip). Tagger nil falls back
+// to the AEP default identity.
+type TagSpec struct {
+	Name    string
+	Target  string
+	Message string
+	Tagger  *GitIdentity
+}
+
+// TagInfo describes a git tag: the peeled commit it points at, the tag
+// message subject (empty for lightweight tags), and when the tag was made.
+type TagInfo struct {
+	Name       string `json:"name"`
+	CommitHash string `json:"commitHash"`
+	Message    string `json:"message,omitempty"`
+	// CreatedAt is git's `creatordate`: the tag's own date for an annotated
+	// tag, the commit's for a lightweight one. It is what orders versions
+	// (their names are the user's and carry no sequence). Zero when the ref
+	// could not be dated.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 // GitIdentity is a git author/committer/tagger identity. Field names and

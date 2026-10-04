@@ -226,3 +226,75 @@ func TestInvalidPathSegmentsRejected(t *testing.T) {
 		t.Fatal("Head with separator repo succeeded, want validation error")
 	}
 }
+
+// Ported from gitfs reads_test.go (Task 4.2a): HeadLocal serves the mirror's
+// default-branch tip without a fetch.
+func TestHeadLocalServesMirrorWithoutFetch(t *testing.T) {
+	fx := NewFixture(t, seedFiles())
+	ctx := context.Background()
+
+	// First-ever access: ensureMirror clones (the one-time network cost), then
+	// the tip resolves locally. The pod's clone carries its own refspec fetch
+	// into staging (cloneMirror); HeadLocal adds none.
+	rec := recordCommands(t, fx.Engine)
+	sha1, err := fx.Engine.HeadLocal(ctx, fx.Ref)
+	if err != nil {
+		t.Fatalf("HeadLocal: %v", err)
+	}
+	if want := fx.Origin.HeadSHA(t); sha1 != want {
+		t.Fatalf("HeadLocal = %s, want origin head %s", sha1, want)
+	}
+	if n := rec.countSubcommand("clone"); n != 1 {
+		t.Fatalf("first access cloned %d times, want 1", n)
+	}
+	if n := rec.countSubcommand("fetch"); n != 1 {
+		t.Fatalf("first access fetched %d times, want only the clone's own fetch", n)
+	}
+
+	// Origin moves ahead out-of-band — HeadLocal serves the mirror as-is
+	// (stale-but-local), still without a fetch.
+	sha2 := fx.Origin.Commit(t, map[string]string{"README.md": "v2\n"}, "second")
+	rec.reset()
+	got, err := fx.Engine.HeadLocal(ctx, fx.Ref)
+	if err != nil {
+		t.Fatalf("HeadLocal after origin move: %v", err)
+	}
+	if got != sha1 || got == sha2 {
+		t.Fatalf("HeadLocal = %s, want stale mirror head %s (never un-fetched %s)", got, sha1, sha2)
+	}
+	if n := rec.countSubcommand("fetch"); n != 0 {
+		t.Fatalf("HeadLocal fetched %d times, want 0", n)
+	}
+
+	// A write THROUGH the engine updates the mirror before returning, so
+	// HeadLocal sees it without a fetch — the committed-truth write path keeps
+	// local reads current for platform-written content.
+	res, err := fx.Engine.Mutate(ctx, fx.Ref, func(tx repo.Tx) error {
+		tx.Write("specs/design/design.md", []byte("design\n"))
+		return nil
+	}, repo.CommitOpts{Message: "add design"})
+	if err != nil {
+		t.Fatalf("Mutate: %v", err)
+	}
+	rec.reset()
+	got2, err := fx.Engine.HeadLocal(ctx, fx.Ref)
+	if err != nil {
+		t.Fatalf("HeadLocal after engine write: %v", err)
+	}
+	if got2 != res.CommitSHA {
+		t.Fatalf("HeadLocal = %s, want engine commit %s", got2, res.CommitSHA)
+	}
+	if n := rec.countSubcommand("fetch"); n != 0 {
+		t.Fatalf("HeadLocal fetched %d times, want 0", n)
+	}
+}
+
+func TestHeadLocalMissingRepo(t *testing.T) {
+	fx := NewFixture(t, seedFiles())
+	bad := fx.Ref
+	bad.Repo = "ghost"
+	bad.CloneURL = "file:///nonexistent/ghost.git"
+	if _, err := fx.Engine.HeadLocal(context.Background(), bad); err == nil {
+		t.Fatal("HeadLocal on missing repo succeeded, want clone error")
+	}
+}
