@@ -183,6 +183,12 @@ S2S credentials-refresh.*
   missing or disagreeing OU): the connection is saved, and saving the token again retries every failure
   but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
+- **A gitpat disconnect takes the org's AE Studio down before the credential goes** (06 §9,
+  `OrgDisconnectService`): the repo hooks are unregistered through the pod while it still holds the
+  gitpat (best effort, `WebhookService.UnregisterOrg`), then the Resource `ae-studio` is deleted
+  (`aestudio.Service.Remove`; OpenChoreo's finalizer takes its binding, release, pod, clones and
+  reference documents with it; the Project and ResourceType stay), then Phase D. A Resource delete that
+  fails stops the cascade before Phase D, so a retry repeats it.
 - **AE Studio converges on drift, single-flight per org** (`aestudio`, ticket 08 §9-§10). The Ensure
   is Project `ae-system` → PRB in the write target (`WriteTargets.Resolve(org, "ae-system")`) →
   ResourceType `ae-studio` (PUT in place, annotated `aep.wso2.com/ae-studio-template-hash`, never

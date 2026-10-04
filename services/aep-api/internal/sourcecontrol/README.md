@@ -109,6 +109,14 @@ flowchart LR
   exactly the statement "the platform wrote this" and no call site can forget it. Branding is
   idempotent; a comment written BEFORE this shipped carries no marker and reads as human, which is an
   accepted gap (the alternative was pattern-matching five writers' openers).
+- **A repo row's hook id names a hook that exists.** `WebhookService.Register` persists the id the pod
+  answers; `Unregister` deletes that hook (never one found by scanning) and clears the id, and
+  `UnregisterOrg` does it for every row of an org (the gitpat disconnect, 06 §9). A ready project row
+  with no hook id is what the eventcore sweep's hook repair ensures a hook for; platform repos
+  (`IsPlatformRepo`: project ids starting with `_`, the skills and resource-docs repos) carry none.
+- **`DeleteRepo` trashes before it drops.** The pod's mirror and reference documents go first
+  (`TrashOps`), because the row is what names the repository; a trash the pod cannot do is logged
+  (`repo.trash_failed`) and the row goes anyway. The GitHub repository is never deleted.
 - **A webhook is acknowledged before its handlers run, and the delivery ledger is what retries it.**
   GitHub closes a delivery's connection at 10 seconds and never redelivers on its own, so a handler
   running on the request's context lost its work to the timeout for good (a merged cycle's build

@@ -332,6 +332,15 @@ func (v ocView) ApplyResource(c context.Context, _ string, r *openchoreo.Resourc
 	return out, err
 }
 
+// DeleteResource is OpenChoreo's delete: the Resource's finalizer deletes
+// its bindings (and releases) before it goes. A missing one is success.
+func (v ocView) DeleteResource(c context.Context, _, name string) error {
+	return v.do(c, "DELETE resource "+name, true, func() error {
+		v.o.res, v.o.rrb = nil, nil
+		return nil
+	})
+}
+
 func (v ocView) GetBinding(c context.Context, _, name string) (b *openchoreo.ResourceReleaseBinding, err error) {
 	err = v.do(c, "GET rrb "+name, false, func() error {
 		b = clone(v.o.rrb)

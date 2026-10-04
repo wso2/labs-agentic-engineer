@@ -230,7 +230,10 @@ func (l eventcoreRepoLister) ListAll(ctx context.Context) ([]eventcore.RepoRef, 
 		if perr != nil {
 			continue
 		}
-		out = append(out, eventcore.RepoRef{OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID, FullName: owner + "/" + name})
+		out = append(out, eventcore.RepoRef{
+			OrgID: rows[i].OrgID, ProjectID: rows[i].ProjectID, FullName: owner + "/" + name,
+			HasHook: rows[i].WebhookID != nil || sourcecontrol.IsPlatformRepo(rows[i].ProjectID),
+		})
 	}
 	return out, nil
 }

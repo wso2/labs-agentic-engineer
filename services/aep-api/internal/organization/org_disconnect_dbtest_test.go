@@ -125,3 +125,69 @@ func TestOrgDisconnect_AlreadyDisconnected_NoOp_DB(t *testing.T) {
 		t.Fatalf("credential row status = %q, want disconnected", row.Status)
 	}
 }
+
+// 06 §9 gitpat disconnect, in order: the repo hooks are unregistered while
+// the pod still holds the gitpat (best effort), then the org's AE Studio
+// Resource is deleted, then Phase D removes the credential. Each step reads
+// the credential row to prove it ran before Phase D.
+func TestDisconnect_UnregistersHooksFirst(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
+	credSvc, _ := newCredSvcDB(t, db, gh)
+	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	var order []string
+	step := func(name string, err error) func(context.Context, string) error {
+		return func(_ context.Context, org string) error {
+			if org != "acme" {
+				t.Errorf("%s: org %q, want acme", name, org)
+			}
+			order = append(order, name+":"+getRow(t, db, "acme").Status)
+			return err
+		}
+	}
+	svc := organization.NewOrgDisconnectService(credSvc, nil).
+		WithHookUnregistrar(step("hooks", errors.New("pod restarting"))).
+		WithStudioRemover(step("studio", nil))
+
+	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); err != nil {
+		t.Fatalf("disconnect: a failed hook unregister is best effort, got %v", err)
+	}
+	want := []string{"hooks:active", "studio:active"}
+	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
+		t.Fatalf("order = %v, want %v (both before Phase D)", order, want)
+	}
+	if row := getRow(t, db, "acme"); row.Status != "disconnected" {
+		t.Fatalf("credential row status = %q, want disconnected", row.Status)
+	}
+}
+
+// A Resource that could not be deleted fails the disconnect before Phase D:
+// the credential stays, so a retry repeats the cascade rather than leaving a
+// pod running with the gitpat of an org that reads as disconnected.
+func TestDisconnect_StudioRemoveFailureStopsBeforePhaseD(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	ctx := context.Background()
+
+	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
+	credSvc, _ := newCredSvcDB(t, db, gh)
+	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	boom := errors.New("openchoreo unreachable")
+	svc := organization.NewOrgDisconnectService(credSvc, nil).
+		WithStudioRemover(func(context.Context, string) error { return boom })
+
+	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); !errors.Is(err, boom) {
+		t.Fatalf("disconnect err = %v, want the Resource delete failure", err)
+	}
+	if row := getRow(t, db, "acme"); row.Status != "active" {
+		t.Fatalf("credential row status = %q, want active (Phase D not run)", row.Status)
+	}
+}

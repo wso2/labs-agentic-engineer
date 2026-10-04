@@ -318,7 +318,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// hooks — goes to the org's pod through the same adapter; the project's
 	// repo row names the repository and the org's connected login owns new
 	// ones.
-	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, credService, cfg.GitHubRepoVisibility)
+	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, studioTools, credService, cfg.GitHubRepoVisibility)
 	issueService := sourcecontrol.NewIssueService(repoRepo, studioTools)
 	// THE delivery-side issue-write surface: every issue the delivery domain
 	// mints, closes, reopens or labels goes through this one writer, so the
@@ -411,6 +411,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// resolves the org's own deployment pipeline for /dependencies/environments'
 	// promotion ordering, so it is built once here instead of twice.
 	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
+	// A create needs the org's AE Studio serving before the OC project exists
+	// (05 §7): it holds the project's repository.
+	projectService.SetAEStudioReady(studioTools)
 	projectService.SetProjectCellProvisioner(projectCellClient)
 	projectService.SetWriteTargets(writeTargets)
 	// Build/deploy stage sources for the status poll (#184): the milestone-run
@@ -812,7 +815,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// The reconcile sweep (missed webhooks / disaster recovery) + the exec
 	// watcher (OC WorkflowRun → execution-row outcomes + build terminals).
-	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0)
+	// It also repairs the hook of every ready project repository whose row
+	// holds no hook id (a create-time registration that failed, 05 §7).
+	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0).
+		WithHookEnsurer(webhookRegService)
 	// The build half of the same plane. The ExecWatcher below only reports build
 	// terminals for `kind=build` execution rows, and the run loop records its
 	// cycles in run_cycles instead — so for anything the run loop builds, this
@@ -848,9 +854,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Org-scoped GitHub connect/disconnect surface. Tasks are GitHub issues now
-	// (no rows to abandon on disconnect); the disconnect service severs the
-	// credential and the issues become inert to the router (no valid webhook).
-	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService)
+	// (no rows to abandon on disconnect); the disconnect (06 §9) unregisters
+	// the org's repo hooks while its pod still holds the gitpat, deletes its
+	// AE Studio Resource, then severs the credential.
+	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService).
+		WithHookUnregistrar(webhookRegService.UnregisterOrg).
+		WithStudioRemover(aeStudio.Remove)
 
 	// Internal S2S runner authorizer — keyed to the CYCLE: the id in the runner
 	// bearer is the run cycle the pod was dispatched for, and the publisher-cc

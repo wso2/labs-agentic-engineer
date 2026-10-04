@@ -353,6 +353,12 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `AbandonRun` (project delete) therefore terminates ALL THREE ids: the rows are purged in the same
   teardown, so there is nothing left to ask which ever existed, and a kind missed leaves a supervisor
   retrying forever against a repository that is gone.
+- **The reconcile sweep repairs missing repo hooks first** (`sweep_hooks.go`, `WithHookEnsurer`): each
+  pass ensures a hook for every ready project row with no hook id (a create-time registration that
+  failed, 05 §7). An org whose AE Studio is absent or not serving waits for the next pass; any other
+  permanent refusal (repository gone, owner refused) skips that row for the life of the process with one
+  value-free `eventcore.hook_repair_skipped {org, project, reason}`; a transient failure retries next
+  pass. It never calls GitHub every minute for a row it cannot fix.
 - **The reconcile sweep is the TRIGGER ROUTER, it reads ISSUES, and it skips HALTED work and CANCELLED
   increments.** For a known milestone with no live run: a milestone whose NEWEST run settled `cancelled`
   is skipped whole, before its issues are even fetched; otherwise it routes on the TRIGGER PREDICATES

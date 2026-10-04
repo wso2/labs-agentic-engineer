@@ -47,10 +47,12 @@ type RepoService interface {
 	// is provisioned for the repo on GitHub. Stored alongside the repo record
 	// so cleanup can deregister.
 	SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error
-	// DeleteRepo drops the repo record and trashes its workspace clone. It
-	// ensures ABSENCE rather than performing a removal, so a project with no
-	// repo row — never provisioned, or a teardown being re-run after it got
-	// this far once — succeeds with nothing to do. The remote is untouched.
+	// DeleteRepo trashes the org pod's mirror and reference documents of the
+	// repository, then drops the repo record. It ensures ABSENCE rather than
+	// performing a removal, so a project with no repo row — never
+	// provisioned, or a teardown being re-run after it got this far once —
+	// succeeds with nothing to do. A trash the pod cannot do is logged and the
+	// row goes anyway. The remote is untouched.
 	DeleteRepo(ctx context.Context, orgID, projectID string) error
 }
 
@@ -64,6 +66,7 @@ type OwnerLookup interface {
 type repoService struct {
 	repo    RepoRepository
 	github  RepoAdmin
+	trash   TrashOps
 	owners  OwnerLookup
 	repoVis string
 }
@@ -71,12 +74,14 @@ type repoService struct {
 func NewRepoService(
 	repo RepoRepository,
 	github RepoAdmin,
+	trash TrashOps,
 	owners OwnerLookup,
 	repoVisibility string,
 ) RepoService {
 	return &repoService{
 		repo:    repo,
 		github:  github,
+		trash:   trash,
 		owners:  owners,
 		repoVis: repoVisibility,
 	}
@@ -257,6 +262,18 @@ func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) e
 		// here made the project teardown log an error on every legitimate re-run
 		// and gave callers no way to tell "already clean" from "cleanup broke".
 		return nil
+	}
+
+	// Trash BEFORE the row goes: the row is what names the repository, so
+	// once it is gone nothing can ask the pod to drop its mirror and the
+	// project's reference documents. Best-effort, like the rest of the
+	// teardown: a pod that cannot trash (restarting, or absent after a
+	// disconnect, when its data went with the Resource) must not keep a
+	// deleted project's row alive in every sweep and in the hook repair.
+	if ref, rerr := RefForRow(orgID, repo); rerr != nil {
+		slog.WarnContext(ctx, "repo.trash_failed", "org", orgID, "project", projectID, "error", rerr)
+	} else if terr := s.trash.TrashRepo(ctx, ref); terr != nil {
+		slog.WarnContext(ctx, "repo.trash_failed", "org", orgID, "project", projectID, "error", terr)
 	}
 
 	if err := s.repo.DeleteByOrgAndProjectID(ctx, orgID, projectID); err != nil {

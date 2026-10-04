@@ -181,12 +181,24 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
+- **A create needs the org's AE Studio serving before the OC project exists** (05 §7,
+  `SetAEStudioReady`, served by the `aestudiotools` adapter's endpoint resolve): absent answers 409
+  `github_not_connected`, not serving 503 `ae_studio_unavailable`, and nothing is half-made.
 - **Everything after the OC project + repo is best-effort; the repo is not.** Skills provisioning, the
   webhook, and the project descriptor are each logged-and-continued on failure: none of them may destroy
-  a creation the user already committed to. A failed repo create compensates the project away and fails
-  the create with the repo error unchanged (05 §7): a name conflict reads as one, and an AE Studio answer
-  reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`). A missing
-  descriptor costs the user one question from the `/start` skill, nothing more.
+  a creation the user already committed to. A hook that failed is installed later by the eventcore
+  sweep's hook repair (a ready row with no hook id). A failed repo create compensates the project away
+  and fails the create with the repo error unchanged (05 §7): a name conflict reads as one, and an AE
+  Studio answer reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`).
+  A create-repo answer lost after GitHub made the repo leaves it standing, and a retry under the same
+  name reads as the name conflict (05 §7 step 2). A missing descriptor costs the user one question from
+  the `/start` skill, nothing more. The OC project delete a compensation makes takes the
+  ProjectReleaseBindings the create authored with it (OpenChoreo's Project finalizer).
+- **Delete runs the OC project first, then the platform's half.** A delete that could not reach
+  OpenChoreo stops before it touches anything (an already-gone OC project goes on). Then the run
+  supervisors, the repo hook, the pod's mirror and reference documents (`DeleteRepo` trashes them
+  through the pod before it drops the row that names them), the repo row, the executions and the runs,
+  each best-effort. The GitHub repository stays.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal

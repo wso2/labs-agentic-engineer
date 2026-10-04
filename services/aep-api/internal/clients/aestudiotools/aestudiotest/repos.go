@@ -79,6 +79,12 @@ func (f *Fake) TrashRepo(_ context.Context, ref sourcecontrol.RepoRef) error {
 		return err
 	}
 	f.mu.Lock()
+	hook := f.beforeTrash
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.repos, keyOf(ref))
 	delete(f.references, keyOf(ref))

@@ -104,6 +104,10 @@ func (f *fakeWebhookSvc) Register(ctx context.Context, orgID, projectID string) 
 	return f.RegisterFunc(ctx, orgID, projectID)
 }
 
+func (f *fakeWebhookSvc) UnregisterOrg(context.Context, string) error {
+	panic("fakeWebhookSvc: UnregisterOrg not expected in project tests")
+}
+
 func (f *fakeWebhookSvc) Unregister(ctx context.Context, orgID, projectID string) error {
 	f.unregisterCalls++
 	f.unregisterArgs = [2]string{orgID, projectID}
@@ -474,7 +478,7 @@ func TestCreateProject_OCErrorShortCircuits(t *testing.T) {
 // A failed repo create stops the project create and compensates the OC
 // project (05 §7), with the repo error unchanged so the edge can speak for an
 // AE Studio answer (409 github_not_connected / 503 ae_studio_unavailable).
-func TestCreateProject_RepoFailureCompensates(t *testing.T) {
+func TestCreateProject_RepoFailureReturnsItsErrorUnchanged(t *testing.T) {
 	t.Parallel()
 	deleted := 0
 	oc := &ocmocks.ProjectClientMock{

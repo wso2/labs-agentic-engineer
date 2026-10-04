@@ -123,3 +123,77 @@ func TestWebhookUnregister_PodFailureIsReported(t *testing.T) {
 		t.Fatalf("a 500 from GitHub must be reported, got %v", err)
 	}
 }
+
+// A hook removed from GitHub is no longer on the row: a disconnect removes
+// the org's hooks while its rows stay, and the sweep's hook repair ensures a
+// hook only for a row with no hook id, so a stale id would leave the project
+// without deliveries after a reconnect.
+func TestWebhookUnregister_ClearsTheStoredHookID(t *testing.T) {
+	t.Parallel()
+	wh, repo, _ := newWebhookSvcOnFake(t)
+	registerHook(t, wh)
+
+	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
+		t.Fatalf("Unregister: %v", err)
+	}
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got != nil {
+		t.Fatalf("stored hook id = %d after unregister, want none", *got)
+	}
+}
+
+// UnregisterOrg removes the hook of every project repository the org has
+// (06 §9 disconnect): one that fails does not stop the others, and the
+// failures are reported together.
+func TestWebhookUnregisterOrg_RemovesEveryHookAndReportsFailures(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	repo.preload(
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "a", RepoURL: "https://github.com/acme/a"},
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "b", RepoURL: "https://github.com/acme/b"},
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: sourcecontrol.SkillsRepoSentinelProjectID, RepoURL: "https://github.com/acme/skills"},
+		&sourcecontrol.GitRepository{OrgID: "org2", ProjectID: "c", RepoURL: "https://github.com/other/c"},
+	)
+	f := aestudiotest.New()
+	repoSvc := sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "acme"}, "public")
+	wh := sourcecontrol.NewWebhookService(repo, f, repoSvc)
+	for _, p := range []struct{ org, project string }{{"org1", "a"}, {"org1", "b"}, {"org2", "c"}} {
+		if _, err := wh.Register(context.Background(), p.org, p.project); err != nil {
+			t.Fatalf("Register %s/%s: %v", p.org, p.project, err)
+		}
+	}
+	a := sourcecontrol.RepoRef{Org: "org1", Owner: "acme", Repo: "a", DefaultBranch: "main"}
+
+	if err := wh.UnregisterOrg(context.Background(), "org1"); err != nil {
+		t.Fatalf("UnregisterOrg: %v", err)
+	}
+	if hooks := f.HookEvents(a); len(hooks) != 0 {
+		t.Fatalf("org1/a hooks = %v, want none", hooks)
+	}
+	if got := storedWebhookID(t, repo, "org1", "b"); got != nil {
+		t.Fatalf("org1/b keeps hook id %d", *got)
+	}
+	if got := storedWebhookID(t, repo, "org2", "c"); got == nil {
+		t.Fatal("another org's hook was removed")
+	}
+
+	// A pod that fails is reported, and every row is still tried.
+	for _, p := range []string{"a", "b"} {
+		if _, err := wh.Register(context.Background(), "org1", p); err != nil {
+			t.Fatalf("re-register %s: %v", p, err)
+		}
+	}
+	f.FailOp(aestudiotest.OpDeleteWebhook, sourcecontrol.ErrAEStudioUnavailable)
+	err := wh.UnregisterOrg(context.Background(), "org1")
+	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+		t.Fatalf("UnregisterOrg err = %v, want the pod's failure reported", err)
+	}
+	deletes := 0
+	for _, c := range f.Calls() {
+		if c.Op == aestudiotest.OpDeleteWebhook && c.Ref.Org == "org1" {
+			deletes++
+		}
+	}
+	if deletes != 4 {
+		t.Fatalf("delete-webhook calls for org1 = %d, want 4 (2 + both rows retried)", deletes)
+	}
+}

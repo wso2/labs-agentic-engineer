@@ -38,7 +38,7 @@ func TestDeleteRepo_DropsTheRow(t *testing.T) {
 		RepoURL: "https://github.com/test-org/proj1.git",
 		Status:  "ready", RepoSlug: "test-org-proj1",
 	})
-	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {
 		t.Fatalf("DeleteRepo: %v", err)
@@ -55,7 +55,7 @@ func TestDeleteRepo_DropsTheRow(t *testing.T) {
 func TestDeleteRepo_AbsentRowIsSuccess(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
-	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	if err := svc.DeleteRepo(testContext(), "org1", "never-provisioned"); err != nil {
 		t.Fatalf("deleting an absent repo must succeed, got %v", err)
@@ -70,11 +70,69 @@ func TestDeleteRepo_IsIdempotent(t *testing.T) {
 		RepoURL: "https://github.com/test-org/proj1.git",
 		Status:  "ready", RepoSlug: "test-org-proj1",
 	})
-	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
 		}
+	}
+}
+
+// DeleteRepo trashes the pod's mirror and reference documents of the
+// project's repository BEFORE it drops the row (05 §7 delete): the row is
+// what names the repository, so after it is gone nothing can ask the pod to
+// drop them.
+func TestDeleteRepo_TrashesThePodMirrorBeforeTheRow(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	repo.put(&sourcecontrol.GitRepository{
+		OrgID: "org1", ProjectID: "proj1",
+		RepoURL: "https://github.com/test-org/proj1.git",
+		Status:  "ready", RepoSlug: "test-org-proj1",
+	})
+	pod := aestudiotest.New()
+	pod.BeforeTrash(func() {
+		if row, _ := repo.GetByOrgAndProjectID(testContext(), "org1", "proj1"); row == nil {
+			t.Error("the row was dropped before the trash")
+		}
+	})
+	svc := sourcecontrol.NewRepoService(repo, pod, pod, fakeOwners{owner: "test-org"}, "private")
+
+	if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
+	var trashed []sourcecontrol.RepoRef
+	for _, c := range pod.Calls() {
+		if c.Op == aestudiotest.OpTrashRepo {
+			trashed = append(trashed, c.Ref)
+		}
+	}
+	want := sourcecontrol.RepoRef{Org: "org1", Owner: "test-org", Repo: "proj1", DefaultBranch: "main"}
+	if len(trashed) != 1 || trashed[0] != want {
+		t.Fatalf("trash calls = %+v, want one for %+v", trashed, want)
+	}
+}
+
+// A trash the pod cannot do (restarting, or absent after a disconnect) does
+// not keep the row: a row left behind would keep a deleted project in every
+// sweep and in the hook repair. The delete is best-effort, as today.
+func TestDeleteRepo_TrashFailureStillDropsTheRow(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	repo.put(&sourcecontrol.GitRepository{
+		OrgID: "org1", ProjectID: "proj1",
+		RepoURL: "https://github.com/test-org/proj1.git",
+		Status:  "ready",
+	})
+	pod := aestudiotest.New()
+	pod.FailOp(aestudiotest.OpTrashRepo, sourcecontrol.ErrAEStudioUnavailable)
+	svc := sourcecontrol.NewRepoService(repo, pod, pod, fakeOwners{owner: "test-org"}, "private")
+
+	if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
+	if _, err := svc.GetRepo(testContext(), "org1", "proj1"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("row survived a failed trash: %v", err)
 	}
 }

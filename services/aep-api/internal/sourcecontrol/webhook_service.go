@@ -38,8 +38,14 @@ type WebhookService interface {
 	// hook GitHub no longer has all resolve to "nothing to remove" and return
 	// nil. Only a live failure to reach the pod or GitHub is an error, and even
 	// that is best-effort at the call site — the delete is never blocked by
-	// webhook cleanup.
+	// webhook cleanup. A removed hook's id is cleared from the row, so the
+	// sweep's hook repair sees the row as hookless again.
 	Unregister(ctx context.Context, orgID, projectID string) error
+
+	// UnregisterOrg unregisters the hook of every repository row the org has
+	// (the gitpat disconnect, 06 §9). One row's failure does not stop the
+	// others; the failures are returned joined.
+	UnregisterOrg(ctx context.Context, orgID string) error
 }
 
 // subscribedEvents answers the events every project hook carries. Repo-level
@@ -115,10 +121,35 @@ func (s *webhookService) Unregister(ctx context.Context, orgID, projectID string
 		return err
 	}
 
-	if err := s.github.DeleteWebhook(ctx, ref, *repo.WebhookID); err != nil {
+	hookID := *repo.WebhookID
+	if err := s.github.DeleteWebhook(ctx, ref, hookID); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
+	// The row outlives the hook on a disconnect: clear the id so a reconnect's
+	// hook repair (the eventcore sweep ensures hookless ready rows) installs a
+	// new one instead of trusting a hook that is gone.
+	repo.WebhookID = nil
+	if err := s.repo.Update(ctx, repo); err != nil {
+		return fmt.Errorf("clear webhook id: %w", err)
+	}
 	slog.InfoContext(ctx, "webhook unregistered from repo",
-		"org", orgID, "project", projectID, "hookId", *repo.WebhookID)
+		"org", orgID, "project", projectID, "hookId", hookID)
 	return nil
+}
+
+func (s *webhookService) UnregisterOrg(ctx context.Context, orgID string) error {
+	rows, err := s.repo.ListByOrg(ctx, orgID)
+	if err != nil {
+		return fmt.Errorf("list org repos: %w", err)
+	}
+	var errs []error
+	for i := range rows {
+		if rows[i].WebhookID == nil {
+			continue
+		}
+		if uerr := s.Unregister(ctx, orgID, rows[i].ProjectID); uerr != nil {
+			errs = append(errs, fmt.Errorf("project %s: %w", rows[i].ProjectID, uerr))
+		}
+	}
+	return errors.Join(errs...)
 }

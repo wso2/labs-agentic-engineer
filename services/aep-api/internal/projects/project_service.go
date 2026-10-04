@@ -71,7 +71,23 @@ type Service struct {
 	endpointGate   *EndpointGate          // deploy stage: is a Ready binding reachable (status_stages.go); may be nil
 	writeTargets   writeTargetResolver    // deploy stage: which environment's bindings count (status_stages.go)
 	cellWait       cellReadyWait          // how long CreateProject waits for the cells to report Ready
+	aeStudio       aeStudioReady          // the org's AE Studio must serve before a create; may be nil
 }
+
+// aeStudioReady answers whether the org's AE Studio serves: nil when it does,
+// sourcecontrol.ErrAEStudioAbsent when the org has none (GitHub not
+// connected), sourcecontrol.ErrAEStudioUnavailable when it is not serving.
+// The aestudiotools adapter satisfies it.
+type aeStudioReady interface {
+	RequireReady(ctx context.Context, org string) error
+}
+
+// SetAEStudioReady wires the check CreateProject runs before it makes the
+// OpenChoreo project (05 §7), so a create the org's AE Studio cannot serve
+// is refused (409 / 503) before anything exists to compensate. Nil skips it;
+// the repo create then refuses the same way, after the OC project, and
+// compensates it.
+func (s *Service) SetAEStudioReady(r aeStudioReady) { s.aeStudio = r }
 
 // cellReadyWait bounds the two readiness waits on a new project: the Project
 // itself, inside the create request, and its ProjectReleaseBindings, watched
@@ -302,6 +318,15 @@ func (s *Service) GetProject(ctx context.Context, orgName, projectName string) (
 func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.CreateProjectRequest) (*gen.Project, error) {
 	if req != nil && strings.TrimSpace(req.DisplayName) == "" {
 		req.DisplayName = req.Name
+	}
+	// The org's AE Studio holds the project's repository, so it must serve
+	// BEFORE the OpenChoreo project exists (05 §7): refused here, a create
+	// leaves nothing half-made. The error is returned unchanged for the edge
+	// to speak for (409 github_not_connected / 503 ae_studio_unavailable).
+	if s.aeStudio != nil {
+		if err := s.aeStudio.RequireReady(ctx, orgName); err != nil {
+			return nil, err
+		}
 	}
 	project, err := s.client.CreateProject(ctx, orgName, req)
 	if err != nil {
@@ -563,7 +588,8 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 		}
 	}
 
-	// Drop the platform's own repository record and its workspace clone.
+	// Drop the platform's own repository record, after DeleteRepo has asked
+	// the org's pod to trash its mirror and the project's reference documents.
 	//
 	// The REMOTE is deliberately not touched, and that is the one piece of this
 	// teardown that leaves something behind: the GitHub repository survives a

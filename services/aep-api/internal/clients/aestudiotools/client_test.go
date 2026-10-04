@@ -343,6 +343,22 @@ func TestEndpointCache_DoesNotCacheRefusals(t *testing.T) {
 	}
 }
 
+// RequireReady is the endpoint resolve alone: a resolving Target is a
+// serving studio (no pod call is made), and the resolver's refusal is
+// answered unchanged.
+func TestAdapter_RequireReadyIsTheEndpointResolve(t *testing.T) {
+	for _, want := range []error{nil, sourcecontrol.ErrAEStudioAbsent, sourcecontrol.ErrAEStudioUnavailable} {
+		ep := &fixedEndpoints{target: Target{BaseURL: "http://127.0.0.1:1", ImpersonateOrg: "ou-123"}, err: want}
+		a := newAdapter(t, ep, &countingTokens{})
+		if err := a.RequireReady(context.Background(), "default"); !errors.Is(err, want) {
+			t.Fatalf("RequireReady = %v, want %v", err, want)
+		}
+		if ep.count() != 1 {
+			t.Fatalf("resolve calls = %d, want 1", ep.count())
+		}
+	}
+}
+
 // A unary call cut by the Adapter's own call timeout is a pod that did not
 // answer: ErrAEStudioUnavailable, and the Target is dropped. The caller's
 // shorter deadline is the caller's: the Target stays.

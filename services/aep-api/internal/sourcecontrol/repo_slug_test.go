@@ -31,3 +31,17 @@ func TestRepoSlugFor(t *testing.T) {
 		}
 	}
 }
+
+func TestIsPlatformRepo(t *testing.T) {
+	t.Parallel()
+	for id, want := range map[string]bool{
+		SkillsRepoSentinelProjectID: true,
+		"_resource-docs":            true,
+		"web":                       false,
+		"my-project":                false,
+	} {
+		if got := IsPlatformRepo(id); got != want {
+			t.Errorf("IsPlatformRepo(%q) = %v, want %v", id, got, want)
+		}
+	}
+}

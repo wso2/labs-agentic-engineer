@@ -67,7 +67,8 @@ const defaultCacheBytes = 64 << 20
 
 // Adapter calls an org's ae-studio-tools. It implements sourcecontrol.Git,
 // the GitHub ports keyed by RepoRef (repos, issues, milestones, pulls,
-// hooks), TrashOps, SkillsMirrorOps, ReferencesOps, IdentityOps and Turns.
+// hooks), TrashOps, SkillsMirrorOps, ReferencesOps, IdentityOps and Turns,
+// and answers whether an org's pod serves (RequireReady).
 type Adapter struct {
 	endpoints   *endpointCache
 	reads       *readCache

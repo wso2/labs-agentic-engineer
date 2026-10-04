@@ -111,6 +111,7 @@ type Sweep struct {
 	events   *Events
 	repos    RepoLister
 	interval time.Duration
+	hooks    hookRepair
 }
 
 // NewSweep wires the sweep. interval ≤ 0 uses the default.
@@ -119,6 +120,14 @@ func NewSweep(events *Events, repos RepoLister, interval time.Duration) *Sweep {
 		interval = defaultSweepInterval
 	}
 	return &Sweep{events: events, repos: repos, interval: interval}
+}
+
+// WithHookEnsurer turns on the hook repair (sweep_hooks.go): each pass first
+// ensures the hook of every ready project repository whose row holds no hook
+// id. Nil leaves it off.
+func (s *Sweep) WithHookEnsurer(h HookEnsurer) *Sweep {
+	s.hooks = hookRepair{ensurer: h}
+	return s
 }
 
 // Run ticks until ctx is cancelled (the app.Watcher shape).
@@ -150,6 +159,7 @@ func (s *Sweep) Once(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.hooks.repair(ctx, repos)
 	var errs []error
 	for _, repo := range repos {
 		if rerr := s.reconcileRepo(ctx, repo); rerr != nil {

@@ -44,6 +44,7 @@ const (
 	OpCommit     = "commit"
 
 	// Repository lifecycle and the narrow adapter ports.
+	OpRequireReady   = "require-ready"
 	OpCreateRepo     = "create-repo"
 	OpTrashRepo      = "trash-repo"
 	OpMirrorSkills   = "mirror-skills"
@@ -91,7 +92,7 @@ const (
 // them; Author and Committer on Commit (Committer defaulted to Author, as the
 // pod does); Skills and Pinned on MirrorSkills; Repo on CreateOrgRepo;
 // Milestone on ListMilestoneIssues; Ref.Org alone on the org-wide ops
-// (GitHubIdentity).
+// (GitHubIdentity, RequireReady).
 type Call struct {
 	Op        string
 	Ref       sourcecontrol.RepoRef
@@ -119,6 +120,7 @@ type Fake struct {
 	failOrg      map[string]error
 	calls        []Call
 	beforeCommit func()
+	beforeTrash  func()
 	beforeTag    func(sourcecontrol.TagSpec)
 	repos        map[repoKey]*repoState
 	references   map[repoKey][]string
@@ -176,6 +178,15 @@ func (f *Fake) BeforeCommit(fn func()) {
 	f.beforeCommit = fn
 }
 
+// BeforeTrash runs fn at the start of every later TrashRepo that is not
+// failed by FailOrg / FailOp, outside the Fake's lock (a caller asserting
+// what still holds when the trash lands). A nil fn clears it.
+func (f *Fake) BeforeTrash(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeTrash = fn
+}
+
 // BeforeTag runs fn with the requested tag at the start of every later Tag
 // that is not failed by FailOrg / FailOp, outside the Fake's lock: fn may tag
 // itself (a pusher claiming the name first). A nil fn clears it.
@@ -231,6 +242,12 @@ func setOrClear(m map[string]error, key string, err error) {
 		return
 	}
 	m[key] = err
+}
+
+// RequireReady answers whether the org's pod serves: FailOrg's error, else
+// FailOp(OpRequireReady)'s, else nil.
+func (f *Fake) RequireReady(_ context.Context, org string) error {
+	return f.begin(Call{Op: OpRequireReady, Ref: sourcecontrol.RepoRef{Org: org}})
 }
 
 // GitHubIdentity answers the identity SetIdentity gave the org, else a 502

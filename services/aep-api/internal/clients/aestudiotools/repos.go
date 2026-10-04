@@ -45,8 +45,6 @@ func (a *Adapter) CreateOrgRepo(ctx context.Context, ref RepoRef, req sourcecont
 
 // TrashRepo moves the pod's mirror and reference store of ref to its trash;
 // a repository the pod holds nothing of is success.
-//
-//deadcode:keep wired in Task 4.18 (project delete trashes through TrashOps)
 func (a *Adapter) TrashRepo(ctx context.Context, ref RepoRef) error {
 	if err := validRef(ref); err != nil {
 		return err

@@ -29,7 +29,7 @@ import (
 // repositories live under the GitHub login "test-org".
 func newRepoSvcOnFake(repo *fakeRepoRepo) (sourcecontrol.RepoService, *aestudiotest.Fake) {
 	f := aestudiotest.New()
-	return sourcecontrol.NewRepoService(repo, f, fakeOwners{owner: "test-org"}, "private"), f
+	return sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "test-org"}, "private"), f
 }
 
 // createCalls answers the create-repo calls the Fake saw.
@@ -136,7 +136,7 @@ func TestCreateRepo_NoGitHubConnectionIsAbsent(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
 	f := aestudiotest.New()
-	svc := sourcecontrol.NewRepoService(repo, f, fakeOwners{err: sourcecontrol.ErrAEStudioAbsent}, "private")
+	svc := sourcecontrol.NewRepoService(repo, f, f, fakeOwners{err: sourcecontrol.ErrAEStudioAbsent}, "private")
 
 	if _, err := svc.CreateRepo(testContext(), "org1", "proj1", "My Project", ""); !errors.Is(err, sourcecontrol.ErrAEStudioAbsent) {
 		t.Fatalf("err = %v, want ErrAEStudioAbsent", err)

@@ -135,7 +135,7 @@ func newEdgeWithFake(t *testing.T, arrange func(*aestudiotest.Fake)) *componentt
 	arrange(pod)
 
 	rows := repoRows{rows: map[string]sourcecontrol.GitRepository{"p": projectRow, spec.SkillsRepoProject: skillsRow}}
-	repoSvc := sourcecontrol.NewRepoService(rows, pod, fixedOwner{}, "private")
+	repoSvc := sourcecontrol.NewRepoService(rows, pod, pod, fixedOwner{}, "private")
 	issueSvc := sourcecontrol.NewIssueService(rows, pod)
 
 	artifacts := spec.NewArtifactService(rows, pod)
@@ -158,8 +158,11 @@ func newEdgeWithFake(t *testing.T, arrange func(*aestudiotest.Fake)) *componentt
 		},
 		DeleteProjectFunc: func(context.Context, string, string) error { return nil },
 	}
-	createRepos := sourcecontrol.NewRepoService(repoRows{}, pod, fixedOwner{}, "private")
-	projH, err := projectshttpapi.New(projects.Deps{ProjectSvc: projects.NewProjectService(oc, createRepos, nil, artifacts, nil)})
+	createRepos := sourcecontrol.NewRepoService(repoRows{}, pod, pod, fixedOwner{}, "private")
+	// The Ready check runs first (05 §7), so the create row answers from it.
+	projectSvc := projects.NewProjectService(oc, createRepos, nil, artifacts, nil)
+	projectSvc.SetAEStudioReady(pod)
+	projH, err := projectshttpapi.New(projects.Deps{ProjectSvc: projectSvc})
 	if err != nil {
 		t.Fatal(err)
 	}

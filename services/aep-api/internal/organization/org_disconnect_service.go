@@ -40,6 +40,17 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 //     straight to 'disconnected' in Phase D (phase2.md §6.7's staged
 //     intermediate state was never wired).
 //
+// Before Phase D (06 §9 gitpat disconnect), while the org's AE Studio pod
+// still holds the gitpat:
+//   - the repo hooks are unregistered through the pod (WithHookUnregistrar).
+//     Best effort: a failure is logged and the cascade goes on, since nothing
+//     can reach GitHub as the org after the next steps;
+//   - the org's AE Studio Resource is deleted (WithStudioRemover), and its
+//     clones and reference documents go with the pod. A failure stops the
+//     cascade before Phase D, so the credential stays and a retry repeats it
+//     rather than leaving a pod running with the gitpat of an org that reads
+//     as disconnected.
+//
 // Phase D (org-scoped finalize — git-service GC):
 //   - DELETE /internal/credentials/orgs/{ocOrgId} on git-service. Git-service
 //     marks status='disconnected' and best-effort GCs OpenBao keys.
@@ -49,8 +60,10 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 // Severing the credential makes the org's issues inert to the webhook router
 // (no valid delivery), which is the disconnect effect.
 type OrgDisconnectService struct {
-	credSvc  *CredentialService
-	issueSvc sourcecontrol.IssueService
+	credSvc         *CredentialService
+	issueSvc        sourcecontrol.IssueService
+	unregisterHooks func(ctx context.Context, org string) error
+	removeStudio    func(ctx context.Context, org string) error
 }
 
 // NewOrgDisconnectService constructs the cascade orchestrator.
@@ -62,6 +75,20 @@ func NewOrgDisconnectService(
 		credSvc:  credSvc,
 		issueSvc: issueSvc,
 	}
+}
+
+// WithHookUnregistrar wires the step that removes the org's repo hooks
+// before Phase D. Nil skips it.
+func (s *OrgDisconnectService) WithHookUnregistrar(fn func(ctx context.Context, org string) error) *OrgDisconnectService {
+	s.unregisterHooks = fn
+	return s
+}
+
+// WithStudioRemover wires the step that deletes the org's AE Studio
+// Resource before Phase D. Nil skips it.
+func (s *OrgDisconnectService) WithStudioRemover(fn func(ctx context.Context, org string) error) *OrgDisconnectService {
+	s.removeStudio = fn
+	return s
 }
 
 // Disconnect runs the cascade synchronously. `cause` is recorded on each
@@ -87,6 +114,20 @@ func (s *OrgDisconnectService) Disconnect(ctx context.Context, ocOrgID, cause st
 		// Already finalized — nothing to do.
 		slog.InfoContext(ctx, "disconnect: already disconnected", "ocOrgId", ocOrgID)
 		return nil
+	}
+
+	// 06 §9, while the pod still holds the gitpat: the hooks first (best
+	// effort), then the pod itself.
+	if s.unregisterHooks != nil {
+		if err := s.unregisterHooks(ctx, ocOrgID); err != nil {
+			slog.WarnContext(ctx, "disconnect: repo hooks not all unregistered — they stay on GitHub and fail to deliver",
+				"ocOrgId", ocOrgID, "error", err)
+		}
+	}
+	if s.removeStudio != nil {
+		if err := s.removeStudio(ctx, ocOrgID); err != nil {
+			return fmt.Errorf("disconnect: delete the AE Studio Resource: %w", err)
+		}
 	}
 
 	// Phase D — finalize on git-service: status flip + OpenBao GC.

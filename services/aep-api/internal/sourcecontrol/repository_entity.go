@@ -27,6 +27,14 @@ import (
 // from real project repos). See docs/design/skills-repo-storage.md §10.1.
 const SkillsRepoSentinelProjectID = "_skills"
 
+// IsPlatformRepo reports whether projectID is a reserved platform repository
+// row (the skills repo, the resource-docs repo) rather than a project's: they
+// live under project ids that start with "_", which an OpenChoreo project
+// name (a DNS label) never does. Platform repos carry no hook.
+func IsPlatformRepo(projectID string) bool {
+	return strings.HasPrefix(projectID, "_")
+}
+
 // GitRepository stores metadata about a platform-provisioned git repository.
 type GitRepository struct {
 	ID string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`

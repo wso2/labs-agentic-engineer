@@ -88,3 +88,13 @@ func (c *endpointCache) drop(org string) {
 	delete(c.targets, org)
 	c.mu.Unlock()
 }
+
+// RequireReady answers whether org's AE Studio serves: nil when its Target
+// resolves (a Ready status with a tools URL and OU id), ErrAEStudioAbsent
+// when the org has none, ErrAEStudioUnavailable otherwise. It reads through
+// the same 30 s cache every call does, so it answers what the next call
+// would meet.
+func (a *Adapter) RequireReady(ctx context.Context, org string) error {
+	_, err := a.endpoints.resolve(ctx, org)
+	return err
+}
