@@ -26,10 +26,10 @@ import (
 )
 
 // The status poll's fetch-free git reads (design/project-status-stage-
-// aggregates.md D1): resolve the local mirror's head once, then address every
-// tree read by SHA. Correct because aep-api is the sole writer of specs/ —
-// platform writes update the mirror synchronously; out-of-band GitHub edits
-// lag until the next fetch-bearing operation, by design.
+// aggregates.md D1): two reads that can move — the pod mirror's head and its
+// tags, both local — then every tree and file read addressed by sha, which
+// the aestudiotools adapter serves from its read cache. Out-of-band GitHub
+// edits lag until the next fetch-bearing read, by design.
 
 // StatusSnapshot is the one-shot local-git view GetProjectStatus derives the
 // spec stage and the flat artifact fields from.
@@ -60,15 +60,16 @@ type StatusSnapshot struct {
 }
 
 // StatusSnapshot implements ArtifactService: the status poll's git source
-// group. One local head resolution + one tree listing + one local tag list
-// (+ one SHA-addressed tag tree when a version exists) — no origin fetch.
+// group. One local head resolution + one local tag list (the two hops), then
+// sha-addressed reads: the head tree, the design root when present, and the
+// newest version's tree when one exists — no GitHub fetch.
 func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID string) (*StatusSnapshot, error) {
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	head, err := s.git.Workspace().HeadLocal(ctx, ref)
+	head, err := s.git.Head(ctx, ref, "", sourcecontrol.Local())
 	if errors.Is(err, sourcecontrol.ErrRefNotFound) {
 		// No commits yet — an empty snapshot, not an error.
 		return &StatusSnapshot{}, nil
@@ -77,13 +78,13 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 		return nil, fmt.Errorf("resolve local head: %w", err)
 	}
 
-	headEntries, _, err := s.git.Workspace().List(ctx, ref, head)
-	if err != nil {
-		return nil, fmt.Errorf("list tree at head: %w", err)
-	}
 	tags, err := s.listVersionTagsLocal(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("list local tags: %w", err)
+	}
+	headEntries, _, err := s.git.List(ctx, ref, head)
+	if err != nil {
+		return nil, fmt.Errorf("list tree at head: %w", err)
 	}
 
 	snap := &StatusSnapshot{HeadSHA: head}
@@ -97,8 +98,8 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 	}
 	if snap.HasDesign {
 		// Blank root = no design (the ReadDesign gate) — one sha-addressed
-		// blob read, local only, and only when the file exists at all.
-		content, _, err := s.git.Workspace().ReadFile(ctx, ref, head, designPrefix+DesignRootFile)
+		// blob read, and only when the file exists at all.
+		content, _, err := s.git.ReadFile(ctx, ref, head, designPrefix+DesignRootFile)
 		if err != nil {
 			return nil, fmt.Errorf("read design root at head: %w", err)
 		}
@@ -108,8 +109,8 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 	snap.RequirementsFingerprint = RequirementsFingerprint(headEntries)
 	if latest, ok := latestVersionTag(tags); ok {
 		snap.SpecVersion = latest.Name
-		// Sha-addressed (the peeled tag commit) — a local read, no fetch.
-		tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)
+		// Sha-addressed (the peeled tag commit) — cacheable, no fetch.
+		tagEntries, _, err := s.git.List(ctx, ref, latest.CommitHash)
 		if err != nil {
 			return nil, fmt.Errorf("list tree at %s: %w", latest.Name, err)
 		}
@@ -120,13 +121,13 @@ func (s *artifactService) StatusSnapshot(ctx context.Context, orgID, projectID s
 
 // RequirementsFingerprintAt implements ArtifactService: the same reduction as
 // the snapshot's, taken at an arbitrary commit. One SHA-addressed tree listing
-// against the local mirror — no fetch, matching the status poll's budget.
+// (the pod fetches only a commit its mirror lacks) — the status poll's budget.
 func (s *artifactService) RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error) {
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return "", err
 	}
-	entries, _, err := s.git.Workspace().List(ctx, ref, at)
+	entries, _, err := s.git.List(ctx, ref, at)
 	if err != nil {
 		return "", fmt.Errorf("list tree at %s: %w", at, err)
 	}
@@ -156,7 +157,7 @@ func (s *artifactService) ComponentCountAtTag(ctx context.Context, orgID, projec
 	if sha == "" {
 		return 0, fmt.Errorf("%w: %q", ErrSpecTagNotFound, tag)
 	}
-	entries, _, err := s.git.Workspace().List(ctx, ref, sha)
+	entries, _, err := s.git.List(ctx, ref, sha)
 	if err != nil {
 		return 0, fmt.Errorf("list tree at %s: %w", tag, err)
 	}

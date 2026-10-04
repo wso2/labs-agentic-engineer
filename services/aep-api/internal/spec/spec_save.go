@@ -100,7 +100,7 @@ type SpecSaveResult struct {
 // the save is a no-op ("unchanged"). Validation failures aggregate into a
 // *SpecValidationError; nothing malformed acquires a tag.
 func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error) {
-	_, ref, err := s.readyRef(ctx, orgID, projectID)
+	row, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,16 +108,16 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return nil, err
 	}
-	reqFiles, err := s.readBundleAtCommit(ctx, ref, commit, requirementsPrefix, requirementsBundleFilter)
+	reqFiles, err := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
 	if err != nil {
 		return nil, err
 	}
-	designFiles, err := s.readBundleAtCommit(ctx, ref, commit, designPrefix, designBundleFilter)
+	designFiles, err := s.readBundleAtCommit(ctx, ref, commit, designBundle)
 	if err != nil {
 		return nil, err
 	}
 	slog.InfoContext(ctx, "spec save: commit read",
-		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug, "commit", commit,
+		"project", projectID, "repo", ref.Owner+"/"+ref.Repo, "commit", commit,
 		"pinned", req.CommitSHA != "", "requirementsFiles", len(reqFiles), "designFiles", len(designFiles))
 
 	// Hard gate: the whole spec must be buildable BEFORE any tag is cut.
@@ -173,7 +173,14 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	} else if verr := ValidateVersionName(tagName); verr != nil {
 		return nil, fmt.Errorf("%w: %w", ErrVersionNameInvalid, verr)
 	}
-	if err := s.createVersionTag(ctx, ref, &tags, &tagName, req.Message, commit, !named); err != nil {
+	if s.tags == nil {
+		return nil, fmt.Errorf("spec save: no version tag gateway configured")
+	}
+	wref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.tags.Resolver(), orgID, row)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.createVersionTag(ctx, ref, wref, &tags, &tagName, req.Message, commit, !named); err != nil {
 		return nil, err
 	}
 
@@ -261,7 +268,7 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 // commit has been garbage-collected would be unfixable by the user, and the
 // staleness it might have caught is visible in the rail either way.
 func (s *artifactService) staleDesignRefusal(
-	ctx context.Context, ref sourcecontrol.WorkspaceRef, orgID, projectID, commit string,
+	ctx context.Context, ref sourcecontrol.RepoRef, orgID, projectID, commit string,
 ) error {
 	if s.designBaseline == nil {
 		return nil
@@ -270,13 +277,13 @@ func (s *artifactService) staleDesignRefusal(
 	if err != nil || base == "" {
 		return nil
 	}
-	wasEntries, _, err := s.git.Workspace().List(ctx, ref, base)
+	wasEntries, _, err := s.git.List(ctx, ref, base)
 	if err != nil {
 		slog.WarnContext(ctx, "spec save: the last design run's commit is unreadable; staleness unchecked",
 			"project", projectID, "base", base, "error", err)
 		return nil
 	}
-	nowEntries, _, err := s.git.Workspace().List(ctx, ref, commit)
+	nowEntries, _, err := s.git.List(ctx, ref, commit)
 	if err != nil {
 		return fmt.Errorf("list tree at %s: %w", commit, err)
 	}
@@ -291,13 +298,13 @@ func (s *artifactService) staleDesignRefusal(
 }
 
 // specTreeUnchanged reports whether the specs/ subtrees at the two commits are
-// content-identical (path→blob-sha comparison, sha-addressed local reads).
-func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontrol.WorkspaceRef, commit, tagCommit string) (bool, error) {
-	headEntries, _, err := s.git.Workspace().List(ctx, ref, commit)
+// content-identical (path→blob-sha comparison, sha-addressed cacheable reads).
+func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontrol.RepoRef, commit, tagCommit string) (bool, error) {
+	headEntries, _, err := s.git.List(ctx, ref, commit)
 	if err != nil {
 		return false, fmt.Errorf("list tree at %s: %w", commit, err)
 	}
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, tagCommit)
+	tagEntries, _, err := s.git.List(ctx, ref, tagCommit)
 	if err != nil {
 		return false, fmt.Errorf("list tree at %s: %w", tagCommit, err)
 	}

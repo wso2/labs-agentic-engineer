@@ -26,7 +26,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/run"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
-	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // The composition-root adapters behind the run supervisor's consumer ports.
@@ -203,8 +202,8 @@ func (a runBuilds) ListBuildRuns(ctx context.Context, orgID, projectID, componen
 // is left is a delegation plus the ref-pinned report read, which is the whole
 // reason this type exists at the boundary.
 type runValidation struct {
-	svc   *validation.Service
-	files spec.FilesService
+	projectFiles
+	svc *validation.Service
 }
 
 func (a runValidation) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error) {
@@ -243,14 +242,11 @@ func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID st
 // report AT ITS OWN MERGE COMMIT, which is a fact about this run rather than a
 // stale read. Nil bytes are what VerdictFromReport maps to `unreported`.
 func (a runValidation) report(ctx context.Context, orgID, projectID, at string) ([]byte, error) {
-	fc, err := a.files.ReadAt(ctx, orgID, projectID, validation.ReportFilePath, at)
-	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return nil, nil
-		}
+	content, _, found, err := a.readFile(ctx, orgID, projectID, at, validation.ReportFilePath)
+	if err != nil || !found {
 		return nil, err
 	}
-	return []byte(fc.Content), nil
+	return []byte(content), nil
 }
 
 // runreadProjectBuilds reads every build WorkflowRun in a project so the run

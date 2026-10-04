@@ -19,7 +19,43 @@ package spec
 import (
 	"context"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
+
+// TestStatusSnapshot_TwoHopsThenCache pins the poll's budget against the pod:
+// exactly two reads that can move (the mirror's head and its tags, both
+// local), and every other read addressed by a sha, which the adapter serves
+// from its cache.
+func TestStatusSnapshot_TwoHopsThenCache(t *testing.T) {
+	f := aestudiotest.New()
+	ref := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
+	f.SeedRepo(ref, map[string]string{"specs/requirements.md": "r", "specs/design/design.cell": "c"})
+	if err := f.Tag(context.Background(), ref, sourcecontrol.TagSpec{Name: "v1", Message: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
+
+	if _, err := svc.StatusSnapshot(context.Background(), "default", "p"); err != nil {
+		t.Fatal(err)
+	}
+	mutable := 0
+	for _, c := range f.Calls() {
+		if c.Op == aestudiotest.OpHead || c.Op == aestudiotest.OpListTags {
+			mutable++
+			if !c.Local {
+				t.Errorf("%s must be local", c.Op)
+			}
+		}
+		if c.At != "" && len(c.At) != 40 {
+			t.Errorf("%s read at %q, want a sha", c.Op, c.At)
+		}
+	}
+	if mutable != 2 {
+		t.Fatalf("mutable hops = %d, want 2", mutable)
+	}
+}
 
 // freshen forces one fetch-bearing read so the engine mirror catches up with
 // the origin — the tests' stand-in for "the platform wrote this through the

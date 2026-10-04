@@ -46,16 +46,17 @@ type TagList struct {
 
 // ListSpecVersionTags lists the project's spec version tags, newest first by
 // CREATION time (a version's name is the user's and carries no sequence —
-// ADR-0030), with the latest tag and whether specs/ moved since it. One origin
-// fetch (the HEAD tree read; its refspec also freshens all tags), then
-// local-mirror reads: the tag list and the sha-addressed tag tree.
+// ADR-0030), with the latest tag and whether specs/ moved since it. One GitHub
+// fetch on the pod (the HEAD tree read; its refspec also freshens all tags),
+// then reads of the pod's mirror: the local tag list and the sha-addressed tag
+// tree.
 func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error) {
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	headEntries, _, err := s.git.Workspace().List(ctx, ref, "")
+	headEntries, _, err := s.git.List(ctx, ref, "")
 	if err != nil {
 		return nil, fmt.Errorf("list head tree: %w", err)
 	}
@@ -75,8 +76,8 @@ func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projec
 
 	latest := versions[0]
 	out.Latest = latest.Name
-	// Sha-addressed (the peeled tag commit) — a local read, no second fetch.
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)
+	// Sha-addressed (the peeled tag commit) — cacheable, no second fetch.
+	tagEntries, _, err := s.git.List(ctx, ref, latest.CommitHash)
 	if err != nil {
 		return nil, fmt.Errorf("list tree at %s: %w", latest.Name, err)
 	}

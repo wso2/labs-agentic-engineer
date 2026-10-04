@@ -52,46 +52,35 @@ func (c crtTypeCatalog) ResourceTypesByName(ctx context.Context) (map[string]spe
 	return out, nil
 }
 
-// designFilesCommitter adapts the Files API (feature/files) to design's narrow
+// designFilesCommitter adapts the project repository to design's narrow
 // designFileCommitter port — the committed-truth single-commit write surface
 // the design service uses to persist a dependency's contract + its
 // dependency.json (and the user's acceptance of an assumed contract) atomically
-// to main. It lives at the composition root so the
-// design feature imports only artifacts (arch boundary), never the files service directly.
+// to main. Reads go through the AE Studio pod; the write is still the Files
+// API's (Task 4.16 moves it to Git.Commit). It lives at the composition root
+// so the design feature imports only artifacts (arch boundary), never the
+// files service directly.
 type designFilesCommitter struct {
+	projectFiles
 	files spec.FilesService
 }
 
 // workloadReader is the eventcore wiring-conformance check's file read: the
-// shipped workload.yaml at HEAD. It is the same Files surface designFilesCommitter
-// uses, projected onto the narrower shape eventcore holds (no CAS token — the
-// check never writes).
+// shipped workload.yaml at HEAD, projected onto the narrower shape eventcore
+// holds (no CAS token — the check never writes).
 type workloadReader struct {
-	files spec.FilesService
+	projectFiles
 }
 
 func (a workloadReader) ReadFile(ctx context.Context, orgID, projectID, path string) (string, bool, error) {
-	fc, err := a.files.Read(ctx, orgID, projectID, path)
-	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return "", false, nil
-		}
-		return "", false, err
-	}
-	return fc.Content, true, nil
+	content, _, found, err := a.readFile(ctx, orgID, projectID, "", path)
+	return content, found, err
 }
 
 // ReadFile returns a file's current content + blob sha (the CAS token). A file
 // absent at HEAD is reported as ok=false with no error (a fresh spec create).
 func (a designFilesCommitter) ReadFile(ctx context.Context, orgID, projectID, path string) (content, sha string, ok bool, err error) {
-	fc, rerr := a.files.Read(ctx, orgID, projectID, path)
-	if rerr != nil {
-		if errors.Is(rerr, spec.ErrFileNotFound) {
-			return "", "", false, nil
-		}
-		return "", "", false, rerr
-	}
-	return fc.Content, fc.SHA, true, nil
+	return a.readFile(ctx, orgID, projectID, "", path)
 }
 
 // Commit writes every file in one atomic apply → main under per-file baseSha

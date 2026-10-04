@@ -442,7 +442,7 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 			defer wg.Done()
 			tags := []sourcecontrol.TagInfo{} // both believe no tags exist yet
 			name := suggestedVersionName(tags)
-			err := s.createVersionTag(context.Background(), ref, &tags, &name,
+			err := s.createVersionTag(context.Background(), r.repoRef(), ref, &tags, &name,
 				"race", head, true)
 			results[i] = outcome{name: name, err: err}
 		}(i)

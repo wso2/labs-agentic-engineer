@@ -18,46 +18,53 @@ package app
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
+	"maps"
+	"slices"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// acceptanceCriteria adapts the Files API to validation's CriteriaReader port:
-// it reads the `.feature` files under specs/validation/acceptance/ at HEAD,
-// reporting an empty or absent directory as found=false with no error (the
-// design agent has not authored the oracle yet). Keeps the files feature out of
-// the validation package.
+// acceptanceCriteria adapts the project repository (through the AE Studio
+// pod) to validation's CriteriaReader port: it reads the `.feature` files under
+// specs/validation/acceptance/ at HEAD, reporting an empty or absent directory
+// as found=false with no error (the design agent has not authored the oracle
+// yet). Keeps git out of the validation package.
 //
-// Bundle rather than List-then-Read: it reads the whole directory at ONE commit,
-// so two files can never come from different states of the repo.
+// One bundle read: the whole directory at ONE commit, so two files can never
+// come from different states of the repo.
 type acceptanceCriteria struct {
-	files spec.FilesService
+	projectFiles
+}
+
+// acceptanceFiles selects the oracle's scenario files: a stray README or an
+// editor's leftover in the directory is not a scenario and must not count as
+// one.
+var acceptanceFiles = sourcecontrol.BundleFilter{Prefix: validation.AcceptanceDirPath + "/", Exts: []string{".feature"}}
+
+// criteriaAt reads the scenario files at `at`, by path.
+func (a acceptanceCriteria) criteriaAt(ctx context.Context, orgID, projectID, at string) ([]validation.AcceptanceCriteriaFile, error) {
+	files, _, err := a.readBundle(ctx, orgID, projectID, at, acceptanceFiles)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]validation.AcceptanceCriteriaFile, 0, len(files))
+	for _, path := range slices.Sorted(maps.Keys(files)) {
+		out = append(out, validation.AcceptanceCriteriaFile{Path: path, Content: files[path]})
+	}
+	return out, nil
 }
 
 func (a acceptanceCriteria) ReadAcceptanceCriteria(ctx context.Context, orgID, projectID string) ([]validation.AcceptanceCriteriaFile, bool, error) {
-	bundle, rerr := a.files.Bundle(ctx, orgID, projectID, validation.AcceptanceDirPath, "")
-	if rerr != nil {
-		if errors.Is(rerr, spec.ErrFileNotFound) {
-			return nil, false, nil
-		}
-		return nil, false, rerr
-	}
-	var out []validation.AcceptanceCriteriaFile
-	for _, fc := range bundle.Files {
-		// The directory is the oracle's, but a stray README or an editor's
-		// leftover is not a scenario file and must not count as one.
-		if !strings.HasSuffix(fc.Path, ".feature") {
-			continue
-		}
-		out = append(out, validation.AcceptanceCriteriaFile{Path: fc.Path, Content: fc.Content})
+	out, err := a.criteriaAt(ctx, orgID, projectID, "")
+	if err != nil {
+		return nil, false, err
 	}
 	return out, len(out) > 0, nil
 }
@@ -70,35 +77,24 @@ func (a acceptanceCriteria) ReadAcceptanceCriteria(ctx context.Context, orgID, p
 // renders that as its own sentence; surfacing it as a read failure would make a
 // known-absent report look like a broken platform.
 func (a acceptanceCriteria) ReportAt(ctx context.Context, orgID, projectID, at string) (string, bool, error) {
-	fc, err := a.files.ReadAt(ctx, orgID, projectID, validation.ReportFilePath, at)
-	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return "", false, nil
-		}
-		return "", false, err
-	}
-	return fc.Content, true, nil
+	content, _, found, err := a.readFile(ctx, orgID, projectID, at, validation.ReportFilePath)
+	return content, found, err
 }
 
 // CriteriaAt satisfies runread's ValidationSnapshotReader: the acceptance
 // oracle as it stood at one commit.
 //
-// Bundle, like the HEAD read above, so every file comes from ONE state of the
-// repo. An absent directory is an empty slice: a version whose oracle was never
-// authored is an ordinary state and the page says so in words, not by failing.
+// One bundle, like the HEAD read above, so every file comes from ONE state of
+// the repo. An absent directory is an empty slice: a version whose oracle was
+// never authored is an ordinary state and the page says so in words, not by
+// failing.
 func (a acceptanceCriteria) CriteriaAt(ctx context.Context, orgID, projectID, at string) ([]gen.AcceptanceCriteriaFile, error) {
-	bundle, err := a.files.Bundle(ctx, orgID, projectID, validation.AcceptanceDirPath, at)
+	files, err := a.criteriaAt(ctx, orgID, projectID, at)
 	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return []gen.AcceptanceCriteriaFile{}, nil
-		}
 		return nil, err
 	}
-	out := make([]gen.AcceptanceCriteriaFile, 0, len(bundle.Files))
-	for _, fc := range bundle.Files {
-		if !strings.HasSuffix(fc.Path, ".feature") {
-			continue
-		}
+	out := make([]gen.AcceptanceCriteriaFile, 0, len(files))
+	for _, fc := range files {
 		out = append(out, gen.AcceptanceCriteriaFile{Path: fc.Path, Content: fc.Content})
 	}
 	return out, nil

@@ -90,7 +90,7 @@ func (s *artifactService) BuildVersionFacts(ctx context.Context, orgID, projectI
 	if err != nil {
 		return VersionFacts{}, err
 	}
-	headEntries, head, err := s.git.Workspace().List(ctx, ref, "")
+	headEntries, head, err := s.git.List(ctx, ref, "")
 	if err != nil {
 		return VersionFacts{}, fmt.Errorf("list head tree: %w", err)
 	}
@@ -108,7 +108,7 @@ func (s *artifactService) BuildVersionFacts(ctx context.Context, orgID, projectI
 	}
 	facts.CurrentVersion = latest.Name
 
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, latest.CommitHash)
+	tagEntries, _, err := s.git.List(ctx, ref, latest.CommitHash)
 	if err != nil {
 		return VersionFacts{}, fmt.Errorf("list tree at %s: %w", latest.Name, err)
 	}
@@ -121,29 +121,30 @@ func (s *artifactService) BuildVersionFacts(ctx context.Context, orgID, projectI
 	return facts, nil
 }
 
+// componentDesigns is the bundle designAt reads: every component's JSON
+// (design.json and its projections; designAt keeps design.json).
+var componentDesigns = sourcecontrol.BundleFilter{Prefix: componentsPrefix, Exts: []string{".json"}}
+
 // designAt reads the platform-resource dependency names the design declares at
-// one commit. Best-effort by design: a resource row is an EXTRA the tree cannot
-// show, so a read that fails costs that row and never the whole answer — the
-// build click must not fail because one design.json would not parse.
-func (s *artifactService) designAt(ctx context.Context, ref sourcecontrol.WorkspaceRef, commit string) map[string]bool {
+// one commit — one bundle read at that sha, which the adapter caches.
+// Best-effort by design: a resource row is an EXTRA the tree cannot show, so a
+// read that fails costs those rows and never the whole answer — the build click
+// must not fail because one design.json would not parse.
+func (s *artifactService) designAt(ctx context.Context, ref sourcecontrol.RepoRef, commit string) map[string]bool {
 	if commit == "" {
 		return nil
 	}
-	entries, _, err := s.git.Workspace().List(ctx, ref, commit)
+	files, _, err := s.git.ReadBundle(ctx, ref, commit, componentDesigns)
 	if err != nil {
 		return nil
 	}
 	out := map[string]bool{}
-	for _, e := range entries {
-		dir, ok := pathSegmentUnder(e.Path, componentsPrefix)
-		if !ok || !strings.HasSuffix(e.Path, "/"+componentDesignFile) {
+	for path, raw := range files {
+		dir, ok := pathSegmentUnder(path, componentsPrefix)
+		if !ok || !strings.HasSuffix(path, "/"+componentDesignFile) {
 			continue
 		}
-		raw, _, rerr := s.git.Workspace().ReadFile(ctx, ref, commit, e.Path)
-		if rerr != nil {
-			continue
-		}
-		comp, perr := parseComponentDesignJSON(dir, string(raw))
+		comp, perr := parseComponentDesignJSON(dir, raw)
 		if perr != nil {
 			continue
 		}

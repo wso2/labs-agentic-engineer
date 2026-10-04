@@ -22,14 +22,19 @@ package spec
 //   - a real bare repo whose `main` tip IS the draft "working tree"
 //     (gittest.NewRemote; arranged with r.seed / r.tag),
 //   - the REAL gitfs Workspace engine mirroring that repo over file://
-//     (workspacetest.NewEngine + production NewGitOpsService) — every read,
-//     the save tag, AND the discard revert run through the mount plumbing;
-//     the Git-Data fake is gone with the REST write path,
+//     (workspacetest.NewEngine) — the engine the AE Studio pod runs. The
+//     service's reads reach it through workspaceGit (the sourcecontrol.Git
+//     port with the pod's semantics: fetch unless local, sha reads local)
+//     and its save tag through the production NewGitOpsService,
 //   - the REAL artifacts.ArtifactService over all of the above.
 //
+// Task 4.16 moves the tag onto Git.Tag and deletes gitfs; this rig then moves
+// onto aestudiotest.Fake.
+//
 // Only the two edges the flow doesn't own are faked: the RepoRepository row (a
-// single in-memory GitRepository, RepoSlug pinned — SlugForURL can't parse
-// file:// URLs) and the credential Resolver (a static token + identity).
+// single in-memory GitRepository naming a GitHub repository, which RefForRow
+// needs; the engine is pointed at the file:// origin instead) and the
+// credential Resolver (a static token + identity).
 // save→tag / discard→revert-commit / read-at-HEAD / read-at-tag therefore run
 // end-to-end over genuine git object-store semantics, offline.
 //
@@ -40,9 +45,11 @@ package spec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -114,8 +121,13 @@ func (stubResolver) Resolve(context.Context, string) (secrets.Credential, error)
 // attempt with its 1-based attempt number — fn runs AFTER the engine's fetch
 // and BEFORE its push, so seeding the origin there makes that attempt's push a
 // genuine non-fast-forward.
+//
+// origin is the file:// origin every write pushes to: the row names the
+// GitHub repository (RefForRow needs owner/repo), so the writes the gateway
+// resolves from it are re-pointed here.
 type hookedWorkspace struct {
 	sourcecontrol.Workspace
+	origin         string
 	BeforeTag      func(spec sourcecontrol.TagSpec)
 	BeforeMutateFn func(attempt int)
 }
@@ -124,10 +136,12 @@ func (h *hookedWorkspace) Tag(ctx context.Context, ref sourcecontrol.WorkspaceRe
 	if h.BeforeTag != nil {
 		h.BeforeTag(spec)
 	}
+	ref.CloneURL = h.origin
 	return h.Workspace.Tag(ctx, ref, spec)
 }
 
 func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.WorkspaceRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (gitfs.CommitResult, error) {
+	ref.CloneURL = h.origin
 	if h.BeforeMutateFn == nil {
 		return h.Workspace.Mutate(ctx, ref, fn, opts)
 	}
@@ -173,23 +187,106 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 	rec := &sourcecontrol.GitRepository{
 		OrgID:         org,
 		ProjectID:     proj,
-		RepoURL:       remote.URL(),
-		RepoSlug:      "acme-widgets", // pinned — SlugForURL can't parse file:// URLs
+		RepoURL:       "https://github.com/acme/widgets",
+		RepoSlug:      "acme-widgets",
 		DefaultBranch: "main",
 		Status:        "ready",
 	}
 	repoRepo := &stubRepoRepo{rec: rec}
 	engine := workspacetest.NewEngine(t)
-	ws := &hookedWorkspace{Workspace: engine}
+	ws := &hookedWorkspace{Workspace: engine, origin: remote.URL()}
 	gitOps := sourcecontrol.NewGitOpsService(stubResolver{}, ws)
-	svc := NewArtifactService(repoRepo, gitOps)
-
-	return &rig{t: t, svc: svc, remote: remote, engine: engine, ws: ws, rec: rec, org: org, proj: proj}
+	r := &rig{t: t, remote: remote, engine: engine, ws: ws, rec: rec, org: org, proj: proj}
+	r.svc = NewArtifactService(repoRepo, workspaceGit{ws: ws, ref: r.workspaceRef()}, gitOps)
+	return r
 }
 
-// workspaceRef derives the same mount RepoRef production resolves for the row.
+// workspaceRef derives the mount RepoRef production resolves for the row,
+// pointed at the file:// origin.
 func (r *rig) workspaceRef() sourcecontrol.WorkspaceRef {
-	return sourcecontrol.WorkspaceRefFor(r.org, r.rec, stubCred{})
+	ref := sourcecontrol.WorkspaceRefFor(r.org, r.rec, stubCred{})
+	ref.CloneURL = r.remote.URL()
+	return ref
+}
+
+// ----- the Git port over the rig's engine -----
+
+// errRigWrite: the rig's writes go through the VersionTagGateway, never the
+// read port.
+var errRigWrite = errors.New("workspaceGit: writes go through the VersionTagGateway")
+
+// workspaceGit is sourcecontrol.Git's reads over the rig's gitfs engine, with
+// the pod's semantics: a read at "" fetches first unless Local() is passed (a
+// local read pins the mirror's tip), a sha read is local, and ReadBundle
+// applies the pod's filter (exact Paths, else Prefix + any of Exts).
+type workspaceGit struct {
+	ws  sourcecontrol.Workspace
+	ref sourcecontrol.WorkspaceRef
+}
+
+var _ sourcecontrol.Git = workspaceGit{}
+
+// pin answers the `at` a read addresses: a local read of the tip is the
+// mirror's tip sha.
+func (g workspaceGit) pin(ctx context.Context, at string, opts []sourcecontrol.ReadOption) (string, error) {
+	if at == "" && sourcecontrol.ReadOptionsOf(opts...).Local {
+		return g.ws.HeadLocal(ctx, g.ref)
+	}
+	return at, nil
+}
+
+func (g workspaceGit) Head(ctx context.Context, _ sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) (string, error) {
+	if at == "" && sourcecontrol.ReadOptionsOf(opts...).Local {
+		return g.ws.HeadLocal(ctx, g.ref)
+	}
+	return g.ws.Head(ctx, g.ref, at)
+}
+
+func (g workspaceGit) List(ctx context.Context, _ sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.Entry, string, error) {
+	at, err := g.pin(ctx, at, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	return g.ws.List(ctx, g.ref, at)
+}
+
+func (g workspaceGit) ReadFile(ctx context.Context, _ sourcecontrol.RepoRef, at, path string, opts ...sourcecontrol.ReadOption) ([]byte, string, error) {
+	at, err := g.pin(ctx, at, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	return g.ws.ReadFile(ctx, g.ref, at, path)
+}
+
+func (g workspaceGit) ReadBundle(ctx context.Context, _ sourcecontrol.RepoRef, at string, f sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
+	at, err := g.pin(ctx, at, opts)
+	if err != nil {
+		return nil, "", err
+	}
+	return g.ws.ReadBundle(ctx, g.ref, at, func(path string) bool {
+		if len(f.Paths) > 0 {
+			return slices.Contains(f.Paths, path)
+		}
+		if !strings.HasPrefix(path, f.Prefix) {
+			return false
+		}
+		return len(f.Exts) == 0 || slices.ContainsFunc(f.Exts, func(e string) bool { return strings.HasSuffix(path, e) })
+	})
+}
+
+func (g workspaceGit) ListTags(ctx context.Context, _ sourcecontrol.RepoRef, prefix string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.TagInfo, error) {
+	if sourcecontrol.ReadOptionsOf(opts...).Local {
+		return g.ws.ListTagsLocal(ctx, g.ref, prefix)
+	}
+	return g.ws.ListTags(ctx, g.ref, prefix)
+}
+
+func (workspaceGit) Tag(context.Context, sourcecontrol.RepoRef, sourcecontrol.TagSpec) error {
+	return errRigWrite
+}
+
+func (workspaceGit) Commit(context.Context, sourcecontrol.RepoRef, sourcecontrol.CommitRequest) (sourcecontrol.CommitResult, error) {
+	return sourcecontrol.CommitResult{}, errRigWrite
 }
 
 // mirrorRevParse resolves rev inside the ENGINE's bare mirror (not the origin)
@@ -247,4 +344,33 @@ func validComponentDesignJSON(name string) string {
 	return `{"name":"` + name + `","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
 		`"stories":[1],"dependencies":[],"description":"a service"}`
+}
+
+// memRepos is a project-repository table holding one ready row: org's
+// project p, at repository url. Any other org or project has no row.
+func memRepos(t *testing.T, org, project, url string) sourcecontrol.RepoRepository {
+	t.Helper()
+	return &orgScopedRepoRepo{stubRepoRepo: stubRepoRepo{rec: &sourcecontrol.GitRepository{
+		OrgID: org, ProjectID: project, RepoURL: url, DefaultBranch: "main", Status: "ready",
+	}}}
+}
+
+// orgScopedRepoRepo answers its row only for the row's own org and project.
+type orgScopedRepoRepo struct{ stubRepoRepo }
+
+func (s *orgScopedRepoRepo) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
+	if org != s.rec.OrgID || project != s.rec.ProjectID {
+		return nil, nil
+	}
+	return s.rec, nil
+}
+
+// repoRef is the repository the service's reads address for the row.
+func (r *rig) repoRef() sourcecontrol.RepoRef {
+	r.t.Helper()
+	ref, err := sourcecontrol.RefForRow(r.org, r.rec)
+	if err != nil {
+		r.t.Fatalf("repo ref: %v", err)
+	}
+	return ref
 }

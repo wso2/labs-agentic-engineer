@@ -38,13 +38,9 @@ type ReadOptions struct {
 type ReadOption func(*ReadOptions)
 
 // Local reads the pod's mirror without fetching first.
-//
-//deadcode:keep first production caller in Task 4.14 (status snapshot reads)
 func Local() ReadOption { return func(o *ReadOptions) { o.Local = true } }
 
 // ReadOptionsOf folds opts into one ReadOptions; Git implementations call it.
-//
-//deadcode:keep first production caller in Task 4.12 (the aestudiotools adapter)
 func ReadOptionsOf(opts ...ReadOption) ReadOptions {
 	var o ReadOptions
 	for _, opt := range opts {

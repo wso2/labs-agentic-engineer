@@ -29,16 +29,22 @@ const (
 )
 
 // gitOrgResourceDocs commits resource-docs files into the per-org
-// org-resource-docs repo. It never writes org-skills / _skills.
+// org-resource-docs repo and reads them back. It never writes org-skills /
+// _skills.
 type gitOrgResourceDocs struct {
 	repos sourcecontrol.RepoService
-	git   sourcecontrol.GitOpsService
+	// reads is the org's AE Studio pod.
+	reads sourcecontrol.Git
+	// git commits through the workspace mirror until Task 4.16 moves the
+	// write to Git.Commit.
+	git sourcecontrol.GitOpsService
 }
 
-// NewGitOrgResourceDocs wires the org-resource-docs store over EnsureBareRepo
-// + Workspace.Mutate. Wired only at the composition root.
-func NewGitOrgResourceDocs(repos sourcecontrol.RepoService, git sourcecontrol.GitOpsService) OrgResourceDocs {
-	return &gitOrgResourceDocs{repos: repos, git: git}
+// NewGitOrgResourceDocs wires the org-resource-docs store over EnsureBareRepo,
+// reads through the pod (reads) and commits through Workspace.Mutate (git).
+// Wired only at the composition root.
+func NewGitOrgResourceDocs(repos sourcecontrol.RepoService, reads sourcecontrol.Git, git sourcecontrol.GitOpsService) OrgResourceDocs {
+	return &gitOrgResourceDocs{repos: repos, reads: reads, git: git}
 }
 
 func (s *gitOrgResourceDocs) CommitUTF8(ctx context.Context, orgID, logicalName, fileName, content string) (string, error) {
@@ -70,11 +76,11 @@ func (s *gitOrgResourceDocs) ReadUTF8(ctx context.Context, orgID, path string) (
 	if err != nil {
 		return "", fmt.Errorf("ensure org-resource-docs repo: %w", err)
 	}
-	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+	ref, err := sourcecontrol.RefForRow(orgID, repo)
 	if err != nil {
-		return "", fmt.Errorf("resolve org-resource-docs workspace: %w", err)
+		return "", fmt.Errorf("resolve org-resource-docs repository: %w", err)
 	}
-	content, _, err := s.git.Workspace().ReadFile(ctx, ref, "", path)
+	content, _, err := s.reads.ReadFile(ctx, ref, "", path)
 	if err != nil {
 		return "", fmt.Errorf("read org-resource-docs %q: %w", path, err)
 	}

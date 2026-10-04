@@ -33,8 +33,6 @@ import (
 )
 
 // Head resolves at to its commit sha. Never cached: "" and a tag move.
-//
-//deadcode:keep wired in Task 4.14 (git content reads move to Git)
 func (a *Adapter) Head(ctx context.Context, ref RepoRef, at string, opts ...sourcecontrol.ReadOption) (string, error) {
 	if err := validRef(ref); err != nil {
 		return "", err
@@ -54,8 +52,6 @@ type listing struct {
 }
 
 // List lists every blob of the tree at `at`.
-//
-//deadcode:keep wired in Task 4.14 (git content reads move to Git)
 func (a *Adapter) List(ctx context.Context, ref RepoRef, at string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.Entry, string, error) {
 	if err := validRef(ref); err != nil {
 		return nil, "", err
@@ -92,8 +88,6 @@ type file struct {
 // ReadFile reads one file and its blob sha. read-file has no local form, so
 // a Local() read of the tip first resolves the mirror's tip (Head, Local)
 // and reads at that sha, which is what local means on the pod's other reads.
-//
-//deadcode:keep wired in Task 4.14 (git content reads move to Git)
 func (a *Adapter) ReadFile(ctx context.Context, ref RepoRef, at, path string, opts ...sourcecontrol.ReadOption) ([]byte, string, error) {
 	if err := validRef(ref); err != nil {
 		return nil, "", err
@@ -131,8 +125,6 @@ type bundle struct {
 }
 
 // ReadBundle reads the files f selects at one commit.
-//
-//deadcode:keep wired in Task 4.14 (git content reads move to Git)
 func (a *Adapter) ReadBundle(ctx context.Context, ref RepoRef, at string, f sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
 	if err := validRef(ref); err != nil {
 		return nil, "", err
@@ -166,8 +158,6 @@ func (a *Adapter) ReadBundle(ctx context.Context, ref RepoRef, at string, f sour
 
 // ListTags lists the tags whose name starts with prefix. Never cached: tags
 // come and go. Tags are repository-wide, so no default branch is named.
-//
-//deadcode:keep wired in Task 4.14 (git content reads move to Git)
 func (a *Adapter) ListTags(ctx context.Context, ref RepoRef, prefix string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.TagInfo, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err

@@ -305,7 +305,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	gitOpsService := sourcecontrol.NewGitOpsService(credResolver, workspaceEngine)
-	artifactSvcGit := spec.NewArtifactService(repoRepo, gitOpsService)
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
@@ -335,6 +334,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
 	// the kickoff and Plan turns and the reference uploads run through it.
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
+	// A project's repository content is read through its org's pod; the
+	// version tag is still cut on the workspace mirror until Task 4.16.
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools, gitOpsService)
+	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
 	// hooks — goes to the org's pod through the same adapter; the project's
 	// repo row names the repository and the org's connected login owns new
@@ -804,10 +807,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Builds: eventcoreBuilds{oc: componentClient, repos: repoRepo, stager: buildStager},
 		// The wiring-conformance check on the merged-PR fan-out: does what shipped
 		// consume the resources the design declares?
-		Workloads: workloadReader{files: filesSvc},
+		Workloads: workloadReader{projFiles},
 		// The revalidate trigger's last guard: refuse a version with no oracle
 		// rather than starting a run that could only conclude `skipped`.
-		Criteria: acceptanceCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{projFiles},
 		Signaler: runSupervisor,
 		Starter:  runSupervisor,
 		// A first-ever component has no OpenChoreo Component CR, and a merged
@@ -1003,7 +1006,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org docs repo: registered resources' contract documents. Register
 	// writes them; the design write path copies one into a project when a
 	// stub dependency names the resource (spec/registry_copy.go).
-	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, gitOpsService)
+	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioTools, gitOpsService)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
 	filesSvc.SetRegisteredResourceReader(registryReader)
 	// The AE Studio tools pod has its saves' dependency stubs completed here,
@@ -1265,11 +1268,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	runCycleBuilds := runread.NewCycleBuilds(milestoneRunRepo, runCycleRepo,
 		runreadProjectBuilds{oc: componentClient})
 	// The validation read model. It reads the same rows as the run story and the
-	// same Files API the validation minter reads the oracle through, so an
+	// same repository read the validation minter reads the oracle through, so an
 	// attempt's snapshot and the mint that judged it cannot disagree about which
 	// files are the oracle.
 	validationReads := runread.NewValidationReads(milestoneRunRepo, runCycleRepo,
-		acceptanceCriteria{files: filesSvc}).
+		acceptanceCriteria{projFiles}).
 		WithRecordings(agentProgressReader)
 
 	deliveryDeps := deliveryhttpapi.Deps{
@@ -1304,7 +1307,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	validationSvc := validation.NewService(validation.Deps{
 		Issues:   issueService,
 		Writer:   deliveryIssues,
-		Criteria: acceptanceCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{projFiles},
 	})
 	// A planned Task's prose body names the App Path the agent works in — the
 	// same component → appPath read the merged-PR build fan-out matches against.
@@ -1312,9 +1315,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Committed-truth write surface for a dependency's directory: the design
 	// service fetches/validates a contract and atomically commits it with the
 	// dependency.json that records it (clearing the needs-contract gate), and
-	// records the user's acceptance of an assumed one, via the Files API.
-	// Composition-root adapter keeps files out of the design feature.
-	designService.SetFileCommitter(designFilesCommitter{files: filesSvc})
+	// records the user's acceptance of an assumed one — read through the pod,
+	// committed via the Files API until Task 4.16. Composition-root adapter
+	// keeps files out of the design feature.
+	designService.SetFileCommitter(designFilesCommitter{projectFiles: projFiles, files: filesSvc})
 	// Grant cascade → design: commit the exposesAPI.orgPublished durability marker
 	// on a provider component when its cross-project access request is granted.
 	// Setter-wired at the root (provisioning holds a narrow design port).
@@ -1633,7 +1637,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			PRs:        issueService,
 			Design:     designComponents{store: artifactStore},
 			Builds:     runBuilds{oc: componentClient},
-			Validation: runValidation{svc: validationSvc, files: filesSvc},
+			Validation: runValidation{projectFiles: projFiles, svc: validationSvc},
 			// The coding executor launches the cycle's runner Job and answers with
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.

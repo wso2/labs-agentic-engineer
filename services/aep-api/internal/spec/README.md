@@ -17,10 +17,10 @@ flowchart LR
     CORE --> GIT[("git: prd.md · specs/design/** · version tags · org-skills repo")]
     CORE --> TURNS[("agent_turns (finished-turn ledger)")]
   end
-  CORE -->|Workspace · GitOps engine| SC[[sourcecontrol]]
+  CORE -->|Git reads · Workspace writes| SC[[sourcecontrol]]
   CORE -->|CRTType port| DEP[[dependencies]]
   CORE -->|git tokens| SEC[[platform/secrets]]
-  CORE -->|kickoff · references| POD[["clients/aestudiotools (the org's AE Studio pod)"]]
+  CORE -->|kickoff · references · git reads| POD[["clients/aestudiotools (the org's AE Studio pod)"]]
 ```
 
 ## Slices
@@ -39,7 +39,8 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `Workspace` · `GitOpsService` · `RepoService` | needs | `sourcecontrol` — the gitfs engine hosting all spec + skills git content |
+| `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`) — every artifact read: bundles, trees, files, tags, the status snapshot (local head + local tags, then sha-addressed reads the adapter caches) |
+| `VersionTagGateway` · `Workspace` · `GitOpsService` · `RepoService` | needs | `sourcecontrol` — the gitfs engine for the writes (the version tag, the Files apply, the skills library and its reads) until Task 4.16 moves them to `Git` |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | git-token `Resolver` | needs | `platform/secrets` — sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
@@ -153,7 +154,8 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
-  reached through sourcecontrol's `Workspace`/gitfs engine.
+  read through the org's AE Studio pod (`sourcecontrol.Git`) and written through sourcecontrol's
+  `Workspace`/gitfs engine (until Task 4.16).
 - **`agent_turns` is the finished-turn ledger** (07 §12). An org's AE Studio tools pod hands
   over the turns its design agent ran through `record-turn-usage` (`POST
   /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
