@@ -48,6 +48,9 @@ type Deps struct {
 	// Git serves the /internal/v1 git content ops (repo.NewHandler over the
 	// git engine).
 	Git repo.Handler
+	// GitHubOps serves the /internal/v1 issue, milestone and pull request
+	// ops (github.NewHandler over the gitpat's client).
+	GitHubOps github.Handler
 	// Projects resolves a project to its repository through aep-api (the
 	// turns op checks the path against it).
 	Projects projects.Resolver
@@ -73,8 +76,8 @@ func Routes(d Deps) http.Handler {
 		return accessLog(capOpBody(internalRouteFinder, internalBodyCaps, internalBodyBytes, m2mGate(next)))
 	}
 	internalSrv := internalServer{
-		Handler: d.Git,
-		gh:      d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner,
+		Handler: d.Git, gitHubOps: d.GitHubOps,
+		gh: d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner,
 		projects: d.Projects, turns: d.Turns,
 	}
 	nf := http.HandlerFunc(notFound)

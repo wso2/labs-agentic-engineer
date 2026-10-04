@@ -38,6 +38,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
+	"github.com/wso2/aep/ae-studio-tools/internal/github/githubtest"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects/projectstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
@@ -96,6 +97,9 @@ type harnessDeps struct {
 	// gitOrigin is the clone URL of every owner/repo the git ops address;
 	// none (a failing clone) unless withGitOrigin names one.
 	gitOrigin string
+	// githubAPI is the GitHub API base the GitHub ops call; nothing listens
+	// there unless withGitHubAPI names a stub.
+	githubAPI string
 }
 
 type harnessOpt func(*harnessDeps)
@@ -111,6 +115,11 @@ func withProjects(repos map[string]projects.Repository) harnessOpt {
 // ops clones.
 func withGitOrigin(origin *repotest.Origin) harnessOpt {
 	return func(d *harnessDeps) { d.gitOrigin = origin.URL() }
+}
+
+// withGitHubAPI points the GitHub ops (issues, milestones, pulls) at stub.
+func withGitHubAPI(stub *githubtest.Stub) harnessOpt {
+	return func(d *harnessDeps) { d.githubAPI = stub.URL() }
 }
 
 // withTurnSocket points the turns relay at a fake Turn socket.
@@ -141,7 +150,10 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 	t.Cleanup(idp.Close)
 
 	h := &harness{t: t, key: key}
-	deps := harnessDeps{gh: fakeGitHub{calls: &h.githubCalls}, turnSocket: filepath.Join(t.TempDir(), "absent.sock")}
+	deps := harnessDeps{
+		gh: fakeGitHub{calls: &h.githubCalls}, turnSocket: filepath.Join(t.TempDir(), "absent.sock"),
+		githubAPI: "http://127.0.0.1:1",
+	}
 	for _, o := range opts {
 		o(&deps)
 	}
@@ -166,8 +178,12 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
 		Git:        repo.NewHandler(engine, nil, func(string, string) string { return deps.gitOrigin }),
-		Projects:   h.projects,
-		Turns:      turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
+		GitHubOps: github.NewHandler(github.New(github.Config{
+			APIBase: deps.githubAPI,
+			Token:   func(context.Context) (string, error) { return "test-gitpat", nil },
+		})),
+		Projects: h.projects,
+		Turns:    turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
 	})
 	h.engine = engine
 	return h

@@ -255,8 +255,6 @@ func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgR
 }
 
 // CreateIssue opens an issue (POST /repos/{owner}/{repo}/issues).
-//
-//deadcode:keep wired in Task 4.3 (create-issue)
 func (c *Client) CreateIssue(ctx context.Context, owner, repo string, req CreateIssueRequest) (*IssueResult, error) {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues", owner, repo)
 	var created struct {
@@ -275,8 +273,6 @@ func (c *Client) CreateIssue(ctx context.Context, owner, repo string, req Create
 
 // EnsureLabel creates a label if it does not exist; GitHub's 422 (already
 // exists) is success.
-//
-//deadcode:keep wired in Task 4.3 (ensure-label)
 func (c *Client) EnsureLabel(ctx context.Context, owner, repo string, name, color string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/labels", owner, repo)
 	return c.doJSON(ctx, http.MethodPost, url, map[string]string{"name": name, "color": color}, nil,
@@ -284,24 +280,18 @@ func (c *Client) EnsureLabel(ctx context.Context, owner, repo string, name, colo
 }
 
 // CloseIssue closes an issue with reason "completed".
-//
-//deadcode:keep wired in Task 4.3 (close-issue)
 func (c *Client) CloseIssue(ctx context.Context, owner, repo string, number int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"state": "closed", "state_reason": "completed"}, nil, http.StatusOK)
 }
 
 // EditIssueBody replaces the issue body (PATCH /issues/{number}).
-//
-//deadcode:keep wired in Task 4.3 (set-issue-body)
 func (c *Client) EditIssueBody(ctx context.Context, owner, repo string, number int, body string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"body": body}, nil, http.StatusOK)
 }
 
 // EditIssueTitle replaces the issue title (PATCH /issues/{number}).
-//
-//deadcode:keep wired in Task 4.3 (set-issue-title)
 func (c *Client) EditIssueTitle(ctx context.Context, owner, repo string, number int, title string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"title": title}, nil, http.StatusOK)
@@ -310,8 +300,6 @@ func (c *Client) EditIssueTitle(ctx context.Context, owner, repo string, number 
 // ReopenIssue sets the issue state back to open. It names no state_reason:
 // GitHub drops the closed reason itself on reopen. Reopening an open issue is
 // a 200 no-op, so callers need no read-before-write.
-//
-//deadcode:keep wired in Task 4.3 (reopen-issue)
 func (c *Client) ReopenIssue(ctx context.Context, owner, repo string, number int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"state": "open"}, nil, http.StatusOK)
@@ -319,16 +307,12 @@ func (c *Client) ReopenIssue(ctx context.Context, owner, repo string, number int
 
 // SetIssueMilestone assigns an issue to a milestone by NUMBER (GitHub
 // answers 422 to a title).
-//
-//deadcode:keep wired in Task 4.3 (set-issue-milestone)
 func (c *Client) SetIssueMilestone(ctx context.Context, owner, repo string, number, milestoneNumber int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]int{"milestone": milestoneNumber}, nil, http.StatusOK)
 }
 
 // GetPullRequest answers a pull request's live state (GET /pulls/{n}).
-//
-//deadcode:keep wired in Task 4.3 (get-pull)
 func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number int) (*PullRequestState, error) {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/pulls/%d", owner, repo, number)
 	var raw struct {
@@ -347,8 +331,6 @@ func (c *Client) GetPullRequest(ctx context.Context, owner, repo string, number 
 // conflicts, already merged). So a retry after a lost success answer is not
 // a failure, a merge error is reconciled against the live PR state: an
 // already-merged PR is success.
-//
-//deadcode:keep wired in Task 4.3 (merge-pull)
 func (c *Client) MergePullRequest(ctx context.Context, owner, repo string, number int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/pulls/%d/merge", owner, repo, number)
 	err := c.doJSON(ctx, http.MethodPut, url, map[string]string{"merge_method": "squash"}, nil, http.StatusOK)
@@ -363,8 +345,6 @@ func (c *Client) MergePullRequest(ctx context.Context, owner, repo string, numbe
 
 // ListPullRequestFiles answers the path of every file a pull request changed
 // (GET /pulls/{n}/files, 100 per page, until a short page).
-//
-//deadcode:keep wired in Task 4.3 (list-pull-files)
 func (c *Client) ListPullRequestFiles(ctx context.Context, owner, repo string, number int) ([]string, error) {
 	var files []string
 	for page := 1; ; page++ {
@@ -385,8 +365,6 @@ func (c *Client) ListPullRequestFiles(ctx context.Context, owner, repo string, n
 }
 
 // CommentIssue posts a comment on an issue.
-//
-//deadcode:keep wired in Task 4.3 (create-issue-comment)
 func (c *Client) CommentIssue(ctx context.Context, owner, repo string, number int, body string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d/comments", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPost, url, map[string]string{"body": body}, nil, http.StatusCreated)
@@ -429,12 +407,10 @@ func (w issueWire) info() IssueInfo {
 // label (AND), newest first, following pages until a short one or
 // issueListMaxPages; past the cap the OLDEST are missing (logged), GetIssue
 // still reaches them. Pull requests are dropped.
-//
-//deadcode:keep wired in Task 4.3 (list-issues)
 func (c *Client) ListIssues(ctx context.Context, owner, repo string, labels []string) ([]IssueInfo, error) {
 	base := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues?state=all&per_page=%d", owner, repo, milestonePageSize)
 	if len(labels) > 0 {
-		base += "&labels=" + strings.Join(labels, ",")
+		base += "&labels=" + urlpkg.QueryEscape(strings.Join(labels, ","))
 	}
 	var issues []IssueInfo
 	for page := 1; page <= issueListMaxPages; page++ {
@@ -457,8 +433,6 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, labels []st
 }
 
 // GetIssue answers one issue by number; a 404 is ErrIssueNotFound.
-//
-//deadcode:keep wired in Task 4.3 (get-issue)
 func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int) (*IssueInfo, error) {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d", owner, repo, number)
 	var raw issueWire
@@ -473,8 +447,6 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, number int) (
 }
 
 // AddIssueLabels adds labels to an issue (merged with its current ones).
-//
-//deadcode:keep wired in Task 4.3 (add-issue-labels)
 func (c *Client) AddIssueLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d/labels", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPost, url, map[string][]string{"labels": labels}, nil, http.StatusOK)
@@ -482,16 +454,12 @@ func (c *Client) AddIssueLabels(ctx context.Context, owner, repo string, number 
 
 // RemoveIssueLabel removes one label (path-escaped: an aep: label holds ':'
 // and may hold '/'). 404 is success: the label is already absent.
-//
-//deadcode:keep wired in Task 4.3 (remove-issue-label)
 func (c *Client) RemoveIssueLabel(ctx context.Context, owner, repo string, number int, label string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/issues/%d/labels/%s", owner, repo, number, urlpkg.PathEscape(label))
 	return c.doJSON(ctx, http.MethodDelete, url, nil, nil, http.StatusOK, http.StatusNotFound)
 }
 
 // SetIssueLabels replaces the issue's whole label set.
-//
-//deadcode:keep wired in Task 4.3 (set-issue-labels)
 func (c *Client) SetIssueLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
 	// A nil slice would marshal as null, which GitHub reads as "unchanged";
 	// an explicit empty array clears.

@@ -71,8 +71,6 @@ type milestoneWire struct {
 //  2. POST, and on GitHub's 422 already_exists (a concurrent create of the same
 //     exact title won the race) re-list and match the title to recover the
 //     number, the same shape RegisterWebhook uses for its already-exists 422.
-//
-//deadcode:keep wired in Task 4.3 (create-milestone)
 func (c *Client) CreateMilestone(ctx context.Context, owner, repo string, req CreateMilestoneRequest) (*MilestoneResult, error) {
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
@@ -152,8 +150,6 @@ func isAlreadyExists(status int, body []byte) bool {
 // CloseMilestone sets a milestone's state to closed
 // (PATCH /repos/{owner}/{repo}/milestones/{number}). Display only: member
 // issues are untouched and the milestone keeps accepting new ones.
-//
-//deadcode:keep wired in Task 4.3 (close-milestone)
 func (c *Client) CloseMilestone(ctx context.Context, owner, repo string, number int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/milestones/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"state": "closed"}, nil, http.StatusOK)
@@ -167,8 +163,6 @@ func (c *Client) CloseMilestone(ctx context.Context, owner, repo string, number 
 // unchanged spec works the same version again — the same milestone a cancel
 // closed — and leaving it closed would show a version being actively worked
 // under a heading that says it is finished.
-//
-//deadcode:keep wired in Task 4.3 (reopen-milestone)
 func (c *Client) ReopenMilestone(ctx context.Context, owner, repo string, number int) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/milestones/%d", owner, repo, number)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]string{"state": "open"}, nil, http.StatusOK)
@@ -178,8 +172,6 @@ func (c *Client) ReopenMilestone(ctx context.Context, owner, repo string, number
 // ("open" | "closed" | "all"; empty ⇒ "all"), following pagination to the end.
 // The walk must be complete — a truncated list would let CreateMilestone's
 // uniqueness pre-check pass on a title that already exists further down.
-//
-//deadcode:keep wired in Task 4.3 (list-milestones)
 func (c *Client) ListMilestones(ctx context.Context, owner, repo string, state string) ([]Milestone, error) {
 	if state == "" {
 		state = "all"
@@ -216,8 +208,6 @@ func (c *Client) ListMilestones(ctx context.Context, owner, repo string, state s
 // dropped: GitHub's issues endpoint returns them alongside issues (each
 // carrying a pull_request member), and counting a member PR as an issue is the
 // same mistake that makes the milestone's open_issues field unusable.
-//
-//deadcode:keep wired in Task 4.3 (list-milestone-issues)
 func (c *Client) ListMilestoneIssues(ctx context.Context, owner, repo string, filter MilestoneIssuesFilter) ([]IssueInfo, error) {
 	if filter.Number <= 0 {
 		return nil, fmt.Errorf("milestone number is required")
@@ -313,8 +303,6 @@ const milestoneIssueCountsQuery = `query($owner: String!, $repo: String!, $m: In
 // working set is non-empty; aep-api's sourcecontrol.MilestoneIssueCounts owns
 // the arithmetic). Returns ErrMilestoneNotFound when the repo has no milestone
 // with that number.
-//
-//deadcode:keep wired in Task 4.3 (get-milestone-counts)
 func (c *Client) MilestoneIssueCounts(ctx context.Context, owner, repo string, number int) (*MilestoneIssueCounts, error) {
 	type countAlias struct {
 		TotalCount int `json:"totalCount"`

@@ -73,10 +73,16 @@ var internalReadFile = trailingPath{scope: internalV1 + "/repos/", vars: 2, lite
 // the validator's.
 var internalRouteFinder = internalReadFile.routes(mustRouter("internal", gen.GetSpec))
 
+// gitHubOps names github.Handler for embedding beside repo.Handler (two
+// embedded fields cannot share the name Handler).
+type gitHubOps = github.Handler
+
 // internalServer implements gen.StrictServerInterface. The git content ops
-// are repo.Handler's.
+// are repo.Handler's; the issue, milestone and pull request ops
+// github.Handler's.
 type internalServer struct {
 	repo.Handler
+	gitHubOps
 	gh github.Identity
 	// refs is the reference store; githubOwner the org's connected GitHub
 	// account (AE_GITHUB_OWNER), the only owner whose repos it stores for.

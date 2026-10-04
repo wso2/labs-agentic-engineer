@@ -18,6 +18,11 @@ info:
     once the request is validated and before the operation runs, when owner
     is not the org's connected GitHub account (compared case-insensitively).
     Errors are RFC 9457 problems (application/problem+json).
+
+    The Issues, Milestones and Pulls operations are one GitHub call each over
+    the org's gitpat, never retried here: a rate limit is 429
+    github_rate_limited with Retry-After, any other refusal 502 github_error
+    with githubStatus.
   version: 1.0.0
 servers:
 - url: /internal/v1
@@ -31,6 +36,12 @@ tags:
 - name: Git
   description: The repository's git content, read from and written through the
     studio's mirror. No path allow-list.
+- name: Issues
+  description: The repository's issues, comments and labels on GitHub.
+- name: Milestones
+  description: The repository's milestones on GitHub (one spec version each).
+- name: Pulls
+  description: The repository's pull requests on GitHub.
 security:
 - aeOnly: []
 paths:
@@ -472,6 +483,792 @@ paths:
           $ref: '#/components/responses/GitHubError'
         '503':
           $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues:
+    get:
+      operationId: list-issues
+      summary: List the repository's issues, newest first
+      description: |-
+        Every state, newest first, at most 10 pages of 100; get-issue reaches
+        the rest.
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - name: labels
+        in: query
+        required: false
+        description: Only issues carrying every one of these labels.
+        schema:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+      responses:
+        '200':
+          description: Issues in every state (pull requests left out); past 1000 the oldest are missing
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: create-issue
+      summary: Open an issue
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIssueRequest'
+      responses:
+        '201':
+          description: Opened
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}:
+    get:
+      operationId: get-issue
+      summary: Read one issue
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '200':
+          description: The issue
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueInfo'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/IssueNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/comments:
+    get:
+      operationId: list-issue-comments
+      summary: Read an issue's newest comments
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      - name: limit
+        in: query
+        required: true
+        description: How many of the newest comments; 0 answers none.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100
+      responses:
+        '200':
+          description: The comments, oldest first, the platform's markers stripped and reported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueCommentList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/IssueNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: create-issue-comment
+      summary: Comment on an issue
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueCommentRequest'
+      responses:
+        '204':
+          description: Commented
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/close:
+    post:
+      operationId: close-issue
+      summary: Close an issue as completed
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '204':
+          description: Closed
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/reopen:
+    post:
+      operationId: reopen-issue
+      summary: Reopen an issue (a no-op when open)
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '204':
+          description: Open
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/body:
+    put:
+      operationId: set-issue-body
+      summary: Replace an issue's body
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueBodyRequest'
+      responses:
+        '204':
+          description: Replaced
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/title:
+    put:
+      operationId: set-issue-title
+      summary: Replace an issue's title
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueTitleRequest'
+      responses:
+        '204':
+          description: Replaced
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/milestone:
+    put:
+      operationId: set-issue-milestone
+      summary: Assign an issue to a milestone
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueMilestoneRequest'
+      responses:
+        '204':
+          description: Assigned
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/labels:
+    post:
+      operationId: add-issue-labels
+      summary: Add labels to an issue
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueLabelsRequest'
+      responses:
+        '204':
+          description: Added (kept with the issue's other labels)
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+    put:
+      operationId: set-issue-labels
+      summary: Replace an issue's labels
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueLabelsRequest'
+      responses:
+        '204':
+          description: Replaced (an empty list clears them)
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/issues/{number}/labels/{label}:
+    delete:
+      operationId: remove-issue-label
+      summary: Remove one label from an issue
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      - $ref: '#/components/parameters/Label'
+      responses:
+        '204':
+          description: Removed, or the issue did not carry it
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/labels:
+    post:
+      operationId: ensure-label
+      summary: Create a label unless it exists
+      tags:
+      - Issues
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureLabelRequest'
+      responses:
+        '204':
+          description: The label exists
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones:
+    get:
+      operationId: list-milestones
+      summary: List the repository's milestones
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - name: state
+        in: query
+        required: false
+        description: Milestones in this state; omitted, all.
+        schema:
+          type: string
+          enum:
+          - open
+          - closed
+          - all
+      responses:
+        '200':
+          description: Every milestone in the state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MilestoneList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: create-milestone
+      summary: Create a milestone unless one has the title
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMilestoneRequest'
+      responses:
+        '200':
+          description: The milestone's number; created is false when one with the title (compared case-insensitively) already existed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MilestoneResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones/{number}/close:
+    post:
+      operationId: close-milestone
+      summary: Close a milestone
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '204':
+          description: Closed
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones/{number}/reopen:
+    post:
+      operationId: reopen-milestone
+      summary: Reopen a milestone
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '204':
+          description: Open
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones/{number}/issues:
+    get:
+      operationId: list-milestone-issues
+      summary: List a milestone's issues
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      - name: state
+        in: query
+        required: false
+        description: Issues in this state; omitted, open.
+        schema:
+          type: string
+          enum:
+          - open
+          - closed
+          - all
+      - name: labels
+        in: query
+        required: false
+        description: Only issues carrying every one of these labels.
+        schema:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+      responses:
+        '200':
+          description: The milestone's issues (pull requests left out)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones/{number}/counts:
+    get:
+      operationId: get-milestone-counts
+      summary: Count a milestone's open issues per population
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '200':
+          description: The open-issue populations, one label each
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MilestoneIssueCounts'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/MilestoneNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/milestones/{number}/comments:
+    get:
+      operationId: list-milestone-comments
+      summary: Read the newest comments of a milestone's issues
+      tags:
+      - Milestones
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      - name: perIssue
+        in: query
+        required: true
+        description: How many of each issue's newest comments; 0 answers none.
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 100
+      responses:
+        '200':
+          description: Per issue (first 100 issues), its newest comments oldest first; an issue with none is left out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MilestoneComments'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/MilestoneNotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/pulls/{number}:
+    get:
+      operationId: get-pull
+      summary: Read a pull request's state
+      tags:
+      - Pulls
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '200':
+          description: The pull request's state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestState'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/pulls/{number}/merge:
+    post:
+      operationId: merge-pull
+      summary: Squash-merge a pull request
+      description: |-
+        A refused merge is checked against the pull request: one already merged
+        is success, so a retry after a lost answer is not a failure.
+      tags:
+      - Pulls
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '204':
+          description: Merged (or already merged)
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/pulls/{number}/files:
+    get:
+      operationId: list-pull-files
+      summary: List the files a pull request changed
+      tags:
+      - Pulls
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Number'
+      responses:
+        '200':
+          description: Every changed path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestFiles'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/GitHubAPIError'
+        '503':
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     aeOnly:
@@ -540,6 +1337,24 @@ components:
       schema:
         type: string
         pattern: ^[A-Za-z0-9._/-]{1,255}$
+    Number:
+      name: number
+      in: path
+      required: true
+      description: The issue, milestone or pull request number
+      schema:
+        type: integer
+        minimum: 1
+    Label:
+      name: label
+      in: path
+      required: true
+      description: The label's name, percent-encoded (a label may hold `/`
+        and `:`)
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 50
   responses:
     Problem:
       description: RFC 9457 problem
@@ -569,6 +1384,27 @@ components:
       description: 'GitHub refused or failed a git clone, fetch or push (problem
         code: github_error; githubStatus is GitHub''s HTTP status when git
         reported one).'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    IssueNotFound:
+      description: 'No issue carries that number (problem code: issue_not_found).'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    MilestoneNotFound:
+      description: 'No milestone carries that number (problem code:
+        milestone_not_found).'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GitHubAPIError:
+      description: 'GitHub refused or failed the call (problem code:
+        github_error; githubStatus is GitHub''s HTTP status when it answered
+        one, 404 for a GraphQL NOT_FOUND).'
       content:
         application/problem+json:
           schema:
@@ -1059,3 +1895,313 @@ components:
           items:
             type: string
             format: binary
+    IssueList:
+      type: object
+      required:
+      - issues
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueInfo'
+    IssueInfo:
+      type: object
+      description: An issue as GitHub holds it.
+      required:
+      - number
+      - title
+      - body
+      - url
+      - state
+      - labels
+      properties:
+        number:
+          type: integer
+        title:
+          type: string
+        body:
+          type: string
+        url:
+          type: string
+          description: The issue's html_url
+        state:
+          type: string
+          description: open or closed
+        stateReason:
+          type: string
+          description: GitHub's state_reason; absent while it has none
+        closedAt:
+          type: string
+          description: GitHub's closed_at; absent while open
+        labels:
+          type: array
+          items:
+            type: string
+    CreateIssueRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - title
+      - body
+      properties:
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+        milestone:
+          type: integer
+          minimum: 1
+          description: The milestone number; omitted, none
+          x-go-type-skip-optional-pointer: false
+    IssueResult:
+      type: object
+      required:
+      - number
+      - url
+      - nodeId
+      properties:
+        number:
+          type: integer
+        url:
+          type: string
+          description: The issue's html_url
+        nodeId:
+          type: string
+    IssueCommentList:
+      type: object
+      required:
+      - comments
+      properties:
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueComment'
+    IssueComment:
+      type: object
+      description: One comment as GitHub holds it, the platform's marker
+        stripped from body and reported as machine or observed (never both).
+      required:
+      - id
+      - author
+      - body
+      - url
+      - createdAt
+      - machine
+      - observed
+      properties:
+        id:
+          type: string
+          description: GitHub's node id
+        author:
+          type: string
+          description: The author's login; empty when the account is gone
+        body:
+          type: string
+        url:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        machine:
+          type: boolean
+          description: The platform wrote it for the agent
+        observed:
+          type: boolean
+          description: The platform wrote it for a person, from what a run did
+    IssueCommentRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - body
+      properties:
+        body:
+          type: string
+          minLength: 1
+    IssueBodyRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - body
+      properties:
+        body:
+          type: string
+    IssueTitleRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+    IssueMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - number
+      properties:
+        number:
+          type: integer
+          minimum: 1
+          description: The milestone number
+    IssueLabelsRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - labels
+      properties:
+        labels:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+            minLength: 1
+            maxLength: 50
+    EnsureLabelRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - color
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+        color:
+          type: string
+          description: Six hex digits, no leading '#'
+          pattern: ^[0-9A-Fa-f]{6}$
+    MilestoneList:
+      type: object
+      required:
+      - milestones
+      properties:
+        milestones:
+          type: array
+          items:
+            $ref: '#/components/schemas/Milestone'
+    Milestone:
+      type: object
+      required:
+      - number
+      - title
+      - state
+      - description
+      - nodeId
+      properties:
+        number:
+          type: integer
+        title:
+          type: string
+        state:
+          type: string
+          description: open or closed (display only)
+        description:
+          type: string
+        nodeId:
+          type: string
+    CreateMilestoneRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - title
+      properties:
+        title:
+          type: string
+          minLength: 1
+          pattern: \S
+        description:
+          type: string
+    MilestoneResult:
+      type: object
+      required:
+      - number
+      - created
+      properties:
+        number:
+          type: integer
+        created:
+          type: boolean
+    MilestoneIssueCounts:
+      type: object
+      description: A milestone's open issues per population, each the count of
+        one label (the working-set arithmetic over them is the caller's).
+      required:
+      - openProvision
+      - openTotal
+      - openAgentWork
+      - openDevelopment
+      - openValidation
+      - openValidationRepairs
+      properties:
+        openProvision:
+          type: integer
+          description: Label provision (dispatch gates)
+        openTotal:
+          type: integer
+          description: Every open issue
+        openAgentWork:
+          type: integer
+          description: Label aep
+        openDevelopment:
+          type: integer
+          description: Label development
+        openValidation:
+          type: integer
+          description: Label validation
+        openValidationRepairs:
+          type: integer
+          description: Label src/validation
+    MilestoneComments:
+      type: object
+      required:
+      - issues
+      properties:
+        issues:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueComments'
+    IssueComments:
+      type: object
+      required:
+      - number
+      - comments
+      properties:
+        number:
+          type: integer
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssueComment'
+    PullRequestState:
+      type: object
+      required:
+      - state
+      - merged
+      - mergeCommitSha
+      properties:
+        state:
+          type: string
+          description: open or closed
+        merged:
+          type: boolean
+        mergeCommitSha:
+          type: string
+          description: Empty until GitHub has one
+    PullRequestFiles:
+      type: object
+      required:
+      - files
+      properties:
+        files:
+          type: array
+          items:
+            type: string

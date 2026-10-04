@@ -38,8 +38,14 @@ package githubtest
 //
 // A later registration for a route replaces the earlier one whichever form is
 // used.
+//
+// Beside the registry, the stub keeps a small model of GitHub (model.go):
+// seeded repositories, issues and the hooks registered on them, served on the
+// routes the client calls when no registration covers them. FailNext answers
+// the next request, whatever it is, with a scripted failure.
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,14 +69,25 @@ type Stub struct {
 	mu       sync.Mutex
 	routes   map[string]http.HandlerFunc
 	requests []RecordedRequest
+	// failNext, when set, answers the next request and is cleared.
+	failNext *failure
+	model    model
+}
+
+// failure is a FailNext script.
+type failure struct {
+	status int
+	header map[string]string
 }
 
 // NewStub starts a route-registry server and registers Close on t.Cleanup.
 func NewStub(t *testing.T) *Stub {
 	t.Helper()
-	s := &Stub{routes: map[string]http.HandlerFunc{}}
+	s := &Stub{routes: map[string]http.HandlerFunc{}, model: newModel()}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		// The handler reads the body again (an OnFunc branching on it).
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		s.mu.Lock()
 		s.requests = append(s.requests, RecordedRequest{
 			Method: r.Method,
@@ -80,7 +97,19 @@ func NewStub(t *testing.T) *Stub {
 			Header: r.Header.Clone(),
 		})
 		h := s.routes[r.Method+" "+r.URL.Path]
+		fail := s.failNext
+		s.failNext = nil
 		s.mu.Unlock()
+		if fail != nil {
+			for k, v := range fail.header {
+				w.Header().Set(k, v)
+			}
+			writeJSON(fail.status, `{"message":"scripted failure"}`)(w, r)
+			return
+		}
+		if h == nil && s.serveModel(w, r, body) {
+			return
+		}
 		if h == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusNotFound)
@@ -91,6 +120,17 @@ func NewStub(t *testing.T) *Stub {
 	}))
 	t.Cleanup(s.Close)
 	return s
+}
+
+// URL is the stub's base URL, the client's APIBase.
+func (s *Stub) URL() string { return s.Server.URL }
+
+// FailNext makes the next request, whichever route it hits, answer status
+// with header set (e.g. Retry-After) and a GitHub-shaped error body.
+func (s *Stub) FailNext(status int, header map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failNext = &failure{status: status, header: header}
 }
 
 // On registers a fixed status+body for an exact method+path. A later On for the

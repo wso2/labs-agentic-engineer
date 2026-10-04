@@ -78,8 +78,6 @@ const milestoneIssueCommentsQuery = `query($owner: String!, $repo: String!, $m: 
 //
 // perIssue <= 0 answers an empty map without a round trip: asking for no
 // comments is a coherent request and must not become a query error.
-//
-//deadcode:keep wired in Task 4.3 (list-milestone-comments)
 func (c *Client) ListMilestoneIssueComments(ctx context.Context, owner, repo string, number, perIssue int) (map[int][]IssueComment, error) {
 	if number <= 0 {
 		return nil, ErrMilestoneNotFound

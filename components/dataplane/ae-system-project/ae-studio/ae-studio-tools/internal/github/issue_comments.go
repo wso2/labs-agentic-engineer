@@ -51,8 +51,6 @@ const issueCommentsQuery = `query($owner: String!, $repo: String!, $n: Int!, $c:
 //
 // limit <= 0 answers nil without a round trip: asking for no comments is a
 // coherent request and must not become a query error.
-//
-//deadcode:keep wired in Task 4.3 (list-issue-comments)
 func (c *Client) ListIssueComments(ctx context.Context, owner, repo string, number, limit int) ([]IssueComment, error) {
 	if number <= 0 {
 		return nil, ErrIssueNotFound

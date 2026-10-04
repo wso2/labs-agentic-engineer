@@ -144,6 +144,48 @@ func (e TurnRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for ListMilestonesParamsState.
+const (
+	ListMilestonesParamsStateAll    ListMilestonesParamsState = "all"
+	ListMilestonesParamsStateClosed ListMilestonesParamsState = "closed"
+	ListMilestonesParamsStateOpen   ListMilestonesParamsState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ListMilestonesParamsState enum.
+func (e ListMilestonesParamsState) Valid() bool {
+	switch e {
+	case ListMilestonesParamsStateAll:
+		return true
+	case ListMilestonesParamsStateClosed:
+		return true
+	case ListMilestonesParamsStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListMilestoneIssuesParamsState.
+const (
+	ListMilestoneIssuesParamsStateAll    ListMilestoneIssuesParamsState = "all"
+	ListMilestoneIssuesParamsStateClosed ListMilestoneIssuesParamsState = "closed"
+	ListMilestoneIssuesParamsStateOpen   ListMilestoneIssuesParamsState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ListMilestoneIssuesParamsState enum.
+func (e ListMilestoneIssuesParamsState) Valid() bool {
+	switch e {
+	case ListMilestoneIssuesParamsStateAll:
+		return true
+	case ListMilestoneIssuesParamsStateClosed:
+		return true
+	case ListMilestoneIssuesParamsStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Bundle defines model for Bundle.
 type Bundle struct {
 	CommitSha string `json:"commitSha"`
@@ -218,6 +260,22 @@ type CreateCommitRequest struct {
 	Writes    []CommitWrite  `json:"writes,omitempty"`
 }
 
+// CreateIssueRequest defines model for CreateIssueRequest.
+type CreateIssueRequest struct {
+	Body   string   `json:"body"`
+	Labels []string `json:"labels,omitempty"`
+
+	// Milestone The milestone number; omitted, none
+	Milestone *int   `json:"milestone,omitempty"`
+	Title     string `json:"title"`
+}
+
+// CreateMilestoneRequest defines model for CreateMilestoneRequest.
+type CreateMilestoneRequest struct {
+	Description string `json:"description,omitempty"`
+	Title       string `json:"title"`
+}
+
 // CreateTagRequest tagger omitted, the AEP default identity.
 type CreateTagRequest struct {
 	Message string `json:"message"`
@@ -228,6 +286,13 @@ type CreateTagRequest struct {
 
 	// Target The commit to tag, as `at` names one; omitted, the default-branch tip
 	Target string `json:"target,omitempty"`
+}
+
+// EnsureLabelRequest defines model for EnsureLabelRequest.
+type EnsureLabelRequest struct {
+	// Color Six hex digits, no leading '#'
+	Color string `json:"color"`
+	Name  string `json:"name"`
 }
 
 // FileContent defines model for FileContent.
@@ -258,6 +323,95 @@ type Head struct {
 	Sha string `json:"sha"`
 }
 
+// IssueBodyRequest defines model for IssueBodyRequest.
+type IssueBodyRequest struct {
+	Body string `json:"body"`
+}
+
+// IssueComment One comment as GitHub holds it, the platform's marker stripped from body and reported as machine or observed (never both).
+type IssueComment struct {
+	// Author The author's login; empty when the account is gone
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// ID GitHub's node id
+	ID string `json:"id"`
+
+	// Machine The platform wrote it for the agent
+	Machine bool `json:"machine"`
+
+	// Observed The platform wrote it for a person, from what a run did
+	Observed bool   `json:"observed"`
+	URL      string `json:"url"`
+}
+
+// IssueCommentList defines model for IssueCommentList.
+type IssueCommentList struct {
+	Comments []IssueComment `json:"comments"`
+}
+
+// IssueCommentRequest defines model for IssueCommentRequest.
+type IssueCommentRequest struct {
+	Body string `json:"body"`
+}
+
+// IssueComments defines model for IssueComments.
+type IssueComments struct {
+	Comments []IssueComment `json:"comments"`
+	Number   int            `json:"number"`
+}
+
+// IssueInfo An issue as GitHub holds it.
+type IssueInfo struct {
+	Body string `json:"body"`
+
+	// ClosedAt GitHub's closed_at; absent while open
+	ClosedAt string   `json:"closedAt,omitempty"`
+	Labels   []string `json:"labels"`
+	Number   int      `json:"number"`
+
+	// State open or closed
+	State string `json:"state"`
+
+	// StateReason GitHub's state_reason; absent while it has none
+	StateReason string `json:"stateReason,omitempty"`
+	Title       string `json:"title"`
+
+	// URL The issue's html_url
+	URL string `json:"url"`
+}
+
+// IssueLabelsRequest defines model for IssueLabelsRequest.
+type IssueLabelsRequest struct {
+	Labels []string `json:"labels"`
+}
+
+// IssueList defines model for IssueList.
+type IssueList struct {
+	Issues []IssueInfo `json:"issues"`
+}
+
+// IssueMilestoneRequest defines model for IssueMilestoneRequest.
+type IssueMilestoneRequest struct {
+	// Number The milestone number
+	Number int `json:"number"`
+}
+
+// IssueResult defines model for IssueResult.
+type IssueResult struct {
+	NodeID string `json:"nodeId"`
+	Number int    `json:"number"`
+
+	// URL The issue's html_url
+	URL string `json:"url"`
+}
+
+// IssueTitleRequest defines model for IssueTitleRequest.
+type IssueTitleRequest struct {
+	Title string `json:"title"`
+}
+
 // KeepAliveFrame One line of the turn stream, sent every 15 s.
 type KeepAliveFrame struct {
 	Type KeepAliveFrameType `json:"type"`
@@ -265,6 +419,54 @@ type KeepAliveFrame struct {
 
 // KeepAliveFrameType defines model for KeepAliveFrame.Type.
 type KeepAliveFrameType string
+
+// Milestone defines model for Milestone.
+type Milestone struct {
+	Description string `json:"description"`
+	NodeID      string `json:"nodeId"`
+	Number      int    `json:"number"`
+
+	// State open or closed (display only)
+	State string `json:"state"`
+	Title string `json:"title"`
+}
+
+// MilestoneComments defines model for MilestoneComments.
+type MilestoneComments struct {
+	Issues []IssueComments `json:"issues"`
+}
+
+// MilestoneIssueCounts A milestone's open issues per population, each the count of one label (the working-set arithmetic over them is the caller's).
+type MilestoneIssueCounts struct {
+	// OpenAgentWork Label aep
+	OpenAgentWork int `json:"openAgentWork"`
+
+	// OpenDevelopment Label development
+	OpenDevelopment int `json:"openDevelopment"`
+
+	// OpenProvision Label provision (dispatch gates)
+	OpenProvision int `json:"openProvision"`
+
+	// OpenTotal Every open issue
+	OpenTotal int `json:"openTotal"`
+
+	// OpenValidation Label validation
+	OpenValidation int `json:"openValidation"`
+
+	// OpenValidationRepairs Label src/validation
+	OpenValidationRepairs int `json:"openValidationRepairs"`
+}
+
+// MilestoneList defines model for MilestoneList.
+type MilestoneList struct {
+	Milestones []Milestone `json:"milestones"`
+}
+
+// MilestoneResult defines model for MilestoneResult.
+type MilestoneResult struct {
+	Created bool `json:"created"`
+	Number  int  `json:"number"`
+}
 
 // PlanContextFile One existing-Task render under its tasks/<n>.md name.
 type PlanContextFile struct {
@@ -296,6 +498,21 @@ type Problem struct {
 	Status       int    `json:"status"`
 	Title        string `json:"title"`
 	Type         string `json:"type"`
+}
+
+// PullRequestFiles defines model for PullRequestFiles.
+type PullRequestFiles struct {
+	Files []string `json:"files"`
+}
+
+// PullRequestState defines model for PullRequestState.
+type PullRequestState struct {
+	// MergeCommitSha Empty until GitHub has one
+	MergeCommitSha string `json:"mergeCommitSha"`
+	Merged         bool   `json:"merged"`
+
+	// State open or closed
+	State string `json:"state"`
 }
 
 // ReferenceUpload defines model for ReferenceUpload.
@@ -420,8 +637,14 @@ type DefaultBranch = string
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
 
+// Label defines model for Label.
+type Label = string
+
 // Local defines model for Local.
 type Local = bool
+
+// Number defines model for Number.
+type Number = int
 
 // Owner defines model for Owner.
 type Owner = string
@@ -432,11 +655,20 @@ type Prefix = string
 // Repo defines model for Repo.
 type Repo = string
 
+// GitHubAPIError defines model for GitHubAPIError.
+type GitHubAPIError = Problem
+
 // GitHubError defines model for GitHubError.
 type GitHubError = Problem
 
 // GitNotFound defines model for GitNotFound.
 type GitNotFound = Problem
+
+// IssueNotFound defines model for IssueNotFound.
+type IssueNotFound = Problem
+
+// MilestoneNotFound defines model for MilestoneNotFound.
+type MilestoneNotFound = Problem
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -510,6 +742,174 @@ type GetHeadParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// ListIssuesParams defines parameters for ListIssues.
+type ListIssuesParams struct {
+	// Labels Only issues carrying every one of these labels.
+	Labels []string `form:"labels,omitempty" json:"labels,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateIssueParams defines parameters for CreateIssue.
+type CreateIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetIssueParams defines parameters for GetIssue.
+type GetIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueBodyParams defines parameters for SetIssueBody.
+type SetIssueBodyParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CloseIssueParams defines parameters for CloseIssue.
+type CloseIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListIssueCommentsParams defines parameters for ListIssueComments.
+type ListIssueCommentsParams struct {
+	// Limit How many of the newest comments; 0 answers none.
+	Limit int `form:"limit" json:"limit"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateIssueCommentParams defines parameters for CreateIssueComment.
+type CreateIssueCommentParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// AddIssueLabelsParams defines parameters for AddIssueLabels.
+type AddIssueLabelsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueLabelsParams defines parameters for SetIssueLabels.
+type SetIssueLabelsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// RemoveIssueLabelParams defines parameters for RemoveIssueLabel.
+type RemoveIssueLabelParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueMilestoneParams defines parameters for SetIssueMilestone.
+type SetIssueMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ReopenIssueParams defines parameters for ReopenIssue.
+type ReopenIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueTitleParams defines parameters for SetIssueTitle.
+type SetIssueTitleParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// EnsureLabelParams defines parameters for EnsureLabel.
+type EnsureLabelParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestonesParams defines parameters for ListMilestones.
+type ListMilestonesParams struct {
+	// State Milestones in this state; omitted, all.
+	State ListMilestonesParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestonesParamsState defines parameters for ListMilestones.
+type ListMilestonesParamsState string
+
+// CreateMilestoneParams defines parameters for CreateMilestone.
+type CreateMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CloseMilestoneParams defines parameters for CloseMilestone.
+type CloseMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneCommentsParams defines parameters for ListMilestoneComments.
+type ListMilestoneCommentsParams struct {
+	// PerIssue How many of each issue's newest comments; 0 answers none.
+	PerIssue int `form:"perIssue" json:"perIssue"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetMilestoneCountsParams defines parameters for GetMilestoneCounts.
+type GetMilestoneCountsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneIssuesParams defines parameters for ListMilestoneIssues.
+type ListMilestoneIssuesParams struct {
+	// State Issues in this state; omitted, open.
+	State ListMilestoneIssuesParamsState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Labels Only issues carrying every one of these labels.
+	Labels []string `form:"labels,omitempty" json:"labels,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneIssuesParamsState defines parameters for ListMilestoneIssues.
+type ListMilestoneIssuesParamsState string
+
+// ReopenMilestoneParams defines parameters for ReopenMilestone.
+type ReopenMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetPullParams defines parameters for GetPull.
+type GetPullParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListPullFilesParams defines parameters for ListPullFiles.
+type ListPullFilesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// MergePullParams defines parameters for MergePull.
+type MergePullParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // PutRepoReferencesParams defines parameters for PutRepoReferences.
 type PutRepoReferencesParams struct {
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
@@ -564,6 +964,33 @@ type StartRepoTurnParams struct {
 // CreateCommitJSONRequestBody defines body for CreateCommit for application/json ContentType.
 type CreateCommitJSONRequestBody = CreateCommitRequest
 
+// CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
+type CreateIssueJSONRequestBody = CreateIssueRequest
+
+// SetIssueBodyJSONRequestBody defines body for SetIssueBody for application/json ContentType.
+type SetIssueBodyJSONRequestBody = IssueBodyRequest
+
+// CreateIssueCommentJSONRequestBody defines body for CreateIssueComment for application/json ContentType.
+type CreateIssueCommentJSONRequestBody = IssueCommentRequest
+
+// AddIssueLabelsJSONRequestBody defines body for AddIssueLabels for application/json ContentType.
+type AddIssueLabelsJSONRequestBody = IssueLabelsRequest
+
+// SetIssueLabelsJSONRequestBody defines body for SetIssueLabels for application/json ContentType.
+type SetIssueLabelsJSONRequestBody = IssueLabelsRequest
+
+// SetIssueMilestoneJSONRequestBody defines body for SetIssueMilestone for application/json ContentType.
+type SetIssueMilestoneJSONRequestBody = IssueMilestoneRequest
+
+// SetIssueTitleJSONRequestBody defines body for SetIssueTitle for application/json ContentType.
+type SetIssueTitleJSONRequestBody = IssueTitleRequest
+
+// EnsureLabelJSONRequestBody defines body for EnsureLabel for application/json ContentType.
+type EnsureLabelJSONRequestBody = EnsureLabelRequest
+
+// CreateMilestoneJSONRequestBody defines body for CreateMilestone for application/json ContentType.
+type CreateMilestoneJSONRequestBody = CreateMilestoneRequest
+
 // PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
 type PutRepoReferencesMultipartRequestBody = ReferenceUpload
 
@@ -590,6 +1017,78 @@ type ServerInterface interface {
 	// Resolve a ref to its commit
 	// (GET /repos/{owner}/{repo}/head)
 	GetHead(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params GetHeadParams)
+	// List the repository's issues, newest first
+	// (GET /repos/{owner}/{repo}/issues)
+	ListIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListIssuesParams)
+	// Open an issue
+	// (POST /repos/{owner}/{repo}/issues)
+	CreateIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateIssueParams)
+	// Read one issue
+	// (GET /repos/{owner}/{repo}/issues/{number})
+	GetIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetIssueParams)
+	// Replace an issue's body
+	// (PUT /repos/{owner}/{repo}/issues/{number}/body)
+	SetIssueBody(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueBodyParams)
+	// Close an issue as completed
+	// (POST /repos/{owner}/{repo}/issues/{number}/close)
+	CloseIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CloseIssueParams)
+	// Read an issue's newest comments
+	// (GET /repos/{owner}/{repo}/issues/{number}/comments)
+	ListIssueComments(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListIssueCommentsParams)
+	// Comment on an issue
+	// (POST /repos/{owner}/{repo}/issues/{number}/comments)
+	CreateIssueComment(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CreateIssueCommentParams)
+	// Add labels to an issue
+	// (POST /repos/{owner}/{repo}/issues/{number}/labels)
+	AddIssueLabels(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params AddIssueLabelsParams)
+	// Replace an issue's labels
+	// (PUT /repos/{owner}/{repo}/issues/{number}/labels)
+	SetIssueLabels(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueLabelsParams)
+	// Remove one label from an issue
+	// (DELETE /repos/{owner}/{repo}/issues/{number}/labels/{label})
+	RemoveIssueLabel(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, label Label, params RemoveIssueLabelParams)
+	// Assign an issue to a milestone
+	// (PUT /repos/{owner}/{repo}/issues/{number}/milestone)
+	SetIssueMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueMilestoneParams)
+	// Reopen an issue (a no-op when open)
+	// (POST /repos/{owner}/{repo}/issues/{number}/reopen)
+	ReopenIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ReopenIssueParams)
+	// Replace an issue's title
+	// (PUT /repos/{owner}/{repo}/issues/{number}/title)
+	SetIssueTitle(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueTitleParams)
+	// Create a label unless it exists
+	// (POST /repos/{owner}/{repo}/labels)
+	EnsureLabel(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params EnsureLabelParams)
+	// List the repository's milestones
+	// (GET /repos/{owner}/{repo}/milestones)
+	ListMilestones(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListMilestonesParams)
+	// Create a milestone unless one has the title
+	// (POST /repos/{owner}/{repo}/milestones)
+	CreateMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateMilestoneParams)
+	// Close a milestone
+	// (POST /repos/{owner}/{repo}/milestones/{number}/close)
+	CloseMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CloseMilestoneParams)
+	// Read the newest comments of a milestone's issues
+	// (GET /repos/{owner}/{repo}/milestones/{number}/comments)
+	ListMilestoneComments(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListMilestoneCommentsParams)
+	// Count a milestone's open issues per population
+	// (GET /repos/{owner}/{repo}/milestones/{number}/counts)
+	GetMilestoneCounts(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetMilestoneCountsParams)
+	// List a milestone's issues
+	// (GET /repos/{owner}/{repo}/milestones/{number}/issues)
+	ListMilestoneIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListMilestoneIssuesParams)
+	// Reopen a milestone
+	// (POST /repos/{owner}/{repo}/milestones/{number}/reopen)
+	ReopenMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ReopenMilestoneParams)
+	// Read a pull request's state
+	// (GET /repos/{owner}/{repo}/pulls/{number})
+	GetPull(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetPullParams)
+	// List the files a pull request changed
+	// (GET /repos/{owner}/{repo}/pulls/{number}/files)
+	ListPullFiles(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListPullFilesParams)
+	// Squash-merge a pull request
+	// (POST /repos/{owner}/{repo}/pulls/{number}/merge)
+	MergePull(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params MergePullParams)
 	// Replace a project's stored reference documents
 	// (PUT /repos/{owner}/{repo}/references)
 	PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams)
@@ -1099,6 +1598,1920 @@ func (siw *ServerInterfaceWrapper) GetHead(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHead(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListIssues operation middleware
+func (siw *ServerInterfaceWrapper) ListIssues(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListIssuesParams
+
+	// ------------- Optional query parameter "labels" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "labels", r.URL.Query(), &params.Labels, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "labels"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "labels", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIssues(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateIssue operation middleware
+func (siw *ServerInterfaceWrapper) CreateIssue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateIssueParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateIssue(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetIssue operation middleware
+func (siw *ServerInterfaceWrapper) GetIssue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetIssueParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetIssue(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetIssueBody operation middleware
+func (siw *ServerInterfaceWrapper) SetIssueBody(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetIssueBodyParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetIssueBody(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CloseIssue operation middleware
+func (siw *ServerInterfaceWrapper) CloseIssue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CloseIssueParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloseIssue(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListIssueComments operation middleware
+func (siw *ServerInterfaceWrapper) ListIssueComments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListIssueCommentsParams
+
+	// ------------- Required query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListIssueComments(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateIssueComment operation middleware
+func (siw *ServerInterfaceWrapper) CreateIssueComment(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateIssueCommentParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateIssueComment(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// AddIssueLabels operation middleware
+func (siw *ServerInterfaceWrapper) AddIssueLabels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params AddIssueLabelsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.AddIssueLabels(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetIssueLabels operation middleware
+func (siw *ServerInterfaceWrapper) SetIssueLabels(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetIssueLabelsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetIssueLabels(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RemoveIssueLabel operation middleware
+func (siw *ServerInterfaceWrapper) RemoveIssueLabel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "label" -------------
+	var label Label
+
+	err = runtime.BindStyledParameterWithOptions("simple", "label", r.PathValue("label"), &label, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "label", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RemoveIssueLabelParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RemoveIssueLabel(w, r, owner, repo, number, label, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetIssueMilestone operation middleware
+func (siw *ServerInterfaceWrapper) SetIssueMilestone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetIssueMilestoneParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetIssueMilestone(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReopenIssue operation middleware
+func (siw *ServerInterfaceWrapper) ReopenIssue(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReopenIssueParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReopenIssue(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// SetIssueTitle operation middleware
+func (siw *ServerInterfaceWrapper) SetIssueTitle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SetIssueTitleParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.SetIssueTitle(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// EnsureLabel operation middleware
+func (siw *ServerInterfaceWrapper) EnsureLabel(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params EnsureLabelParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.EnsureLabel(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMilestones operation middleware
+func (siw *ServerInterfaceWrapper) ListMilestones(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMilestonesParams
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMilestones(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateMilestone operation middleware
+func (siw *ServerInterfaceWrapper) CreateMilestone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateMilestoneParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateMilestone(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CloseMilestone operation middleware
+func (siw *ServerInterfaceWrapper) CloseMilestone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CloseMilestoneParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CloseMilestone(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMilestoneComments operation middleware
+func (siw *ServerInterfaceWrapper) ListMilestoneComments(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMilestoneCommentsParams
+
+	// ------------- Required query parameter "perIssue" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "perIssue", r.URL.Query(), &params.PerIssue, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "perIssue"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "perIssue", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMilestoneComments(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetMilestoneCounts operation middleware
+func (siw *ServerInterfaceWrapper) GetMilestoneCounts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetMilestoneCountsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetMilestoneCounts(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListMilestoneIssues operation middleware
+func (siw *ServerInterfaceWrapper) ListMilestoneIssues(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListMilestoneIssuesParams
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "labels" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "labels", r.URL.Query(), &params.Labels, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "labels"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "labels", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListMilestoneIssues(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReopenMilestone operation middleware
+func (siw *ServerInterfaceWrapper) ReopenMilestone(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReopenMilestoneParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReopenMilestone(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPull operation middleware
+func (siw *ServerInterfaceWrapper) GetPull(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetPullParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPull(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListPullFiles operation middleware
+func (siw *ServerInterfaceWrapper) ListPullFiles(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListPullFilesParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListPullFiles(w, r, owner, repo, number, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// MergePull operation middleware
+func (siw *ServerInterfaceWrapper) MergePull(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "number" -------------
+	var number Number
+
+	err = runtime.BindStyledParameterWithOptions("simple", "number", r.PathValue("number"), &number, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "number", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params MergePullParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.MergePull(w, r, owner, repo, number, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1669,6 +4082,30 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/commits", wrapper.CreateCommit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/files/{path}", wrapper.ReadFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/head", wrapper.GetHead)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.ListIssues)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.CreateIssue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}", wrapper.GetIssue)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/body", wrapper.SetIssueBody)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/close", wrapper.CloseIssue)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/comments", wrapper.ListIssueComments)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/comments", wrapper.CreateIssueComment)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/labels", wrapper.AddIssueLabels)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/labels", wrapper.SetIssueLabels)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/labels/{label}", wrapper.RemoveIssueLabel)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/milestone", wrapper.SetIssueMilestone)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/reopen", wrapper.ReopenIssue)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}/title", wrapper.SetIssueTitle)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/labels", wrapper.EnsureLabel)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones", wrapper.ListMilestones)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones", wrapper.CreateMilestone)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones/{number}/close", wrapper.CloseMilestone)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones/{number}/comments", wrapper.ListMilestoneComments)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones/{number}/counts", wrapper.GetMilestoneCounts)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones/{number}/issues", wrapper.ListMilestoneIssues)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/milestones/{number}/reopen", wrapper.ReopenMilestone)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/pulls/{number}", wrapper.GetPull)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/pulls/{number}/files", wrapper.ListPullFiles)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/pulls/{number}/merge", wrapper.MergePull)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/references", wrapper.PutRepoReferences)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/tags", wrapper.ListTags)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/tags", wrapper.CreateTag)
@@ -1678,9 +4115,15 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	return m
 }
 
+type GitHubAPIErrorApplicationProblemPlusJSONResponse Problem
+
 type GitHubErrorApplicationProblemPlusJSONResponse Problem
 
 type GitNotFoundApplicationProblemPlusJSONResponse Problem
+
+type IssueNotFoundApplicationProblemPlusJSONResponse Problem
+
+type MilestoneNotFoundApplicationProblemPlusJSONResponse Problem
 
 type ProblemApplicationProblemPlusJSONResponse Problem
 
@@ -2265,6 +4708,2781 @@ func (response GetHead502ApplicationProblemPlusJSONResponse) VisitGetHeadRespons
 type GetHead503ApplicationProblemPlusJSONResponse Problem
 
 func (response GetHead503ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssuesRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params ListIssuesParams
+}
+
+type ListIssuesResponseObject interface {
+	VisitListIssuesResponse(w http.ResponseWriter) error
+}
+
+type ListIssues200JSONResponse IssueList
+
+func (response ListIssues200JSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssues400ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssues401ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssues403ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssues429ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssues502ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssues503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssues503ApplicationProblemPlusJSONResponse) VisitListIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params CreateIssueParams
+	Body   *CreateIssueJSONRequestBody
+}
+
+type CreateIssueResponseObject interface {
+	VisitCreateIssueResponse(w http.ResponseWriter) error
+}
+
+type CreateIssue201JSONResponse IssueResult
+
+func (response CreateIssue201JSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssue400ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssue401ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssue403ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssue429ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssue502ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssue503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssue503ApplicationProblemPlusJSONResponse) VisitCreateIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssueRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params GetIssueParams
+}
+
+type GetIssueResponseObject interface {
+	VisitGetIssueResponse(w http.ResponseWriter) error
+}
+
+type GetIssue200JSONResponse IssueInfo
+
+func (response GetIssue200JSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetIssue400ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue401ApplicationProblemPlusJSONResponse Problem
+
+func (response GetIssue401ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetIssue403ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue404ApplicationProblemPlusJSONResponse struct {
+	IssueNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetIssue404ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetIssue429ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response GetIssue502ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetIssue503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetIssue503ApplicationProblemPlusJSONResponse) VisitGetIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBodyRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params SetIssueBodyParams
+	Body   *SetIssueBodyJSONRequestBody
+}
+
+type SetIssueBodyResponseObject interface {
+	VisitSetIssueBodyResponse(w http.ResponseWriter) error
+}
+
+type SetIssueBody204Response struct {
+}
+
+func (response SetIssueBody204Response) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetIssueBody400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueBody400ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBody401ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueBody401ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBody403ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueBody403ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBody429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueBody429ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBody502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueBody502ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueBody503ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueBody503ApplicationProblemPlusJSONResponse) VisitSetIssueBodyResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssueRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params CloseIssueParams
+}
+
+type CloseIssueResponseObject interface {
+	VisitCloseIssueResponse(w http.ResponseWriter) error
+}
+
+type CloseIssue204Response struct {
+}
+
+func (response CloseIssue204Response) VisitCloseIssueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CloseIssue400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CloseIssue400ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssue401ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseIssue401ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssue403ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseIssue403ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssue429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CloseIssue429ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssue502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CloseIssue502ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseIssue503ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseIssue503ApplicationProblemPlusJSONResponse) VisitCloseIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueCommentsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ListIssueCommentsParams
+}
+
+type ListIssueCommentsResponseObject interface {
+	VisitListIssueCommentsResponse(w http.ResponseWriter) error
+}
+
+type ListIssueComments200JSONResponse IssueCommentList
+
+func (response ListIssueComments200JSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssueComments400ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssueComments401ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssueComments403ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments404ApplicationProblemPlusJSONResponse struct {
+	IssueNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssueComments404ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssueComments429ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListIssueComments502ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListIssueComments503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListIssueComments503ApplicationProblemPlusJSONResponse) VisitListIssueCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueCommentRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params CreateIssueCommentParams
+	Body   *CreateIssueCommentJSONRequestBody
+}
+
+type CreateIssueCommentResponseObject interface {
+	VisitCreateIssueCommentResponse(w http.ResponseWriter) error
+}
+
+type CreateIssueComment204Response struct {
+}
+
+func (response CreateIssueComment204Response) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CreateIssueComment400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssueComment400ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueComment401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssueComment401ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueComment403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssueComment403ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueComment429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssueComment429ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueComment502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateIssueComment502ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateIssueComment503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateIssueComment503ApplicationProblemPlusJSONResponse) VisitCreateIssueCommentResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabelsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params AddIssueLabelsParams
+	Body   *AddIssueLabelsJSONRequestBody
+}
+
+type AddIssueLabelsResponseObject interface {
+	VisitAddIssueLabelsResponse(w http.ResponseWriter) error
+}
+
+type AddIssueLabels204Response struct {
+}
+
+func (response AddIssueLabels204Response) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type AddIssueLabels400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response AddIssueLabels400ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabels401ApplicationProblemPlusJSONResponse Problem
+
+func (response AddIssueLabels401ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabels403ApplicationProblemPlusJSONResponse Problem
+
+func (response AddIssueLabels403ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabels429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response AddIssueLabels429ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabels502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response AddIssueLabels502ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type AddIssueLabels503ApplicationProblemPlusJSONResponse Problem
+
+func (response AddIssueLabels503ApplicationProblemPlusJSONResponse) VisitAddIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabelsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params SetIssueLabelsParams
+	Body   *SetIssueLabelsJSONRequestBody
+}
+
+type SetIssueLabelsResponseObject interface {
+	VisitSetIssueLabelsResponse(w http.ResponseWriter) error
+}
+
+type SetIssueLabels204Response struct {
+}
+
+func (response SetIssueLabels204Response) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetIssueLabels400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueLabels400ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabels401ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueLabels401ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabels403ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueLabels403ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabels429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueLabels429ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabels502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueLabels502ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueLabels503ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueLabels503ApplicationProblemPlusJSONResponse) VisitSetIssueLabelsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabelRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Label  Label  `json:"label"`
+	Params RemoveIssueLabelParams
+}
+
+type RemoveIssueLabelResponseObject interface {
+	VisitRemoveIssueLabelResponse(w http.ResponseWriter) error
+}
+
+type RemoveIssueLabel204Response struct {
+}
+
+func (response RemoveIssueLabel204Response) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type RemoveIssueLabel400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveIssueLabel400ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabel401ApplicationProblemPlusJSONResponse Problem
+
+func (response RemoveIssueLabel401ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabel403ApplicationProblemPlusJSONResponse Problem
+
+func (response RemoveIssueLabel403ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabel429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveIssueLabel429ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabel502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response RemoveIssueLabel502ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RemoveIssueLabel503ApplicationProblemPlusJSONResponse Problem
+
+func (response RemoveIssueLabel503ApplicationProblemPlusJSONResponse) VisitRemoveIssueLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestoneRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params SetIssueMilestoneParams
+	Body   *SetIssueMilestoneJSONRequestBody
+}
+
+type SetIssueMilestoneResponseObject interface {
+	VisitSetIssueMilestoneResponse(w http.ResponseWriter) error
+}
+
+type SetIssueMilestone204Response struct {
+}
+
+func (response SetIssueMilestone204Response) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetIssueMilestone400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueMilestone400ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestone401ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueMilestone401ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestone403ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueMilestone403ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestone429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueMilestone429ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestone502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueMilestone502ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueMilestone503ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueMilestone503ApplicationProblemPlusJSONResponse) VisitSetIssueMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssueRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ReopenIssueParams
+}
+
+type ReopenIssueResponseObject interface {
+	VisitReopenIssueResponse(w http.ResponseWriter) error
+}
+
+type ReopenIssue204Response struct {
+}
+
+func (response ReopenIssue204Response) VisitReopenIssueResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ReopenIssue400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenIssue400ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssue401ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenIssue401ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssue403ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenIssue403ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssue429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenIssue429ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssue502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenIssue502ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenIssue503ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenIssue503ApplicationProblemPlusJSONResponse) VisitReopenIssueResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitleRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params SetIssueTitleParams
+	Body   *SetIssueTitleJSONRequestBody
+}
+
+type SetIssueTitleResponseObject interface {
+	VisitSetIssueTitleResponse(w http.ResponseWriter) error
+}
+
+type SetIssueTitle204Response struct {
+}
+
+func (response SetIssueTitle204Response) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type SetIssueTitle400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueTitle400ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitle401ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueTitle401ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitle403ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueTitle403ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitle429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueTitle429ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitle502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response SetIssueTitle502ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SetIssueTitle503ApplicationProblemPlusJSONResponse Problem
+
+func (response SetIssueTitle503ApplicationProblemPlusJSONResponse) VisitSetIssueTitleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabelRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params EnsureLabelParams
+	Body   *EnsureLabelJSONRequestBody
+}
+
+type EnsureLabelResponseObject interface {
+	VisitEnsureLabelResponse(w http.ResponseWriter) error
+}
+
+type EnsureLabel204Response struct {
+}
+
+func (response EnsureLabel204Response) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type EnsureLabel400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response EnsureLabel400ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabel401ApplicationProblemPlusJSONResponse Problem
+
+func (response EnsureLabel401ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabel403ApplicationProblemPlusJSONResponse Problem
+
+func (response EnsureLabel403ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabel429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response EnsureLabel429ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabel502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response EnsureLabel502ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type EnsureLabel503ApplicationProblemPlusJSONResponse Problem
+
+func (response EnsureLabel503ApplicationProblemPlusJSONResponse) VisitEnsureLabelResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestonesRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params ListMilestonesParams
+}
+
+type ListMilestonesResponseObject interface {
+	VisitListMilestonesResponse(w http.ResponseWriter) error
+}
+
+type ListMilestones200JSONResponse MilestoneList
+
+func (response ListMilestones200JSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestones400ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestones401ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestones403ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestones429ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestones502ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestones503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestones503ApplicationProblemPlusJSONResponse) VisitListMilestonesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestoneRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params CreateMilestoneParams
+	Body   *CreateMilestoneJSONRequestBody
+}
+
+type CreateMilestoneResponseObject interface {
+	VisitCreateMilestoneResponse(w http.ResponseWriter) error
+}
+
+type CreateMilestone200JSONResponse MilestoneResult
+
+func (response CreateMilestone200JSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateMilestone400ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateMilestone401ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateMilestone403ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateMilestone429ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateMilestone502ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateMilestone503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateMilestone503ApplicationProblemPlusJSONResponse) VisitCreateMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestoneRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params CloseMilestoneParams
+}
+
+type CloseMilestoneResponseObject interface {
+	VisitCloseMilestoneResponse(w http.ResponseWriter) error
+}
+
+type CloseMilestone204Response struct {
+}
+
+func (response CloseMilestone204Response) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type CloseMilestone400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CloseMilestone400ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestone401ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseMilestone401ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestone403ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseMilestone403ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestone429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CloseMilestone429ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestone502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CloseMilestone502ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CloseMilestone503ApplicationProblemPlusJSONResponse Problem
+
+func (response CloseMilestone503ApplicationProblemPlusJSONResponse) VisitCloseMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneCommentsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ListMilestoneCommentsParams
+}
+
+type ListMilestoneCommentsResponseObject interface {
+	VisitListMilestoneCommentsResponse(w http.ResponseWriter) error
+}
+
+type ListMilestoneComments200JSONResponse MilestoneComments
+
+func (response ListMilestoneComments200JSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneComments400ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneComments401ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneComments403ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments404ApplicationProblemPlusJSONResponse struct {
+	MilestoneNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneComments404ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneComments429ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneComments502ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneComments503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneComments503ApplicationProblemPlusJSONResponse) VisitListMilestoneCommentsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCountsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params GetMilestoneCountsParams
+}
+
+type GetMilestoneCountsResponseObject interface {
+	VisitGetMilestoneCountsResponse(w http.ResponseWriter) error
+}
+
+type GetMilestoneCounts200JSONResponse MilestoneIssueCounts
+
+func (response GetMilestoneCounts200JSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetMilestoneCounts400ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts401ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMilestoneCounts401ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMilestoneCounts403ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts404ApplicationProblemPlusJSONResponse struct {
+	MilestoneNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetMilestoneCounts404ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetMilestoneCounts429ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response GetMilestoneCounts502ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetMilestoneCounts503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetMilestoneCounts503ApplicationProblemPlusJSONResponse) VisitGetMilestoneCountsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssuesRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ListMilestoneIssuesParams
+}
+
+type ListMilestoneIssuesResponseObject interface {
+	VisitListMilestoneIssuesResponse(w http.ResponseWriter) error
+}
+
+type ListMilestoneIssues200JSONResponse IssueList
+
+func (response ListMilestoneIssues200JSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneIssues400ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneIssues401ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneIssues403ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneIssues429ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListMilestoneIssues502ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListMilestoneIssues503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListMilestoneIssues503ApplicationProblemPlusJSONResponse) VisitListMilestoneIssuesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestoneRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ReopenMilestoneParams
+}
+
+type ReopenMilestoneResponseObject interface {
+	VisitReopenMilestoneResponse(w http.ResponseWriter) error
+}
+
+type ReopenMilestone204Response struct {
+}
+
+func (response ReopenMilestone204Response) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type ReopenMilestone400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenMilestone400ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestone401ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenMilestone401ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestone403ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenMilestone403ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestone429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenMilestone429ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestone502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ReopenMilestone502ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReopenMilestone503ApplicationProblemPlusJSONResponse Problem
+
+func (response ReopenMilestone503ApplicationProblemPlusJSONResponse) VisitReopenMilestoneResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPullRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params GetPullParams
+}
+
+type GetPullResponseObject interface {
+	VisitGetPullResponse(w http.ResponseWriter) error
+}
+
+type GetPull200JSONResponse PullRequestState
+
+func (response GetPull200JSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetPull400ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull401ApplicationProblemPlusJSONResponse Problem
+
+func (response GetPull401ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetPull403ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response GetPull429ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response GetPull502ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetPull503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetPull503ApplicationProblemPlusJSONResponse) VisitGetPullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFilesRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params ListPullFilesParams
+}
+
+type ListPullFilesResponseObject interface {
+	VisitListPullFilesResponse(w http.ResponseWriter) error
+}
+
+type ListPullFiles200JSONResponse PullRequestFiles
+
+func (response ListPullFiles200JSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListPullFiles400ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListPullFiles401ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListPullFiles403ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response ListPullFiles429ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListPullFiles502ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListPullFiles503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListPullFiles503ApplicationProblemPlusJSONResponse) VisitListPullFilesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePullRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Number Number `json:"number"`
+	Params MergePullParams
+}
+
+type MergePullResponseObject interface {
+	VisitMergePullResponse(w http.ResponseWriter) error
+}
+
+type MergePull204Response struct {
+}
+
+func (response MergePull204Response) VisitMergePullResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type MergePull400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response MergePull400ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePull401ApplicationProblemPlusJSONResponse Problem
+
+func (response MergePull401ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePull403ApplicationProblemPlusJSONResponse Problem
+
+func (response MergePull403ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePull429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response MergePull429ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePull502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response MergePull502ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type MergePull503ApplicationProblemPlusJSONResponse Problem
+
+func (response MergePull503ApplicationProblemPlusJSONResponse) VisitMergePullResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -2921,6 +8139,78 @@ type StrictServerInterface interface {
 	// Resolve a ref to its commit
 	// (GET /repos/{owner}/{repo}/head)
 	GetHead(ctx context.Context, request GetHeadRequestObject) (GetHeadResponseObject, error)
+	// List the repository's issues, newest first
+	// (GET /repos/{owner}/{repo}/issues)
+	ListIssues(ctx context.Context, request ListIssuesRequestObject) (ListIssuesResponseObject, error)
+	// Open an issue
+	// (POST /repos/{owner}/{repo}/issues)
+	CreateIssue(ctx context.Context, request CreateIssueRequestObject) (CreateIssueResponseObject, error)
+	// Read one issue
+	// (GET /repos/{owner}/{repo}/issues/{number})
+	GetIssue(ctx context.Context, request GetIssueRequestObject) (GetIssueResponseObject, error)
+	// Replace an issue's body
+	// (PUT /repos/{owner}/{repo}/issues/{number}/body)
+	SetIssueBody(ctx context.Context, request SetIssueBodyRequestObject) (SetIssueBodyResponseObject, error)
+	// Close an issue as completed
+	// (POST /repos/{owner}/{repo}/issues/{number}/close)
+	CloseIssue(ctx context.Context, request CloseIssueRequestObject) (CloseIssueResponseObject, error)
+	// Read an issue's newest comments
+	// (GET /repos/{owner}/{repo}/issues/{number}/comments)
+	ListIssueComments(ctx context.Context, request ListIssueCommentsRequestObject) (ListIssueCommentsResponseObject, error)
+	// Comment on an issue
+	// (POST /repos/{owner}/{repo}/issues/{number}/comments)
+	CreateIssueComment(ctx context.Context, request CreateIssueCommentRequestObject) (CreateIssueCommentResponseObject, error)
+	// Add labels to an issue
+	// (POST /repos/{owner}/{repo}/issues/{number}/labels)
+	AddIssueLabels(ctx context.Context, request AddIssueLabelsRequestObject) (AddIssueLabelsResponseObject, error)
+	// Replace an issue's labels
+	// (PUT /repos/{owner}/{repo}/issues/{number}/labels)
+	SetIssueLabels(ctx context.Context, request SetIssueLabelsRequestObject) (SetIssueLabelsResponseObject, error)
+	// Remove one label from an issue
+	// (DELETE /repos/{owner}/{repo}/issues/{number}/labels/{label})
+	RemoveIssueLabel(ctx context.Context, request RemoveIssueLabelRequestObject) (RemoveIssueLabelResponseObject, error)
+	// Assign an issue to a milestone
+	// (PUT /repos/{owner}/{repo}/issues/{number}/milestone)
+	SetIssueMilestone(ctx context.Context, request SetIssueMilestoneRequestObject) (SetIssueMilestoneResponseObject, error)
+	// Reopen an issue (a no-op when open)
+	// (POST /repos/{owner}/{repo}/issues/{number}/reopen)
+	ReopenIssue(ctx context.Context, request ReopenIssueRequestObject) (ReopenIssueResponseObject, error)
+	// Replace an issue's title
+	// (PUT /repos/{owner}/{repo}/issues/{number}/title)
+	SetIssueTitle(ctx context.Context, request SetIssueTitleRequestObject) (SetIssueTitleResponseObject, error)
+	// Create a label unless it exists
+	// (POST /repos/{owner}/{repo}/labels)
+	EnsureLabel(ctx context.Context, request EnsureLabelRequestObject) (EnsureLabelResponseObject, error)
+	// List the repository's milestones
+	// (GET /repos/{owner}/{repo}/milestones)
+	ListMilestones(ctx context.Context, request ListMilestonesRequestObject) (ListMilestonesResponseObject, error)
+	// Create a milestone unless one has the title
+	// (POST /repos/{owner}/{repo}/milestones)
+	CreateMilestone(ctx context.Context, request CreateMilestoneRequestObject) (CreateMilestoneResponseObject, error)
+	// Close a milestone
+	// (POST /repos/{owner}/{repo}/milestones/{number}/close)
+	CloseMilestone(ctx context.Context, request CloseMilestoneRequestObject) (CloseMilestoneResponseObject, error)
+	// Read the newest comments of a milestone's issues
+	// (GET /repos/{owner}/{repo}/milestones/{number}/comments)
+	ListMilestoneComments(ctx context.Context, request ListMilestoneCommentsRequestObject) (ListMilestoneCommentsResponseObject, error)
+	// Count a milestone's open issues per population
+	// (GET /repos/{owner}/{repo}/milestones/{number}/counts)
+	GetMilestoneCounts(ctx context.Context, request GetMilestoneCountsRequestObject) (GetMilestoneCountsResponseObject, error)
+	// List a milestone's issues
+	// (GET /repos/{owner}/{repo}/milestones/{number}/issues)
+	ListMilestoneIssues(ctx context.Context, request ListMilestoneIssuesRequestObject) (ListMilestoneIssuesResponseObject, error)
+	// Reopen a milestone
+	// (POST /repos/{owner}/{repo}/milestones/{number}/reopen)
+	ReopenMilestone(ctx context.Context, request ReopenMilestoneRequestObject) (ReopenMilestoneResponseObject, error)
+	// Read a pull request's state
+	// (GET /repos/{owner}/{repo}/pulls/{number})
+	GetPull(ctx context.Context, request GetPullRequestObject) (GetPullResponseObject, error)
+	// List the files a pull request changed
+	// (GET /repos/{owner}/{repo}/pulls/{number}/files)
+	ListPullFiles(ctx context.Context, request ListPullFilesRequestObject) (ListPullFilesResponseObject, error)
+	// Squash-merge a pull request
+	// (POST /repos/{owner}/{repo}/pulls/{number}/merge)
+	MergePull(ctx context.Context, request MergePullRequestObject) (MergePullResponseObject, error)
 	// Replace a project's stored reference documents
 	// (PUT /repos/{owner}/{repo}/references)
 	PutRepoReferences(ctx context.Context, request PutRepoReferencesRequestObject) (PutRepoReferencesResponseObject, error)
@@ -3113,6 +8403,761 @@ func (sh *strictHandler) GetHead(w http.ResponseWriter, r *http.Request, owner O
 	}
 }
 
+// ListIssues operation middleware
+func (sh *strictHandler) ListIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListIssuesParams) {
+	var request ListIssuesRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListIssues(ctx, request.(ListIssuesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListIssues")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListIssuesResponseObject); ok {
+		if err := validResponse.VisitListIssuesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateIssue operation middleware
+func (sh *strictHandler) CreateIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateIssueParams) {
+	var request CreateIssueRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body CreateIssueJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateIssue(ctx, request.(CreateIssueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateIssue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateIssueResponseObject); ok {
+		if err := validResponse.VisitCreateIssueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetIssue operation middleware
+func (sh *strictHandler) GetIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetIssueParams) {
+	var request GetIssueRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetIssue(ctx, request.(GetIssueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetIssue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetIssueResponseObject); ok {
+		if err := validResponse.VisitGetIssueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetIssueBody operation middleware
+func (sh *strictHandler) SetIssueBody(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueBodyParams) {
+	var request SetIssueBodyRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body SetIssueBodyJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetIssueBody(ctx, request.(SetIssueBodyRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetIssueBody")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetIssueBodyResponseObject); ok {
+		if err := validResponse.VisitSetIssueBodyResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CloseIssue operation middleware
+func (sh *strictHandler) CloseIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CloseIssueParams) {
+	var request CloseIssueRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CloseIssue(ctx, request.(CloseIssueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CloseIssue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CloseIssueResponseObject); ok {
+		if err := validResponse.VisitCloseIssueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListIssueComments operation middleware
+func (sh *strictHandler) ListIssueComments(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListIssueCommentsParams) {
+	var request ListIssueCommentsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListIssueComments(ctx, request.(ListIssueCommentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListIssueComments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListIssueCommentsResponseObject); ok {
+		if err := validResponse.VisitListIssueCommentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateIssueComment operation middleware
+func (sh *strictHandler) CreateIssueComment(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CreateIssueCommentParams) {
+	var request CreateIssueCommentRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body CreateIssueCommentJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateIssueComment(ctx, request.(CreateIssueCommentRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateIssueComment")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateIssueCommentResponseObject); ok {
+		if err := validResponse.VisitCreateIssueCommentResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// AddIssueLabels operation middleware
+func (sh *strictHandler) AddIssueLabels(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params AddIssueLabelsParams) {
+	var request AddIssueLabelsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body AddIssueLabelsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.AddIssueLabels(ctx, request.(AddIssueLabelsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "AddIssueLabels")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(AddIssueLabelsResponseObject); ok {
+		if err := validResponse.VisitAddIssueLabelsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetIssueLabels operation middleware
+func (sh *strictHandler) SetIssueLabels(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueLabelsParams) {
+	var request SetIssueLabelsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body SetIssueLabelsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetIssueLabels(ctx, request.(SetIssueLabelsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetIssueLabels")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetIssueLabelsResponseObject); ok {
+		if err := validResponse.VisitSetIssueLabelsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RemoveIssueLabel operation middleware
+func (sh *strictHandler) RemoveIssueLabel(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, label Label, params RemoveIssueLabelParams) {
+	var request RemoveIssueLabelRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Label = label
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RemoveIssueLabel(ctx, request.(RemoveIssueLabelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RemoveIssueLabel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RemoveIssueLabelResponseObject); ok {
+		if err := validResponse.VisitRemoveIssueLabelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetIssueMilestone operation middleware
+func (sh *strictHandler) SetIssueMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueMilestoneParams) {
+	var request SetIssueMilestoneRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body SetIssueMilestoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetIssueMilestone(ctx, request.(SetIssueMilestoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetIssueMilestone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetIssueMilestoneResponseObject); ok {
+		if err := validResponse.VisitSetIssueMilestoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReopenIssue operation middleware
+func (sh *strictHandler) ReopenIssue(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ReopenIssueParams) {
+	var request ReopenIssueRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReopenIssue(ctx, request.(ReopenIssueRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReopenIssue")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReopenIssueResponseObject); ok {
+		if err := validResponse.VisitReopenIssueResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SetIssueTitle operation middleware
+func (sh *strictHandler) SetIssueTitle(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params SetIssueTitleParams) {
+	var request SetIssueTitleRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	var body SetIssueTitleJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.SetIssueTitle(ctx, request.(SetIssueTitleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SetIssueTitle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(SetIssueTitleResponseObject); ok {
+		if err := validResponse.VisitSetIssueTitleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// EnsureLabel operation middleware
+func (sh *strictHandler) EnsureLabel(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params EnsureLabelParams) {
+	var request EnsureLabelRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body EnsureLabelJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.EnsureLabel(ctx, request.(EnsureLabelRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "EnsureLabel")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(EnsureLabelResponseObject); ok {
+		if err := validResponse.VisitEnsureLabelResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMilestones operation middleware
+func (sh *strictHandler) ListMilestones(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListMilestonesParams) {
+	var request ListMilestonesRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMilestones(ctx, request.(ListMilestonesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMilestones")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMilestonesResponseObject); ok {
+		if err := validResponse.VisitListMilestonesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateMilestone operation middleware
+func (sh *strictHandler) CreateMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateMilestoneParams) {
+	var request CreateMilestoneRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body CreateMilestoneJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateMilestone(ctx, request.(CreateMilestoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateMilestone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateMilestoneResponseObject); ok {
+		if err := validResponse.VisitCreateMilestoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CloseMilestone operation middleware
+func (sh *strictHandler) CloseMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params CloseMilestoneParams) {
+	var request CloseMilestoneRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CloseMilestone(ctx, request.(CloseMilestoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CloseMilestone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CloseMilestoneResponseObject); ok {
+		if err := validResponse.VisitCloseMilestoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMilestoneComments operation middleware
+func (sh *strictHandler) ListMilestoneComments(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListMilestoneCommentsParams) {
+	var request ListMilestoneCommentsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMilestoneComments(ctx, request.(ListMilestoneCommentsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMilestoneComments")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMilestoneCommentsResponseObject); ok {
+		if err := validResponse.VisitListMilestoneCommentsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetMilestoneCounts operation middleware
+func (sh *strictHandler) GetMilestoneCounts(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetMilestoneCountsParams) {
+	var request GetMilestoneCountsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetMilestoneCounts(ctx, request.(GetMilestoneCountsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetMilestoneCounts")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetMilestoneCountsResponseObject); ok {
+		if err := validResponse.VisitGetMilestoneCountsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListMilestoneIssues operation middleware
+func (sh *strictHandler) ListMilestoneIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListMilestoneIssuesParams) {
+	var request ListMilestoneIssuesRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListMilestoneIssues(ctx, request.(ListMilestoneIssuesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListMilestoneIssues")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListMilestoneIssuesResponseObject); ok {
+		if err := validResponse.VisitListMilestoneIssuesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReopenMilestone operation middleware
+func (sh *strictHandler) ReopenMilestone(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ReopenMilestoneParams) {
+	var request ReopenMilestoneRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReopenMilestone(ctx, request.(ReopenMilestoneRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReopenMilestone")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReopenMilestoneResponseObject); ok {
+		if err := validResponse.VisitReopenMilestoneResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetPull operation middleware
+func (sh *strictHandler) GetPull(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params GetPullParams) {
+	var request GetPullRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetPull(ctx, request.(GetPullRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetPull")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetPullResponseObject); ok {
+		if err := validResponse.VisitGetPullResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListPullFiles operation middleware
+func (sh *strictHandler) ListPullFiles(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params ListPullFilesParams) {
+	var request ListPullFilesRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListPullFiles(ctx, request.(ListPullFilesRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListPullFiles")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListPullFilesResponseObject); ok {
+		if err := validResponse.VisitListPullFilesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// MergePull operation middleware
+func (sh *strictHandler) MergePull(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, number Number, params MergePullParams) {
+	var request MergePullRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Number = number
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.MergePull(ctx, request.(MergePullRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "MergePull")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(MergePullResponseObject); ok {
+		if err := validResponse.VisitMergePullResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PutRepoReferences operation middleware
 func (sh *strictHandler) PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams) {
 	var request PutRepoReferencesRequestObject
@@ -3279,99 +9324,144 @@ func (sh *strictHandler) StartRepoTurn(w http.ResponseWriter, r *http.Request, o
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"G591FUxHsIurFPgbfYtShWWKRQ8fHv43AAD//w==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

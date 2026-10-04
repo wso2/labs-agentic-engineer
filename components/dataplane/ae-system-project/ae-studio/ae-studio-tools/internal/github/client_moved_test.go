@@ -52,6 +52,63 @@ func TestRegisterWebhook_FindsExistingHookAcrossPages(t *testing.T) {
 	}
 }
 
+// TestRegisterWebhook_FollowsGitHubsRepositoriesNextLink: GitHub's real
+// next-page links address the repository by id
+// (https://api.github.com/repositories/<id>/hooks?page=2), not by
+// owner/repo; that is still inside the API base, so the walk follows it.
+func TestRegisterWebhook_FollowsGitHubsRepositoriesNextLink(t *testing.T) {
+	const hookURL = "https://tools.example/webhooks/github"
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[{"message":"Hook already exists on this repository"}]}`))
+	})
+	mux.HandleFunc("GET /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", `<`+srv.URL+`/repositories/123456/hooks?per_page=100&page=2>; rel="next", <`+srv.URL+`/repositories/123456/hooks?per_page=100&page=2>; rel="last"`)
+		_, _ = w.Write([]byte(`[{"id":101,"config":{"url":"https://other.example/hook"}}]`))
+	})
+	mux.HandleFunc("GET /repositories/123456/hooks", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "2" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":303,"config":{"url":"` + hookURL + `"}}]`))
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: hookURL, HookSecret: "s"})
+	id, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 303 {
+		t.Fatalf("hook id = %d, want 303 (found on the repositories/<id> page)", id)
+	}
+}
+
+// TestListIssues_EscapesTheLabelFilter: a label is a query value, never
+// query syntax.
+func TestListIssues_EscapesTheLabelFilter(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("labels")
+		if r.URL.Query().Get("state") != "all" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t")})
+	if _, err := c.ListIssues(context.Background(), "acme", "greeter", []string{"aep:status/x", "a&state=open"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "aep:status/x,a&state=open" {
+		t.Fatalf("labels = %q", got)
+	}
+}
+
 // TestWrites_ReturnHTTPStatusError: a write GitHub refuses is a typed
 // *HTTPStatusError, except DeleteWebhook, for which 404 is success (the hook
 // is already gone).

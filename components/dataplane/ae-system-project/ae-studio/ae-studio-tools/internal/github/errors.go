@@ -101,8 +101,6 @@ func (e *GraphQLError) Error() string {
 
 // IsGraphQLType reports whether err is a *GraphQLError carrying at least one
 // error of the given type (e.g. "NOT_FOUND").
-//
-//deadcode:keep wired in Task 4.3 (GraphQL RATE_LIMITED / NOT_FOUND mapping)
 func IsGraphQLType(err error, typ string) bool {
 	var ge *GraphQLError
 	if !errors.As(err, &ge) {

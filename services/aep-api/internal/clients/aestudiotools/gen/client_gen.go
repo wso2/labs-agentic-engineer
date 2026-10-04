@@ -136,6 +136,48 @@ func (e TurnRequestKind) Valid() bool {
 	}
 }
 
+// Defines values for ListMilestonesParamsState.
+const (
+	ListMilestonesParamsStateAll    ListMilestonesParamsState = "all"
+	ListMilestonesParamsStateClosed ListMilestonesParamsState = "closed"
+	ListMilestonesParamsStateOpen   ListMilestonesParamsState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ListMilestonesParamsState enum.
+func (e ListMilestonesParamsState) Valid() bool {
+	switch e {
+	case ListMilestonesParamsStateAll:
+		return true
+	case ListMilestonesParamsStateClosed:
+		return true
+	case ListMilestonesParamsStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ListMilestoneIssuesParamsState.
+const (
+	ListMilestoneIssuesParamsStateAll    ListMilestoneIssuesParamsState = "all"
+	ListMilestoneIssuesParamsStateClosed ListMilestoneIssuesParamsState = "closed"
+	ListMilestoneIssuesParamsStateOpen   ListMilestoneIssuesParamsState = "open"
+)
+
+// Valid indicates whether the value is a known member of the ListMilestoneIssuesParamsState enum.
+func (e ListMilestoneIssuesParamsState) Valid() bool {
+	switch e {
+	case ListMilestoneIssuesParamsStateAll:
+		return true
+	case ListMilestoneIssuesParamsStateClosed:
+		return true
+	case ListMilestoneIssuesParamsStateOpen:
+		return true
+	default:
+		return false
+	}
+}
+
 // Bundle defines model for Bundle.
 type Bundle struct {
 	CommitSha string `json:"commitSha"`
@@ -210,6 +252,22 @@ type CreateCommitRequest struct {
 	Writes    []CommitWrite  `json:"writes,omitempty,omitzero"`
 }
 
+// CreateIssueRequest defines model for CreateIssueRequest.
+type CreateIssueRequest struct {
+	Body   string   `json:"body"`
+	Labels []string `json:"labels,omitempty,omitzero"`
+
+	// Milestone The milestone number; omitted, none
+	Milestone *int   `json:"milestone,omitempty"`
+	Title     string `json:"title"`
+}
+
+// CreateMilestoneRequest defines model for CreateMilestoneRequest.
+type CreateMilestoneRequest struct {
+	Description string `json:"description,omitempty,omitzero"`
+	Title       string `json:"title"`
+}
+
 // CreateTagRequest tagger omitted, the AEP default identity.
 type CreateTagRequest struct {
 	Message string `json:"message"`
@@ -220,6 +278,13 @@ type CreateTagRequest struct {
 
 	// Target The commit to tag, as `at` names one; omitted, the default-branch tip
 	Target string `json:"target,omitempty,omitzero"`
+}
+
+// EnsureLabelRequest defines model for EnsureLabelRequest.
+type EnsureLabelRequest struct {
+	// Color Six hex digits, no leading '#'
+	Color string `json:"color"`
+	Name  string `json:"name"`
 }
 
 // FileContent defines model for FileContent.
@@ -250,6 +315,95 @@ type Head struct {
 	Sha string `json:"sha"`
 }
 
+// IssueBodyRequest defines model for IssueBodyRequest.
+type IssueBodyRequest struct {
+	Body string `json:"body"`
+}
+
+// IssueComment One comment as GitHub holds it, the platform's marker stripped from body and reported as machine or observed (never both).
+type IssueComment struct {
+	// Author The author's login; empty when the account is gone
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// ID GitHub's node id
+	ID string `json:"id"`
+
+	// Machine The platform wrote it for the agent
+	Machine bool `json:"machine"`
+
+	// Observed The platform wrote it for a person, from what a run did
+	Observed bool   `json:"observed"`
+	URL      string `json:"url"`
+}
+
+// IssueCommentList defines model for IssueCommentList.
+type IssueCommentList struct {
+	Comments []IssueComment `json:"comments"`
+}
+
+// IssueCommentRequest defines model for IssueCommentRequest.
+type IssueCommentRequest struct {
+	Body string `json:"body"`
+}
+
+// IssueComments defines model for IssueComments.
+type IssueComments struct {
+	Comments []IssueComment `json:"comments"`
+	Number   int            `json:"number"`
+}
+
+// IssueInfo An issue as GitHub holds it.
+type IssueInfo struct {
+	Body string `json:"body"`
+
+	// ClosedAt GitHub's closed_at; absent while open
+	ClosedAt string   `json:"closedAt,omitempty,omitzero"`
+	Labels   []string `json:"labels"`
+	Number   int      `json:"number"`
+
+	// State open or closed
+	State string `json:"state"`
+
+	// StateReason GitHub's state_reason; absent while it has none
+	StateReason string `json:"stateReason,omitempty,omitzero"`
+	Title       string `json:"title"`
+
+	// URL The issue's html_url
+	URL string `json:"url"`
+}
+
+// IssueLabelsRequest defines model for IssueLabelsRequest.
+type IssueLabelsRequest struct {
+	Labels []string `json:"labels"`
+}
+
+// IssueList defines model for IssueList.
+type IssueList struct {
+	Issues []IssueInfo `json:"issues"`
+}
+
+// IssueMilestoneRequest defines model for IssueMilestoneRequest.
+type IssueMilestoneRequest struct {
+	// Number The milestone number
+	Number int `json:"number"`
+}
+
+// IssueResult defines model for IssueResult.
+type IssueResult struct {
+	NodeID string `json:"nodeId"`
+	Number int    `json:"number"`
+
+	// URL The issue's html_url
+	URL string `json:"url"`
+}
+
+// IssueTitleRequest defines model for IssueTitleRequest.
+type IssueTitleRequest struct {
+	Title string `json:"title"`
+}
+
 // KeepAliveFrame One line of the turn stream, sent every 15 s.
 type KeepAliveFrame struct {
 	Type KeepAliveFrameType `json:"type"`
@@ -257,6 +411,54 @@ type KeepAliveFrame struct {
 
 // KeepAliveFrameType defines model for KeepAliveFrame.Type.
 type KeepAliveFrameType string
+
+// Milestone defines model for Milestone.
+type Milestone struct {
+	Description string `json:"description"`
+	NodeID      string `json:"nodeId"`
+	Number      int    `json:"number"`
+
+	// State open or closed (display only)
+	State string `json:"state"`
+	Title string `json:"title"`
+}
+
+// MilestoneComments defines model for MilestoneComments.
+type MilestoneComments struct {
+	Issues []IssueComments `json:"issues"`
+}
+
+// MilestoneIssueCounts A milestone's open issues per population, each the count of one label (the working-set arithmetic over them is the caller's).
+type MilestoneIssueCounts struct {
+	// OpenAgentWork Label aep
+	OpenAgentWork int `json:"openAgentWork"`
+
+	// OpenDevelopment Label development
+	OpenDevelopment int `json:"openDevelopment"`
+
+	// OpenProvision Label provision (dispatch gates)
+	OpenProvision int `json:"openProvision"`
+
+	// OpenTotal Every open issue
+	OpenTotal int `json:"openTotal"`
+
+	// OpenValidation Label validation
+	OpenValidation int `json:"openValidation"`
+
+	// OpenValidationRepairs Label src/validation
+	OpenValidationRepairs int `json:"openValidationRepairs"`
+}
+
+// MilestoneList defines model for MilestoneList.
+type MilestoneList struct {
+	Milestones []Milestone `json:"milestones"`
+}
+
+// MilestoneResult defines model for MilestoneResult.
+type MilestoneResult struct {
+	Created bool `json:"created"`
+	Number  int  `json:"number"`
+}
 
 // PlanContextFile One existing-Task render under its tasks/<n>.md name.
 type PlanContextFile struct {
@@ -288,6 +490,21 @@ type Problem struct {
 	Status       int    `json:"status"`
 	Title        string `json:"title"`
 	Type         string `json:"type"`
+}
+
+// PullRequestFiles defines model for PullRequestFiles.
+type PullRequestFiles struct {
+	Files []string `json:"files"`
+}
+
+// PullRequestState defines model for PullRequestState.
+type PullRequestState struct {
+	// MergeCommitSha Empty until GitHub has one
+	MergeCommitSha string `json:"mergeCommitSha"`
+	Merged         bool   `json:"merged"`
+
+	// State open or closed
+	State string `json:"state"`
 }
 
 // ReferenceUpload defines model for ReferenceUpload.
@@ -412,8 +629,14 @@ type DefaultBranch = string
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
 
+// Label defines model for Label.
+type Label = string
+
 // Local defines model for Local.
 type Local = bool
+
+// Number defines model for Number.
+type Number = int
 
 // Owner defines model for Owner.
 type Owner = string
@@ -424,11 +647,20 @@ type Prefix = string
 // Repo defines model for Repo.
 type Repo = string
 
+// GitHubAPIError defines model for GitHubAPIError.
+type GitHubAPIError = Problem
+
 // GitHubError defines model for GitHubError.
 type GitHubError = Problem
 
 // GitNotFound defines model for GitNotFound.
 type GitNotFound = Problem
+
+// IssueNotFound defines model for IssueNotFound.
+type IssueNotFound = Problem
+
+// MilestoneNotFound defines model for MilestoneNotFound.
+type MilestoneNotFound = Problem
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -502,6 +734,174 @@ type GetHeadParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// ListIssuesParams defines parameters for ListIssues.
+type ListIssuesParams struct {
+	// Labels Only issues carrying every one of these labels.
+	Labels []string `form:"labels,omitempty" json:"labels,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateIssueParams defines parameters for CreateIssue.
+type CreateIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetIssueParams defines parameters for GetIssue.
+type GetIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueBodyParams defines parameters for SetIssueBody.
+type SetIssueBodyParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CloseIssueParams defines parameters for CloseIssue.
+type CloseIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListIssueCommentsParams defines parameters for ListIssueComments.
+type ListIssueCommentsParams struct {
+	// Limit How many of the newest comments; 0 answers none.
+	Limit int `form:"limit" json:"limit"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateIssueCommentParams defines parameters for CreateIssueComment.
+type CreateIssueCommentParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// AddIssueLabelsParams defines parameters for AddIssueLabels.
+type AddIssueLabelsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueLabelsParams defines parameters for SetIssueLabels.
+type SetIssueLabelsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// RemoveIssueLabelParams defines parameters for RemoveIssueLabel.
+type RemoveIssueLabelParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueMilestoneParams defines parameters for SetIssueMilestone.
+type SetIssueMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ReopenIssueParams defines parameters for ReopenIssue.
+type ReopenIssueParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// SetIssueTitleParams defines parameters for SetIssueTitle.
+type SetIssueTitleParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// EnsureLabelParams defines parameters for EnsureLabel.
+type EnsureLabelParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestonesParams defines parameters for ListMilestones.
+type ListMilestonesParams struct {
+	// State Milestones in this state; omitted, all.
+	State ListMilestonesParamsState `form:"state,omitempty" json:"state,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestonesParamsState defines parameters for ListMilestones.
+type ListMilestonesParamsState string
+
+// CreateMilestoneParams defines parameters for CreateMilestone.
+type CreateMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CloseMilestoneParams defines parameters for CloseMilestone.
+type CloseMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneCommentsParams defines parameters for ListMilestoneComments.
+type ListMilestoneCommentsParams struct {
+	// PerIssue How many of each issue's newest comments; 0 answers none.
+	PerIssue int `form:"perIssue" json:"perIssue"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetMilestoneCountsParams defines parameters for GetMilestoneCounts.
+type GetMilestoneCountsParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneIssuesParams defines parameters for ListMilestoneIssues.
+type ListMilestoneIssuesParams struct {
+	// State Issues in this state; omitted, open.
+	State ListMilestoneIssuesParamsState `form:"state,omitempty" json:"state,omitempty,omitzero"`
+
+	// Labels Only issues carrying every one of these labels.
+	Labels []string `form:"labels,omitempty" json:"labels,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListMilestoneIssuesParamsState defines parameters for ListMilestoneIssues.
+type ListMilestoneIssuesParamsState string
+
+// ReopenMilestoneParams defines parameters for ReopenMilestone.
+type ReopenMilestoneParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetPullParams defines parameters for GetPull.
+type GetPullParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListPullFilesParams defines parameters for ListPullFiles.
+type ListPullFilesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// MergePullParams defines parameters for MergePull.
+type MergePullParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // PutRepoReferencesParams defines parameters for PutRepoReferences.
 type PutRepoReferencesParams struct {
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
@@ -555,6 +955,33 @@ type StartRepoTurnParams struct {
 
 // CreateCommitJSONRequestBody defines body for CreateCommit for application/json ContentType.
 type CreateCommitJSONRequestBody = CreateCommitRequest
+
+// CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
+type CreateIssueJSONRequestBody = CreateIssueRequest
+
+// SetIssueBodyJSONRequestBody defines body for SetIssueBody for application/json ContentType.
+type SetIssueBodyJSONRequestBody = IssueBodyRequest
+
+// CreateIssueCommentJSONRequestBody defines body for CreateIssueComment for application/json ContentType.
+type CreateIssueCommentJSONRequestBody = IssueCommentRequest
+
+// AddIssueLabelsJSONRequestBody defines body for AddIssueLabels for application/json ContentType.
+type AddIssueLabelsJSONRequestBody = IssueLabelsRequest
+
+// SetIssueLabelsJSONRequestBody defines body for SetIssueLabels for application/json ContentType.
+type SetIssueLabelsJSONRequestBody = IssueLabelsRequest
+
+// SetIssueMilestoneJSONRequestBody defines body for SetIssueMilestone for application/json ContentType.
+type SetIssueMilestoneJSONRequestBody = IssueMilestoneRequest
+
+// SetIssueTitleJSONRequestBody defines body for SetIssueTitle for application/json ContentType.
+type SetIssueTitleJSONRequestBody = IssueTitleRequest
+
+// EnsureLabelJSONRequestBody defines body for EnsureLabel for application/json ContentType.
+type EnsureLabelJSONRequestBody = EnsureLabelRequest
+
+// CreateMilestoneJSONRequestBody defines body for CreateMilestone for application/json ContentType.
+type CreateMilestoneJSONRequestBody = CreateMilestoneRequest
 
 // PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
 type PutRepoReferencesMultipartRequestBody = ReferenceUpload
@@ -655,6 +1082,96 @@ type ClientInterface interface {
 	// GetHead request
 	GetHead(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListIssues request
+	ListIssues(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateIssueWithBody request with any body
+	CreateIssueWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateIssue(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, body CreateIssueJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetIssue request
+	GetIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *GetIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetIssueBodyWithBody request with any body
+	SetIssueBodyWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetIssueBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, body SetIssueBodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloseIssue request
+	CloseIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListIssueComments request
+	ListIssueComments(ctx context.Context, owner Owner, repo Repo, number Number, params *ListIssueCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateIssueCommentWithBody request with any body
+	CreateIssueCommentWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateIssueComment(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, body CreateIssueCommentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AddIssueLabelsWithBody request with any body
+	AddIssueLabelsWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	AddIssueLabels(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, body AddIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetIssueLabelsWithBody request with any body
+	SetIssueLabelsWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetIssueLabels(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, body SetIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveIssueLabel request
+	RemoveIssueLabel(ctx context.Context, owner Owner, repo Repo, number Number, label Label, params *RemoveIssueLabelParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetIssueMilestoneWithBody request with any body
+	SetIssueMilestoneWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetIssueMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, body SetIssueMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReopenIssue request
+	ReopenIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetIssueTitleWithBody request with any body
+	SetIssueTitleWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetIssueTitle(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, body SetIssueTitleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnsureLabelWithBody request with any body
+	EnsureLabelWithBody(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	EnsureLabel(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, body EnsureLabelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMilestones request
+	ListMilestones(ctx context.Context, owner Owner, repo Repo, params *ListMilestonesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateMilestoneWithBody request with any body
+	CreateMilestoneWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateMilestone(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, body CreateMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CloseMilestone request
+	CloseMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseMilestoneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMilestoneComments request
+	ListMilestoneComments(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetMilestoneCounts request
+	GetMilestoneCounts(ctx context.Context, owner Owner, repo Repo, number Number, params *GetMilestoneCountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListMilestoneIssues request
+	ListMilestoneIssues(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReopenMilestone request
+	ReopenMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenMilestoneParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetPull request
+	GetPull(ctx context.Context, owner Owner, repo Repo, number Number, params *GetPullParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListPullFiles request
+	ListPullFiles(ctx context.Context, owner Owner, repo Repo, number Number, params *ListPullFilesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MergePull request
+	MergePull(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PutRepoReferencesWithBody request with any body
 	PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -737,6 +1254,402 @@ func (c *Client) ReadFile(ctx context.Context, owner Owner, repo Repo, path stri
 
 func (c *Client) GetHead(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetHeadRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListIssues(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListIssuesRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateIssueWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIssueRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateIssue(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, body CreateIssueJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIssueRequest(c.Server, owner, repo, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *GetIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetIssueRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueBodyWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueBodyRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, body SetIssueBodyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueBodyRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloseIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseIssueRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListIssueComments(ctx context.Context, owner Owner, repo Repo, number Number, params *ListIssueCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListIssueCommentsRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateIssueCommentWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIssueCommentRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateIssueComment(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, body CreateIssueCommentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateIssueCommentRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddIssueLabelsWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddIssueLabelsRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) AddIssueLabels(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, body AddIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAddIssueLabelsRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueLabelsWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueLabelsRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueLabels(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, body SetIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueLabelsRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RemoveIssueLabel(ctx context.Context, owner Owner, repo Repo, number Number, label Label, params *RemoveIssueLabelParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveIssueLabelRequest(c.Server, owner, repo, number, label, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueMilestoneWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueMilestoneRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, body SetIssueMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueMilestoneRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReopenIssue(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenIssueParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReopenIssueRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueTitleWithBody(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueTitleRequestWithBody(c.Server, owner, repo, number, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetIssueTitle(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, body SetIssueTitleJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetIssueTitleRequest(c.Server, owner, repo, number, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) EnsureLabelWithBody(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnsureLabelRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) EnsureLabel(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, body EnsureLabelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnsureLabelRequest(c.Server, owner, repo, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMilestones(ctx context.Context, owner Owner, repo Repo, params *ListMilestonesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMilestonesRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMilestoneWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMilestoneRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateMilestone(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, body CreateMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateMilestoneRequest(c.Server, owner, repo, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CloseMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseMilestoneParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCloseMilestoneRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMilestoneComments(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMilestoneCommentsRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetMilestoneCounts(ctx context.Context, owner Owner, repo Repo, number Number, params *GetMilestoneCountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetMilestoneCountsRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListMilestoneIssues(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMilestoneIssuesRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReopenMilestone(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenMilestoneParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReopenMilestoneRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetPull(ctx context.Context, owner Owner, repo Repo, number Number, params *GetPullParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetPullRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListPullFiles(ctx context.Context, owner Owner, repo Repo, number Number, params *ListPullFilesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListPullFilesRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MergePull(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMergePullRequest(c.Server, owner, repo, number, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1271,6 +2184,1690 @@ func NewGetHeadRequest(server string, owner Owner, repo Repo, params *GetHeadPar
 	return req, nil
 }
 
+// NewListIssuesRequest generates requests for ListIssues
+func NewListIssuesRequest(server string, owner Owner, repo Repo, params *ListIssuesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Labels != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "labels", params.Labels, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateIssueRequest calls the generic CreateIssue builder with application/json body
+func NewCreateIssueRequest(server string, owner Owner, repo Repo, params *CreateIssueParams, body CreateIssueJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateIssueRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewCreateIssueRequestWithBody generates requests for CreateIssue with any type of body
+func NewCreateIssueRequestWithBody(server string, owner Owner, repo Repo, params *CreateIssueParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetIssueRequest generates requests for GetIssue
+func NewGetIssueRequest(server string, owner Owner, repo Repo, number Number, params *GetIssueParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetIssueBodyRequest calls the generic SetIssueBody builder with application/json body
+func NewSetIssueBodyRequest(server string, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, body SetIssueBodyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetIssueBodyRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewSetIssueBodyRequestWithBody generates requests for SetIssueBody with any type of body
+func NewSetIssueBodyRequestWithBody(server string, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/body", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCloseIssueRequest generates requests for CloseIssue
+func NewCloseIssueRequest(server string, owner Owner, repo Repo, number Number, params *CloseIssueParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/close", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListIssueCommentsRequest generates requests for ListIssueComments
+func NewListIssueCommentsRequest(server string, owner Owner, repo Repo, number Number, params *ListIssueCommentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/comments", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateIssueCommentRequest calls the generic CreateIssueComment builder with application/json body
+func NewCreateIssueCommentRequest(server string, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, body CreateIssueCommentJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateIssueCommentRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewCreateIssueCommentRequestWithBody generates requests for CreateIssueComment with any type of body
+func NewCreateIssueCommentRequestWithBody(server string, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/comments", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewAddIssueLabelsRequest calls the generic AddIssueLabels builder with application/json body
+func NewAddIssueLabelsRequest(server string, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, body AddIssueLabelsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewAddIssueLabelsRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewAddIssueLabelsRequestWithBody generates requests for AddIssueLabels with any type of body
+func NewAddIssueLabelsRequestWithBody(server string, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/labels", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetIssueLabelsRequest calls the generic SetIssueLabels builder with application/json body
+func NewSetIssueLabelsRequest(server string, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, body SetIssueLabelsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetIssueLabelsRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewSetIssueLabelsRequestWithBody generates requests for SetIssueLabels with any type of body
+func NewSetIssueLabelsRequestWithBody(server string, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/labels", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRemoveIssueLabelRequest generates requests for RemoveIssueLabel
+func NewRemoveIssueLabelRequest(server string, owner Owner, repo Repo, number Number, label Label, params *RemoveIssueLabelParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam3 string
+
+	pathParam3, err = runtime.StyleParamWithOptions("simple", false, "label", label, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/labels/%s", pathParam0, pathParam1, pathParam2, pathParam3)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetIssueMilestoneRequest calls the generic SetIssueMilestone builder with application/json body
+func NewSetIssueMilestoneRequest(server string, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, body SetIssueMilestoneJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetIssueMilestoneRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewSetIssueMilestoneRequestWithBody generates requests for SetIssueMilestone with any type of body
+func NewSetIssueMilestoneRequestWithBody(server string, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/milestone", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReopenIssueRequest generates requests for ReopenIssue
+func NewReopenIssueRequest(server string, owner Owner, repo Repo, number Number, params *ReopenIssueParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/reopen", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewSetIssueTitleRequest calls the generic SetIssueTitle builder with application/json body
+func NewSetIssueTitleRequest(server string, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, body SetIssueTitleJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetIssueTitleRequestWithBody(server, owner, repo, number, params, "application/json", bodyReader)
+}
+
+// NewSetIssueTitleRequestWithBody generates requests for SetIssueTitle with any type of body
+func NewSetIssueTitleRequestWithBody(server string, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/issues/%s/title", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewEnsureLabelRequest calls the generic EnsureLabel builder with application/json body
+func NewEnsureLabelRequest(server string, owner Owner, repo Repo, params *EnsureLabelParams, body EnsureLabelJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewEnsureLabelRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewEnsureLabelRequestWithBody generates requests for EnsureLabel with any type of body
+func NewEnsureLabelRequestWithBody(server string, owner Owner, repo Repo, params *EnsureLabelParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/labels", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListMilestonesRequest generates requests for ListMilestones
+func NewListMilestonesRequest(server string, owner Owner, repo Repo, params *ListMilestonesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateMilestoneRequest calls the generic CreateMilestone builder with application/json body
+func NewCreateMilestoneRequest(server string, owner Owner, repo Repo, params *CreateMilestoneParams, body CreateMilestoneJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateMilestoneRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewCreateMilestoneRequestWithBody generates requests for CreateMilestone with any type of body
+func NewCreateMilestoneRequestWithBody(server string, owner Owner, repo Repo, params *CreateMilestoneParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCloseMilestoneRequest generates requests for CloseMilestone
+func NewCloseMilestoneRequest(server string, owner Owner, repo Repo, number Number, params *CloseMilestoneParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones/%s/close", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListMilestoneCommentsRequest generates requests for ListMilestoneComments
+func NewListMilestoneCommentsRequest(server string, owner Owner, repo Repo, number Number, params *ListMilestoneCommentsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones/%s/comments", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "perIssue", params.PerIssue, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetMilestoneCountsRequest generates requests for GetMilestoneCounts
+func NewGetMilestoneCountsRequest(server string, owner Owner, repo Repo, number Number, params *GetMilestoneCountsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones/%s/counts", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListMilestoneIssuesRequest generates requests for ListMilestoneIssues
+func NewListMilestoneIssuesRequest(server string, owner Owner, repo Repo, number Number, params *ListMilestoneIssuesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones/%s/issues", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Labels != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "labels", params.Labels, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReopenMilestoneRequest generates requests for ReopenMilestone
+func NewReopenMilestoneRequest(server string, owner Owner, repo Repo, number Number, params *ReopenMilestoneParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/milestones/%s/reopen", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetPullRequest generates requests for GetPull
+func NewGetPullRequest(server string, owner Owner, repo Repo, number Number, params *GetPullParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListPullFilesRequest generates requests for ListPullFiles
+func NewListPullFilesRequest(server string, owner Owner, repo Repo, number Number, params *ListPullFilesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/files", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewMergePullRequest generates requests for MergePull
+func NewMergePullRequest(server string, owner Owner, repo Repo, number Number, params *MergePullParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "number", number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/pulls/%s/merge", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewPutRepoReferencesRequestWithBody generates requests for PutRepoReferences with any type of body
 func NewPutRepoReferencesRequestWithBody(server string, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -1730,6 +4327,96 @@ type ClientWithResponsesInterface interface {
 	// GetHeadWithResponse request
 	GetHeadWithResponse(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*GetHeadResponse, error)
 
+	// ListIssuesWithResponse request
+	ListIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error)
+
+	// CreateIssueWithBodyWithResponse request with any body
+	CreateIssueWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIssueResponse, error)
+
+	CreateIssueWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, body CreateIssueJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIssueResponse, error)
+
+	// GetIssueWithResponse request
+	GetIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetIssueParams, reqEditors ...RequestEditorFn) (*GetIssueResponse, error)
+
+	// SetIssueBodyWithBodyWithResponse request with any body
+	SetIssueBodyWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueBodyResponse, error)
+
+	SetIssueBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, body SetIssueBodyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueBodyResponse, error)
+
+	// CloseIssueWithResponse request
+	CloseIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseIssueParams, reqEditors ...RequestEditorFn) (*CloseIssueResponse, error)
+
+	// ListIssueCommentsWithResponse request
+	ListIssueCommentsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListIssueCommentsParams, reqEditors ...RequestEditorFn) (*ListIssueCommentsResponse, error)
+
+	// CreateIssueCommentWithBodyWithResponse request with any body
+	CreateIssueCommentWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIssueCommentResponse, error)
+
+	CreateIssueCommentWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, body CreateIssueCommentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIssueCommentResponse, error)
+
+	// AddIssueLabelsWithBodyWithResponse request with any body
+	AddIssueLabelsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddIssueLabelsResponse, error)
+
+	AddIssueLabelsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, body AddIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddIssueLabelsResponse, error)
+
+	// SetIssueLabelsWithBodyWithResponse request with any body
+	SetIssueLabelsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueLabelsResponse, error)
+
+	SetIssueLabelsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, body SetIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueLabelsResponse, error)
+
+	// RemoveIssueLabelWithResponse request
+	RemoveIssueLabelWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, label Label, params *RemoveIssueLabelParams, reqEditors ...RequestEditorFn) (*RemoveIssueLabelResponse, error)
+
+	// SetIssueMilestoneWithBodyWithResponse request with any body
+	SetIssueMilestoneWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueMilestoneResponse, error)
+
+	SetIssueMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, body SetIssueMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueMilestoneResponse, error)
+
+	// ReopenIssueWithResponse request
+	ReopenIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenIssueParams, reqEditors ...RequestEditorFn) (*ReopenIssueResponse, error)
+
+	// SetIssueTitleWithBodyWithResponse request with any body
+	SetIssueTitleWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueTitleResponse, error)
+
+	SetIssueTitleWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, body SetIssueTitleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueTitleResponse, error)
+
+	// EnsureLabelWithBodyWithResponse request with any body
+	EnsureLabelWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnsureLabelResponse, error)
+
+	EnsureLabelWithResponse(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, body EnsureLabelJSONRequestBody, reqEditors ...RequestEditorFn) (*EnsureLabelResponse, error)
+
+	// ListMilestonesWithResponse request
+	ListMilestonesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListMilestonesParams, reqEditors ...RequestEditorFn) (*ListMilestonesResponse, error)
+
+	// CreateMilestoneWithBodyWithResponse request with any body
+	CreateMilestoneWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMilestoneResponse, error)
+
+	CreateMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, body CreateMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMilestoneResponse, error)
+
+	// CloseMilestoneWithResponse request
+	CloseMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseMilestoneParams, reqEditors ...RequestEditorFn) (*CloseMilestoneResponse, error)
+
+	// ListMilestoneCommentsWithResponse request
+	ListMilestoneCommentsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneCommentsParams, reqEditors ...RequestEditorFn) (*ListMilestoneCommentsResponse, error)
+
+	// GetMilestoneCountsWithResponse request
+	GetMilestoneCountsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetMilestoneCountsParams, reqEditors ...RequestEditorFn) (*GetMilestoneCountsResponse, error)
+
+	// ListMilestoneIssuesWithResponse request
+	ListMilestoneIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneIssuesParams, reqEditors ...RequestEditorFn) (*ListMilestoneIssuesResponse, error)
+
+	// ReopenMilestoneWithResponse request
+	ReopenMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenMilestoneParams, reqEditors ...RequestEditorFn) (*ReopenMilestoneResponse, error)
+
+	// GetPullWithResponse request
+	GetPullWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetPullParams, reqEditors ...RequestEditorFn) (*GetPullResponse, error)
+
+	// ListPullFilesWithResponse request
+	ListPullFilesWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListPullFilesParams, reqEditors ...RequestEditorFn) (*ListPullFilesResponse, error)
+
+	// MergePullWithResponse request
+	MergePullWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*MergePullResponse, error)
+
 	// PutRepoReferencesWithBodyWithResponse request with any body
 	PutRepoReferencesWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutRepoReferencesResponse, error)
 
@@ -1925,6 +4612,861 @@ func (r GetHeadResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetHeadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListIssuesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *IssueList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListIssuesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListIssuesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListIssuesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateIssueResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *IssueResult
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateIssueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateIssueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateIssueResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetIssueResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *IssueInfo
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *IssueNotFound
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r GetIssueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetIssueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetIssueResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetIssueBodyResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r SetIssueBodyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetIssueBodyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetIssueBodyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CloseIssueResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CloseIssueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloseIssueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CloseIssueResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListIssueCommentsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *IssueCommentList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *IssueNotFound
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListIssueCommentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListIssueCommentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListIssueCommentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateIssueCommentResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateIssueCommentResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateIssueCommentResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateIssueCommentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type AddIssueLabelsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r AddIssueLabelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AddIssueLabelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AddIssueLabelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetIssueLabelsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r SetIssueLabelsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetIssueLabelsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetIssueLabelsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RemoveIssueLabelResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveIssueLabelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveIssueLabelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveIssueLabelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetIssueMilestoneResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r SetIssueMilestoneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetIssueMilestoneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetIssueMilestoneResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReopenIssueResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReopenIssueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReopenIssueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReopenIssueResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type SetIssueTitleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r SetIssueTitleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetIssueTitleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SetIssueTitleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type EnsureLabelResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r EnsureLabelResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnsureLabelResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r EnsureLabelResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListMilestonesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *MilestoneList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMilestonesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMilestonesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMilestonesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateMilestoneResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *MilestoneResult
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateMilestoneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateMilestoneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateMilestoneResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CloseMilestoneResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CloseMilestoneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CloseMilestoneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CloseMilestoneResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListMilestoneCommentsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *MilestoneComments
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *MilestoneNotFound
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMilestoneCommentsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMilestoneCommentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMilestoneCommentsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetMilestoneCountsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *MilestoneIssueCounts
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *MilestoneNotFound
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r GetMilestoneCountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetMilestoneCountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetMilestoneCountsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListMilestoneIssuesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *IssueList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMilestoneIssuesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMilestoneIssuesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMilestoneIssuesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReopenMilestoneResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReopenMilestoneResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReopenMilestoneResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReopenMilestoneResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetPullResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *PullRequestState
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r GetPullResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetPullResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetPullResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListPullFilesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *PullRequestFiles
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListPullFilesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListPullFilesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListPullFilesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type MergePullResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON429 *RateLimited
+	ApplicationProblemJSON502 *GitHubAPIError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r MergePullResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MergePullResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MergePullResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -2163,6 +5705,294 @@ func (c *ClientWithResponses) GetHeadWithResponse(ctx context.Context, owner Own
 		return nil, err
 	}
 	return ParseGetHeadResponse(rsp)
+}
+
+// ListIssuesWithResponse request returning *ListIssuesResponse
+func (c *ClientWithResponses) ListIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error) {
+	rsp, err := c.ListIssues(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListIssuesResponse(rsp)
+}
+
+// CreateIssueWithBodyWithResponse request with arbitrary body returning *CreateIssueResponse
+func (c *ClientWithResponses) CreateIssueWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIssueResponse, error) {
+	rsp, err := c.CreateIssueWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIssueResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateIssueWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateIssueParams, body CreateIssueJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIssueResponse, error) {
+	rsp, err := c.CreateIssue(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIssueResponse(rsp)
+}
+
+// GetIssueWithResponse request returning *GetIssueResponse
+func (c *ClientWithResponses) GetIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetIssueParams, reqEditors ...RequestEditorFn) (*GetIssueResponse, error) {
+	rsp, err := c.GetIssue(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetIssueResponse(rsp)
+}
+
+// SetIssueBodyWithBodyWithResponse request with arbitrary body returning *SetIssueBodyResponse
+func (c *ClientWithResponses) SetIssueBodyWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueBodyResponse, error) {
+	rsp, err := c.SetIssueBodyWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueBodyResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetIssueBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueBodyParams, body SetIssueBodyJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueBodyResponse, error) {
+	rsp, err := c.SetIssueBody(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueBodyResponse(rsp)
+}
+
+// CloseIssueWithResponse request returning *CloseIssueResponse
+func (c *ClientWithResponses) CloseIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseIssueParams, reqEditors ...RequestEditorFn) (*CloseIssueResponse, error) {
+	rsp, err := c.CloseIssue(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseIssueResponse(rsp)
+}
+
+// ListIssueCommentsWithResponse request returning *ListIssueCommentsResponse
+func (c *ClientWithResponses) ListIssueCommentsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListIssueCommentsParams, reqEditors ...RequestEditorFn) (*ListIssueCommentsResponse, error) {
+	rsp, err := c.ListIssueComments(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListIssueCommentsResponse(rsp)
+}
+
+// CreateIssueCommentWithBodyWithResponse request with arbitrary body returning *CreateIssueCommentResponse
+func (c *ClientWithResponses) CreateIssueCommentWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateIssueCommentResponse, error) {
+	rsp, err := c.CreateIssueCommentWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIssueCommentResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateIssueCommentWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CreateIssueCommentParams, body CreateIssueCommentJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateIssueCommentResponse, error) {
+	rsp, err := c.CreateIssueComment(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateIssueCommentResponse(rsp)
+}
+
+// AddIssueLabelsWithBodyWithResponse request with arbitrary body returning *AddIssueLabelsResponse
+func (c *ClientWithResponses) AddIssueLabelsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AddIssueLabelsResponse, error) {
+	rsp, err := c.AddIssueLabelsWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddIssueLabelsResponse(rsp)
+}
+
+func (c *ClientWithResponses) AddIssueLabelsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *AddIssueLabelsParams, body AddIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddIssueLabelsResponse, error) {
+	rsp, err := c.AddIssueLabels(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAddIssueLabelsResponse(rsp)
+}
+
+// SetIssueLabelsWithBodyWithResponse request with arbitrary body returning *SetIssueLabelsResponse
+func (c *ClientWithResponses) SetIssueLabelsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueLabelsResponse, error) {
+	rsp, err := c.SetIssueLabelsWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueLabelsResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetIssueLabelsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueLabelsParams, body SetIssueLabelsJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueLabelsResponse, error) {
+	rsp, err := c.SetIssueLabels(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueLabelsResponse(rsp)
+}
+
+// RemoveIssueLabelWithResponse request returning *RemoveIssueLabelResponse
+func (c *ClientWithResponses) RemoveIssueLabelWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, label Label, params *RemoveIssueLabelParams, reqEditors ...RequestEditorFn) (*RemoveIssueLabelResponse, error) {
+	rsp, err := c.RemoveIssueLabel(ctx, owner, repo, number, label, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveIssueLabelResponse(rsp)
+}
+
+// SetIssueMilestoneWithBodyWithResponse request with arbitrary body returning *SetIssueMilestoneResponse
+func (c *ClientWithResponses) SetIssueMilestoneWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueMilestoneResponse, error) {
+	rsp, err := c.SetIssueMilestoneWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueMilestoneResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetIssueMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueMilestoneParams, body SetIssueMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueMilestoneResponse, error) {
+	rsp, err := c.SetIssueMilestone(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueMilestoneResponse(rsp)
+}
+
+// ReopenIssueWithResponse request returning *ReopenIssueResponse
+func (c *ClientWithResponses) ReopenIssueWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenIssueParams, reqEditors ...RequestEditorFn) (*ReopenIssueResponse, error) {
+	rsp, err := c.ReopenIssue(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReopenIssueResponse(rsp)
+}
+
+// SetIssueTitleWithBodyWithResponse request with arbitrary body returning *SetIssueTitleResponse
+func (c *ClientWithResponses) SetIssueTitleWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetIssueTitleResponse, error) {
+	rsp, err := c.SetIssueTitleWithBody(ctx, owner, repo, number, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueTitleResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetIssueTitleWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *SetIssueTitleParams, body SetIssueTitleJSONRequestBody, reqEditors ...RequestEditorFn) (*SetIssueTitleResponse, error) {
+	rsp, err := c.SetIssueTitle(ctx, owner, repo, number, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetIssueTitleResponse(rsp)
+}
+
+// EnsureLabelWithBodyWithResponse request with arbitrary body returning *EnsureLabelResponse
+func (c *ClientWithResponses) EnsureLabelWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnsureLabelResponse, error) {
+	rsp, err := c.EnsureLabelWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnsureLabelResponse(rsp)
+}
+
+func (c *ClientWithResponses) EnsureLabelWithResponse(ctx context.Context, owner Owner, repo Repo, params *EnsureLabelParams, body EnsureLabelJSONRequestBody, reqEditors ...RequestEditorFn) (*EnsureLabelResponse, error) {
+	rsp, err := c.EnsureLabel(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnsureLabelResponse(rsp)
+}
+
+// ListMilestonesWithResponse request returning *ListMilestonesResponse
+func (c *ClientWithResponses) ListMilestonesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListMilestonesParams, reqEditors ...RequestEditorFn) (*ListMilestonesResponse, error) {
+	rsp, err := c.ListMilestones(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMilestonesResponse(rsp)
+}
+
+// CreateMilestoneWithBodyWithResponse request with arbitrary body returning *CreateMilestoneResponse
+func (c *ClientWithResponses) CreateMilestoneWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateMilestoneResponse, error) {
+	rsp, err := c.CreateMilestoneWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMilestoneResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateMilestoneParams, body CreateMilestoneJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateMilestoneResponse, error) {
+	rsp, err := c.CreateMilestone(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateMilestoneResponse(rsp)
+}
+
+// CloseMilestoneWithResponse request returning *CloseMilestoneResponse
+func (c *ClientWithResponses) CloseMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *CloseMilestoneParams, reqEditors ...RequestEditorFn) (*CloseMilestoneResponse, error) {
+	rsp, err := c.CloseMilestone(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCloseMilestoneResponse(rsp)
+}
+
+// ListMilestoneCommentsWithResponse request returning *ListMilestoneCommentsResponse
+func (c *ClientWithResponses) ListMilestoneCommentsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneCommentsParams, reqEditors ...RequestEditorFn) (*ListMilestoneCommentsResponse, error) {
+	rsp, err := c.ListMilestoneComments(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMilestoneCommentsResponse(rsp)
+}
+
+// GetMilestoneCountsWithResponse request returning *GetMilestoneCountsResponse
+func (c *ClientWithResponses) GetMilestoneCountsWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetMilestoneCountsParams, reqEditors ...RequestEditorFn) (*GetMilestoneCountsResponse, error) {
+	rsp, err := c.GetMilestoneCounts(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetMilestoneCountsResponse(rsp)
+}
+
+// ListMilestoneIssuesWithResponse request returning *ListMilestoneIssuesResponse
+func (c *ClientWithResponses) ListMilestoneIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListMilestoneIssuesParams, reqEditors ...RequestEditorFn) (*ListMilestoneIssuesResponse, error) {
+	rsp, err := c.ListMilestoneIssues(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMilestoneIssuesResponse(rsp)
+}
+
+// ReopenMilestoneWithResponse request returning *ReopenMilestoneResponse
+func (c *ClientWithResponses) ReopenMilestoneWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ReopenMilestoneParams, reqEditors ...RequestEditorFn) (*ReopenMilestoneResponse, error) {
+	rsp, err := c.ReopenMilestone(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReopenMilestoneResponse(rsp)
+}
+
+// GetPullWithResponse request returning *GetPullResponse
+func (c *ClientWithResponses) GetPullWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *GetPullParams, reqEditors ...RequestEditorFn) (*GetPullResponse, error) {
+	rsp, err := c.GetPull(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetPullResponse(rsp)
+}
+
+// ListPullFilesWithResponse request returning *ListPullFilesResponse
+func (c *ClientWithResponses) ListPullFilesWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *ListPullFilesParams, reqEditors ...RequestEditorFn) (*ListPullFilesResponse, error) {
+	rsp, err := c.ListPullFiles(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListPullFilesResponse(rsp)
+}
+
+// MergePullWithResponse request returning *MergePullResponse
+func (c *ClientWithResponses) MergePullWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*MergePullResponse, error) {
+	rsp, err := c.MergePull(ctx, owner, repo, number, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMergePullResponse(rsp)
 }
 
 // PutRepoReferencesWithBodyWithResponse request with arbitrary body returning *PutRepoReferencesResponse
@@ -2556,6 +6386,1575 @@ func ParseGetHeadResponse(rsp *http.Response) (*GetHeadResponse, error) {
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListIssuesResponse parses an HTTP response from a ListIssuesWithResponse call
+func ParseListIssuesResponse(rsp *http.Response) (*ListIssuesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListIssuesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IssueList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateIssueResponse parses an HTTP response from a CreateIssueWithResponse call
+func ParseCreateIssueResponse(rsp *http.Response) (*CreateIssueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateIssueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest IssueResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetIssueResponse parses an HTTP response from a GetIssueWithResponse call
+func ParseGetIssueResponse(rsp *http.Response) (*GetIssueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetIssueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IssueInfo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest IssueNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetIssueBodyResponse parses an HTTP response from a SetIssueBodyWithResponse call
+func ParseSetIssueBodyResponse(rsp *http.Response) (*SetIssueBodyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetIssueBodyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloseIssueResponse parses an HTTP response from a CloseIssueWithResponse call
+func ParseCloseIssueResponse(rsp *http.Response) (*CloseIssueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloseIssueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListIssueCommentsResponse parses an HTTP response from a ListIssueCommentsWithResponse call
+func ParseListIssueCommentsResponse(rsp *http.Response) (*ListIssueCommentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListIssueCommentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IssueCommentList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest IssueNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateIssueCommentResponse parses an HTTP response from a CreateIssueCommentWithResponse call
+func ParseCreateIssueCommentResponse(rsp *http.Response) (*CreateIssueCommentResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateIssueCommentResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseAddIssueLabelsResponse parses an HTTP response from a AddIssueLabelsWithResponse call
+func ParseAddIssueLabelsResponse(rsp *http.Response) (*AddIssueLabelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AddIssueLabelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetIssueLabelsResponse parses an HTTP response from a SetIssueLabelsWithResponse call
+func ParseSetIssueLabelsResponse(rsp *http.Response) (*SetIssueLabelsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetIssueLabelsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRemoveIssueLabelResponse parses an HTTP response from a RemoveIssueLabelWithResponse call
+func ParseRemoveIssueLabelResponse(rsp *http.Response) (*RemoveIssueLabelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveIssueLabelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetIssueMilestoneResponse parses an HTTP response from a SetIssueMilestoneWithResponse call
+func ParseSetIssueMilestoneResponse(rsp *http.Response) (*SetIssueMilestoneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetIssueMilestoneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReopenIssueResponse parses an HTTP response from a ReopenIssueWithResponse call
+func ParseReopenIssueResponse(rsp *http.Response) (*ReopenIssueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReopenIssueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetIssueTitleResponse parses an HTTP response from a SetIssueTitleWithResponse call
+func ParseSetIssueTitleResponse(rsp *http.Response) (*SetIssueTitleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetIssueTitleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEnsureLabelResponse parses an HTTP response from a EnsureLabelWithResponse call
+func ParseEnsureLabelResponse(rsp *http.Response) (*EnsureLabelResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnsureLabelResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMilestonesResponse parses an HTTP response from a ListMilestonesWithResponse call
+func ParseListMilestonesResponse(rsp *http.Response) (*ListMilestonesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMilestonesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MilestoneList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateMilestoneResponse parses an HTTP response from a CreateMilestoneWithResponse call
+func ParseCreateMilestoneResponse(rsp *http.Response) (*CreateMilestoneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateMilestoneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MilestoneResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCloseMilestoneResponse parses an HTTP response from a CloseMilestoneWithResponse call
+func ParseCloseMilestoneResponse(rsp *http.Response) (*CloseMilestoneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CloseMilestoneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMilestoneCommentsResponse parses an HTTP response from a ListMilestoneCommentsWithResponse call
+func ParseListMilestoneCommentsResponse(rsp *http.Response) (*ListMilestoneCommentsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMilestoneCommentsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MilestoneComments
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest MilestoneNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetMilestoneCountsResponse parses an HTTP response from a GetMilestoneCountsWithResponse call
+func ParseGetMilestoneCountsResponse(rsp *http.Response) (*GetMilestoneCountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetMilestoneCountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MilestoneIssueCounts
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest MilestoneNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListMilestoneIssuesResponse parses an HTTP response from a ListMilestoneIssuesWithResponse call
+func ParseListMilestoneIssuesResponse(rsp *http.Response) (*ListMilestoneIssuesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMilestoneIssuesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest IssueList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReopenMilestoneResponse parses an HTTP response from a ReopenMilestoneWithResponse call
+func ParseReopenMilestoneResponse(rsp *http.Response) (*ReopenMilestoneResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReopenMilestoneResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetPullResponse parses an HTTP response from a GetPullWithResponse call
+func ParseGetPullResponse(rsp *http.Response) (*GetPullResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetPullResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PullRequestState
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListPullFilesResponse parses an HTTP response from a ListPullFilesWithResponse call
+func ParseListPullFilesResponse(rsp *http.Response) (*ListPullFilesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListPullFilesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PullRequestFiles
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMergePullResponse parses an HTTP response from a MergePullWithResponse call
+func ParseMergePullResponse(rsp *http.Response) (*MergePullResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MergePullResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubAPIError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
