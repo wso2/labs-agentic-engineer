@@ -80,6 +80,8 @@ func (s *stubRepoSvc) EnsureBareRepo(context.Context, string, string, string) (*
 func (s *stubRepoSvc) SetWebhookID(context.Context, string, string, int64) error {
 	panic("stubRepoSvc: SetWebhookID not expected")
 }
+func (s *stubRepoSvc) BeginDelete(context.Context, string, string) error { return nil }
+func (s *stubRepoSvc) AbortDelete(context.Context, string, string) error { return nil }
 func (s *stubRepoSvc) DeleteRepo(context.Context, string, string) error {
 	panic("stubRepoSvc: DeleteRepo not expected")
 }

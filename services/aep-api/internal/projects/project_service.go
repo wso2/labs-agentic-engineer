@@ -54,7 +54,7 @@ var (
 type Service struct {
 	client         openchoreo.ProjectClient
 	repoSvc        sourcecontrol.RepoService
-	webhookSvc     sourcecontrol.WebhookService
+	webhookSvc     projectWebhooks
 	artifactSvc    spec.ArtifactService
 	execs          delivery.ExecutionRepository
 	skillsProv     skillsProvisioner
@@ -72,6 +72,13 @@ type Service struct {
 	writeTargets   writeTargetResolver    // deploy stage: which environment's bindings count (status_stages.go)
 	cellWait       cellReadyWait          // how long CreateProject waits for the cells to report Ready
 	aeStudio       aeStudioReady          // the org's AE Studio must serve before a create; may be nil
+}
+
+// projectWebhooks is the per-project hook lifecycle a create registers and a
+// delete removes; sourcecontrol.WebhookService satisfies it.
+type projectWebhooks interface {
+	Register(ctx context.Context, orgID, projectID string) (*int64, error)
+	Unregister(ctx context.Context, orgID, projectID string) error
 }
 
 // aeStudioReady answers whether the org's AE Studio serves: nil when it does,
@@ -243,7 +250,7 @@ func (s *Service) SetProjectCellProvisioner(c projectCellProvisioner) { s.cells 
 func NewProjectService(
 	client openchoreo.ProjectClient,
 	repoSvc sourcecontrol.RepoService,
-	webhookSvc sourcecontrol.WebhookService,
+	webhookSvc projectWebhooks,
 	artifactSvc spec.ArtifactService,
 	execs delivery.ExecutionRepository,
 ) *Service {
@@ -504,6 +511,16 @@ func (s *Service) SetIdentityTeardown(t identityTeardown) {
 }
 
 func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string) error {
+	// Mark the repo row `deleting` before anything is torn down: from here no
+	// sweep lists the project and no hook id can land on its row, so the hook
+	// repair never installs a hook the teardown below would miss. A delete
+	// that stops before the OC project goes puts the mark back.
+	if s.repoSvc != nil {
+		if err := s.repoSvc.BeginDelete(ctx, orgName, projectName); err != nil {
+			return err
+		}
+	}
+
 	// Deprovision the project's OC Resource model FIRST — while its design (the
 	// dependency inventory) is still readable and before the OC Project delete,
 	// which does not cascade the logically-owned Resources/bindings. Best-effort.
@@ -549,6 +566,12 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 	// a project that still exists there would strand the project instead.
 	if err := translateHTTPError(s.client.DeleteProject(ctx, orgName, projectName)); err != nil &&
 		!errors.Is(err, ErrProjectNotFound) {
+		if s.repoSvc != nil {
+			if aerr := s.repoSvc.AbortDelete(context.WithoutCancel(ctx), orgName, projectName); aerr != nil {
+				slog.ErrorContext(ctx, "failed to unmark the repo row after a refused delete — the project's sweeps skip it until it is deleted",
+					"org", orgName, "project", projectName, "error", aerr)
+			}
+		}
 		return err
 	}
 
@@ -678,6 +701,11 @@ func applyRepoToProjectStatus(status *gen.ProjectStatus, repo *sourcecontrol.Git
 	status.RepoURL = repo.RepoURL
 
 	switch repo.Status {
+	case sourcecontrol.RepoStatusDeleting:
+		// The project is being deleted: it reads as having no repository.
+		status.RepoStatus = ""
+		status.Phase = "no-repo"
+		return true
 	case "pending", "cloning":
 		status.Phase = "repo-cloning"
 		return true
@@ -689,11 +717,19 @@ func applyRepoToProjectStatus(status *gen.ProjectStatus, repo *sourcecontrol.Git
 	return false
 }
 
+// compensateTimeout bounds the OC delete a failed create compensates with.
+const compensateTimeout = 30 * time.Second
+
 // compensateCreate deletes the OC project a failed create just made, so the
 // failure leaves nothing behind. Best-effort: the create's own error is the
-// one the caller returns, and a failed delete is only logged.
+// one the caller returns, and a failed delete is only logged. It runs on the
+// request's values but not its cancellation: a client that went away, or a
+// gateway that timed the request out, is often WHY the create failed, and
+// the compensation must still run (bounded by compensateTimeout).
 func (s *Service) compensateCreate(ctx context.Context, orgName, projectName, cause string) {
-	if delErr := s.client.DeleteProject(ctx, orgName, projectName); delErr != nil {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensateTimeout)
+	defer cancel()
+	if delErr := s.client.DeleteProject(cctx, orgName, projectName); delErr != nil {
 		slog.ErrorContext(ctx, "failed to compensate project after "+cause,
 			"project", projectName, "error", delErr)
 	}

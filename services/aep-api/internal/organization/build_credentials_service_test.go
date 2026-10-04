@@ -65,6 +65,13 @@ func (f *fakeRepoRepo) GetByOrgAndProjectID(ctx context.Context, ocOrgID, projec
 func (f *fakeRepoRepo) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (f *fakeRepoRepo) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (f *fakeRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (f *fakeRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
 func (f *fakeRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("fakeRepoRepo: ListByOrg not expected in orgcreds tests")
 }

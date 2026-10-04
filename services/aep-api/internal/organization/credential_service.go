@@ -164,6 +164,10 @@ type ConnectRequest struct {
 	GitHubLogin string `json:"githubLogin,omitempty"`
 }
 
+// CredentialStatusActive is an org credential that holds a live GitHub
+// connection (the other statuses are suspended and disconnected).
+const CredentialStatusActive = "active"
+
 // Projection is the JSON shape returned by status / connect / replace. It
 // never contains the token itself.
 type Projection struct {

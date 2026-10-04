@@ -38,14 +38,19 @@ type WebhookService interface {
 	// hook GitHub no longer has all resolve to "nothing to remove" and return
 	// nil. Only a live failure to reach the pod or GitHub is an error, and even
 	// that is best-effort at the call site — the delete is never blocked by
-	// webhook cleanup. A removed hook's id is cleared from the row, so the
-	// sweep's hook repair sees the row as hookless again.
+	// webhook cleanup. The row keeps the id: the project delete drops the
+	// row next, and a disconnect forgets the org's ids with ForgetOrg.
 	Unregister(ctx context.Context, orgID, projectID string) error
 
 	// UnregisterOrg unregisters the hook of every repository row the org has
 	// (the gitpat disconnect, 06 §9). One row's failure does not stop the
 	// others; the failures are returned joined.
 	UnregisterOrg(ctx context.Context, orgID string) error
+
+	// ForgetOrg clears the hook id of every row of the org (the gitpat
+	// disconnect, after its pod is gone): a reconnect's hook repair then
+	// installs a hook for each, whether or not UnregisterOrg reached it.
+	ForgetOrg(ctx context.Context, orgID string) error
 }
 
 // subscribedEvents answers the events every project hook carries. Repo-level
@@ -69,9 +74,13 @@ func NewWebhookService(repo RepoRepository, github WebhookOps, repoSvc RepoServi
 }
 
 func (s *webhookService) Register(ctx context.Context, orgID, projectID string) (*int64, error) {
-	ref, _, err := RepoRefFor(ctx, s.repo, orgID, projectID)
+	ref, row, err := RepoRefFor(ctx, s.repo, orgID, projectID)
 	if err != nil {
 		return nil, err
+	}
+	if row.Status != RepoStatusReady {
+		// Its project's delete has started: no hook is installed for it.
+		return nil, ErrRepoNotFound
 	}
 
 	hookID, err := s.github.RegisterWebhook(ctx, ref, subscribedEvents())
@@ -90,6 +99,15 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 	}
 
 	if err := s.repoSvc.SetWebhookID(ctx, orgID, projectID, hookID); err != nil {
+		if errors.Is(err, ErrRepoNotFound) {
+			// The row went (or its project's delete started) while the hook
+			// was being installed: nothing will ever name this hook again,
+			// so it is removed now rather than left posting for a project
+			// the platform is forgetting.
+			if derr := s.github.DeleteWebhook(ctx, ref, hookID); derr != nil {
+				slog.WarnContext(ctx, "webhook.orphan_left", "org", orgID, "project", projectID, "hookId", hookID, "error", derr)
+			}
+		}
 		return nil, fmt.Errorf("persist webhook id: %w", err)
 	}
 	return &hookID, nil
@@ -125,15 +143,15 @@ func (s *webhookService) Unregister(ctx context.Context, orgID, projectID string
 	if err := s.github.DeleteWebhook(ctx, ref, hookID); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
-	// The row outlives the hook on a disconnect: clear the id so a reconnect's
-	// hook repair (the eventcore sweep ensures hookless ready rows) installs a
-	// new one instead of trusting a hook that is gone.
-	repo.WebhookID = nil
-	if err := s.repo.Update(ctx, repo); err != nil {
-		return fmt.Errorf("clear webhook id: %w", err)
-	}
 	slog.InfoContext(ctx, "webhook unregistered from repo",
 		"org", orgID, "project", projectID, "hookId", hookID)
+	return nil
+}
+
+func (s *webhookService) ForgetOrg(ctx context.Context, orgID string) error {
+	if err := s.repo.ClearWebhookIDs(ctx, orgID); err != nil {
+		return fmt.Errorf("clear org webhook ids: %w", err)
+	}
 	return nil
 }
 

@@ -156,6 +156,40 @@ func (f *fakeRepoRepo) Update(_ context.Context, repo *sourcecontrol.GitReposito
 	return nil
 }
 
+func (f *fakeRepoRepo) SetWebhookIDIfReady(_ context.Context, orgID, projectID string, hookID int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.rows[repoKey(orgID, projectID)]
+	if !ok || r.Status != sourcecontrol.RepoStatusReady {
+		return false, nil
+	}
+	id := hookID
+	r.WebhookID = &id
+	return true, nil
+}
+
+func (f *fakeRepoRepo) ClearWebhookIDs(_ context.Context, orgID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.rows {
+		if r.OrgID == orgID {
+			r.WebhookID = nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepoRepo) SetStatusIf(_ context.Context, orgID, projectID, from, to string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.rows[repoKey(orgID, projectID)]
+	if !ok || r.Status != from {
+		return false, nil
+	}
+	r.Status = to
+	return true, nil
+}
+
 func (f *fakeRepoRepo) DeleteByOrgAndProjectID(_ context.Context, orgID, projectID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

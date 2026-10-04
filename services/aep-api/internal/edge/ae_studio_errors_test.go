@@ -80,7 +80,14 @@ func (repoRows) FindInOrgByFullName(context.Context, string, string) (*sourcecon
 	return nil, nil
 }
 func (repoRows) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) { return nil, nil }
-func (repoRows) ListAll(context.Context) ([]sourcecontrol.GitRepository, error)      { return nil, nil }
+func (repoRows) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (repoRows) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (repoRows) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
+func (repoRows) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) { return nil, nil }
 func (repoRows) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }

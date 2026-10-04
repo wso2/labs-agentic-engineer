@@ -19,12 +19,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/eventcore"
 	"github.com/wso2/aep/aep-api/internal/delivery/runread"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -236,6 +238,33 @@ func (l eventcoreRepoLister) ListAll(ctx context.Context) ([]eventcore.RepoRef, 
 		})
 	}
 	return out, nil
+}
+
+// activeOrgHooks is the sweep's hook repair gated on the org's GitHub
+// connection: an org whose credential is missing or not active gets no hook
+// (ErrAEStudioAbsent, so the sweep passes the org by this tick), whatever
+// its pod's state, so a disconnect is never undone by the repair.
+type activeOrgHooks struct {
+	hooks interface {
+		Register(ctx context.Context, orgID, projectID string) (*int64, error)
+	}
+	creds interface {
+		Status(ctx context.Context, ocOrgID string) (*organization.Projection, error)
+	}
+}
+
+func (a activeOrgHooks) Register(ctx context.Context, orgID, projectID string) (*int64, error) {
+	p, err := a.creds.Status(ctx, orgID)
+	var nf *organization.NotFoundError
+	switch {
+	case errors.As(err, &nf):
+		return nil, sourcecontrol.ErrAEStudioAbsent
+	case err != nil:
+		return nil, fmt.Errorf("%w: read the GitHub connection: %w", sourcecontrol.ErrAEStudioUnavailable, err)
+	case p.Status != organization.CredentialStatusActive:
+		return nil, sourcecontrol.ErrAEStudioAbsent
+	}
+	return a.hooks.Register(ctx, orgID, projectID)
 }
 
 // projectLister projects the same repository onto the deployment converge

@@ -191,11 +191,14 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   and fails the create with the repo error unchanged (05 §7): a name conflict reads as one, and an AE
   Studio answer reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`).
   A create-repo answer lost after GitHub made the repo leaves it standing, and a retry under the same
-  name reads as the name conflict (05 §7 step 2). A missing descriptor costs the user one question from
+  name reads as the name conflict (05 §7 step 2). The compensation runs on the request's values but
+  not its cancellation (bounded, 30 s), so a client that went away still leaves no OC project. A
+  missing descriptor costs the user one question from
   the `/start` skill, nothing more. The OC project delete a compensation makes takes the
   ProjectReleaseBindings the create authored with it (OpenChoreo's Project finalizer).
-- **Delete runs the OC project first, then the platform's half.** A delete that could not reach
-  OpenChoreo stops before it touches anything (an already-gone OC project goes on). Then the run
+- **Delete marks the repo row, runs the OC project first, then the platform's half.** The row is marked
+  `deleting` first (no sweep lists it, no hook id lands on it); a delete that could not reach OpenChoreo
+  puts the mark back and stops before it touches anything else (an already-gone OC project goes on). Then the run
   supervisors, the repo hook, the pod's mirror and reference documents (`DeleteRepo` trashes them
   through the pod before it drops the row that names them), the repo row, the executions and the runs,
   each best-effort. The GitHub repository stays.

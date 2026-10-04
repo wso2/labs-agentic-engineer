@@ -818,7 +818,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// It also repairs the hook of every ready project repository whose row
 	// holds no hook id (a create-time registration that failed, 05 §7).
 	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0).
-		WithHookEnsurer(webhookRegService)
+		WithHookEnsurer(activeOrgHooks{hooks: webhookRegService, creds: credService})
 	// The build half of the same plane. The ExecWatcher below only reports build
 	// terminals for `kind=build` execution rows, and the run loop records its
 	// cycles in run_cycles instead — so for anything the run loop builds, this
@@ -856,10 +856,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Org-scoped GitHub connect/disconnect surface. Tasks are GitHub issues now
 	// (no rows to abandon on disconnect); the disconnect (06 §9) unregisters
 	// the org's repo hooks while its pod still holds the gitpat, deletes its
-	// AE Studio Resource, then severs the credential.
+	// AE Studio Resource, removes the gitpat's and webhook secret's rows and
+	// references, forgets the hook ids, then severs the credential.
 	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService).
-		WithHookUnregistrar(webhookRegService.UnregisterOrg).
-		WithStudioRemover(aeStudio.Remove)
+		WithRepoHooks(webhookRegService).
+		WithStudioRemover(aeStudio).
+		WithGitHubSecretsRemover(secretRefWriter.RemoveGitHubSecrets)
 
 	// Internal S2S runner authorizer — keyed to the CYCLE: the id in the runner
 	// bearer is the run cycle the pod was dispatched for, and the publisher-cc

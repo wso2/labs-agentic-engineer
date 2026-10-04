@@ -505,6 +505,33 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	return name, nil
 }
 
+// RemoveGitHubSecrets removes the org's github-pat and github-webhook-secret
+// (06 §9 gitpat disconnect): each one's row, then its reference by the stored
+// name, under the secret's lock; the PAT's reference columns on the
+// credential row are cleared in between. An unset secret is a no-op, so a
+// re-run finishes what a failed one left, and a reconnect writes both anew
+// (the PAT on the submit, the webhook secret once more as a first submit).
+// ctx must carry the user's ouId claim (the vault path).
+func (w *SecretRefWriter) RemoveGitHubSecrets(ctx context.Context, ocOrgID string) error {
+	if !w.Enabled() || w.orgSecrets == nil {
+		return nil
+	}
+	ouID, err := orgUUIDForSecretLocation(ctx)
+	if err != nil {
+		return fmt.Errorf("secret-ref writer: remove github secrets: %w", err)
+	}
+	clearPATColumns := func() error {
+		return w.orgCredRepo.UpdateColumns(ctx, ocOrgID, clearSecretRefTripletWithWrittenAt())
+	}
+	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, clearPATColumns); err != nil {
+		return fmt.Errorf("secret-ref writer: remove github-pat: %w", err)
+	}
+	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretGitHubWebhookSecret, nil); err != nil {
+		return fmt.Errorf("secret-ref writer: remove github-webhook-secret: %w", err)
+	}
+	return nil
+}
+
 // RestoreGitHubPAT rewrites the org's GitHub PAT under the github-pat
 // reference its row already names (local repair after the vault lost its
 // values): no new reference, nothing repointed. It reports false when the

@@ -211,6 +211,17 @@ func (t *submitThunder) holds(entityID string) string {
 	return t.secrets[entityID]
 }
 
+// submitStudio fakes the disconnect's hook and studio steps (logged).
+type submitStudio struct{ log *submitLog }
+
+func (s submitStudio) UnregisterOrg(context.Context, string) error {
+	s.log.add("unregister-hooks")
+	return nil
+}
+func (s submitStudio) ForgetOrg(context.Context, string) error { s.log.add("forget-hooks"); return nil }
+func (s submitStudio) Remove(context.Context, string) error    { s.log.add("remove-studio"); return nil }
+func (s submitStudio) Release(string)                          {}
+
 type submitConverger struct{ log *submitLog }
 
 func (c submitConverger) Trigger(context.Context, string) { c.log.add("converge") }
@@ -298,7 +309,12 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	if o.noConverger {
 		converger = nil
 	}
-	svc := organization.NewService(credSvc, nil, idpSvc, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
+	// The disconnect cascade: the real gitpat secret removal, the hooks and
+	// the studio faked (logged).
+	studio := submitStudio{log: log}
+	disconnect := organization.NewOrgDisconnectService(credSvc, nil).
+		WithRepoHooks(studio).WithStudioRemover(studio).WithGitHubSecretsRemover(refWriter.RemoveGitHubSecrets)
+	svc := organization.NewService(credSvc, disconnect, idpSvc, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
 		WithAEStudio(orgSecrets, converger)
 
 	// The submit's log lines, captured to check what they say and that no
@@ -464,5 +480,54 @@ func TestSubmit_RunsAfterAnIDPKindSwitch(t *testing.T) {
 	del, ens := slices.Index(calls, "thunder:delete-publisher"), slices.Index(calls, "ensure:publisher")
 	if del < 0 || ens < del {
 		t.Fatalf("the publisher is ensured after the revoke: %v", calls)
+	}
+}
+
+// Connect → disconnect → connect (06 §9): the disconnect removes the gitpat's
+// and the webhook secret's rows and references after the pod, and a
+// reconnect writes both anew (the webhook secret as on a first submit), so
+// the converge gate opens again.
+func TestSubmit_DisconnectRemovesTheGitHubSecretsAndReconnectRestoresThem(t *testing.T) {
+	f := newSubmitFixture(t)
+	ctx := userCtx(submitOU.String())
+	if err := f.patch(ctx, "ghorg", "pat-1"); err != nil {
+		t.Fatal(err)
+	}
+	pat1, hook1 := f.row(t, organization.OrgSecretGitHubPAT), f.row(t, organization.OrgSecretGitHubWebhookSecret)
+	if pat1 == "" || hook1 == "" {
+		t.Fatal("precondition: both rows written")
+	}
+
+	existed, err := f.svc.DisconnectGitProvider(ctx, "default")
+	if err != nil || !existed {
+		t.Fatalf("disconnect: existed=%v err=%v", existed, err)
+	}
+	// ("connect" is the credential transaction's log line: Phase D's.)
+	if calls := f.log.take(); !slices.Equal(calls, []string{"unregister-hooks", "remove-studio", "forget-hooks", "connect"}) {
+		t.Fatalf("disconnect steps %v", calls)
+	}
+	if f.row(t, organization.OrgSecretGitHubPAT) != "" || f.row(t, organization.OrgSecretGitHubWebhookSecret) != "" {
+		t.Fatal("the gitpat rows survived the disconnect")
+	}
+	if f.vault.live[pat1] || f.vault.live[hook1] {
+		t.Fatalf("the gitpat references survived the disconnect: live %v", f.vault.live)
+	}
+	// A second disconnect is the idempotent no-op.
+	if existed, err := f.svc.DisconnectGitProvider(ctx, "default"); err != nil || !existed {
+		t.Fatalf("second disconnect: existed=%v err=%v", existed, err)
+	}
+	f.log.take()
+
+	if err := f.patch(ctx, "ghorg", "pat-2"); err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	for _, step := range []string{"write:github-pat", "write:github-webhook-secret", "converge"} {
+		if !slices.Contains(f.calls, step) {
+			t.Fatalf("reconnect calls %v lack %s", f.calls, step)
+		}
+	}
+	pat2, hook2 := f.row(t, organization.OrgSecretGitHubPAT), f.row(t, organization.OrgSecretGitHubWebhookSecret)
+	if pat2 == "" || hook2 == "" || pat2 == pat1 || hook2 == hook1 || !f.vault.live[pat2] || !f.vault.live[hook2] {
+		t.Fatalf("reconnect rows pat %q→%q hook %q→%q, live %v", pat1, pat2, hook1, hook2, f.vault.live)
 	}
 }

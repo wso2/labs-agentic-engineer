@@ -394,6 +394,9 @@ type fakeOrg struct {
 	secrets map[organization.OrgSecret]string
 	conn    *modelconn.Connection
 	login   string
+	// disconnected flips the credential's status (the row stays);
+	// noCredential is an org with no credential row at all.
+	disconnected, noCredential bool
 }
 
 func (f *fakeOrg) List(_ context.Context, _ string) ([]organization.OrgSecretRef, error) {
@@ -429,10 +432,14 @@ func (f *fakeOrg) Connection(_ context.Context, _ string) (modelconn.Connection,
 func (f *fakeOrg) Status(_ context.Context, org string) (*organization.Projection, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.login == "" {
+	if f.noCredential {
 		return nil, &organization.NotFoundError{What: "org_credentials." + org}
 	}
-	return &organization.Projection{GitHubLogin: f.login}, nil
+	status := organization.CredentialStatusActive
+	if f.disconnected {
+		status = "disconnected"
+	}
+	return &organization.Projection{GitHubLogin: f.login, Status: status}, nil
 }
 
 type fakeClock struct {

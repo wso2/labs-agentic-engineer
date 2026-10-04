@@ -24,6 +24,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
@@ -144,5 +145,72 @@ func TestCreateProject_NoReadyCheckWiredStillCreates(t *testing.T) {
 	}
 	if oc.created != 1 {
 		t.Fatalf("created = %d, want 1", oc.created)
+	}
+}
+
+// A create cut short by its client (or a gateway timeout) still compensates:
+// the OC delete runs on the request's values, not its cancellation (I-2).
+func TestCreateProject_CompensatesOnACancelledRequest(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	deleted := 0
+	oc := &ocmocks.ProjectClientMock{
+		CreateProjectFunc: func(_ context.Context, org string, req *gen.CreateProjectRequest) (*gen.Project, error) {
+			return &gen.Project{Name: req.Name, NamespaceName: org}, nil
+		},
+		DeleteProjectFunc: func(c context.Context, _, _ string) error {
+			if c.Err() != nil {
+				return c.Err()
+			}
+			if _, ok := c.Deadline(); !ok {
+				t.Error("the compensation must be bounded")
+			}
+			deleted++
+			return nil
+		},
+	}
+	repos := &fakeRepoSvc{CreateRepoFunc: func(context.Context, string, string, string, string) (*sourcecontrol.GitRepository, error) {
+		cancel() // the client went away while the pod was creating the repo
+		return nil, context.Canceled
+	}}
+	svc := NewProjectService(oc, repos, &fakeWebhookSvc{}, nil, nil)
+	if _, err := svc.CreateProject(ctx, "default", &gen.CreateProjectRequest{Name: "p"}); err == nil {
+		t.Fatal("want the create to fail")
+	}
+	if deleted != 1 {
+		t.Fatalf("compensations = %d, want 1", deleted)
+	}
+}
+
+// The delete marks the repo row before the OC delete, so no sweep lists the
+// project and no hook id can land on its row while it is torn down; a delete
+// OpenChoreo refuses puts the mark back (I-1).
+func TestDeleteProject_MarksTheRowFirstAndUnmarksOnARefusedDelete(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		ocErr error
+		want  []string
+	}{
+		{"deleted", nil, []string{"begin"}},
+		{"refused", errors.New("openchoreo down"), []string{"begin", "abort"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var order []string
+			repos := &fakeRepoSvc{DeleteRepoFunc: func(context.Context, string, string) error { return nil }}
+			oc := &ocmocks.ProjectClientMock{DeleteProjectFunc: func(context.Context, string, string) error {
+				order = append(order, "oc:"+strings.Join(repos.marks, ","))
+				return tc.ocErr
+			}}
+			svc := NewProjectService(oc, repos, nil, nil, &fakeExecs{})
+			_ = svc.DeleteProject(context.Background(), "default", "p")
+			if len(order) != 1 || order[0] != "oc:begin" {
+				t.Fatalf("OC delete saw marks %v, want the row marked first", order)
+			}
+			if strings.Join(repos.marks, ",") != strings.Join(tc.want, ",") {
+				t.Fatalf("marks = %v, want %v", repos.marks, tc.want)
+			}
+		})
 	}
 }

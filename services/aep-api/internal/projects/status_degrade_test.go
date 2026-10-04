@@ -52,6 +52,13 @@ func (oneRepoRow) FindInOrgByFullName(context.Context, string, string) (*sourcec
 func (oneRepoRow) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (oneRepoRow) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (oneRepoRow) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (oneRepoRow) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
 func (oneRepoRow) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) { return nil, nil }
 func (oneRepoRow) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil

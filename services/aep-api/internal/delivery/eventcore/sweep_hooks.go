@@ -54,6 +54,7 @@ func (h *hookRepair) repair(ctx context.Context, repos []RepoRef) {
 	if h.ensurer == nil {
 		return
 	}
+	h.prune(repos)
 	waiting := map[string]bool{} // orgs whose AE Studio does not serve this pass
 	for _, repo := range repos {
 		if repo.HasHook || waiting[repo.OrgID] || h.isSkipped(repo) {
@@ -70,7 +71,27 @@ func (h *hookRepair) repair(ctx context.Context, repos []RepoRef) {
 			h.skip(repo)
 			slog.WarnContext(ctx, "eventcore.hook_repair_skipped", "org", repo.OrgID, "project", repo.ProjectID, "reason", skipReason(err))
 		default:
-			slog.WarnContext(ctx, "eventcore.hook_repair_failed", "org", repo.OrgID, "project", repo.ProjectID, "error", err)
+			slog.WarnContext(ctx, "eventcore.hook_repair_failed", "org", repo.OrgID, "project", repo.ProjectID,
+				"reason", failReason(err), "status", httpStatusOf(err))
+		}
+	}
+}
+
+// prune forgets the skipped rows the listing no longer has (a deleted
+// project), so a project re-created under the same name is tried again.
+func (h *hookRepair) prune(repos []RepoRef) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.skipped) == 0 {
+		return
+	}
+	listed := make(map[RepoRef]bool, len(repos))
+	for _, r := range repos {
+		listed[skipKey(r)] = true
+	}
+	for k := range h.skipped {
+		if !listed[k] {
+			delete(h.skipped, k)
 		}
 	}
 }
@@ -94,6 +115,29 @@ func (h *hookRepair) skip(repo RepoRef) {
 func skipKey(repo RepoRef) RepoRef {
 	repo.HasHook = false
 	return repo
+}
+
+// failReason names a transient hook-repair failure without the error's text
+// (a GitHub response body can ride it).
+func failReason(err error) string {
+	var rl *sourcecontrol.RateLimitedError
+	switch {
+	case errors.As(err, &rl):
+		return "rate_limited"
+	case httpStatusOf(err) != 0:
+		return "github_error"
+	default:
+		return "failed"
+	}
+}
+
+// httpStatusOf is the GitHub status an error carries, 0 when none.
+func httpStatusOf(err error) int {
+	var se *sourcecontrol.HTTPStatusError
+	if errors.As(err, &se) {
+		return se.StatusCode
+	}
+	return 0
 }
 
 // skipReason names why the hook repair passed a row by, without the error's

@@ -124,34 +124,18 @@ func TestWebhookUnregister_PodFailureIsReported(t *testing.T) {
 	}
 }
 
-// A hook removed from GitHub is no longer on the row: a disconnect removes
-// the org's hooks while its rows stay, and the sweep's hook repair ensures a
-// hook only for a row with no hook id, so a stale id would leave the project
-// without deliveries after a reconnect.
-func TestWebhookUnregister_ClearsTheStoredHookID(t *testing.T) {
-	t.Parallel()
-	wh, repo, _ := newWebhookSvcOnFake(t)
-	registerHook(t, wh)
-
-	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
-		t.Fatalf("Unregister: %v", err)
-	}
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got != nil {
-		t.Fatalf("stored hook id = %d after unregister, want none", *got)
-	}
-}
-
 // UnregisterOrg removes the hook of every project repository the org has
-// (06 §9 disconnect): one that fails does not stop the others, and the
-// failures are reported together.
+// (06 §9 disconnect): one that fails does not stop the others, the failures
+// are reported together, and the ids stay on the rows (ForgetOrg clears
+// them once the pod is gone).
 func TestWebhookUnregisterOrg_RemovesEveryHookAndReportsFailures(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
 	repo.preload(
-		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "a", RepoURL: "https://github.com/acme/a"},
-		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "b", RepoURL: "https://github.com/acme/b"},
-		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: sourcecontrol.SkillsRepoSentinelProjectID, RepoURL: "https://github.com/acme/skills"},
-		&sourcecontrol.GitRepository{OrgID: "org2", ProjectID: "c", RepoURL: "https://github.com/other/c"},
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "a", RepoURL: "https://github.com/acme/a", Status: "ready"},
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "b", RepoURL: "https://github.com/acme/b", Status: "ready"},
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: sourcecontrol.SkillsRepoSentinelProjectID, RepoURL: "https://github.com/acme/skills", Status: "ready"},
+		&sourcecontrol.GitRepository{OrgID: "org2", ProjectID: "c", RepoURL: "https://github.com/other/c", Status: "ready"},
 	)
 	f := aestudiotest.New()
 	repoSvc := sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "acme"}, "public")
@@ -162,6 +146,7 @@ func TestWebhookUnregisterOrg_RemovesEveryHookAndReportsFailures(t *testing.T) {
 		}
 	}
 	a := sourcecontrol.RepoRef{Org: "org1", Owner: "acme", Repo: "a", DefaultBranch: "main"}
+	c := sourcecontrol.RepoRef{Org: "org2", Owner: "other", Repo: "c", DefaultBranch: "main"}
 
 	if err := wh.UnregisterOrg(context.Background(), "org1"); err != nil {
 		t.Fatalf("UnregisterOrg: %v", err)
@@ -169,31 +154,93 @@ func TestWebhookUnregisterOrg_RemovesEveryHookAndReportsFailures(t *testing.T) {
 	if hooks := f.HookEvents(a); len(hooks) != 0 {
 		t.Fatalf("org1/a hooks = %v, want none", hooks)
 	}
-	if got := storedWebhookID(t, repo, "org1", "b"); got != nil {
-		t.Fatalf("org1/b keeps hook id %d", *got)
-	}
-	if got := storedWebhookID(t, repo, "org2", "c"); got == nil {
-		t.Fatal("another org's hook was removed")
+	if hooks := f.HookEvents(c); len(hooks) != 1 {
+		t.Fatalf("another org's hook was removed: %v", hooks)
 	}
 
 	// A pod that fails is reported, and every row is still tried.
-	for _, p := range []string{"a", "b"} {
-		if _, err := wh.Register(context.Background(), "org1", p); err != nil {
-			t.Fatalf("re-register %s: %v", p, err)
-		}
-	}
 	f.FailOp(aestudiotest.OpDeleteWebhook, sourcecontrol.ErrAEStudioUnavailable)
 	err := wh.UnregisterOrg(context.Background(), "org1")
 	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
 		t.Fatalf("UnregisterOrg err = %v, want the pod's failure reported", err)
 	}
 	deletes := 0
-	for _, c := range f.Calls() {
-		if c.Op == aestudiotest.OpDeleteWebhook && c.Ref.Org == "org1" {
+	for _, call := range f.Calls() {
+		if call.Op == aestudiotest.OpDeleteWebhook && call.Ref.Org == "org1" {
 			deletes++
 		}
 	}
 	if deletes != 4 {
 		t.Fatalf("delete-webhook calls for org1 = %d, want 4 (2 + both rows retried)", deletes)
+	}
+}
+
+// ForgetOrg clears every hook id of the org and no other org's, so a
+// reconnect's hook repair installs a hook for each row whether or not the
+// disconnect reached GitHub.
+func TestWebhookForgetOrg_ClearsOnlyThatOrgsIDs(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	one, two := int64(1), int64(2)
+	repo.preload(
+		&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "a", RepoURL: "https://github.com/acme/a", Status: "ready", WebhookID: &one},
+		&sourcecontrol.GitRepository{OrgID: "org2", ProjectID: "c", RepoURL: "https://github.com/other/c", Status: "ready", WebhookID: &two},
+	)
+	f := aestudiotest.New()
+	wh := sourcecontrol.NewWebhookService(repo, f, sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "acme"}, "public"))
+	if err := wh.ForgetOrg(context.Background(), "org1"); err != nil {
+		t.Fatalf("ForgetOrg: %v", err)
+	}
+	if got := storedWebhookID(t, repo, "org1", "a"); got != nil {
+		t.Fatalf("org1/a keeps hook id %d", *got)
+	}
+	if got := storedWebhookID(t, repo, "org2", "c"); got == nil {
+		t.Fatal("another org's hook id was cleared")
+	}
+	if n := len(f.Calls()); n != 0 {
+		t.Fatalf("ForgetOrg made %d pod calls, want 0", n)
+	}
+}
+
+// A row whose project's delete has started takes no hook (the sweep's hook
+// repair must never install one for a project being deleted).
+func TestWebhookRegister_RefusesARowBeingDeleted(t *testing.T) {
+	t.Parallel()
+	wh, repo, f := newWebhookSvcOnFake(t)
+	if _, err := repo.SetStatusIf(context.Background(), "org1", "proj1", "ready", sourcecontrol.RepoStatusDeleting); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wh.Register(context.Background(), "org1", "proj1"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("Register on a deleting row: %v, want ErrRepoNotFound", err)
+	}
+	if n := len(f.Calls()); n != 0 {
+		t.Fatalf("Register reached the pod %d times for a deleting row", n)
+	}
+}
+
+// goneOnPersist is a row the project delete marks (or drops) while the hook
+// is being installed: the id cannot be stored.
+type goneOnPersist struct{ *fakeRepoRepo }
+
+func (goneOnPersist) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	return false, nil
+}
+
+// The delete window: a registration whose row is marked or dropped between
+// the hook's install and the id's store removes the hook it installed, so no
+// hook outlives the row that names it.
+func TestWebhookRegister_RowGoneMidRegisterRemovesTheHook(t *testing.T) {
+	t.Parallel()
+	base := newFakeRepoRepo()
+	base.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"})
+	repo := goneOnPersist{base}
+	f := aestudiotest.New()
+	wh := sourcecontrol.NewWebhookService(repo, f, sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "acme"}, "public"))
+
+	if _, err := wh.Register(context.Background(), "org1", "proj1"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("Register err = %v, want ErrRepoNotFound", err)
+	}
+	if hooks := f.HookEvents(widgets); len(hooks) != 0 {
+		t.Fatalf("hooks = %v, want the installed one removed", hooks)
 	}
 }

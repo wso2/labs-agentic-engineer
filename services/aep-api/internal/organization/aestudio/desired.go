@@ -181,6 +181,16 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 	if set[organization.OrgSecretGitHubPAT] == "" {
 		return d, notReady(StateAbsent, "no GitHub token")
 	}
+	// The gitpat's row alone is not enough: a disconnected (or suspended)
+	// credential is no GitHub connection, whatever rows a half-run
+	// disconnect left (06 §9), so nothing converges a pod for it.
+	login, active, err := s.githubConnection(ctx, org)
+	if err != nil {
+		return d, err
+	}
+	if !active {
+		return d, notReady(StateAbsent, "GitHub is not connected")
+	}
 	if err := s.configured(); err != nil {
 		return d, err
 	}
@@ -214,9 +224,7 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 	if d.Params.ModelConnection, err = s.modelConnection(ctx, org); err != nil {
 		return d, err
 	}
-	if d.Params.GitHubOwner, err = s.githubOwner(ctx, org); err != nil {
-		return d, err
-	}
+	d.Params.GitHubOwner = login
 	tools, agent, err := secretSets(ctx, s.oc, org, set)
 	if err != nil {
 		return d, err
@@ -329,17 +337,18 @@ func (s *Service) modelConnection(ctx context.Context, org string) (string, erro
 	return string(raw), nil
 }
 
-// githubOwner is the org's GitHub login, "" when it has no GitHub connection.
-func (s *Service) githubOwner(ctx context.Context, org string) (string, error) {
+// githubConnection is the org's GitHub login and whether its credential is
+// active; no credential row is ("", false).
+func (s *Service) githubConnection(ctx context.Context, org string) (login string, active bool, err error) {
 	p, err := s.github.Status(ctx, org)
 	var nf *organization.NotFoundError
 	if errors.As(err, &nf) {
-		return "", nil
+		return "", false, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("read github connection: %w", err)
+		return "", false, fmt.Errorf("read github connection: %w", err)
 	}
-	return p.GitHubLogin, nil
+	return p.GitHubLogin, p.Status == organization.CredentialStatusActive, nil
 }
 
 // envConfigsOf maps the install config onto the RT's environmentConfigs.

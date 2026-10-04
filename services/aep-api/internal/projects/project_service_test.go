@@ -52,6 +52,7 @@ type fakeRepoSvc struct {
 	GetRepoFunc    func(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 	DeleteRepoFunc func(ctx context.Context, orgID, projectID string) error
 	ListByOrgFunc  func(ctx context.Context, orgID string) ([]sourcecontrol.GitRepository, error)
+	marks          []string
 }
 
 func (f *fakeRepoSvc) CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*sourcecontrol.GitRepository, error) {
@@ -78,6 +79,18 @@ func (f *fakeRepoSvc) GetRepo(ctx context.Context, orgID, projectID string) (*so
 func (f *fakeRepoSvc) SetWebhookID(context.Context, string, string, int64) error {
 	panic("fakeRepoSvc: SetWebhookID not expected in project tests")
 }
+
+// BeginDelete / AbortDelete record the delete mark; trace, when set, orders
+// them against the other teardown steps.
+func (f *fakeRepoSvc) BeginDelete(context.Context, string, string) error {
+	f.marks = append(f.marks, "begin")
+	return nil
+}
+
+func (f *fakeRepoSvc) AbortDelete(context.Context, string, string) error {
+	f.marks = append(f.marks, "abort")
+	return nil
+}
 func (f *fakeRepoSvc) DeleteRepo(ctx context.Context, orgID, projectID string) error {
 	if f.DeleteRepoFunc == nil {
 		panic("fakeRepoSvc: DeleteRepo not set")
@@ -102,10 +115,6 @@ func (f *fakeWebhookSvc) Register(ctx context.Context, orgID, projectID string) 
 		return nil, nil
 	}
 	return f.RegisterFunc(ctx, orgID, projectID)
-}
-
-func (f *fakeWebhookSvc) UnregisterOrg(context.Context, string) error {
-	panic("fakeWebhookSvc: UnregisterOrg not expected in project tests")
 }
 
 func (f *fakeWebhookSvc) Unregister(ctx context.Context, orgID, projectID string) error {

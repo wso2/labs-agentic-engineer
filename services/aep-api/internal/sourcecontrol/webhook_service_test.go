@@ -33,7 +33,7 @@ import (
 func newWebhookSvcOnFake(t *testing.T) (sourcecontrol.WebhookService, *fakeRepoRepo, *aestudiotest.Fake) {
 	t.Helper()
 	repo := newFakeRepoRepo()
-	repo.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets"})
+	repo.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"})
 	f := aestudiotest.New()
 	repoSvc := sourcecontrol.NewRepoService(repo, f, f, fakeOwners{owner: "acme"}, "public")
 	return sourcecontrol.NewWebhookService(repo, f, repoSvc), repo, f

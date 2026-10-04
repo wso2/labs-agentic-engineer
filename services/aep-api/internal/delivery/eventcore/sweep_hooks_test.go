@@ -201,3 +201,38 @@ func TestSweep_NoHookEnsurerRepairsNothing(t *testing.T) {
 		t.Fatalf("sweep: %v", err)
 	}
 }
+
+// A transient failure logs a code and the GitHub status, never the error's
+// text (a response body can ride it).
+func TestSweep_HookRepairFailureLogsNoErrorText(t *testing.T) {
+	logs := captureHookLogs(t)
+	h := newHarness(t)
+	hooks := &hookSpy{fail: map[string]error{"p": &sourcecontrol.HTTPStatusError{StatusCode: 502, Body: "upstream said secret-ish things"}}}
+	_ = hookSweep(h, hooks, RepoRef{OrgID: "default", ProjectID: "p", FullName: "acme/p"}).Once(context.Background())
+	failed := logs.events(t, "eventcore.hook_repair_failed")
+	if len(failed) != 1 || failed[0]["reason"] != "github_error" || failed[0]["status"] != float64(502) {
+		t.Fatalf("hook_repair_failed = %v", failed)
+	}
+	if _, ok := failed[0]["error"]; ok {
+		t.Fatalf("the error text was logged: %v", failed[0])
+	}
+}
+
+// A row skipped for good is forgotten once it leaves the listing (its project
+// was deleted), so a project re-created under the same name is tried again.
+func TestSweep_HookRepairForgetsASkippedRowThatLeftTheListing(t *testing.T) {
+	h := newHarness(t)
+	gone := RepoRef{OrgID: "default", ProjectID: "p", FullName: "acme/p"}
+	hooks := &hookSpy{fail: map[string]error{"p": &sourcecontrol.HTTPStatusError{StatusCode: 404}}}
+	lister := &fakeRepoLister{repos: []RepoRef{gone}}
+	s := NewSweep(h.events, lister, 0).WithHookEnsurer(hooks)
+	_ = s.Once(context.Background()) // skipped for good
+	lister.repos = nil
+	_ = s.Once(context.Background()) // the project was deleted
+	lister.repos = []RepoRef{gone}
+	hooks.fail = nil
+	_ = s.Once(context.Background()) // re-created under the same name
+	if got := hooks.ensured(); !slices.Equal(got, []string{"p", "p"}) {
+		t.Fatalf("ensured %v, want the re-created project tried again", got)
+	}
+}

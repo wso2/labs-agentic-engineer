@@ -185,10 +185,16 @@ S2S credentials-refresh.*
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
 - **A gitpat disconnect takes the org's AE Studio down before the credential goes** (06 §9,
   `OrgDisconnectService`): the repo hooks are unregistered through the pod while it still holds the
-  gitpat (best effort, `WebhookService.UnregisterOrg`), then the Resource `ae-studio` is deleted
-  (`aestudio.Service.Remove`; OpenChoreo's finalizer takes its binding, release, pod, clones and
-  reference documents with it; the Project and ResourceType stay), then Phase D. A Resource delete that
-  fails stops the cascade before Phase D, so a retry repeats it.
+  gitpat (best effort, `WebhookService.UnregisterOrg`); the Resource `ae-studio` is deleted
+  (`aestudio.Service.Remove`, which holds the org's converges and waits out a running one until the
+  cascade ends; OpenChoreo's finalizer takes its binding, release, pod, clones and reference documents
+  with it; the Project and ResourceType stay); the `github-pat` and `github-webhook-secret` rows and
+  references are removed (`SecretRefWriter.RemoveGitHubSecrets`); the hook ids are forgotten
+  (`ForgetOrg`); then Phase D. Any of the last four failing stops the cascade with the credential
+  active, and a retry repeats it (every step treats "already gone" as done). The converge gate needs
+  both the gitpat row and an ACTIVE credential, and the sweep's hook repair needs the active credential,
+  so nothing brings the pod or the hooks back for a disconnected org; a reconnect writes both secrets
+  anew (the webhook secret as on a first submit) and converges.
 - **AE Studio converges on drift, single-flight per org** (`aestudio`, ticket 08 §9-§10). The Ensure
   is Project `ae-system` → PRB in the write target (`WriteTargets.Resolve(org, "ae-system")`) →
   ResourceType `ae-studio` (PUT in place, annotated `aep.wso2.com/ae-studio-template-hash`, never

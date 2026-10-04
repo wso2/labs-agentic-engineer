@@ -45,8 +45,16 @@ type RepoService interface {
 	ListByOrg(ctx context.Context, orgID string) ([]GitRepository, error)
 	// SetWebhookID is called by the webhook registration service after a hook
 	// is provisioned for the repo on GitHub. Stored alongside the repo record
-	// so cleanup can deregister.
+	// so cleanup can deregister. Only a `ready` row takes it: a row that is
+	// gone or whose project is being deleted is ErrRepoNotFound.
 	SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error
+	// BeginDelete marks the project's row `deleting` before its teardown
+	// starts, so no sweep lists it and no hook id lands on it from then on.
+	// No row (or one already marked) is success.
+	BeginDelete(ctx context.Context, orgID, projectID string) error
+	// AbortDelete puts a `deleting` row back to `ready` (a teardown that
+	// stopped before it changed anything).
+	AbortDelete(ctx context.Context, orgID, projectID string) error
 	// DeleteRepo trashes the org pod's mirror and reference documents of the
 	// repository, then drops the repo record. It ensures ABSENCE rather than
 	// performing a removal, so a project with no repo row — never
@@ -145,7 +153,7 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
 		DefaultBranch: defaultBranchFallback, // the pod initialises a main branch + base tree
-		Status:        "ready",
+		Status:        RepoStatusReady,
 		RepoSlug:      repoSlug,
 	}
 
@@ -192,7 +200,7 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
 		DefaultBranch: defaultBranchFallback,
-		Status:        "ready", // the mirror is created lazily on first access
+		Status:        RepoStatusReady, // the mirror is created lazily on first access
 		RepoSlug:      RepoSlugFor(cloneURL),
 	}
 	if err := s.repo.Create(ctx, gitRepo); err != nil {
@@ -240,16 +248,28 @@ func (s *repoService) ListByOrg(ctx context.Context, orgID string) ([]GitReposit
 }
 
 func (s *repoService) SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error {
-	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
+	took, err := s.repo.SetWebhookIDIfReady(ctx, orgID, projectID, hookID)
 	if err != nil {
-		return fmt.Errorf("get repo: %w", err)
+		return fmt.Errorf("store webhook id: %w", err)
 	}
-	if repo == nil {
+	if !took {
 		return ErrRepoNotFound
 	}
-	id := hookID
-	repo.WebhookID = &id
-	return s.repo.Update(ctx, repo)
+	return nil
+}
+
+func (s *repoService) BeginDelete(ctx context.Context, orgID, projectID string) error {
+	if _, err := s.repo.SetStatusIf(ctx, orgID, projectID, RepoStatusReady, RepoStatusDeleting); err != nil {
+		return fmt.Errorf("mark repo deleting: %w", err)
+	}
+	return nil
+}
+
+func (s *repoService) AbortDelete(ctx context.Context, orgID, projectID string) error {
+	if _, err := s.repo.SetStatusIf(ctx, orgID, projectID, RepoStatusDeleting, RepoStatusReady); err != nil {
+		return fmt.Errorf("unmark repo deleting: %w", err)
+	}
+	return nil
 }
 
 func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) error {

@@ -27,6 +27,14 @@ import (
 // from real project repos). See docs/design/skills-repo-storage.md §10.1.
 const SkillsRepoSentinelProjectID = "_skills"
 
+// Repository row statuses this package writes. A `deleting` row belongs to a
+// project whose delete has started: no sweep lists it (ListAllReady) and no
+// hook id is stored on it (SetWebhookIDIfReady).
+const (
+	RepoStatusReady    = "ready"
+	RepoStatusDeleting = "deleting"
+)
+
 // IsPlatformRepo reports whether projectID is a reserved platform repository
 // row (the skills repo, the resource-docs repo) rather than a project's: they
 // live under project ids that start with "_", which an OpenChoreo project

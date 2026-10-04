@@ -62,6 +62,13 @@ func (s *stubRepoRepo) GetByOrgAndSlug(context.Context, string, string) (*source
 func (s *stubRepoRepo) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (s *stubRepoRepo) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (s *stubRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (s *stubRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
 func (s *stubRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("stubRepoRepo: ListByOrg not expected in artifacts tests")
 }

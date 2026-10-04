@@ -136,3 +136,32 @@ func TestDeleteRepo_TrashFailureStillDropsTheRow(t *testing.T) {
 		t.Fatalf("row survived a failed trash: %v", err)
 	}
 }
+
+// BeginDelete marks a ready row deleting (no sweep lists it, no hook id lands
+// on it); AbortDelete puts it back. No row is success for both.
+func TestRepoDeleteMark_BeginAndAbort(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	repo.put(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/test-org/proj1.git", Status: "ready"})
+	pod := aestudiotest.New()
+	svc := sourcecontrol.NewRepoService(repo, pod, pod, fakeOwners{owner: "test-org"}, "private")
+
+	if err := svc.BeginDelete(testContext(), "org1", "proj1"); err != nil {
+		t.Fatal(err)
+	}
+	if row, _ := svc.GetRepo(testContext(), "org1", "proj1"); row.Status != sourcecontrol.RepoStatusDeleting {
+		t.Fatalf("status %q, want deleting", row.Status)
+	}
+	if err := svc.SetWebhookID(testContext(), "org1", "proj1", 5); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("SetWebhookID on a deleting row: %v, want ErrRepoNotFound", err)
+	}
+	if err := svc.AbortDelete(testContext(), "org1", "proj1"); err != nil {
+		t.Fatal(err)
+	}
+	if row, _ := svc.GetRepo(testContext(), "org1", "proj1"); row.Status != sourcecontrol.RepoStatusReady {
+		t.Fatalf("status %q, want ready", row.Status)
+	}
+	if err := svc.BeginDelete(testContext(), "org1", "none"); err != nil {
+		t.Fatalf("BeginDelete with no row: %v", err)
+	}
+}

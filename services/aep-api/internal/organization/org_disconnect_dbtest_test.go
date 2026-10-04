@@ -33,7 +33,10 @@ package organization_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 
@@ -126,68 +129,100 @@ func TestOrgDisconnect_AlreadyDisconnected_NoOp_DB(t *testing.T) {
 	}
 }
 
-// 06 §9 gitpat disconnect, in order: the repo hooks are unregistered while
-// the pod still holds the gitpat (best effort), then the org's AE Studio
-// Resource is deleted, then Phase D removes the credential. Each step reads
-// the credential row to prove it ran before Phase D.
-func TestDisconnect_UnregistersHooksFirst(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
+// disconnectSteps records the 06 §9 steps with the credential status each
+// one saw, proving all ran before Phase D.
+type disconnectSteps struct {
+	t      *testing.T
+	db     *gorm.DB
+	order  []string
+	errs   map[string]error
+	holder bool // Remove called and Release not yet
+}
 
+func (d *disconnectSteps) step(name string) error {
+	d.order = append(d.order, name+":"+getRow(d.t, d.db, "acme").Status)
+	return d.errs[name]
+}
+
+func (d *disconnectSteps) UnregisterOrg(context.Context, string) error { return d.step("hooks") }
+func (d *disconnectSteps) ForgetOrg(context.Context, string) error     { return d.step("forget") }
+func (d *disconnectSteps) Remove(context.Context, string) error {
+	d.holder = true
+	return d.step("studio")
+}
+func (d *disconnectSteps) Release(string) {
+	d.holder = false
+	d.order = append(d.order, "release")
+}
+func (d *disconnectSteps) removeSecrets(context.Context, string) error { return d.step("secrets") }
+
+func newDisconnectSteps(t *testing.T, db *gorm.DB, errs map[string]error) *disconnectSteps {
+	return &disconnectSteps{t: t, db: db, errs: errs}
+}
+
+func connectedAcme(t *testing.T) (*gorm.DB, *organization.CredentialService) {
+	t.Helper()
+	db := dbtest.New(t)
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
 	credSvc, _ := newCredSvcDB(t, db, gh)
-	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
+	if _, err := credSvc.Connect(context.Background(), "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
+	return db, credSvc
+}
 
-	var order []string
-	step := func(name string, err error) func(context.Context, string) error {
-		return func(_ context.Context, org string) error {
-			if org != "acme" {
-				t.Errorf("%s: org %q, want acme", name, org)
-			}
-			order = append(order, name+":"+getRow(t, db, "acme").Status)
-			return err
-		}
-	}
+// 06 §9 gitpat disconnect, in order, all before Phase D: the hooks (best
+// effort, so a failure goes on), the AE Studio Resource (held until the
+// cascade ends), the gitpat rows and references, the hook ids.
+func TestDisconnect_UnregistersHooksFirst(t *testing.T) {
+	t.Parallel()
+	db, credSvc := connectedAcme(t)
+	steps := newDisconnectSteps(t, db, map[string]error{"hooks": errors.New("pod restarting")})
 	svc := organization.NewOrgDisconnectService(credSvc, nil).
-		WithHookUnregistrar(step("hooks", errors.New("pod restarting"))).
-		WithStudioRemover(step("studio", nil))
+		WithRepoHooks(steps).WithStudioRemover(steps).WithGitHubSecretsRemover(steps.removeSecrets)
 
-	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); err != nil {
+	if err := svc.Disconnect(context.Background(), "acme", "manual.disconnect"); err != nil {
 		t.Fatalf("disconnect: a failed hook unregister is best effort, got %v", err)
 	}
-	want := []string{"hooks:active", "studio:active"}
-	if len(order) != len(want) || order[0] != want[0] || order[1] != want[1] {
-		t.Fatalf("order = %v, want %v (both before Phase D)", order, want)
+	want := []string{"hooks:active", "studio:active", "secrets:active", "forget:active", "release"}
+	if !slices.Equal(steps.order, want) {
+		t.Fatalf("order = %v, want %v", steps.order, want)
 	}
 	if row := getRow(t, db, "acme"); row.Status != "disconnected" {
 		t.Fatalf("credential row status = %q, want disconnected", row.Status)
 	}
 }
 
-// A Resource that could not be deleted fails the disconnect before Phase D:
-// the credential stays, so a retry repeats the cascade rather than leaving a
-// pod running with the gitpat of an org that reads as disconnected.
-func TestDisconnect_StudioRemoveFailureStopsBeforePhaseD(t *testing.T) {
+// A step after the hooks that fails stops the cascade before Phase D (the
+// credential stays, a retry repeats it) and still releases the studio hold.
+func TestDisconnect_AFailedStepStopsBeforePhaseD(t *testing.T) {
 	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
+	for _, failing := range []string{"studio", "secrets", "forget"} {
+		t.Run(failing, func(t *testing.T) {
+			t.Parallel()
+			db, credSvc := connectedAcme(t)
+			boom := errors.New(failing + " failed")
+			steps := newDisconnectSteps(t, db, map[string]error{failing: boom})
+			svc := organization.NewOrgDisconnectService(credSvc, nil).
+				WithRepoHooks(steps).WithStudioRemover(steps).WithGitHubSecretsRemover(steps.removeSecrets)
 
-	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	credSvc, _ := newCredSvcDB(t, db, gh)
-	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	boom := errors.New("openchoreo unreachable")
-	svc := organization.NewOrgDisconnectService(credSvc, nil).
-		WithStudioRemover(func(context.Context, string) error { return boom })
-
-	if err := svc.Disconnect(ctx, "acme", "manual.disconnect"); !errors.Is(err, boom) {
-		t.Fatalf("disconnect err = %v, want the Resource delete failure", err)
-	}
-	if row := getRow(t, db, "acme"); row.Status != "active" {
-		t.Fatalf("credential row status = %q, want active (Phase D not run)", row.Status)
+			if err := svc.Disconnect(context.Background(), "acme", "manual.disconnect"); !errors.Is(err, boom) {
+				t.Fatalf("disconnect err = %v, want %v", err, boom)
+			}
+			if row := getRow(t, db, "acme"); row.Status != "active" {
+				t.Fatalf("credential row status = %q, want active (Phase D not run)", row.Status)
+			}
+			if steps.holder {
+				t.Fatal("the studio hold outlived the cascade")
+			}
+			// The retry repeats the whole cascade and finishes it.
+			steps.errs = nil
+			if err := svc.Disconnect(context.Background(), "acme", "manual.disconnect"); err != nil {
+				t.Fatalf("retry: %v", err)
+			}
+			if row := getRow(t, db, "acme"); row.Status != "disconnected" {
+				t.Fatalf("after the retry: status %q, want disconnected", row.Status)
+			}
+		})
 	}
 }

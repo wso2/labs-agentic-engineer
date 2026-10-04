@@ -168,9 +168,16 @@ type Service struct {
 	// statusFailures is, per org, the desired state Status last logged a
 	// failed answer for, so a polling console logs it once.
 	statusFailures map[string]string
+	// held are the orgs whose AE Studio is being removed (Remove until
+	// Release): no converge starts for them.
+	held map[string]bool
 }
 
-type flight struct{ again bool }
+// flight is one org's running converge loop; done closes when it ends.
+type flight struct {
+	again bool
+	done  chan struct{}
+}
 
 // failure is a failed converge: when, and the desired state it was given
 // ("" when the converge failed before it could compute one).
@@ -186,7 +193,7 @@ func New(d Deps) *Service {
 		connections: d.Connections, github: d.GitHub,
 		oc: d.OC, now: time.Now,
 		flights: map[string]*flight{}, failures: map[string]failure{}, converged: map[string]time.Time{},
-		statusFailures: map[string]string{},
+		statusFailures: map[string]string{}, held: map[string]bool{},
 	}
 }
 
@@ -199,12 +206,16 @@ func New(d Deps) *Service {
 // request that started it.
 func (s *Service) Trigger(ctx context.Context, org string) {
 	s.mu.Lock()
+	if s.held[org] {
+		s.mu.Unlock()
+		return
+	}
 	if f, ok := s.flights[org]; ok {
 		f.again = true
 		s.mu.Unlock()
 		return
 	}
-	f := &flight{}
+	f := &flight{done: make(chan struct{})}
 	s.flights[org] = f
 	s.mu.Unlock()
 	go s.fly(auth.WithServiceIdentity(context.WithoutCancel(ctx)), org, f)
@@ -223,8 +234,9 @@ func (s *Service) fly(ctx context.Context, org string, f *flight) {
 			delete(s.failures, org)
 			s.converged[org] = s.now()
 		}
-		if !f.again {
+		if !f.again || s.held[org] {
 			delete(s.flights, org)
+			close(f.done)
 			s.mu.Unlock()
 			return
 		}
