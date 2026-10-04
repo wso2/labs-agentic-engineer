@@ -191,12 +191,6 @@ type ProjectSnapshot struct {
 // ProjectSnapshotKnown defines model for ProjectSnapshot.Known.
 type ProjectSnapshotKnown bool
 
-// RoomToken defines model for RoomToken.
-type RoomToken struct {
-	ExpiresAt time.Time `json:"expiresAt"`
-	Token     string    `json:"token"`
-}
-
 // SkillsSnapshot defines model for SkillsSnapshot.
 type SkillsSnapshot struct {
 	SkillsSha string `json:"skillsSha"`
@@ -270,9 +264,6 @@ type ServerInterface interface {
 	// Resolve a project and write its snapshots
 	// (GET /projects/{projectName})
 	LookupProject(w http.ResponseWriter, r *http.Request, projectName ProjectName, params LookupProjectParams)
-	// Mint a collab room token for the agent
-	// (POST /room-token)
-	MintRoomToken(w http.ResponseWriter, r *http.Request)
 	// Write the Org skills snapshot
 	// (GET /skills)
 	GetSkills(w http.ResponseWriter, r *http.Request)
@@ -337,20 +328,6 @@ func (siw *ServerInterfaceWrapper) LookupProject(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.LookupProject(w, r, projectName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// MintRoomToken operation middleware
-func (siw *ServerInterfaceWrapper) MintRoomToken(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.MintRoomToken(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -510,7 +487,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/mcp", wrapper.CallMcp)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/projects/{projectName}", wrapper.LookupProject)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/room-token", wrapper.MintRoomToken)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/skills", wrapper.GetSkills)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/turn-usage", wrapper.PostTurnUsage)
 
@@ -674,57 +650,6 @@ func (response LookupProject503ApplicationProblemPlusJSONResponse) VisitLookupPr
 	return err
 }
 
-type MintRoomTokenRequestObject struct {
-}
-
-type MintRoomTokenResponseObject interface {
-	VisitMintRoomTokenResponse(w http.ResponseWriter) error
-}
-
-type MintRoomToken200JSONResponse RoomToken
-
-func (response MintRoomToken200JSONResponse) VisitMintRoomTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MintRoomToken502ApplicationProblemPlusJSONResponse struct {
-	ProblemApplicationProblemPlusJSONResponse
-}
-
-func (response MintRoomToken502ApplicationProblemPlusJSONResponse) VisitMintRoomTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(502)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type MintRoomToken503ApplicationProblemPlusJSONResponse Problem
-
-func (response MintRoomToken503ApplicationProblemPlusJSONResponse) VisitMintRoomTokenResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(503)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 type GetSkillsRequestObject struct {
 }
 
@@ -830,9 +755,6 @@ type StrictServerInterface interface {
 	// Resolve a project and write its snapshots
 	// (GET /projects/{projectName})
 	LookupProject(ctx context.Context, request LookupProjectRequestObject) (LookupProjectResponseObject, error)
-	// Mint a collab room token for the agent
-	// (POST /room-token)
-	MintRoomToken(ctx context.Context, request MintRoomTokenRequestObject) (MintRoomTokenResponseObject, error)
 	// Write the Org skills snapshot
 	// (GET /skills)
 	GetSkills(ctx context.Context, request GetSkillsRequestObject) (GetSkillsResponseObject, error)
@@ -928,30 +850,6 @@ func (sh *strictHandler) LookupProject(w http.ResponseWriter, r *http.Request, p
 	}
 }
 
-// MintRoomToken operation middleware
-func (sh *strictHandler) MintRoomToken(w http.ResponseWriter, r *http.Request) {
-	var request MintRoomTokenRequestObject
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.MintRoomToken(ctx, request.(MintRoomTokenRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "MintRoomToken")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(MintRoomTokenResponseObject); ok {
-		if err := validResponse.VisitMintRoomTokenResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // GetSkills operation middleware
 func (sh *strictHandler) GetSkills(w http.ResponseWriter, r *http.Request) {
 	var request GetSkillsRequestObject
@@ -1012,51 +910,49 @@ func (sh *strictHandler) PostTurnUsage(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"AAAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

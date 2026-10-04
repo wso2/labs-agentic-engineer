@@ -38,8 +38,7 @@ import (
 // ae-design-agent is its only caller (the socket's emptyDir is mounted into
 // that container and this one only, and the socket is 0660), so there is no
 // token gate. It is the in-pod agent's only door out of the pod: POST /mcp
-// (the JSON-RPC tool surface, mcp.Server), POST /room-token (the collab room
-// token), and GET /projects/{p} and GET /skills (the snapshots a turn reads,
+// (the JSON-RPC tool surface, mcp.Server), GET /projects/{p} and GET /skills (the snapshots a turn reads,
 // mcp_sock_projects.go), and POST /turn-usage (a finished turn's record,
 // handed to the usage outbox).
 
@@ -49,22 +48,13 @@ const (
 	mcpSocketBodyBytes int64 = 1 << 20
 	// mcpSocketRequestBudget bounds one MCP socket request: a forwarded call
 	// is one aep-api call (15 s, platform.aepAPITimeout, its 401 retry
-	// included), a remote-git call one GitHub read (15 s, mcp.remoteGitTimeout)
-	// and a room token one token-endpoint call (10 s).
+	// included) and a remote-git call one GitHub read (15 s, mcp.remoteGitTimeout).
 	mcpSocketRequestBudget = 20 * time.Second
 )
 
-// RoomTokens mints the token the in-pod agent joins its collab room with: the
-// ae-studio-<org> client's (platform.ClientCredentials), the only client
-// ae-collab's local listener accepts.
-type RoomTokens interface {
-	TokenWithExpiry(ctx context.Context) (string, time.Time, error)
-}
-
 // MCPSocketDeps is what the MCP socket's routes need.
 type MCPSocketDeps struct {
-	MCP        mcp.Server
-	RoomTokens RoomTokens
+	MCP mcp.Server
 	// Snapshots resolves a project or the org's skills repository and writes
 	// the snapshots the agent reads.
 	Snapshots files.Reader
@@ -82,7 +72,7 @@ type UsageOutbox interface {
 // contract does not declare is 404 at the validator; a request that does not
 // match its operation is 400 invalid_request.
 func mcpSocketHandler(d MCPSocketDeps) http.Handler {
-	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, rooms: d.RoomTokens, snapshots: d.Snapshots, usage: d.Usage}, nil, mcpsock.StrictHTTPServerOptions{
+	strict := mcpsock.NewStrictHandlerWithOptions(mcpSocketServer{mcp: d.MCP, snapshots: d.Snapshots, usage: d.Usage}, nil, mcpsock.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeMCPSocketRequestError,
 		ResponseErrorHandlerFunc: writeMCPSocketResponseError,
 	})
@@ -101,7 +91,6 @@ const mcpSocketInvalidCode = "invalid_request"
 // mcpSocketServer implements the MCP socket operations.
 type mcpSocketServer struct {
 	mcp       mcp.Server
-	rooms     RoomTokens
 	snapshots files.Reader
 	usage     UsageOutbox
 }
@@ -130,23 +119,6 @@ func (s mcpSocketServer) CallMcp(ctx context.Context, req mcpsock.CallMcpRequest
 			mcpSocketProblem(http.StatusBadGateway, "aep_api_unavailable", "aep-api could not answer the call")), nil
 	}
 	return jsonRPCReply{ID: req.Body.ID, Result: result}, nil
-}
-
-// MintRoomToken answers a token for the agent's collab room join. The token
-// is never logged; a failure names the token endpoint's status only.
-func (s mcpSocketServer) MintRoomToken(ctx context.Context, _ mcpsock.MintRoomTokenRequestObject) (mcpsock.MintRoomTokenResponseObject, error) {
-	tok, exp, err := s.rooms.TokenWithExpiry(ctx)
-	if err == nil && exp.IsZero() {
-		err = errors.New("token endpoint named no lifetime")
-	}
-	if err != nil {
-		slog.WarnContext(ctx, "room_token.mint_failed", "error", err)
-		return mcpsock.MintRoomToken502ApplicationProblemPlusJSONResponse{
-			ProblemApplicationProblemPlusJSONResponse: mcpsock.ProblemApplicationProblemPlusJSONResponse(
-				mcpSocketProblem(http.StatusBadGateway, "idp_unavailable", "the room token could not be minted")),
-		}, nil
-	}
-	return mcpsock.MintRoomToken200JSONResponse{Token: tok, ExpiresAt: exp}, nil
 }
 
 // PostTurnUsage hands one finished turn's record (validated against the

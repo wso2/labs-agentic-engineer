@@ -62,8 +62,8 @@ type Config struct {
 	// remote-git call, per call, not at boot.
 	GitHubOwner string
 	// StudioClientID and StudioClientSecret are the ae-studio-<org> client,
-	// which mints the agent's collab room token and authenticates the pod's
-	// calls to aep-api's ae-studio/ ops.
+	// which authenticates the pod's calls to aep-api's ae-studio/ ops. Its
+	// token never leaves this container.
 	StudioClientID, StudioClientSecret string
 }
 

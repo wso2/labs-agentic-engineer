@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -37,6 +36,7 @@ import (
 	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
+	"github.com/wso2/aep/ae-studio-tools/internal/gen/mcpsock"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 )
@@ -144,17 +144,6 @@ func (g *fakeGitHubAPI) callsFor(owner string) int {
 	return g.calls[strings.ToLower(owner)]
 }
 
-// fakeRoomTokens is the ae-studio-<org> client's token source.
-type fakeRoomTokens struct {
-	token  string
-	expiry time.Time
-	err    error
-}
-
-func (f fakeRoomTokens) TokenWithExpiry(context.Context) (string, time.Time, error) {
-	return f.token, f.expiry, f.err
-}
-
 // mcpHarness serves MCPSocketRoutes on a real Unix socket bound by
 // ListenSocket, over a fake GitHub and a fake aep-api, capturing the logs.
 type mcpHarness struct {
@@ -188,13 +177,10 @@ type mcpHarnessOpt func(*mcpHarnessConfig)
 
 type mcpHarnessConfig struct {
 	owner     string
-	rooms     fakeRoomTokens
 	snapshots files.Reader
 }
 
 func withOwner(o string) mcpHarnessOpt { return func(c *mcpHarnessConfig) { c.owner = o } }
-
-func withRoomTokens(r fakeRoomTokens) mcpHarnessOpt { return func(c *mcpHarnessConfig) { c.rooms = r } }
 
 func withSnapshots(r files.Reader) mcpHarnessOpt {
 	return func(c *mcpHarnessConfig) { c.snapshots = r }
@@ -238,7 +224,7 @@ func newMCPHarness(t *testing.T, up mcp.Upstream, opts ...mcpHarnessOpt) *mcpHar
 		t.Fatal(err)
 	}
 	srv := &http.Server{
-		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, RoomTokens: cfg.rooms, Snapshots: cfg.snapshots, Usage: sink}),
+		Handler:           MCPSocketRoutes(MCPSocketDeps{MCP: server, Snapshots: cfg.snapshots, Usage: sink}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() { _ = srv.Serve(ln) }()
@@ -513,33 +499,21 @@ func TestMCP_RequestShapeIsValidated(t *testing.T) {
 	}
 }
 
-func TestRoomToken(t *testing.T) {
-	exp := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
-	s := newMCPHarness(t, &fakeUpstream{}, withRoomTokens(fakeRoomTokens{token: "room-tok", expiry: exp}))
-	status, body := s.post("/room-token", "")
-	if status != http.StatusOK {
-		t.Fatalf("room-token = %d %s", status, body)
+// Task 4.7a: the agent joins its collab Room on ae-collab's Room socket (the
+// mount is its identity), so this socket mints no room token: the ae-studio
+// client's token never leaves this container. /room-token is not in the
+// contract, so it is 404 like any undeclared path.
+func TestMCPSocket_NoRoomToken(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	if status, body := s.post("/room-token", ""); status != http.StatusNotFound {
+		t.Fatalf("POST /room-token = %d %s", status, body)
 	}
-	var rt struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expiresAt"`
+	spec, err := mcpsock.GetSpec()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(body), &rt); err != nil || rt.Token != "room-tok" || !rt.ExpiresAt.Equal(exp) {
-		t.Fatalf("room-token body = %s (%v)", body, err)
-	}
-	if strings.Contains(s.logs.String(), "room-tok") {
-		t.Fatal("the room token was logged")
-	}
-
-	for name, rooms := range map[string]fakeRoomTokens{
-		"idp down":    {err: errors.New("token endpoint answered 503")},
-		"no lifetime": {token: "room-tok"},
-	} {
-		s := newMCPHarness(t, &fakeUpstream{}, withRoomTokens(rooms))
-		status, body := s.post("/room-token", "")
-		if status != http.StatusBadGateway || !strings.Contains(body, `"code":"idp_unavailable"`) || strings.Contains(body, "room-tok") {
-			t.Fatalf("%s: room-token = %d %s", name, status, body)
-		}
+	if spec.Paths.Find("/room-token") != nil {
+		t.Fatal("the MCP socket contract still declares /room-token")
 	}
 }
 

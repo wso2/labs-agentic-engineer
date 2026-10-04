@@ -215,7 +215,7 @@ func TestCheckSecretRev(t *testing.T) {
 	}
 }
 
-// Phase 3 (Q-16): the MCP and Turn sockets and the room-token client are
+// Phase 3 (Q-16): the MCP and Turn sockets and the ae-studio client are
 // required (fail closed at boot); AE_GITHUB_OWNER is read but may be empty,
 // which refuses every remote-git call instead.
 func TestLoad_MCPSocketKeys(t *testing.T) {

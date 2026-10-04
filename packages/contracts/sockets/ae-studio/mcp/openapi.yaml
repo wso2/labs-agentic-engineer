@@ -5,8 +5,9 @@ info:
     Unix-socket API between ae-design-agent and ae-studio-tools inside one AE
     Studio pod (socket path in AE_MCP_SOCKET, served by ae-studio-tools, mode
     0660). The mount is the gate, so there is no security scheme. It is the
-    agent's only door out of the pod: the MCP tools, the collab room token,
-    the turn usage ledger and the project and skills snapshots. Errors are RFC
+    agent's only door out of the pod: the MCP tools, the turn usage ledger
+    and the project and skills snapshots. (The agent joins its collab Room on
+    ae-collab's Room socket, not through this one.) Errors are RFC
     9457 problems (application/problem+json); a JSON-RPC failure is a 200 with
     an `error` member, as the protocol has it.
   version: 1.0.0
@@ -15,8 +16,6 @@ servers:
 tags:
 - name: MCP
   description: JSON-RPC 2.0 tool surface.
-- name: Room
-  description: Collab room access.
 - name: Usage
   description: The turn usage ledger.
 - name: Snapshots
@@ -52,23 +51,6 @@ paths:
           description: A notification, accepted; no body
         '400':
           $ref: '#/components/responses/Problem'
-        '502':
-          $ref: '#/components/responses/Problem'
-        '503':
-          $ref: '#/components/responses/Problem'
-  /room-token:
-    post:
-      operationId: mint-room-token
-      summary: Mint a collab room token for the agent
-      tags:
-      - Room
-      responses:
-        '200':
-          description: A short-lived room token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RoomToken'
         '502':
           $ref: '#/components/responses/Problem'
         '503':
@@ -238,18 +220,6 @@ components:
         message:
           type: string
         data: {}
-    RoomToken:
-      type: object
-      additionalProperties: false
-      required:
-      - token
-      - expiresAt
-      properties:
-        token:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
     ProjectSnapshot:
       type: object
       additionalProperties: false

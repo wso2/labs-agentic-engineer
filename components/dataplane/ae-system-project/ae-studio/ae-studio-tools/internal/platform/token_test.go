@@ -123,33 +123,6 @@ func TestClientCredentials_NoExpiresInIsNotCached(t *testing.T) {
 	}
 }
 
-// TokenWithExpiry answers the token's expiry: the minted lifetime from now,
-// the same instant for the cached token, and zero when the endpoint named no
-// lifetime.
-func TestClientCredentials_TokenWithExpiry(t *testing.T) {
-	ts := &tokenServer{t: t, expiresIn: 300}
-	srv := httptest.NewServer(ts)
-	defer srv.Close()
-	cc := newCC(srv.URL)
-	now := time.Unix(1_000_000, 0)
-	cc.now = func() time.Time { return now }
-	tok, exp, err := cc.TokenWithExpiry(context.Background())
-	if err != nil || tok != "tok-1" || !exp.Equal(now.Add(300*time.Second)) {
-		t.Fatalf("tok=%q exp=%v err=%v", tok, exp, err)
-	}
-	now = now.Add(time.Minute)
-	if tok, exp2, _ := cc.TokenWithExpiry(context.Background()); tok != "tok-1" || !exp2.Equal(exp) {
-		t.Fatalf("cached: tok=%q exp=%v", tok, exp2)
-	}
-
-	ts0 := &tokenServer{t: t, expiresIn: 0}
-	srv0 := httptest.NewServer(ts0)
-	defer srv0.Close()
-	if tok, exp, err := newCC(srv0.URL).TokenWithExpiry(context.Background()); err != nil || tok != "tok-1" || !exp.IsZero() {
-		t.Fatalf("no lifetime: tok=%q exp=%v err=%v", tok, exp, err)
-	}
-}
-
 func TestClientCredentials_InvalidateForcesAMint(t *testing.T) {
 	ts := &tokenServer{t: t, expiresIn: 3600}
 	srv := httptest.NewServer(ts)

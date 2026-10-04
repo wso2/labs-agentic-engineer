@@ -131,7 +131,8 @@ func run() error {
 	reap := reaper.New(engine, reaper.Config{Budget: cfg.StorageBudgetBytes})
 
 	// The org's ae-studio-<org> client: the only credential aep-api's
-	// ae-studio/ ops accept, and the agent's room tokens.
+	// ae-studio/ ops accept. It never leaves this container: the agent joins
+	// its collab Room on ae-collab's Room socket, without a token.
 	studioClient := &platform.ClientCredentials{
 		TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
 	}
@@ -160,16 +161,14 @@ func run() error {
 	reader := files.Reader{Engine: engine, Projects: resolver}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
 	// GitHub account, the other tools forwarded to aep-api as the publisher,
-	// the agent's room token minted as ae-studio-<org>, and the project and
-	// skills snapshots the agent reads.
+	// and the project and skills snapshots the agent reads.
 	mcpDeps := edge.MCPSocketDeps{
 		MCP: mcp.Server{
 			Remote:   mcp.RemoteGit{Owner: cfg.GitHubOwner, Token: cfg.GitHubPAT},
 			Upstream: mcp.NewAEPAPIUpstream(aepAPIMCP),
 		},
-		RoomTokens: studioClient,
-		Snapshots:  reader,
-		Usage:      usageOutbox.sender,
+		Snapshots: reader,
+		Usage:     usageOutbox.sender,
 	}
 	// The GitHub client over the gitpat: commit identity and aep-api's
 	// GitHub ops; the hooks it registers deliver to AE_WEBHOOK_URL signed

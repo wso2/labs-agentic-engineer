@@ -71,29 +71,21 @@ type tokenResponse struct {
 // Token returns a cached token that is good for more than 60 s, or mints a
 // new one. Concurrent callers share one mint.
 func (c *ClientCredentials) Token(ctx context.Context) (string, error) {
-	tok, _, err := c.TokenWithExpiry(ctx)
-	return tok, err
-}
-
-// TokenWithExpiry is Token with the token's expiry, for a caller that hands
-// the token on (the MCP socket's room token). The expiry is zero when the
-// token endpoint named no lifetime.
-func (c *ClientCredentials) TokenWithExpiry(ctx context.Context) (string, time.Time, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.clock()
 	if c.token != "" && now.Before(c.expiry.Add(-refreshBefore)) {
-		return c.token, c.expiry, nil
+		return c.token, nil
 	}
 	tr, err := c.mint(ctx)
 	if err != nil {
-		return "", time.Time{}, err
+		return "", err
 	}
 	c.token, c.expiry = "", time.Time{}
 	if tr.ExpiresIn > 0 {
 		c.token, c.expiry = tr.AccessToken, now.Add(time.Duration(tr.ExpiresIn)*time.Second)
 	}
-	return tr.AccessToken, c.expiry, nil
+	return tr.AccessToken, nil
 }
 
 // Invalidate drops the cached token, so the next Token call mints.
