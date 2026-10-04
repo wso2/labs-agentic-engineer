@@ -28,15 +28,10 @@ import (
 // election (electAndList) is covered by the dbtest tier.
 
 type fakeProbes struct {
-	rows         []ActiveRow
-	patFn        func(ActiveRow) (string, string, string, error)
-	appFn        func(ActiveRow) (string, error)
-	recordFn     func(string, string, string, string) (bool, error)
-	loginFn      func(string, string) error
-	touchFn      func(string) error
-	recordCalls  int
-	loginUpdates int
-	touchCalls   int
+	rows        []ActiveRow
+	patFn       func(ActiveRow) (string, string, string, error)
+	recordFn    func(string, string, string, string) (bool, error)
+	recordCalls int
 }
 
 func (f *fakeProbes) ListActiveRows(ctx context.Context) ([]ActiveRow, error) {
@@ -48,32 +43,12 @@ func (f *fakeProbes) ProbePAT(ctx context.Context, row ActiveRow) (string, strin
 	}
 	return f.patFn(row)
 }
-func (f *fakeProbes) ProbeApp(ctx context.Context, row ActiveRow) (string, error) {
-	if f.appFn == nil {
-		return row.GitHubLogin, nil
-	}
-	return f.appFn(row)
-}
 func (f *fakeProbes) RecordIdentityFromGitHub(ctx context.Context, ocOrgID, login, name, email string) (bool, error) {
 	f.recordCalls++
 	if f.recordFn == nil {
 		return false, nil
 	}
 	return f.recordFn(ocOrgID, login, name, email)
-}
-func (f *fakeProbes) UpdateGitHubLogin(ctx context.Context, ocOrgID, login string) error {
-	f.loginUpdates++
-	if f.loginFn == nil {
-		return nil
-	}
-	return f.loginFn(ocOrgID, login)
-}
-func (f *fakeProbes) TouchValidatedAt(ctx context.Context, ocOrgID string) error {
-	f.touchCalls++
-	if f.touchFn == nil {
-		return nil
-	}
-	return f.touchFn(ocOrgID)
 }
 
 // processRow is the unit under test. The DB-backed Run/RunOnce paths
@@ -174,79 +149,28 @@ func TestProcessRow_PAT_IdentityDrift(t *testing.T) {
 	}
 }
 
-func TestProcessRow_App_Unauthorized_FiresCascade(t *testing.T) {
+// A GitHub App installation row left from before App mode was removed is
+// neither probed nor cascaded: the validator logs it and moves on.
+func TestProcessRow_AppInstallationRowIsSkipped(t *testing.T) {
 	probes := &fakeProbes{
-		appFn: func(ActiveRow) (string, error) {
-			return "", ErrCredentialUnauthorized
+		patFn: func(ActiveRow) (string, string, string, error) {
+			t.Fatal("an app-installation row must not be probed")
+			return "", "", "", nil
 		},
 	}
-	cascadeCalls := 0
 	v := &Validator{
 		probes: probes,
-		cascade: func(ctx context.Context, ocOrgID, cause string) error {
-			cascadeCalls++
+		cascade: func(context.Context, string, string) error {
+			t.Fatal("an app-installation row must not cascade")
 			return nil
 		},
 	}
-	id := int64(42)
-	row := ActiveRow{OcOrgID: "default", Kind: "app-installation", InstallationID: &id}
 	summary := &RunSummary{}
-	if err := v.processRow(context.Background(), row, summary); err != nil {
+	if err := v.processRow(context.Background(), ActiveRow{OcOrgID: "default", Kind: "app-installation"}, summary); err != nil {
 		t.Fatalf("processRow: %v", err)
 	}
-	if cascadeCalls != 1 || summary.CascadedRows != 1 {
-		t.Fatalf("expected cascade fired once: calls=%d cascadedRows=%d", cascadeCalls, summary.CascadedRows)
-	}
-}
-
-func TestProcessRow_App_Rename_DriftsLogin(t *testing.T) {
-	probes := &fakeProbes{
-		appFn: func(ActiveRow) (string, error) {
-			return "aep-repos-renamed", nil
-		},
-	}
-	v := &Validator{probes: probes}
-	id := int64(42)
-	row := ActiveRow{
-		OcOrgID:        "default",
-		Kind:           "app-installation",
-		GitHubLogin:    "aep-repos",
-		InstallationID: &id,
-	}
-	summary := &RunSummary{}
-	if err := v.processRow(context.Background(), row, summary); err != nil {
-		t.Fatalf("processRow: %v", err)
-	}
-	if probes.loginUpdates != 1 {
-		t.Fatalf("expected one UpdateGitHubLogin call, got %d", probes.loginUpdates)
-	}
-	if probes.touchCalls != 1 {
-		t.Fatalf("expected one TouchValidatedAt call, got %d", probes.touchCalls)
-	}
-	if summary.DriftedRows != 1 || summary.ValidatedRows != 1 {
-		t.Fatalf("unexpected summary: %+v", summary)
-	}
-}
-
-func TestProcessRow_App_Stable_NoDrift(t *testing.T) {
-	probes := &fakeProbes{}
-	v := &Validator{probes: probes}
-	id := int64(42)
-	row := ActiveRow{
-		OcOrgID:        "default",
-		Kind:           "app-installation",
-		GitHubLogin:    "aep-repos",
-		InstallationID: &id,
-	}
-	summary := &RunSummary{}
-	if err := v.processRow(context.Background(), row, summary); err != nil {
-		t.Fatalf("processRow: %v", err)
-	}
-	if probes.loginUpdates != 0 {
-		t.Fatalf("stable login must not trigger UpdateGitHubLogin")
-	}
-	if summary.DriftedRows != 0 || summary.ValidatedRows != 1 {
-		t.Fatalf("unexpected summary: %+v", summary)
+	if *summary != (RunSummary{}) || probes.recordCalls != 0 {
+		t.Fatalf("summary=%+v recordCalls=%d, want nothing touched", summary, probes.recordCalls)
 	}
 }
 

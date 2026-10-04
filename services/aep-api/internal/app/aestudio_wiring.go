@@ -26,15 +26,17 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 )
 
-// aeStudioTools is aep-api's one adapter to each org's ae-studio-tools: the
-// org's Target from its AE Studio status, the AE-only client's token
+// aeStudioTools is aep-api's one adapter to each org's ae-studio-tools (every
+// GitHub call and the turns): the org's Target from its AE Studio status, a
+// 64 MiB sha-keyed read cache, the AE-only client's token
 // (AE_STUDIO_INTERNAL_CLIENT_ID/SECRET at AE_STUDIO_IDP_TOKEN_URL). Boot
 // never needs those; without them every call is ErrAEStudioMisconfigured
 // (the ae-studio-tools degradation names them at boot).
 func aeStudioTools(cfg config.AEStudioConfig, status organization.AEStudioStatusReader) *aestudiotools.Adapter {
 	return aestudiotools.New(aestudiotools.Config{
-		Endpoints: aeStudioEndpoints{status: status},
-		Tokens:    aestudiotools.NewClientCredentials(cfg.IDP.TokenURL, cfg.InternalClientID, cfg.InternalClientSecret, nil),
+		Endpoints:  aeStudioEndpoints{status: status},
+		Tokens:     aestudiotools.NewClientCredentials(cfg.IDP.TokenURL, cfg.InternalClientID, cfg.InternalClientSecret, nil),
+		CacheBytes: 64 << 20,
 	})
 }
 

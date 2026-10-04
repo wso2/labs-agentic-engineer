@@ -30,8 +30,6 @@ import (
 
 // CreateIssue opens an issue (in its milestone when the request names one).
 // aep-api's own fields (dedupe key, component, ...) never leave aep-api.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) CreateIssue(ctx context.Context, ref RepoRef, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -48,8 +46,6 @@ func (a *Adapter) CreateIssue(ctx context.Context, ref RepoRef, req sourcecontro
 }
 
 // ListIssues lists the issues carrying every label, newest first.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListIssues(ctx context.Context, ref RepoRef, labels []string) ([]sourcecontrol.IssueInfo, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -65,8 +61,6 @@ func (a *Adapter) ListIssues(ctx context.Context, ref RepoRef, labels []string) 
 }
 
 // GetIssue reads one issue; ErrIssueNotFound when GitHub holds none.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) GetIssue(ctx context.Context, ref RepoRef, number int) (*sourcecontrol.IssueInfo, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -84,8 +78,6 @@ func (a *Adapter) GetIssue(ctx context.Context, ref RepoRef, number int) (*sourc
 
 // ListIssueComments answers the newest limit comments of one issue, oldest
 // first. limit always travels (the pod requires it; 0 answers none).
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListIssueComments(ctx context.Context, ref RepoRef, number, limit int) ([]sourcecontrol.IssueComment, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -101,8 +93,6 @@ func (a *Adapter) ListIssueComments(ctx context.Context, ref RepoRef, number, li
 }
 
 // EnsureLabel creates the label unless it exists.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) EnsureLabel(ctx context.Context, ref RepoRef, name, color string) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -113,8 +103,6 @@ func (a *Adapter) EnsureLabel(ctx context.Context, ref RepoRef, name, color stri
 }
 
 // CloseIssue closes the issue as completed.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) CloseIssue(ctx context.Context, ref RepoRef, number int) error {
 	return a.writeIssue(ctx, ref, "close-issue", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.CloseIssue(ctx, ref.Owner, ref.Repo, number, &gen.CloseIssueParams{XImpersonateOrg: org}, auth)
@@ -122,8 +110,6 @@ func (a *Adapter) CloseIssue(ctx context.Context, ref RepoRef, number int) error
 }
 
 // ReopenIssue reopens the issue.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ReopenIssue(ctx context.Context, ref RepoRef, number int) error {
 	return a.writeIssue(ctx, ref, "reopen-issue", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.ReopenIssue(ctx, ref.Owner, ref.Repo, number, &gen.ReopenIssueParams{XImpersonateOrg: org}, auth)
@@ -131,8 +117,6 @@ func (a *Adapter) ReopenIssue(ctx context.Context, ref RepoRef, number int) erro
 }
 
 // CommentIssue posts a comment on the issue.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) CommentIssue(ctx context.Context, ref RepoRef, number int, body string) error {
 	return a.writeIssue(ctx, ref, "create-issue-comment", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.CreateIssueComment(ctx, ref.Owner, ref.Repo, number, &gen.CreateIssueCommentParams{XImpersonateOrg: org}, gen.IssueCommentRequest{Body: body}, auth)
@@ -140,8 +124,6 @@ func (a *Adapter) CommentIssue(ctx context.Context, ref RepoRef, number int, bod
 }
 
 // EditIssueBody replaces the issue body.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) EditIssueBody(ctx context.Context, ref RepoRef, number int, body string) error {
 	return a.writeIssue(ctx, ref, "set-issue-body", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.SetIssueBody(ctx, ref.Owner, ref.Repo, number, &gen.SetIssueBodyParams{XImpersonateOrg: org}, gen.IssueBodyRequest{Body: body}, auth)
@@ -149,8 +131,6 @@ func (a *Adapter) EditIssueBody(ctx context.Context, ref RepoRef, number int, bo
 }
 
 // EditIssueTitle replaces the issue title.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) EditIssueTitle(ctx context.Context, ref RepoRef, number int, title string) error {
 	return a.writeIssue(ctx, ref, "set-issue-title", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.SetIssueTitle(ctx, ref.Owner, ref.Repo, number, &gen.SetIssueTitleParams{XImpersonateOrg: org}, gen.IssueTitleRequest{Title: title}, auth)
@@ -158,8 +138,6 @@ func (a *Adapter) EditIssueTitle(ctx context.Context, ref RepoRef, number int, t
 }
 
 // AddIssueLabels adds labels to the issue.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) AddIssueLabels(ctx context.Context, ref RepoRef, number int, labels []string) error {
 	return a.writeIssue(ctx, ref, "add-issue-labels", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.AddIssueLabels(ctx, ref.Owner, ref.Repo, number, &gen.AddIssueLabelsParams{XImpersonateOrg: org}, gen.IssueLabelsRequest{Labels: nonNil(labels)}, auth)
@@ -167,8 +145,6 @@ func (a *Adapter) AddIssueLabels(ctx context.Context, ref RepoRef, number int, l
 }
 
 // RemoveIssueLabel removes one label; an absent label is success.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) RemoveIssueLabel(ctx context.Context, ref RepoRef, number int, label string) error {
 	return a.writeIssue(ctx, ref, "remove-issue-label", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.RemoveIssueLabel(ctx, ref.Owner, ref.Repo, number, label, &gen.RemoveIssueLabelParams{XImpersonateOrg: org}, auth)
@@ -176,8 +152,6 @@ func (a *Adapter) RemoveIssueLabel(ctx context.Context, ref RepoRef, number int,
 }
 
 // SetIssueLabels replaces the issue's whole label set (nil: none).
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) SetIssueLabels(ctx context.Context, ref RepoRef, number int, labels []string) error {
 	return a.writeIssue(ctx, ref, "set-issue-labels", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.SetIssueLabels(ctx, ref.Owner, ref.Repo, number, &gen.SetIssueLabelsParams{XImpersonateOrg: org}, gen.IssueLabelsRequest{Labels: nonNil(labels)}, auth)
@@ -185,8 +159,6 @@ func (a *Adapter) SetIssueLabels(ctx context.Context, ref RepoRef, number int, l
 }
 
 // SetIssueMilestone assigns the issue to a milestone by number.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) SetIssueMilestone(ctx context.Context, ref RepoRef, number, milestoneNumber int) error {
 	return a.writeIssue(ctx, ref, "set-issue-milestone", func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.SetIssueMilestone(ctx, ref.Owner, ref.Repo, number, &gen.SetIssueMilestoneParams{XImpersonateOrg: org}, gen.IssueMilestoneRequest{Number: milestoneNumber}, auth)
@@ -208,8 +180,6 @@ func (a *Adapter) writeIssue(ctx context.Context, ref RepoRef, op string, fn cal
 }
 
 // GetPullRequest reads a pull request's state.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) GetPullRequest(ctx context.Context, ref RepoRef, number int) (*sourcecontrol.PullRequestState, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -226,8 +196,6 @@ func (a *Adapter) GetPullRequest(ctx context.Context, ref RepoRef, number int) (
 
 // MergePullRequest squash-merges an open pull request; GitHub's 405
 // (not mergeable) is an HTTPStatusError 405.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) MergePullRequest(ctx context.Context, ref RepoRef, number int) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -238,8 +206,6 @@ func (a *Adapter) MergePullRequest(ctx context.Context, ref RepoRef, number int)
 }
 
 // ListPullRequestFiles lists the paths a pull request changes.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListPullRequestFiles(ctx context.Context, ref RepoRef, number int) ([]string, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -256,8 +222,6 @@ func (a *Adapter) ListPullRequestFiles(ctx context.Context, ref RepoRef, number 
 
 // CreateMilestone mints a milestone, or adopts the one with that title
 // (case-insensitively).
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) CreateMilestone(ctx context.Context, ref RepoRef, req sourcecontrol.CreateMilestoneRequest) (*sourcecontrol.MilestoneResult, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -273,8 +237,6 @@ func (a *Adapter) CreateMilestone(ctx context.Context, ref RepoRef, req sourceco
 }
 
 // CloseMilestone closes a milestone.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) CloseMilestone(ctx context.Context, ref RepoRef, number int) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -285,8 +247,6 @@ func (a *Adapter) CloseMilestone(ctx context.Context, ref RepoRef, number int) e
 }
 
 // ReopenMilestone reopens a closed milestone.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ReopenMilestone(ctx context.Context, ref RepoRef, number int) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -298,8 +258,6 @@ func (a *Adapter) ReopenMilestone(ctx context.Context, ref RepoRef, number int) 
 
 // ListMilestones lists every milestone in state ("open", "closed", "all";
 // "" is all).
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListMilestones(ctx context.Context, ref RepoRef, state string) ([]sourcecontrol.Milestone, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -319,8 +277,6 @@ func (a *Adapter) ListMilestones(ctx context.Context, ref RepoRef, state string)
 }
 
 // ListMilestoneIssues lists a milestone's issues by state and label.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListMilestoneIssues(ctx context.Context, ref RepoRef, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -338,8 +294,6 @@ func (a *Adapter) ListMilestoneIssues(ctx context.Context, ref RepoRef, filter s
 }
 
 // MilestoneIssueCounts answers a milestone's open-issue populations.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) MilestoneIssueCounts(ctx context.Context, ref RepoRef, number int) (*sourcecontrol.MilestoneIssueCounts, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err
@@ -360,8 +314,6 @@ func (a *Adapter) MilestoneIssueCounts(ctx context.Context, ref RepoRef, number 
 // ListMilestoneIssueComments answers the newest perIssue comments of every
 // issue in the milestone, by issue number, oldest first; an issue without
 // comments is absent. perIssue always travels (the pod requires it).
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) ListMilestoneIssueComments(ctx context.Context, ref RepoRef, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error) {
 	if err := validRef(ref); err != nil {
 		return nil, err

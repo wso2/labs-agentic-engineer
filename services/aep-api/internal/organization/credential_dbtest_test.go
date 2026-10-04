@@ -464,59 +464,6 @@ func TestOrgIDByRepoFullName_DB(t *testing.T) {
 }
 
 // ============================================================================
-// Installation status flips + repo merge
-// ============================================================================
-
-func TestSuspendUnsuspendInstallation_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-	insertAppRow(t, db, "acme", 42, "active", nil)
-
-	if err := svc.SuspendInstallation(ctx, 42); err != nil {
-		t.Fatalf("suspend: %v", err)
-	}
-	if row := getRow(t, db, "acme"); row.Status != "suspended" {
-		t.Fatalf("after suspend: %q", row.Status)
-	}
-	if err := svc.UnsuspendInstallation(ctx, 42); err != nil {
-		t.Fatalf("unsuspend: %v", err)
-	}
-	if row := getRow(t, db, "acme"); row.Status != "active" {
-		t.Fatalf("after unsuspend: %q", row.Status)
-	}
-	// Missing install is idempotent (webhook may precede the connect row).
-	if err := svc.SuspendInstallation(ctx, 999999); err != nil {
-		t.Fatalf("suspend missing install must be idempotent nil, got %v", err)
-	}
-}
-
-func TestMergeSelectedRepos_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-	insertAppRow(t, db, "acme", 77, "active", []string{"acme-org/a", "acme-org/b"})
-
-	if err := svc.MergeSelectedRepos(ctx, 77, []string{"acme-org/c"}, []string{"acme-org/a"}); err != nil {
-		t.Fatalf("merge: %v", err)
-	}
-	row := getRow(t, db, "acme")
-	got := map[string]bool{}
-	for _, r := range row.SelectedRepos {
-		got[r] = true
-	}
-	if len(got) != 2 || !got["acme-org/b"] || !got["acme-org/c"] || got["acme-org/a"] {
-		t.Fatalf("merged set: %v", row.SelectedRepos)
-	}
-	var nfe *organization.NotFoundError
-	if err := svc.MergeSelectedRepos(ctx, 424242, nil, nil); !errors.As(err, &nfe) {
-		t.Fatalf("merge on missing install must NotFoundError, got %#v", err)
-	}
-}
-
-// ============================================================================
 // Identity drift + validator bookkeeping
 // ============================================================================
 
@@ -547,26 +494,6 @@ func TestRecordIdentityFromGitHub_Drift_DB(t *testing.T) {
 	drifted, err = svc.RecordIdentityFromGitHub(ctx, "acme", "bob", "Bob B", "bob@x.io")
 	if err != nil || drifted {
 		t.Fatalf("no-drift expected: drifted=%v err=%v", drifted, err)
-	}
-}
-
-func TestTouchValidatedAt_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, _ := newCredSvcDB(t, db, gh)
-	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	before := getRow(t, db, "acme").LastValidatedAt
-
-	if err := svc.TouchValidatedAt(ctx, "acme"); err != nil {
-		t.Fatalf("touch: %v", err)
-	}
-	after := getRow(t, db, "acme").LastValidatedAt
-	if before == nil || after == nil || after.Before(*before) {
-		t.Fatalf("last_validated_at must advance: before=%v after=%v", before, after)
 	}
 }
 
@@ -705,29 +632,18 @@ func equalStrs(a, b []string) bool {
 	return true
 }
 
-// TestConnectApp_EntryGuards_DB pins the two App-mode dispatch guards that are
-// reachable WITHOUT a real GitHub App key: a missing installationId is a
-// ValidationError before any lock/lookup, and a no-app minter (AppID()==0 —
-// this deployment has no App configured) is a ConflictError. Everything past
-// those guards (install fetch, bot identity, token mint) needs real App
-// material and is integration-owned.
-func TestConnectApp_EntryGuards_DB(t *testing.T) {
+// TestConnect_RefusesTheRetiredAppKind_DB: the GitHub App connect went with
+// App mode, so its kind is refused like any unknown one and nothing persists.
+func TestConnect_RefusesTheRetiredAppKind_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
 	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
 
-	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "app-installation", InstallationID: 0})
-	assertValidationCode(t, err, "installation_id_missing")
-
-	_, err = svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "app-installation", InstallationID: 5})
-	var ce *organization.ConflictError
-	if !errors.As(err, &ce) || ce.Reason != "GitHub App not configured on this deployment" {
-		t.Fatalf("no-app minter must yield the not-configured ConflictError, got %v", err)
-	}
-	// Neither guard may leave a row behind.
+	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "app-installation"})
+	assertValidationCode(t, err, "kind_invalid")
 	var n int64
 	if err := db.Model(&organization.OrgCredential{}).Where("oc_org_id = ?", "acme").Count(&n).Error; err != nil || n != 0 {
-		t.Fatalf("entry guards must not persist anything: n=%d err=%v", n, err)
+		t.Fatalf("a refused connect must not persist anything: n=%d err=%v", n, err)
 	}
 }

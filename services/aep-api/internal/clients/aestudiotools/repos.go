@@ -28,12 +28,9 @@ import (
 )
 
 // CreateOrgRepo creates ref.Repo under ref.Owner (the org's connected GitHub
-// account) and answers its clone URL; req.Name is not read (the ref names
-// the repository) and the pod always initialises it. A taken name is
-// ErrRepoNameConflict unless req.AdoptExisting, which answers the existing
-// repository.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
+// account) and answers its clone URL; the pod always initialises it. A
+// taken name is ErrRepoNameConflict unless req.AdoptExisting, which answers
+// the existing repository.
 func (a *Adapter) CreateOrgRepo(ctx context.Context, ref RepoRef, req sourcecontrol.CreateOrgRepoRequest) (string, error) {
 	if err := validRef(ref); err != nil {
 		return "", err

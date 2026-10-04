@@ -17,7 +17,7 @@ flowchart LR
     SL --> CORE
     CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
   end
-  CORE -->|AppInstallOps · IssueService| SC[[sourcecontrol]]
+  CORE -->|IdentityOps · IssueService| SC[[sourcecontrol]]
   CORE -->|CredentialStore · Resolver| SEC[[platform/secrets]]
   CORE -->|publisher app · OU| THUNDER(["Thunder"])
   CORE -->|model probe, netguard, no redirects| MODEL(["the org's model endpoint"])
@@ -40,7 +40,8 @@ S2S credentials-refresh.*
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `AppInstallOps` · `IssueService` | needs | `sourcecontrol` — App/PAT probes, disconnect issue cascade |
+| `IdentityOps` · `IssueService` | needs | `sourcecontrol` — the validator's PAT probe (the gitpat's GitHub user, read through the org's pod), disconnect issue cascade |
+| `OwnerLookup` | offers | `sourcecontrol` — `CredentialService.GitHubOwner`, the connected login new repositories are created under |
 | `CredentialStore` · `Resolver` · `AppTokenMinter` | needs | `platform/secrets` — sealed git-token / model-key / subscription store, credential resolution |
 | `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) · the edge (dev secret-ref resync) |

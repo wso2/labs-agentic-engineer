@@ -38,7 +38,7 @@ func TestRepoAndHookOps_RequestAndReply(t *testing.T) {
 			want:  "https://github.com/acme/greeter.git",
 			call: func(ctx context.Context, a *Adapter) (any, error) {
 				return a.CreateOrgRepo(ctx, RepoRef{Org: "default", Owner: "acme", Repo: "greeter"},
-					sourcecontrol.CreateOrgRepoRequest{Name: "ignored", Private: true, AutoInit: true, Description: "d", AdoptExisting: true})
+					sourcecontrol.CreateOrgRepoRequest{Private: true, Description: "d", AdoptExisting: true})
 			},
 		},
 		{

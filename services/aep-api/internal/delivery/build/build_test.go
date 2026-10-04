@@ -82,7 +82,7 @@ func (f *fakeTagger) TagSpec(_ context.Context, _, _, version string) (*spec.Spe
 // planSpy is the whole milestone plan path as one recording fake: the GitHub
 // milestone surface, the run store, the planner, the gates and the supervisor.
 // The plan path's own wire behaviour is proven at the service tier
-// (milestone_plan_test.go, real IssueService on a gittest.Stub); here it only
+// (milestone_plan_test.go, real IssueService on the in-memory pod); here it only
 // has to show that the HTTP click reaches it and that its conflict reaches the
 // edge as a 409.
 type planSpy struct {

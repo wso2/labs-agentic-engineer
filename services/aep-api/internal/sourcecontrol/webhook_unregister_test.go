@@ -18,12 +18,10 @@ package sourcecontrol_test
 
 import (
 	"context"
-	"fmt"
-	"net/http"
+	"errors"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -32,95 +30,53 @@ import (
 // registration, never a hook it found by scanning. Repositories carry other
 // integrations' webhooks, and a project delete has no business touching them.
 //
-// Everything else about it is total. A project with no repo row, no stored hook
-// or a platform-strategy credential has nothing of ours installed, and a hook
-// GitHub has already dropped is the post-state we wanted anyway.
-
-const hookPath = "/repos/acme/widgets/hooks/12345"
+// Everything else about it is total. A project with no repo row or no stored
+// hook has nothing of ours installed, and a hook GitHub has already dropped is
+// the post-state we wanted anyway (the pod answers it as success).
 
 // registerHook drives a real registration so the hook id is persisted the way
 // production persists it — the test then unregisters what registration stored,
 // rather than a number the test made up.
-func registerHook(t *testing.T, stub *gittest.Stub, wh sourcecontrol.WebhookService) {
+func registerHook(t *testing.T, wh sourcecontrol.WebhookService) int64 {
 	t.Helper()
-	stub.On(http.MethodPost, "/repos/acme/widgets/hooks", http.StatusCreated, `{"id":12345}`)
-	stub.On(http.MethodPatch, hookPath, http.StatusOK, `{}`)
-	if _, err := wh.Register(context.Background(), "org1", "proj1"); err != nil {
+	id, err := wh.Register(context.Background(), "org1", "proj1")
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
+	return *id
 }
 
 func TestWebhookUnregister_DeletesTheStoredHook(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, repo := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
-	registerHook(t, stub, wh)
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != 12345 {
-		t.Fatalf("precondition: stored hook id = %v, want 12345", got)
+	wh, repo, f := newWebhookSvcOnFake(t)
+	id := registerHook(t, wh)
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != id {
+		t.Fatalf("precondition: stored hook id = %v, want %d", got, id)
 	}
-	stub.On(http.MethodDelete, hookPath, http.StatusNoContent, "")
+	// Another integration's hook on the same repository.
+	other, err := f.RegisterWebhook(context.Background(), widgets, []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
 		t.Fatalf("Unregister: %v", err)
 	}
-
-	// The DELETE went to the STORED hook's id, and nothing listed the repo's
-	// hooks looking for something to remove.
-	var deletes, lists int
-	for _, r := range stub.Requests() {
-		if r.Method == http.MethodDelete && r.Path == hookPath {
-			deletes++
-		}
-		if r.Method == http.MethodGet && r.Path == "/repos/acme/widgets/hooks" {
-			lists++
-		}
+	hooks := f.HookEvents(widgets)
+	if _, ok := hooks[id]; ok {
+		t.Errorf("the stored hook %d survived: %v", id, hooks)
 	}
-	if deletes != 1 {
-		t.Errorf("DELETE %s sent %d times, want 1", hookPath, deletes)
-	}
-	if lists != 0 {
-		t.Errorf("Unregister listed the repo's hooks %d times; it must address the stored id only", lists)
-	}
-}
-
-// TestWebhookUnregister_AlreadyGoneHookIsSuccess covers the two ways GitHub says
-// "that hook is not here": a plain 404, and the 410 it returns once a hook has
-// been auto-disabled and reaped after repeated delivery failures — which is
-// exactly where an orphaned webhook ends up.
-func TestWebhookUnregister_AlreadyGoneHookIsSuccess(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name   string
-		status int
-	}{
-		{"404 not found", http.StatusNotFound},
-		{"410 gone", http.StatusGone},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			stub := gittest.NewStub(t)
-			wh, _ := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
-			registerHook(t, stub, wh)
-			stub.On(http.MethodDelete, hookPath, tc.status, `{"message":"Not Found"}`)
-
-			if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
-				t.Fatalf("an already-absent hook must be success, got %v", err)
-			}
-		})
+	if _, ok := hooks[other]; !ok {
+		t.Errorf("another integration's hook %d was removed: %v", other, hooks)
 	}
 }
 
 func TestWebhookUnregister_IsIdempotent(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, _ := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
-	registerHook(t, stub, wh)
-	// First call removes it; every call after that finds it gone.
-	stub.OnSequence(http.MethodDelete, hookPath,
-		gittest.Response{Status: http.StatusNoContent},
-		gittest.Response{Status: http.StatusNotFound, Body: `{"message":"Not Found"}`},
-	)
+	wh, _, _ := newWebhookSvcOnFake(t)
+	registerHook(t, wh)
 
+	// First call removes it; every call after that finds it gone.
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
@@ -129,18 +85,17 @@ func TestWebhookUnregister_IsIdempotent(t *testing.T) {
 }
 
 // TestWebhookUnregister_NothingRegisteredIsANoOp: no hook id was ever persisted,
-// so there is nothing of ours on the repo. It must not probe GitHub at all —
+// so there is nothing of ours on the repo. It must not reach the pod at all —
 // guessing which hook was "probably" ours is what this design refuses to do.
 func TestWebhookUnregister_NothingRegisteredIsANoOp(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, _ := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
+	wh, _, f := newWebhookSvcOnFake(t)
 
 	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
 		t.Fatalf("no stored hook must be a no-op, got %v", err)
 	}
-	if n := len(stub.Requests()); n != 0 {
-		t.Errorf("Unregister made %d GitHub calls with no hook stored, want 0", n)
+	if n := len(f.Calls()); n != 0 {
+		t.Errorf("Unregister made %d pod calls with no hook stored, want 0", n)
 	}
 }
 
@@ -149,53 +104,25 @@ func TestWebhookUnregister_NothingRegisteredIsANoOp(t *testing.T) {
 // teardown re-runs this path.
 func TestWebhookUnregister_UnknownProjectIsANoOp(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, _ := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
+	wh, _, _ := newWebhookSvcOnFake(t)
 
 	if err := wh.Unregister(context.Background(), "org1", "no-such-project"); err != nil {
 		t.Fatalf("an unresolvable project must be a no-op, got %v", err)
 	}
 }
 
-// TestWebhookUnregister_PlatformStrategyIsANoOp mirrors Register's short-circuit:
-// App-installation delivery never installed a per-repo hook, so there is none to
-// remove.
-func TestWebhookUnregister_PlatformStrategyIsANoOp(t *testing.T) {
+// TestWebhookUnregister_PodFailureIsReported: only a live failure to reach the
+// pod or GitHub is an error. The project teardown swallows it (see
+// TestDeleteProject_WebhookUnregisterFailureIsSwallowed) — but it has to be
+// told, or the log line naming the leftover hook could never be written.
+func TestWebhookUnregister_PodFailureIsReported(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, repo := newWebhookSvcOnStub(t, stub, secrets.WebhookPlatform)
-	// Stamp a hook id directly: under App mode Register would never persist one,
-	// and this proves the strategy check — not an absent id — is what stops it.
-	hookID := int64(12345)
-	repo.preload(&sourcecontrol.GitRepository{
-		OrgID: "org1", ProjectID: "proj1",
-		RepoURL: "https://github.com/acme/widgets", WebhookID: &hookID,
-	})
+	wh, _, f := newWebhookSvcOnFake(t)
+	registerHook(t, wh)
+	boom := &sourcecontrol.HTTPStatusError{StatusCode: 500, Body: "boom"}
+	f.FailOp(aestudiotest.OpDeleteWebhook, boom)
 
-	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
-		t.Fatalf("platform strategy must be a no-op, got %v", err)
-	}
-	if n := len(stub.Requests()); n != 0 {
-		t.Errorf("Unregister made %d GitHub calls under platform delivery, want 0", n)
-	}
-}
-
-// TestWebhookUnregister_GitHubFailureIsReported: only a live failure to reach
-// GitHub is an error. The project teardown swallows it (see
-// TestDeleteProject_WebhookUnregisterFailureIsSwallowed) — but it has to be told,
-// or the log line naming the leftover hook could never be written.
-func TestWebhookUnregister_GitHubFailureIsReported(t *testing.T) {
-	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, _ := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
-	registerHook(t, stub, wh)
-	stub.On(http.MethodDelete, hookPath, http.StatusInternalServerError, `{"message":"boom"}`)
-
-	err := wh.Unregister(context.Background(), "org1", "proj1")
-	if err == nil {
-		t.Fatal("a 500 from GitHub must be reported, got nil")
-	}
-	if got := fmt.Sprint(err); got == "" {
-		t.Error("error must carry a message")
+	if err := wh.Unregister(context.Background(), "org1", "proj1"); !errors.As(err, new(*sourcecontrol.HTTPStatusError)) {
+		t.Fatalf("a 500 from GitHub must be reported, got %v", err)
 	}
 }

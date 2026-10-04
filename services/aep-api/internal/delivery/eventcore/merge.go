@@ -38,7 +38,7 @@ import (
 // work". Two copies of one predicate, and the hidden copy won.
 //
 // Adding the validation label to this filter would not fix it either: REST
-// `?labels=a,b` is AND (see githubhost.ListMilestoneIssues), so asking for both
+// `?labels=a,b` is AND (the pod client's ListMilestoneIssues), so asking for both
 // demands an issue carrying both and matches nothing. The fetch stays wide and
 // the policy stays the only place labels are read.
 func milestoneOpenIssuesFilter(milestoneNumber int) sourcecontrol.MilestoneIssuesFilter {

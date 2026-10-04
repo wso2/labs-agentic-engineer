@@ -69,13 +69,13 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%q/%q/%q/%q/%q", orgID, projectID, incidentID, req.ComponentName, namespace)))
 	label := "dedupe:sre-" + namespace + "-" + hex.EncodeToString(sum[:16])
 	req.Labels = append(labels, label)
-	owner, repo, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	unlock := s.lockRepoCreates(owner, repo)
+	unlock := s.lockRepoCreates(ref)
 	defer unlock()
-	existing, err := s.github.ListIssues(ctx, owner, repo, cred, []string{label})
+	existing, err := s.github.ListIssues(ctx, ref, []string{label})
 	if err != nil {
 		return nil, fmt.Errorf("look up incident: %w", err)
 	}
@@ -107,7 +107,7 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 		if err != nil {
 			return nil, fmt.Errorf("record incident recurrence: %w", err)
 		}
-		if err := s.github.ReopenIssue(ctx, owner, repo, cred, issue.Number); err != nil {
+		if err := s.github.ReopenIssue(ctx, ref, issue.Number); err != nil {
 			return nil, fmt.Errorf("reopen incident: %w", err)
 		}
 		result := &IssueResult{Number: issue.Number, URL: issue.URL, Reopened: true, RecurrenceCount: count, Classification: classification}
@@ -121,16 +121,16 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	// labels, which would make the next create miss this incident entirely.
 	for _, label := range req.Labels {
 		color := labelColor(label)
-		key := owner + "/" + repo + "\x00" + label + "\x00" + color
+		key := ref.Owner + "/" + ref.Repo + "\x00" + label + "\x00" + color
 		if _, done := s.ensuredLabels.Load(key); done {
 			continue
 		}
-		if err := s.github.EnsureLabel(ctx, owner, repo, cred, label, color); err != nil {
+		if err := s.github.EnsureLabel(ctx, ref, label, color); err != nil {
 			return nil, fmt.Errorf("ensure incident label %q: %w", label, err)
 		}
 		s.ensuredLabels.Store(key, struct{}{})
 	}
-	result, err := s.github.CreateIssue(ctx, owner, repo, cred, req)
+	result, err := s.github.CreateIssue(ctx, ref, req)
 	if err != nil {
 		return nil, err
 	}

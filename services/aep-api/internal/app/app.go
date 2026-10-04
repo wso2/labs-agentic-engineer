@@ -73,7 +73,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/projects"
 	projectshttpapi "github.com/wso2/aep/aep-api/internal/projects/httpapi"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 	schttpapi "github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -284,13 +283,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Infra — Assemble does no OpenBao/network I/O.
 	credResolver := secrets.NewOrgResolver(db, credStore, minter)
 
-	// One git host, selected by GIT_PROVIDER, threaded into every gitrepo
-	// domain service where it narrows to that service's capability port.
-	gitHost, err := buildGitHost(cfg)
-	if err != nil {
-		return nil, err
-	}
-
 	// Workspace engine (resolved in Resolve, arrives via Infra) — the disk-backed
 	// git plumbing over the shared /workspaces mount. It backs the disk-lifecycle
 	// pieces (the two best-effort trash hooks below + the reaper watcher) and the
@@ -312,18 +304,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		}
 	}
 
-	repoService := sourcecontrol.NewRepoService(repoRepo, gitHost, credResolver, cfg.GitHubRepoVisibility,
-		sourcecontrol.WithWorkspaceTrash(trashWorkspaceRepo))
 	gitOpsService := sourcecontrol.NewGitOpsService(credResolver, workspaceEngine)
 	artifactSvcGit := spec.NewArtifactService(repoRepo, gitOpsService)
-	issueService := sourcecontrol.NewIssueService(repoRepo, gitHost, credResolver)
-	// THE delivery-side issue-write surface: every issue the delivery domain
-	// mints, closes, reopens or labels goes through this one writer, so the
-	// label vocabulary and the dedupe contract are decided once rather than once
-	// per sub-package. Its slices (eventcore, task, validation, build) each hold
-	// it; nothing else in delivery writes an issue.
-	deliveryIssues := delivery.NewIssueWriter(issueService)
-	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, gitHost, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
@@ -353,6 +335,20 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
 	// the kickoff and Plan turns and the reference uploads run through it.
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
+	// Every GitHub call — repositories, issues, milestones, pull requests,
+	// hooks — goes to the org's pod through the same adapter; the project's
+	// repo row names the repository and the org's connected login owns new
+	// ones.
+	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, credService, cfg.GitHubRepoVisibility,
+		sourcecontrol.WithWorkspaceTrash(trashWorkspaceRepo))
+	issueService := sourcecontrol.NewIssueService(repoRepo, studioTools)
+	// THE delivery-side issue-write surface: every issue the delivery domain
+	// mints, closes, reopens or labels goes through this one writer, so the
+	// label vocabulary and the dedupe contract are decided once rather than once
+	// per sub-package. Its slices (eventcore, task, validation, build) each hold
+	// it; nothing else in delivery writes an issue.
+	deliveryIssues := delivery.NewIssueWriter(issueService)
+	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, studioTools, repoService)
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
 	// projects and saves it, and coding dispatch copies the runtime onto the run
@@ -402,7 +398,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		bindings: environmentClient,
 		targets:  writeTargets,
 	})
-	validatorProbes := organization.NewValidatorProbes(credService, gitHost, credResolver, minter)
+	validatorProbes := organization.NewValidatorProbes(credService, studioTools)
 	credValidator := secrets.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 
 	// Artifact store — in-process via artifactSvcGit. Adds the
@@ -835,7 +831,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// freshly filed issue into the deployed version's milestone and start an
 	// incident run over it.
 	taskCommands := task.NewCommands(componentService, eventcoreAdopter{events: eventPlane})
-	webhook.RegisterInstallationHandlers(webhookRouter, credService, issueService, trashWorkspaceOrg)
 	// One Ingestor runs every accepted delivery's tail (persist, claim, ack,
 	// detached dispatch): the AE Studio tools pod's ingest-webhook-event, and
 	// the GitHub App receiver until it is retired.
@@ -1748,22 +1743,6 @@ func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID,
 		return "", nil
 	}
 	return res.SecretRef, nil
-}
-
-// buildGitHost selects the git host implementation named by GIT_PROVIDER and
-// returns it as sourcecontrol.Host. This is the only place a concrete provider client
-// is constructed; every gitrepo domain service narrows Host to its own
-// capability port. Deliberately a plain switch — NOT a registry or capability
-// framework. A GitLab impl later is one new clients/gitlab package + one case.
-// cfg.Validate() already rejects unknown providers at boot; the default arm is
-// defensive.
-func buildGitHost(cfg config.Config) (sourcecontrol.Host, error) {
-	switch cfg.GitProvider {
-	case "github":
-		return githubclient.NewClient(), nil
-	default:
-		return nil, fmt.Errorf("unknown GIT_PROVIDER %q — supported: github", cfg.GitProvider)
-	}
 }
 
 // environmentThunderCredentials opens the secret store the environment-tier

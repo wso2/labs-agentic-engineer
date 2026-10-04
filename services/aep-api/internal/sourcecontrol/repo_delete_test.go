@@ -21,8 +21,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 )
 
 // DeleteRepo ensures ABSENCE rather than performing a removal. Its only caller
@@ -42,7 +42,7 @@ func TestDeleteRepo_DropsTheRowAndTrashesTheWorkspace(t *testing.T) {
 
 	var trashed [3]string
 	var trashCalls int
-	svc := sourcecontrol.NewRepoService(repo, githubclient.NewClient(), fakeResolver{}, "private",
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private",
 		sourcecontrol.WithWorkspaceTrash(func(_ context.Context, orgID, projectID, repoSlug string) {
 			trashCalls++
 			trashed = [3]string{orgID, projectID, repoSlug}
@@ -67,7 +67,7 @@ func TestDeleteRepo_AbsentRowIsSuccess(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
 	trashCalls := 0
-	svc := sourcecontrol.NewRepoService(repo, githubclient.NewClient(), fakeResolver{}, "private",
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private",
 		sourcecontrol.WithWorkspaceTrash(func(context.Context, string, string, string) { trashCalls++ }))
 
 	if err := svc.DeleteRepo(testContext(), "org1", "never-provisioned"); err != nil {
@@ -87,7 +87,7 @@ func TestDeleteRepo_IsIdempotent(t *testing.T) {
 		RepoURL: "https://github.com/test-org/proj1.git",
 		Status:  "ready", RepoSlug: "test-org-proj1",
 	})
-	svc := sourcecontrol.NewRepoService(repo, githubclient.NewClient(), fakeResolver{}, "private")
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	for attempt := 1; attempt <= 2; attempt++ {
 		if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {

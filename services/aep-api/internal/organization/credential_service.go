@@ -42,9 +42,8 @@ import (
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
 //
-// It owns: validation of new PATs against GitHub, PAT connect (Connect's
-// app-installation branch has no caller since the App connect flow was
-// removed; it goes with AppInstallOps in phase 4), status projection,
+// It owns: validation of new PATs against GitHub, PAT connect, status
+// projection, the org's GitHub owner (GitHubOwner),
 // disconnect Phase D, webhook-secret rotation, lookup helpers used by the
 // BFF's webhook routing.
 //
@@ -157,14 +156,12 @@ func (e *UpstreamError) Error() string { return e.Message }
 // Connect / Replace — POST /internal/credentials/orgs/{ocOrgId}
 // ----------------------------------------------------------------------------
 
-// ConnectRequest is the body for POST /internal/credentials/orgs/{ocOrgId}.
-// Exactly one of {AppInstallation, UserPAT} must be populated; the kind field
-// must match.
+// ConnectRequest is a GitHub connection to record. Kind must be "user-pat"
+// (the GitHub App kind went with App mode).
 type ConnectRequest struct {
-	Kind           string `json:"kind"`
-	InstallationID int64  `json:"installationId,omitempty"`
-	PAT            string `json:"pat,omitempty"`
-	GitHubLogin    string `json:"githubLogin,omitempty"`
+	Kind        string `json:"kind"`
+	PAT         string `json:"pat,omitempty"`
+	GitHubLogin string `json:"githubLogin,omitempty"`
 }
 
 // Projection is the JSON shape returned by status / connect / replace. It

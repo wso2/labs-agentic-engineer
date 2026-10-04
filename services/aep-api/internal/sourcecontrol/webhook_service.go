@@ -21,108 +21,51 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// WebhookService manages per-repo webhook registration on GitHub.
-//
-// PAT credentials carry WebhookStrategy WebhookPerRepo and get a per-repo
-// hook. App-installation credentials carry WebhookPlatform and skip per-repo
-// registration entirely, because the App's configured callback already
-// handles delivery for every install.
-//
-// Callers dispatch the strategy without inspecting the kind — see Register's
-// short-circuit on WebhookPlatform.
+// WebhookService manages the per-repo webhook that delivers a project's
+// GitHub events to its org's AE Studio pod. The pod owns the delivery URL and
+// the signing secret; this service only asks for the hook and remembers its
+// ID on the repo row.
 type WebhookService interface {
-	// Register installs a webhook on the repo. No-op when the credential's
-	// strategy is WebhookPlatform. Idempotent on (repo, deliveryURL).
+	// Register installs the webhook on the project's repo and persists its
+	// hook ID. Idempotent: the pod answers an existing hook to its URL.
 	Register(ctx context.Context, orgID, projectID string) (hookID *int64, err error)
 
 	// Unregister removes the hook Register installed, addressed by the hook ID
 	// persisted on the repo row. It is the project teardown's counterpart to
-	// Register and is total: a project with no repo row, no stored hook, a
-	// platform-strategy credential, or a hook GitHub no longer has all resolve to
-	// "nothing to remove" and return nil. Only a live failure to reach GitHub is
-	// an error, and even that is best-effort at the call site — the delete is
-	// never blocked by webhook cleanup.
+	// Register and is total: a project with no repo row, no stored hook, or a
+	// hook GitHub no longer has all resolve to "nothing to remove" and return
+	// nil. Only a live failure to reach the pod or GitHub is an error, and even
+	// that is best-effort at the call site — the delete is never blocked by
+	// webhook cleanup.
 	Unregister(ctx context.Context, orgID, projectID string) error
 }
 
-// issueRepoResolver is the private capability webhookService borrows from the
-// issue service: resolving a project's (owner, repo, credential) in one place.
-// The production *issueService satisfies it. Storing the IssueService interface
-// (rather than a lossy `issueSvc.(*issueService)` cast that silently yields nil
-// and nil-derefs at request time) means Register reaches the resolver through a
-// checked assertion — an impl that can't resolve fails loudly with an error, not
-// a panic.
-type issueRepoResolver interface {
-	resolveRepoAndCredential(ctx context.Context, orgID, projectID string) (owner, repo string, cred secrets.Credential, err error)
-}
+// subscribedEvents are the events every project hook carries. Repo-level
+// webhooks only — App-installation events like installation_repositories are
+// rejected by GitHub on repo webhooks (422). "issues" joins the set for the
+// tasks-github-native model (§9.2): task birth, command labels, block
+// validation/repair, close/reopen. The pod refuses any other event.
+var subscribedEvents = []string{"pull_request", "push", "issue_comment", "issues"}
 
 type webhookService struct {
-	repo             RepoRepository
-	github           WebhookOps
-	repoSvc          RepoService
-	issue            IssueService
-	deliveryURL      string
-	hmacSecret       string
-	subscribedEvents []string
+	repo    RepoRepository
+	github  WebhookOps
+	repoSvc RepoService
 }
 
-func NewWebhookService(
-	repo RepoRepository,
-	github WebhookOps,
-	repoSvc RepoService,
-	issueSvc IssueService,
-	deliveryURL, hmacSecret string,
-) WebhookService {
-	return &webhookService{
-		repo:        repo,
-		github:      github,
-		repoSvc:     repoSvc,
-		issue:       issueSvc,
-		deliveryURL: deliveryURL,
-		hmacSecret:  hmacSecret,
-		// Events subscribed to. Repo-level webhooks only — App-installation
-		// events like installation_repositories are scoped to the App's own
-		// callback and are rejected by GitHub on repo webhooks (422). "issues"
-		// joins the set for the tasks-github-native model (§9.2): task birth,
-		// command labels, block validation/repair, close/reopen.
-		subscribedEvents: []string{
-			"pull_request",
-			"push",
-			"issue_comment",
-			"issues",
-		},
-	}
+func NewWebhookService(repo RepoRepository, github WebhookOps, repoSvc RepoService) WebhookService {
+	return &webhookService{repo: repo, github: github, repoSvc: repoSvc}
 }
 
 func (s *webhookService) Register(ctx context.Context, orgID, projectID string) (*int64, error) {
-	if s.deliveryURL == "" || s.hmacSecret == "" {
-		return nil, fmt.Errorf("webhook delivery URL or HMAC secret not configured — set GITHUB_WEBHOOK_DELIVERY_URL and GITHUB_WEBHOOK_SECRET")
-	}
-
-	resolver, ok := s.issue.(issueRepoResolver)
-	if !ok {
-		return nil, fmt.Errorf("webhook: issue service %T cannot resolve repo credentials", s.issue)
-	}
-	owner, repoName, cred, err := resolver.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, _, err := RepoRefFor(ctx, s.repo, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	// App-mode short-circuit: platform-level delivery, no per-repo
-	// registration. Platform-PAT credentials always return WebhookPerRepo.
-	if cred.WebhookStrategy() == secrets.WebhookPlatform {
-		return nil, nil
-	}
-
-	hookID, err := s.github.RegisterWebhook(
-		ctx, owner, repoName, cred,
-		s.deliveryURL, s.hmacSecret,
-		s.subscribedEvents,
-	)
+	hookID, err := s.github.RegisterWebhook(ctx, ref, subscribedEvents)
 	if err != nil {
 		return nil, fmt.Errorf("register webhook: %w", err)
 	}
@@ -133,7 +76,7 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 	// issue deliveries. PATCHing the events every register makes cutover
 	// idempotent (§9.2). Best-effort: a reconcile failure must not block a
 	// successful registration.
-	if patchErr := s.github.UpdateWebhookEvents(ctx, owner, repoName, cred, hookID, s.subscribedEvents); patchErr != nil {
+	if patchErr := s.github.UpdateWebhookEvents(ctx, ref, hookID, subscribedEvents); patchErr != nil {
 		slog.WarnContext(ctx, "reconcile webhook events failed", "project", projectID, "hookId", hookID, "error", patchErr)
 	}
 
@@ -147,13 +90,13 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 // contract; the shape below is Register's, run backwards.
 //
 // It must be called BEFORE the repo row is deleted: the row carries both the
-// hook ID and the repo identity the credential resolves against, and once it is
-// gone the platform has no way left to name the hook it created.
+// hook ID and the repo identity, and once it is gone the platform has no way
+// left to name the hook it created.
 func (s *webhookService) Unregister(ctx context.Context, orgID, projectID string) error {
 	// The hook ID is the whole point: it is what makes this removal precise. A
-	// project that never registered one — App-mode delivery, a failed
-	// registration, a repo provisioned before hooks existed — has nothing of ours
-	// on the repo to remove.
+	// project that never registered one — a failed registration, a repo
+	// provisioned before hooks existed — has nothing of ours on the repo to
+	// remove.
 	repo, err := s.repoSvc.GetRepo(ctx, orgID, projectID)
 	if err != nil {
 		if errors.Is(err, ErrRepoNotFound) {
@@ -164,23 +107,12 @@ func (s *webhookService) Unregister(ctx context.Context, orgID, projectID string
 	if repo == nil || repo.WebhookID == nil {
 		return nil
 	}
-
-	resolver, ok := s.issue.(issueRepoResolver)
-	if !ok {
-		return fmt.Errorf("webhook: issue service %T cannot resolve repo credentials", s.issue)
-	}
-	owner, repoName, cred, err := resolver.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := RefForRow(orgID, repo)
 	if err != nil {
 		return err
 	}
 
-	// Same short-circuit as Register, and for the same reason: under App-mode
-	// delivery no per-repo hook was ever installed, so there is none to remove.
-	if cred.WebhookStrategy() == secrets.WebhookPlatform {
-		return nil
-	}
-
-	if err := s.github.DeleteWebhook(ctx, owner, repoName, cred, *repo.WebhookID); err != nil {
+	if err := s.github.DeleteWebhook(ctx, ref, *repo.WebhookID); err != nil {
 		return fmt.Errorf("delete webhook: %w", err)
 	}
 	slog.InfoContext(ctx, "webhook unregistered from repo",

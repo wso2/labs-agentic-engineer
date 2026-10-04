@@ -31,46 +31,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// The 4.13 reshaped GitHub ports (RepoAdmin, IssueOps, WebhookOps keyed by
-// RepoRef), declared here until Task 4.13 moves them into sourcecontrol: the
-// Adapter and aestudiotest.Fake satisfy the same shapes.
-type (
-	repoAdmin interface {
-		CreateOrgRepo(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateOrgRepoRequest) (cloneURL string, err error)
-	}
-	issueOps interface {
-		CreateIssue(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
-		ListIssues(ctx context.Context, ref sourcecontrol.RepoRef, labels []string) ([]sourcecontrol.IssueInfo, error)
-		GetIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.IssueInfo, error)
-		ListIssueComments(ctx context.Context, ref sourcecontrol.RepoRef, number, limit int) ([]sourcecontrol.IssueComment, error)
-		EnsureLabel(ctx context.Context, ref sourcecontrol.RepoRef, name, color string) error
-		CloseIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ReopenIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		CommentIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int, body string) error
-		EditIssueBody(ctx context.Context, ref sourcecontrol.RepoRef, number int, body string) error
-		EditIssueTitle(ctx context.Context, ref sourcecontrol.RepoRef, number int, title string) error
-		AddIssueLabels(ctx context.Context, ref sourcecontrol.RepoRef, number int, labels []string) error
-		RemoveIssueLabel(ctx context.Context, ref sourcecontrol.RepoRef, number int, label string) error
-		SetIssueLabels(ctx context.Context, ref sourcecontrol.RepoRef, number int, labels []string) error
-		SetIssueMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number, milestoneNumber int) error
-		GetPullRequest(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.PullRequestState, error)
-		MergePullRequest(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ListPullRequestFiles(ctx context.Context, ref sourcecontrol.RepoRef, number int) ([]string, error)
-		CreateMilestone(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateMilestoneRequest) (*sourcecontrol.MilestoneResult, error)
-		CloseMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ReopenMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ListMilestones(ctx context.Context, ref sourcecontrol.RepoRef, state string) ([]sourcecontrol.Milestone, error)
-		ListMilestoneIssues(ctx context.Context, ref sourcecontrol.RepoRef, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
-		MilestoneIssueCounts(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.MilestoneIssueCounts, error)
-		ListMilestoneIssueComments(ctx context.Context, ref sourcecontrol.RepoRef, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error)
-	}
-	webhookOps interface {
-		RegisterWebhook(ctx context.Context, ref sourcecontrol.RepoRef, events []string) (hookID int64, err error)
-		UpdateWebhookEvents(ctx context.Context, ref sourcecontrol.RepoRef, hookID int64, events []string) error
-		DeleteWebhook(ctx context.Context, ref sourcecontrol.RepoRef, hookID int64) error
-	}
-)
-
 var (
 	_ sourcecontrol.Git             = (*Adapter)(nil)
 	_ sourcecontrol.TrashOps        = (*Adapter)(nil)
@@ -78,9 +38,9 @@ var (
 	_ sourcecontrol.ReferencesOps   = (*Adapter)(nil)
 	_ sourcecontrol.IdentityOps     = (*Adapter)(nil)
 	_ Turns                         = (*Adapter)(nil)
-	_ repoAdmin                     = (*Adapter)(nil)
-	_ issueOps                      = (*Adapter)(nil)
-	_ webhookOps                    = (*Adapter)(nil)
+	_ sourcecontrol.RepoAdmin       = (*Adapter)(nil)
+	_ sourcecontrol.IssueOps        = (*Adapter)(nil)
+	_ sourcecontrol.WebhookOps      = (*Adapter)(nil)
 )
 
 // countingEndpoints resolves every org to url and counts the lookups.

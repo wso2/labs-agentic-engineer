@@ -31,11 +31,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
 )
+
+// sortedKeys returns the sorted JSON keys of a decoded object.
+func sortedKeys(m map[string]any) []string {
+	ks := make([]string, 0, len(m))
+	for k := range m {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
+}
 
 // --- shared fake Thunder admin client ---------------------------------------
 //

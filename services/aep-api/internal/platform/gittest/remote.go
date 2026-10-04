@@ -19,15 +19,13 @@
 // save/discard/versioning flows run against genuine git object-store
 // semantics in the fast `make test` lane.
 //
-// Two pieces (the Git-Data HTTP fake was retired with the REST git-object
-// path — the gitfs Workspace engine + workspacetest supersede it):
-//
-//   - NewRemote(t): a bare repo in t.TempDir() acting as a file:// origin
-//     (clone/fetch/push work unchanged; GIT_ASKPASS never fires on file
-//     remotes). Seed/Tag/read helpers arrange and assert via git plumbing.
-//   - NewStub(t): a route-registry httptest fake for the JSON endpoints —
-//     repos, issues, milestones, webhooks, and the single POST /graphql
-//     endpoint — where a git-backed fake would be over-engineering.
+// NewRemote(t) is a bare repo in t.TempDir() acting as a file:// origin
+// (clone/fetch/push work unchanged; GIT_ASKPASS never fires on file remotes);
+// Seed/Tag/read helpers arrange and assert via git plumbing. It serves the
+// gitfs Workspace engine's tests and goes with gitfs (phase 4 Task 4.16). The
+// GitHub JSON stub moved to ae-studio-tools (internal/github/githubtest) with
+// the GitHub client; aep-api's GitHub callers test against
+// aestudiotest.Fake.
 //
 // Hermeticity: every git subprocess runs with GIT_CONFIG_GLOBAL/SYSTEM pointed
 // at os.DevNull and a fixed identity supplied via env, so a run depends on

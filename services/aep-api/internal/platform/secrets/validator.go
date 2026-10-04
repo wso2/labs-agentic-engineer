@@ -27,15 +27,13 @@ import (
 )
 
 // Validator probes every active org_credentials row on a fixed interval
-// (default 24h) and runs whatever drift / revocation reconciliation the
-// row's kind requires. Per phase2.md §6.10:
-//
-//   - app-installation: GET /app/installations/{installationId}.
-//     200 → refresh account.login if changed (rename drift). Update
-//     last_validated_at. 401/404/410 → trigger disconnect cascade.
-//   - user-pat: GET /user with the cached PAT. 200 with new login →
-//     identity drift (PrevIdentityLogin/IdentityChangedAt). 401 →
-//     trigger disconnect cascade. Otherwise update last_validated_at.
+// (default 24h) and runs the drift / revocation reconciliation of a
+// user-pat row (phase2.md §6.10): the GitHub user behind the org's PAT,
+// read through the org's AE Studio pod. 200 with new login → identity drift
+// (PrevIdentityLogin/IdentityChangedAt); GitHub refusing the token → trigger
+// the disconnect cascade; otherwise update last_validated_at. A row of any
+// other kind (a GitHub App installation left from before App mode was
+// removed) is logged and skipped.
 //
 // Single-flight per process across replicas via
 // pg_advisory_xact_lock(hashtext('validator')); rows are listed inside
@@ -70,42 +68,30 @@ type ValidatorProbes interface {
 	// the slice without holding the validator lock.
 	ListActiveRows(ctx context.Context) ([]ActiveRow, error)
 
-	// ProbePAT performs GET /user with the row's stored PAT (resolved via
-	// the resolver). On 200 returns identity{login, name, email}; on 401
-	// returns ErrCredentialUnauthorized; on 5xx returns ErrCredentialTransient.
-	ProbePAT(ctx context.Context, row ActiveRow) (login, name, email string, err error)
-
-	// ProbeApp calls GET /app/installations/{installationId} via the
-	// AppTokenMinter's signed App JWT. On 200 returns accountLogin; on
-	// 401/404/410 returns ErrCredentialUnauthorized; on 5xx returns
+	// ProbePAT reads the GitHub user behind the org's PAT. On success
+	// returns identity{login, name, email}; GitHub refusing the token is
+	// ErrCredentialUnauthorized; anything that may clear on its own is
 	// ErrCredentialTransient.
-	ProbeApp(ctx context.Context, row ActiveRow) (accountLogin string, err error)
+	ProbePAT(ctx context.Context, row ActiveRow) (login, name, email string, err error)
 
 	// RecordIdentityFromGitHub commits identity / drift columns under the
 	// row's transaction. drifted=true when the new login differed from the
 	// stored identity_login.
 	RecordIdentityFromGitHub(ctx context.Context, ocOrgID, login, name, email string) (drifted bool, err error)
-
-	// UpdateGitHubLogin updates the github_login column for App-mode rename drift.
-	UpdateGitHubLogin(ctx context.Context, ocOrgID, login string) error
-
-	// TouchValidatedAt updates last_validated_at without identity changes.
-	TouchValidatedAt(ctx context.Context, ocOrgID string) error
 }
 
 // ActiveRow is the projection the validator walks. Avoids a GORM model
 // dependency so the validator package stays free of DB schema details.
 type ActiveRow struct {
-	OcOrgID        string
-	Kind           string
-	GitHubLogin    string
-	IdentityLogin  string
-	InstallationID *int64
-	Status         string
+	OcOrgID       string
+	Kind          string
+	GitHubLogin   string
+	IdentityLogin string
+	Status        string
 }
 
 // CascadeTrigger is invoked by the validator on a confirmed unauthorized
-// signal (401 from PAT mode; 401/404/410 from App mode). The callback
+// signal (GitHub refusing the org's PAT). The callback
 // runs the BFF-side disconnect cascade per §6.7. Errors are logged but
 // don't stop the validator's iteration.
 type CascadeTrigger func(ctx context.Context, ocOrgID, cause string) error
@@ -217,31 +203,6 @@ func (v *Validator) processRow(ctx context.Context, row ActiveRow, summary *RunS
 		}
 		if drifted {
 			summary.DriftedRows++
-		}
-		summary.ValidatedRows++
-		return nil
-
-	case "app-installation":
-		accountLogin, err := v.probes.ProbeApp(ctx, row)
-		if errors.Is(err, ErrCredentialUnauthorized) {
-			summary.CascadedRows++
-			return v.fireCascade(ctx, row.OcOrgID, "validator.unauthorized")
-		}
-		if err != nil {
-			return err
-		}
-		// App-mode "drift" is the install's account.login changing
-		// (org rename on GitHub). Update github_login + last_validated_at.
-		// No identity_login update — the App's bot identity is fixed by
-		// the App definition.
-		if accountLogin != "" && accountLogin != row.GitHubLogin {
-			if err := v.probes.UpdateGitHubLogin(ctx, row.OcOrgID, accountLogin); err != nil {
-				return err
-			}
-			summary.DriftedRows++
-		}
-		if err := v.probes.TouchValidatedAt(ctx, row.OcOrgID); err != nil {
-			return err
 		}
 		summary.ValidatedRows++
 		return nil

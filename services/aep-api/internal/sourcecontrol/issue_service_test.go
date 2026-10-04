@@ -18,73 +18,104 @@ package sourcecontrol_test
 
 import (
 	"errors"
-	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 )
 
-// newIssueSvcOnStub wires a REAL issueService (and REAL client) at the stub.
-// The repo resolves (org1, proj1) → github.com/acme/widgets, so every REST call
-// lands under /repos/acme/widgets on the stub; GraphQL lands on the single
-// POST /graphql route. Tasks are plain GitHub issues now (Projects v2 dropped)
-// — no board ops on creation.
-func newIssueSvcOnStub(t *testing.T, stub *gittest.Stub) sourcecontrol.IssueService {
+// widgets is the repository (org1, proj1) resolves to.
+var widgets = sourcecontrol.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}
+
+// newIssueSvcOnFake wires a REAL issueService at the in-memory pod. The repo
+// row resolves (org1, proj1) → github.com/acme/widgets. Tasks are plain
+// GitHub issues (Projects v2 dropped) — no board ops on creation.
+func newIssueSvcOnFake(t *testing.T) (sourcecontrol.IssueService, *aestudiotest.Fake) {
 	t.Helper()
 	repo := newFakeRepoRepo()
 	repo.preload(&sourcecontrol.GitRepository{
 		OrgID: "org1", ProjectID: "proj1",
 		RepoURL: "https://github.com/acme/widgets",
 	})
-	client := githubclient.NewClient(
-		githubclient.WithAPIBase(stub.URL),
-		githubclient.WithGraphQLEndpoint(stub.URL+"/graphql"),
-	)
-	return sourcecontrol.NewIssueService(repo, client, fakeResolver{})
+	f := aestudiotest.New()
+	return sourcecontrol.NewIssueService(repo, f), f
 }
 
-func TestRecurrence_RealGitHubPayloadPreservesEvidenceBeforeReopen(t *testing.T) {
+// ops lists the operations the Fake saw, in order.
+func ops(f *aestudiotest.Fake) []string {
+	var out []string
+	for _, c := range f.Calls() {
+		out = append(out, c.Op)
+	}
+	return out
+}
+
+// issueNo answers one issue of ref by number.
+func issueNo(t *testing.T, f *aestudiotest.Fake, ref sourcecontrol.RepoRef, n int) sourcecontrol.IssueInfo {
+	t.Helper()
+	for _, is := range f.Issues(ref) {
+		if is.Number == n {
+			return is
+		}
+	}
+	t.Fatalf("issue #%d not on %s/%s", n, ref.Owner, ref.Repo)
+	return sourcecontrol.IssueInfo{}
+}
+
+// commentsOn answers every comment on issue n of ref, oldest first.
+func commentsOn(t *testing.T, f *aestudiotest.Fake, ref sourcecontrol.RepoRef, n int) []sourcecontrol.IssueComment {
+	t.Helper()
+	cs, err := f.ListIssueComments(testContext(), ref, n, 100)
+	if err != nil {
+		t.Fatalf("comments on #%d: %v", n, err)
+	}
+	return cs
+}
+
+// A completed incident recurs: its evidence is appended to the issue body
+// BEFORE the issue reopens, so a failed reopen never loses it.
+func TestRecurrence_PreservesEvidenceBeforeReopen(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK,
-		`[{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","state":"closed","state_reason":"completed","closed_at":"2026-09-18T08:00:00Z","body":"Original RCA evidence","labels":[{"name":"incident"}]}]`)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
-	result, err := svc.CreateIssue(sourcecontrol.WithIncidentContext(testContext(), "alert-123"), "org1", "proj1", sourcecontrol.CreateIssueRequest{
+	svc, f := newIssueSvcOnFake(t)
+	ctx := sourcecontrol.WithIncidentContext(testContext(), "alert-123")
+	first, err := svc.CreateIssue(ctx, "org1", "proj1", sourcecontrol.CreateIssueRequest{
+		Title: "Recurring timeout", ComponentName: "checkout", Body: "Original RCA evidence",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.CloseIssue(testContext(), widgets, first.Number); err != nil {
+		t.Fatal(err)
+	}
+	before := len(f.Calls())
+
+	result, err := svc.CreateIssue(ctx, "org1", "proj1", sourcecontrol.CreateIssueRequest{
 		Title: "Recurring timeout", ComponentName: "checkout", Body: "## Evidence\nNew timeout trace",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Reopened || result.Number != 7 || result.RecurrenceCount != 1 || result.Adopted || result.AdoptionError == "" {
+	if !result.Reopened || result.Number != first.Number || result.RecurrenceCount != 1 || result.Adopted || result.AdoptionError == "" {
 		t.Fatalf("result=%+v", result)
 	}
-	patches := requestsMatching(stub.Requests(), http.MethodPatch, "/repos/acme/widgets/issues/7")
-	if len(patches) != 2 {
-		t.Fatalf("patches=%+v", patches)
+	got := issueNo(t, f, widgets, first.Number)
+	if !strings.HasPrefix(got.Body, "Original RCA evidence\n\n## Recurrence 1\n") || !strings.HasSuffix(got.Body, "## Evidence\nNew timeout trace") {
+		t.Fatalf("evidence=%s", got.Body)
 	}
-	var evidence struct{ Body string }
-	decodeBody(t, patches[0].Body, &evidence)
-	if !strings.HasPrefix(evidence.Body, "Original RCA evidence\n\n## Recurrence 1\n") || !strings.HasSuffix(evidence.Body, "## Evidence\nNew timeout trace") {
-		t.Fatalf("evidence=%s", evidence.Body)
+	if got.State != "open" {
+		t.Fatalf("state = %q, want open", got.State)
 	}
-	var reopen struct{ State string }
-	decodeBody(t, patches[1].Body, &reopen)
-	if reopen.State != "open" {
-		t.Fatalf("reopen=%s", patches[1].Body)
+	writes := slices.DeleteFunc(ops(f)[before:], func(op string) bool { return op == aestudiotest.OpListIssues })
+	if want := []string{aestudiotest.OpEditIssueBody, aestudiotest.OpReopenIssue}; !slices.Equal(writes, want) {
+		t.Fatalf("writes = %v, want %v (evidence before reopen)", writes, want)
 	}
 }
 
 func TestCreateIssue_SendsTitleBodyLabelsAndParsesResult(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/labels", http.StatusCreated, `{}`)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated,
-		`{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","node_id":"NODE7"}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
 
 	res, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{
 		Title:  "Implement auth",
@@ -94,107 +125,113 @@ func TestCreateIssue_SendsTitleBodyLabelsAndParsesResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
-	if res.Number != 7 || res.URL != "https://github.com/acme/widgets/issues/7" || res.NodeID != "NODE7" {
-		t.Fatalf("result = %+v, want {7, .../issues/7, NODE7}", res)
+	if res.Number != 1 || res.URL != "https://github.com/acme/widgets/issues/1" || res.NodeID == "" {
+		t.Fatalf("result = %+v", res)
 	}
 
-	reqs := stub.Requests()
-
-	// Issue create request carries title/body/labels verbatim.
-	issueReq := onlyRequest(t, reqs, http.MethodPost, "/repos/acme/widgets/issues")
-	var body struct {
-		Title  string   `json:"title"`
-		Body   string   `json:"body"`
-		Labels []string `json:"labels"`
+	// The issue carries title/body/labels verbatim.
+	got := issueNo(t, f, widgets, 1)
+	if got.Title != "Implement auth" || got.Body != "do the thing" {
+		t.Fatalf("issue title/body = %q/%q", got.Title, got.Body)
 	}
-	decodeBody(t, issueReq.Body, &body)
-	if body.Title != "Implement auth" || body.Body != "do the thing" {
-		t.Fatalf("issue body title/body = %q/%q", body.Title, body.Body)
-	}
-	if strings.Join(body.Labels, ",") != "aep,phase-1" {
-		t.Fatalf("issue labels = %v, want [aep phase-1]", body.Labels)
+	if strings.Join(got.Labels, ",") != "aep,phase-1" {
+		t.Fatalf("issue labels = %v, want [aep phase-1]", got.Labels)
 	}
 
-	// Both labels are ensured up-front, in order, with their mapped colors.
-	labelReqs := requestsMatching(reqs, http.MethodPost, "/repos/acme/widgets/labels")
-	if len(labelReqs) != 2 {
-		t.Fatalf("label ensure requests = %d, want 2", len(labelReqs))
+	// Both labels are ensured up-front, before the create, with their mapped
+	// colours.
+	if want := []string{aestudiotest.OpEnsureLabel, aestudiotest.OpEnsureLabel, aestudiotest.OpCreateIssue}; !slices.Equal(ops(f), want) {
+		t.Fatalf("ops = %v, want %v", ops(f), want)
 	}
-	wantColors := map[string]string{"aep": "0075ca", "phase-1": "ededed"}
-	for _, lr := range labelReqs {
-		var l struct{ Name, Color string }
-		decodeBody(t, lr.Body, &l)
-		if wantColors[l.Name] != l.Color {
-			t.Fatalf("label %q color = %q, want %q", l.Name, l.Color, wantColors[l.Name])
-		}
-		delete(wantColors, l.Name)
-	}
-	if len(wantColors) != 0 {
-		t.Fatalf("labels not all ensured; missing %v", wantColors)
+	if labels := f.Labels(widgets); labels["aep"] != "0075ca" || labels["phase-1"] != "ededed" || len(labels) != 2 {
+		t.Fatalf("labels = %v", labels)
 	}
 }
 
 func TestCreateIssue_TitleRequired(t *testing.T) {
 	t.Parallel()
-	svc := newIssueSvcOnStub(t, gittest.NewStub(t))
+	svc, f := newIssueSvcOnFake(t)
 	if _, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{Title: "  "}); err == nil {
 		t.Fatal("want error for blank title, got nil")
+	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("nothing must reach the pod, got %v", ops(f))
 	}
 }
 
 func TestCreateIssue_RepoNotFound(t *testing.T) {
 	t.Parallel()
-	// A repo with no row → resolveRepoAndCredential surfaces ErrRepoNotFound.
-	svc := sourcecontrol.NewIssueService(newFakeRepoRepo(), githubclient.NewClient(githubclient.WithAPIBase(gittest.NewStub(t).URL)), fakeResolver{})
+	// A project with no row → resolveRef surfaces ErrRepoNotFound.
+	f := aestudiotest.New()
+	svc := sourcecontrol.NewIssueService(newFakeRepoRepo(), f)
 	_, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{Title: "x"})
 	if !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		t.Fatalf("err = %v, want ErrRepoNotFound", err)
 	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("nothing must reach the pod, got %v", ops(f))
+	}
+}
+
+// The pod's answer for an org whose AE Studio is down or not connected
+// reaches the caller as is (no fallback), so the edge can map it.
+func TestCreateIssue_PodFailureReachesTheCaller(t *testing.T) {
+	t.Parallel()
+	for _, want := range []error{sourcecontrol.ErrAEStudioUnavailable, sourcecontrol.ErrAEStudioAbsent} {
+		svc, f := newIssueSvcOnFake(t)
+		f.FailOrg("org1", want)
+		if _, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{Title: "x"}); !errors.Is(err, want) {
+			t.Fatalf("err = %v, want %v", err, want)
+		}
+	}
+}
+
+// openIssue files one plain issue through the Fake and answers its number.
+func openIssue(t *testing.T, f *aestudiotest.Fake) int {
+	t.Helper()
+	res, err := f.CreateIssue(testContext(), widgets, sourcecontrol.CreateIssueRequest{Title: "seed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res.Number
 }
 
 func TestCloseIssue_CommentsThenCloses(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
-	if err := svc.CloseIssue(testContext(), "org1", "proj1", 7, "closing this out"); err != nil {
+	if err := svc.CloseIssue(testContext(), "org1", "proj1", n, "closing this out"); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
-	reqs := stub.Requests()
-
-	comment := onlyRequest(t, reqs, http.MethodPost, "/repos/acme/widgets/issues/7/comments")
-	var cb struct{ Body string }
-	decodeBody(t, comment.Body, &cb)
+	cs := commentsOn(t, f, widgets, n)
 	// The prose is the caller's; the machine brand rides in front of it (see
 	// TestCloseIssue_ClosingCommentIsBrandedAsMachine).
-	if !strings.Contains(cb.Body, "closing this out") {
-		t.Fatalf("comment body = %q", cb.Body)
+	if len(cs) != 1 || !strings.Contains(cs[0].Body, "closing this out") {
+		t.Fatalf("comments = %+v", cs)
 	}
-
-	patch := onlyRequest(t, reqs, http.MethodPatch, "/repos/acme/widgets/issues/7")
-	var pb struct {
-		State       string `json:"state"`
-		StateReason string `json:"state_reason"`
+	got := issueNo(t, f, widgets, n)
+	if got.State != "closed" || got.StateReason != "completed" {
+		t.Fatalf("issue = %+v, want closed completed", got)
 	}
-	decodeBody(t, patch.Body, &pb)
-	if pb.State != "closed" || pb.StateReason != "completed" {
-		t.Fatalf("close patch = %+v, want {closed completed}", pb)
+	if want := []string{aestudiotest.OpCreateIssue, aestudiotest.OpCommentIssue, aestudiotest.OpCloseIssue, aestudiotest.OpListIssueComments}; !slices.Equal(ops(f), want) {
+		t.Fatalf("ops = %v, want the comment before the close", ops(f))
 	}
 }
 
 func TestCloseIssue_NoCommentWhenBlank(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
-	if err := svc.CloseIssue(testContext(), "org1", "proj1", 7, "   "); err != nil {
+	if err := svc.CloseIssue(testContext(), "org1", "proj1", n, "   "); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
-	if got := requestsMatching(stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments"); len(got) != 0 {
+	if got := commentsOn(t, f, widgets, n); len(got) != 0 {
 		t.Fatalf("comment posted despite blank comment: %+v", got)
+	}
+	if issueNo(t, f, widgets, n).State != "closed" {
+		t.Fatal("issue not closed")
 	}
 }
 
@@ -205,21 +242,18 @@ func TestCloseIssue_NoCommentWhenBlank(t *testing.T) {
 // it from the coding agent's own notes (both post under the org's credential).
 func TestCommentIssue_PostsBodyBrandedAsMachine(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
-	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, "a comment"); err != nil {
+	if err := svc.CommentIssue(testContext(), "org1", "proj1", n, "a comment"); err != nil {
 		t.Fatalf("CommentIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
-	var b struct{ Body string }
-	decodeBody(t, req.Body, &b)
-	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
-		t.Fatalf("comment not branded: %q", b.Body)
+	cs := commentsOn(t, f, widgets, n)
+	if len(cs) != 1 || !strings.HasPrefix(cs[0].Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("comment not branded: %+v", cs)
 	}
-	if !strings.Contains(b.Body, "a comment") {
-		t.Fatalf("the caller's prose did not survive branding: %q", b.Body)
+	if !strings.Contains(cs[0].Body, "a comment") {
+		t.Fatalf("the caller's prose did not survive branding: %q", cs[0].Body)
 	}
 }
 
@@ -227,19 +261,14 @@ func TestCommentIssue_PostsBodyBrandedAsMachine(t *testing.T) {
 // the most visible machine comment on an issue before this existed.
 func TestCloseIssue_ClosingCommentIsBrandedAsMachine(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
-	if err := svc.CloseIssue(testContext(), "org1", "proj1", 7, "✅ Provisioned."); err != nil {
+	if err := svc.CloseIssue(testContext(), "org1", "proj1", n, "✅ Provisioned."); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
-	var b struct{ Body string }
-	decodeBody(t, req.Body, &b)
-	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
-		t.Fatalf("closing comment not branded: %q", b.Body)
+	if cs := commentsOn(t, f, widgets, n); len(cs) != 1 || !strings.HasPrefix(cs[0].Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("closing comment not branded: %+v", cs)
 	}
 }
 
@@ -248,19 +277,16 @@ func TestCloseIssue_ClosingCommentIsBrandedAsMachine(t *testing.T) {
 // leave a visible artefact once the read strips only what it expects.
 func TestCommentIssue_BrandingDoesNotStack(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
 	already := sourcecontrol.MachineCommentMarker + "\nalready branded"
-	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, already); err != nil {
+	if err := svc.CommentIssue(testContext(), "org1", "proj1", n, already); err != nil {
 		t.Fatalf("CommentIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
-	var b struct{ Body string }
-	decodeBody(t, req.Body, &b)
-	if n := strings.Count(b.Body, sourcecontrol.MachineCommentMarker); n != 1 {
-		t.Fatalf("marker appears %d times, want 1: %q", n, b.Body)
+	cs := commentsOn(t, f, widgets, n)
+	if c := strings.Count(cs[0].Body, sourcecontrol.MachineCommentMarker); c != 1 {
+		t.Fatalf("marker appears %d times, want 1: %q", c, cs[0].Body)
 	}
 }
 
@@ -271,36 +297,35 @@ func TestCommentIssue_BrandingDoesNotStack(t *testing.T) {
 // feed built to exclude it.
 func TestCommentIssue_BrandsABodyThatMerelyQuotesTheMarker(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues/7/comments", http.StatusCreated, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
 	quoting := "the earlier note said:\n\n> " + sourcecontrol.MachineCommentMarker + "\n> done"
-	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, quoting); err != nil {
+	if err := svc.CommentIssue(testContext(), "org1", "proj1", n, quoting); err != nil {
 		t.Fatalf("CommentIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues/7/comments")
-	var b struct{ Body string }
-	decodeBody(t, req.Body, &b)
-	if !strings.HasPrefix(b.Body, sourcecontrol.MachineCommentMarker) {
-		t.Fatalf("a body quoting the marker was left unbranded: %q", b.Body)
+	if cs := commentsOn(t, f, widgets, n); !strings.HasPrefix(cs[0].Body, sourcecontrol.MachineCommentMarker) {
+		t.Fatalf("a body quoting the marker was left unbranded: %q", cs[0].Body)
 	}
 }
 
 func TestCommentIssue_BodyRequired(t *testing.T) {
 	t.Parallel()
-	svc := newIssueSvcOnStub(t, gittest.NewStub(t))
+	svc, _ := newIssueSvcOnFake(t)
 	if err := svc.CommentIssue(testContext(), "org1", "proj1", 7, "  "); err == nil {
 		t.Fatal("want error for blank comment body, got nil")
 	}
 }
 
-func TestListIssues_ParsesResponseAndFiltersByLabel(t *testing.T) {
+func TestListIssues_FiltersByLabelAndProjectsAttention(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK,
-		`[{"number":1,"title":"T1","body":"B1","html_url":"U1","state":"open","labels":[{"name":"aep"},{"name":"phase-1"}]}]`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	if _, err := f.CreateIssue(testContext(), widgets, sourcecontrol.CreateIssueRequest{Title: "T1", Body: "B1", Labels: []string{"aep", "phase-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.CreateIssue(testContext(), widgets, sourcecontrol.CreateIssueRequest{Title: "other", Labels: []string{"bug"}}); err != nil {
+		t.Fatal(err)
+	}
 
 	issues, err := svc.ListIssues(testContext(), "org1", "proj1", []string{"aep"})
 	if err != nil {
@@ -310,66 +335,54 @@ func TestListIssues_ParsesResponseAndFiltersByLabel(t *testing.T) {
 		t.Fatalf("got %d issues, want 1", len(issues))
 	}
 	got := issues[0]
-	if got.Number != 1 || got.Title != "T1" || got.Body != "B1" || got.URL != "U1" || got.State != "open" {
+	if got.Number != 1 || got.Title != "T1" || got.Body != "B1" || got.State != "open" || strings.Join(got.Labels, ",") != "aep,phase-1" {
 		t.Fatalf("issue = %+v", got)
 	}
-	if strings.Join(got.Labels, ",") != "aep,phase-1" {
-		t.Fatalf("labels = %v, want [aep phase-1]", got.Labels)
-	}
-	// The requested label was passed through as a query filter.
-	req := onlyRequest(t, stub.Requests(), http.MethodGet, "/repos/acme/widgets/issues")
-	if !strings.Contains(req.Query, "labels=aep") {
-		t.Fatalf("query = %q, want it to contain labels=aep", req.Query)
-	}
 }
 
-func TestEditIssueBody_PatchesBody(t *testing.T) {
+func TestEditIssueBody_ReplacesBody(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
 
-	if err := svc.EditIssueBody(testContext(), "org1", "proj1", 7, "replacement body"); err != nil {
+	if err := svc.EditIssueBody(testContext(), "org1", "proj1", n, "replacement body"); err != nil {
 		t.Fatalf("EditIssueBody: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPatch, "/repos/acme/widgets/issues/7")
-	var b struct{ Body string }
-	decodeBody(t, req.Body, &b)
-	if b.Body != "replacement body" {
-		t.Fatalf("edit body = %q", b.Body)
+	if got := issueNo(t, f, widgets, n).Body; got != "replacement body" {
+		t.Fatalf("edit body = %q", got)
 	}
 }
 
-// TestSetIssueMilestone_PatchesTheNumber pins adoption's write: the milestone
+// TestSetIssueMilestone_MovesTheIssue pins adoption's write: the milestone
 // travels as a NUMBER (GitHub 422s a title here, and the number is the only
-// stable key), on the ordinary issue PATCH route.
-func TestSetIssueMilestone_PatchesTheNumber(t *testing.T) {
+// stable key).
+func TestSetIssueMilestone_MovesTheIssue(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPatch, "/repos/acme/widgets/issues/7", http.StatusOK, `{}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	n := openIssue(t, f)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if err := svc.SetIssueMilestone(testContext(), "org1", "proj1", 7, 3); err != nil {
+	if err := svc.SetIssueMilestone(testContext(), "org1", "proj1", n, m.Number); err != nil {
 		t.Fatalf("SetIssueMilestone: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPatch, "/repos/acme/widgets/issues/7")
-	var b struct{ Milestone int }
-	decodeBody(t, req.Body, &b)
-	if b.Milestone != 3 {
-		t.Fatalf("milestone = %d, want 3", b.Milestone)
+	members, err := f.ListMilestoneIssues(testContext(), widgets, sourcecontrol.MilestoneIssuesFilter{Number: m.Number})
+	if err != nil || len(members) != 1 || members[0].Number != n {
+		t.Fatalf("milestone members = %+v err=%v", members, err)
 	}
 }
 
 func TestSetIssueMilestone_NumberRequired(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
 
 	if err := svc.SetIssueMilestone(testContext(), "org1", "proj1", 7, 0); err == nil {
 		t.Fatal("a zero milestone number must be refused before any request")
 	}
-	if len(stub.Requests()) != 0 {
-		t.Fatalf("nothing must be sent, got %v", stub.Requests())
+	if len(f.Calls()) != 0 {
+		t.Fatalf("nothing must be sent, got %v", ops(f))
 	}
 }
 

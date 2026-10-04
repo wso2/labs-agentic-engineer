@@ -17,337 +17,185 @@
 package sourcecontrol_test
 
 // The milestone surface at the service tier: the REAL issueService over the
-// REAL githubhost client, driven against a gittest.Stub (newIssueSvcOnStub).
-// What is being pinned is the wire behaviour GitHub's milestone API forces on
-// us — the case-sensitivity split, the 422 recovery, number-not-title
-// addressing, pagination, and PR exclusion.
+// in-memory pod (newIssueSvcOnFake). The GitHub wire it rides — the
+// case-sensitivity split, the 422 recovery, number-not-title addressing,
+// pagination, PR exclusion, the one GraphQL round trip of the counts — is the
+// pod's client's, pinned in ae-studio-tools' internal/github tests.
 
 import (
 	"errors"
-	"fmt"
-	"net/http"
 	"slices"
-	"strings"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-const milestonesPath = "/repos/acme/widgets/milestones"
-
-// alreadyExists422 is GitHub's verbatim duplicate-title rejection.
-const alreadyExists422 = `{"message":"Validation Failed","errors":[{"resource":"Milestone","code":"already_exists","field":"title"}]}`
-
 func TestCreateMilestone_CreatesWhenAbsent(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, milestonesPath, http.StatusOK, `[]`)
-	stub.On(http.MethodPost, milestonesPath, http.StatusCreated, `{"number":4,"title":"v3","node_id":"MI_4"}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
 
 	res, err := svc.CreateMilestone(testContext(), "org1", "proj1", sourcecontrol.CreateMilestoneRequest{
-		Title: "v3", Description: "spec tag v3",
+		Title: "  v3 ", Description: "spec tag v3",
 	})
 	if err != nil {
 		t.Fatalf("CreateMilestone: %v", err)
 	}
-	if res.Number != 4 || !res.Created {
-		t.Fatalf("result = %+v, want {4 true}", res)
+	if res.Number != 1 || !res.Created {
+		t.Fatalf("result = %+v, want {1 true}", res)
 	}
-
-	reqs := stub.Requests()
-	// The pre-check spans every state: a closed milestone still owns its title.
-	pre := onlyRequest(t, reqs, http.MethodGet, milestonesPath)
-	if !strings.Contains(pre.Query, "state=all") {
-		t.Fatalf("pre-check query = %q, want it to contain state=all", pre.Query)
-	}
-	post := onlyRequest(t, reqs, http.MethodPost, milestonesPath)
-	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-	}
-	decodeBody(t, post.Body, &body)
-	if body.Title != "v3" || body.Description != "spec tag v3" {
-		t.Fatalf("create body = %+v", body)
+	ms, err := f.ListMilestones(testContext(), widgets, "all")
+	if err != nil || len(ms) != 1 || ms[0].Title != "v3" || ms[0].Description != "spec tag v3" {
+		t.Fatalf("milestones = %+v err=%v, want one trimmed v3", ms, err)
 	}
 }
 
-// TestCreateMilestone_RecoversFromAlreadyExists422 is the race path: the
-// pre-check saw nothing, a concurrent create won, and GitHub answered 422
-// already_exists. The number must be recovered from a re-list — which means the
-// same GET route answers differently before and after the POST.
-func TestCreateMilestone_RecoversFromAlreadyExists422(t *testing.T) {
+// A case-twin is adopted, never minted beside the original: the issues-list
+// title filter is case-insensitive, so a twin pair would merge on every read.
+func TestCreateMilestone_AdoptsACaseTwin(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.OnSequence(http.MethodGet, milestonesPath,
-		gittest.Response{Status: http.StatusOK, Body: `[]`},
-		gittest.Response{Status: http.StatusOK, Body: `[{"number":9,"title":"v3","state":"open"}]`},
-	)
-	stub.On(http.MethodPost, milestonesPath, http.StatusUnprocessableEntity, alreadyExists422)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	twin, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "V3"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	res, err := svc.CreateMilestone(testContext(), "org1", "proj1", sourcecontrol.CreateMilestoneRequest{Title: "v3"})
 	if err != nil {
 		t.Fatalf("CreateMilestone: %v", err)
 	}
-	if res.Number != 9 || res.Created {
-		t.Fatalf("result = %+v, want {9 false} (adopted, not created)", res)
-	}
-	if got := len(requestsMatching(stub.Requests(), http.MethodGet, milestonesPath)); got != 2 {
-		t.Fatalf("milestone lists = %d, want 2 (pre-check + recovery)", got)
-	}
-}
-
-// A 422 that is NOT already_exists is a real rejection, not a duplicate: it
-// must surface rather than send us hunting for a milestone that never existed.
-func TestCreateMilestone_OtherValidationErrorFails(t *testing.T) {
-	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, milestonesPath, http.StatusOK, `[]`)
-	stub.On(http.MethodPost, milestonesPath, http.StatusUnprocessableEntity,
-		`{"message":"Validation Failed","errors":[{"resource":"Milestone","code":"invalid","field":"due_on"}]}`)
-	svc := newIssueSvcOnStub(t, stub)
-
-	if _, err := svc.CreateMilestone(testContext(), "org1", "proj1", sourcecontrol.CreateMilestoneRequest{Title: "v3"}); err == nil {
-		t.Fatal("want error for a non-duplicate 422, got nil")
-	}
-	if got := len(requestsMatching(stub.Requests(), http.MethodGet, milestonesPath)); got != 1 {
-		t.Fatalf("milestone lists = %d, want 1 (no recovery attempt)", got)
-	}
-}
-
-// TestCreateMilestone_CaseInsensitivePreCheckAdoptsTwin is the whole reason the
-// pre-check exists: GitHub would happily create "V3" alongside "v3", after
-// which the issues-list title filter — which IS case-insensitive — returns
-// their merged union forever.
-func TestCreateMilestone_CaseInsensitivePreCheckAdoptsTwin(t *testing.T) {
-	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, milestonesPath, http.StatusOK, `[{"number":2,"title":"V3","state":"closed"}]`)
-	svc := newIssueSvcOnStub(t, stub)
-
-	res, err := svc.CreateMilestone(testContext(), "org1", "proj1", sourcecontrol.CreateMilestoneRequest{Title: "v3"})
-	if err != nil {
-		t.Fatalf("CreateMilestone: %v", err)
-	}
-	if res.Number != 2 || res.Created {
-		t.Fatalf("result = %+v, want {2 false}", res)
-	}
-	if got := requestsMatching(stub.Requests(), http.MethodPost, milestonesPath); len(got) != 0 {
-		t.Fatalf("POST issued despite a case-twin: %+v", got)
+	if res.Number != twin.Number || res.Created {
+		t.Fatalf("result = %+v, want {%d false}", res, twin.Number)
 	}
 }
 
 func TestCreateMilestone_TitleRequired(t *testing.T) {
 	t.Parallel()
-	svc := newIssueSvcOnStub(t, gittest.NewStub(t))
+	svc, f := newIssueSvcOnFake(t)
 	if _, err := svc.CreateMilestone(testContext(), "org1", "proj1", sourcecontrol.CreateMilestoneRequest{Title: "  "}); err == nil {
 		t.Fatal("want error for blank title, got nil")
 	}
+	if len(f.Calls()) != 0 {
+		t.Fatalf("nothing must reach the pod, got %v", ops(f))
+	}
 }
 
-func TestCloseMilestone_PatchesStateClosed(t *testing.T) {
+func TestCloseAndReopenMilestone(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPatch, milestonesPath+"/9", http.StatusOK, `{"number":9,"state":"closed"}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if err := svc.CloseMilestone(testContext(), "org1", "proj1", 9); err != nil {
+	if err := svc.CloseMilestone(testContext(), "org1", "proj1", m.Number); err != nil {
 		t.Fatalf("CloseMilestone: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPatch, milestonesPath+"/9")
-	var body map[string]string
-	decodeBody(t, req.Body, &body)
-	if len(body) != 1 || body["state"] != "closed" {
-		t.Fatalf("close patch = %v, want exactly {state: closed}", body)
+	if closed, _ := svc.ListMilestones(testContext(), "org1", "proj1", "closed"); len(closed) != 1 || closed[0].Number != m.Number {
+		t.Fatalf("closed milestones = %+v", closed)
+	}
+	if err := svc.ReopenMilestone(testContext(), "org1", "proj1", m.Number); err != nil {
+		t.Fatalf("ReopenMilestone: %v", err)
+	}
+	if open, _ := svc.ListMilestones(testContext(), "org1", "proj1", "open"); len(open) != 1 {
+		t.Fatalf("open milestones = %+v", open)
 	}
 }
 
-// TestListMilestones_PagesToTheEnd guards the pre-check: a truncated list would
-// let a duplicate title through.
-func TestListMilestones_PagesToTheEnd(t *testing.T) {
+func TestListMilestones_EveryState(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	full := milestonePage(1, 100)
-	stub.OnFunc(http.MethodGet, milestonesPath, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("page") == "1" {
-			_, _ = w.Write([]byte(full))
-			return
+	svc, f := newIssueSvcOnFake(t)
+	for _, title := range []string{"v1", "v2"} {
+		if _, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: title}); err != nil {
+			t.Fatal(err)
 		}
-		_, _ = w.Write([]byte(`[{"number":101,"title":"v101","state":"closed"}]`))
-	})
-	svc := newIssueSvcOnStub(t, stub)
+	}
+	if err := f.CloseMilestone(testContext(), widgets, 1); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := svc.ListMilestones(testContext(), "org1", "proj1", "all")
 	if err != nil {
 		t.Fatalf("ListMilestones: %v", err)
 	}
-	if len(got) != 101 {
-		t.Fatalf("milestones = %d, want 101 (both pages)", len(got))
-	}
-	if got[100].Number != 101 || got[100].Title != "v101" || got[100].State != "closed" {
-		t.Fatalf("last milestone = %+v", got[100])
+	if len(got) != 2 || got[0].State != "closed" || got[1].State != "open" {
+		t.Fatalf("milestones = %+v, want v1 closed and v2 open", got)
 	}
 }
 
-// TestListMilestoneIssues_FiltersByNumberAndPages pins the three things GitHub
-// forces here: the milestone is addressed by NUMBER (a title 422s), labels are
-// AND-filtered server-side, and the walk continues past a full page.
-func TestListMilestoneIssues_FiltersByNumberAndPages(t *testing.T) {
+// The milestone is addressed by NUMBER, labels AND-filter, and member pull
+// requests never count as issues.
+func TestListMilestoneIssues_FiltersByNumberStateAndLabels(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Query().Get("page") == "1" {
-			_, _ = w.Write([]byte(issuePage(1, 100)))
-			return
-		}
-		_, _ = w.Write([]byte(`[{"number":101,"title":"T101","state":"open","labels":[{"name":"aep"}]}]`))
-	})
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	both := f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "planned", Labels: []string{"aep", "development"}}, m.Number)
+	f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "only armed", Labels: []string{"aep"}}, m.Number)
+	f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "closed", State: "closed", StateReason: "completed", Labels: []string{"aep", "development"}}, m.Number)
+	f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "elsewhere", Labels: []string{"aep", "development"}}, 0)
+	f.SeedPullRequest(widgets, []string{"a.go"})
 
 	got, err := svc.ListMilestoneIssues(testContext(), "org1", "proj1", sourcecontrol.MilestoneIssuesFilter{
-		Number: 9, State: "open", Labels: []string{"aep", "development"},
+		Number: m.Number, State: "open", Labels: []string{"aep", "development"},
 	})
 	if err != nil {
 		t.Fatalf("ListMilestoneIssues: %v", err)
 	}
-	if len(got) != 101 {
-		t.Fatalf("issues = %d, want 101 (both pages)", len(got))
-	}
-	if got[100].Number != 101 || strings.Join(got[100].Labels, ",") != "aep" {
-		t.Fatalf("last issue = %+v", got[100])
-	}
-
-	reqs := requestsMatching(stub.Requests(), http.MethodGet, "/repos/acme/widgets/issues")
-	if len(reqs) != 2 {
-		t.Fatalf("issue list calls = %d, want 2", len(reqs))
-	}
-	for _, want := range []string{"milestone=9", "state=open", "labels=aep%2Cdevelopment", "page=1"} {
-		if !strings.Contains(reqs[0].Query, want) {
-			t.Fatalf("page-1 query = %q, want it to contain %q", reqs[0].Query, want)
-		}
-	}
-	if !strings.Contains(reqs[1].Query, "page=2") {
-		t.Fatalf("page-2 query = %q, want it to contain page=2", reqs[1].Query)
+	if len(got) != 1 || got[0].Number != both {
+		t.Fatalf("issues = %+v, want only #%d", got, both)
 	}
 }
 
-// TestListMilestoneIssues_ExcludesPullRequests — GitHub's issues endpoint
-// returns member PRs alongside issues. Counting one as an issue is the same
-// mistake that makes the milestone's own open_issues field unusable.
-func TestListMilestoneIssues_ExcludesPullRequests(t *testing.T) {
+func TestListMilestoneIssues_UnknownMilestoneFails(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK, `[
-		{"number":1,"title":"a real issue","state":"open","labels":[]},
-		{"number":2,"title":"a member PR","state":"open","labels":[],"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/2"}}
-	]`)
-	svc := newIssueSvcOnStub(t, stub)
-
-	got, err := svc.ListMilestoneIssues(testContext(), "org1", "proj1", sourcecontrol.MilestoneIssuesFilter{Number: 9})
-	if err != nil {
-		t.Fatalf("ListMilestoneIssues: %v", err)
-	}
-	if len(got) != 1 || got[0].Number != 1 {
-		t.Fatalf("issues = %+v, want only the non-PR issue #1", got)
-	}
-}
-
-func TestListMilestoneIssues_NumberRequired(t *testing.T) {
-	t.Parallel()
-	svc := newIssueSvcOnStub(t, gittest.NewStub(t))
+	svc, _ := newIssueSvcOnFake(t)
 	if _, err := svc.ListMilestoneIssues(testContext(), "org1", "proj1", sourcecontrol.MilestoneIssuesFilter{}); err == nil {
 		t.Fatal("want error for a zero milestone number, got nil")
 	}
 }
 
-// TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts pins the dispatch
-// predicate: ONE GraphQL round trip carrying every aliased population, and
-// never a read of the REST milestone's PR-contaminated open_issues.
-//
-// One label per alias is the point. The labels: argument matches an issue
-// carrying ANY of the listed labels, so a multi-label alias is a union wearing
-// a narrower name; with one label each there is no union left to misread, and
-// the working sets are plain subtraction in Go.
-func TestMilestoneIssueCounts_SendsAliasedQueryAndParsesCounts(t *testing.T) {
+// The dispatch predicate input: the open populations of one milestone, read
+// through the pod in one call.
+func TestMilestoneIssueCounts_CountsTheMilestonesOpenPopulations(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/graphql", http.StatusOK,
-		`{"data":{"repository":{"milestone":{
-			"provision":{"totalCount":1},
-			"allOpen":{"totalCount":9},
-			"agentWork":{"totalCount":5},
-			"development":{"totalCount":2},
-			"validation":{"totalCount":1},
-			"srcValidation":{"totalCount":1}
-		}}}}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, labels := range [][]string{
+		{labelGate},
+		{labelWork, labelDev}, {labelWork, labelDev},
+		{labelWork, labelBug, labelSrcValid},
+		{labelWork, labelValid},
+		nil,
+	} {
+		f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "i", Labels: labels}, m.Number)
+	}
+	f.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "done", State: "closed", Labels: []string{labelWork, labelDev}}, m.Number)
 
-	counts, err := svc.MilestoneIssueCounts(testContext(), "org1", "proj1", 9)
+	counts, err := svc.MilestoneIssueCounts(testContext(), "org1", "proj1", m.Number)
 	if err != nil {
 		t.Fatalf("MilestoneIssueCounts: %v", err)
 	}
 	want := sourcecontrol.MilestoneIssueCounts{
-		OpenProvision: 1, OpenTotal: 9,
-		OpenAgentWork: 5, OpenDevelopment: 2, OpenValidation: 1,
+		OpenProvision: 1, OpenTotal: 6,
+		OpenAgentWork: 4, OpenDevelopment: 2, OpenValidation: 1,
 		OpenValidationRepairs: 1,
 	}
 	if *counts != want {
 		t.Fatalf("counts = %+v, want %+v", *counts, want)
 	}
-	// 5 armed issues, one of which is the validation task: 4 for the dev loop,
-	// and 2 once the milestone's planned work is taken out as well.
-	if got := counts.OpenDevWork(); got != 4 {
-		t.Fatalf("OpenDevWork = %d, want 4", got)
+	// 4 armed issues, one of which is the validation task: 3 for the dev loop,
+	// and 1 once the milestone's planned work is taken out as well.
+	if got := counts.OpenDevWork(); got != 3 {
+		t.Fatalf("OpenDevWork = %d, want 3", got)
 	}
-	if got := counts.OpenTaskWork(); got != 2 {
-		t.Fatalf("OpenTaskWork = %d, want 2", got)
-	}
-
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/graphql")
-	var payload struct {
-		Query     string `json:"query"`
-		Variables struct {
-			Owner string `json:"owner"`
-			Repo  string `json:"repo"`
-			M     int    `json:"m"`
-		} `json:"variables"`
-	}
-	decodeBody(t, req.Body, &payload)
-	if payload.Variables.Owner != "acme" || payload.Variables.Repo != "widgets" || payload.Variables.M != 9 {
-		t.Fatalf("variables = %+v, want {acme widgets 9}", payload.Variables)
-	}
-	for _, want := range []string{
-		`provision:     issues(states: [OPEN], labels: ["provision"], first: 1)`,
-		`allOpen:       issues(states: [OPEN], first: 1)`,
-		`agentWork:     issues(states: [OPEN], labels: ["aep"], first: 1)`,
-		`development:   issues(states: [OPEN], labels: ["development"], first: 1)`,
-		`validation:    issues(states: [OPEN], labels: ["validation"], first: 1)`,
-		`srcValidation: issues(states: [OPEN], labels: ["src/validation"], first: 1)`,
-		"milestone(number: $m)",
-	} {
-		if !strings.Contains(payload.Query, want) {
-			t.Fatalf("query missing %q:\n%s", want, payload.Query)
-		}
-	}
-	if strings.Contains(payload.Query, "open_issues") || strings.Contains(payload.Query, "openIssueCount") {
-		t.Fatalf("query reads a PR-contaminated count:\n%s", payload.Query)
-	}
-	// Exactly six aliased populations, ONE LABEL EACH. A seventh would mean
-	// somebody re-added a COMPOSITE alias — the union the old inclusion-exclusion
-	// arithmetic needed. Any alias listing more than one label is a wider union
-	// than its name claims, and it silently empties a working set.
-	if got := strings.Count(payload.Query, "issues(states: [OPEN]"); got != 6 {
-		t.Fatalf("query has %d aliased populations, want exactly 6:\n%s", got, payload.Query)
-	}
-	if got := strings.Count(payload.Query, `", "`); got != 0 {
-		t.Fatalf("an alias lists more than one label (%d multi-label alias separators):\n%s", got, payload.Query)
-	}
-	if req.Header.Get("Authorization") != "Bearer test-token" {
-		t.Fatalf("graphql Authorization = %q, want the credential's bearer token", req.Header.Get("Authorization"))
+	if got := counts.OpenTaskWork(); got != 1 {
+		t.Fatalf("OpenTaskWork = %d, want 1", got)
 	}
 }
 
@@ -520,9 +368,7 @@ func TestMilestoneIssueCounts_AGateHoldsWorkItDoesNotErase(t *testing.T) {
 // recoverable state, distinguishable from a transport failure.
 func TestMilestoneIssueCounts_MissingMilestone(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/graphql", http.StatusOK, `{"data":{"repository":{"milestone":null}}}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, _ := newIssueSvcOnFake(t)
 
 	_, err := svc.MilestoneIssueCounts(testContext(), "org1", "proj1", 404)
 	if !errors.Is(err, sourcecontrol.ErrMilestoneNotFound) {
@@ -530,91 +376,56 @@ func TestMilestoneIssueCounts_MissingMilestone(t *testing.T) {
 	}
 }
 
-// GraphQL answers 200 with a populated errors[]; the whole array survives as a
-// typed error so callers branch on the machine-readable type.
-func TestMilestoneIssueCounts_GraphQLErrorIsTyped(t *testing.T) {
+// GitHub's rate limit reaches the caller typed, so the run supervisor can
+// wait it out rather than read it as a missing milestone.
+func TestMilestoneIssueCounts_RateLimitIsTyped(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/graphql", http.StatusOK,
-		`{"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}],"data":null}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	f.FailOp(aestudiotest.OpMilestoneIssueCounts, &sourcecontrol.RateLimitedError{})
 
 	_, err := svc.MilestoneIssueCounts(testContext(), "org1", "proj1", 9)
-	if err == nil {
-		t.Fatal("want an error, got nil")
-	}
-	if !sourcecontrol.IsGraphQLType(err, "RATE_LIMITED") {
-		t.Fatalf("err = %v, want a GraphQLError of type RATE_LIMITED", err)
-	}
-	if sourcecontrol.IsGraphQLType(err, "NOT_FOUND") {
-		t.Fatalf("err = %v matched the wrong type", err)
+	var rl *sourcecontrol.RateLimitedError
+	if !errors.As(err, &rl) || errors.Is(err, sourcecontrol.ErrMilestoneNotFound) {
+		t.Fatalf("err = %v, want a RateLimitedError", err)
 	}
 }
 
-// TestCreateIssue_AssignsMilestoneAtCreation — assignment rides issue creation
-// (one call, not create-then-patch) and travels as the NUMBER; GitHub 422s a
-// title here. Unset means the field never reaches the wire.
+// Assignment rides issue creation (one call, not create-then-patch).
 func TestCreateIssue_AssignsMilestoneAtCreation(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/labels", http.StatusCreated, `{}`)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated,
-		`{"number":7,"html_url":"https://github.com/acme/widgets/issues/7","node_id":"NODE7"}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	number := 9
-	if _, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{
-		Title: "Implement auth", Body: "do the thing", Milestone: &number,
-	}); err != nil {
+	res, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{
+		Title: "Implement auth", Body: "do the thing", Milestone: &m.Number,
+	})
+	if err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues")
-	var body struct {
-		Milestone *int `json:"milestone"`
+	members, _ := f.ListMilestoneIssues(testContext(), widgets, sourcecontrol.MilestoneIssuesFilter{Number: m.Number})
+	if len(members) != 1 || members[0].Number != res.Number {
+		t.Fatalf("milestone members = %+v, want #%d", members, res.Number)
 	}
-	decodeBody(t, req.Body, &body)
-	if body.Milestone == nil || *body.Milestone != 9 {
-		t.Fatalf("milestone on the wire = %v, want 9", body.Milestone)
+	if slices.Contains(ops(f), aestudiotest.OpSetIssueMilestone) {
+		t.Fatalf("milestone set after creation: %v", ops(f))
 	}
 }
 
-func TestCreateIssue_OmitsMilestoneWhenUnset(t *testing.T) {
+func TestCreateIssue_LeavesMilestoneUnsetWhenUnset(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated,
-		`{"number":7,"html_url":"https://github.com/acme/widgets/issues/7"}`)
-	svc := newIssueSvcOnStub(t, stub)
+	svc, f := newIssueSvcOnFake(t)
+	m, err := f.CreateMilestone(testContext(), widgets, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{Title: "unassigned"}); err != nil {
 		t.Fatalf("CreateIssue: %v", err)
 	}
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/issues")
-	var body map[string]any
-	decodeBody(t, req.Body, &body)
-	if _, present := body["milestone"]; present {
-		t.Fatalf("unset milestone leaked onto the wire: %s", req.Body)
+	if members, _ := f.ListMilestoneIssues(testContext(), widgets, sourcecontrol.MilestoneIssuesFilter{Number: m.Number, State: "all"}); len(members) != 0 {
+		t.Fatalf("an unassigned issue joined a milestone: %+v", members)
 	}
-	// The aep-api-only dedupe key must stay off the wire too.
-	if _, present := body["dedupeKey"]; present {
-		t.Fatalf("dedupeKey leaked onto the wire: %s", req.Body)
-	}
-}
-
-// jsonPage renders a full page of n objects numbered from `from`, so a test can
-// arrange the "page was full, keep walking" condition without a 100-entry
-// literal. tmpl takes the number twice (number + title suffix).
-func jsonPage(tmpl string, from, n int) string {
-	items := make([]string, 0, n)
-	for i := range n {
-		items = append(items, fmt.Sprintf(tmpl, from+i, from+i))
-	}
-	return "[" + strings.Join(items, ",") + "]"
-}
-
-func milestonePage(from, n int) string {
-	return jsonPage(`{"number":%d,"title":"v%d","state":"open"}`, from, n)
-}
-
-func issuePage(from, n int) string {
-	return jsonPage(`{"number":%d,"title":"T%d","state":"open","labels":[]}`, from, n)
 }

@@ -51,8 +51,6 @@ func hookEvents(events []string) (gen.HookEventsRequest, error) {
 
 // RegisterWebhook ensures the platform's hook on ref carries events (created,
 // or an existing one's events replaced) and answers its id.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) RegisterWebhook(ctx context.Context, ref RepoRef, events []string) (int64, error) {
 	if err := validRef(ref); err != nil {
 		return 0, err
@@ -70,8 +68,6 @@ func (a *Adapter) RegisterWebhook(ctx context.Context, ref RepoRef, events []str
 
 // UpdateWebhookEvents replaces the hook's events; an unknown hook is an
 // HTTPStatusError 404.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) UpdateWebhookEvents(ctx context.Context, ref RepoRef, hookID int64, events []string) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -86,8 +82,6 @@ func (a *Adapter) UpdateWebhookEvents(ctx context.Context, ref RepoRef, hookID i
 }
 
 // DeleteWebhook removes the hook; one already gone is success.
-//
-//deadcode:keep wired in Task 4.13 (GitHub REST callers move to the adapter)
 func (a *Adapter) DeleteWebhook(ctx context.Context, ref RepoRef, hookID int64) error {
 	if err := validRef(ref); err != nil {
 		return err

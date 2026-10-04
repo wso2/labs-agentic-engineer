@@ -147,9 +147,8 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //     is gone, either from the repo ledger or from the host.
 //   - 404 / 410 — the repository, issue or pull request no longer exists for
 //     this credential.
-//   - 401 — the credential was rejected. Tokens are resolved per REQUEST (see
-//     githubhost.authHeaders), so a short-lived App token has already been
-//     re-minted by the time one arrives: a repeat presents the same rejection.
+//   - 401 — GitHub rejected the org's token (the pod's github_error); a
+//     repeat presents the same token and the same rejection.
 //   - GraphQL NOT_FOUND — the 404 of the GraphQL surface.
 //   - ErrAEStudioAbsent — GitHub is not connected for the org; a person has
 //     to connect it.

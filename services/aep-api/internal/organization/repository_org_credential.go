@@ -72,16 +72,10 @@ type OrgCredentialTx interface {
 	AdvisoryLock(key string) error
 	// GetByOrg returns the row for ocOrgID within the tx, or nil when absent.
 	GetByOrg(ocOrgID string) (*OrgCredential, error)
-	// GetByInstallationID returns the row bound to installationID within the
-	// tx, or nil when absent.
-	GetByInstallationID(installationID int64) (*OrgCredential, error)
 	// Create inserts a new row within the tx.
 	Create(row *OrgCredential) error
 	// UpdateColumns writes the given columns scoped to oc_org_id within the tx.
 	UpdateColumns(ocOrgID string, updates map[string]any) error
-	// UpdateStatusByInstallationID flips status on the row bound to
-	// installationID within the tx (a no-op update when no row matches).
-	UpdateStatusByInstallationID(installationID int64, status string) error
 }
 
 type orgCredentialRepository struct {
@@ -220,23 +214,6 @@ func (t *orgCredentialTx) GetByOrg(ocOrgID string) (*OrgCredential, error) {
 	return &row, nil
 }
 
-func (t *orgCredentialTx) GetByInstallationID(installationID int64) (*OrgCredential, error) {
-	var row OrgCredential
-	err := t.tx.Where("installation_id = ?", installationID).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	opened, err := openWebhookSecrets(t.cipher, row.WebhookSecrets)
-	if err != nil {
-		return nil, err
-	}
-	row.WebhookSecrets = opened
-	return &row, nil
-}
-
 func (t *orgCredentialTx) Create(row *OrgCredential) error {
 	if row == nil {
 		return t.tx.Create(row).Error
@@ -258,11 +235,4 @@ func (t *orgCredentialTx) UpdateColumns(ocOrgID string, updates map[string]any) 
 		Model(&OrgCredential{}).
 		Where("oc_org_id = ?", ocOrgID).
 		Updates(updates).Error
-}
-
-func (t *orgCredentialTx) UpdateStatusByInstallationID(installationID int64, status string) error {
-	return t.tx.
-		Model(&OrgCredential{}).
-		Where("installation_id = ?", installationID).
-		Update("status", status).Error
 }

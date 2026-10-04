@@ -16,81 +16,36 @@
 
 package sourcecontrol_test
 
-// Shared fakes for the sourcecontrol unit tier. Fakes sit only at the two real
-// edges of these services — the credential seam (secrets.Resolver /
-// Credential) and the persistence seam (sourcecontrol.RepoRepository). The
-// git-exec paths run against a real gittest.Remote, and the GitHub HTTP paths
-// run through the REAL githubhost client pointed at a gittest.Stub (WithAPIBase
-// for REST, WithGraphQLEndpoint for the milestone predicate). No service or
-// client is mocked.
+// Shared fakes for the sourcecontrol unit tier. Fakes sit only at the real
+// edges of these services — the GitHub owner lookup (OwnerLookup) and the
+// persistence seam (sourcecontrol.RepoRepository); the org's pod is the
+// in-memory aestudiotest.Fake. No service is mocked.
 //
 // These tests live in the external sourcecontrol_test package (not white-box
-// sourcecontrol): they construct the real client from githubhost, which imports
-// sourcecontrol, so a white-box test would form an import cycle.
-// Unexported-helper tests (detectDefaultBranch, slugifyProjectName) stay
-// white-box in repo_internal_test.go.
+// sourcecontrol): aestudiotest imports sourcecontrol, so a white-box test
+// would form an import cycle. Unexported-helper tests (slugifyProjectName)
+// stay white-box in repo_internal_test.go.
 
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// ---- credential seam -------------------------------------------------------
+// ---- owner seam ------------------------------------------------------------
 
-// fakeCred is a static secrets.Credential. Zero value: token "test-token",
-// owner "test-org", strategy WebhookPerRepo, empty identity.
-type fakeCred struct {
-	token    string
-	owner    string
-	strategy secrets.WebhookStrategy
-	identity secrets.Identity
-	tokenErr error
+// fakeOwners answers owner for every org, unless err is set.
+type fakeOwners struct {
+	owner string
+	err   error
 }
 
-func (c fakeCred) Token(context.Context) (string, time.Time, error) {
-	if c.tokenErr != nil {
-		return "", time.Time{}, c.tokenErr
-	}
-	t := c.token
-	if t == "" {
-		t = "test-token"
-	}
-	return t, time.Time{}, nil
-}
-func (c fakeCred) Identity() secrets.Identity { return c.identity }
-func (c fakeCred) RepoOwner() string {
-	if c.owner == "" {
-		return "test-org"
-	}
-	return c.owner
-}
-func (c fakeCred) WebhookStrategy() secrets.WebhookStrategy { return c.strategy }
-
-var _ secrets.Credential = fakeCred{}
-
-// fakeResolver resolves every org to `cred` (or fakeCred{} when nil), unless
-// `err` is set.
-type fakeResolver struct {
-	cred secrets.Credential
-	err  error
+func (f fakeOwners) GitHubOwner(context.Context, string) (string, error) {
+	return f.owner, f.err
 }
 
-func (f fakeResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.cred != nil {
-		return f.cred, nil
-	}
-	return fakeCred{}, nil
-}
-
-var _ secrets.Resolver = fakeResolver{}
+var _ sourcecontrol.OwnerLookup = fakeOwners{}
 
 // ---- persistence seam ------------------------------------------------------
 

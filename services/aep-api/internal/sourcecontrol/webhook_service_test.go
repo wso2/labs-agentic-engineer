@@ -18,40 +18,25 @@ package sourcecontrol_test
 
 import (
 	"context"
-	"net/http"
-	"strings"
+	"errors"
+	"slices"
 	"testing"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 )
 
-// newWebhookSvcOnStub wires a REAL webhookService with a REAL issueService (for
-// the resolve helper), a REAL repoService (so SetWebhookID's lookup+persist body
-// actually executes — review finding: a recording double left it uncovered), and
-// the REAL REST client at the stub. Everything shares ONE fake repo store, whose
-// record is how tests assert persistence. strategy sets the resolved
-// credential's webhook strategy.
-func newWebhookSvcOnStub(t *testing.T, stub *gittest.Stub, strategy secrets.WebhookStrategy) (sourcecontrol.WebhookService, *fakeRepoRepo) {
+// newWebhookSvcOnFake wires a REAL webhookService with a REAL repoService (so
+// SetWebhookID's lookup+persist body actually executes) at the in-memory pod.
+// Everything shares ONE fake repo store, whose record is how tests assert
+// persistence.
+func newWebhookSvcOnFake(t *testing.T) (sourcecontrol.WebhookService, *fakeRepoRepo, *aestudiotest.Fake) {
 	t.Helper()
 	repo := newFakeRepoRepo()
 	repo.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets"})
-	resolver := fakeResolver{cred: fakeCred{strategy: strategy}}
-	gh := githubclient.NewClient(githubclient.WithAPIBase(stub.URL))
-	issueSvc := sourcecontrol.NewIssueService(repo, nil, resolver)
-	repoSvc := sourcecontrol.NewRepoService(repo, gh, resolver, "public")
-
-	wh := sourcecontrol.NewWebhookService(
-		repo,
-		gh,
-		repoSvc,
-		issueSvc,
-		"https://webhook.example/deliver",
-		"s3cr3t",
-	)
-	return wh, repo
+	f := aestudiotest.New()
+	repoSvc := sourcecontrol.NewRepoService(repo, f, fakeOwners{owner: "acme"}, "public")
+	return sourcecontrol.NewWebhookService(repo, f, repoSvc), repo, f
 }
 
 // storedWebhookID reads the persisted WebhookID off the shared fake repo record.
@@ -64,120 +49,81 @@ func storedWebhookID(t *testing.T, repo *fakeRepoRepo, org, proj string) *int64 
 	return rec.WebhookID
 }
 
-func TestWebhookRegister_HappyPathSendsHookPayloadAndPersistsID(t *testing.T) {
+// The hook asks the org's pod for the four project events (the pod owns the
+// delivery URL and the signing secret) and persists the hook id.
+func TestWebhookRegister_HappyPathRegistersTheEventsAndPersistsID(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodPost, "/repos/acme/widgets/hooks", http.StatusCreated, `{"id":12345}`)
-	wh, repo := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
+	wh, repo, f := newWebhookSvcOnFake(t)
 
 	hookID, err := wh.Register(testContext(), "org1", "proj1")
 	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if hookID == nil || *hookID != 12345 {
-		t.Fatalf("hookID = %v, want 12345", hookID)
+	hooks := f.HookEvents(widgets)
+	if hookID == nil || len(hooks) != 1 {
+		t.Fatalf("hookID = %v, hooks = %v, want one hook", hookID, hooks)
 	}
-
-	req := onlyRequest(t, stub.Requests(), http.MethodPost, "/repos/acme/widgets/hooks")
-	var body struct {
-		Name   string            `json:"name"`
-		Active bool              `json:"active"`
-		Events []string          `json:"events"`
-		Config map[string]string `json:"config"`
+	if got := hooks[*hookID]; !slices.Equal(got, []string{"pull_request", "push", "issue_comment", "issues"}) {
+		t.Fatalf("events = %v, want [pull_request push issue_comment issues]", got)
 	}
-	decodeBody(t, req.Body, &body)
-	if body.Name != "web" || !body.Active {
-		t.Fatalf("hook = {name:%q active:%v}, want {web true}", body.Name, body.Active)
-	}
-	if strings.Join(body.Events, ",") != "pull_request,push,issue_comment,issues" {
-		t.Fatalf("events = %v, want [pull_request push issue_comment issues]", body.Events)
-	}
-	if body.Config["url"] != "https://webhook.example/deliver" || body.Config["secret"] != "s3cr3t" {
-		t.Fatalf("config url/secret = %q/%q", body.Config["url"], body.Config["secret"])
-	}
-	if body.Config["content_type"] != "json" || body.Config["insecure_ssl"] != "0" {
-		t.Fatalf("config content_type/insecure_ssl = %q/%q", body.Config["content_type"], body.Config["insecure_ssl"])
-	}
-
 	// Persistence asserted through the REAL repoService.SetWebhookID body:
 	// lookup + pointer-set + repo.Update all executed against the shared store.
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != 12345 {
-		t.Fatalf("persisted WebhookID = %v, want 12345", got)
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != *hookID {
+		t.Fatalf("persisted WebhookID = %v, want %d", got, *hookID)
 	}
 }
 
-func TestWebhookRegister_PlatformStrategyShortCircuits(t *testing.T) {
+// RegisterWebhook answers an existing hook as is, without touching its events,
+// so every register reconciles the event list (§9.2 cutover).
+func TestWebhookRegister_ReconcilesTheEventsOnTheHook(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	wh, repo := newWebhookSvcOnStub(t, stub, secrets.WebhookPlatform)
+	wh, _, f := newWebhookSvcOnFake(t)
 
-	hookID, err := wh.Register(testContext(), "org1", "proj1")
-	if err != nil || hookID != nil {
-		t.Fatalf("Register = (%v, %v), want (nil, nil) for platform strategy", hookID, err)
-	}
-	if n := len(stub.Requests()); n != 0 {
-		t.Fatalf("GitHub called %d times for platform strategy, want 0", n)
-	}
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got != nil {
-		t.Fatalf("WebhookID = %v for platform strategy, want unset", *got)
-	}
-}
-
-func TestWebhookRegister_MissingConfigErrors(t *testing.T) {
-	t.Parallel()
-	issRepo := newFakeRepoRepo()
-	issRepo.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets"})
-	issueSvc := sourcecontrol.NewIssueService(issRepo, nil, fakeResolver{})
-	repoSvc := sourcecontrol.NewRepoService(issRepo, githubclient.NewClient(), fakeResolver{}, "public")
-	// Empty delivery URL + secret.
-	wh := sourcecontrol.NewWebhookService(issRepo, githubclient.NewClient(), repoSvc, issueSvc, "", "")
-
-	if _, err := wh.Register(testContext(), "org1", "proj1"); err == nil {
-		t.Fatal("want error for unconfigured webhook delivery URL/secret, got nil")
-	}
-}
-
-func TestWebhookRegister_DedupOnHookAlreadyExists(t *testing.T) {
-	t.Parallel()
-	stub := gittest.NewStub(t)
-	// GitHub 422s a duplicate hook; the client then lists hooks and matches by URL.
-	stub.On(http.MethodPost, "/repos/acme/widgets/hooks", http.StatusUnprocessableEntity, `{"message":"Hook already exists"}`)
-	stub.On(http.MethodGet, "/repos/acme/widgets/hooks", http.StatusOK,
-		`[{"id":99,"config":{"url":"https://webhook.example/deliver"}}]`)
-	wh, repo := newWebhookSvcOnStub(t, stub, secrets.WebhookPerRepo)
-
-	hookID, err := wh.Register(testContext(), "org1", "proj1")
-	if err != nil {
+	if _, err := wh.Register(testContext(), "org1", "proj1"); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if hookID == nil || *hookID != 99 {
-		t.Fatalf("hookID = %v, want existing 99", hookID)
-	}
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != 99 {
-		t.Fatalf("persisted WebhookID = %v, want 99", got)
+	if want := []string{aestudiotest.OpRegisterWebhook, aestudiotest.OpUpdateWebhookEvents}; !slices.Equal(ops(f), want) {
+		t.Fatalf("ops = %v, want %v", ops(f), want)
 	}
 }
 
-// nonResolvingIssueSvc implements IssueService (via the embedded interface) but
-// NOT the private resolveRepoAndCredential helper — i.e. a test double or an
-// alternate provider impl. Before the fix, webhookService type-asserted to the
-// concrete *issueService and stored nil, so Register nil-dereferenced. After the
-// fix it stores the interface and surfaces a clean error.
-type nonResolvingIssueSvc struct{ sourcecontrol.IssueService }
-
-func TestWebhookRegister_NonResolvingIssueServiceErrorsNotPanics(t *testing.T) {
+// A failed reconcile does not undo a registration that succeeded.
+func TestWebhookRegister_ReconcileFailureIsNotFatal(t *testing.T) {
 	t.Parallel()
-	repo := newFakeRepoRepo()
-	wh := sourcecontrol.NewWebhookService(
-		repo,
-		githubclient.NewClient(),
-		sourcecontrol.NewRepoService(repo, githubclient.NewClient(), fakeResolver{}, "public"),
-		nonResolvingIssueSvc{},
-		"https://webhook.example/deliver",
-		"s3cr3t",
-	)
-	_, err := wh.Register(testContext(), "org1", "proj1")
-	if err == nil || !strings.Contains(err.Error(), "cannot resolve repo credentials") {
-		t.Fatalf("err = %v, want a clean 'cannot resolve repo credentials' error (not a panic)", err)
+	wh, repo, f := newWebhookSvcOnFake(t)
+	f.FailOp(aestudiotest.OpUpdateWebhookEvents, sourcecontrol.ErrAEStudioUnavailable)
+
+	hookID, err := wh.Register(testContext(), "org1", "proj1")
+	if err != nil || hookID == nil {
+		t.Fatalf("Register = (%v, %v), want the hook", hookID, err)
+	}
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != *hookID {
+		t.Fatalf("persisted WebhookID = %v, want %d", got, *hookID)
+	}
+}
+
+// The pod being down fails the registration loudly and persists nothing.
+func TestWebhookRegister_PodFailureIsReported(t *testing.T) {
+	t.Parallel()
+	wh, repo, f := newWebhookSvcOnFake(t)
+	f.FailOrg("org1", sourcecontrol.ErrAEStudioUnavailable)
+
+	if _, err := wh.Register(testContext(), "org1", "proj1"); !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
+	}
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got != nil {
+		t.Fatalf("WebhookID = %v after a failed register, want unset", *got)
+	}
+}
+
+func TestWebhookRegister_UnknownProjectIsRepoNotFound(t *testing.T) {
+	t.Parallel()
+	wh, _, f := newWebhookSvcOnFake(t)
+
+	if _, err := wh.Register(testContext(), "org1", "no-such-project"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("err = %v, want ErrRepoNotFound", err)
+	}
+	if n := len(f.Calls()); n != 0 {
+		t.Fatalf("the pod was called %d times, want 0", n)
 	}
 }

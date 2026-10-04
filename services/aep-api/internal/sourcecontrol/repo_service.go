@@ -22,8 +22,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // RepoService manages git repository lifecycle (create, get, delete).
@@ -35,10 +33,10 @@ type RepoService interface {
 	CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*GitRepository, error)
 	// EnsureBareRepo idempotently provisions a private repo with a STABLE name
 	// (no random suffix) and NO local clone — used for the per-org skills repo
-	// (sentinel projectID, e.g. "_skills"). AutoInit gives it a `main` branch +
-	// base tree so the first API commit has a parent. If the GitHub repo already
-	// exists (name conflict), it is adopted (cloneURL derived from owner+name)
-	// so the call stays idempotent across a lost DB row.
+	// (sentinel projectID, e.g. "_skills"). The pod initialises it with a
+	// `main` branch + base tree so the first commit has a parent. If the GitHub
+	// repo already exists, the pod adopts it (AdoptExisting) so the call stays
+	// idempotent across a lost DB row.
 	// See docs/design/skills-repo-storage.md §10.
 	EnsureBareRepo(ctx context.Context, orgID, projectID, repoName string) (*GitRepository, error)
 	GetRepo(ctx context.Context, orgID, projectID string) (*GitRepository, error)
@@ -56,11 +54,18 @@ type RepoService interface {
 	DeleteRepo(ctx context.Context, orgID, projectID string) error
 }
 
+// OwnerLookup answers the GitHub account an org's repositories live under:
+// the login it connected. An org with no GitHub connection is
+// ErrAEStudioAbsent.
+type OwnerLookup interface {
+	GitHubOwner(ctx context.Context, org string) (string, error)
+}
+
 type repoService struct {
-	repo     RepoRepository
-	github   RepoAdmin
-	resolver secrets.Resolver
-	repoVis  string
+	repo    RepoRepository
+	github  RepoAdmin
+	owners  OwnerLookup
+	repoVis string
 	// workspaceTrash, when set (from the composition root), renames the
 	// repo's on-disk workspace subtree into trash after the DB row is
 	// deleted — phase 1 of the two-phase disk delete (design §14/D12).
@@ -83,15 +88,15 @@ func WithWorkspaceTrash(fn func(ctx context.Context, orgID, projectID, repoSlug 
 func NewRepoService(
 	repo RepoRepository,
 	github RepoAdmin,
-	resolver secrets.Resolver,
+	owners OwnerLookup,
 	repoVisibility string,
 	opts ...RepoServiceOption,
 ) RepoService {
 	s := &repoService{
-		repo:     repo,
-		github:   github,
-		resolver: resolver,
-		repoVis:  repoVisibility,
+		repo:    repo,
+		github:  github,
+		owners:  owners,
+		repoVis: repoVisibility,
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -119,9 +124,9 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 		return existing, nil
 	}
 
-	cred, err := s.resolver.Resolve(ctx, orgID)
+	owner, err := s.githubOwner(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve credential for org %q: %w", orgID, err)
+		return nil, err
 	}
 
 	description := fmt.Sprintf("WSO2 Labs Agentic Engineer project %s", projectName)
@@ -133,10 +138,8 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	// create form showed. A conflict propagates (ErrRepoNameConflict survives
 	// the wrap) so the caller can ask the user for a different name; suffixing
 	// it away would silently rename the repo behind their back.
-	cloneURL, err := s.github.CreateOrgRepo(ctx, cred, CreateOrgRepoRequest{
-		Name:        repoName,
+	cloneURL, err := s.github.CreateOrgRepo(ctx, RepoRef{Org: orgID, Owner: owner, Repo: repoName, DefaultBranch: defaultBranchFallback}, CreateOrgRepoRequest{
 		Private:     strings.EqualFold(s.repoVis, "private"),
-		AutoInit:    true,
 		Description: description,
 	})
 	if err != nil {
@@ -151,14 +154,14 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	// name is computed here; OcSecretRefName is left nil on new rows.
 	repoSlug := RepoSlugFor(cloneURL)
 
-	// The repo is ready the moment GitHub has it: the shared-volume bare
-	// mirror is created lazily on first gitfs access (ensureMirror), so
-	// there is no "cloning" status to wait through at create time.
+	// The repo is ready the moment GitHub has it: the mirror is created
+	// lazily on first access, so there is no "cloning" status to wait through
+	// at create time.
 	gitRepo := &GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
-		DefaultBranch: "main", // AutoInit gives the repo a main branch + base tree
+		DefaultBranch: defaultBranchFallback, // the pod initialises a main branch + base tree
 		Status:        "ready",
 		RepoSlug:      repoSlug,
 	}
@@ -168,7 +171,7 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	}
 
 	slog.InfoContext(ctx, "created platform repo",
-		"owner", cred.RepoOwner(), "name", repoName, "project", projectID, "org", orgID)
+		"owner", owner, "name", repoName, "project", projectID, "org", orgID)
 
 	return gitRepo, nil
 }
@@ -186,32 +189,27 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		return existing, nil
 	}
 
-	cred, err := s.resolver.Resolve(ctx, orgID)
+	owner, err := s.githubOwner(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve credential for org %q: %w", orgID, err)
+		return nil, err
 	}
 
-	cloneURL, err := s.github.CreateOrgRepo(ctx, cred, CreateOrgRepoRequest{
-		Name:        repoName,
-		Private:     true,
-		AutoInit:    true,
-		Description: "WSO2 Labs Agentic Engineer — org skills (single source of truth)",
+	// A pre-existing repo of the same name under this owner is adopted.
+	cloneURL, err := s.github.CreateOrgRepo(ctx, RepoRef{Org: orgID, Owner: owner, Repo: repoName, DefaultBranch: defaultBranchFallback}, CreateOrgRepoRequest{
+		Private:       true,
+		Description:   "WSO2 Labs Agentic Engineer — org skills (single source of truth)",
+		AdoptExisting: true,
 	})
 	if err != nil {
-		if !IsRepoNameConflict(err) {
-			return nil, fmt.Errorf("create github skills repo: %w", err)
-		}
-		// Adopt a pre-existing repo of the same name under this owner.
-		cloneURL = fmt.Sprintf("https://github.com/%s/%s", cred.RepoOwner(), repoName)
-		slog.InfoContext(ctx, "adopting pre-existing skills repo", "owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+		return nil, fmt.Errorf("create github skills repo: %w", err)
 	}
 
 	gitRepo := &GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
-		DefaultBranch: "main",
-		Status:        "ready", // mirror is lazy — ensureMirror on first gitfs access
+		DefaultBranch: defaultBranchFallback,
+		Status:        "ready", // the mirror is created lazily on first access
 		RepoSlug:      RepoSlugFor(cloneURL),
 	}
 	if err := s.repo.Create(ctx, gitRepo); err != nil {
@@ -226,8 +224,17 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		return nil, fmt.Errorf("create skills repo record: %w", err)
 	}
 	slog.InfoContext(ctx, "provisioned bare skills repo",
-		"owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+		"owner", owner, "name", repoName, "org", orgID)
 	return gitRepo, nil
+}
+
+// githubOwner is the account the org's repositories are created under.
+func (s *repoService) githubOwner(ctx context.Context, orgID string) (string, error) {
+	owner, err := s.owners.GitHubOwner(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("github owner for org %q: %w", orgID, err)
+	}
+	return owner, nil
 }
 
 func (s *repoService) GetRepo(ctx context.Context, orgID, projectID string) (*GitRepository, error) {

@@ -25,8 +25,6 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // Connect creates or replaces the credential record for ocOrgID. PAT mode
@@ -64,13 +62,6 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 		switch req.Kind {
 		case "user-pat":
 			fn, err := s.connectPAT(ctx, tx, ocOrgID, hadRow, existing, req)
-			if err != nil {
-				return err
-			}
-			finalize = fn
-			return nil
-		case "app-installation":
-			fn, err := s.connectApp(ctx, tx, ocOrgID, hadRow, existing, req)
 			if err != nil {
 				return err
 			}
@@ -278,127 +269,4 @@ func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string)
 		return false, fmt.Errorf("credentials resync: write: %w", err)
 	}
 	return wrote, nil
-}
-
-// connectApp runs inside Connect's transaction (the org advisory lock is
-// held). It takes the install-scoped advisory lock, validates the installation
-// against GitHub, writes the row, and returns the finalize closure Connect
-// calls AFTER the commit (post-commit projection re-fetch + success log).
-func (s *CredentialService) connectApp(ctx context.Context, tx OrgCredentialTx, ocOrgID string, hadRow bool, existing *OrgCredential, req ConnectRequest) (func() (*Projection, error), error) {
-	if req.InstallationID == 0 {
-		return nil, &ValidationError{Code: "installation_id_missing", Message: "installationId is required"}
-	}
-	if s.minter == nil || s.minter.AppID() == 0 {
-		return nil, &ConflictError{Reason: "GitHub App not configured on this deployment"}
-	}
-
-	// Race-fix advisory lock keyed on installation_id (phase2.md §6.4).
-	if err := tx.AdvisoryLock(fmt.Sprintf("install:%d", req.InstallationID)); err != nil {
-		return nil, fmt.Errorf("connect: install lock: %w", err)
-	}
-
-	// Cross-org install check: if the same installation_id already maps
-	// to a different ocOrgId, refuse.
-	clash, err := tx.GetByInstallationID(req.InstallationID)
-	if err != nil {
-		return nil, fmt.Errorf("connect: install lookup: %w", err)
-	}
-	if clash != nil {
-		if clash.OcOrgID != ocOrgID {
-			return nil, &ConflictError{Reason: fmt.Sprintf("installation %d already bound to org %s", req.InstallationID, clash.OcOrgID)}
-		}
-		if clash.Status == "active" && hadRow && existing.OcOrgID == ocOrgID {
-			// Idempotent re-connect — return current projection.
-			slog.InfoContext(ctx, "secrets.connect.idempotent", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", req.InstallationID)
-			return func() (*Projection, error) {
-				return projectionFromRow(clash), nil
-			}, nil
-		}
-	}
-
-	// Fetch installation + bot identity.
-	accountLogin, accountType, selectedRepos, err := s.fetchInstallation(ctx, req.InstallationID)
-	if err != nil {
-		return nil, err
-	}
-	// Refuse User-account installs. GitHub's POST /user/repos is not
-	// accessible to App installation tokens (returns 403 "Resource not
-	// accessible by integration"), so any first-class repo provisioning
-	// fails silently after bind. Surface it at connect time instead so
-	// the user knows to install on an Organization account.
-	if accountType == "User" {
-		return nil, &ValidationError{
-			Code:    "user_account_install_unsupported",
-			Message: fmt.Sprintf("GitHub App was installed on a personal user account (%s). Install on an Organization account instead — App tokens cannot create repositories on user accounts.", accountLogin),
-		}
-	}
-	if s.minter.BotIdentity().Login == "" {
-		// First connect — populate the bot identity once.
-		botID, err := s.fetchAppBotIdentity(ctx)
-		if err != nil {
-			slog.WarnContext(ctx, "fetch bot identity failed", "error", err)
-			// Use a deterministic fallback so the row passes NOT NULL constraints.
-			botID = secrets.Identity{
-				Name:  "AEP Platform Bot",
-				Email: "bot@aep.dev",
-				Login: "aep-platform[bot]",
-			}
-		}
-		s.minter.SetBotIdentity(botID)
-	}
-	bot := s.minter.BotIdentity()
-
-	now := time.Now().UTC()
-	id := req.InstallationID
-	if !hadRow {
-		row := OrgCredential{
-			OcOrgID:         ocOrgID,
-			Kind:            "app-installation",
-			GitHubLogin:     accountLogin,
-			IdentityName:    bot.Name,
-			IdentityEmail:   bot.Email,
-			IdentityLogin:   bot.Login,
-			InstallationID:  &id,
-			SelectedRepos:   JSONStringList(selectedRepos),
-			Status:          "active",
-			ConnectedAt:     now,
-			LastValidatedAt: &now,
-		}
-		if err := tx.Create(&row); err != nil {
-			return nil, fmt.Errorf("connect: insert app: %w", err)
-		}
-		return func() (*Projection, error) {
-			slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", id, "githubLogin", accountLogin)
-			return projectionFromRow(&row), nil
-		}, nil
-	}
-
-	// Updating existing row to App mode (post-disconnect-then-reconnect).
-	updates := map[string]any{
-		"kind":              "app-installation",
-		"github_login":      accountLogin,
-		"identity_name":     bot.Name,
-		"identity_email":    bot.Email,
-		"identity_login":    bot.Login,
-		"installation_id":   id,
-		"selected_repos":    JSONStringList(selectedRepos),
-		"status":            "active",
-		"connected_at":      now,
-		"last_validated_at": now,
-		// PAT-mode specific fields are nulled by the CHECK constraint —
-		// caller side must clear webhook_secrets.
-		"webhook_secrets": nil,
-		"pat_secret_ref":  nil,
-	}
-	if err := tx.UpdateColumns(ocOrgID, updates); err != nil {
-		return nil, fmt.Errorf("connect: update app: %w", err)
-	}
-	return func() (*Projection, error) {
-		row, err := s.fetchRow(ctx, ocOrgID)
-		if err != nil {
-			return nil, err
-		}
-		slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", id, "githubLogin", accountLogin)
-		return projectionFromRow(row), nil
-	}, nil
 }

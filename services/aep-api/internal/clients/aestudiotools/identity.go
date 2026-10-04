@@ -30,8 +30,6 @@ import (
 // GitHubIdentity answers the GitHub user of the org's gitpat (name and email
 // only when public). A GitHub rate limit is a *RateLimitedError, any other
 // GitHub failure an *HTTPStatusError with GitHub's status.
-//
-//deadcode:keep wired in Task 4.13 (ProbePAT through the pod)
 func (a *Adapter) GitHubIdentity(ctx context.Context, org string) (*sourcecontrol.GitHubUser, error) {
 	var body gen.GitHubIdentity
 	err := a.do(ctx, org, "get-github-identity", &body, func(ctx context.Context, c *gen.Client, impersonateOrg string, auth gen.RequestEditorFn) (*http.Response, error) {

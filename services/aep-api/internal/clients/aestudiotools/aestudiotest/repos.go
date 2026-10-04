@@ -53,7 +53,7 @@ func (f *Fake) References(ref sourcecontrol.RepoRef) []string {
 // commit and answers its clone URL. A taken name is ErrRepoNameConflict,
 // unless req.AdoptExisting, which answers the existing repository.
 func (f *Fake) CreateOrgRepo(_ context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateOrgRepoRequest) (string, error) {
-	if err := f.begin(Call{Op: OpCreateRepo, Ref: ref}); err != nil {
+	if err := f.begin(Call{Op: OpCreateRepo, Ref: ref, Repo: req}); err != nil {
 		return "", err
 	}
 	f.mu.Lock()

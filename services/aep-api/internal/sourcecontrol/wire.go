@@ -33,15 +33,12 @@ import (
 
 // ----- Repo / issue -----
 
-// CreateOrgRepoRequest maps to the fields we send to POST /orgs/{org}/repos.
-//
-// The owning org/user is derived from the Credential's RepoOwner() — the
-// caller does not pass it explicitly, which keeps the multi-tenant invariant
-// (repo creation is parametrised by the credential, not by ambient config).
+// CreateOrgRepoRequest is what a new repository is created with. The
+// repository's owner and name are the RepoRef's (the owner is the org's
+// connected GitHub account); the pod always initialises it with a main
+// branch.
 type CreateOrgRepoRequest struct {
-	Name        string
 	Private     bool
-	AutoInit    bool
 	Description string
 	// AdoptExisting answers the existing repository instead of
 	// ErrRepoNameConflict when the name is taken (the AE Studio create-repo

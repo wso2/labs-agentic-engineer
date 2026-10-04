@@ -25,8 +25,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // IssueService creates and lists GitHub issues on project repositories.
@@ -109,7 +107,6 @@ type IssueService interface {
 type issueService struct {
 	repo     RepoRepository
 	github   IssueOps
-	resolver secrets.Resolver
 	incident IncidentPorts
 	// createLocks serializes dedupe-checked creation per "owner/repo" so two
 	// concurrent CreateIssue calls with the same DedupeKey can't both pass the
@@ -181,11 +178,10 @@ func (k *keyedMutex) lock(key string) func() {
 	}
 }
 
-func NewIssueService(repo RepoRepository, github IssueOps, resolver secrets.Resolver, incident ...IncidentPorts) *issueService {
+func NewIssueService(repo RepoRepository, github IssueOps, incident ...IncidentPorts) *issueService {
 	s := &issueService{
-		repo:     repo,
-		github:   github,
-		resolver: resolver,
+		repo:   repo,
+		github: github,
 	}
 	if len(incident) > 0 {
 		s.incident = incident[0]
@@ -229,7 +225,7 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 		}
 	}
 
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -238,10 +234,10 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 		req.DedupeKey = "" // aep-api-only field; must not reach GitHub
 		label := dedupeLabelFor(key)
 
-		unlock := s.lockRepoCreates(owner, repoName)
+		unlock := s.lockRepoCreates(ref)
 		defer unlock()
 
-		existing, listErr := s.github.ListIssues(ctx, owner, repoName, cred, []string{label})
+		existing, listErr := s.github.ListIssues(ctx, ref, []string{label})
 		if listErr != nil {
 			// Best-effort: a failed lookup must not block filing the issue; at
 			// worst we regress to a possible duplicate.
@@ -261,25 +257,25 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 
 	// Ensure all requested labels exist in the repo before creating the issue.
 	// GitHub silently drops labels that don't exist, so we create them up-front.
-	s.ensureLabels(ctx, owner, repoName, cred, req.Labels)
+	s.ensureLabels(ctx, ref, req.Labels)
 
 	// GitHub Projects v2 is dropped (tasks-github-native §4): no lazy board
 	// create/link/add on issue creation. Tasks are plain GitHub issues.
-	return s.github.CreateIssue(ctx, owner, repoName, cred, req)
+	return s.github.CreateIssue(ctx, ref, req)
 }
 
 // ensureLabels pre-creates every label that this process has not already
 // created on this repo, because GitHub silently DROPS labels that do not exist.
 // A failure is non-fatal and unmemoised: the issue lands without that label and
 // the next call tries again.
-func (s *issueService) ensureLabels(ctx context.Context, owner, repoName string, cred secrets.Credential, labels []string) {
+func (s *issueService) ensureLabels(ctx context.Context, ref RepoRef, labels []string) {
 	for _, label := range labels {
 		color := labelColor(label)
-		key := owner + "/" + repoName + "\x00" + label + "\x00" + color
+		key := ref.Owner + "/" + ref.Repo + "\x00" + label + "\x00" + color
 		if _, done := s.ensuredLabels.Load(key); done {
 			continue
 		}
-		if ensureErr := s.github.EnsureLabel(ctx, owner, repoName, cred, label, color); ensureErr != nil {
+		if ensureErr := s.github.EnsureLabel(ctx, ref, label, color); ensureErr != nil {
 			slog.WarnContext(ctx, "ensure github label failed", "label", label, "error", ensureErr)
 			continue
 		}
@@ -289,8 +285,8 @@ func (s *issueService) ensureLabels(ctx context.Context, owner, repoName string,
 
 // lockRepoCreates acquires the per-repo creation lock and returns its release
 // func. See the createLocks field doc for why this exists.
-func (s *issueService) lockRepoCreates(owner, repo string) func() {
-	return s.createLocks.lock(owner + "/" + repo)
+func (s *issueService) lockRepoCreates(ref RepoRef) func() {
+	return s.createLocks.lock(ref.Owner + "/" + ref.Repo)
 }
 
 // dedupeLabelPrefix namespaces the dedupe label. GitHub caps label names at 50
@@ -324,11 +320,11 @@ func dedupeLabelFor(key string) string {
 }
 
 func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]IssueInfo, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	issues, err := s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	issues, err := s.github.ListIssues(ctx, ref, labels)
 	if err != nil {
 		return nil, err
 	}
@@ -339,11 +335,11 @@ func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, 
 }
 
 func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, number int) (*IssueInfo, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	issue, err := s.github.GetIssue(ctx, owner, repoName, cred, number)
+	issue, err := s.github.GetIssue(ctx, ref, number)
 	if err != nil {
 		return nil, err
 	}
@@ -354,35 +350,35 @@ func (s *issueService) GetIssue(ctx context.Context, orgID, projectID string, nu
 }
 
 func (s *issueService) ListIssueComments(ctx context.Context, orgID, projectID string, number, limit int) ([]IssueComment, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListIssueComments(ctx, owner, repoName, cred, number, limit)
+	return s.github.ListIssueComments(ctx, ref, number, limit)
 }
 
 func (s *issueService) CloseIssue(ctx context.Context, orgID, projectID string, number int, comment string) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
 
 	// Post the closing comment first (best-effort: log and continue on failure).
 	if strings.TrimSpace(comment) != "" {
-		if commentErr := s.github.CommentIssue(ctx, owner, repoName, cred, number, markMachineComment(comment)); commentErr != nil {
+		if commentErr := s.github.CommentIssue(ctx, ref, number, markMachineComment(comment)); commentErr != nil {
 			slog.WarnContext(ctx, "failed to post closing comment", "project", projectID, "issue", number, "error", commentErr)
 		}
 	}
 
-	return s.github.CloseIssue(ctx, owner, repoName, cred, number)
+	return s.github.CloseIssue(ctx, ref, number)
 }
 
 func (s *issueService) ReopenIssue(ctx context.Context, orgID, projectID string, number int) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.ReopenIssue(ctx, owner, repoName, cred, number)
+	return s.github.ReopenIssue(ctx, ref, number)
 }
 
 func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error {
@@ -390,12 +386,12 @@ func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string
 		return fmt.Errorf("comment body is required")
 	}
 
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
 
-	return s.github.CommentIssue(ctx, owner, repoName, cred, number, markMachineComment(body))
+	return s.github.CommentIssue(ctx, ref, number, markMachineComment(body))
 }
 
 // markMachineComment brands a body as platform-written (MachineCommentMarker).
@@ -409,7 +405,7 @@ func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string
 // created to end.
 //
 // The marker LEADS, and the idempotence check is a prefix test to match — the
-// read side detects on the prefix too (githubhost.isMachineComment), so a body
+// read side (the pod's issue reads) detects on the prefix too, so a body
 // that merely mentions the marker further down is not already branded and must
 // still get one. Checking with Contains here would leave a comment that QUOTES a
 // platform comment unbranded while the reader also declines to hide it: the two
@@ -426,112 +422,96 @@ func (s *issueService) EditIssueBody(ctx context.Context, orgID, projectID strin
 	if strings.TrimSpace(body) == "" {
 		return fmt.Errorf("body is required")
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.EditIssueBody(ctx, owner, repoName, cred, number, body)
+	return s.github.EditIssueBody(ctx, ref, number, body)
 }
 
 func (s *issueService) EditIssueTitle(ctx context.Context, orgID, projectID string, number int, title string) error {
 	if strings.TrimSpace(title) == "" {
 		return fmt.Errorf("title is required")
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.EditIssueTitle(ctx, owner, repoName, cred, number, title)
+	return s.github.EditIssueTitle(ctx, ref, number, title)
 }
 
 func (s *issueService) SetIssueMilestone(ctx context.Context, orgID, projectID string, number, milestoneNumber int) error {
 	if milestoneNumber <= 0 {
 		return fmt.Errorf("milestone number is required")
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.SetIssueMilestone(ctx, owner, repoName, cred, number, milestoneNumber)
+	return s.github.SetIssueMilestone(ctx, ref, number, milestoneNumber)
 }
 
 func (s *issueService) AddLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error {
 	if len(labels) == 0 {
 		return nil
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
 	// Ensure each label exists first — GitHub silently drops unknown labels.
-	s.ensureLabels(ctx, owner, repoName, cred, labels)
-	return s.github.AddIssueLabels(ctx, owner, repoName, cred, number, labels)
+	s.ensureLabels(ctx, ref, labels)
+	return s.github.AddIssueLabels(ctx, ref, number, labels)
 }
 
 func (s *issueService) RemoveLabel(ctx context.Context, orgID, projectID string, number int, label string) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.RemoveIssueLabel(ctx, owner, repoName, cred, number, label)
+	return s.github.RemoveIssueLabel(ctx, ref, number, label)
 }
 
 func (s *issueService) SetLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	s.ensureLabels(ctx, owner, repoName, cred, labels)
-	return s.github.SetIssueLabels(ctx, owner, repoName, cred, number, labels)
+	s.ensureLabels(ctx, ref, labels)
+	return s.github.SetIssueLabels(ctx, ref, number, labels)
 }
 
 func (s *issueService) GetPullRequestState(ctx context.Context, orgID, projectID string, number int) (*PullRequestState, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.GetPullRequest(ctx, owner, repoName, cred, number)
+	return s.github.GetPullRequest(ctx, ref, number)
 }
 
 func (s *issueService) MergePullRequest(ctx context.Context, orgID, projectID string, number int) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.MergePullRequest(ctx, owner, repoName, cred, number)
+	return s.github.MergePullRequest(ctx, ref, number)
 }
 
 func (s *issueService) ListPullRequestFiles(ctx context.Context, orgID, projectID string, number int) ([]string, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListPullRequestFiles(ctx, owner, repoName, cred, number)
+	return s.github.ListPullRequestFiles(ctx, ref, number)
 }
 
-// resolveRepoAndCredential looks up the project's git repository, parses its
-// owner/repo from the clone URL, and resolves the org's credential. Every
+// resolveRef addresses the project's repository in the org's pod: the ref is
+// RefForRow's, built from the project's git_repositories row. Every
 // GitHub-bound op routes through here — the multi-tenant invariant
 // (operations parametrised by ocOrgID) is enforced at one place.
-func (s *issueService) resolveRepoAndCredential(ctx context.Context, orgID, projectID string) (owner, repo string, cred secrets.Credential, err error) {
-	gitRepo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("get repo: %w", err)
-	}
-	if gitRepo == nil {
-		return "", "", nil, ErrRepoNotFound
-	}
-
-	owner, repo, err = ParseOwnerRepo(gitRepo.RepoURL)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("parse repo url %q: %w", gitRepo.RepoURL, err)
-	}
-
-	cred, err = s.resolver.Resolve(ctx, gitRepo.OrgID)
-	if err != nil {
-		return "", "", nil, fmt.Errorf("resolve credential for org %q: %w", gitRepo.OrgID, err)
-	}
-	return owner, repo, cred, nil
+func (s *issueService) resolveRef(ctx context.Context, orgID, projectID string) (RepoRef, error) {
+	ref, _, err := RepoRefFor(ctx, s.repo, orgID, projectID)
+	return ref, err
 }
 
 // ParseOwnerRepo extracts the "owner" and "repo" segments from a git clone URL.

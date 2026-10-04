@@ -151,7 +151,7 @@ const (
 //     an immediate obstruction; planned work is the weakest claim.
 //
 // A multi-kind issue is the ONLY case where this function and the counts query
-// (githubhost.milestoneIssueCountsQuery) can disagree, because plain label
+// (the pod client's milestoneIssueCountsQuery) can disagree, because plain label
 // subtraction cannot be reproduced by resolving to a single kind. Where they do,
 // the disagreement costs a run that will not settle — visible, and recoverable —
 // never a run that settles a version nobody built.

@@ -28,13 +28,11 @@ package sourcecontrol_test
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
 )
@@ -144,14 +142,16 @@ func TestIssueComponent_ListAllowsOnlyKnownAttentionReasons(t *testing.T) {
 
 func TestIssueComponent_AttentionFromGitHubEvidence(t *testing.T) {
 	t.Parallel()
-	stub := gittest.NewStub(t)
-	stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK, `[
-	{"number":1,"title":"review fix","state":"open","state_reason":"reopened","labels":[{"name":"incident"}]},
-	{"number":2,"title":"no code change","state":"closed","state_reason":"not_planned","labels":[{"name":"incident"}]},
-	{"number":3,"title":"repeated incident","state":"open","state_reason":"reopened","body":"Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence","labels":[{"name":"incident"},{"name":"aep"}]},
-  {"number":4,"title":"ordinary","state":"open","state_reason":"reopened","labels":[{"name":"bug"}]}
-]`)
-	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, newIssueSvcOnStub(t, stub))}})
+	svc, f := newIssueSvcOnFake(t)
+	for _, info := range []sourcecontrol.IssueInfo{
+		{Title: "review fix", State: "open", StateReason: "reopened", Labels: []string{"incident"}},
+		{Title: "no code change", State: "closed", StateReason: "not_planned", ClosedAt: "2026-09-18T08:00:00Z", Labels: []string{"incident"}},
+		{Title: "repeated incident", State: "open", StateReason: "reopened", Body: "Original\n\n## Recurrence 1\nEvidence\n\n## Recurrence 2\nEvidence\n\n## Recurrence 3\nEvidence", Labels: []string{"incident", "aep"}},
+		{Title: "ordinary", State: "open", StateReason: "reopened", Labels: []string{"bug"}},
+	} {
+		f.SeedIssue(widgets, info, 0)
+	}
+	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{SourceControl: scWith(t, svc)}})
 	resp := h.AsOrg("org1").Get("/api/v1/projects/proj1/issues")
 	if resp.Code != 200 {
 		t.Fatalf("list status=%d body=%s", resp.Code, resp.Body.String())

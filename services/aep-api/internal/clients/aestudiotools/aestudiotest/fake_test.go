@@ -36,53 +36,10 @@ import (
 
 var ref = sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
 
-// The sub-port method sets as Task 4.13 writes them into ports.go: the GitHub
-// ports keep their method names and take a RepoRef instead of owner, repo and
-// a credential. Until then they live here so the Fake is held to them.
-type (
-	repoAdmin interface {
-		CreateOrgRepo(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateOrgRepoRequest) (cloneURL string, err error)
-	}
-	issueOps interface {
-		CreateIssue(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error)
-		ListIssues(ctx context.Context, ref sourcecontrol.RepoRef, labels []string) ([]sourcecontrol.IssueInfo, error)
-		GetIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.IssueInfo, error)
-		ListIssueComments(ctx context.Context, ref sourcecontrol.RepoRef, number, limit int) ([]sourcecontrol.IssueComment, error)
-		EnsureLabel(ctx context.Context, ref sourcecontrol.RepoRef, name, color string) error
-		CloseIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ReopenIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		CommentIssue(ctx context.Context, ref sourcecontrol.RepoRef, number int, body string) error
-		EditIssueBody(ctx context.Context, ref sourcecontrol.RepoRef, number int, body string) error
-		EditIssueTitle(ctx context.Context, ref sourcecontrol.RepoRef, number int, title string) error
-		AddIssueLabels(ctx context.Context, ref sourcecontrol.RepoRef, number int, labels []string) error
-		RemoveIssueLabel(ctx context.Context, ref sourcecontrol.RepoRef, number int, label string) error
-		SetIssueLabels(ctx context.Context, ref sourcecontrol.RepoRef, number int, labels []string) error
-		SetIssueMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number, milestoneNumber int) error
-		GetPullRequest(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.PullRequestState, error)
-		MergePullRequest(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ListPullRequestFiles(ctx context.Context, ref sourcecontrol.RepoRef, number int) ([]string, error)
-		CreateMilestone(ctx context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CreateMilestoneRequest) (*sourcecontrol.MilestoneResult, error)
-		CloseMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ReopenMilestone(ctx context.Context, ref sourcecontrol.RepoRef, number int) error
-		ListMilestones(ctx context.Context, ref sourcecontrol.RepoRef, state string) ([]sourcecontrol.Milestone, error)
-		ListMilestoneIssues(ctx context.Context, ref sourcecontrol.RepoRef, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error)
-		MilestoneIssueCounts(ctx context.Context, ref sourcecontrol.RepoRef, number int) (*sourcecontrol.MilestoneIssueCounts, error)
-		ListMilestoneIssueComments(ctx context.Context, ref sourcecontrol.RepoRef, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error)
-	}
-	webhookOps interface {
-		RegisterWebhook(ctx context.Context, ref sourcecontrol.RepoRef, events []string) (hookID int64, err error)
-		UpdateWebhookEvents(ctx context.Context, ref sourcecontrol.RepoRef, hookID int64, events []string) error
-		DeleteWebhook(ctx context.Context, ref sourcecontrol.RepoRef, hookID int64) error
-	}
-	host interface {
-		repoAdmin
-		issueOps
-		webhookOps
-	}
-)
-
 var (
-	_ host                          = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.RepoAdmin       = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.IssueOps        = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.WebhookOps      = (*aestudiotest.Fake)(nil)
 	_ sourcecontrol.Git             = (*aestudiotest.Fake)(nil)
 	_ sourcecontrol.TrashOps        = (*aestudiotest.Fake)(nil)
 	_ sourcecontrol.SkillsMirrorOps = (*aestudiotest.Fake)(nil)

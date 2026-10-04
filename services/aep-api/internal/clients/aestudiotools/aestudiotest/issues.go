@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -62,6 +63,32 @@ func (f *Fake) Issues(ref sourcecontrol.RepoRef) []sourcecontrol.IssueInfo {
 		out = append(out, cloneInfo(st.issues[n].info))
 	}
 	return out
+}
+
+// Labels answers ref's repository labels: name → colour, as EnsureLabel
+// created them.
+func (f *Fake) Labels(ref sourcecontrol.RepoRef) map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.state(ref).labels)
+}
+
+// SeedIssue files an issue on ref exactly as info describes it (state,
+// state reason, body, labels — what GitHub would report) and answers its
+// number; info.Number and info.URL are assigned. milestone 0 leaves it out
+// of every milestone.
+func (f *Fake) SeedIssue(ref sourcecontrol.RepoRef, info sourcecontrol.IssueInfo, milestone int) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.state(ref)
+	st.nextNumber++
+	info.Number = st.nextNumber
+	info.URL = "https://github.com/" + ref.Owner + "/" + ref.Repo + "/issues/" + strconv.Itoa(info.Number)
+	if info.State == "" {
+		info.State = "open"
+	}
+	st.issues[info.Number] = &issue{info: cloneInfo(info), milestone: milestone}
+	return info.Number
 }
 
 // SeedPullRequest opens a pull request on ref changing files and answers its
@@ -209,17 +236,19 @@ func (f *Fake) editIssue(op string, ref sourcecontrol.RepoRef, number int, edit 
 	return nil
 }
 
-// CloseIssue closes the issue as completed.
+// CloseIssue closes the issue as completed, stamping its closedAt from the
+// Fake's clock (each closure is a new one, as on GitHub).
 func (f *Fake) CloseIssue(_ context.Context, ref sourcecontrol.RepoRef, number int) error {
 	return f.editIssue(OpCloseIssue, ref, number, func(is *issue) {
 		is.info.State, is.info.StateReason = "closed", "completed"
+		is.info.ClosedAt = f.tick().Format(time.RFC3339)
 	})
 }
 
 // ReopenIssue reopens the issue.
 func (f *Fake) ReopenIssue(_ context.Context, ref sourcecontrol.RepoRef, number int) error {
 	return f.editIssue(OpReopenIssue, ref, number, func(is *issue) {
-		is.info.State, is.info.StateReason = "open", "reopened"
+		is.info.State, is.info.StateReason, is.info.ClosedAt = "open", "reopened", ""
 	})
 }
 
@@ -412,11 +441,13 @@ func (st *repoState) members(number int, state string, labels []string) []*issue
 
 // ListMilestoneIssues lists the milestone's issues the filter selects.
 func (f *Fake) ListMilestoneIssues(_ context.Context, ref sourcecontrol.RepoRef, filter sourcecontrol.MilestoneIssuesFilter) ([]sourcecontrol.IssueInfo, error) {
-	st, unlock, err := f.issueOp(OpListMilestoneIssues, ref)
-	if err != nil {
+	filter.Labels = slices.Clone(filter.Labels)
+	if err := f.begin(Call{Op: OpListMilestoneIssues, Ref: ref, Milestone: filter}); err != nil {
 		return nil, err
 	}
-	defer unlock()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st := f.state(ref)
 	if _, err := st.milestone(filter.Number); err != nil {
 		return nil, err
 	}

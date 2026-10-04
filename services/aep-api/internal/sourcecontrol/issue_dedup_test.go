@@ -21,27 +21,11 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // --- minimal fakes (embed the interface; only the methods the dedup path
 // actually calls are implemented — the rest would panic if reached, which is
 // the point: the test asserts the path stays on the dedup branch) ---
-
-type fakeCredential struct{ secrets.Credential }
-
-func (fakeCredential) Token(context.Context) (string, time.Time, error) {
-	return "tok", time.Time{}, nil
-}
-func (fakeCredential) RepoOwner() string { return "o" }
-
-type fakeResolver struct{}
-
-func (fakeResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return fakeCredential{}, nil
-}
 
 type fakeRepoRepo struct{ RepoRepository }
 
@@ -59,7 +43,7 @@ type fakeGitHub struct {
 	nextNum     int
 }
 
-func (f *fakeGitHub) ListIssues(_ context.Context, _, _ string, _ secrets.Credential, labels []string) ([]IssueInfo, error) {
+func (f *fakeGitHub) ListIssues(_ context.Context, _ RepoRef, labels []string) ([]IssueInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []IssueInfo
@@ -74,11 +58,11 @@ func (f *fakeGitHub) ListIssues(_ context.Context, _, _ string, _ secrets.Creden
 	return out, nil
 }
 
-func (f *fakeGitHub) EnsureLabel(context.Context, string, string, secrets.Credential, string, string) error {
+func (f *fakeGitHub) EnsureLabel(context.Context, RepoRef, string, string) error {
 	return nil
 }
 
-func (f *fakeGitHub) CreateIssue(_ context.Context, _, _ string, _ secrets.Credential, req CreateIssueRequest) (*IssueResult, error) {
+func (f *fakeGitHub) CreateIssue(_ context.Context, _ RepoRef, req CreateIssueRequest) (*IssueResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.createCount++
@@ -98,7 +82,7 @@ func hasLabel(iss IssueInfo, want string) bool {
 }
 
 func newDedupService(gh *fakeGitHub) IssueService {
-	return NewIssueService(fakeRepoRepo{}, gh, fakeResolver{})
+	return NewIssueService(fakeRepoRepo{}, gh)
 }
 
 func req(title, key string) CreateIssueRequest {

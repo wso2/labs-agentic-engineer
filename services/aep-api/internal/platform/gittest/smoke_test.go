@@ -17,14 +17,11 @@
 package gittest
 
 // Smoke tests proving the harness end to end: clone/seed/tag over the file://
-// remote, and the Stub route registry. (The Git-Data HTTP fake and its wire
-// round-trip tests were retired with the REST git-object path — the gitfs
-// Workspace engine is exercised by internal/platform/gitfs's own suite.)
+// remote. (The gitfs Workspace engine is exercised by internal/platform/gitfs's
+// own suite.)
 
 import (
 	"bytes"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,130 +93,4 @@ func TestRemote_RemoveDeletesPaths(t *testing.T) {
 	if got := r.FileAt(t, "main", "specs/requirements/main.md"); got != "keep" {
 		t.Fatalf("survivor main.md = %q, want %q", got, "keep")
 	}
-}
-
-// --- Stub: route registry ---------------------------------------------------
-
-func TestStub_RegistersAndRecords(t *testing.T) {
-	t.Parallel()
-	s := NewStub(t)
-	s.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated, `{"number":7}`)
-
-	// Registered route returns the configured status+body.
-	resp, err := http.Post(s.URL+"/repos/acme/widgets/issues", "application/json", bytes.NewReader([]byte(`{"title":"bug"}`)))
-	if err != nil {
-		t.Fatalf("post: %v", err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated || string(body) != `{"number":7}` {
-		t.Fatalf("registered route = %d %q, want 201 {\"number\":7}", resp.StatusCode, body)
-	}
-
-	// Unregistered route 404s.
-	resp2, err := http.Get(s.URL + "/repos/acme/widgets/hooks")
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	_ = resp2.Body.Close()
-	if resp2.StatusCode != http.StatusNotFound {
-		t.Fatalf("unregistered route = %d, want 404", resp2.StatusCode)
-	}
-
-	// Both requests were recorded, in order, with method/path/body.
-	reqs := s.Requests()
-	if len(reqs) != 2 {
-		t.Fatalf("recorded %d requests, want 2", len(reqs))
-	}
-	if reqs[0].Method != http.MethodPost || reqs[0].Path != "/repos/acme/widgets/issues" || reqs[0].Body != `{"title":"bug"}` {
-		t.Fatalf("request[0] = %+v", reqs[0])
-	}
-	if reqs[1].Path != "/repos/acme/widgets/hooks" {
-		t.Fatalf("request[1] path = %q, want /repos/acme/widgets/hooks", reqs[1].Path)
-	}
-}
-
-// TestStub_OnSequenceScriptsSuccessiveReplies pins the create-then-recover
-// shape: one route answers differently before and after an intervening side
-// effect, and calls past the end of the script repeat the last reply.
-func TestStub_OnSequenceScriptsSuccessiveReplies(t *testing.T) {
-	t.Parallel()
-	s := NewStub(t)
-	s.OnSequence(http.MethodGet, "/repos/acme/widgets/milestones",
-		Response{Status: http.StatusOK, Body: `[]`},
-		Response{Status: http.StatusOK, Body: `[{"number":4,"title":"v1"}]`},
-	)
-
-	want := []struct {
-		status int
-		body   string
-	}{
-		{http.StatusOK, `[]`},
-		{http.StatusOK, `[{"number":4,"title":"v1"}]`},
-		{http.StatusOK, `[{"number":4,"title":"v1"}]`}, // past the end: last reply repeats
-	}
-	for i, w := range want {
-		status, body := get(t, s.URL+"/repos/acme/widgets/milestones")
-		if status != w.status || body != w.body {
-			t.Fatalf("call %d = %d %q, want %d %q", i+1, status, body, w.status, w.body)
-		}
-	}
-	if got := len(s.Requests()); got != 3 {
-		t.Fatalf("recorded %d requests, want 3", got)
-	}
-}
-
-// TestStub_OnFuncSeesTheRequest proves a dynamic route can key its reply off
-// the request — the pagination and single-/graphql-route cases.
-func TestStub_OnFuncSeesTheRequest(t *testing.T) {
-	t.Parallel()
-	s := NewStub(t)
-	s.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if r.URL.Query().Get("page") == "2" {
-			_, _ = io.WriteString(w, `[{"number":2}]`)
-			return
-		}
-		_, _ = io.WriteString(w, `[{"number":1}]`)
-	})
-
-	if _, body := get(t, s.URL+"/repos/acme/widgets/issues?page=1"); body != `[{"number":1}]` {
-		t.Fatalf("page 1 body = %q", body)
-	}
-	if _, body := get(t, s.URL+"/repos/acme/widgets/issues?page=2"); body != `[{"number":2}]` {
-		t.Fatalf("page 2 body = %q", body)
-	}
-	// Query strings are captured on the record even though routing ignores them.
-	if q := s.Requests()[1].Query; q != "page=2" {
-		t.Fatalf("recorded query = %q, want page=2", q)
-	}
-}
-
-// TestStub_OnReplacesAnEarlierRegistration pins the documented last-one-wins
-// rule across registration forms.
-func TestStub_OnReplacesAnEarlierRegistration(t *testing.T) {
-	t.Parallel()
-	s := NewStub(t)
-	s.OnSequence(http.MethodGet, "/x", Response{Status: http.StatusOK, Body: `first`})
-	s.On(http.MethodGet, "/x", http.StatusTeapot, `second`)
-
-	if status, body := get(t, s.URL+"/x"); status != http.StatusTeapot || body != "second" {
-		t.Fatalf("after replacement = %d %q, want 418 \"second\"", status, body)
-	}
-}
-
-// get performs a GET and returns the status and body as a string.
-func get(t *testing.T, url string) (int, string) {
-	t.Helper()
-	resp, err := http.Get(url)
-	if err != nil {
-		t.Fatalf("get %s: %v", url, err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read body: %v", err)
-	}
-	return resp.StatusCode, string(body)
 }

@@ -22,7 +22,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
@@ -34,29 +33,25 @@ func (repo) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourc
 	return &sourcecontrol.GitRepository{OrgID: org, ProjectID: project, RepoURL: "https://github.com/acme/shop"}, nil
 }
 
-type resolver struct{ secrets.Resolver }
-
-func (resolver) Resolve(context.Context, string) (secrets.Credential, error) { return nil, nil }
-
 type host struct {
 	sourcecontrol.IssueOps
 	created sourcecontrol.CreateIssueRequest
 }
 
-func (*host) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+func (*host) ListIssues(context.Context, sourcecontrol.RepoRef, []string) ([]sourcecontrol.IssueInfo, error) {
 	return nil, nil
 }
-func (*host) EnsureLabel(context.Context, string, string, secrets.Credential, string, string) error {
+func (*host) EnsureLabel(context.Context, sourcecontrol.RepoRef, string, string) error {
 	return nil
 }
-func (h *host) CreateIssue(_ context.Context, _, _ string, _ secrets.Credential, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
+func (h *host) CreateIssue(_ context.Context, _ sourcecontrol.RepoRef, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	h.created = req
 	return &sourcecontrol.IssueResult{Number: 42, URL: "https://github.com/acme/shop/issues/42"}, nil
 }
 
 func TestSREHandlerUsesTrustedContextAndPreservesOutcome(t *testing.T) {
 	gh := &host{}
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, gh, resolver{}))
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, gh))
 	ctx := sourcecontrol.WithIncidentContext(tenant.WithBoundOrg(context.Background(), "acme"), "alert-1")
 	response, err := h.CreateIssue(ctx, gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{
 		Title: "timeout", ComponentName: "checkout", ActionStatuses: []*string{nil}, DedupeKey: "spoof",
@@ -74,7 +69,7 @@ func TestSREHandlerUsesTrustedContextAndPreservesOutcome(t *testing.T) {
 }
 
 func TestSREHandlerRejectsMissingTrustedIdentity(t *testing.T) {
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}))
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, &host{}))
 	_, err := h.CreateIssue(context.Background(), gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
 	apiError, ok := err.(*apierr.Error)
 	if !ok || apiError.Status != 400 {
@@ -86,12 +81,12 @@ func TestSREHandlerRejectsMissingTrustedIdentity(t *testing.T) {
 // closure reason (a human's "duplicate") is not eligible to recur.
 type closedDuplicateHost struct{ host }
 
-func (*closedDuplicateHost) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+func (*closedDuplicateHost) ListIssues(context.Context, sourcecontrol.RepoRef, []string) ([]sourcecontrol.IssueInfo, error) {
 	return []sourcecontrol.IssueInfo{{Number: 7, State: "closed", StateReason: "duplicate", Labels: []string{"bug", "incident"}}}, nil
 }
 
 func TestSREHandlerReportsIneligibleClosedIncidentAsConflict(t *testing.T) {
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}, resolver{}))
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}))
 	ctx := sourcecontrol.WithIncidentContext(tenant.WithBoundOrg(context.Background(), "acme"), "alert-1")
 	_, err := h.CreateIssue(ctx, gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
 	apiError, ok := err.(*apierr.Error)
