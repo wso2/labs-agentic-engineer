@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -533,22 +534,34 @@ func (s *issueService) resolveRepoAndCredential(ctx context.Context, orgID, proj
 	return owner, repo, cred, nil
 }
 
-// ParseOwnerRepo extracts the "owner" and "repo" segments from a GitHub clone URL.
-// Supports https://github.com/owner/repo.git and https://github.com/owner/repo forms.
+// ParseOwnerRepo extracts the "owner" and "repo" segments from a git clone URL.
+// It is host-agnostic (GitHub Enterprise hosts exist) but strict about shape: the
+// input must be an http(s)/ssh URL, or the scp form git@host:owner/repo, with a
+// host and exactly two path segments. A trailing ".git" and trailing "/" are
+// allowed. Anything else is an error rather than a guess.
 func ParseOwnerRepo(cloneURL string) (owner, repo string, err error) {
 	u := strings.TrimSpace(cloneURL)
-	for _, prefix := range []string{"https://github.com/", "http://github.com/", "git@github.com:"} {
-		if strings.HasPrefix(u, prefix) {
-			u = strings.TrimPrefix(u, prefix)
-			break
+	var path string
+	switch {
+	case strings.Contains(u, "://"):
+		parsed, perr := url.Parse(u)
+		if perr != nil || parsed.Hostname() == "" {
+			return "", "", fmt.Errorf("not a repo url")
 		}
+		path = parsed.Path
+	default:
+		// scp form: user@host:owner/repo
+		at := strings.Index(u, "@")
+		colon := strings.Index(u, ":")
+		if at <= 0 || colon <= at+1 {
+			return "", "", fmt.Errorf("not a repo url")
+		}
+		path = u[colon+1:]
 	}
-	u = strings.TrimSuffix(u, ".git")
-	u = strings.Trim(u, "/")
-
-	parts := strings.SplitN(u, "/", 2)
+	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
+	parts := strings.Split(path, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("not a github repo url")
+		return "", "", fmt.Errorf("not an owner/repo url")
 	}
 	return parts[0], parts[1], nil
 }

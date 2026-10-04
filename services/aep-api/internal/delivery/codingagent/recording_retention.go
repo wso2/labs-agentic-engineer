@@ -16,7 +16,7 @@
 
 package codingagent
 
-// recordings.go — retention for the coding-agent run recordings under
+// recording_retention.go — retention for the coding-agent run recordings under
 // <root>/runs/<orgId>/<cycleId>.
 //
 // This tree is the one part of the workspace mount that is NOT a rebuildable

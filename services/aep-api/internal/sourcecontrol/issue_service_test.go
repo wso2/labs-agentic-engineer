@@ -384,8 +384,22 @@ func TestParseOwnerRepo(t *testing.T) {
 		{"https://github.com/acme/widgets.git", "acme", "widgets", false},
 		{"git@github.com:acme/widgets.git", "acme", "widgets", false},
 		{"https://github.com/acme/widgets/", "acme", "widgets", false},
+		{"https://github.com/acme/widgets.git/", "acme", "widgets", false},
+		{"  https://github.com/acme/widgets  ", "acme", "widgets", false},
+		{"https://ghe.example.com/acme/widgets.git", "acme", "widgets", false},
+		{"https://gitlab.com/aep/repo", "aep", "repo", false},
 		{"not-a-url", "", "", true},
+		{"", "", "", true},
+		{"acme/widgets", "", "", true},
 		{"https://github.com/onlyowner", "", "", true},
+		{"https://github.com/acme/widgets/extra", "", "", true},
+		{"https://github.com/acme/widgets/tree/main", "", "", true},
+		{"https://github.com/", "", "", true},
+		{"https://", "", "", true},
+		{"https:", "", "", true},
+		{"https:///acme/widgets", "", "", true},
+		{"https://gitlab.com/aep", "", "", true},
+		{"git@github.com:onlyowner", "", "", true},
 	}
 	for _, c := range cases {
 		owner, repo, err := sourcecontrol.ParseOwnerRepo(c.in)

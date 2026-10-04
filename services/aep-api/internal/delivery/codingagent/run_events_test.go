@@ -295,7 +295,7 @@ func TestCycleEvents_LostRecordingSaysSo(t *testing.T) {
 	r, store, root := recordedReader(t)
 	recordEvents(t, store, "c1", 1, recordedEvent(2, "one"))
 	// The events file goes; the directory and its state.json stay.
-	if err := os.Remove(filepath.Join(filepath.Join(root, "runs"), "acme", "c1", "events.1.ndjson")); err != nil {
+	if err := os.Remove(filepath.Join(root, "runs", "acme", "c1", "events.1.ndjson")); err != nil {
 		t.Fatalf("remove events file: %v", err)
 	}
 

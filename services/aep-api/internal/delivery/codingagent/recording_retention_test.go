@@ -34,7 +34,7 @@ import (
 // started rather than the moment it last wrote).
 func mkRecording(t *testing.T, root, org, cycle string, size int, when time.Time) string {
 	t.Helper()
-	dir := filepath.Join(filepath.Join(root, "runs"), org, cycle)
+	dir := filepath.Join(root, "runs", org, cycle)
 	mkFile(t, filepath.Join(dir, "events.1.ndjson"), size)
 	mkFile(t, filepath.Join(dir, "state.json"), 64)
 	chtimes(t, filepath.Join(dir, "events.1.ndjson"), when)
@@ -182,5 +182,68 @@ func mustNotExist(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected %s to be gone, stat err=%v", path, err)
+	}
+}
+
+func TestNewRecordingRetention_Defaults(t *testing.T) {
+	t.Parallel()
+	r := NewRecordingRetention("/w", config.WorkspaceConfig{})
+	if r.maxAge != 30*24*time.Hour {
+		t.Errorf("maxAge = %v, want 30 days", r.maxAge)
+	}
+	if r.interval != 5*time.Minute {
+		t.Errorf("interval = %v, want 5m", r.interval)
+	}
+	r = NewRecordingRetention("/w", config.WorkspaceConfig{
+		RecordingMaxAge: time.Hour, ReapInterval: time.Second, OrgQuotaBytes: 7,
+	})
+	if r.maxAge != time.Hour || r.interval != time.Second || r.quota != 7 {
+		t.Errorf("configured values not honoured: %+v", r)
+	}
+}
+
+// Run sweeps at start (aged goes, fresh stays, quota holds) and stops on cancel.
+func TestRecordingRetention_RunSweepsAndStopsOnCancel(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	payload := blockPayloadSize(t)
+	cfg := config.WorkspaceConfig{
+		RecordingMaxAge: 30 * 24 * time.Hour,
+		OrgQuotaBytes:   4 * payload,
+		ReapInterval:    time.Hour,
+	}
+	r, root := newRetention(t, cfg)
+	r.now = func() time.Time { return now }
+
+	aged := mkRecording(t, root, "acme", "cycle-old", 64, now.Add(-40*24*time.Hour))
+	q1 := mkRecording(t, root, "globex", "c1", 64, now.Add(-72*time.Hour))
+	q2 := mkRecording(t, root, "globex", "c2", 64, now.Add(-48*time.Hour))
+	q3 := mkRecording(t, root, "globex", "c3", 64, now.Add(-24*time.Hour))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+
+	deadline := time.After(10 * time.Second)
+	for {
+		if _, err := os.Stat(aged); os.IsNotExist(err) {
+			if _, err := os.Stat(q1); os.IsNotExist(err) {
+				break
+			}
+		}
+		select {
+		case <-deadline:
+			t.Fatal("startup sweep did not remove the aged / over-quota recordings")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	mustExist(t, q2)
+	mustExist(t, q3)
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after ctx cancel")
 	}
 }
