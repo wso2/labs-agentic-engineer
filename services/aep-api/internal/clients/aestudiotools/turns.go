@@ -83,13 +83,13 @@ type TurnRequest struct {
 }
 
 // TurnEvent is one line of the turn stream: a task-op (Op, Output), a
-// keep-alive, or the final result (Status completed|failed, Code, Message).
+// keep-alive, or the final result (Status completed|failed, Code). The
+// result's free-text message is deliberately not read (see TurnFailedError).
 type TurnEvent struct {
 	Type, Op string
 	Output   json.RawMessage
 	Status   string
 	Code     string
-	Message  string
 }
 
 // Turns starts turns in an org's pod.
@@ -165,12 +165,11 @@ func (a *Adapter) turnEvents(ctx context.Context, org string, body io.ReadCloser
 				continue
 			}
 			var ev struct {
-				Type    string          `json:"type"`
-				Op      string          `json:"op"`
-				Output  json.RawMessage `json:"output"`
-				Status  string          `json:"status"`
-				Code    string          `json:"code"`
-				Message string          `json:"message"`
+				Type   string          `json:"type"`
+				Op     string          `json:"op"`
+				Output json.RawMessage `json:"output"`
+				Status string          `json:"status"`
+				Code   string          `json:"code"`
 			}
 			if err := json.Unmarshal(line, &ev); err != nil {
 				yield(TurnEvent{}, fmt.Errorf("ae studio: malformed turn stream line: %w", err))
@@ -180,7 +179,7 @@ func (a *Adapter) turnEvents(ctx context.Context, org string, body io.ReadCloser
 				yield(TurnEvent{}, errors.New("ae studio: turn stream line without a type"))
 				return
 			}
-			out := TurnEvent{Type: ev.Type, Op: ev.Op, Output: ev.Output, Status: ev.Status, Code: ev.Code, Message: ev.Message}
+			out := TurnEvent{Type: ev.Type, Op: ev.Op, Output: ev.Output, Status: ev.Status, Code: ev.Code}
 			if !yield(out, nil) || ev.Type == EventResult {
 				return
 			}

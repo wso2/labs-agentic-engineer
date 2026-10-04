@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -47,6 +48,35 @@ func TestIsPermanent(t *testing.T) {
 	} {
 		if got := IsPermanent(tc.err); got != tc.want {
 			t.Errorf("IsPermanent(%v) = %v, want %v", tc.err, got, tc.want)
+		}
+	}
+}
+
+// A failed turn's error names its code and nothing else: the pod's free-text
+// message (possibly a provider's error body) never reaches an error string,
+// so it never reaches Temporal history or a run record (R1-M4).
+func TestTurnFailedError_ClassifiesByCodeAndCarriesNoMessage(t *testing.T) {
+	for _, tc := range []struct {
+		code                         string
+		interrupted, providerLimited bool
+	}{
+		{TurnCodeShutdown, true, false},
+		{TurnCodeStreamDied, true, false},
+		{TurnCodeProviderLimit, false, true},
+		{"agent-error", false, false},
+		{"output_truncated", false, false},
+		{"internal", false, false},
+		{"", false, false},
+	} {
+		e := &TurnFailedError{Code: tc.code}
+		if e.Interrupted() != tc.interrupted || e.ProviderLimited() != tc.providerLimited {
+			t.Errorf("%q: interrupted=%v providerLimited=%v, want %v %v", tc.code, e.Interrupted(), e.ProviderLimited(), tc.interrupted, tc.providerLimited)
+		}
+		if tc.code != "" && !strings.Contains(e.Error(), tc.code) {
+			t.Errorf("%q: Error() = %q, want the code in it", tc.code, e.Error())
+		}
+		if IsPermanent(e) {
+			t.Errorf("%q: IsPermanent must not classify a turn failure; the caller's retry policy does", tc.code)
 		}
 	}
 }

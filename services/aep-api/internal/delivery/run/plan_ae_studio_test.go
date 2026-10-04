@@ -142,3 +142,61 @@ func TestPlanMilestone_HeartbeatsPerTurnEvent(t *testing.T) {
 	defer mu.Unlock()
 	require.Equal(t, 3, last, "the last beat must carry the turn's event count")
 }
+
+// A turn the pod ends `failed` (R1-I1). Each attempt of the planning activity
+// is a new paid model turn, so only a turn that did not run to its own end is
+// retried freely; a provider limit is retried a bounded number of times, each
+// after planProviderLimitRetryDelay; any other ending is the model's answer
+// and fails the run on its first attempt.
+func TestPlanMilestone_AFailedTurnIsClassifiedByItsCode(t *testing.T) {
+	for _, tc := range []struct {
+		code      string
+		permanent bool
+	}{
+		{aestudiotools.TurnCodeShutdown, false},
+		{aestudiotools.TurnCodeStreamDied, false},
+		{aestudiotools.TurnCodeProviderLimit, false},
+		{"agent-error", true},
+		{"output_truncated", true},
+		{"internal", true},
+		{"", true},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			acts, runs := planWith(fmt.Errorf("plan: %w", &aestudiotools.TurnFailedError{Code: tc.code}))
+
+			err := acts.PlanMilestone(context.Background(), PlanMilestoneInput{RunID: "run-1"})
+
+			appErr, permanent := nonRetryable(err)
+			require.Equal(t, tc.permanent, permanent)
+			if permanent {
+				require.Equal(t, errTypePermanentPlan, appErr.Type())
+			}
+			require.True(t, runs.recorded[0].Permanent == tc.permanent, "the record and the retry policy must agree")
+		})
+	}
+}
+
+// provider_limit: retried after planProviderLimitRetryDelay (the result line
+// carries no reset time), and permanent from attempt planProviderLimitAttempts
+// on, so a spent plan cannot loop a run for ever.
+func TestPlanErr_AProviderLimitIsRetriedABoundedNumberOfTimes(t *testing.T) {
+	limited := fmt.Errorf("plan: %w", &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeProviderLimit})
+
+	for attempt := 1; attempt < planProviderLimitAttempts; attempt++ {
+		var appErr *temporal.ApplicationError
+		require.ErrorAs(t, planErr(limited, attempt), &appErr, "attempt %d", attempt)
+		require.False(t, appErr.NonRetryable(), "attempt %d must be retried", attempt)
+		require.Equal(t, planProviderLimitRetryDelay, appErr.NextRetryDelay())
+		require.False(t, planFailure(limited, attempt).Permanent)
+		require.Equal(t, planProviderLimitAttempts, planFailure(limited, attempt).MaxAttempts)
+	}
+	appErr, permanent := nonRetryable(planErr(limited, planProviderLimitAttempts))
+	require.True(t, permanent, "the last provider_limit attempt must not be retried")
+	require.Equal(t, errTypePermanentPlan, appErr.Type())
+	require.True(t, planFailure(limited, planProviderLimitAttempts).Permanent)
+
+	// Interrupted turns keep the default (unbounded) policy at any attempt.
+	died := &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeStreamDied}
+	_, permanent = nonRetryable(planErr(died, 50))
+	require.False(t, permanent)
+}

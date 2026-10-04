@@ -42,6 +42,7 @@ package run
 
 import (
 	"errors"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -77,7 +78,7 @@ func sourceControlErr(err error) error {
 const errTypePermanentPlan = "PermanentPlanFailure"
 
 // planErr classifies a planning round trip, and is the whole point of moving
-// planning into the workflow.
+// planning into the workflow. attempt is the activity's attempt number.
 //
 // The detached goroutine this replaced had no such distinction: a seven-second
 // TCP connect timeout to GitHub and "the repository was deleted" both settled
@@ -85,10 +86,11 @@ const errTypePermanentPlan = "PermanentPlanFailure"
 // the default unbounded policy, and only the second — which repeating cannot
 // change — comes back non-retryable and fails the run on its first attempt.
 //
-// The classification is sourcecontrol's, not this package's: planning is an LLM
-// turn wrapped around git and GitHub calls, so the failures worth telling apart
-// are exactly the ones sourceControlErr already names.
-func planErr(err error) error {
+// Planning is an LLM turn wrapped around git and GitHub calls, so the failures
+// worth telling apart are the ones sourceControlErr already names, the AE
+// Studio adapter's permanent answers, and how the turn itself ended
+// (planPermanent).
+func planErr(err error, attempt int) error {
 	switch {
 	case err == nil:
 		return nil
@@ -96,8 +98,16 @@ func planErr(err error) error {
 		// C3: aep-api's own AE-only client cannot call the pod. An operator
 		// fixes that, never a retry, so it fails under its own type.
 		return temporal.NewNonRetryableApplicationError(err.Error(), errTypeAEStudioMisconfigured, err)
-	case planPermanent(err):
+	case planPermanent(err, attempt):
 		return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentPlan, err)
+	case providerLimited(err):
+		// The result line carries no reset time, so the next attempt waits a
+		// fixed delay rather than the default backoff (seconds), which would
+		// spend the bounded attempts before any limit resets.
+		return temporal.NewApplicationErrorWithOptions(err.Error(), errTypeProviderLimitedPlan, temporal.ApplicationErrorOptions{
+			NextRetryDelay: planProviderLimitRetryDelay,
+			Cause:          err,
+		})
 	}
 	// Everything else is retried, ErrTurnInProgress among it (05 §5): a
 	// different turn running for the project is a wait, not a failure.
@@ -108,16 +118,52 @@ func planErr(err error) error {
 // turn aep-api's AE-only client could not start (C3).
 const errTypeAEStudioMisconfigured = "ae_studio_misconfigured"
 
+// errTypeProviderLimitedPlan is the ApplicationError type of a planning turn
+// the model provider's limit stopped, while it is still being retried.
+const errTypeProviderLimitedPlan = "ProviderLimitedPlan"
+
+// A planning turn the provider's limit stopped is retried this many attempts
+// in all, planProviderLimitRetryDelay apart (about 30 min of waiting): long
+// enough for a per-minute or hourly limit to reset, short of looping a run on
+// a spent plan for ever. Every attempt is a new paid turn (R1-I1).
+const (
+	planProviderLimitAttempts   = 4
+	planProviderLimitRetryDelay = 10 * time.Minute
+)
+
 // planPermanent reports whether repeating a planning round trip cannot
-// change its answer: a permanent source-control failure, or an AE Studio
-// answer that is one (aestudiotools.IsPermanent: a misconfigured client, a
-// 4xx of the pod). An org with no AE Studio is permanent too: it has no
-// GitHub token, and only a person connecting GitHub changes that, so the run
-// fails on its first attempt instead of retrying unseen.
-func planPermanent(err error) bool {
+// change its answer, at this attempt:
+//   - a permanent source-control failure;
+//   - an AE Studio answer that is one (aestudiotools.IsPermanent: a
+//     misconfigured client, a 4xx of the pod);
+//   - an org with no AE Studio: it has no GitHub token, and only a person
+//     connecting GitHub changes that;
+//   - a turn the pod ended failed (R1-I1), unless it was interrupted (a
+//     shutdown, a dead stream: retried like a blip) or stopped by the
+//     provider's limit before its last bounded attempt. Any other ending
+//     (agent-error, output_truncated, internal) is the model's answer, and a
+//     retry would pay for a new turn to likely meet it again.
+func planPermanent(err error, attempt int) bool {
+	var failed *aestudiotools.TurnFailedError
+	if errors.As(err, &failed) {
+		switch {
+		case failed.Interrupted():
+			return false
+		case failed.ProviderLimited():
+			return attempt >= planProviderLimitAttempts
+		default:
+			return true
+		}
+	}
 	return sourcecontrol.IsPermanent(err) ||
 		aestudiotools.IsPermanent(err) ||
 		errors.Is(err, aestudiotools.ErrAEStudioAbsent)
+}
+
+// providerLimited reports a planning turn the model provider's limit stopped.
+func providerLimited(err error) bool {
+	var failed *aestudiotools.TurnFailedError
+	return errors.As(err, &failed) && failed.ProviderLimited()
 }
 
 // errTypePermanentDeploy is the ApplicationError type a permanent deploy failure

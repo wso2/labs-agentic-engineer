@@ -509,7 +509,7 @@ func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) e
 		// the record is what lets the console say "retrying, attempt N".
 		attempt := activityAttempt(ctx)
 		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt), attempt)
-		return planErr(err)
+		return planErr(err, attempt)
 	})
 }
 

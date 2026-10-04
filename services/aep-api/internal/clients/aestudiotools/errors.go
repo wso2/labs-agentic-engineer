@@ -46,6 +46,44 @@ var (
 	ErrReferenceRejected = errors.New("ae studio: reference rejected")
 )
 
+// Failure codes the pod ends a turn with (the result line's code) that a
+// caller branches on. The rest (agent-error, output_truncated, internal, ...)
+// are the turn's own answer.
+const (
+	// TurnCodeShutdown: the pod shut down while the turn ran.
+	TurnCodeShutdown = "shutdown"
+	// TurnCodeStreamDied: the turn's stream inside the pod broke off.
+	TurnCodeStreamDied = "stream-died"
+	// TurnCodeProviderLimit: the model provider's rate or spend limit stopped
+	// the turn.
+	TurnCodeProviderLimit = "provider_limit"
+)
+
+// TurnFailedError is a turn the pod ended `failed`. It carries the result's
+// code only: the result's free-text message is the agent's, possibly a
+// provider's error body, so the adapter never reads it and it cannot reach an
+// error string, a log line or Temporal history (R1-M4). Whether to start the
+// turn again is the caller's policy; IsPermanent does not judge it.
+type TurnFailedError struct{ Code string }
+
+func (e *TurnFailedError) Error() string {
+	code := e.Code
+	if code == "" {
+		code = "no code"
+	}
+	return "ae studio: the turn failed (" + code + ")"
+}
+
+// Interrupted reports a turn that did not run to its own end (the pod shut
+// down, or its stream died): a new turn can succeed.
+func (e *TurnFailedError) Interrupted() bool {
+	return e.Code == TurnCodeShutdown || e.Code == TurnCodeStreamDied
+}
+
+// ProviderLimited reports a turn the model provider's limit stopped: a new
+// turn can succeed once the limit resets.
+func (e *TurnFailedError) ProviderLimited() bool { return e.Code == TurnCodeProviderLimit }
+
 // StatusError is an answer the adapter has no typed error for: the HTTP
 // status and, when the pod sent a problem, its code and detail.
 type StatusError struct {

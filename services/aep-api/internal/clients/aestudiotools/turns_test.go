@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
@@ -97,16 +98,22 @@ func TestStartTurn_StreamsEventsInOrderKeepAlivesIncluded(t *testing.T) {
 		{Type: "task-op", Op: "plan", Output: json.RawMessage(`{"title":"one"}`)},
 		{Type: "keep-alive"},
 		{Type: "task-op", Op: "update", Output: json.RawMessage(`{"number":2}`)},
-		{Type: "result", Status: "failed", Code: "stream-died", Message: "agent went away"},
+		{Type: "result", Status: "failed", Code: "stream-died"},
 	}
 	if len(evs) != len(want) {
 		t.Fatalf("events = %+v, want %d (keep-alive yielded, D-2)", evs, len(want))
 	}
 	for i := range want {
 		if evs[i].Type != want[i].Type || evs[i].Op != want[i].Op || string(evs[i].Output) != string(want[i].Output) ||
-			evs[i].Status != want[i].Status || evs[i].Code != want[i].Code || evs[i].Message != want[i].Message {
+			evs[i].Status != want[i].Status || evs[i].Code != want[i].Code {
 			t.Fatalf("event %d = %+v, want %+v", i, evs[i], want[i])
 		}
+	}
+	// The result's free-text message is the agent's (possibly a provider's
+	// error body): the adapter does not read it, so it cannot reach an error,
+	// a log line or Temporal history (R1-M4).
+	if strings.Contains(fmt.Sprintf("%+v", evs[3]), "agent went away") {
+		t.Fatalf("result event %+v carries the pod's free-text message", evs[3])
 	}
 	if body["turnId"] != turnID || body["project"] != "greeter" || body["kind"] != "start" || body["text"] != "a greeting service" {
 		t.Fatalf("request body = %v", body)

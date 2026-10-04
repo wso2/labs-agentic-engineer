@@ -346,10 +346,11 @@ func TestPlanTap_AFailedTurnIsAnError(t *testing.T) {
 
 	err := tap.Stream(turn(
 		taskOp(planOK("order-service", "Implement order-service", nil)),
-		aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "failed", Code: "shutdown", Message: "the studio is shutting down"},
+		aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "failed", Code: "shutdown"},
 	), noAbort)
-	if err == nil || !strings.Contains(err.Error(), "shutdown") {
-		t.Fatalf("err = %v, want the turn's failure with its code", err)
+	var failed *aestudiotools.TurnFailedError
+	if !errors.As(err, &failed) || failed.Code != "shutdown" {
+		t.Fatalf("err = %v, want a TurnFailedError with the pod's code", err)
 	}
 	if len(issues.created) != 1 {
 		t.Fatalf("created %d issues, want the one planned before the failure", len(issues.created))
