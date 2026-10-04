@@ -295,9 +295,10 @@ func TestReferencesUpload(t *testing.T) {
 }
 
 // TestInternalBodyCaps pins the per-op cap table: only the references upload
-// is allowed more than the default.
+// and the turn start (the agent's own Turn-socket cap) are allowed more than
+// the default.
 func TestInternalBodyCaps(t *testing.T) {
-	if want := map[string]int64{"put-repo-references": 80 << 20}; !reflect.DeepEqual(internalBodyCaps, want) {
+	if want := map[string]int64{"put-repo-references": 80 << 20, "start-repo-turn": 4 << 20}; !reflect.DeepEqual(internalBodyCaps, want) {
 		t.Fatalf("internalBodyCaps = %v, want %v", internalBodyCaps, want)
 	}
 	if internalBodyBytes != 1<<20 {

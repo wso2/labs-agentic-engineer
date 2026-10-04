@@ -162,6 +162,31 @@ func TestTurnsRelay_DrainsAfterCallerLeavesAndReattaches(t *testing.T) {
 	}
 }
 
+// TestTurnsRelay_BodyCapIsTheAgents (R1-M3): start-repo-turn takes what the
+// agent's Turn socket takes (4 MiB), not the group's 1 MiB default. A re-plan's
+// taskContext carries the open Tasks' bodies, and a 413 here is permanent to
+// aep-api, which would fail the version's plan outright.
+func TestTurnsRelay_BodyCapIsTheAgents(t *testing.T) {
+	sock := turnstest.New(t, turnstest.Script{})
+	h := newHarness(t, withTurnSocket(sock), withProjects(greeterRepo))
+	m := h.m2m()
+	withText := func(id string, n int) string {
+		return strings.TrimSuffix(turnRequest(id), "}") + `,"text":"` + strings.Repeat("a", n) + `"}`
+	}
+
+	big := h.postStream(turnsPath, m, withText("11111111-1111-5111-8111-111111111111", 2<<20))
+	if big.StatusCode != http.StatusOK {
+		t.Fatalf("a 2 MiB turn = %d, want 200 (under the agent's 4 MiB cap)", big.StatusCode)
+	}
+	_ = lastLine(t, big)
+
+	over := h.postStream(turnsPath, m, withText("22222222-2222-5222-8222-222222222222", 4<<20))
+	defer func() { _ = over.Body.Close() }()
+	if over.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("a turn over 4 MiB = %d, want 413", over.StatusCode)
+	}
+}
+
 // TestTurnsRelay_DifferentTurnWhileRunningIs409: Review Focus 3, the third
 // case.
 func TestTurnsRelay_DifferentTurnWhileRunningIs409(t *testing.T) {

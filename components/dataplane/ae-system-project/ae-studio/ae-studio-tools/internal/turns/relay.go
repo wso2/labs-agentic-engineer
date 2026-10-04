@@ -75,7 +75,7 @@ type Relay struct {
 // Serve answers one start: the agent's NDJSON stream on 200, every line
 // relayed unchanged (keep-alive lines included), or its refusal (409
 // turn_in_progress {activeTurnId} as JSON; a problem with status 400, 404,
-// 409 or 503 passed through). An unreachable socket is 503
+// 409, 413 or 503 passed through). An unreachable socket is 503
 // agent_unavailable, any other answer 502 agent_error.
 func (rl Relay) Serve(w http.ResponseWriter, r *http.Request, t Turn) {
 	log := rl.Log
@@ -106,8 +106,8 @@ func (rl Relay) Serve(w http.ResponseWriter, r *http.Request, t Turn) {
 }
 
 // writeRefusal passes a declared refusal through and reports whether it did:
-// 409 TurnInProgress as JSON, or a problem with a code on 400, 404, 409 or
-// 503.
+// 409 TurnInProgress as JSON, or a problem with a code on 400, 404, 409, 413
+// or 503. A 413 stays a 413 (the agent's payload_too_large), never a 502.
 func writeRefusal(w http.ResponseWriter, status int, body io.Reader) bool {
 	raw, err := io.ReadAll(io.LimitReader(body, maxRefusalBytes))
 	if err != nil {
@@ -123,7 +123,7 @@ func writeRefusal(w http.ResponseWriter, status int, body io.Reader) bool {
 		}
 	}
 	switch status {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable:
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusRequestEntityTooLarge, http.StatusServiceUnavailable:
 	default:
 		return false
 	}

@@ -437,6 +437,7 @@ type StartTurnResponse struct {
 	ApplicationProblemJSON404 *Problem
 	JSON409                   *TurnInProgress
 	ApplicationProblemJSON409 *Problem
+	ApplicationProblemJSON413 *Problem
 	ApplicationProblemJSON503 *Problem
 }
 
@@ -522,6 +523,13 @@ func ParseStartTurnResponse(rsp *http.Response) (*StartTurnResponse, error) {
 			return nil, err
 		}
 		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem

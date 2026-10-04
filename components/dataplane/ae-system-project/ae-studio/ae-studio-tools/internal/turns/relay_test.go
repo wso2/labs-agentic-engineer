@@ -220,6 +220,8 @@ func TestRelay_SocketRefusals(t *testing.T) {
 			503, "application/problem+json", `"code":"shutting_down"`},
 		{"invalid turn", 400, "application/problem+json", `{"type":"about:blank","title":"Bad Request","status":400,"code":"invalid_turn"}`,
 			400, "application/problem+json", `"code":"invalid_turn"`},
+		{"payload too large", 413, "application/problem+json", `{"type":"about:blank","title":"Payload Too Large","status":413,"code":"payload_too_large"}`,
+			413, "application/problem+json", `"code":"payload_too_large"`},
 		{"undeclared status", 500, "text/plain", `boom`,
 			502, "application/problem+json", `"code":"agent_error"`},
 		{"409 that is neither shape", 409, "application/json", `{"nope":true}`,

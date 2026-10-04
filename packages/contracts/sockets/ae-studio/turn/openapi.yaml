@@ -52,13 +52,15 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/Problem'
         '503':
           $ref: '#/components/responses/Problem'
 components:
   responses:
     Problem:
       description: 'RFC 9457 problem. Codes: invalid_turn, project_unknown, no_default_key,
-        shutting_down.'
+        payload_too_large (a body over 4 MiB), shutting_down.'
       content:
         application/problem+json:
           schema:

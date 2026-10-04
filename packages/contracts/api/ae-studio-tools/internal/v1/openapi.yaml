@@ -104,6 +104,13 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '413':
+          description: 'The body is over 4 MiB, the design agent''s own cap (problem
+            code: payload_too_large).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '502':
           $ref: '#/components/responses/Problem'
         '503':

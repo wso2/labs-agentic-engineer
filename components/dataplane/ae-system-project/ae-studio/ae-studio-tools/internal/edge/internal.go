@@ -45,12 +45,18 @@ const (
 	// the multipart framing, with room to spare (09 §1). The handler checks
 	// the parts themselves.
 	referencesBodyBytes int64 = 80 << 20
+	// turnBodyBytes caps a turn start at what the agent's Turn socket takes
+	// (ae-design-agent src/edge/turn-socket.ts MAX_BODY_BYTES): a re-plan's
+	// taskContext carries the open Tasks' bodies, and a cap below the agent's
+	// would refuse here a turn the agent accepts (R1-M3).
+	turnBodyBytes int64 = 4 << 20
 )
 
 // internalBodyCaps lists the operations allowed more than internalBodyBytes,
 // by operationId.
 var internalBodyCaps = map[string]int64{
 	"put-repo-references": referencesBodyBytes,
+	"start-repo-turn":     turnBodyBytes,
 }
 
 // internalRouteFinder matches a request to an /internal/v1 contract
