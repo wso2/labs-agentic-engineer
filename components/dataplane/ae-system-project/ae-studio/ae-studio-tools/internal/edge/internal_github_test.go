@@ -291,3 +291,28 @@ func TestInternalGitHub_NamesAndEventsAreAllowListed(t *testing.T) {
 		t.Fatalf("the four events: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// TestInternalGitHub_HookEnsureReKeysALeftoverHook: a hook to this pod's URL
+// signed with another secret (one a disconnect could not remove, its secret
+// then deleted) is reused and re-keyed with the pod's secret and the new
+// events; the secret never reaches the logs.
+func TestInternalGitHub_HookEnsureReKeysALeftoverHook(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	gh.SeedRepo("acme-gh", "greeter")
+	old := gh.SeedHook("acme-gh", "greeter", "https://tools.example/webhooks/github", "old-secret", []string{"push"})
+	h := newHarness(t, withGitHubAPI(gh))
+	rec := h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["push","issues"]}`)
+	got := jsonBody(t, rec.Body.Bytes())
+	if rec.Code != http.StatusOK || int64(got["id"].(float64)) != old {
+		t.Fatalf("ensure: %d %v, want the leftover hook %d reused", rec.Code, got, old)
+	}
+	if s := gh.HookSecret("acme-gh", "greeter", old); s != testWebhookSecret {
+		t.Fatalf("hook secret %q, want the pod's", s)
+	}
+	if ev := gh.HookEvents("acme-gh", "greeter", old); strings.Join(ev, ",") != "push,issues" {
+		t.Fatalf("events %v", ev)
+	}
+	if strings.Contains(h.logs(), testWebhookSecret) {
+		t.Fatal("the webhook secret reached the logs")
+	}
+}

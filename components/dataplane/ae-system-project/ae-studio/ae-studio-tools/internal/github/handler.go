@@ -110,13 +110,15 @@ func (h Handler) CreateRepo(ctx context.Context, req gen.CreateRepoRequestObject
 
 // RegisterHook ensures the studio's hook on the repository with these
 // events: GitHub creates it, or, when a hook for the pod's URL exists, its
-// events are replaced. A failed replace fails the call (the hook keeps its
-// old events; aep-api's retry ensures again).
+// whole config (URL, content type, TLS check and this pod's signing secret)
+// and its events are replaced, so a hook left signed with an older secret
+// is re-keyed. A failed replace fails the call (aep-api's retry ensures
+// again).
 func (h Handler) RegisterHook(ctx context.Context, req gen.RegisterHookRequestObject) (gen.RegisterHookResponseObject, error) {
 	events := hookEvents(req.Body.Events)
 	id, existed, err := h.gh.RegisterWebhook(ctx, req.Owner, req.Repo, events)
 	if err == nil && existed {
-		err = h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, id, events)
+		err = h.gh.ReconfigureWebhook(ctx, req.Owner, req.Repo, id, events)
 	}
 	if err != nil {
 		return h.problem(ctx, "register-hook", req.Owner, req.Repo, err)

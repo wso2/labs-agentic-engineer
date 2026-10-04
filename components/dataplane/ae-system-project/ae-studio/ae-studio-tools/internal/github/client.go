@@ -504,19 +504,14 @@ func (c *Client) SetIssueLabels(ctx context.Context, owner, repo string, number 
 // RegisterWebhook installs a repo webhook delivering to Config.HookURL,
 // signed with Config.HookSecret, and answers its id. GitHub's 422 "Hook
 // already exists" (same URL) answers the existing hook's id, found across
-// every page of the repo's hooks, with existed set; its events are left as
-// they are (UpdateWebhookEvents replaces them).
+// every page of the repo's hooks, with existed set; its config and events
+// are left as they are (ReconfigureWebhook replaces both).
 func (c *Client) RegisterWebhook(ctx context.Context, owner, repo string, events []string) (id int64, existed bool, err error) {
 	payload := map[string]any{
 		"name":   "web",
 		"active": true,
 		"events": events,
-		"config": map[string]string{
-			"url":          c.cfg.HookURL,
-			"content_type": "json",
-			"secret":       c.cfg.HookSecret,
-			"insecure_ssl": "0",
-		},
+		"config": c.hookConfig(),
 	}
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks", owner, repo)
 	r, err := c.send(ctx, http.MethodPost, url, payload)
@@ -596,6 +591,28 @@ func nextPageURL(h http.Header) string {
 		}
 	}
 	return ""
+}
+
+// hookConfig is the config every hook of this pod carries: its delivery URL
+// and its signing secret.
+func (c *Client) hookConfig() map[string]string {
+	return map[string]string{
+		"url":          c.cfg.HookURL,
+		"content_type": "json",
+		"secret":       c.cfg.HookSecret,
+		"insecure_ssl": "0",
+	}
+}
+
+// ReconfigureWebhook replaces an existing hook's whole config and its events
+// (PATCH /hooks/{id}) and makes it active. A hook found by URL may have been
+// installed with another secret (one a disconnect could not remove, signed
+// with the webhook secret the disconnect then deleted); GitHub never returns
+// the secret, so it is always sent.
+func (c *Client) ReconfigureWebhook(ctx context.Context, owner, repo string, hookID int64, events []string) error {
+	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks/%d", owner, repo, hookID)
+	payload := map[string]any{"active": true, "events": events, "config": c.hookConfig()}
+	return c.doJSON(ctx, http.MethodPatch, url, payload, nil, http.StatusOK)
 }
 
 // UpdateWebhookEvents replaces an existing hook's event list

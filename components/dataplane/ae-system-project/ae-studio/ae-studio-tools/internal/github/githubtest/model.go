@@ -37,7 +37,7 @@ import (
 //	GET    /repos/{owner}/{repo}/issues/{n} one issue, else 404
 //	POST   /repos/{owner}/{repo}/hooks      register (422 "Hook already exists")
 //	GET    /repos/{owner}/{repo}/hooks      every hook, one page
-//	PATCH  /repos/{owner}/{repo}/hooks/{id} replace the events
+//	PATCH  /repos/{owner}/{repo}/hooks/{id} replace the events (and the config, when sent)
 //	DELETE /repos/{owner}/{repo}/hooks/{id} remove, else 404
 
 type model struct {
@@ -60,6 +60,7 @@ type seededIssue struct {
 type seededHook struct {
 	id     int64
 	url    string
+	secret string
 	events []string
 }
 
@@ -109,6 +110,32 @@ func (s *Stub) HookEvents(owner, repo string, id int64) []string {
 		}
 	}
 	return nil
+}
+
+// HookSecret is the signing secret hook id on owner/repo was last given,
+// "" when there is no such hook.
+func (s *Stub) HookSecret(owner, repo string, id int64) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if r, ok := s.model.repos[repoKey(owner, repo)]; ok {
+		for _, h := range r.hooks {
+			if h.id == id {
+				return h.secret
+			}
+		}
+	}
+	return ""
+}
+
+// SeedHook installs a hook to url signed with secret on owner/repo (one a
+// previous AE Studio left) and answers its id.
+func (s *Stub) SeedHook(owner, repo, url, secret string, events []string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.seedRepoLocked(owner, repo)
+	s.model.nextID++
+	r.hooks = append(r.hooks, &seededHook{id: s.model.nextID, url: url, secret: secret, events: slices.Clone(events)})
+	return s.model.nextID
 }
 
 // serveModel answers r from the model and reports whether it did.
@@ -229,7 +256,8 @@ func (s *Stub) registerHook(w http.ResponseWriter, repo *seededRepo, body []byte
 	var req struct {
 		Events []string `json:"events"`
 		Config struct {
-			URL string `json:"url"`
+			URL    string `json:"url"`
+			Secret string `json:"secret"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -243,7 +271,7 @@ func (s *Stub) registerHook(w http.ResponseWriter, repo *seededRepo, body []byte
 		}
 	}
 	s.model.nextID++
-	h := &seededHook{id: s.model.nextID, url: req.Config.URL, events: req.Events}
+	h := &seededHook{id: s.model.nextID, url: req.Config.URL, secret: req.Config.Secret, events: req.Events}
 	repo.hooks = append(repo.hooks, h)
 	writeValue(w, http.StatusCreated, map[string]any{"id": h.id, "events": h.events})
 }
@@ -264,12 +292,19 @@ func (s *Stub) changeHook(w http.ResponseWriter, method string, repo *seededRepo
 	}
 	var req struct {
 		Events []string `json:"events"`
+		Config *struct {
+			URL    string `json:"url"`
+			Secret string `json:"secret"`
+		} `json:"config"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeJSON(http.StatusUnprocessableEntity, `{"message":"Validation Failed"}`)(w, nil)
 		return true
 	}
 	repo.hooks[i].events = req.Events
+	if req.Config != nil {
+		repo.hooks[i].url, repo.hooks[i].secret = req.Config.URL, req.Config.Secret
+	}
 	writeValue(w, http.StatusOK, map[string]any{"id": id, "events": req.Events})
 	return true
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -274,5 +275,37 @@ func TestListIssuesStopsAtPageCap(t *testing.T) {
 	}
 	if len(issues) != issueListMaxPages*milestonePageSize {
 		t.Fatalf("issues = %d, want %d", len(issues), issueListMaxPages*milestonePageSize)
+	}
+}
+
+// ReconfigureWebhook re-keys a reused hook: one PATCH carrying the whole
+// config with this pod's secret (GitHub never returns it, so it is always
+// sent), the events, and active.
+func TestReconfigureWebhook_SendsTheWholeConfigWithTheSecret(t *testing.T) {
+	cap := &capture{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		cap.method, cap.escapedPath, cap.body = r.Method, r.URL.EscapedPath(), string(b)
+		_, _ = io.WriteString(w, `{"id":99}`)
+	}))
+	t.Cleanup(srv.Close)
+	c := New(Config{APIBase: srv.URL, Token: staticToken("tok"), HookURL: "https://tools.example/webhooks/github", HookSecret: "new-secret"})
+	if err := c.ReconfigureWebhook(context.Background(), "acme", "repo", 99, []string{"push", "issues"}); err != nil {
+		t.Fatalf("ReconfigureWebhook: %v", err)
+	}
+	if cap.method != http.MethodPatch || cap.escapedPath != "/repos/acme/repo/hooks/99" {
+		t.Fatalf("%s %s, want PATCH /repos/acme/repo/hooks/99", cap.method, cap.escapedPath)
+	}
+	var got struct {
+		Active bool              `json:"active"`
+		Events []string          `json:"events"`
+		Config map[string]string `json:"config"`
+	}
+	if err := json.Unmarshal([]byte(cap.body), &got); err != nil {
+		t.Fatalf("body not json: %v", err)
+	}
+	want := map[string]string{"url": "https://tools.example/webhooks/github", "content_type": "json", "secret": "new-secret", "insecure_ssl": "0"}
+	if !got.Active || strings.Join(got.Events, ",") != "push,issues" || !maps.Equal(got.Config, want) {
+		t.Fatalf("body = %+v", got)
 	}
 }
