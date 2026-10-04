@@ -157,7 +157,14 @@ func run() error {
 		Snapshots: reader,
 		Usage:     usageOutbox.sender,
 	}
-	gh := github.NewClient(cfg.GitHubPAT)
+	// The GitHub client over the gitpat: commit identity today, and the
+	// hooks it registers deliver to AE_WEBHOOK_URL signed with the webhook
+	// secret.
+	gh := github.New(github.Config{
+		Token:      func(context.Context) (string, error) { return cfg.GitHubPAT, nil },
+		HookURL:    cfg.WebhookURL,
+		HookSecret: cfg.WebhookSecret,
+	})
 	applier := files.Applier{
 		Reader:    reader,
 		Completer: files.NewAEPAPICompleter(aepAPI),

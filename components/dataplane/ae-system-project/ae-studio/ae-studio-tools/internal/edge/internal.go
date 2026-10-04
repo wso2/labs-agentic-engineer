@@ -155,19 +155,18 @@ func (s internalServer) GetGithubIdentity(ctx context.Context, _ gen.GetGithubId
 	if err == nil {
 		return gen.GetGithubIdentity200JSONResponse{Login: login, ID: id}, nil
 	}
-	var rl *github.ErrRateLimited
-	if errors.As(err, &rl) {
+	if wait, limited := github.RateLimited(err); limited {
 		return gen.GetGithubIdentity429ApplicationProblemPlusJSONResponse{
 			RateLimitedApplicationProblemPlusJSONResponse: gen.RateLimitedApplicationProblemPlusJSONResponse{
 				Body:    newProblem(http.StatusTooManyRequests, "github_rate_limited", "GitHub rate-limited the gitpat"),
-				Headers: gen.RateLimitedResponseHeaders{RetryAfter: int(math.Ceil(rl.RetryAfter.Seconds()))},
+				Headers: gen.RateLimitedResponseHeaders{RetryAfter: int(math.Ceil(wait.Seconds()))},
 			},
 		}, nil
 	}
 	detail := "GitHub could not be reached"
-	var se *github.StatusError
+	var se *github.HTTPStatusError
 	if errors.As(err, &se) {
-		detail = fmt.Sprintf("GitHub answered %d", se.Status)
+		detail = fmt.Sprintf("GitHub answered %d", se.StatusCode)
 	}
 	slog.Warn("github.identity_failed", "error", err)
 	return gen.GetGithubIdentity502ApplicationProblemPlusJSONResponse(

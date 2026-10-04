@@ -29,12 +29,15 @@ import (
 // Config is what ae-studio-tools reads from its pod env (ticket 08 §3). Each
 // later phase adds the keys its feature reads; nothing is read before it is used.
 type Config struct {
-	OrgID, OrgHandle       string
-	IDPIssuer, IDPJWKSURL  string
-	UserAudiences          []string
-	M2MClientID            string
-	GitHubPAT              string
-	WebhookSecret          string
+	OrgID, OrgHandle      string
+	IDPIssuer, IDPJWKSURL string
+	UserAudiences         []string
+	M2MClientID           string
+	GitHubPAT             string
+	WebhookSecret         string
+	// WebhookURL (AE_WEBHOOK_URL) is where the repo hooks this pod registers
+	// deliver; WebhookSecret signs them.
+	WebhookURL             string
 	ListenPort, HealthPort int
 	// IDPTokenURL and the publisher client mint the org's publisher token,
 	// which authenticates the pod's calls to aep-api at AEPAPIBaseURL.
@@ -142,6 +145,7 @@ func Load(getenv func(string) string) (Config, error) {
 		PublisherClientID:     req("AE_PUBLISHER_CLIENT_ID"),
 		PublisherClientSecret: req("AE_PUBLISHER_CLIENT_SECRET"),
 		AEPAPIBaseURL:         httpURL("AEP_API_BASE_URL"),
+		WebhookURL:            httpURL("AE_WEBHOOK_URL"),
 
 		StudioDataDir:      absPath("AE_STUDIO_DATA_DIR"),
 		StorageBudgetBytes: positiveBytes("AE_STORAGE_BUDGET_BYTES"),

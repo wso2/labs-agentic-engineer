@@ -286,6 +286,8 @@ spec:
                     - { name: AE_LISTEN_PORT, value: "8082" }
                     - { name: AE_HEALTH_PORT, value: "9082" }
                     - { name: AE_GITHUB_OWNER, value: "${parameters.githubOwner}" }
+                    # Where the repo hooks this container registers deliver (= the webhookUrl output).
+                    - { name: AE_WEBHOOK_URL, value: "${environmentConfigs.publicScheme}://${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}/webhooks/github" }
                   envFrom:
                     - secretRef: { name: "${metadata.name}-tools" }
                   startupProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 2, failureThreshold: 30 }

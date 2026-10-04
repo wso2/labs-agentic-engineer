@@ -28,7 +28,8 @@ type podContainer struct {
 	Name    string   `json:"name"`
 	Command []string `json:"command"`
 	Env     []struct {
-		Name string `json:"name"`
+		Name  string `json:"name"`
+		Value string `json:"value"`
 	} `json:"env"`
 }
 
@@ -71,7 +72,7 @@ func TestTemplate_Invariants(t *testing.T) {
 	dep := string(byID["deployment"].Template)
 	for _, want := range []string{`"type":"Recreate"`, `"terminationGracePeriodSeconds":30`, `"automountServiceAccountToken":false`,
 		`"name":"studio-data"`, `"subPath":"snapshots"`, `"medium":"Memory"`, `"port":9080`, `"port":9081`, `"port":9082`,
-		`"name":"AE_MODEL_CONNECTION"`, `"name":"AE_GITHUB_OWNER"`} {
+		`"name":"AE_MODEL_CONNECTION"`, `"name":"AE_GITHUB_OWNER"`, `"name":"AE_WEBHOOK_URL"`} {
 		if !strings.Contains(dep, want) {
 			t.Errorf("deployment lacks %s", want)
 		}
@@ -155,5 +156,36 @@ func TestTemplate_ContainerCommandsAndEnv(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestTemplate_WebhookURLEnvIsTheOutput (Q-6): ae-studio-tools registers its
+// repo hooks at AE_WEBHOOK_URL, which must be the very URL the webhookUrl
+// output publishes, or GitHub delivers where nothing listens.
+func TestTemplate_WebhookURLEnvIsTheOutput(t *testing.T) {
+	rt, err := Template()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var dep []byte
+	for _, m := range rt.Spec.Resources {
+		if m.ID == "deployment" {
+			dep = m.Template
+		}
+	}
+	var want string
+	for _, o := range rt.Spec.Outputs {
+		if o.Name == "webhookUrl" {
+			want = o.Value
+		}
+	}
+	got := ""
+	for _, e := range deploymentContainers(t, dep)["ae-studio-tools"].Env {
+		if e.Name == "AE_WEBHOOK_URL" {
+			got = e.Value
+		}
+	}
+	if want == "" || got != want {
+		t.Fatalf("AE_WEBHOOK_URL = %q, want the webhookUrl output %q", got, want)
 	}
 }

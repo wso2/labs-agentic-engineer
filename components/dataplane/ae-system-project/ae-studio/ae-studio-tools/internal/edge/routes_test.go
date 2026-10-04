@@ -109,7 +109,7 @@ func withTurnSocket(s *turnstest.Server) harnessOpt {
 }
 
 func withGitHubStatus(status int) harnessOpt {
-	return withGitHubErr(&github.StatusError{Status: status})
+	return withGitHubErr(&github.HTTPStatusError{StatusCode: status})
 }
 
 // newHarness serves the real Routes over a fake GitHub and a test JWKS, and
@@ -316,7 +316,7 @@ func TestRoutes_GitHubErrorIsProblem(t *testing.T) {
 }
 
 func TestRoutes_GitHubRateLimitIs429(t *testing.T) {
-	h := newHarness(t, withGitHubErr(&github.ErrRateLimited{RetryAfter: 30 * time.Second}))
+	h := newHarness(t, withGitHubErr(&github.HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: 30 * time.Second}))
 	rec := h.do("GET", "/internal/v1/github/identity", h.m2m(), "ou-1", nil)
 	if rec.Code != 429 || rec.Header().Get("Retry-After") != "30" ||
 		!strings.Contains(rec.Body.String(), `"code":"github_rate_limited"`) {

@@ -83,7 +83,7 @@ func TestCommitAuthor_FallsBackToLoginAndNoreply(t *testing.T) {
 // A failure is remembered for identityFailureTTL, then asked again; a
 // success is remembered for good.
 func TestCommitAuthor_CachesFailureBrieflyAndSuccessForGood(t *testing.T) {
-	users := &fakeUsers{err: &StatusError{Status: http.StatusBadGateway}}
+	users := &fakeUsers{err: &HTTPStatusError{StatusCode: http.StatusBadGateway}}
 	a := NewCommitAuthor(users)
 	clock := time.Unix(1_000_000, 0)
 	a.now = func() time.Time { return clock }
@@ -164,10 +164,9 @@ func TestCommitAuthor_WaitHonoursTheCallersContext(t *testing.T) {
 }
 
 func TestCommitAuthor_ErrorKeepsItsClass(t *testing.T) {
-	a := NewCommitAuthor(&fakeUsers{err: &ErrRateLimited{RetryAfter: 1}})
+	a := NewCommitAuthor(&fakeUsers{err: &HTTPStatusError{StatusCode: http.StatusTooManyRequests, RetryAfter: time.Second}})
 	_, _, err := a.Identity(context.Background())
-	var rl *ErrRateLimited
-	if !errors.As(err, &rl) {
-		t.Fatalf("err = %v, want ErrRateLimited", err)
+	if _, ok := RateLimited(err); !ok {
+		t.Fatalf("err = %v, want the rate limit", err)
 	}
 }

@@ -40,6 +40,7 @@ func base() map[string]string {
 		"AE_MCP_SOCKET":   "/run/ae/mcp/mcp.sock", "AE_TURN_SOCKET": "/run/ae/mcp/turn.sock",
 		"AE_STUDIO_CLIENT_ID": "ae-studio-default", "AE_STUDIO_CLIENT_SECRET": "studio-secret-value",
 		"AE_GITHUB_OWNER": "Acme-GH",
+		"AE_WEBHOOK_URL":  "http://ae-studio-tools.example:8080/webhooks/github",
 	}
 }
 
@@ -91,7 +92,7 @@ func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
 		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL",
 		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET",
-		"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET"} {
+		"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET", "AE_WEBHOOK_URL"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
 			t.Fatalf("error %v does not name %s", err, k)
 		}
@@ -249,5 +250,25 @@ func TestLoad_MCPSocketKeys(t *testing.T) {
 	c, err = Load(env(m))
 	if err != nil || c.GitHubOwner != "" {
 		t.Fatalf("empty owner: %q %v", c.GitHubOwner, err)
+	}
+}
+
+// Phase 4 (Q-6): AE_WEBHOOK_URL, where the repo hooks the pod registers
+// deliver, is a required absolute http(s) URL: a hook never registers with an
+// empty URL.
+func TestLoad_WebhookURL(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WebhookURL != "http://ae-studio-tools.example:8080/webhooks/github" {
+		t.Fatalf("WebhookURL = %q", c.WebhookURL)
+	}
+	for v, want := range map[string]string{" ": "missing AE_WEBHOOK_URL", "/webhooks/github": "invalid AE_WEBHOOK_URL", "ftp://x/y": "invalid AE_WEBHOOK_URL"} {
+		m := base()
+		m["AE_WEBHOOK_URL"] = v
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("AE_WEBHOOK_URL=%q: err = %v, want %q", v, err, want)
+		}
 	}
 }

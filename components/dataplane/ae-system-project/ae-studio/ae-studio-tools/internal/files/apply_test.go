@@ -64,7 +64,7 @@ func withIdentity(login, email string) applyOpt {
 // withFailingIdentity makes every GET /user fail.
 func withFailingIdentity() applyOpt {
 	return func(_ *testing.T, a *files.Applier, _ *repotest.Origin) {
-		a.Identity = github.NewCommitAuthor(fakeUsers{err: &github.StatusError{Status: 502}})
+		a.Identity = github.NewCommitAuthor(fakeUsers{err: &github.HTTPStatusError{StatusCode: 502}})
 	}
 }
 

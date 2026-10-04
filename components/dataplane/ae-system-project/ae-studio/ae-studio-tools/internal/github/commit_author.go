@@ -62,8 +62,8 @@ func NewCommitAuthor(users Users) *CommitAuthor {
 }
 
 // Identity returns the commit name and email. Errors are the lookup's
-// (*StatusError, *ErrRateLimited or a transport failure, possibly the cached
-// one), or ctx's when the caller stops waiting; never the token.
+// (*HTTPStatusError, a rate limit included, or a transport failure, possibly
+// the cached one), or ctx's when the caller stops waiting; never the token.
 func (a *CommitAuthor) Identity(ctx context.Context) (name, email string, err error) {
 	a.mu.Lock()
 	switch {

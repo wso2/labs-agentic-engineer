@@ -62,12 +62,11 @@ func TestWhoami_ReturnsLoginAndID(t *testing.T) {
 	}
 }
 
-func TestWhoami_WrongPATIsStatusError(t *testing.T) {
+func TestWhoami_WrongPATIsHTTPStatusError(t *testing.T) {
 	srv := fakeGitHub(t, http.StatusOK, nil, `{"login":"e2e-bot","id":42}`)
 	_, _, err := newClient(srv.URL, "ghp_wrong").Whoami(context.Background())
-	var se *StatusError
-	if !errors.As(err, &se) || se.Status != http.StatusUnauthorized {
-		t.Fatalf("err = %v, want StatusError 401", err)
+	if !IsHTTPStatus(err, http.StatusUnauthorized) {
+		t.Fatalf("err = %v, want HTTPStatusError 401", err)
 	}
 }
 
@@ -89,23 +88,22 @@ func TestWhoami_RateLimited(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			srv := fakeGitHub(t, c.status, c.headers, `{"message":"rate limited"}`)
 			_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
-			var rl *ErrRateLimited
-			if !errors.As(err, &rl) {
-				t.Fatalf("err = %v, want ErrRateLimited", err)
+			wait, ok := RateLimited(err)
+			if !ok || !IsHTTPStatus(err, http.StatusTooManyRequests) {
+				t.Fatalf("err = %v, want HTTPStatusError 429", err)
 			}
-			if rl.RetryAfter < c.min || rl.RetryAfter > c.max {
-				t.Fatalf("RetryAfter = %v, want [%v, %v]", rl.RetryAfter, c.min, c.max)
+			if wait < c.min || wait > c.max {
+				t.Fatalf("RetryAfter = %v, want [%v, %v]", wait, c.min, c.max)
 			}
 		})
 	}
 }
 
-func TestWhoami_ForbiddenWithoutRateLimitIsStatusError(t *testing.T) {
+func TestWhoami_ForbiddenWithoutRateLimitIsHTTPStatusError(t *testing.T) {
 	srv := fakeGitHub(t, http.StatusForbidden, map[string]string{"X-RateLimit-Remaining": "4999"}, `{}`)
 	_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
-	var se *StatusError
-	if !errors.As(err, &se) || se.Status != http.StatusForbidden {
-		t.Fatalf("err = %v, want StatusError 403", err)
+	if _, limited := RateLimited(err); limited || !IsHTTPStatus(err, http.StatusForbidden) {
+		t.Fatalf("err = %v, want HTTPStatusError 403, not a rate limit", err)
 	}
 }
 
@@ -113,7 +111,7 @@ func TestWhoami_MalformedBody(t *testing.T) {
 	for _, body := range []string{`not json`, `{"login":"","id":42}`, `{"login":"x","id":0}`} {
 		srv := fakeGitHub(t, http.StatusOK, nil, body)
 		_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
-		var se *StatusError
+		var se *HTTPStatusError
 		if err == nil || errors.As(err, &se) {
 			t.Fatalf("body %q: err = %v, want a decode error", body, err)
 		}
@@ -127,15 +125,26 @@ func TestWhoami_ErrorsNeverCarryThePAT(t *testing.T) {
 	}
 }
 
-func TestStatusErr_ResetUnderHalfASecondWaitsAtLeastOneSecond(t *testing.T) {
+func TestStatusError_ResetUnderHalfASecondWaitsAtLeastOneSecond(t *testing.T) {
 	reset := time.Now().Add(time.Hour).Truncate(time.Second)
 	now := reset.Add(-300 * time.Millisecond) // rounds to 0 s
-	resp := &http.Response{StatusCode: http.StatusForbidden, Header: http.Header{
+	r := &response{status: http.StatusForbidden, header: http.Header{
 		"X-Ratelimit-Remaining": {"0"},
 		"X-Ratelimit-Reset":     {strconv.FormatInt(reset.Unix(), 10)},
 	}}
-	var rl *ErrRateLimited
-	if err := statusErr(resp, now); !errors.As(err, &rl) || rl.RetryAfter < time.Second {
-		t.Fatalf("err = %v, want ErrRateLimited with RetryAfter >= 1s", err)
+	if e := statusError(r, "u", now); e.StatusCode != http.StatusTooManyRequests || e.RetryAfter < time.Second {
+		t.Fatalf("err = %v (RetryAfter %v), want 429 with RetryAfter >= 1s", e, e.RetryAfter)
 	}
+}
+
+func TestStatusError_BodyIsTruncated(t *testing.T) {
+	r := &response{status: http.StatusBadGateway, body: []byte(strings.Repeat("x", 3*maxErrorBodyBytes))}
+	if e := statusError(r, "u", time.Now()); len(e.Body) != maxErrorBodyBytes {
+		t.Fatalf("body length = %d, want %d", len(e.Body), maxErrorBodyBytes)
+	}
+}
+
+// newClient is the client at base with a static gitpat.
+func newClient(base, pat string) *Client {
+	return New(Config{APIBase: base, Token: staticToken(pat)})
 }

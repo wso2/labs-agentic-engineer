@@ -51,13 +51,13 @@ func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.Gi
 // identityErrorAttrs names a failed identity lookup by class (and GitHub's
 // status when it answered), never by the error's text.
 func identityErrorAttrs(err error) []any {
-	var rl *github.ErrRateLimited
-	var se *github.StatusError
-	switch {
-	case errors.As(err, &rl):
+	var se *github.HTTPStatusError
+	if _, limited := github.RateLimited(err); limited {
 		return []any{"class", "rate_limited"}
+	}
+	switch {
 	case errors.As(err, &se):
-		return []any{"class", "status", "status", se.Status}
+		return []any{"class", "status", "status", se.StatusCode}
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return []any{"class", "canceled"}
 	default:
