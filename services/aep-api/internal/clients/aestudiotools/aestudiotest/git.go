@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +36,29 @@ import (
 // errInvalidCommit is a commit request the pod refuses with 400
 // validation_failed.
 var errInvalidCommit = errors.New("aestudiotest: invalid commit request")
+
+// errInvalidBundleFilter is a read-bundle request the pod refuses with 400
+// validation_failed: an ext outside the contract pattern, or more than 20.
+var errInvalidBundleFilter = errors.New("aestudiotest: invalid read-bundle filter")
+
+// bundleExtPattern is the contract's `ext` item pattern (ae-studio-tools
+// internal/v1 openapi.yaml, read-bundle).
+var bundleExtPattern = regexp.MustCompile(`^\.[A-Za-z0-9._-]{1,32}$`)
+
+const maxBundleExts = 20
+
+// validBundleFilter refuses what the pod's request validator answers 400 to.
+func validBundleFilter(filter sourcecontrol.BundleFilter) error {
+	if len(filter.Exts) > maxBundleExts {
+		return errInvalidBundleFilter
+	}
+	for _, e := range filter.Exts {
+		if !bundleExtPattern.MatchString(e) {
+			return errInvalidBundleFilter
+		}
+	}
+	return nil
+}
 
 // repoKey is one repository regardless of the DefaultBranch a ref carries.
 type repoKey struct{ org, owner, repo string }
@@ -211,6 +235,9 @@ func (f *Fake) ReadFile(_ context.Context, ref sourcecontrol.RepoRef, at, path s
 func (f *Fake) ReadBundle(_ context.Context, ref sourcecontrol.RepoRef, at string, filter sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
 	c, err := f.read(OpReadBundle, ref, at, filter, opts)
 	if err != nil {
+		return nil, "", err
+	}
+	if err := validBundleFilter(filter); err != nil {
 		return nil, "", err
 	}
 	files := map[string]string{}

@@ -47,8 +47,12 @@ import (
 // reads pins from — the same repo path design_json.go's codec targets.
 const designComponentsPrefix = "specs/design/components/"
 
-// designJSONSuffix is the per-component design file name, joined onto its
-// directory under designComponentsPrefix.
+// designJSONExt is the file extension asked of the pod's read-bundle filter
+// (its ext param takes an extension, not a path suffix).
+const designJSONExt = ".json"
+
+// designJSONSuffix is the per-component design file path suffix, joined onto
+// its directory under designComponentsPrefix; matched client-side.
 const designJSONSuffix = "/design.json"
 
 // resolvePinnedSkills reads every component's `skillsPinned` at the project
@@ -61,12 +65,15 @@ const designJSONSuffix = "/design.json"
 // from refreshing (that specific component simply loses its pins for this
 // pass — it re-establishes them once it is next saved).
 func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontrol.RepoRef) ([]string, error) {
-	files, _, err := s.git.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: designComponentsPrefix, Exts: []string{designJSONSuffix}})
+	files, _, err := s.git.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: designComponentsPrefix, Exts: []string{designJSONExt}})
 	if err != nil {
 		return nil, fmt.Errorf("read component designs: %w", err)
 	}
 	pinned := map[string]bool{}
 	for p, raw := range files {
+		if !strings.HasSuffix(p, designJSONSuffix) {
+			continue // a stray components/x.json is not a component design
+		}
 		rel := strings.TrimPrefix(p, designComponentsPrefix)
 		name := strings.TrimSuffix(rel, designJSONSuffix)
 		if name == "" || strings.Contains(name, "/") {

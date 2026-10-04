@@ -98,6 +98,36 @@ func TestSyncProjectSkills_MirrorsThroughThePodWithThePins(t *testing.T) {
 	}
 }
 
+// Pins come only from components/<name>/design.json: a stray top-level
+// components/x.json is never parsed as a component design. The Fake enforces
+// the pod's ext pattern, so a path-suffix sent as an ext fails here as the pod
+// answers 400 validation_failed.
+func TestSyncProjectSkills_PinsComeOnlyFromComponentDesignJSON(t *testing.T) {
+	t.Parallel()
+	svc, host := newTestStore(t)
+	ctx := context.Background()
+	orgID := "org1"
+	if _, err := svc.List(ctx, orgID); err != nil {
+		t.Fatalf("seed skills repo: %v", err)
+	}
+	provisionProjectRepo(t, host, orgID)
+	host.originFor(orgID, testProjectID).Seed(t, map[string]string{
+		"specs/design/components/api/design.json": `{"name":"api","type":"service","dependencies":[],"skillsPinned":["go"]}`,
+		"specs/design/components/x.json":          `{"name":"x","type":"service","dependencies":[],"skillsPinned":["stray"]}`,
+	}, "design")
+
+	if err := svc.SyncProjectSkills(ctx, orgID, testProjectID); err != nil {
+		t.Fatalf("SyncProjectSkills: %v", err)
+	}
+	calls := mirrorCalls(host.pod)
+	if len(calls) != 1 {
+		t.Fatalf("mirror calls = %d, want 1", len(calls))
+	}
+	if want := []string{"go"}; !reflect.DeepEqual(calls[0].Pinned, want) {
+		t.Fatalf("pinned = %v, want %v (design.json only)", calls[0].Pinned, want)
+	}
+}
+
 // No design yet (a brand-new project) mirrors with zero pins, not an error —
 // the project-creation case.
 func TestSyncProjectSkills_NoDesignYetIsNotAnError(t *testing.T) {
