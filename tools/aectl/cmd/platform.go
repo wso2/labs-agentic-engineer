@@ -179,8 +179,8 @@ func aeStudioOverrides(platformNamespace string) []string {
 		"--set", "aeStudio.publicPortSuffix=" + port,
 		"--set", "aeStudio.consoleOrigins={" + consolePublicURL() + ",http://localhost:8090}",
 	}
-	// An unset gateway.hostname is omitted, not set empty: under update's
-	// --reuse-values an empty --set would wipe a value the install made.
+	// An unset gateway.hostname is omitted, not set empty: update reuses the
+	// previous release's values, and an empty --set would wipe one the install made.
 	if h := viper.GetString("gateway.hostname"); h != "" {
 		args = append(args, "--set", "aeStudio.gatewayHost="+h)
 	}
@@ -195,7 +195,8 @@ func aeStudioOverrides(platformNamespace string) []string {
 			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
 		)
 	}
-	// Always set, so update's --reuse-values follows the config both ways.
+	// Always set, so update (which reuses the previous release's values)
+	// follows the config both ways. The relay image is the chart's own default.
 	args = append(args, "--set", fmt.Sprintf("aeStudio.webhookRelay.enabled=%t", viper.GetBool("ae_studio.webhook_relay.enabled")))
 	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress(platformNamespace))
 }

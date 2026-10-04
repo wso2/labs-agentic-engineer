@@ -49,9 +49,11 @@ var updateCmd = &cobra.Command{
 	Short: "Upgrade the AEP platform chart",
 	Long: `Runs helm upgrade on the AEP platform release.
 
-By default values from the previous release are reused (--reuse-values),
-so only flags you explicitly pass are changed. Use --reset-values to
-start from chart defaults instead. The aeStudio.* values aectl derives from
+By default the values supplied to the previous release are reused on top of
+the new chart's defaults (helm --reset-then-reuse-values, helm >= 3.14), so
+only flags you explicitly pass change a value you set, while a default the new
+chart adds or changes takes effect. Use --reset-values to drop the previous
+release's values and start from chart defaults instead. The aeStudio.* values aectl derives from
 its config (gateway host, IdP URLs, console origins, egress) are always
 re-applied, so installs that predate them pick them up; no secret is touched.
 
@@ -77,7 +79,7 @@ func init() {
 	f.StringVar(&updatePlatformRelease, "platform-release", "aep-platform", "Helm release name")
 	f.StringVar(&updatePlatformVersion, "version", "", "Chart version to upgrade to (default: reuse current version)")
 	f.StringVar(&updatePlatformChart, "platform-chart", "", "Local path to a platform chart (overrides --version)")
-	f.BoolVar(&updateResetValues, "reset-values", false, "Reset all values to chart defaults before applying overrides (default: reuse previous values)")
+	f.BoolVar(&updateResetValues, "reset-values", false, "Reset all values to chart defaults before applying overrides (default: reuse the previous release's values on the new chart's defaults)")
 	f.StringVar(&updatePullPolicy, "pull-policy", "", "imagePullPolicy applied to every service whose image is overridden (Never|IfNotPresent|Always)")
 	f.StringArrayVar(&updateHelmSets, "set", nil, "Additional helm --set overrides (repeatable)")
 
@@ -121,7 +123,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 func buildUpdateArgs() ([]string, error) {
 	// The AE Studio values are derived from aectl config. With the config
 	// ConfigMap absent or partial they would be derived from defaults (plain
-	// http, empty Thunder namespace in the egress rule) and --reuse-values
+	// http, empty Thunder namespace in the egress rule) and the upgrade
 	// would write those over a working install, so fail instead.
 	if errs := config.ValidateLoaded(); len(errs) > 0 {
 		return nil, fmt.Errorf("aectl config is missing or invalid, refusing to derive aeStudio.* values from it "+
@@ -151,11 +153,15 @@ func buildUpdateArgs() ([]string, error) {
 		}
 	}
 
-	// Value strategy.
+	// Value strategy. Not --reuse-values: Helm then renders on the defaults
+	// of the chart the release was installed with, so a default a newer
+	// chart adds (aeStudio.webhookRelay.image) never reaches an existing
+	// install. --reset-then-reuse-values renders on the new chart's defaults
+	// and keeps every value supplied to the previous release.
 	if updateResetValues {
 		helmArgs = append(helmArgs, "--reset-values")
 	} else {
-		helmArgs = append(helmArgs, "--reuse-values")
+		helmArgs = append(helmArgs, "--reset-then-reuse-values")
 	}
 
 	// Per-service image overrides.

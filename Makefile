@@ -365,10 +365,13 @@ obs-status:
 
 # Edit source, then run this: rebuilds only the images whose dependencies
 # changed (dev-images above), then re-points the aep-platform release at them
-# directly via `helm upgrade --reuse-values` — a plain CLI flag skaffold's own v4beta11
-# HelmRelease schema has no field for (see skaffold.yaml's header), and
-# load-bearing: without it this would reset every value `aectl platform
-# install` set (Thunder/OpenBao/webhook URLs, etc.) back to chart defaults.
+# with `aectl platform update` (helm upgrade --reset-then-reuse-values) — a
+# plain CLI flag skaffold's own v4beta11 HelmRelease schema has no field for
+# (see skaffold.yaml's header), and load-bearing: it keeps every value
+# `aectl platform install` set (Thunder/OpenBao URLs, etc.) while rendering on
+# the current chart's defaults, so a default the chart gained since the
+# install (aeStudio.webhookRelay.image) applies. Plain --reuse-values would
+# keep the install-time chart's defaults instead.
 #
 # The tag is always the same literal string (dev-local), so a repeat
 # `helm upgrade --set image.tag=dev-local` is byte-identical to the Deployment
@@ -385,7 +388,7 @@ obs-status:
 # sees the new image refs. Never `kubectl rollout restart` it: the Deployment
 # is OpenChoreo's, not ours.
 #
-# The upgrade is `aectl platform update` (helm upgrade --reuse-values), not bare
+# The upgrade is `aectl platform update`, not bare
 # helm, so it also re-applies the aeStudio.* values aectl derives from its
 # config (gateway host, IdP URLs, console origins, egress): an install that
 # predates them converges here, with no secret touched.
@@ -420,11 +423,12 @@ dev-update:
 # released ghcr image and no OpenCode image, which takes OpenCode off the
 # runtime menu. Run after `make dev-env`, and again after changing
 # runners/remote-worker or a package it bakes in (agent-eval, web-search,
-# skills, bal-library-tool). Like dev-update, --reuse-values keeps aectl's
-# settings; the image values change, so Helm rolls aep-api by itself.
+# skills, bal-library-tool). Like dev-update, --reset-then-reuse-values keeps
+# aectl's settings on the current chart's defaults; the image values change, so
+# Helm rolls aep-api by itself.
 dev-runner:
 	FORCE=1 bash deployments/scripts/build-runner.sh
-	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
+	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reset-then-reuse-values \
 		--set codingAgentRunner.image=aep-runner:dev \
 		--set codingAgentRunner.opencodeImage=aep-runner-opencode:dev
 

@@ -105,7 +105,10 @@ loop — run it again after every edit you want reflected in the cluster. It
 only rebuilds images whose dependencies changed and re-points the
 already-installed `aep-platform` release at them; it does not re-derive any of
 aectl's own settings (Thunder/OpenBao URLs), which is why its Helm
-step passes `--reuse-values`.
+step passes `--reset-then-reuse-values` (helm >= 3.14): the values the install
+set are kept, and the current chart's defaults apply. Plain `--reuse-values`
+would render on the defaults of the chart the release was installed with, so a
+new default (for example `aeStudio.webhookRelay.image`) would never arrive.
 
 The three images of the `ae-studio` data-plane pod (design agent, collab,
 studio tools) are built by a second config, `skaffold/ae-studio.yaml`, with a
@@ -120,7 +123,7 @@ aep-api's converge sees the new refs. It is never `kubectl rollout restart`ed:
 its Deployment belongs to OpenChoreo.
 
 **Upgrading an existing install.** `make dev-update` upgrades through
-`aectl platform update` (`helm upgrade --reuse-values`), which also re-applies
+`aectl platform update` (`helm upgrade --reset-then-reuse-values`), which also re-applies
 the `aeStudio.*` values aectl derives from its config (gateway host, IdP
 issuer/JWKS/token URLs, console origins, egress). An install made before AE
 Studio existed therefore picks them up on its next `make dev-update` or

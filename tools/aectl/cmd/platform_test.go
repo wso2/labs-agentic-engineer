@@ -19,6 +19,7 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -219,13 +220,70 @@ func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
 			t.Errorf("update args lack %s", key)
 		}
 	}
-	if !strings.Contains(joined, "--reuse-values") {
-		t.Error("update must keep --reuse-values")
+}
+
+// Update keeps the release's user-supplied values but renders on the new
+// chart's defaults (--reset-then-reuse-values): under --reuse-values Helm
+// renders on the defaults of the chart the release was installed with, so a
+// default a newer chart adds never reaches an existing install (Task 4.22a:
+// aeStudio.webhookRelay.image). --reset-values still opts out of the reuse.
+func TestBuildUpdateArgs_ValueStrategy(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reset bool
+		want  string
+	}{
+		{"default", false, "--reset-then-reuse-values"},
+		{"reset", true, "--reset-values"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setValidUpdateConfig(t)
+			updateResetValues = tc.reset
+			got, err := buildUpdateArgs()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var strategies []string
+			for _, a := range got {
+				if a == "--reuse-values" || a == "--reset-values" || a == "--reset-then-reuse-values" {
+					strategies = append(strategies, a)
+				}
+			}
+			if len(strategies) != 1 || strategies[0] != tc.want {
+				t.Errorf("value strategy flags = %v, want exactly [%s]", strategies, tc.want)
+			}
+		})
+	}
+}
+
+// The relay switch follows the config on update both ways; the relay image is
+// never set by aectl: it is the chart's own default (values.yaml, the single
+// source of the gosmee digest), which --reset-then-reuse-values applies.
+func TestBuildUpdateArgs_WebhookRelay(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
+			setValidUpdateConfig(t)
+			viper.Set("ae_studio.webhook_relay.enabled", enabled)
+			got, err := buildUpdateArgs()
+			if err != nil {
+				t.Fatal(err)
+			}
+			joined := strings.Join(got, "\x00")
+			if want := fmt.Sprintf("--set\x00aeStudio.webhookRelay.enabled=%t", enabled); !strings.Contains(joined, want) {
+				t.Errorf("update args lack %q: %v", want, got)
+			}
+			if strings.Contains(joined, "aeStudio.webhookRelay.image") {
+				t.Errorf("aectl must not set the relay image (chart default is the source): %v", got)
+			}
+			if !strings.Contains(joined, "--reset-then-reuse-values") {
+				t.Errorf("without --reset-then-reuse-values the chart's relay image default never reaches an existing install: %v", got)
+			}
+		})
 	}
 }
 
 // Missing or partial aectl config must fail loudly, not derive http/empty
-// values that --reuse-values would write over a working install.
+// values the upgrade would write over a working install.
 func TestBuildUpdateArgs_RejectsMissingConfig(t *testing.T) {
 	setValidUpdateConfig(t)
 	viper.Reset()
