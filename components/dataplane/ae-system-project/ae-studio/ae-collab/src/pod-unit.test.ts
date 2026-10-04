@@ -37,7 +37,7 @@ import { onTokenSyncFor, type CollabContext, type Verify } from "./pod/auth.js";
 import { systemClock, type ExpiryGuard } from "./pod/expiry.js";
 import type { PodLogLine } from "./pod/log.js";
 
-const cfg = { orgId: "ou-acme", orgHandle: "acme", userAudiences: ["aep-console-client"], agentClientId: "ae-studio-acme" };
+const cfg = { orgId: "ou-acme", orgHandle: "acme", userAudiences: ["aep-console-client"] };
 
 function fakeConnection(context: CollabContext) {
   const closes: unknown[] = [];

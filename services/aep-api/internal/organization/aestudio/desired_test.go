@@ -123,8 +123,8 @@ func TestDesired_OrgAndEnvConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Params.Org.ID != testOU || d.Params.Org.Handle != "default" || d.Params.AgentClientID != "ae-studio-default" {
-		t.Fatalf("org %+v client %q", d.Params.Org, d.Params.AgentClientID)
+	if d.Params.Org.ID != testOU || d.Params.Org.Handle != "default" {
+		t.Fatalf("org %+v", d.Params.Org)
 	}
 	raw, _ := json.Marshal(d.EnvConfigs)
 	for _, want := range []string{`"budgetBytes":"2147483648"`, `"aeOnlyClientId":"ae-studio-internal-client"`,

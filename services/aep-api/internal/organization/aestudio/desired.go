@@ -77,7 +77,6 @@ type params struct {
 		ID     string `json:"id"`
 		Handle string `json:"handle"`
 	} `json:"org"`
-	AgentClientID string `json:"agentClientId"`
 	// ModelConnection is the connection's non-secret fields as one JSON
 	// string (AE_MODEL_CONNECTION), "" when the org has none (07 §4, R18).
 	ModelConnection string `json:"modelConnection"`
@@ -212,7 +211,6 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 	d.Params.Images.StudioTools = cfg.Images.StudioTools
 	d.Params.Org.ID = o.ThunderOrgUUID.String()
 	d.Params.Org.Handle = org
-	d.Params.AgentClientID = profile.StudioClientID
 	if d.Params.ModelConnection, err = s.modelConnection(ctx, org); err != nil {
 		return d, err
 	}

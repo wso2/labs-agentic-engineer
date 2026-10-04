@@ -25,7 +25,7 @@ spec:
   parameters:
     openAPIV3Schema:
       type: object
-      required: [images, org, agentClientId, secrets]
+      required: [images, org, secrets]
       properties:
         images:
           type: object
@@ -40,7 +40,6 @@ spec:
           properties:
             id: { type: string }
             handle: { type: string }
-        agentClientId: { type: string }
         modelConnection:
           # 07 §4, R18: the non-secret connection fields as one JSON string (AE_MODEL_CONNECTION); an edit re-pins.
           type: string
@@ -190,6 +189,7 @@ spec:
               annotations:
                 dev.gvisor.spec.mount.files-sock.share: pod
                 dev.gvisor.spec.mount.mcp-sock.share: pod
+                dev.gvisor.spec.mount.room-sock.share: pod
             spec:
               runtimeClassName: '${environmentConfigs.runtimeClassName != "" ? environmentConfigs.runtimeClassName : oc_omit()}'
               automountServiceAccountToken: false
@@ -203,15 +203,21 @@ spec:
                 runAsGroup: 10001
                 fsGroup: 10001
                 seccompProfile: { type: RuntimeDefault }
-              # Socket dirs are mounted now; each socket joins its containers' /readyz in the phase that serves it.
+              # Socket dirs: one emptyDir per pair of containers that talk, mounted into that pair only (the mount
+              # is the gate, sockets are 0660): files-sock = ae-collab + ae-studio-tools, mcp-sock = ae-design-agent
+              # + ae-studio-tools (MCP and Turn sockets), room-sock = ae-collab + ae-design-agent (the agent's Room
+              # join, no token: Task 4.7a). Each serving container's /readyz (its startup probe) waits for its sockets.
               volumes:
                 - { name: files-sock, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
                 - { name: mcp-sock,   emptyDir: { medium: Memory, sizeLimit: 1Mi } }
+                - { name: room-sock,  emptyDir: { medium: Memory, sizeLimit: 1Mi } }
                 - name: studio-data                                             # 20: one disk emptyDir, a cache of GitHub
                   emptyDir: { sizeLimit: "${environmentConfigs.storage.sizeLimit}" }
                 - { name: tmp-agent,  emptyDir: { sizeLimit: 256Mi } }
                 - { name: tmp-collab, emptyDir: { sizeLimit: 64Mi } }
                 - { name: tmp-tools,  emptyDir: { sizeLimit: 256Mi } }
+              # A container added here mounts no socket dir unless it is one end of that socket: the relay
+              # container (Task 4.20) mounts none, since any process that can reach a socket is trusted by it.
               containers:
                 - name: ae-design-agent
                   image: ${parameters.images.designAgent}
@@ -225,7 +231,7 @@ spec:
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
                     - { name: AE_MCP_SOCKET, value: /run/ae/mcp/mcp.sock }
                     - { name: AE_TURN_SOCKET, value: /run/ae/mcp/turn.sock }
-                    - { name: AE_COLLAB_LOCAL_URL, value: "ws://127.0.0.1:8091" }
+                    - { name: AE_ROOM_SOCKET, value: /run/ae/room/room.sock }
                     - { name: AE_SNAPSHOTS_DIR, value: /snapshots }
                     - { name: AE_MODEL_CONNECTION, value: "${parameters.modelConnection}" }
                     - { name: AE_EXPECTED_SECRET_REV, value: "${size(parameters.secrets.designAgent.data) > 0 ? parameters.secrets.designAgent.rev : \"\"}" }
@@ -239,6 +245,7 @@ spec:
                   securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
                   volumeMounts:
                     - { name: mcp-sock, mountPath: /run/ae/mcp }
+                    - { name: room-sock, mountPath: /run/ae/room }
                     - { name: studio-data, mountPath: /snapshots, subPath: snapshots, readOnly: true }   # 20
                     - { name: tmp-agent, mountPath: /tmp }
                 - name: ae-collab
@@ -251,9 +258,9 @@ spec:
                     - { name: AE_IDP_ISSUER, value: "${environmentConfigs.idp.issuer}" }
                     - { name: AE_IDP_JWKS_URL, value: "${environmentConfigs.idp.jwksUrl}" }
                     - { name: AE_USER_AUDIENCES, value: '${environmentConfigs.idp.userAudiences.join(",")}' }
-                    - { name: AE_AGENT_CLIENT_ID, value: "${parameters.agentClientId}" }
                     - { name: AE_ALLOWED_ORIGINS, value: '${environmentConfigs.consoleOrigins.join(",")}' }   # 10
                     - { name: AE_FILES_SOCKET, value: /run/ae/files/files.sock }
+                    - { name: AE_ROOM_SOCKET, value: /run/ae/room/room.sock }   # served here; /readyz waits for it
                     - { name: HOME, value: /tmp }
                     - { name: AE_LISTEN_PORT, value: "8081" }
                     - { name: AE_HEALTH_PORT, value: "9081" }
@@ -263,6 +270,7 @@ spec:
                   securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
                   volumeMounts:
                     - { name: files-sock, mountPath: /run/ae/files }
+                    - { name: room-sock, mountPath: /run/ae/room }
                     - { name: tmp-collab, mountPath: /tmp }
                 - name: ae-studio-tools
                   image: ${parameters.images.studioTools}
