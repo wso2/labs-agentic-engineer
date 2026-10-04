@@ -127,12 +127,6 @@ func IsRepoNameConflict(err error) bool {
 	return errors.Is(err, ErrRepoNameConflict)
 }
 
-// GraphQLTypeNotFound is GitHub's machine-readable errors[].type for a node the
-// query could not resolve — how a deleted repository or milestone arrives on
-// the GraphQL surface, which answers 200 with a populated errors[] rather than
-// a 404. Spelled once here because IsPermanent branches on it.
-const GraphQLTypeNotFound = "NOT_FOUND"
-
 // IsPermanent reports whether err is an answer rather than a blip: a failure
 // that repeating the same call cannot change.
 //
@@ -149,7 +143,6 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //     this credential.
 //   - 401 — GitHub rejected the org's token (the pod's github_error); a
 //     repeat presents the same token and the same rejection.
-//   - GraphQL NOT_FOUND — the 404 of the GraphQL surface.
 //   - ErrAEStudioAbsent — GitHub is not connected for the org; a person has
 //     to connect it.
 //   - ErrAEStudioMisconfigured — aep-api's AE-only token is refused (C3); an
@@ -168,7 +161,6 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //     pointlessly; the alternative — parsing the body — is worse, and a run
 //     that stalls visibly on a real 403 is the safer of the two mistakes.
 //   - 5xx and every transport error, which are the blips retries exist for.
-//   - GraphQL RATE_LIMITED, same reason as 403.
 //   - ErrRepoNotReady, which is a state the mirror heals out of.
 //   - ErrAEStudioUnavailable and *RateLimitedError: the pod or GitHub is
 //     busy or coming up, which is what retries are for.
@@ -191,8 +183,6 @@ func IsPermanent(err error) bool {
 		IsHTTPStatus(err, http.StatusUnauthorized),
 		IsHTTPStatus(err, http.StatusBadRequest),
 		IsHTTPStatus(err, http.StatusUnprocessableEntity):
-		return true
-	case IsGraphQLType(err, GraphQLTypeNotFound):
 		return true
 	}
 	var p permanence

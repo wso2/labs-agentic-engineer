@@ -19,7 +19,6 @@ package sourcecontrol
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
@@ -356,7 +355,7 @@ type CompareResult = gitfs.CompareResult
 // modified | renamed | copied | changed | unchanged.
 type ChangedFile = gitfs.ChangedFile
 
-// ----- Account / App installation -----
+// ----- Account -----
 
 // GitHubUser is the subset of GET /user we consume.
 type GitHubUser struct {
@@ -364,29 +363,6 @@ type GitHubUser struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
 	ID    int64  `json:"id"`
-}
-
-// AppInstallationInfo is the subset of GET /app/installations/{id} we consume.
-// account.login is the GitHub org/user the install belongs to; it can drift
-// when the org is renamed on GitHub.
-type AppInstallationInfo struct {
-	ID      int64 `json:"id"`
-	Account struct {
-		Login string `json:"login"`
-		Type  string `json:"type"`
-	} `json:"account"`
-	Suspended *string `json:"suspended_at,omitempty"`
-}
-
-// AppInstallationSummary is the flat projection of /app/installations[i]
-// the discover endpoint returns to the BFF and console. Mirrors the wire
-// shape used in the response (camelCase). Distinct from
-// AppInstallationInfo (which preserves the nested account.* shape used
-// by the validator's GetAppInstallation probe).
-type AppInstallationSummary struct {
-	InstallationID int64  `json:"installationId"`
-	AccountLogin   string `json:"accountLogin"`
-	AccountType    string `json:"accountType"`
 }
 
 // ----- Git identity -----
@@ -426,58 +402,6 @@ func IsHTTPStatus(err error, code int) bool {
 	var he *HTTPStatusError
 	if errors.As(err, &he) {
 		return he.StatusCode == code
-	}
-	return false
-}
-
-// GraphQLError carries the errors[] array of a GraphQL response. GraphQL
-// answers 200 with a populated errors[] rather than an HTTP status, so this is
-// the GraphQL analogue of HTTPStatusError: the whole array is preserved (not
-// flattened to a first message) because the machine-readable Type is what
-// callers branch on — NOT_FOUND for a stale milestone number is recoverable,
-// RATE_LIMITED is retryable, anything else is a bug.
-type GraphQLError struct {
-	Errors []GraphQLErrorDetail
-	// Query is the operation that failed, for debug logging at the call site.
-	Query string
-}
-
-// GraphQLErrorDetail is one entry of a GraphQL response's errors[]. Path is the
-// response path the error applies to; its elements are field names or list
-// indices, hence any.
-type GraphQLErrorDetail struct {
-	Message string `json:"message"`
-	Type    string `json:"type"`
-	Path    []any  `json:"path"`
-}
-
-func (e *GraphQLError) Error() string {
-	msgs := make([]string, 0, len(e.Errors))
-	for _, d := range e.Errors {
-		if d.Type != "" {
-			msgs = append(msgs, d.Type+": "+d.Message)
-			continue
-		}
-		msgs = append(msgs, d.Message)
-	}
-	return "github graphql error: " + strings.Join(msgs, "; ")
-}
-
-// IsGraphQLType reports true when err is a GraphQLError carrying at least one
-// error of the given machine-readable type (e.g. "NOT_FOUND", "RATE_LIMITED").
-//
-// This is the discriminator IsPermanent branches on: the milestone predicate is
-// a GraphQL call, so a deleted repository reaches the run supervisor as a
-// NOT_FOUND entry here rather than as an HTTP 404.
-func IsGraphQLType(err error, typ string) bool {
-	var ge *GraphQLError
-	if !errors.As(err, &ge) {
-		return false
-	}
-	for _, d := range ge.Errors {
-		if d.Type == typ {
-			return true
-		}
 	}
 	return false
 }

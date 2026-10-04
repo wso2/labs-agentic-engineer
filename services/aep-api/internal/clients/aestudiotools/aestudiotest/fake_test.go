@@ -391,6 +391,13 @@ func TestFake_ReposHooksAndIdentity(t *testing.T) {
 	if got := f.HookEvents(newRef); !slices.Equal(got[id], []string{"push", "issues"}) {
 		t.Fatalf("hooks = %v", got)
 	}
+	// Register is an ensure: the pod's hook is answered as is, events untouched.
+	if again, err := f.RegisterWebhook(ctx, newRef, []string{"pull_request"}); err != nil || again != id {
+		t.Fatalf("re-register = (%d, %v), want the existing hook %d", again, err, id)
+	}
+	if got := f.HookEvents(newRef); len(got) != 1 || !slices.Equal(got[id], []string{"push", "issues"}) {
+		t.Fatalf("hooks after re-register = %v", got)
+	}
 	if err := f.DeleteWebhook(ctx, newRef, id); err != nil || len(f.HookEvents(newRef)) != 0 {
 		t.Fatalf("delete: err=%v hooks=%v", err, f.HookEvents(newRef))
 	}

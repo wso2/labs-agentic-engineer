@@ -133,14 +133,12 @@ func TestPollMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
 	require.Contains(t, err.Error(), sourcecontrol.ErrRepoNotFound.Error())
 }
 
-// The GraphQL surface answers 200 with an errors[] entry, so a repository
-// deleted on GitHub reaches the supervisor as NOT_FOUND rather than as a 404.
-// It is the same answer and must cost the same one attempt.
-func TestPollMilestoneStopsOnGraphQLNotFound(t *testing.T) {
-	env, port := pollEnv(t, &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-		Type:    sourcecontrol.GraphQLTypeNotFound,
-		Message: "Could not resolve to a Repository with the name 'org1/proj1'.",
-	}}})
+// The pod answers a milestone or repository deleted on GitHub as a
+// github_error carrying GitHub's 404 (GraphQL NOT_FOUND included), so it
+// reaches the supervisor as an HTTPStatusError 404. It is an answer and must
+// cost one attempt.
+func TestPollMilestoneStopsOnGitHubNotFound(t *testing.T) {
+	env, port := pollEnv(t, &sourcecontrol.HTTPStatusError{StatusCode: http.StatusNotFound, Body: "Could not resolve to a Repository"})
 
 	executePoll(env)
 

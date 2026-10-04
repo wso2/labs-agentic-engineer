@@ -54,10 +54,7 @@ func TestWebhookUnregister_DeletesTheStoredHook(t *testing.T) {
 		t.Fatalf("precondition: stored hook id = %v, want %d", got, id)
 	}
 	// Another integration's hook on the same repository.
-	other, err := f.RegisterWebhook(context.Background(), widgets, []string{"push"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	other := f.SeedHook(widgets, []string{"push"})
 
 	if err := wh.Unregister(context.Background(), "org1", "proj1"); err != nil {
 		t.Fatalf("Unregister: %v", err)

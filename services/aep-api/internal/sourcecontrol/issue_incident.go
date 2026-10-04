@@ -121,7 +121,7 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	// labels, which would make the next create miss this incident entirely.
 	for _, label := range req.Labels {
 		color := labelColor(label)
-		key := ref.Owner + "/" + ref.Repo + "\x00" + label + "\x00" + color
+		key := repoKeyOf(ref) + "\x00" + label + "\x00" + color
 		if _, done := s.ensuredLabels.Load(key); done {
 			continue
 		}

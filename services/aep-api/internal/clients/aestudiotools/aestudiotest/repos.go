@@ -85,16 +85,32 @@ func (f *Fake) TrashRepo(_ context.Context, ref sourcecontrol.RepoRef) error {
 	return nil
 }
 
-// RegisterWebhook installs a hook for events and answers its id.
+// RegisterWebhook ensures the hook delivering to the pod's URL and answers
+// its id: an existing one is answered as is, its events untouched (as the
+// pod's GitHub "Hook already exists" path does).
 func (f *Fake) RegisterWebhook(_ context.Context, ref sourcecontrol.RepoRef, events []string) (int64, error) {
 	st, unlock, err := f.issueOp(OpRegisterWebhook, ref)
 	if err != nil {
 		return 0, err
 	}
 	defer unlock()
+	if _, ok := st.hooks[st.podHook]; ok {
+		return st.podHook, nil
+	}
 	f.nextHookID++
 	st.hooks[f.nextHookID] = slices.Clone(events)
+	st.podHook = f.nextHookID
 	return f.nextHookID, nil
+}
+
+// SeedHook installs another integration's hook (not to the pod's URL) on
+// ref and answers its id.
+func (f *Fake) SeedHook(ref sourcecontrol.RepoRef, events []string) int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.nextHookID++
+	f.state(ref).hooks[f.nextHookID] = slices.Clone(events)
+	return f.nextHookID
 }
 
 // UpdateWebhookEvents replaces the hook's events; an unknown hook is 404.

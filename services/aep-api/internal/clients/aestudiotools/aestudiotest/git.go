@@ -63,6 +63,9 @@ type repoState struct {
 	milestones []*sourcecontrol.Milestone
 	labels     map[string]string
 	hooks      map[int64][]string
+	// podHook is the id of the hook delivering to the pod's own URL (0: none);
+	// every other hook belongs to another integration.
+	podHook int64
 }
 
 func newRepoState() *repoState {

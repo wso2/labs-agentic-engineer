@@ -42,12 +42,15 @@ type WebhookService interface {
 	Unregister(ctx context.Context, orgID, projectID string) error
 }
 
-// subscribedEvents are the events every project hook carries. Repo-level
+// subscribedEvents answers the events every project hook carries. Repo-level
 // webhooks only — App-installation events like installation_repositories are
 // rejected by GitHub on repo webhooks (422). "issues" joins the set for the
 // tasks-github-native model (§9.2): task birth, command labels, block
-// validation/repair, close/reopen. The pod refuses any other event.
-var subscribedEvents = []string{"pull_request", "push", "issue_comment", "issues"}
+// validation/repair, close/reopen. The pod refuses any other event. A fresh
+// slice per call, so no port implementation can alter the next caller's set.
+func subscribedEvents() []string {
+	return []string{"pull_request", "push", "issue_comment", "issues"}
+}
 
 type webhookService struct {
 	repo    RepoRepository
@@ -65,7 +68,7 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 		return nil, err
 	}
 
-	hookID, err := s.github.RegisterWebhook(ctx, ref, subscribedEvents)
+	hookID, err := s.github.RegisterWebhook(ctx, ref, subscribedEvents())
 	if err != nil {
 		return nil, fmt.Errorf("register webhook: %w", err)
 	}
@@ -76,7 +79,7 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 	// issue deliveries. PATCHing the events every register makes cutover
 	// idempotent (§9.2). Best-effort: a reconcile failure must not block a
 	// successful registration.
-	if patchErr := s.github.UpdateWebhookEvents(ctx, ref, hookID, subscribedEvents); patchErr != nil {
+	if patchErr := s.github.UpdateWebhookEvents(ctx, ref, hookID, subscribedEvents()); patchErr != nil {
 		slog.WarnContext(ctx, "reconcile webhook events failed", "project", projectID, "hookId", hookID, "error", patchErr)
 	}
 

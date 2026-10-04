@@ -108,7 +108,7 @@ type issueService struct {
 	repo     RepoRepository
 	github   IssueOps
 	incident IncidentPorts
-	// createLocks serializes dedupe-checked creation per "owner/repo" so two
+	// createLocks serializes dedupe-checked creation per "org/owner/repo" so two
 	// concurrent CreateIssue calls with the same DedupeKey can't both pass the
 	// existing-issue check before either creates — the exact race that produced
 	// duplicate SRE/RCA issues when multiple alert rules fired for one incident.
@@ -130,7 +130,7 @@ type issueService struct {
 	// minute, and without the memo that batch costs 2N requests rather than N.
 	// Skipping a repeat is safe because label creation is monotone — nothing in
 	// the platform deletes a label — and a process restart re-ensures anyway.
-	ensuredLabels sync.Map // "owner/repo\x00name\x00color" → struct{}
+	ensuredLabels sync.Map // "org/owner/repo\x00name\x00color" → struct{}
 }
 
 // keyedMutex is a per-key mutex pool that deletes a key's entry once no
@@ -271,7 +271,7 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 func (s *issueService) ensureLabels(ctx context.Context, ref RepoRef, labels []string) {
 	for _, label := range labels {
 		color := labelColor(label)
-		key := ref.Owner + "/" + ref.Repo + "\x00" + label + "\x00" + color
+		key := repoKeyOf(ref) + "\x00" + label + "\x00" + color
 		if _, done := s.ensuredLabels.Load(key); done {
 			continue
 		}
@@ -283,10 +283,16 @@ func (s *issueService) ensureLabels(ctx context.Context, ref RepoRef, labels []s
 	}
 }
 
+// repoKeyOf keys the per-repository memo and lock: org-qualified, so two
+// orgs never share either even if their refs name one repository.
+func repoKeyOf(ref RepoRef) string {
+	return ref.Org + "/" + ref.Owner + "/" + ref.Repo
+}
+
 // lockRepoCreates acquires the per-repo creation lock and returns its release
 // func. See the createLocks field doc for why this exists.
 func (s *issueService) lockRepoCreates(ref RepoRef) func() {
-	return s.createLocks.lock(ref.Owner + "/" + ref.Repo)
+	return s.createLocks.lock(repoKeyOf(ref))
 }
 
 // dedupeLabelPrefix namespaces the dedupe label. GitHub caps label names at 50

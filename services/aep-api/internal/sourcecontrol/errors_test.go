@@ -65,14 +65,6 @@ func TestIsPermanent(t *testing.T) {
 			err:  &sourcecontrol.HTTPStatusError{StatusCode: http.StatusUnauthorized},
 			want: true,
 		},
-		{
-			name: "graphql NOT_FOUND — the 404 of the GraphQL surface",
-			err: &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-				Type:    sourcecontrol.GraphQLTypeNotFound,
-				Message: "Could not resolve to a Repository with the name 'org/proj'.",
-			}}},
-			want: true,
-		},
 
 		{
 			name: "403 — GitHub's secondary rate limit wears this status and clears itself",
@@ -82,13 +74,6 @@ func TestIsPermanent(t *testing.T) {
 		{
 			name: "500 is the blip retries exist for",
 			err:  &sourcecontrol.HTTPStatusError{StatusCode: http.StatusInternalServerError},
-			want: false,
-		},
-		{
-			name: "graphql RATE_LIMITED, same reason as 403",
-			err: &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-				Type: "RATE_LIMITED", Message: "API rate limit exceeded",
-			}}},
 			want: false,
 		},
 		{

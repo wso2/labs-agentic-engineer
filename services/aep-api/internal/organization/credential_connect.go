@@ -14,9 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// credential_connect.go — the Connect/replace flow: kind dispatch,
-// the PAT path (validate + seal + seed webhook secret), the PAT's reference
-// write the submit runs after it, and the App-installation path.
+// credential_connect.go — the Connect/replace flow: kind dispatch, the PAT
+// path (validate + seal + seed webhook secret), and the PAT's reference write
+// the submit runs after it.
 
 package organization
 
@@ -27,9 +27,9 @@ import (
 	"time"
 )
 
-// Connect creates or replaces the credential record for ocOrgID. PAT mode
-// runs the full validation chain (GET /user, membership probe, repo-read
-// probe). App mode mints a JWT and looks up the install's account login.
+// Connect creates or replaces the credential record for ocOrgID. The one kind
+// is "user-pat": it runs the full validation chain (GET /user, membership
+// probe, repo-read probe); any other kind is a kind_invalid ValidationError.
 //
 // 409 (ConflictError) if an existing ACTIVE row is a different kind (the
 // connect-time mode is fixed; disconnect before switching kind).
@@ -42,9 +42,9 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 	// releases the advisory lock.
 	var finalize func() (*Projection, error)
 	err := s.repo.Tx(ctx, func(tx OrgCredentialTx) error {
-		// Acquire org-scoped advisory lock for the duration of the txn so the
-		// callback handler and a concurrent webhook (installation.created) can't
-		// race the INSERT/UPDATE.
+		// Acquire the org-scoped advisory lock for the duration of the txn so
+		// two concurrent connects (or a connect and a disconnect) for the org
+		// can't race the INSERT/UPDATE.
 		if err := tx.AdvisoryLock("org:" + ocOrgID); err != nil {
 			return fmt.Errorf("connect: org lock: %w", err)
 		}

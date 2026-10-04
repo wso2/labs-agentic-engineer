@@ -149,7 +149,7 @@ func TestListMilestoneIssues_FiltersByNumberStateAndLabels(t *testing.T) {
 	}
 }
 
-func TestListMilestoneIssues_UnknownMilestoneFails(t *testing.T) {
+func TestListMilestoneIssues_NumberRequired(t *testing.T) {
 	t.Parallel()
 	svc, _ := newIssueSvcOnFake(t)
 	if _, err := svc.ListMilestoneIssues(testContext(), "org1", "proj1", sourcecontrol.MilestoneIssuesFilter{}); err == nil {

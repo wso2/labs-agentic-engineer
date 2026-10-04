@@ -87,6 +87,27 @@ func TestWebhookRegister_ReconcilesTheEventsOnTheHook(t *testing.T) {
 	}
 }
 
+// Registering again answers the same hook (the pod ensures it) and
+// reconciles its events.
+func TestWebhookRegister_IsIdempotent(t *testing.T) {
+	t.Parallel()
+	wh, repo, f := newWebhookSvcOnFake(t)
+	first, err := wh.Register(testContext(), "org1", "proj1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := wh.Register(testContext(), "org1", "proj1")
+	if err != nil || *second != *first {
+		t.Fatalf("second register = (%v, %v), want hook %d", second, err, *first)
+	}
+	if hooks := f.HookEvents(widgets); len(hooks) != 1 {
+		t.Fatalf("hooks = %v, want one", hooks)
+	}
+	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != *first {
+		t.Fatalf("persisted WebhookID = %v, want %d", got, *first)
+	}
+}
+
 // A failed reconcile does not undo a registration that succeeded.
 func TestWebhookRegister_ReconcileFailureIsNotFatal(t *testing.T) {
 	t.Parallel()

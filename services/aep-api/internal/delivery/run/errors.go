@@ -64,8 +64,8 @@ const errTypePermanentSourceControl = "PermanentSourceControlFailure"
 // right for it.
 //
 // The original error is carried as the ApplicationError's CAUSE, so an
-// errors.Is/As on the way out still sees ErrRepoNotFound, an HTTPStatusError or
-// a GraphQLError rather than a flattened string.
+// errors.Is/As on the way out still sees ErrRepoNotFound or an HTTPStatusError
+// rather than a flattened string.
 func sourceControlErr(err error) error {
 	if !sourcecontrol.IsPermanent(err) {
 		return err

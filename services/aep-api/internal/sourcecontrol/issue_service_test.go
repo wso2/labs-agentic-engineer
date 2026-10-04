@@ -204,6 +204,10 @@ func TestCloseIssue_CommentsThenCloses(t *testing.T) {
 	if err := svc.CloseIssue(testContext(), "org1", "proj1", n, "closing this out"); err != nil {
 		t.Fatalf("CloseIssue: %v", err)
 	}
+	// Read the call log before the assertions below add their own reads.
+	if got, want := ops(f), []string{aestudiotest.OpCreateIssue, aestudiotest.OpCommentIssue, aestudiotest.OpCloseIssue}; !slices.Equal(got, want) {
+		t.Fatalf("ops = %v, want the comment before the close", got)
+	}
 	cs := commentsOn(t, f, widgets, n)
 	// The prose is the caller's; the machine brand rides in front of it (see
 	// TestCloseIssue_ClosingCommentIsBrandedAsMachine).
@@ -213,9 +217,6 @@ func TestCloseIssue_CommentsThenCloses(t *testing.T) {
 	got := issueNo(t, f, widgets, n)
 	if got.State != "closed" || got.StateReason != "completed" {
 		t.Fatalf("issue = %+v, want closed completed", got)
-	}
-	if want := []string{aestudiotest.OpCreateIssue, aestudiotest.OpCommentIssue, aestudiotest.OpCloseIssue, aestudiotest.OpListIssueComments}; !slices.Equal(ops(f), want) {
-		t.Fatalf("ops = %v, want the comment before the close", ops(f))
 	}
 }
 

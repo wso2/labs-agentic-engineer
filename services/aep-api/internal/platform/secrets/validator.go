@@ -61,8 +61,8 @@ type Validator struct {
 // ValidatorProbes is the seam between the validator's loop and GitHub /
 // the database mutations. The validator never builds Authorization headers
 // or runs raw HTTP — that's all behind these methods (which the
-// production wiring backs with the git host client + CredentialService, and
-// tests back with fakes).
+// production wiring backs with the org's AE Studio pod, read through the
+// aestudiotools adapter, + CredentialService, and tests back with fakes).
 type ValidatorProbes interface {
 	// ListActiveRows returns the rows to probe. The validator iterates
 	// the slice without holding the validator lock.

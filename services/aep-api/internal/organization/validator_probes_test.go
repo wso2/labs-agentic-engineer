@@ -72,8 +72,17 @@ func TestProbePAT_MapsThePodsAnswer(t *testing.T) {
 			f.SetIdentity("default", &sourcecontrol.GitHubUser{Login: "acme-bot"})
 			f.FailOp(aestudiotest.OpGitHubIdentity, tc.err)
 			p := organization.NewValidatorProbes(probeCredSvc(), f)
-			if _, _, _, err := p.ProbePAT(context.Background(), secrets.ActiveRow{OcOrgID: "default"}); !errors.Is(err, tc.want) {
+			_, _, _, err := p.ProbePAT(context.Background(), secrets.ActiveRow{OcOrgID: "default"})
+			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			// The two signals exclude each other: a skipped tick never cascades.
+			other := secrets.ErrCredentialTransient
+			if tc.want == secrets.ErrCredentialTransient {
+				other = secrets.ErrCredentialUnauthorized
+			}
+			if errors.Is(err, other) {
+				t.Fatalf("err = %v also matches %v", err, other)
 			}
 		})
 	}

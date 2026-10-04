@@ -16,13 +16,14 @@
 
 package github
 
-// The issue and milestone wire GitHub forces on the client, pinned against a
-// githubtest.Stub: the case-sensitivity split and 422 recovery of milestone
-// creation, number-not-title addressing, pagination, PR exclusion, the one
-// GraphQL round trip of the dispatch counts, and the request bodies of the
-// issue writes. Moved from aep-api's service-tier tests (sourcecontrol
-// milestone_ops_test.go / issue_service_test.go), which drove the same code
-// in githubhost before phase 4 moved it here.
+// The issue, milestone and hook wire GitHub forces on the client, pinned
+// against a githubtest.Stub: the case-sensitivity split and 422 recovery of
+// milestone creation, number-not-title addressing, pagination, PR exclusion,
+// the one GraphQL round trip of the dispatch counts, the request bodies of
+// the issue writes, the hook's body and its delete. Moved from aep-api's
+// service-tier tests (sourcecontrol milestone_ops_test.go,
+// issue_service_test.go, webhook_service_test.go, webhook_unregister_test.go),
+// which drove the same code in githubhost before phase 4 moved it here.
 
 import (
 	"context"
@@ -469,6 +470,60 @@ func TestListIssues_PassesTheLabelFilter(t *testing.T) {
 	}
 	if req := onlyRequestTo(t, stub, http.MethodGet, issuesPath); !strings.Contains(req.Query, "labels=aep") {
 		t.Fatalf("query = %q, want it to contain labels=aep", req.Query)
+	}
+}
+
+// The hook GitHub receives: a "web" hook to the pod's delivery URL, signed
+// with the pod's secret, JSON bodies, TLS verification ON (insecure_ssl "0")
+// and the asked-for events. The URL, the secret and insecure_ssl are the
+// security-relevant parts. Moved from aep-api's webhook_service_test.go.
+func TestRegisterWebhook_SendsTheSignedVerifiedHook(t *testing.T) {
+	stub := githubtest.NewStub(t)
+	stub.On(http.MethodPost, "/repos/acme/widgets/hooks", http.StatusCreated, `{"id":12345}`)
+	c := New(Config{APIBase: stub.URL(), Token: staticToken("test-token"), HookURL: "https://tools.example/webhooks/github", HookSecret: "s3cr3t"})
+
+	id, existed, err := c.RegisterWebhook(context.Background(), wireOwner, wireRepo, []string{"pull_request", "push", "issue_comment", "issues"})
+	if err != nil || id != 12345 || existed {
+		t.Fatalf("RegisterWebhook = (%d, %v, %v), want (12345, false, nil)", id, existed, err)
+	}
+	var body struct {
+		Name   string            `json:"name"`
+		Active bool              `json:"active"`
+		Events []string          `json:"events"`
+		Config map[string]string `json:"config"`
+	}
+	decodeInto(t, onlyRequestTo(t, stub, http.MethodPost, "/repos/acme/widgets/hooks").Body, &body)
+	if body.Name != "web" || !body.Active {
+		t.Fatalf("hook = {name:%q active:%v}, want {web true}", body.Name, body.Active)
+	}
+	if strings.Join(body.Events, ",") != "pull_request,push,issue_comment,issues" {
+		t.Fatalf("events = %v", body.Events)
+	}
+	want := map[string]string{"url": "https://tools.example/webhooks/github", "secret": "s3cr3t", "content_type": "json", "insecure_ssl": "0"}
+	for k, v := range want {
+		if body.Config[k] != v {
+			t.Fatalf("config[%s] = %q, want %q", k, body.Config[k], v)
+		}
+	}
+}
+
+// A hook GitHub says is not there — 404, or 410 once it reaped a failing
+// hook — is a successful delete: absence is the post-state asked for.
+// Moved from aep-api's webhook_unregister_test.go.
+func TestDeleteWebhook_AlreadyGoneIsSuccess(t *testing.T) {
+	for _, status := range []int{http.StatusNoContent, http.StatusNotFound, http.StatusGone} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			stub := githubtest.NewStub(t)
+			stub.On(http.MethodDelete, "/repos/acme/widgets/hooks/12345", status, `{"message":"Not Found"}`)
+			if err := clientOnStub(stub).DeleteWebhook(context.Background(), wireOwner, wireRepo, 12345); err != nil {
+				t.Fatalf("delete answered %d: err = %v, want success", status, err)
+			}
+		})
+	}
+	stub := githubtest.NewStub(t)
+	stub.On(http.MethodDelete, "/repos/acme/widgets/hooks/12345", http.StatusInternalServerError, `{"message":"boom"}`)
+	if err := clientOnStub(stub).DeleteWebhook(context.Background(), wireOwner, wireRepo, 12345); err == nil {
+		t.Fatal("a 500 on delete must be reported")
 	}
 }
 
