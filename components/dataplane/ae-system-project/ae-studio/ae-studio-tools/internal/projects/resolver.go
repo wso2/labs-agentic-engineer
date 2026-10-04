@@ -49,11 +49,11 @@ var (
 	// aep_api_unavailable (503).
 	ErrUnavailable = errors.New("aep-api unavailable")
 	// ErrMisconfigured marks an ErrUnavailable caused by the pod's own
-	// credentials: the token endpoint rejected the publisher client, or
+	// credentials: the token endpoint rejected the ae-studio client, or
 	// aep-api still answered 401/403 after a fresh token. The wire answer is
 	// still aep_api_unavailable; callers check this to log one loud,
 	// value-free event, since retrying will not help.
-	ErrMisconfigured = errors.New("publisher credentials rejected")
+	ErrMisconfigured = errors.New("ae-studio client credentials rejected")
 )
 
 // Resolver maps a project name to its repository, and the org to its skills
@@ -68,8 +68,8 @@ type Resolver interface {
 
 // NewAEPAPIResolver resolves through aep-api's
 // GET /internal/v1/ae-studio/projects/{projectName}/repository and
-// GET /internal/v1/ae-studio/skills/repository. c carries the org's publisher
-// token (platform.NewAEPAPI), which scopes the answer to the pod's org. It
+// GET /internal/v1/ae-studio/skills/repository. c carries the org's ae-studio
+// client token (platform.NewAEPAPI), which scopes the answer to the pod's org. It
 // takes the raw-op interface: the decision is the HTTP status, never a parsed
 // error body (Q-2).
 func NewAEPAPIResolver(c aepapi.ClientInterface) Resolver {
@@ -80,7 +80,7 @@ type aepAPIResolver struct{ c aepapi.ClientInterface }
 
 // Resolve maps by HTTP status and never reads an error body for a decision
 // (Q-2): 200 → the repository, 404 → ErrUnknown, 401/403 (after the
-// transport's one retry) or a rejected publisher client → ErrUnavailable and
+// transport's one retry) or a rejected ae-studio client → ErrUnavailable and
 // ErrMisconfigured, anything else or a transport failure → ErrUnavailable.
 func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repository, error) {
 	resp, err := r.c.GetAeStudioProjectRepository(ctx, project)

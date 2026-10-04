@@ -892,6 +892,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// runner identity there is; an execution id named in a path fails closed.
 	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-")
 	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleOrgLookup(db))
+	// The ae-studio/ internal ops take only the org's ae-studio-<org> client
+	// token, checked against the client id recorded for the org; a publisher
+	// token (what a coding Job holds) never opens them.
+	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
 
 	// One RCA-report store: the SRE handoff writes through it (sre/ ops) and
 	// the ops domain reads through it (console Alerts).
@@ -918,10 +922,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			SREHandoff: sreHandoff,
 			Issues:     issueService,
 			RcaReports: rcaReports,
-			// The AE Studio tools pod presents its org's publisher client
-			// token (the verifier the runner callbacks use) to resolve a
-			// project to its repository on every request.
-			PublisherTokens:      publisherVerifier,
+			// The AE Studio tools pod presents its org's ae-studio-<org>
+			// client token on every ae-studio/ op.
+			StudioClients:        studioClientVerifier,
 			AEStudioRepositories: aestudio.NewProjectRepositories(repoService),
 			// The org's skills library, reconciled before each turn's
 			// snapshot, as every turn's skills have been.
@@ -929,6 +932,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// The finished-turn ledger the pod hands its turns to; the status
 			// poll, the build gate's design baseline and kickoff read it.
 			TurnLedger: turnRepo,
+			// The pod's verified GitHub hook deliveries, into the same
+			// ledger and handlers as the receiver's.
+			WebhookIngestor: webhookIngestor,
 		},
 		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,

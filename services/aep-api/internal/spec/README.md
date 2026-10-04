@@ -156,7 +156,7 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   reached through sourcecontrol's `Workspace`/gitfs engine.
 - **`agent_turns` is the finished-turn ledger** (07 §12). An org's AE Studio tools pod hands
   over the turns its design agent ran through `record-turn-usage` (`POST
-  /internal/v1/ae-studio/turn-usage`, publisher client token, ≤ 100 records). `RecordFinished`
+  /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
   writes each record once (`ON CONFLICT (org_id, id) DO NOTHING`, so a resent batch changes nothing) with
   its `kind` (`browser | kickoff | plan`), `started_at`/`finished_at`, and `cost_usd` stamped at
   ingest from the `(host, model)` rate then in force. `created_at` is the turn's start, so

@@ -58,7 +58,7 @@ func filesProblem(ctx context.Context, op, project string, err error) problemRes
 		return problemResponse{status: http.StatusNotFound, code: "project_unknown", detail: "no such project in this org"}
 	case errors.Is(err, projects.ErrMisconfigured):
 		// Retrying will not help, so no Retry-After; the loud event is the
-		// operator's signal that the publisher credentials are wrong.
+		// operator's signal that the ae-studio client credentials are wrong.
 		cause := "aep_api"
 		if errors.Is(err, platform.ErrClientRejected) {
 			cause = "token_endpoint"

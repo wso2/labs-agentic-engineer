@@ -41,8 +41,8 @@ import (
 // (capInternalBody, which finds its route once); every generated operation then
 // passes internalGate, which verifies the caller's credential for the op's
 // route group (a runner's publisher-cc bearer against the cycle named in the
-// path, the INT-6 fence; the SRE handoff bearer for sre/; an org's publisher
-// client token for ae-studio/) and binds the verified org into the context;
+// path, the INT-6 fence; the SRE handoff bearer for sre/; an org's
+// ae-studio-<org> client token for ae-studio/) and binds the verified org into the context;
 // only an authenticated request is validated against the embedded internal
 // spec (internalValidator). The raw MCP routes carry their
 // own verifier. The spec is non-public, never gateway-advertised, but the path
@@ -70,10 +70,10 @@ type InternalDeps struct {
 	// A nil one answers 503 for its ops.
 	Issues     sourcecontrol.IssueService
 	RcaReports ops.Repository
-	// PublisherTokens verifies an org's publisher client token for the
-	// ae-studio/ ops (the AE Studio tools pod). nil fails closed: every
-	// ae-studio/ op answers 401.
-	PublisherTokens *auth.PublisherTokenVerifier
+	// StudioClients verifies an org's ae-studio-<org> client token for the
+	// ae-studio/ ops (the AE Studio tools pod) and binds the org recorded for
+	// that client. nil fails closed: every ae-studio/ op answers 401.
+	StudioClients *auth.StudioClientVerifier
 	// AEStudioRepositories backs get-ae-studio-project-repository; nil
 	// answers 503.
 	AEStudioRepositories ProjectRepositoryLookup
@@ -86,6 +86,9 @@ type InternalDeps struct {
 	// TurnLedger backs record-turn-usage (the finished-turn ledger,
 	// spec.TurnRepository); nil answers 503.
 	TurnLedger TurnLedger
+	// WebhookIngestor backs ingest-webhook-event (webhook.Ingestor); nil
+	// answers 503.
+	WebhookIngestor WebhookIngestor
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation
@@ -141,11 +144,13 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 }
 
 // internalDefaultBodyBytes caps every /internal/v1 request body (03 §4);
-// internalBodyCaps lists the operations allowed more. Phase 4 adds
-// ingest-webhook-event at 25 MiB (GitHub's payload maximum).
+// internalBodyCaps lists the operations allowed more, keyed by the embedded
+// spec's operation id.
 const internalDefaultBodyBytes int64 = 1 << 20
 
-var internalBodyCaps = map[string]int64{}
+var internalBodyCaps = map[string]int64{
+	"ingest-webhook-event": ingestBodyCapBytes,
+}
 
 // internalRouteMatch is the embedded-spec operation a request matched, found
 // once by capInternalBody and read from the context by internalGate and
@@ -221,8 +226,10 @@ const (
 	runnerCredential internalCredential = iota + 1
 	// sreHandoffCredential: aep-mcp-server's static SRE handoff bearer.
 	sreHandoffCredential
-	// aeStudioCredential: the org's publisher client token, presented by its
-	// AE Studio tools pod; no cycle fence, the org is the token's ouHandle.
+	// aeStudioCredential: the org's ae-studio-<org> client token, presented
+	// by its AE Studio tools pod; no cycle fence, the org is the one that
+	// client is recorded for. An org's publisher token (what its coding Jobs
+	// hold) never clears it.
 	aeStudioCredential
 )
 
@@ -246,6 +253,7 @@ var internalOpGates = map[string]internalOpGate{
 	"get-ae-studio-skills-repository":  {credential: aeStudioCredential},
 	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
 	"record-turn-usage":                {credential: aeStudioCredential},
+	"ingest-webhook-event":             {credential: aeStudioCredential},
 }
 
 // internalGate is /internal/v1's deny-by-default gate (internalOpGates), one
@@ -255,7 +263,7 @@ var internalOpGates = map[string]internalOpGate{
 //
 //	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
-//	ae-studio/                 AE Studio pod   publisher client token, binds its ouHandle org (no cycle)
+//	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
 //	mcp, mcp/playground-token  runner, agent   route miss here: passed through to their own verifier
 //	any other embedded op      -               denied (401)
 //
@@ -263,9 +271,9 @@ var internalOpGates = map[string]internalOpGate{
 // serves a raw MCP route that verifies its own caller. Each generated operation
 // must present the credential of its route group, and the verified org is bound
 // into the context. A credential opens its own group only: a publisher token
-// never clears sre/, the SRE bearer never clears a runner op or ae-studio/,
-// and no other token (a user JWT, the AE-only client, an ae-studio-<org>
-// client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
+// never clears sre/ or ae-studio/, the SRE bearer never clears a runner op or
+// ae-studio/, an ae-studio-<org> client token never clears a runner op, and
+// no other token (a user JWT, the AE-only client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
 // denied outright, so adding an internal op means teaching this gate its
 // credential first. The cycle fence checks the decoded path value, the one
 // the handler is served. requireInternalGate denies any generated op that reaches
@@ -305,7 +313,7 @@ func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader str
 		ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
 		return tenant.WithBoundOrg(ctx, claims.OuHandle), nil
 	case ok && gate.credential == aeStudioCredential:
-		return authenticateAEStudio(ctx, deps.PublisherTokens, authHeader)
+		return authenticateAEStudio(ctx, deps.StudioClients, authHeader)
 	case ok && gate.credential == runnerCredential:
 		if deps.RunnerAuth == nil {
 			return nil, errServiceUnavailable("runner auth not configured")

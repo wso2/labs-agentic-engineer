@@ -292,7 +292,7 @@ func dependencyDocumentPath(name, file string) (string, bool) {
 
 // NewAEPAPICompleter completes through aep-api's
 // POST /internal/v1/ae-studio/dependency-completions. c carries the org's
-// publisher token (platform.NewAEPAPI); aep-api answers 404 for a project
+// ae-studio client token (platform.NewAEPAPI); aep-api answers 404 for a project
 // outside the token's org. It takes the raw-op interface: the decision is
 // the HTTP status, never a parsed error body.
 func NewAEPAPICompleter(c aepapi.ClientInterface) Completer {
@@ -303,7 +303,7 @@ type aepAPICompleter struct{ c aepapi.ClientInterface }
 
 // Complete maps by HTTP status: 200 → the completions, 404 →
 // projects.ErrUnknown, 401/403 (after the transport's one retry) or a
-// rejected publisher client → projects.ErrUnavailable and ErrMisconfigured,
+// rejected ae-studio client → projects.ErrUnavailable and ErrMisconfigured,
 // anything else, a transport failure or an unusable body →
 // projects.ErrUnavailable.
 func (c aepAPICompleter) Complete(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning, error) {

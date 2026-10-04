@@ -35,7 +35,8 @@ import (
 // MUST match the ouHandle claim).
 //
 // Used by the runner-callback handlers (Skills, Refresh) to accept
-// per-org publisher cc tokens.
+// per-org publisher cc tokens, and over the ae-studio- prefix by
+// StudioClientVerifier (the same checks, another per-org client).
 type PublisherTokenVerifier struct {
 	jwks           *jwtassertion.JWKSCache
 	expectedIssuer string

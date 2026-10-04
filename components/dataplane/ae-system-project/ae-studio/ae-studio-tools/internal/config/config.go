@@ -40,7 +40,8 @@ type Config struct {
 	WebhookURL             string
 	ListenPort, HealthPort int
 	// IDPTokenURL and the publisher client mint the org's publisher token,
-	// which authenticates the pod's calls to aep-api at AEPAPIBaseURL.
+	// which authenticates the pod's MCP calls to aep-api at AEPAPIBaseURL
+	// (its ae-studio/ ops take the ae-studio client, StudioClientID).
 	IDPTokenURL                              string
 	PublisherClientID, PublisherClientSecret string
 	AEPAPIBaseURL                            string
@@ -61,7 +62,8 @@ type Config struct {
 	// remote-git call, per call, not at boot.
 	GitHubOwner string
 	// StudioClientID and StudioClientSecret are the ae-studio-<org> client,
-	// which mints the agent's collab room token.
+	// which mints the agent's collab room token and authenticates the pod's
+	// calls to aep-api's ae-studio/ ops.
 	StudioClientID, StudioClientSecret string
 }
 

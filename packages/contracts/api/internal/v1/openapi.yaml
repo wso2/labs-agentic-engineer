@@ -6,9 +6,11 @@ info:
     never the console: non-public, never gateway-advertised. Every operation's
     tags name its caller (Runner, AE Studio, SRE), so the spec reads as who
     calls what. Callers authenticate with a Thunder per-org publisher
-    client-credentials token, a BFF-signed per-task RS256 JWT, or (sre/ ops
-    only) the static per-org SRE handoff bearer; the acting org is always
-    derived from the verified credential, never from request input.
+    client-credentials token (runner ops), the org's ae-studio-<org>
+    client-credentials token (ae-studio/ ops only), a BFF-signed per-task
+    RS256 JWT, or (sre/ ops only) the static per-org SRE handoff bearer; the
+    acting org is always derived from the verified credential, never from
+    request input.
 
     Requests are validated against this spec and body-capped per operation
     (1 MiB by default) before any handler runs.
@@ -189,12 +191,12 @@ paths:
       summary: Resolve a project to its GitHub repository (AE Studio tools pod)
       description: |-
         The org's AE Studio tools pod calls this on every request; it keeps no
-        cache. The org is the publisher client token's ouHandle. A project the
-        org does not own answers 404, the same as one that does not exist.
+        cache. The org is the one its ae-studio client token is recorded for. A
+        project the org does not own answers 404, the same as one that does not exist.
       tags:
       - AE Studio
       security:
-      - publisherCC: []
+      - aeStudioCC: []
       parameters:
       - description: Project name (DNS-label slug)
         in: path
@@ -222,15 +224,15 @@ paths:
       summary: Resolve the org's skills repository (AE Studio tools pod)
       description: |-
         The org's AE Studio tools pod calls this before it writes the Org
-        skills snapshot of a turn; it keeps no cache. The org is the publisher
-        client token's ouHandle. aep-api reconciles the org's skills library
+        skills snapshot of a turn; it keeps no cache. The org is the one its
+        ae-studio client token is recorded for. aep-api reconciles the org's skills library
         first (the platform skills shipped since it was provisioned land in it),
         then answers the org's skills repository. 404 when the org has none;
         503 when the library could not be reconciled.
       tags:
       - AE Studio
       security:
-      - publisherCC: []
+      - aeStudioCC: []
       responses:
         '200':
           content:
@@ -261,8 +263,8 @@ paths:
         aep-api copies the registered resource from the org registry, or
         fetches the provider's document (https, public hosts, 5 MiB), so a URL
         chosen by model output is never fetched by the pod that holds the
-        org's git credential. The org is the publisher client token's
-        ouHandle, and `project` must be one of its projects (404 otherwise,
+        org's git credential. The org is the one its ae-studio client token is
+        recorded for, and `project` must be one of its projects (404 otherwise,
         with no data). A stub that cannot be completed is absent from `completed`
         and carries a warning; a write that is not a stub is ignored. Every
         path must be `specs/design/dependencies/<name>/dependency.json`, else
@@ -270,7 +272,7 @@ paths:
       tags:
       - AE Studio
       security:
-      - publisherCC: []
+      - aeStudioCC: []
       requestBody:
         content:
           application/json:
@@ -296,8 +298,8 @@ paths:
       summary: Record finished turns (AE Studio tools pod)
       description: |-
         The org's AE Studio tools pod hands over the records of the turns that
-        ran in its design agent. The org is the publisher client token's
-        ouHandle. Idempotent on `turnId`: a record already stored is kept, not
+        ran in its design agent. The org is the one its ae-studio client token
+        is recorded for. Idempotent on `turnId`: a record already stored is kept, not
         written twice. A record's `project`, when present, must be one of the
         org's projects; a record without `project` is a marketplace turn and is
         valid. When any record names a project that is unknown or not the org's,
@@ -305,7 +307,7 @@ paths:
       tags:
       - AE Studio
       security:
-      - publisherCC: []
+      - aeStudioCC: []
       requestBody:
         content:
           application/json:
@@ -321,6 +323,80 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: A record names a project that is unknown or not the org's.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /ae-studio/webhook-events:
+    post:
+      operationId: ingest-webhook-event
+      summary: Ingest one verified GitHub webhook delivery (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod receives its repositories' GitHub hook
+        deliveries, verifies GitHub's signature over the exact bytes, and hands
+        each verified delivery over here, one per request, with GitHub's
+        delivery id and event name. The org is the one its ae-studio client
+        token is recorded for.
+        The body is kept as it arrived (never re-serialized): the handlers get
+        these bytes, and the delivery ledger stores them with only a published
+        test-user credential redacted.
+
+        The event must be one of the hook's (`pull_request`, `push`,
+        `issue_comment`, `issues`, `ping`) and its `repository.full_name` must
+        name one of the org's repositories; otherwise 404
+        `repository_unknown` and nothing is stored. Deduplicated on the
+        delivery id: a delivery already processed answers 200 `duplicate`, one
+        whose earlier attempt is still running or waiting to be retried
+        answers 202 `held`. Otherwise it is stored and its handlers start
+        after the answer (202 `dispatched`); a failed run is retried by
+        aep-api, not by the caller. Bodies up to 25 MiB (GitHub's payload
+        maximum).
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      parameters:
+      - description: GitHub's delivery id (X-GitHub-Delivery), the dedup key.
+        in: header
+        name: X-GitHub-Delivery
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - description: GitHub's event name (X-GitHub-Event).
+        in: header
+        name: X-GitHub-Event
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioWebhookEvent'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioWebhookEventResult'
+          description: A redelivery of a delivery already processed (`duplicate`).
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioWebhookEventResult'
+          description: Stored and dispatched (`dispatched`), or held by an earlier attempt (`held`).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The delivery names no repository of the org (`repository_unknown`).
         default:
           content:
             application/json:
@@ -875,6 +951,27 @@ components:
           type: string
         name:
           type: string
+    AEStudioWebhookEvent:
+      description: |-
+        A GitHub webhook payload, exactly as GitHub sent it. Declares no
+        properties or defaults, so validation never rewrites it, and is
+        generated as json.RawMessage so the handler gets the bytes as they
+        arrived.
+      type: object
+      x-go-type: json.RawMessage
+    AEStudioWebhookEventResult:
+      description: What became of an ingested delivery.
+      type: object
+      additionalProperties: false
+      properties:
+        result:
+          type: string
+          enum:
+          - dispatched
+          - held
+          - duplicate
+      required:
+      - result
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object
@@ -916,6 +1013,15 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Thunder per-org publisher client-credentials token
+    aeStudioCC:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |-
+        Thunder client-credentials token of the org's AE Studio client
+        (ae-studio-<org>), held by its AE Studio tools pod; the org is the one
+        that client is recorded for. The only credential the ae-studio/ ops
+        accept.
     sreHandoff:
       type: http
       scheme: bearer

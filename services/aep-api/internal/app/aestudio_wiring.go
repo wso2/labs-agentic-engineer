@@ -17,6 +17,8 @@
 package app
 
 import (
+	"context"
+
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/config"
@@ -65,4 +67,21 @@ func aeStudioOCConfig(base openchoreo.Config) openchoreo.Config {
 	}
 	base.RequestAuthStrategy = nil
 	return base
+}
+
+// studioClientRecords answers the ae-studio-<org> client id recorded on the
+// org's IDP profile (auth.StudioClientLookup): the binding the ae-studio/
+// internal gate checks a tools pod's token against.
+type studioClientRecords struct {
+	profiles interface {
+		GetProfileByOrgID(ctx context.Context, orgID string) (*organization.OrganizationIDPProfile, error)
+	}
+}
+
+func (r studioClientRecords) StudioClientID(ctx context.Context, org string) (string, error) {
+	p, err := r.profiles.GetProfileByOrgID(ctx, org)
+	if err != nil || p == nil {
+		return "", err
+	}
+	return p.StudioClientID, nil
 }

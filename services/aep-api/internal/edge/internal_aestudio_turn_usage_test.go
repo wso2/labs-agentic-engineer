@@ -113,7 +113,7 @@ func TestTurnUsage_RecordsTheBatchUnderTheTokenOrg(t *testing.T) {
 	deps.TurnLedger = ledger
 	h := NewHandler(AppParams{InternalDeps: deps})
 
-	rec := postTurnUsage(t, h, "Bearer "+stack.mint("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
+	rec := postTurnUsage(t, h, "Bearer "+stack.mintStudio("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
 	}
@@ -165,7 +165,7 @@ func TestTurnUsage_OptionalFieldsStayEmpty(t *testing.T) {
 		r["reason"] = "shutdown"
 		r["code"] = "shutdown"
 	}))
-	if rec := postTurnUsage(t, h, "Bearer "+stack.mint("acme"), body); rec.Code != http.StatusAccepted {
+	if rec := postTurnUsage(t, h, "Bearer "+stack.mintStudio("acme"), body); rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
 	}
 	got := ledger.batches[0][0]
@@ -185,8 +185,8 @@ func TestTurnUsage_OptionalFieldsStayEmpty(t *testing.T) {
 // permanently bad one is never a 5xx.
 func TestTurnUsage_Tenancy(t *testing.T) {
 	stack := newInternalStack(t)
-	publisher := "Bearer " + stack.mint("acme")
-	evil := "Bearer " + stack.mint("evil")
+	studio := "Bearer " + stack.mintStudio("acme")
+	evil := "Bearer " + stack.mintStudio("evil")
 	withProject := func(p string) func(map[string]any) {
 		return func(r map[string]any) { r["project"] = p }
 	}
@@ -213,15 +213,16 @@ func TestTurnUsage_Tenancy(t *testing.T) {
 		wantOrg      string
 		wantRecords  int
 	}{
-		{name: "own project", bearer: publisher, records: []map[string]any{turnRecordJSON(t, nil)}, want: 202, wantOrg: "acme", wantRecords: 1},
-		{name: "marketplace record", bearer: publisher, records: []map[string]any{turnRecordJSON(t, marketplace)}, want: 202, wantOrg: "acme", wantRecords: 1},
-		{name: "own project and marketplace", bearer: publisher, records: []map[string]any{turnRecordJSON(t, nil), other(marketplace)}, want: 202, wantOrg: "acme", wantRecords: 2},
+		{name: "own project", bearer: studio, records: []map[string]any{turnRecordJSON(t, nil)}, want: 202, wantOrg: "acme", wantRecords: 1},
+		{name: "marketplace record", bearer: studio, records: []map[string]any{turnRecordJSON(t, marketplace)}, want: 202, wantOrg: "acme", wantRecords: 1},
+		{name: "own project and marketplace", bearer: studio, records: []map[string]any{turnRecordJSON(t, nil), other(marketplace)}, want: 202, wantOrg: "acme", wantRecords: 2},
 		{name: "org B token, org A project", bearer: evil, records: []map[string]any{turnRecordJSON(t, nil)}, want: 404},
-		{name: "unknown project", bearer: publisher, records: []map[string]any{turnRecordJSON(t, withProject("nope"))}, want: 404},
-		{name: "one foreign record refuses the batch", bearer: publisher, records: []map[string]any{turnRecordJSON(t, nil), other(withProject("ledger"))}, want: 404},
+		{name: "unknown project", bearer: studio, records: []map[string]any{turnRecordJSON(t, withProject("nope"))}, want: 404},
+		{name: "one foreign record refuses the batch", bearer: studio, records: []map[string]any{turnRecordJSON(t, nil), other(withProject("ledger"))}, want: 404},
 		{name: "org B token, its own project", bearer: evil, records: []map[string]any{turnRecordJSON(t, withProject("ledger"))}, want: 202, wantOrg: "evil", wantRecords: 1},
 		{name: "no bearer", records: []map[string]any{turnRecordJSON(t, nil)}, want: 401},
 		{name: "user JWT", bearer: userJWT, records: []map[string]any{turnRecordJSON(t, nil)}, want: 401},
+		{name: "publisher token of the org", bearer: "Bearer " + stack.mint("acme"), records: []map[string]any{turnRecordJSON(t, nil)}, want: 401},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -253,7 +254,7 @@ func TestTurnUsage_Tenancy(t *testing.T) {
 // 5xx it retries.
 func TestTurnUsage_Statuses(t *testing.T) {
 	stack := newInternalStack(t)
-	publisher := "Bearer " + stack.mint("acme")
+	studio := "Bearer " + stack.mintStudio("acme")
 	build := func(mut func(*InternalDeps)) http.Handler {
 		deps := stack.deps
 		deps.AEStudioRepositories = aeStudioProjects()
@@ -298,7 +299,7 @@ func TestTurnUsage_Statuses(t *testing.T) {
 			if h == nil {
 				h = build(nil)
 			}
-			if rec := postTurnUsage(t, h, publisher, tc.body); rec.Code != tc.want {
+			if rec := postTurnUsage(t, h, studio, tc.body); rec.Code != tc.want {
 				t.Fatalf("status = %d, want %d (body %s)", rec.Code, tc.want, rec.Body)
 			}
 		})
@@ -316,7 +317,7 @@ func TestTurnUsage_ProjectWithAnUnparseableRepoURL(t *testing.T) {
 	deps.TurnLedger = ledger
 	h := NewHandler(AppParams{InternalDeps: deps})
 
-	rec := postTurnUsage(t, h, "Bearer "+stack.mint("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
+	rec := postTurnUsage(t, h, "Bearer "+stack.mintStudio("acme"), turnUsageBody(t, turnRecordJSON(t, nil)))
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
 	}

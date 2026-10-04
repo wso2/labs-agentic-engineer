@@ -41,8 +41,9 @@ import (
 // tools pod resolves a project to its GitHub repository on every request
 // (04 §2) and the org's skills repository on every turn (07 §6), and has the dependency stubs of a save completed here (04 §4), so
 // the registry read and the fetch of a model-chosen URL never run in the pod
-// that holds the org's git credential. internalGate admits only the org's publisher client token here and
-// binds its ouHandle as the org; the org is always read from the context,
+// that holds the org's git credential. internalGate admits only the org's
+// ae-studio-<org> client token here and binds the org that client is recorded
+// for; the org is always read from the context,
 // never the request. A project the org does not own is a 404, the same as one
 // that does not exist.
 
@@ -80,21 +81,26 @@ const codePathInvalid = "path_invalid"
 // margin is the warnings' room. Raise both together.
 const maxCompletionsAnswerBytes = 24 << 20
 
-// authenticateAEStudio verifies authHeader as an org's publisher client token
-// (aud aep-publisher-<org>, ouHandle == <org>) and binds that org. A nil
-// verifier, or any other token (a user JWT, the AE-only client, an
-// ae-studio-<org> client), is a 401.
-func authenticateAEStudio(ctx context.Context, verifier *auth.PublisherTokenVerifier, authHeader string) (context.Context, error) {
+// authenticateAEStudio verifies authHeader as an org's ae-studio-<org> client
+// token (aud ae-studio-<org>, ouHandle == <org>, the client recorded for
+// <org>) and binds that org. A nil verifier, or any other token (the org's
+// publisher token, a user JWT, the AE-only client), is a 401; a recorded
+// client that cannot be read is a 503.
+func authenticateAEStudio(ctx context.Context, verifier *auth.StudioClientVerifier, authHeader string) (context.Context, error) {
 	const prefix = "Bearer "
 	if len(authHeader) <= len(prefix) || !strings.EqualFold(authHeader[:len(prefix)], prefix) {
-		return nil, errUnauthorized("publisher client token required")
+		return nil, errUnauthorized("ae-studio client token required")
 	}
-	claims, err := verifier.Verify(authHeader[len(prefix):]) // nil verifier: error, fails closed
+	org, err := verifier.Verify(ctx, authHeader[len(prefix):]) // nil verifier: error, fails closed
+	if errors.Is(err, auth.ErrStudioClientLookup) {
+		slog.ErrorContext(ctx, "ae-studio internal op: client lookup failed", "error", err)
+		return nil, errServiceUnavailable("ae-studio client lookup unavailable")
+	}
 	if err != nil {
 		slog.WarnContext(ctx, "ae-studio internal op: bearer rejected", "error", err)
-		return nil, errUnauthorized("publisher client token required")
+		return nil, errUnauthorized("ae-studio client token required")
 	}
-	return tenant.WithBoundOrg(ctx, claims.OrgHandle), nil
+	return tenant.WithBoundOrg(ctx, org), nil
 }
 
 // lookupAEStudioProject resolves one of org's projects to its repository.

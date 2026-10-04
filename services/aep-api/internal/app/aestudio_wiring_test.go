@@ -18,12 +18,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/ocauth"
 )
@@ -104,5 +106,31 @@ func TestAEStudioOCConfig_UnchangedWithoutImpersonation(t *testing.T) {
 		if got := aeStudioOCConfig(cfg); got.RequestAuthStrategy != cfg.RequestAuthStrategy {
 			t.Errorf("%s: strategy replaced", name)
 		}
+	}
+}
+
+type profilesByOrg map[string]*organization.OrganizationIDPProfile
+
+func (p profilesByOrg) GetProfileByOrgID(_ context.Context, org string) (*organization.OrganizationIDPProfile, error) {
+	if org == "down" {
+		return nil, errors.New("db down")
+	}
+	return p[org], nil
+}
+
+// The ae-studio/ gate's binding is the client id recorded on the org's IDP
+// profile; an org with no profile, or none recorded, has no client.
+func TestStudioClientRecords(t *testing.T) {
+	r := studioClientRecords{profiles: profilesByOrg{
+		"acme":   {StudioClientID: "ae-studio-acme"},
+		"globex": {},
+	}}
+	for org, want := range map[string]string{"acme": "ae-studio-acme", "globex": "", "initech": ""} {
+		if got, err := r.StudioClientID(context.Background(), org); err != nil || got != want {
+			t.Errorf("%s: got %q %v, want %q", org, got, err, want)
+		}
+	}
+	if _, err := r.StudioClientID(context.Background(), "down"); err == nil {
+		t.Error("a failed profile read must be an error, not an empty id")
 	}
 }

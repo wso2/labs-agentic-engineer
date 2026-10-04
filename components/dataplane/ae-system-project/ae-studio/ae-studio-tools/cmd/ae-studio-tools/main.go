@@ -16,7 +16,8 @@
 
 // Command ae-studio-tools is the AE Studio pod's tools container: wiring only.
 // It builds the git engine over the studio-data volume and its reaper, the
-// per-request project resolver (aep-api, with the org's publisher token), and
+// per-request project resolver (aep-api, with the org's ae-studio client
+// token), and
 // serves the public listener (edge.Routes), the Files socket
 // (edge.FilesSocketRoutes, ae-collab's), the MCP socket
 // (edge.MCPSocketRoutes, ae-design-agent's) and the health listener,
@@ -129,17 +130,31 @@ func run() error {
 	slog.Info("repo.root", "root_layout", string(layout))
 	reap := reaper.New(engine, reaper.Config{Budget: cfg.StorageBudgetBytes})
 
-	// The project resolver: aep-api on every request, as the org's publisher.
-	aepAPI, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
+	// The org's ae-studio-<org> client: the only credential aep-api's
+	// ae-studio/ ops accept, and the agent's room tokens.
+	studioClient := &platform.ClientCredentials{
+		TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
+	}
+	// aep-api's ae-studio/ ops (project and skills lookups, dependency
+	// completions, turn usage) as the org's ae-studio client.
+	aepAPI, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, studioClient)
+	if err != nil {
+		slog.Error("aep_api_client_invalid")
+		return err
+	}
+	// aep-api's MCP endpoint (/internal/v1/mcp) as the org's publisher: it
+	// takes a task JWT or a publisher token, never the ae-studio client.
+	aepAPIMCP, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
 		TokenURL: cfg.IDPTokenURL, ClientID: cfg.PublisherClientID, ClientSecret: cfg.PublisherClientSecret,
 	})
 	if err != nil {
 		slog.Error("aep_api_client_invalid")
 		return err
 	}
+	// The project resolver: aep-api on every request.
 	resolver := projects.NewAEPAPIResolver(aepAPI)
 	// The usage outbox: finished turns' records to aep-api's
-	// record-turn-usage, as the publisher, for the process lifetime.
+	// record-turn-usage, for the process lifetime.
 	usageOutbox := startUsageOutbox(usage.New(usage.NewAEPAPIPost(aepAPI)))
 	defer usageOutbox.stopRun()
 	reader := files.Reader{Engine: engine, Projects: resolver}
@@ -150,13 +165,11 @@ func run() error {
 	mcpDeps := edge.MCPSocketDeps{
 		MCP: mcp.Server{
 			Remote:   mcp.RemoteGit{Owner: cfg.GitHubOwner, Token: cfg.GitHubPAT},
-			Upstream: mcp.NewAEPAPIUpstream(aepAPI),
+			Upstream: mcp.NewAEPAPIUpstream(aepAPIMCP),
 		},
-		RoomTokens: &platform.ClientCredentials{
-			TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
-		},
-		Snapshots: reader,
-		Usage:     usageOutbox.sender,
+		RoomTokens: studioClient,
+		Snapshots:  reader,
+		Usage:      usageOutbox.sender,
 	}
 	// The GitHub client over the gitpat: commit identity and aep-api's
 	// GitHub ops; the hooks it registers deliver to AE_WEBHOOK_URL signed

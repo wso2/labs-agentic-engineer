@@ -79,7 +79,11 @@ type internalStack struct {
 	// deps is what handler was built from, so a test can extend the runner
 	// wiring (e.g. with the SRE handoff deps) and build its own handler.
 	deps InternalDeps
+	// mint signs an org's publisher client token (the runner's credential).
 	mint func(org string) string
+	// mintStudio signs an org's ae-studio-<org> client token (the AE Studio
+	// tools pod's credential, the only one the ae-studio/ ops accept).
+	mintStudio func(org string) string
 	// sign signs any claims with the Thunder test key, for tokens that are not
 	// a well-formed publisher token (user JWTs, other clients' tokens).
 	sign    func(claims jwt.Claims) string
@@ -97,6 +101,21 @@ func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string, 
 }
 
 const pubIssuer, pubAudPrefix = "platform-idp", "aep-publisher-"
+
+// orgWithoutStudioClient is the one org recordedStudioClients has no
+// ae-studio client recorded for.
+const orgWithoutStudioClient = "no-client"
+
+// recordedStudioClients records ae-studio-<org> for every org but
+// orgWithoutStudioClient.
+type recordedStudioClients struct{}
+
+func (recordedStudioClients) StudioClientID(_ context.Context, org string) (string, error) {
+	if org == orgWithoutStudioClient {
+		return "", nil
+	}
+	return "ae-studio-" + org, nil
+}
 
 func newInternalStack(t *testing.T) internalStack {
 	t.Helper()
@@ -136,6 +155,20 @@ func newInternalStack(t *testing.T) internalStack {
 			OuHandle: org,
 		})
 	}
+	mintStudio := func(org string) string {
+		return sign(auth.PublisherClaims{
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer:    pubIssuer,
+				Audience:  jwt.ClaimStrings{"ae-studio-" + org},
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			},
+			OuHandle: org,
+		})
+	}
+	studioClients := auth.NewStudioClientVerifier(jwtassertion.NewJWKSCache(jwks.URL), pubIssuer, recordedStudioClients{})
+	if studioClients == nil {
+		t.Fatal("NewStudioClientVerifier returned nil")
+	}
 	fenced := &[]string{}
 	lookup := func(_ context.Context, cycleID string) (string, error) {
 		*fenced = append(*fenced, cycleID)
@@ -145,17 +178,18 @@ func newInternalStack(t *testing.T) internalStack {
 		return "org-acme", nil
 	}
 	stack := internalStack{
-		mint:    mint,
-		sign:    sign,
-		refresh: &fakeCredsRefresh{},
-		context: &fakeValidationContext{},
-		fenced:  fenced,
+		mint:       mint,
+		mintStudio: mintStudio,
+		sign:       sign,
+		refresh:    &fakeCredsRefresh{},
+		context:    &fakeValidationContext{},
+		fenced:     fenced,
 	}
 	stack.deps = InternalDeps{
 		CredsRefresh:      stack.refresh,
 		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
 		ValidationContext: stack.context,
-		PublisherTokens:   verifier,
+		StudioClients:     studioClients,
 	}
 	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack

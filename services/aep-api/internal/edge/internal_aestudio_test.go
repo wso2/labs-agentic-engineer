@@ -55,10 +55,11 @@ func (f *fakeProjectRepos) Lookup(_ context.Context, org, project string) (aestu
 	return row, nil
 }
 
-// The ae-studio/ route group admits only an org's publisher client token, and
-// the org is that token's ouHandle (04 §2, 03 §1). aep-api never accepts the
-// AE-only client's token (no org claim; scenario 4.9) or the org's ae-studio-<org>
-// client: the AE-only pin lives in the tools pod's /internal/v1 gate, not here.
+// The ae-studio/ route group admits only an org's ae-studio-<org> client
+// token, and the org is the one that client is recorded for (04 §2, 03 §1,
+// Q-1). aep-api never accepts the org's publisher token (a coding Job holds
+// it) or the AE-only client's token (no org claim; scenario 4.9): the AE-only
+// pin lives in the tools pod's /internal/v1 gate, not here.
 func TestInternalGate_AEStudio(t *testing.T) {
 	stack := newInternalStack(t)
 	greeter := aestudio.ProjectRepository{
@@ -76,7 +77,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 		return NewHandler(AppParams{InternalDeps: deps})
 	}
 	on := build(nil)
-	noVerifier := build(func(d *InternalDeps) { d.PublisherTokens = nil })
+	noVerifier := build(func(d *InternalDeps) { d.StudioClients = nil })
 	noLookup := build(func(d *InternalDeps) { d.AEStudioRepositories = nil })
 	failing := build(func(d *InternalDeps) { d.AEStudioRepositories = &fakeProjectRepos{err: errors.New("db down")} })
 
@@ -90,7 +91,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 			OuHandle: ouHandle,
 		})
 	}
-	publisher := "Bearer " + stack.mint("acme")
+	studio := "Bearer " + stack.mintStudio("acme")
 	const path = "/internal/v1/ae-studio/projects/greeter/repository"
 
 	cases := []struct {
@@ -99,10 +100,10 @@ func TestInternalGate_AEStudio(t *testing.T) {
 		h                  http.Handler
 		want               int
 	}{
-		{name: "publisher token of the owning org", bearer: publisher, want: 200},
-		{name: "publisher token, unknown project", path: "/internal/v1/ae-studio/projects/nope/repository", bearer: publisher, want: 404},
-		{name: "publisher token of another org", bearer: "Bearer " + stack.mint("evil"), want: 404},
-		{name: "publisher token, name breaks the slug pattern", path: "/internal/v1/ae-studio/projects/Not_A_Slug/repository", bearer: publisher, want: 400},
+		{name: "ae-studio client token of the owning org", bearer: studio, want: 200},
+		{name: "ae-studio client token, unknown project", path: "/internal/v1/ae-studio/projects/nope/repository", bearer: studio, want: 404},
+		{name: "ae-studio client token of another org", bearer: "Bearer " + stack.mintStudio("evil"), want: 404},
+		{name: "ae-studio client token, name breaks the slug pattern", path: "/internal/v1/ae-studio/projects/Not_A_Slug/repository", bearer: studio, want: 400},
 		{name: "no bearer", want: 401},
 		{name: "no bearer, name breaks the slug pattern", path: "/internal/v1/ae-studio/projects/Not_A_Slug/repository", want: 401},
 		// Scenario 4.7: a user's JWT is never an internal credential.
@@ -111,13 +112,16 @@ func TestInternalGate_AEStudio(t *testing.T) {
 		// is refused, with or without an impersonation header.
 		{name: "AE-only client token", bearer: token("ae-studio-internal-client", ""), want: 401},
 		{name: "AE-only client token impersonating the org", bearer: token("ae-studio-internal-client", ""), header: map[string]string{"X-Impersonate-Org": "acme"}, want: 401},
-		{name: "ae-studio-<org> client token", bearer: token("ae-studio-acme", "acme"), want: 401},
-		{name: "publisher audience without an org claim", bearer: token(pubAudPrefix+"acme", ""), want: 401},
-		{name: "publisher audience naming another org", bearer: token(pubAudPrefix+"acme", "evil"), want: 401},
+		// Q-1: the org's publisher token (what its coding Jobs hold) never
+		// opens ae-studio/.
+		{name: "publisher token of the owning org", bearer: "Bearer " + stack.mint("acme"), want: 401},
+		{name: "ae-studio audience without an org claim", bearer: token("ae-studio-acme", ""), want: 401},
+		{name: "ae-studio audience naming another org", bearer: token("ae-studio-acme", "evil"), want: 401},
+		{name: "ae-studio client of an org with none recorded", bearer: "Bearer " + stack.mintStudio(orgWithoutStudioClient), want: 401},
 		{name: "SRE handoff bearer", bearer: "Bearer s3cr3t", want: 401},
-		{name: "no publisher verifier configured", h: noVerifier, bearer: publisher, want: 401},
-		{name: "no lookup configured", h: noLookup, bearer: publisher, want: 503},
-		{name: "lookup fails", h: failing, bearer: publisher, want: 500},
+		{name: "no ae-studio client verifier configured", h: noVerifier, bearer: studio, want: 401},
+		{name: "no lookup configured", h: noLookup, bearer: studio, want: 503},
+		{name: "lookup fails", h: failing, bearer: studio, want: 500},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -165,7 +169,7 @@ func TestInternalRoutes_AEStudioProjectRepository(t *testing.T) {
 	h := NewHandler(AppParams{InternalDeps: deps})
 
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/ae-studio/projects/greeter/repository", nil)
-	req.Header.Set("Authorization", "Bearer "+stack.mint("acme"))
+	req.Header.Set("Authorization", "Bearer "+stack.mintStudio("acme"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -240,7 +244,7 @@ func aeStudioProjects() *fakeProjectRepos {
 }
 
 // complete-ae-studio-dependencies rides the same gate as the repository
-// lookup: only the org's publisher client token, the org is its ouHandle.
+// lookup: only the org's ae-studio client token, the org is its recorded one.
 // Every write must be a dependency definition path (400 path_invalid).
 func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 	stack := newInternalStack(t)
@@ -272,35 +276,35 @@ func TestInternalGate_AEStudioDependencyCompletions(t *testing.T) {
 			OuHandle: ouHandle,
 		})
 	}
-	publisher := "Bearer " + stack.mint("acme")
+	studio := "Bearer " + stack.mintStudio("acme")
 
 	cases := []struct {
 		name, body, bearer, wantCode string
 		h                            http.Handler
 		want                         int
 	}{
-		{name: "publisher token of the org", bearer: publisher, want: 200},
+		{name: "ae-studio client token of the org", bearer: studio, want: 200},
 		{name: "no bearer", want: 401},
 		{name: "user JWT", bearer: token("aep-console", "acme"), want: 401},
 		{name: "AE-only client token", bearer: token("ae-studio-internal-client", ""), want: 401},
-		{name: "ae-studio-<org> client token", bearer: token("ae-studio-acme", "acme"), want: 401},
+		{name: "publisher token of the org", bearer: "Bearer " + stack.mint("acme"), want: 401},
 		{name: "SRE handoff bearer", bearer: "Bearer s3cr3t", want: 401},
-		{name: "write outside dependencies/", body: completionsBody("specs/design/components/api/design.json"), bearer: publisher, want: 400, wantCode: codePathInvalid},
-		{name: "a dependency's document, not its definition", body: completionsBody("specs/design/dependencies/payments/openapi.yaml"), bearer: publisher, want: 400, wantCode: codePathInvalid},
-		{name: "traversal", body: completionsBody("specs/design/dependencies/../dependency.json"), bearer: publisher, want: 400, wantCode: codePathInvalid},
-		{name: "same path twice", body: completionsBody(depStubPath, depStubPath), bearer: publisher, want: 400, wantCode: codePathInvalid},
-		{name: "no writes", body: `{"writes":[]}`, bearer: publisher, want: 400},
-		{name: "unknown field", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}","baseSha":"x"}]}`, bearer: publisher, want: 400},
-		{name: "body over the 1 MiB cap", body: completionsBody(depStubPath)[:10] + strings.Repeat(" ", 1<<20), bearer: publisher, want: 413},
-		{name: "no completer configured", h: noCompleter, bearer: publisher, want: 503},
+		{name: "write outside dependencies/", body: completionsBody("specs/design/components/api/design.json"), bearer: studio, want: 400, wantCode: codePathInvalid},
+		{name: "a dependency's document, not its definition", body: completionsBody("specs/design/dependencies/payments/openapi.yaml"), bearer: studio, want: 400, wantCode: codePathInvalid},
+		{name: "traversal", body: completionsBody("specs/design/dependencies/../dependency.json"), bearer: studio, want: 400, wantCode: codePathInvalid},
+		{name: "same path twice", body: completionsBody(depStubPath, depStubPath), bearer: studio, want: 400, wantCode: codePathInvalid},
+		{name: "no writes", body: `{"writes":[]}`, bearer: studio, want: 400},
+		{name: "unknown field", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}","baseSha":"x"}]}`, bearer: studio, want: 400},
+		{name: "body over the 1 MiB cap", body: completionsBody(depStubPath)[:10] + strings.Repeat(" ", 1<<20), bearer: studio, want: 413},
+		{name: "no completer configured", h: noCompleter, bearer: studio, want: 503},
 		// The project gates the call (the same answer as the repository lookup).
-		{name: "another org's project", body: completionsBodyFor("ledger", depStubPath), bearer: publisher, want: 404},
-		{name: "unknown project", body: completionsBodyFor("nope", depStubPath), bearer: publisher, want: 404},
-		{name: "project breaks the slug pattern", body: completionsBodyFor("Not_A_Slug", depStubPath), bearer: publisher, want: 400},
-		{name: "no project", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}"}]}`, bearer: publisher, want: 400},
-		{name: "no lookup configured", h: noLookup, bearer: publisher, want: 503},
-		{name: "64 writes", body: completionsBody(sixtyFive[:64]...), bearer: publisher, want: 200},
-		{name: "65 writes", body: completionsBody(sixtyFive...), bearer: publisher, want: 400},
+		{name: "another org's project", body: completionsBodyFor("ledger", depStubPath), bearer: studio, want: 404},
+		{name: "unknown project", body: completionsBodyFor("nope", depStubPath), bearer: studio, want: 404},
+		{name: "project breaks the slug pattern", body: completionsBodyFor("Not_A_Slug", depStubPath), bearer: studio, want: 400},
+		{name: "no project", body: `{"writes":[{"path":"` + depStubPath + `","content":"{}"}]}`, bearer: studio, want: 400},
+		{name: "no lookup configured", h: noLookup, bearer: studio, want: 503},
+		{name: "64 writes", body: completionsBody(sixtyFive[:64]...), bearer: studio, want: 200},
+		{name: "65 writes", body: completionsBody(sixtyFive...), bearer: studio, want: 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,7 +359,7 @@ func TestInternalRoutes_AEStudioDependencyCompletions(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, completionsPath, strings.NewReader(completionsBody(depStubPath)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+stack.mint("acme"))
+	req.Header.Set("Authorization", "Bearer "+stack.mintStudio("acme"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
@@ -471,7 +475,7 @@ func (f *fakeSkillsRepos) Lookup(_ context.Context, org string) (aestudio.Projec
 }
 
 // get-ae-studio-skills-repository rides the ae-studio/ gate: only the org's
-// publisher client token, and the org is its ouHandle. The 200 body is
+// ae-studio client token, and the org is its recorded one. The 200 body is
 // exactly AEStudioProjectRepository; an org without a skills repository is
 // 404; a library that could not be reconciled is 503.
 func TestInternalRoutes_AEStudioSkillsRepository(t *testing.T) {
@@ -503,17 +507,18 @@ func TestInternalRoutes_AEStudioSkillsRepository(t *testing.T) {
 		h            http.Handler
 		want         int
 	}{
-		{name: "publisher token of the org", bearer: "Bearer " + stack.mint("acme"), want: 200},
-		{name: "org with no skills repository", bearer: "Bearer " + stack.mint("evil"), want: 404},
+		{name: "ae-studio client token of the org", bearer: "Bearer " + stack.mintStudio("acme"), want: 200},
+		{name: "org with no skills repository", bearer: "Bearer " + stack.mintStudio("evil"), want: 404},
 		{name: "no bearer", want: 401},
 		{name: "user JWT", bearer: userJWT, want: 401},
-		{name: "no lookup configured", h: build(func(d *InternalDeps) { d.AEStudioSkills = nil }), bearer: "Bearer " + stack.mint("acme"), want: 503},
+		{name: "publisher token of the org", bearer: "Bearer " + stack.mint("acme"), want: 401},
+		{name: "no lookup configured", h: build(func(d *InternalDeps) { d.AEStudioSkills = nil }), bearer: "Bearer " + stack.mintStudio("acme"), want: 503},
 		{name: "library not reconciled", h: build(func(d *InternalDeps) {
 			d.AEStudioSkills = &fakeSkillsRepos{err: fmt.Errorf("%w: github down", aestudio.ErrSkillsUnavailable)}
-		}), bearer: "Bearer " + stack.mint("acme"), want: 503},
+		}), bearer: "Bearer " + stack.mintStudio("acme"), want: 503},
 		{name: "lookup fails", h: build(func(d *InternalDeps) {
 			d.AEStudioSkills = &fakeSkillsRepos{err: errors.New("db down")}
-		}), bearer: "Bearer " + stack.mint("acme"), want: 500},
+		}), bearer: "Bearer " + stack.mintStudio("acme"), want: 500},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -19,6 +19,7 @@ import (
 )
 
 const (
+	AeStudioCCScopes  aeStudioCCContextKey  = "aeStudioCC.Scopes"
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
 	TaskJWTScopes     taskJWTContextKey     = "taskJWT.Scopes"
 )
@@ -202,6 +203,9 @@ type ErrorDetail struct {
 	Field   string `json:"field"`
 	Message string `json:"message"`
 }
+
+// aeStudioCCContextKey is the context key for aeStudioCC security scheme
+type aeStudioCCContextKey string
 
 // publisherCCContextKey is the context key for publisherCC security scheme
 type publisherCCContextKey string
