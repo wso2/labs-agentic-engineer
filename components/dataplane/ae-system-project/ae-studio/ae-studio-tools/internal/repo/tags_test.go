@@ -19,8 +19,13 @@ package repo_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
@@ -212,5 +217,77 @@ func TestListTagsLocalSkipsFetch(t *testing.T) {
 	}
 	if !names["v1-2"] {
 		t.Fatalf("ListTagsLocal = %+v, want to include engine-created v1-2", local2)
+	}
+}
+
+// installENOSPCGit puts a git wrapper first on PATH that fails every
+// invocation naming subcommand with git's strerror for a full disk, and runs
+// the real git otherwise. The engine's children inherit PATH (baseEnv).
+func installENOSPCGit(t *testing.T, subcommand string) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	script := fmt.Sprintf(`#!/bin/sh
+for a in "$@"; do
+  if [ "$a" = %q ]; then
+    echo "fatal: write error: No space left on device" >&2
+    exit 128
+  fi
+done
+exec %q "$@"
+`, subcommand, real)
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil { //nolint:gosec // a test git wrapper must be executable
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// The ported methods answer a full disk like every other engine op: a
+// DiskFullError (an ErrDiskFull, the 503 disk_full) after queueing the
+// reaper's forced sweep, never a plain git error.
+func TestPortedMethodsMapENOSPCToDiskFull(t *testing.T) {
+	for _, tc := range []struct {
+		name, failing string
+		primed        bool // clone the mirror before the disk fills
+		call          func(ctx context.Context, fx *Fixture) error
+	}{
+		{"Tag push", "push", true, func(ctx context.Context, fx *Fixture) error {
+			return fx.Engine.Tag(ctx, fx.Ref, repo.TagSpec{Name: "v1", Message: "v1"})
+		}},
+		{"HeadLocal clone", "clone", false, func(ctx context.Context, fx *Fixture) error {
+			_, err := fx.Engine.HeadLocal(ctx, fx.Ref)
+			return err
+		}},
+		{"ListTags fetch", "fetch", true, func(ctx context.Context, fx *Fixture) error {
+			_, err := fx.Engine.ListTags(ctx, fx.Ref, "v")
+			return err
+		}},
+		{"ListTagsLocal clone", "clone", false, func(ctx context.Context, fx *Fixture) error {
+			_, err := fx.Engine.ListTagsLocal(ctx, fx.Ref, "v")
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := NewFixture(t, seedFiles())
+			ctx := context.Background()
+			if tc.primed {
+				mustHead(t, fx, "")
+			}
+			var sweeps atomic.Int32
+			fx.Engine.SetOnENOSPC(func() { sweeps.Add(1) })
+			installENOSPCGit(t, tc.failing)
+
+			err := tc.call(ctx, fx)
+			var full *repo.DiskFullError
+			if !errors.As(err, &full) || !errors.Is(err, repo.ErrDiskFull) {
+				t.Fatalf("err = %v, want a DiskFullError", err)
+			}
+			if sweeps.Load() != 1 {
+				t.Fatalf("forced sweeps queued = %d, want 1", sweeps.Load())
+			}
+		})
 	}
 }

@@ -72,3 +72,21 @@ func TestPathDerivationRejectsHostileSegments(t *testing.T) {
 		}
 	}
 }
+
+// Segments are validated as GitHub's ASCII charset BEFORE lower-casing: a
+// non-ASCII name whose Unicode lower case is ASCII (the Kelvin sign K, U+212A,
+// lowers to "k") must be refused, never alias an ASCII mirror or store.
+func TestOwnerRepoRefusesNonASCIIThatLowersToASCII(t *testing.T) {
+	const root = "/workspaces"
+	for _, ref := range []repo.RepoRef{
+		{Owner: "\u212Aacme", Repo: "greeter"},
+		{Owner: "acme", Repo: "greeter-\u212A"},
+	} {
+		if dir, err := repo.RepoDir(root, ref); err == nil {
+			t.Errorf("RepoDir(%+v) = %q, want refused", ref, dir)
+		}
+		if dir, err := repo.ReferenceStoreDir(root, ref.OwnerRepo()); err == nil {
+			t.Errorf("ReferenceStoreDir(%+v) = %q, want refused", ref, dir)
+		}
+	}
+}

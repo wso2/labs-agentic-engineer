@@ -50,7 +50,8 @@ func (e *Engine) Head(ctx context.Context, ref RepoRef, at string) (string, erro
 // Ported from gitfs (Task 4.2a).
 //
 //deadcode:keep wired in Task 4.2b (get-head local=true)
-func (e *Engine) HeadLocal(ctx context.Context, ref RepoRef) (string, error) {
+func (e *Engine) HeadLocal(ctx context.Context, ref RepoRef) (sha string, err error) {
+	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
 	if err != nil {
 		return "", err

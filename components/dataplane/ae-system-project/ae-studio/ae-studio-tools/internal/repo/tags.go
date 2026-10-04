@@ -32,7 +32,8 @@ import (
 // caller can recompute the next name and retry.
 //
 //deadcode:keep wired in Task 4.2b (create-tag)
-func (e *Engine) Tag(ctx context.Context, ref RepoRef, spec TagSpec) error {
+func (e *Engine) Tag(ctx context.Context, ref RepoRef, spec TagSpec) (err error) {
+	defer func() { err = e.mapDiskErr(err) }()
 	if spec.Name == "" {
 		return fmt.Errorf("repo: empty tag name")
 	}
@@ -90,7 +91,8 @@ func (e *Engine) Tag(ctx context.Context, ref RepoRef, spec TagSpec) error {
 // version lists, the save collision precheck, the plan lineage).
 //
 //deadcode:keep wired in Task 4.2b (list-tags)
-func (e *Engine) ListTags(ctx context.Context, ref RepoRef, prefix string) ([]TagInfo, error) {
+func (e *Engine) ListTags(ctx context.Context, ref RepoRef, prefix string) (tags []TagInfo, err error) {
+	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
 	if err != nil {
 		return nil, err
@@ -124,7 +126,8 @@ func (e *Engine) ListTags(ctx context.Context, ref RepoRef, prefix string) ([]Ta
 // when the mirror is already present).
 //
 //deadcode:keep wired in Task 4.2b (list-tags local=true)
-func (e *Engine) ListTagsLocal(ctx context.Context, ref RepoRef, prefix string) ([]TagInfo, error) {
+func (e *Engine) ListTagsLocal(ctx context.Context, ref RepoRef, prefix string) (tags []TagInfo, err error) {
+	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
 	if err != nil {
 		return nil, err

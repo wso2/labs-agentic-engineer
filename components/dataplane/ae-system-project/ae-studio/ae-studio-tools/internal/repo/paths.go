@@ -62,16 +62,17 @@ func validateSegment(kind, s string) error {
 
 // ownerRepoDir is <base>/<owner>/<repo>, lower-cased: GitHub names are
 // case-insensitive, so one repository has one dir whichever spelling a caller
-// has.
+// has. The segments are validated (GitHub's ASCII charset) BEFORE lowering:
+// Unicode lower-casing maps some non-ASCII runes to ASCII (the Kelvin sign
+// U+212A lowers to "k"), which would let a foreign name alias a repository.
 func ownerRepoDir(base, owner, name string) (string, error) {
-	owner, name = strings.ToLower(owner), strings.ToLower(name)
 	if err := validateSegment("owner", owner); err != nil {
 		return "", err
 	}
 	if err := validateSegment("repo", name); err != nil {
 		return "", err
 	}
-	return filepath.Join(base, owner, name), nil
+	return filepath.Join(base, strings.ToLower(owner), strings.ToLower(name)), nil
 }
 
 // ReposDir is <root>/repos.
