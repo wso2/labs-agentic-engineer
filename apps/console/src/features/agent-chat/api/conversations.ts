@@ -64,7 +64,6 @@ export async function rotateConversation(projectName: string): Promise<string> {
   return data.conversationId;
 }
 
-/** Rotate the project's current thread and stamp the new id into the query cache. */
 /**
  * Start a fresh conversation for the scope and make it the one the chat
  * resolves. `chatKey` names where a marketplace conversation's id is

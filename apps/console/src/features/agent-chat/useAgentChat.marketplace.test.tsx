@@ -38,8 +38,10 @@ vi.mock("../../auth/token", () => ({
 vi.mock("../ae-studio/api/queries", () => ({
   usePodQueryOptions: () => ({ enabled: true, retryDelay: () => 0 }),
 }));
+// The signed-in user (the access token's sub); a test may switch it.
+let currentUser = "u1";
 vi.mock("./currentUser", () => ({
-  useCurrentAuthor: () => ({ id: "u1", displayName: "Ada" }),
+  useCurrentAuthor: () => ({ id: currentUser, displayName: currentUser === "u1" ? "Ada" : "Bob" }),
 }));
 const mockAttach = vi.fn();
 vi.mock("./runTurn", () => ({
@@ -54,7 +56,7 @@ const { useAgentChat } = await import("./useAgentChat");
 const DESIGN = "http://ae-design-agent.mock";
 const MARKET = `${DESIGN}/v1/marketplace`;
 const ORG = "acme";
-const KEY = chatKeyForScope(ORG, MARKETPLACE_SCOPE);
+const KEY = chatKeyForScope(ORG, MARKETPLACE_SCOPE, "u1");
 const STORED = `aep.chat.conv.${KEY}`;
 const server = setupServer();
 
@@ -65,6 +67,7 @@ let turnAnswer: () => Response;
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => {
+  currentUser = "u1";
   started = 0;
   posted.length = 0;
   messagesStatus = 200;
@@ -108,6 +111,26 @@ function mount() {
 }
 
 describe("useAgentChat on the marketplace scope", () => {
+  it("is per user on a shared browser: another user neither paints nor resumes the first user's conversation (R3-M1)", async () => {
+    const first = mount();
+    await waitFor(() => expect(first.result.current.historyReady).toBe(true));
+    expect(getMessages(KEY).some((m) => "content" in m && m.content === "earlier register")).toBe(true);
+    expect(sessionStorage.getItem(STORED)).toBe("c-1");
+    first.unmount();
+
+    currentUser = "u2";
+    const bobKey = chatKeyForScope(ORG, MARKETPLACE_SCOPE, "u2");
+    expect(bobKey).not.toBe(KEY);
+    expect(getMessages(bobKey)).toEqual([]);
+    const second = mount();
+    await waitFor(() => expect(second.result.current.conversationReady).toBe(true));
+    expect(started).toBe(2);
+    expect(sessionStorage.getItem(`aep.chat.conv.${bobKey}`)).toBe("c-2");
+    expect(sessionStorage.getItem(STORED)).toBe("c-1");
+    second.unmount();
+    replaceMessages(bobKey, []);
+  });
+
   it("starts a conversation, then sends that conversation's turns", async () => {
     const { result } = mount();
     await waitFor(() => expect(result.current.conversationReady).toBe(true));

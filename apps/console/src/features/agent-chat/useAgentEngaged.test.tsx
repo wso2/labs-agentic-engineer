@@ -26,11 +26,16 @@
 // state where the user needs it most: after a failed attempt.
 
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskQuestionInput } from "@aep/agent-stream";
 import { addMessage, chatKeyFor, getMessages, replaceMessages } from "./chatStore";
 import { projectScope } from "./chatScope";
 import { agentEngaged, useAgentEngaged } from "./useAgentEngaged";
+
+// The chat key of a marketplace scope names the signed-in user.
+vi.mock("./currentUser", () => ({
+  useCurrentAuthor: () => ({ id: "u-test", displayName: "Test" }),
+}));
 
 const ORG = "acme";
 const PROJECT = "proj1";

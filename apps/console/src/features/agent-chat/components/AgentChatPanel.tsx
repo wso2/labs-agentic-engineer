@@ -133,11 +133,11 @@ export function AgentChatPanel({
     send,
     newConversation,
   } = useAgentChat(org, scope);
-  const chatKey = chatKeyForScope(org, scope);
+  const author = useCurrentAuthor();
+  const chatKey = chatKeyForScope(org, scope, author.id);
   // A project's chat leads to its spec room ("Open spec", question pills); the
   // marketplace register conversation has none.
   const projectName = scope.kind === "project" ? scope.project : undefined;
-  const author = useCurrentAuthor();
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   // Files attached to the message being composed (#428). Held here, beside the

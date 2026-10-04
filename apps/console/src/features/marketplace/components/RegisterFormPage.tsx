@@ -178,7 +178,7 @@ export function RegisterFormPage({
   const seedRegister = !isEdit && !isPromote && Boolean(promptTrimmed);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { orgHandle } = useSession();
+  const { orgHandle, user } = useSession();
   const environments = useOrgEnvironments();
   const register = useRegisterExternalResource();
   const update = useUpdateExternalResource(editName ?? "");
@@ -225,7 +225,7 @@ export function RegisterFormPage({
   const [docs, setDocs] = useState<ResourceDocRow[]>([]);
   const [prefilledName, setPrefilledName] = useState<string | null>(null);
 
-  const chatKey = chatKeyForScope(orgHandle ?? "default", MARKETPLACE_SCOPE);
+  const chatKey = chatKeyForScope(orgHandle ?? "default", MARKETPLACE_SCOPE, user.id);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
     () => getMessages(chatKey),

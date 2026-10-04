@@ -201,7 +201,8 @@ export function useAgentChat(org: string, scopeArg: ChatScope): AgentChat {
     () => (scopeArg.kind === "project" ? projectScope(projectName) : MARKETPLACE_SCOPE),
     [scopeArg.kind, projectName],
   );
-  const chatKey = chatKeyForScope(org, scope);
+  const author = useCurrentAuthor();
+  const chatKey = chatKeyForScope(org, scope, author.id);
   const scopeKey = scopeName(scope);
   const messages = useSyncExternalStore(
     useCallback((fn: () => void) => subscribe(chatKey, fn), [chatKey]),
@@ -228,7 +229,6 @@ export function useAgentChat(org: string, scopeArg: ChatScope): AgentChat {
   // (since the optimistic row has no turn id yet) a second user bubble beside
   // the one the user is already looking at.
   const pendingStartRef = useRef(false);
-  const author = useCurrentAuthor();
   const queryClient = useQueryClient();
 
   // The ONLY writers of the two guards above, so the local ref and the store

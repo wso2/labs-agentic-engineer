@@ -82,7 +82,7 @@ vi.mock("@tanstack/react-router", () => ({
 // AuthGuard — this test renders the panel bare, so stub the session.
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
-    user: { name: "Test User", email: "test@example.com" },
+    user: { id: "u-test", name: "Test User", email: "test@example.com" },
     orgHandle: "acme",
     signOut: vi.fn(),
   }),

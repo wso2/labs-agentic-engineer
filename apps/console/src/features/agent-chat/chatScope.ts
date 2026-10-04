@@ -41,6 +41,13 @@ export function scopeName(scope: ChatScope): string {
   return scope.kind === "project" ? scope.project : "~marketplace";
 }
 
-export function chatKeyForScope(org: string, scope: ChatScope): string {
-  return chatKeyFor(org, scopeName(scope));
+/**
+ * The chat log's key for the scope, as `userId` (the access token's `sub`)
+ * sees it. A project's log is the project's shared thread. A marketplace
+ * conversation belongs to the user who started it, so its log, and the
+ * session's conversation id stored under this key, are per user: a second
+ * user on the same browser neither paints nor resumes the first user's.
+ */
+export function chatKeyForScope(org: string, scope: ChatScope, userId: string): string {
+  return chatKeyFor(org, scope.kind === "project" ? scopeName(scope) : `${scopeName(scope)}.${userId}`);
 }

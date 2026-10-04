@@ -91,7 +91,7 @@ vi.mock("../api/queries", () => ({
 
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
-    user: { name: "Test", email: "t@example.com" },
+    user: { id: "u-test", name: "Test", email: "t@example.com" },
     orgHandle: "acme",
     signOut: vi.fn(),
   }),
@@ -195,7 +195,7 @@ function renderPage(ui: ReactElement) {
 }
 
 function registerChatKey() {
-  return chatKeyForScope("acme", MARKETPLACE_SCOPE);
+  return chatKeyForScope("acme", MARKETPLACE_SCOPE, "u-test");
 }
 
 async function waitForComposerSeed() {
@@ -616,7 +616,7 @@ describe("RegisterFormPage", () => {
     renderPage(<RegisterFormPage prompt="" />);
     const env = screen.getByLabelText("development · API_KEY");
     fireEvent.change(env, { target: { value: "human-secret" } });
-    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE);
+    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE, "u-test");
     act(() => {
       publishRegisterDraft(chatKey, {
         description: "Patched description",
@@ -640,7 +640,7 @@ describe("RegisterFormPage", () => {
   it("fills non-secret fields from the draft after answers", () => {
     renderPage(<RegisterFormPage prompt="an API" />);
     act(() => {
-      publishRegisterDraft(chatKeyForScope("acme", MARKETPLACE_SCOPE), {
+      publishRegisterDraft(chatKeyForScope("acme", MARKETPLACE_SCOPE, "u-test"), {
         name: "stripe",
         provider: "Stripe",
         description: "Payments API",
@@ -664,7 +664,7 @@ describe("RegisterFormPage", () => {
 
   it("does not change a human-typed env value when a later draft patches description only", () => {
     renderPage(<RegisterFormPage prompt="an API" />);
-    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE);
+    const chatKey = chatKeyForScope("acme", MARKETPLACE_SCOPE, "u-test");
     act(() => {
       publishRegisterDraft(chatKey, {
         name: "stripe",
@@ -755,7 +755,7 @@ describe("RegisterFormPage edit mode", () => {
     expect(screen.getByLabelText("The agent is working on this resource")).toBeInTheDocument();
 
     act(() => {
-      addMessage(chatKeyForScope("acme", MARKETPLACE_SCOPE), {
+      addMessage(chatKeyForScope("acme", MARKETPLACE_SCOPE, "u-test"), {
         role: "question",
         turnId: "t1",
         toolCallId: "tc1",
