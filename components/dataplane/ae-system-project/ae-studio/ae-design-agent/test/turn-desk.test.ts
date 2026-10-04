@@ -23,10 +23,12 @@ import { runInNewContext } from "node:vm";
 import type { ReplayFrame } from "../src/turns/replay-buffer.js";
 import {
   DeskClosedError,
+  INTERNAL_TURN_MESSAGE,
   TURN_CAP_MS,
   TurnDesk,
   TurnInProgressError,
   type Scope,
+  type TurnLogLine,
   type TurnMeta,
   type TurnOutcome,
   type TurnRun,
@@ -90,7 +92,7 @@ test("the cap is 30 minutes", () => {
 });
 
 test("lock is per project; a throwing run releases it; same turnId reattaches", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const p = { kind: "project", project: "greeter" } as const;
   const hold = deferred<TurnOutcome>();
   const a = desk.start(p, meta(), async () => hold.promise, KICKOFF_ID);
@@ -115,7 +117,7 @@ test("lock is per project; a throwing run releases it; same turnId reattaches", 
 });
 
 test("the marketplace lock is per conversation", () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const c1: Scope = { kind: "marketplace", conversationId: "c1" };
   desk.start(c1, meta({ conversationId: "c1" }), never);
   assert.throws(() => desk.start(c1, meta({ conversationId: "c1" }), never), TurnInProgressError);
@@ -127,7 +129,7 @@ test("the marketplace lock is per conversation", () => {
 });
 
 test("lock release: a runner that throws synchronously", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const t = desk.start(proj, meta(), (() => {
     throw new Error("snapshot read failed");
   }) as TurnRun);
@@ -138,21 +140,25 @@ test("lock release: a runner that throws synchronously", async () => {
 });
 
 test("lock release: a runner that rejects before the first frame", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
-  const t = desk.start(proj, meta(), () => Promise.reject(new Error("room join failed")));
+  const logs: TurnLogLine[] = [];
+  const desk = new TurnDesk({ onFinished: () => {}, log: (l) => logs.push(l) });
+  const t = desk.start(proj, meta(), () => Promise.reject(new TypeError("room join failed at /snapshots/x")));
   await settle();
   assert.equal(desk.active(proj), null);
   assert.equal(desk.status(t.turnId)?.reason, "internal");
+  // The error's own text (paths, room ids, undici text) is never shown (R2-M6).
+  assert.equal(desk.status(t.turnId)?.message, INTERNAL_TURN_MESSAGE);
   assert.deepEqual((await frames(desk.attach(t.turnId, 0)!)).map((f) => f.part), [
-    { type: "turn-failed", reason: "internal", message: "room join failed" },
+    { type: "turn-failed", reason: "internal", message: INTERNAL_TURN_MESSAGE },
     "[DONE]",
   ]);
+  assert.deepEqual(logs, [{ msg: "turn_internal_error", source: "ae-design-agent", errorClass: "TypeError" }]);
   assert.doesNotThrow(() => desk.start(proj, meta(), async () => done()));
 });
 
 test("30-minute cap fails the turn with stream-died and frees the lock", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, capMs: 30 * 60_000, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, capMs: 30 * 60_000, onFinished: () => {}, log: () => {} });
   const t = desk.start(proj, meta(), untilAborted);
   clock.advance(30 * 60_000 - 1);
   await settle();
@@ -167,7 +173,7 @@ test("30-minute cap fails the turn with stream-died and frees the lock", async (
 test("the cap frees the lock even when the runner ignores the abort", async () => {
   const clock = fakeClock();
   let aborted = false;
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   const t = desk.start(proj, meta(), (_e, signal) => {
     signal.addEventListener("abort", () => (aborted = true));
     return new Promise(() => {});
@@ -182,7 +188,7 @@ test("the cap frees the lock even when the runner ignores the abort", async () =
 
 test("attach from N yields frames N.. exactly once; after retention it is gone", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   const t = desk.start(proj, meta(), async (emit) => {
     for (let i = 0; i < 5; i++) emit(text(i));
     return done();
@@ -211,7 +217,7 @@ async function collectGarbage(): Promise<void> {
 
 test("past buffer retention the frames are released; the status is still served", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   let frame: WeakRef<object> | undefined;
   const t = desk.start(proj, meta(), async (emit) => {
     const part = { type: "text-delta", id: "t", delta: "x".repeat(1024) };
@@ -228,7 +234,7 @@ test("past buffer retention the frames are released; the status is still served"
 });
 
 test("a watcher attached mid-turn tails live frames and ends with the terminal", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const gate = deferred<void>();
   const t = desk.start(proj, meta(), async (emit) => {
     emit(text(0));
@@ -254,7 +260,7 @@ test("a watcher attached mid-turn tails live frames and ends with the terminal",
 test("frames a capped run emits after the terminal are dropped", async () => {
   const clock = fakeClock();
   let emitLate!: () => void;
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   const t = desk.start(proj, meta(), (emit) => {
     emitLate = () => emit(text(9));
     return new Promise(() => {});
@@ -271,7 +277,7 @@ test("frames a capped run emits after the terminal are dropped", async () => {
 
 test("status and active project the TurnStatus shape", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   const hold = deferred<TurnOutcome>();
   const t = desk.start(proj, meta({ kind: "kickoff", flow: "start" }), () => hold.promise);
   const running = {
@@ -296,7 +302,7 @@ test("status and active project the TurnStatus shape", async () => {
 });
 
 test("a turn with no author reports empty author fields; marketplace has no project", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const scope: Scope = { kind: "marketplace", conversationId: "c1" };
   const t = desk.start(scope, meta({ author: undefined, conversationId: "c1" }), never);
   const s = desk.status(t.turnId)!;
@@ -307,7 +313,7 @@ test("a turn with no author reports empty author fields; marketplace has no proj
 });
 
 test("TurnStatus retention: the last 20 per scope", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const made: string[] = [];
   for (let i = 0; i < 21; i++) {
     made.push(desk.start(proj, meta(), async () => done()).turnId);
@@ -322,7 +328,7 @@ test("TurnStatus retention: the last 20 per scope", async () => {
 
 test("TurnStatus retention: 1 h after the terminal; a running turn is never dropped", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, capMs: 2 * 60 * 60_000, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, capMs: 2 * 60 * 60_000, onFinished: () => {}, log: () => {} });
   const finished = desk.start(proj, meta(), async () => done()).turnId;
   await settle();
   const running = desk.start({ kind: "project", project: "other" }, meta(), never).turnId;
@@ -334,7 +340,7 @@ test("TurnStatus retention: 1 h after the terminal; a running turn is never drop
 });
 
 test("a retained turn id reattaches after the turn finished; it does not start again", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   let runs = 0;
   const run: TurnRun = async () => {
     runs++;
@@ -350,7 +356,7 @@ test("a retained turn id reattaches after the turn finished; it does not start a
 test("onFinished gets the whole TurnRecord, usage included on failure", async () => {
   const clock = fakeClock();
   const records: TurnRecord[] = [];
-  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r) });
+  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r), log: () => {} });
   const hold = deferred<TurnOutcome>();
   const t = desk.start(proj, meta({ kind: "plan", flow: "plan" }), () => hold.promise);
   clock.advance(3_000);
@@ -393,7 +399,7 @@ test("onFinished gets the whole TurnRecord, usage included on failure", async ()
 
 test("a thrown run still hands over a record with zero usage and no refs", async () => {
   const records: TurnRecord[] = [];
-  const desk = new TurnDesk({ onFinished: (r) => records.push(r) });
+  const desk = new TurnDesk({ onFinished: (r) => records.push(r), log: () => {} });
   desk.start({ kind: "marketplace", conversationId: "c1" }, meta({ conversationId: "c1", author: undefined }), async () => {
     throw new Error("boom");
   });
@@ -410,7 +416,7 @@ test("a thrown run still hands over a record with zero usage and no refs", async
 test("onFinished runs once per turn even when the run settles after the cap", async () => {
   const clock = fakeClock();
   const records: TurnRecord[] = [];
-  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r) });
+  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r), log: () => {} });
   const hold = deferred<TurnOutcome>();
   desk.start(proj, meta(), () => hold.promise);
   clock.advance(TURN_CAP_MS + 1);
@@ -432,7 +438,7 @@ test("a throwing onFinished does not keep the lock", async () => {
 });
 
 test("lastTerminal holds the last finished turn's status and baseRef per scope", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   assert.equal(desk.lastTerminal(proj), null);
   desk.start(proj, meta(), async () => done({ baseRef: "sha-a" }));
   await settle();
@@ -445,7 +451,7 @@ test("lastTerminal holds the last finished turn's status and baseRef per scope",
 
 test("lastTerminal outlives the TurnStatus retention", async () => {
   const clock = fakeClock();
-  const desk = new TurnDesk({ now: clock.now, onFinished: () => {} });
+  const desk = new TurnDesk({ now: clock.now, onFinished: () => {}, log: () => {} });
   desk.start(proj, meta(), async () => done({ baseRef: "sha-a" }));
   await settle();
   clock.advance(2 * 60 * 60_000);
@@ -454,7 +460,7 @@ test("lastTerminal outlives the TurnStatus retention", async () => {
 
 test("abortAll ends every running turn with shutdown, hands over records, frees the locks", async () => {
   const records: TurnRecord[] = [];
-  const desk = new TurnDesk({ onFinished: (r) => records.push(r) });
+  const desk = new TurnDesk({ onFinished: (r) => records.push(r), log: () => {} });
   const a = desk.start(proj, meta(), untilAborted);
   const b = desk.start({ kind: "marketplace", conversationId: "c1" }, meta({ conversationId: "c1" }), untilAborted);
   await desk.abortAll("shutdown");
@@ -468,7 +474,7 @@ test("abortAll ends every running turn with shutdown, hands over records, frees 
 });
 
 test("after abortAll the desk starts no new turn, but a known turn id still reattaches (R2-I1)", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const before = desk.start(proj, meta(), untilAborted, KICKOFF_ID);
   await desk.abortAll("shutdown");
   assert.throws(() => desk.start(proj, meta(), untilAborted), DeskClosedError);
@@ -478,7 +484,7 @@ test("after abortAll the desk starts no new turn, but a known turn id still reat
 });
 
 test("abortAll does not wait for a runner that ignores the abort", async () => {
-  const desk = new TurnDesk({ onFinished: () => {} });
+  const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   desk.start(proj, meta(), never);
   const finished = desk.abortAll("shutdown");
   mock.timers.tick(2_000);
@@ -489,7 +495,7 @@ test("abortAll does not wait for a runner that ignores the abort", async () => {
 test("a turn that ends before its run reports refs records the starter's refs, so it does not read as an external change", async () => {
   const clock = fakeClock();
   const records: TurnRecord[] = [];
-  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r) });
+  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r), log: () => {} });
   desk.start(proj, meta({ baseRef: "head1", skillsRef: "skills1" }), async () => {
     throw new Error("snapshot read failed");
   });

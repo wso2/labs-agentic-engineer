@@ -26,10 +26,12 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { mockModel } from "../src/shared/mock-model.js";
 import type { RoomPeer } from "../src/collab/room-peer.js";
 import type { Credit } from "../src/turns/start-turn.js";
-import { CONNECTION, PROJECT, call, readSse, startEdge, startTurn, streamOf, type Edge } from "./helpers/edge.js";
+import { CONNECTION, HEAD, PROJECT, call, readSse, startEdge, startTurn, streamOf, type Edge } from "./helpers/edge.js";
 
 const text = (t: string) => mockModel([{ kind: "text", text: t }]);
 const slow = () => mockModel([{ kind: "text", text: "slow" }], { delayMs: 400 });
@@ -134,6 +136,18 @@ test("no key: turn POST answers problem no_default_key", () =>
     assert.equal(res.headers.get("content-type"), "application/problem+json");
     assert.equal((await json(res)).code, "no_default_key");
     assert.equal(edge.tools.lookups.length, 0, "refused before the lookup");
+  }));
+
+test("a snapshot that will not read is 500 internal with a fixed detail; the log names the class only (R2-M6)", () =>
+  withEdge({}, async (edge) => {
+    rmSync(join(edge.snapshotsDir, "projects", PROJECT, HEAD), { recursive: true, force: true });
+    const res = await startTurn(edge, await edge.token());
+    assert.equal(res.status, 500);
+    const body = await json(res);
+    assert.equal(body.code, "internal");
+    assert.equal(body.detail, "the turn's files could not be read");
+    assert.equal(JSON.stringify(edge.turnLogs).includes(edge.snapshotsDir), false, "no path in the log");
+    assert.deepEqual(edge.turnLogs, [{ msg: "turn_material_unreadable", source: "ae-design-agent", errorClass: "SnapshotPathError" }]);
   }));
 
 test("a client that leaves the stream does not end the turn", () =>

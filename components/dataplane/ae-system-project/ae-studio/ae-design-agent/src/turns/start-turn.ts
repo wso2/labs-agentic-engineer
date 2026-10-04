@@ -63,7 +63,18 @@ import { projectSnapshotDir, skillsSnapshotDir } from "../shared/snapshot-path.j
 import type { ConversationStore } from "../store/conversation-store.js";
 import { ToolsSocketError, type ProjectSnapshot, type ToolsSocket } from "../tools-socket/client.js";
 import { startTurnSummary, turnSpecFor } from "./start-spec.js";
-import { DeskClosedError, TurnDesk, TurnInProgressError, type Scope, type TurnMeta, type TurnOutcome, type TurnRun } from "./turn-desk.js";
+import {
+  DeskClosedError,
+  errorClassOf,
+  stdoutTurnLog,
+  TurnDesk,
+  TurnInProgressError,
+  type Scope,
+  type TurnLogLine,
+  type TurnMeta,
+  type TurnOutcome,
+  type TurnRun,
+} from "./turn-desk.js";
 import { catalogTurn, designOrRoomTurn } from "./turn-spec.js";
 
 /** The longest instruction a turn takes (aep-api's `createTurnMaxInstructionBytes`). */
@@ -153,6 +164,8 @@ export interface TurnStarterDeps {
   surface?: Surface;
   /** The pod's org, named on provider log lines. */
   orgId?: string;
+  /** The start path's value-free log (stdout as JSON by default). */
+  log?: (line: TurnLogLine) => void;
   /**
    * No one answers questions in this run, so every turn is told to generate
    * on stated assumptions (the playground's one-shot phase verbs). The pod
@@ -425,7 +438,10 @@ export class TurnStarter {
         skillsRef: d.skillsRef,
       };
     } catch (err) {
-      throw new TurnStartError(500, "internal", err instanceof Error ? err.message : "snapshot read failed");
+      // The error's text names snapshot paths: the caller gets a fixed
+      // sentence, the log the class only.
+      (this.deps.log ?? stdoutTurnLog)({ msg: "turn_material_unreadable", source: "ae-design-agent", errorClass: errorClassOf(err) });
+      throw new TurnStartError(500, "internal", "the turn's files could not be read");
     }
     const references = await fitReferences(read.references, conn.capabilities);
     // The encoded budget is shared with the references (the ceiling belongs

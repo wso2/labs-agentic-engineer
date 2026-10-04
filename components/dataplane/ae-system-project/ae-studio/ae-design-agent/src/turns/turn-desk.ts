@@ -62,6 +62,31 @@ const STATUS_KEEP_MS = 60 * 60_000;
 /** How long `abortAll` waits for aborted runs to settle. */
 const ABORT_GRACE_MS = 2_000;
 
+/**
+ * The message of a turn that ended on an internal error (its run threw). The
+ * error's own text can carry snapshot paths, room ids or transport text, so
+ * it is never shown; the log names its class only.
+ */
+export const INTERNAL_TURN_MESSAGE = "the turn stopped on an internal error";
+
+/** One structured, value-free log line of the turn path. */
+export interface TurnLogLine {
+  msg: "turn_internal_error" | "turn_material_unreadable";
+  source: "ae-design-agent";
+  /** The error's class (`Error`, `TypeError`, ...), never its message. */
+  errorClass: string;
+}
+
+/** Writes a line to stdout as JSON (the pod's log). */
+export const stdoutTurnLog = (line: TurnLogLine): void => {
+  process.stdout.write(`${JSON.stringify(line)}\n`);
+};
+
+/** The class name of a thrown value, for a value-free log line. */
+export function errorClassOf(err: unknown): string {
+  return err instanceof Error ? err.name : typeof err;
+}
+
 /** What a turn holds the lock on. */
 export type Scope = { kind: "project"; project: string } | { kind: "marketplace"; conversationId: string };
 
@@ -150,6 +175,7 @@ export class TurnDesk {
   private readonly now: () => number;
   private readonly capMs: number;
   private readonly onFinished: (rec: TurnRecord) => void;
+  private readonly log: (line: TurnLogLine) => void;
   /** Running and retained turns by id. */
   private readonly turns = new Map<string, Turn>();
   /** The running turn per scope: the lock. */
@@ -162,10 +188,11 @@ export class TurnDesk {
   /** Set by `abortAll`: a start after it would run past the shutdown with no terminal and no record. */
   private closed = false;
 
-  constructor(opts: { now?: () => number; capMs?: number; onFinished: (rec: TurnRecord) => void }) {
+  constructor(opts: { now?: () => number; capMs?: number; onFinished: (rec: TurnRecord) => void; log?: (line: TurnLogLine) => void }) {
     this.now = opts.now ?? Date.now;
     this.capMs = opts.capMs ?? TURN_CAP_MS;
     this.onFinished = opts.onFinished;
+    this.log = opts.log ?? stdoutTurnLog;
   }
 
   /**
@@ -228,8 +255,10 @@ export class TurnDesk {
     }
     turn.settled = outcome.then(
         (outcome) => this.finish(turn, outcome),
-        (err: unknown) =>
-          this.finish(turn, { status: "failed", reason: "internal", message: err instanceof Error ? err.message : String(err), ...refsOf(meta) }),
+        (err: unknown) => {
+          this.log({ msg: "turn_internal_error", source: "ae-design-agent", errorClass: errorClassOf(err) });
+          this.finish(turn, { status: "failed", reason: "internal", message: INTERNAL_TURN_MESSAGE, ...refsOf(meta) });
+        },
       );
     return { turnId: id, reattached: false };
   }

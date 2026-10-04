@@ -38,7 +38,7 @@ import { ThreadBook } from "../../src/conversations/thread-book.js";
 import { MarketplaceBook } from "../../src/conversations/marketplace-book.js";
 import { FakeToolsSocket } from "../../src/tools-socket/fake.js";
 import { UsageOutbox } from "../../src/usage/outbox.js";
-import { TurnDesk } from "../../src/turns/turn-desk.js";
+import { TurnDesk, type TurnLogLine } from "../../src/turns/turn-desk.js";
 import { finishedTurnSink, TurnStarter, type BuildModel, type JoinRoom } from "../../src/turns/start-turn.js";
 import { anthropicConnection, type ModelConnection } from "../../src/shared/model.js";
 import { testKeys } from "./test-keys.js";
@@ -89,6 +89,10 @@ export interface Edge {
   store: InMemoryConversationStore;
   turns: TurnStarter;
   logs: PodLogLine[];
+  /** The desk's and the starter's log lines. */
+  turnLogs: TurnLogLine[];
+  /** `AE_SNAPSHOTS_DIR` (a test can break a snapshot). */
+  snapshotsDir: string;
   healthUrl: string;
   /** A user token of `ouHandle` (the pod's org unless named) with these claims. */
   token(claims?: { ouHandle?: string; sub?: string; name?: string; email?: string }): Promise<string>;
@@ -127,9 +131,11 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
   const threads = new ThreadBook({ store });
   const outbox = new UsageOutbox(tools, { log: () => {} });
   outbox.run();
-  const desk = new TurnDesk({ onFinished: finishedTurnSink(threads, outbox) });
+  const turnLogs: TurnLogLine[] = [];
+  const desk = new TurnDesk({ onFinished: finishedTurnSink(threads, outbox), log: (l) => turnLogs.push(l) });
   const models = [...(opts.models ?? [])];
   const turns = new TurnStarter({
+    log: (l) => turnLogs.push(l),
     desk,
     threads,
     store,
@@ -187,6 +193,8 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
     store,
     turns,
     logs,
+    turnLogs,
+    snapshotsDir: root,
     token: (claims = {}) => {
       const ouHandle = claims.ouHandle ?? ORG_HANDLE;
       return keys.userWith({ ...claims, ouHandle, ouId: ouHandle === ORG_HANDLE ? ORG_ID : `ou-${ouHandle}` });
