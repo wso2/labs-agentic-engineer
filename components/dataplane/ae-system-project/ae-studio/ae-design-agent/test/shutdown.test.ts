@@ -176,7 +176,7 @@ test("an abort that spends the whole handover leaves the drain no time, never a 
   assert.equal(drained, 0);
 });
 
-/** A stand-in for ae-studio-tools' MCP socket: one project, room tokens, and the usage records it receives. */
+/** A stand-in for ae-studio-tools' MCP socket: one project, and the usage records it receives. */
 async function fakeToolsSocket(path: string, head: string, skills: string) {
   const usage: Array<{ at: number; record: TurnRecord }> = [];
   const body = (req: IncomingMessage) =>
@@ -188,7 +188,6 @@ async function fakeToolsSocket(path: string, head: string, skills: string) {
   const server = createHttpServer(async (req, res) => {
     const json = (status: number, v: unknown) => res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(v));
     if (req.method === "GET" && req.url === `/projects/${PROJECT}`) return json(200, { known: true, headSha: head, skillsSha: skills, references: [] });
-    if (req.method === "POST" && req.url === "/room-token") return json(200, { token: "room-token", expiresAt: new Date(Date.now() + 600_000).toISOString() });
     if (req.method === "POST" && req.url === "/turn-usage") {
       usage.push({ at: Date.now(), record: JSON.parse(await body(req)) as TurnRecord });
       return res.writeHead(202).end();
@@ -207,12 +206,12 @@ test("main.ts on a real SIGTERM: the Turn socket's turn ends with the shutdown r
   writeFileSync(join(root, "snapshots", "projects", PROJECT, head, "specs", "requirements", "prd.md"), "# PRD\n");
   mkdirSync(join(root, "snapshots", "skills", skills), { recursive: true });
   const tools = await fakeToolsSocket(join(root, "mcp.sock"), head, skills);
-  // A collab listener that accepts and never answers: the kickoff's Room join
+  // A Room socket that accepts and never answers: the kickoff's Room join
   // hangs, so the turn is running when the signal comes (and ignores its abort).
   const held: Socket[] = [];
   const collab = createNetServer((s) => void held.push(s));
-  await new Promise<void>((resolve) => collab.listen(0, "127.0.0.1", resolve));
-  const collabPort = (collab.address() as { port: number }).port;
+  const roomSocket = join(root, "room.sock");
+  await new Promise<void>((resolve) => collab.listen(roomSocket, resolve));
   const turnSocket = join(root, "turn.sock");
 
   const child = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
@@ -226,7 +225,7 @@ test("main.ts on a real SIGTERM: the Turn socket's turn ends with the shutdown r
       AE_USER_AUDIENCES: "aep-console-client",
       AE_MCP_SOCKET: join(root, "mcp.sock"),
       AE_TURN_SOCKET: turnSocket,
-      AE_COLLAB_LOCAL_URL: `ws://127.0.0.1:${collabPort}`,
+      AE_ROOM_SOCKET: roomSocket,
       AE_SNAPSHOTS_DIR: join(root, "snapshots"),
       AE_LISTEN_PORT: "0",
       AE_HEALTH_PORT: "0",

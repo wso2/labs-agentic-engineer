@@ -213,8 +213,9 @@ test("a Plan turn runs the task-plan toolset on the scope and the existing Tasks
   });
 });
 
-test("a kickoff joins spec-acme-greeter on the local listener as the credited user, on the current thread", async () => {
-  const port = 20000 + Math.floor(Math.random() * 20000);
+test("a kickoff joins spec-acme-greeter on the Room socket as the credited user, with no token, on the current thread", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "ae-room-"));
+  const roomSocket = join(dir, "room.sock");
   const joins: Array<{ room: string; token: string; credit: string | null }> = [];
   let doc: Document | undefined;
   const collab = new Server({
@@ -229,19 +230,21 @@ test("a kickoff joins spec-acme-greeter on the local listener as the credited us
       return Promise.resolve(document);
     },
   });
-  await collab.listen(port);
+  // ae-collab's Room socket: the Hocuspocus server's own HTTP server, bound to a Unix socket.
+  await new Promise<void>((resolve) => collab.httpServer.listen(roomSocket, resolve));
   const model = mockModel([
     { kind: "toolCall", toolCallId: "a1", toolName: "addFile", input: { path: "specs/requirements/notes.md", content: "n\n" } },
     { kind: "text", text: "Tell me about your idea." },
   ]);
   try {
-    await withEdge({ models: [model], collabLocalUrl: `ws://127.0.0.1:${port}` }, async (edge) => {
+    await withEdge({ models: [model], roomSocket }, async (edge) => {
       const turnId = randomUUID();
       const res = await postTurnSocket(edge.turnSocket, { turnId, project: PROJECT, kind: "start", credit: ANN, text: "a greeting service" });
       assert.equal(res.status, 200);
       assert.deepEqual(withoutKeepAlives(await res.rest()), [{ type: "result", status: "completed" }]);
 
-      assert.deepEqual(joins, [{ room: "spec-acme-greeter", token: "room-token-fake", credit: '{"name":"Ann","email":"ann@x"}' }]);
+      // The socket is the agent's identity: the auth message carries no token.
+      assert.deepEqual(joins, [{ room: "spec-acme-greeter", token: "", credit: '{"name":"Ann","email":"ann@x"}' }]);
       assert.equal(readDocFile(doc!, "specs/requirements/notes.md")?.trim(), "n", "the kickoff wrote through the Room");
 
       const status = edge.desk.status(turnId)!;
@@ -262,6 +265,7 @@ test("a kickoff joins spec-acme-greeter on the local listener as the credited us
     });
   } finally {
     await collab.destroy();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

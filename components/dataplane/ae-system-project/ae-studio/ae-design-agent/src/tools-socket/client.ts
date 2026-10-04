@@ -43,8 +43,6 @@ export interface ToolsSocket {
    * ae-studio-tools (the MCP client posts to `/mcp`).
    */
   mcpFetch: typeof fetch;
-  /** A short-lived collab room token (the `ae-studio-<org>` client's). */
-  roomToken(): Promise<string>;
   /** Hand over one finished turn's record; resolves once it is accepted. */
   postUsage(r: TurnRecord): Promise<void>;
   /**
@@ -180,14 +178,6 @@ export function createToolsSocket(socketPath: string, options: ToolsSocketOption
 
   return {
     mcpFetch,
-
-    async roomToken() {
-      const reply = await send("POST", "/room-token");
-      if (reply.status !== 200) throw failure(reply);
-      const body = parseJSON(reply.text);
-      if (!isRecord(body) || !isString(body.token) || body.token === "") throw malformed("room-token", reply);
-      return body.token;
-    },
 
     async postUsage(record) {
       const reply = await send("POST", "/turn-usage", record);

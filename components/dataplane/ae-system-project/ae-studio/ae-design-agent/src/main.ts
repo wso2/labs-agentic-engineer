@@ -109,7 +109,7 @@ async function startPod(cfg: PodConfig, connection: ReturnType<typeof connection
     connection,
     // Built PER TURN from the org's connection.
     buildModel: (conn, ctx) => createModel(conn, ctx),
-    room: localRoomJoiner({ url: cfg.collabLocalUrl, orgHandle: cfg.orgHandle, tools }),
+    room: localRoomJoiner({ socketPath: cfg.roomSocket, orgHandle: cfg.orgHandle }),
     surface: "console",
     orgId: cfg.orgId,
   });

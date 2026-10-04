@@ -17,17 +17,15 @@
  */
 
 /**
- * The pod's Room join (07 §9): ae-collab's local listener
- * (`AE_COLLAB_LOCAL_URL`, `ws://127.0.0.1:8091`), a room token minted by
- * ae-studio-tools for the `ae-studio-<org>` client (`POST /room-token` on the
- * MCP socket) and asked again at every connect, the Room
- * `spec-<orgHandle>-<project>`, and the credited user as the `credit`
- * connection parameter. The local listener credits the Room's participant
- * to that user and refuses a credit without a name, so a credit that names
- * no one falls back to the user id.
+ * The pod's Room join (07 §9, amended by Task 4.7a): ae-collab's Room socket
+ * (`AE_ROOM_SOCKET`, a Unix socket on an emptyDir shared by ae-collab and
+ * this container only), the Room `spec-<orgHandle>-<project>`, and the
+ * credited user as the `credit` connection parameter. No token: socket
+ * access is the agent's identity. The Room socket credits the Room's
+ * participant to that user and refuses a credit without a name, so a credit
+ * that names no one falls back to the user id.
  */
 
-import type { ToolsSocket } from "../tools-socket/client.js";
 import { joinRoom, type RoomPeer } from "./room-peer.js";
 
 /** Who a Room join is credited to (the turn's credit). */
@@ -38,11 +36,10 @@ export interface RoomCredit {
 }
 
 export interface LocalRoomConfig {
-  /** `AE_COLLAB_LOCAL_URL`. */
-  url: string;
+  /** `AE_ROOM_SOCKET`: ae-collab's Room socket. */
+  socketPath: string;
   /** `AE_ORG_HANDLE`: the Room ids are the org's. */
   orgHandle: string;
-  tools: Pick<ToolsSocket, "roomToken">;
 }
 
 /** The `credit` parameter: `{name, email}` with a name (`name || userId`). */
@@ -50,13 +47,18 @@ export function creditParameter(credit: RoomCredit): string {
   return JSON.stringify({ name: credit.name.trim() || credit.userId, email: credit.email });
 }
 
-/** Joins a project's Room on the local listener, as the credited user. */
+/** The ws URL of a Unix socket, in `ws`'s `ws+unix:<socket>:<request path>` form. */
+function roomSocketUrl(socketPath: string): string {
+  return `ws+unix:${socketPath}:/`;
+}
+
+/** Joins a project's Room on the Room socket, as the credited user. */
 export function localRoomJoiner(cfg: LocalRoomConfig): (project: string, credit: RoomCredit) => Promise<RoomPeer> {
+  const url = roomSocketUrl(cfg.socketPath);
   return (project, credit) =>
     joinRoom({
-      url: cfg.url,
+      url,
       roomId: `spec-${cfg.orgHandle}-${project}`,
-      token: () => cfg.tools.roomToken(),
       parameters: { credit: creditParameter(credit) },
     });
 }

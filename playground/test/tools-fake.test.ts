@@ -109,6 +109,5 @@ test("MCP lists the design tools and every call says the local run has no catalo
     result: { content: { text: string }[] };
   };
   assert.equal(call.result.content[0]?.text, NO_CATALOG);
-  await assert.rejects(tools.roomToken(), (e: unknown) => e instanceof ToolsSocketError && e.code === "no_room");
   await tools.postUsage();
 });

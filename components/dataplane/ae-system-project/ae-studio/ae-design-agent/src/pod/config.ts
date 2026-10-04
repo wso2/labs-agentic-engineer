@@ -20,7 +20,7 @@
  * The AE Studio pod's env for this container (08 §2/§3, 07 §9): the org the
  * pod serves, the Platform IdP that signs its users' tokens, the user
  * audiences, the public and health ports, the tools socket, the Turn socket,
- * ae-collab's local listener, the snapshot mount, and the secret revisions of
+ * ae-collab's Room socket, the snapshot mount, and the secret revisions of
  * 08 §7. The model connection is read
  * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
@@ -37,8 +37,8 @@ export interface PodConfig {
   mcpSocket: string;
   /** `AE_TURN_SOCKET`: where this container serves the Turn socket (`edge/turn-socket.ts`). */
   turnSocket: string;
-  /** `AE_COLLAB_LOCAL_URL`: ae-collab's local listener, where the agent joins Rooms. */
-  collabLocalUrl: string;
+  /** `AE_ROOM_SOCKET`: ae-collab's Room socket, where the agent joins Rooms (no token: the mount is the gate). */
+  roomSocket: string;
   /** `AE_SNAPSHOTS_DIR`: the read-only snapshot mount. */
   snapshotsDir: string;
   /** The revision the pod spec was rendered for; `""` when the org has no key. */
@@ -84,8 +84,7 @@ export function loadPodConfig(env: Env): PodConfig | null {
   if (userAudiences.length === 0) problems.push("missing AE_USER_AUDIENCES");
   const mcpSocket = required("AE_MCP_SOCKET");
   const turnSocket = required("AE_TURN_SOCKET");
-  const collabLocalUrl = required("AE_COLLAB_LOCAL_URL");
-  if (collabLocalUrl && !isWsUrl(collabLocalUrl)) problems.push("invalid AE_COLLAB_LOCAL_URL");
+  const roomSocket = required("AE_ROOM_SOCKET");
   const snapshotsDir = required("AE_SNAPSHOTS_DIR");
   const listenPort = port("AE_LISTEN_PORT", DEFAULT_LISTEN_PORT);
   const healthPort = port("AE_HEALTH_PORT", DEFAULT_HEALTH_PORT);
@@ -100,18 +99,9 @@ export function loadPodConfig(env: Env): PodConfig | null {
     healthPort,
     mcpSocket,
     turnSocket,
-    collabLocalUrl,
+    roomSocket,
     snapshotsDir,
     expectedSecretRev: env.AE_EXPECTED_SECRET_REV ?? "",
     secretRev: env.AE_SECRET_REV ?? "",
   };
-}
-
-function isWsUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "ws:" || u.protocol === "wss:";
-  } catch {
-    return false;
-  }
 }

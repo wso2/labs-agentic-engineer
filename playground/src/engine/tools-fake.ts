@@ -28,8 +28,8 @@
  * - MCP is the design agent's catalog stubs (`FakeToolsSocket`): the eleven
  *   design tools are listed, and every call answers that a local run has no
  *   platform catalog, so the agent treats the org as empty.
- * - There is no Room (the session wires none) and no usage ledger: a room
- *   token is refused, and usage records are accepted and dropped.
+ * - There is no Room (the session wires none) and no usage ledger: usage
+ *   records are accepted and dropped.
  */
 
 import { FakeToolsSocket } from "@aep/ae-design-agent/tools-socket/fake";
@@ -74,10 +74,6 @@ export class PlaygroundToolsSocket implements ToolsSocket {
 
   async skills(): Promise<SkillsSnapshot> {
     return { skillsSha: this.materializeSkills() };
-  }
-
-  async roomToken(): Promise<string> {
-    throw new ToolsSocketError("no_room", 404, "the local playground has no Room");
   }
 
   async postUsage(): Promise<void> {

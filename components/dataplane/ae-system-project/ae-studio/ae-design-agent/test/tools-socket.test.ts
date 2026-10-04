@@ -144,21 +144,9 @@ function reset(next: Route): void {
   route = next;
 }
 
-test("roomToken: POST /room-token, answers the token", async () => {
-  reset(() => ({ status: 200, body: { token: "room-tok", expiresAt: "2026-10-03T11:00:00Z" } }));
-  const tools = createToolsSocket(socketPath);
-  assert.equal(await tools.roomToken(), "room-tok");
-  assert.deepEqual(
-    seen.map((s) => [s.method, s.url]),
-    [["POST", "/room-token"]],
-  );
-});
-
-test("roomToken: idp_unavailable surfaces as a transient ToolsSocketError", async () => {
-  reset(() => problem(502, "idp_unavailable"));
-  const err = await createToolsSocket(socketPath).roomToken().catch((e: unknown) => e);
-  assert.ok(err instanceof ToolsSocketError);
-  assert.deepEqual([err.status, err.code, err.permanent], [502, "idp_unavailable", false]);
+test("no room token: the agent joins its Room on the Room socket, so neither adapter can mint one (Task 4.7a)", () => {
+  assert.equal("roomToken" in createToolsSocket(socketPath), false);
+  assert.equal("roomToken" in new FakeToolsSocket(), false);
 });
 
 test("postUsage: POST /turn-usage with the one record, 202 resolves", async () => {
@@ -299,7 +287,6 @@ test("fake: loadMcpTools lists the eleven tools; tool calls and usage are record
   assert.deepEqual(await fake.lookup("greeter"), { headSha: "h1", skillsSha: "s1", references: ["a.md"] });
   assert.equal(await fake.lookup("nope"), null);
   assert.deepEqual(await fake.skills(), { skillsSha: "s1" });
-  assert.equal(typeof (await fake.roomToken()), "string");
 
   await fake.postUsage(RECORD);
   assert.deepEqual(fake.usage, [RECORD]);

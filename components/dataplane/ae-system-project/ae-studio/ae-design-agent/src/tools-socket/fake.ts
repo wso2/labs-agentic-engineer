@@ -57,8 +57,6 @@ export interface FakeToolsSocketOptions {
   missingRefs?: string[];
   /** The skills snapshot's sha (`skills()`). */
   skillsSha?: string;
-  /** The room token `roomToken()` answers. */
-  roomToken?: string;
   /** A tool's text result; defaults to `{"tool": <name>}`. */
   callTool?: (call: FakeToolCall) => string;
 }
@@ -87,7 +85,6 @@ export class FakeToolsSocket implements ToolsSocket {
   private readonly projects: Record<string, ProjectSnapshot>;
   private readonly missingRefs: ReadonlySet<string>;
   private readonly skillsSha: string;
-  private readonly token: string;
   private readonly callTool: (call: FakeToolCall) => string;
   private failures = 0;
   private failStatus = 503;
@@ -98,7 +95,6 @@ export class FakeToolsSocket implements ToolsSocket {
     this.projects = opts.projects ?? {};
     this.missingRefs = new Set(opts.missingRefs ?? []);
     this.skillsSha = opts.skillsSha ?? "skills-fake";
-    this.token = opts.roomToken ?? "room-token-fake";
     this.callTool = opts.callTool ?? ((call) => JSON.stringify({ tool: call.name }));
   }
 
@@ -156,10 +152,6 @@ export class FakeToolsSocket implements ToolsSocket {
     }
     return json({ jsonrpc: "2.0", id: req.id, error: { code: -32601, message: "method not found" } });
   }) as typeof fetch;
-
-  async roomToken(): Promise<string> {
-    return this.token;
-  }
 
   async postUsage(r: TurnRecord): Promise<void> {
     this.usageAttempts++;

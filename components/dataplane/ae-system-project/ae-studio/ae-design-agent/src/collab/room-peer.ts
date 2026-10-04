@@ -22,15 +22,15 @@
 // @aep/collab-doc (Y.Text diff-and-patch, md fragment reparse), presence as
 // an agent (`kind: "agent"`, the console renders square avatars, #86 d7).
 //
-// The pod joins through `local-room.ts` (07 §9): ae-collab's local listener,
-// a room token from the tools socket asked at every connect, and the
-// credited user as a connection parameter.
+// The pod joins through `local-room.ts` (07 §9): ae-collab's Room socket,
+// whose access is the agent's identity (no token is sent), and the credited
+// user as a connection parameter.
 //
 // Every connection gets a FRESH Y.Doc, and a dropped connection is never
 // resumed with the doc it had (C13): a client that reconnects with a kept doc
 // merges its old copy of the seed into a Room that re-seeded after a restart,
 // and the document doubles. A dropped connection is replaced by a new one
-// (new doc, new token), and the files this peer wrote are written again where
+// (new doc), and the files this peer wrote are written again where
 // the new doc differs.
 //
 // The rejoin is bounded (`REJOIN_POLICY`): a refused or silent attempt backs
@@ -57,7 +57,7 @@ export const AGENT_ORIGIN = "aep-agent";
 
 /**
  * The reason the collab server tags a refusal with when ITS upstream was
- * unreachable, rather than when the token was refused. Duplicated from
+ * unreachable, rather than when the join itself was refused. Duplicated from
  * `components/dataplane/ae-system-project/ae-studio/ae-collab/src/pod/auth.ts`
  * (the console spells it out on its side of this socket too).
  */
@@ -128,16 +128,15 @@ export interface RoomPeer {
 }
 
 export interface JoinRoomInput {
-  /** The collab listener's ws URL (`AE_COLLAB_LOCAL_URL` in the pod). */
+  /**
+   * The collab listener's ws URL: in the pod, the Room socket's
+   * `ws+unix:<path>:/` (`local-room.ts`). No token is sent: the listener
+   * the peer reaches decides who it is.
+   */
   url: string;
   /** Room id: `spec-<orgHandle>-<project>`. */
   roomId: string;
-  /**
-   * The room token, asked at every connect: a reconnect presents a fresh
-   * one, and a token is held for its connection only.
-   */
-  token: () => Promise<string>;
-  /** Connection parameters, sent in the upgrade URL's query (the local listener's `credit`). */
+  /** Connection parameters, sent in the upgrade URL's query (the Room socket's `credit`). */
   parameters?: Record<string, string>;
   /** Presence label (defaults to "Spec Agent"). */
   agentName?: string;
@@ -169,7 +168,7 @@ function refusalError(roomId: string, reason: string | undefined): Error {
   return new Error(
     reason === UPSTREAM_UNAVAILABLE
       ? `collab: room ${roomId} is unavailable — the collab server could not reach its upstream (${reason})`
-      : `collab: room ${roomId} rejected the room token`,
+      : `collab: room ${roomId} refused the join (${reason ?? "no reason"})`,
   );
 }
 
@@ -185,10 +184,12 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
   /** A new connection, not yet attached: a fresh doc every time (C13). */
   const open = (): Connection => {
     // Explicit websocket sub-provider so the Node `ws` implementation is
-    // pinned (the polyfill knob lives on the websocket configuration).
-    const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: WebSocket });
+    // pinned (the polyfill knob lives on the websocket configuration). The
+    // trailing slash is kept: in `ws+unix:<path>:/` it is the request path.
+    const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: WebSocket, preserveTrailingSlash: true });
     const doc = new Y.Doc();
-    const provider = new HocuspocusProvider({ websocketProvider: socket, name: input.roomId, document: doc, token: input.token });
+    // No token: the provider's auth message carries an empty one.
+    const provider = new HocuspocusProvider({ websocketProvider: socket, name: input.roomId, document: doc });
     provider.setAwarenessField("user", { name: agentName, color: "#b57edc", kind: "agent" });
     return { socket, provider, doc, synced: false };
   };
@@ -215,14 +216,14 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
         conn.synced = true;
         resolve();
       });
-      // A refused room and a refused token arrive through the SAME event
+      // A refused room and a refused join arrive through the SAME event
       // (#586): the collab server answers an unseedable room with a
       // permission-denied frame too, tagging it so the two can be told apart.
       // Both are terminal for this turn — an agent has no committed copy to
       // fall back on the way the console does, and writing into a room that
       // was never seeded is what corrupted the spec in the first place — but
       // they must not be REPORTED alike, or a restart upstream shows up in
-      // the turn log as a credentials problem.
+      // the turn log as an access problem.
       conn.provider.on("authenticationFailed", ({ reason }: { reason?: string }) => {
         clearTimeout(timer);
         reject(refusalError(input.roomId, reason));
@@ -302,7 +303,7 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
     retry.unref?.();
   };
 
-  /** One attempt: a new connection with a fresh doc and a fresh token. */
+  /** One attempt: a new connection with a fresh doc. */
   const rejoin = (): void => {
     retry = undefined;
     if (left || lost) return;

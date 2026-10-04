@@ -68,7 +68,6 @@ test("joins, snapshots the doc, mirrors bundle ops live, leaves", async () => {
   const peer: RoomPeer = await joinRoom({
     url,
     roomId: "spec-acme-shop",
-    token: async () => "any",
   });
   try {
     const files = peer.files();
@@ -101,7 +100,7 @@ test("joins, snapshots the doc, mirrors bundle ops live, leaves", async () => {
 });
 
 test("a failed-op does not touch the doc", async () => {
-  const peer = await joinRoom({ url, roomId: "spec-acme-shop2", token: async () => "any" });
+  const peer = await joinRoom({ url, roomId: "spec-acme-shop2" });
   try {
     const bundle = new DocFileBundle(peer, peer.files());
     const res = bundle.editFile("requirements/prd.md", "not-present-text", "x");
@@ -114,7 +113,7 @@ test("a failed-op does not touch the doc", async () => {
   }
 });
 
-test("the token is asked at every connect and the parameters ride the upgrade", async () => {
+test("no token is sent (the listener decides who the peer is) and the parameters ride the upgrade", async () => {
   const port = randomPort();
   const seen: Array<{ token: string; room: string; credit: string | null }> = [];
   const srv = new Server({
@@ -125,25 +124,23 @@ test("the token is asked at every connect and the parameters ride the upgrade", 
     },
   });
   await srv.listen(port);
-  let asked = 0;
   const credit = JSON.stringify({ name: "Ann", email: "ann@x" });
   const peer = await joinRoom({
     url: `ws://127.0.0.1:${port}`,
     roomId: "spec-acme-greeter",
-    token: async () => `token-${++asked}`,
     parameters: { credit },
   });
   try {
-    assert.deepEqual(seen, [{ token: "token-1", room: "spec-acme-greeter", credit }]);
+    assert.deepEqual(seen, [{ token: "", room: "spec-acme-greeter", credit }]);
   } finally {
     peer.leave();
     await srv.destroy();
   }
 });
 
-test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed, the agent's writes land again (C13)", async () => {
+test("a dropped Room is rejoined with a fresh doc: a new join, no doubled seed, the agent's writes land again (C13)", async () => {
   const port = randomPort();
-  const tokens: string[] = [];
+  const joins: string[] = [];
   let serverDoc: Document | undefined;
   let loads = 0;
   // Each start of the collab server seeds its doc anew (new Yjs items), as
@@ -151,8 +148,8 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
   const start = async (): Promise<Server> => {
     const srv = new Server({
       quiet: true,
-      onAuthenticate: ({ token }) => {
-        tokens.push(token);
+      onAuthenticate: ({ documentName }) => {
+        joins.push(documentName);
         return Promise.resolve();
       },
       onLoadDocument: ({ document }) => {
@@ -166,9 +163,8 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
     return srv;
   };
   let srv = await start();
-  let n = 0;
   const logs: RoomLogLine[] = [];
-  const peer = await joinRoom({ url: `ws://127.0.0.1:${port}`, roomId: "spec-acme-rejoin", token: async () => `t${++n}`, log: (l) => logs.push(l) });
+  const peer = await joinRoom({ url: `ws://127.0.0.1:${port}`, roomId: "spec-acme-rejoin", log: (l) => logs.push(l) });
   try {
     peer.set("specs/design/notes.txt", "agent wrote this\n", false);
     await until(() => serverDoc !== undefined && readDocFile(serverDoc, "specs/design/notes.txt") !== undefined, "the first write");
@@ -181,7 +177,7 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
 
     assert.equal(loads, 2, "the doc was seeded twice: a kept client doc would merge the first seed in");
     assert.equal(readDocFile(serverDoc!, "specs/requirements/prd.md"), "# PRD\n\nSeeded body.", "the seed is not doubled");
-    assert.deepEqual(tokens, ["t1", "t2"], "the rejoin asked for a new token");
+    assert.deepEqual(joins, ["spec-acme-rejoin", "spec-acme-rejoin"], "the rejoin authenticated a new connection");
     assert.equal(peer.files()["specs/requirements/prd.md"], "# PRD\n\nSeeded body.");
 
     // Writes after the rejoin go to the new connection.
@@ -199,7 +195,7 @@ test("a dropped Room is rejoined with a fresh doc: a new token, no doubled seed,
 });
 
 test("leave clears the agent's presence for the other peers at once (C21)", async () => {
-  const peer = await joinRoom({ url, roomId: "spec-acme-presence", token: async () => "any" });
+  const peer = await joinRoom({ url, roomId: "spec-acme-presence" });
   const socket = new HocuspocusProviderWebsocket({ url, WebSocketPolyfill: WebSocket });
   const observer = new HocuspocusProvider({ websocketProvider: socket, name: "spec-acme-presence", document: new Y.Doc(), token: "any" });
   observer.attach();
@@ -240,7 +236,6 @@ test("refused rejoins back off exponentially to the cap, stop at the bound, and 
   const peer = await joinRoom({
     url: `ws://127.0.0.1:${port}`,
     roomId: "spec-acme-refused",
-    token: async () => "t",
     rejoin: { firstDelayMs: 40, maxDelayMs: 100, attemptTimeoutMs: 2_000, maxAttempts: 4, leaveWaitMs: 50 },
     log: (l) => logs.push({ ...l, at: Date.now() }),
   });
@@ -265,7 +260,6 @@ test("refused rejoins back off exponentially to the cap, stop at the bound, and 
       [1],
       "the give-up reports the write the Room never confirmed",
     );
-    assert.ok(logs.every((l) => !JSON.stringify(l).includes('"t"')), "no token in a log line");
 
     await new Promise((r) => setTimeout(r, 300));
     assert.equal(logs.filter((l) => l.msg === "room_rejoin").length, 4, "nothing after the bound");
@@ -284,7 +278,6 @@ test("writes pending when the turn leaves during a rejoin are counted and logged
   const peer = await joinRoom({
     url: `ws://127.0.0.1:${port}`,
     roomId: "spec-acme-pending",
-    token: async () => "t",
     // The second attempt is far off: the turn ends while the peer waits for it.
     rejoin: { firstDelayMs: 60_000, maxAttempts: 10, leaveWaitMs: 100 },
     log: (l) => logs.push(l),

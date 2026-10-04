@@ -61,8 +61,8 @@ export interface EdgeOptions {
   room?: JoinRoom;
   /** Where the Turn socket listens (a temp dir unless named). */
   turnSocket?: string;
-  /** Join Rooms as the pod does (`localRoomJoiner` over the fake tools socket) on this collab URL. */
-  collabLocalUrl?: string;
+  /** Join Rooms as the pod does (`localRoomJoiner`) on this Room socket. */
+  roomSocket?: string;
   /** The project snapshot's files (path → content). */
   files?: Record<string, string>;
   /** Reference documents stored for the project (name → bytes). */
@@ -150,7 +150,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
         return model;
       }),
     ...(opts.room ? { room: opts.room } : {}),
-    ...(opts.collabLocalUrl ? { room: localRoomJoiner({ url: opts.collabLocalUrl, orgHandle: ORG_HANDLE, tools }) } : {}),
+    ...(opts.roomSocket ? { room: localRoomJoiner({ socketPath: opts.roomSocket, orgHandle: ORG_HANDLE }) } : {}),
     surface: "console",
     orgId: ORG_ID,
     ...(opts.headless ? { headless: true } : {}),
@@ -163,7 +163,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
     AE_USER_AUDIENCES: "aep-console-client",
     AE_MCP_SOCKET: "/unused/mcp.sock",
     AE_TURN_SOCKET: opts.turnSocket ?? join(root, "turn.sock"),
-    AE_COLLAB_LOCAL_URL: opts.collabLocalUrl ?? "ws://127.0.0.1:1",
+    AE_ROOM_SOCKET: opts.roomSocket ?? "/unused/room.sock",
     AE_SNAPSHOTS_DIR: root,
     AE_LISTEN_PORT: "0",
     AE_HEALTH_PORT: "0",

@@ -133,11 +133,12 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   thread, in the Room; a Plan turn runs the task-plan toolset on a
   throwaway conversation (no Room, dropped when it ends).
 - **Room join** (`collab/local-room.ts`, `collab/room-peer.ts`, 07 §9):
-  ae-collab's local listener (`AE_COLLAB_LOCAL_URL`), Room
-  `spec-<AE_ORG_HANDLE>-<project>`, a room token from `tools.roomToken()`
-  asked at every connect, and the `credit` parameter `{name, email}` (name
-  falls back to the user id). Every connection has a fresh Y.Doc: a dropped
-  connection is replaced, never resumed with its kept doc (a kept doc
+  ae-collab's Room socket (`AE_ROOM_SOCKET`, a Unix socket on an emptyDir
+  shared with ae-collab only, dialled as `ws+unix:<path>:/`), Room
+  `spec-<AE_ORG_HANDLE>-<project>`, no token (socket access is the agent's
+  identity; the ae-studio client token never leaves ae-studio-tools), and
+  the `credit` parameter `{name, email}` (name falls back to the user id).
+  Every connection has a fresh Y.Doc: a dropped connection is replaced, never resumed with its kept doc (a kept doc
   doubles a re-seeded Room), and the peer's writes are applied again where
   the new doc differs; writes still pending when the turn ends are lost.
   Leaving clears the agent's presence at once.
@@ -180,7 +181,7 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   `conversation/history-for.ts` drops what another connection cannot replay.
 - **Tools socket** (`src/tools-socket/`): the one port to ae-studio-tools
   over the Unix socket in `AE_MCP_SOCKET`: `mcpFetch` (the MCP client's
-  transport), `roomToken`, `postUsage`, `lookup` (404 `project_unknown` →
+  transport), `postUsage`, `lookup` (404 `project_unknown` →
   `null`) and `skills`. `client.ts` is the undici socket adapter, `fake.ts`
   the in-process one for tests. `src/usage/outbox.ts` holds finished-turn
   records (cap 200, oldest dropped, retry every 2 s, in order);
