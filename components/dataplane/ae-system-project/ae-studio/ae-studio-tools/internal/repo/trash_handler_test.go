@@ -29,14 +29,22 @@ import (
 )
 
 // TestTrashRepo_MovesTheMirrorToTrash: trash-repo moves owner/repo's mirror
-// into trash/ (any case of the name), a missing mirror is success, and the
-// next op on the repository clones it again.
+// and its reference store into trash/ (any case of the name), nothing
+// stored is success, and the next op on the repository clones it again.
 func TestTrashRepo_MovesTheMirrorToTrash(t *testing.T) {
 	origin := repotest.NewOrigin(t, map[string]string{"specs/a.md": "a"})
 	engine := NewEngine(t, nil)
-	h := repo.NewHandler(engine, nil, func(string, string) string { return origin.URL() })
+	h := repo.NewHandler(engine, nil, func(string, string) string { return origin.URL() }, repo.WithOwner("Acme"))
 	ctx := context.Background()
 	if _, err := h.GetHead(ctx, gen.GetHeadRequestObject{Owner: "acme", Repo: "greeter"}); err != nil {
+		t.Fatal(err)
+	}
+	store := repo.OwnerRepo{Owner: "acme", Repo: "greeter"}
+	if err := engine.PutReferences(ctx, store, []repo.ReferenceDoc{{Name: "notes.md", Content: []byte("n")}}); err != nil {
+		t.Fatal(err)
+	}
+	storeDir, err := repo.ReferenceStoreDir(engine.Root(), store)
+	if err != nil {
 		t.Fatal(err)
 	}
 	dir, err := repo.RepoDir(engine.Root(), repo.RepoRef{Owner: "acme", Repo: "greeter"})
@@ -58,8 +66,14 @@ func TestTrashRepo_MovesTheMirrorToTrash(t *testing.T) {
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("mirror still at %s (%v)", dir, err)
 	}
-	if entries, _ := os.ReadDir(repo.TrashDir(engine.Root())); len(entries) != 1 {
-		t.Fatalf("trash holds %d entries, want the one mirror", len(entries))
+	if _, err := os.Stat(storeDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("reference store still at %s (%v)", storeDir, err)
+	}
+	if names, err := engine.ListReferences(ctx, store); err != nil || len(names) != 0 {
+		t.Fatalf("references after trash %v (%v)", names, err)
+	}
+	if entries, _ := os.ReadDir(repo.TrashDir(engine.Root())); len(entries) != 2 {
+		t.Fatalf("trash holds %d entries, want the mirror and the reference store", len(entries))
 	}
 	head, err := h.GetHead(ctx, gen.GetHeadRequestObject{Owner: "acme", Repo: "greeter"})
 	if err != nil {
@@ -70,9 +84,32 @@ func TestTrashRepo_MovesTheMirrorToTrash(t *testing.T) {
 	}
 }
 
+// TestTrashRepo_RefusesAnotherOwner: an owner that is not the connected
+// account (or no connected account) is 403 owner_not_allowed and nothing
+// moves.
+func TestTrashRepo_RefusesAnotherOwner(t *testing.T) {
+	engine := NewEngine(t, nil)
+	ctx := context.Background()
+	store := repo.OwnerRepo{Owner: "evil", Repo: "x"}
+	if err := engine.PutReferences(ctx, store, []repo.ReferenceDoc{{Name: "notes.md", Content: []byte("n")}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, connected := range []string{"acme", ""} {
+		h := repo.NewHandler(engine, nil, repo.GitHubCloneURL, repo.WithOwner(connected))
+		resp, err := h.TrashRepo(ctx, gen.TrashRepoRequestObject{Body: &gen.TrashRepoRequest{Owner: "evil", Repo: "x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantProblem(t, resp.VisitTrashRepoResponse, http.StatusForbidden, "owner_not_allowed")
+	}
+	if names, _ := engine.ListReferences(ctx, store); len(names) != 1 {
+		t.Fatalf("a refused trash moved the store: %v", names)
+	}
+}
+
 // TestTrashRepo_RefusesABadName: a name the store cannot hold is 400.
 func TestTrashRepo_RefusesABadName(t *testing.T) {
-	h := repo.NewHandler(NewEngine(t, nil), nil, repo.GitHubCloneURL)
+	h := repo.NewHandler(NewEngine(t, nil), nil, repo.GitHubCloneURL, repo.WithOwner(".."))
 	resp, err := h.TrashRepo(context.Background(), gen.TrashRepoRequestObject{Body: &gen.TrashRepoRequest{Owner: "..", Repo: "x"}})
 	if err != nil {
 		t.Fatal(err)

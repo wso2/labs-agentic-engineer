@@ -113,9 +113,10 @@ func (h Handler) CreateRepo(ctx context.Context, req gen.CreateRepoRequestObject
 // events are replaced. A failed replace fails the call (the hook keeps its
 // old events; aep-api's retry ensures again).
 func (h Handler) RegisterHook(ctx context.Context, req gen.RegisterHookRequestObject) (gen.RegisterHookResponseObject, error) {
-	id, existed, err := h.gh.RegisterWebhook(ctx, req.Owner, req.Repo, req.Body.Events)
+	events := hookEvents(req.Body.Events)
+	id, existed, err := h.gh.RegisterWebhook(ctx, req.Owner, req.Repo, events)
 	if err == nil && existed {
-		err = h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, id, req.Body.Events)
+		err = h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, id, events)
 	}
 	if err != nil {
 		return h.problem(ctx, "register-hook", req.Owner, req.Repo, err)
@@ -125,10 +126,19 @@ func (h Handler) RegisterHook(ctx context.Context, req gen.RegisterHookRequestOb
 
 // UpdateHookEvents replaces a hook's events.
 func (h Handler) UpdateHookEvents(ctx context.Context, req gen.UpdateHookEventsRequestObject) (gen.UpdateHookEventsResponseObject, error) {
-	if err := h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, req.HookID, req.Body.Events); err != nil {
+	if err := h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, req.HookID, hookEvents(req.Body.Events)); err != nil {
 		return h.problem(ctx, "update-hook-events", req.Owner, req.Repo, err)
 	}
 	return gen.UpdateHookEvents204Response{}, nil
+}
+
+// hookEvents is the contract's event enum as GitHub's event names.
+func hookEvents(in []gen.HookEventsRequestEvents) []string {
+	out := make([]string, 0, len(in))
+	for _, e := range in {
+		out = append(out, string(e))
+	}
+	return out
 }
 
 // DeleteHook deletes a hook; one GitHub no longer has is success.

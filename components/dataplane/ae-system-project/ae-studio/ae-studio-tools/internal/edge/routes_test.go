@@ -178,7 +178,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
-		Git:        repo.NewHandler(engine, nil, func(string, string) string { return deps.gitOrigin }),
+		Git:        repo.NewHandler(engine, nil, func(string, string) string { return deps.gitOrigin }, repo.WithOwner(cfg.GitHubOwner)),
 		GitHubOps: github.NewHandler(github.New(github.Config{
 			APIBase: deps.githubAPI,
 			Token:   func(context.Context) (string, error) { return "test-gitpat", nil },

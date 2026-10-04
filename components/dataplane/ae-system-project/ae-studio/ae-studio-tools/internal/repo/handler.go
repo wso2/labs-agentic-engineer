@@ -55,11 +55,27 @@ type Handler struct {
 	identity IdentitySource
 	// cloneURL addresses an owner/repo's origin (GitHubCloneURL).
 	cloneURL func(owner, name string) string
+	// owner is the org's connected GitHub account (AE_GITHUB_OWNER), the
+	// only owner trash-repo acts for (its owner is in the body, outside the
+	// edge's path guard); empty refuses every trash.
+	owner string
+}
+
+// HandlerOption configures a Handler.
+type HandlerOption func(*Handler)
+
+// WithOwner names the org's connected GitHub account.
+func WithOwner(owner string) HandlerOption {
+	return func(h *Handler) { h.owner = owner }
 }
 
 // NewHandler serves ws, cloning owner/repo from cloneURL(owner, repo).
-func NewHandler(ws Workspace, identity IdentitySource, cloneURL func(owner, name string) string) Handler {
-	return Handler{ws: ws, identity: identity, cloneURL: cloneURL}
+func NewHandler(ws Workspace, identity IdentitySource, cloneURL func(owner, name string) string, opts ...HandlerOption) Handler {
+	h := Handler{ws: ws, identity: identity, cloneURL: cloneURL}
+	for _, o := range opts {
+		o(&h)
+	}
+	return h
 }
 
 // errBadRequest is a request the contract allows but the op refuses (400

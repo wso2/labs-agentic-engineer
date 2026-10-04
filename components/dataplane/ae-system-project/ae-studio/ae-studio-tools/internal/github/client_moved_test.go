@@ -109,6 +109,48 @@ func TestListIssues_EscapesTheLabelFilter(t *testing.T) {
 	}
 }
 
+// TestCreateOrgRepo_UserFallbackOnlyForTheGitpatsOwnAccount: a 404 on
+// /orgs/{owner}/repos falls back to /user/repos only when owner is the
+// gitpat's user (case-insensitively); otherwise the 404 is the answer and
+// nothing is created.
+func TestCreateOrgRepo_UserFallbackOnlyForTheGitpatsOwnAccount(t *testing.T) {
+	for _, tc := range []struct {
+		login        string
+		wantFallback bool
+	}{{"gitpat-user", false}, {"ACME", true}} {
+		t.Run(tc.login, func(t *testing.T) {
+			fellBack := false
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /orgs/acme/repos", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			})
+			mux.HandleFunc("GET /user", func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"login":"` + tc.login + `","id":7}`))
+			})
+			mux.HandleFunc("POST /user/repos", func(w http.ResponseWriter, _ *http.Request) {
+				fellBack = true
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"name":"x","owner":{"login":"` + tc.login + `"},"default_branch":"main"}`))
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			got, err := New(Config{APIBase: srv.URL, Token: staticToken("t")}).CreateOrgRepo(context.Background(), "acme", CreateOrgRepoRequest{Name: "x"})
+			if fellBack != tc.wantFallback {
+				t.Fatalf("fell back = %v, want %v", fellBack, tc.wantFallback)
+			}
+			if tc.wantFallback {
+				if err != nil || got.Owner != tc.login {
+					t.Fatalf("got %+v, %v", got, err)
+				}
+				return
+			}
+			if !IsHTTPStatus(err, http.StatusNotFound) {
+				t.Fatalf("err = %v, want HTTPStatusError 404", err)
+			}
+		})
+	}
+}
+
 // TestWrites_ReturnHTTPStatusError: a write GitHub refuses is a typed
 // *HTTPStatusError, except DeleteWebhook, for which 404 is success (the hook
 // is already gone).

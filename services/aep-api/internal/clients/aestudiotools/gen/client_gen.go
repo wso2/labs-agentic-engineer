@@ -22,6 +22,30 @@ const (
 	AeOnlyScopes aeOnlyContextKey = "aeOnly.Scopes"
 )
 
+// Defines values for HookEventsRequestEvents.
+const (
+	HookEventsRequestEventsIssueComment HookEventsRequestEvents = "issue_comment"
+	HookEventsRequestEventsIssues       HookEventsRequestEvents = "issues"
+	HookEventsRequestEventsPullRequest  HookEventsRequestEvents = "pull_request"
+	HookEventsRequestEventsPush         HookEventsRequestEvents = "push"
+)
+
+// Valid indicates whether the value is a known member of the HookEventsRequestEvents enum.
+func (e HookEventsRequestEvents) Valid() bool {
+	switch e {
+	case HookEventsRequestEventsIssueComment:
+		return true
+	case HookEventsRequestEventsIssues:
+		return true
+	case HookEventsRequestEventsPullRequest:
+		return true
+	case HookEventsRequestEventsPush:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for KeepAliveFrameType.
 const (
 	KeepAlive KeepAliveFrameType = "keep-alive"
@@ -273,7 +297,9 @@ type CreateRepoRequest struct {
 	// AdoptExisting A taken name answers the existing repository (200) instead of 409
 	AdoptExisting bool   `json:"adoptExisting,omitempty,omitzero"`
 	Description   string `json:"description,omitempty,omitzero"`
-	Name          string `json:"name"`
+
+	// Name GitHub's charset; never . or ..
+	Name string `json:"name"`
 
 	// Owner Must be the org's connected GitHub account
 	Owner   string `json:"owner"`
@@ -339,8 +365,11 @@ type Hook struct {
 
 // HookEventsRequest defines model for HookEventsRequest.
 type HookEventsRequest struct {
-	Events []string `json:"events"`
+	Events []HookEventsRequestEvents `json:"events"`
 }
+
+// HookEventsRequestEvents defines model for HookEventsRequest.Events.
+type HookEventsRequestEvents string
 
 // IssueBodyRequest defines model for IssueBodyRequest.
 type IssueBodyRequest struct {
@@ -604,6 +633,7 @@ type TaskOpFrameType string
 
 // TrashRepoRequest defines model for TrashRepoRequest.
 type TrashRepoRequest struct {
+	// Owner Must be the org's connected GitHub account
 	Owner string `json:"owner"`
 	Repo  string `json:"repo"`
 }

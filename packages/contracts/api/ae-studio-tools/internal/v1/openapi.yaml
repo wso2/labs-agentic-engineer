@@ -14,10 +14,10 @@ info:
     any handler runs. A multipart body is the exception: its handler reads and
     checks the parts itself.
 
-    Every /repos/{owner}/{repo}/... operation, and create-repo for its body's
-    owner, answers 403 owner_not_allowed, once the request is validated and
-    before the operation runs, when owner is not the org's connected GitHub
-    account (compared case-insensitively).
+    Every /repos/{owner}/{repo}/... operation, and create-repo and
+    trash-repo for their body's owner, answer 403 owner_not_allowed, once the
+    request is validated and before the operation runs, when owner is not the
+    org's connected GitHub account (compared case-insensitively).
     Errors are RFC 9457 problems (application/problem+json).
 
     The Issues, Milestones, Pulls, Hooks and create-repo operations call
@@ -1428,11 +1428,14 @@ paths:
   /trash:
     post:
       operationId: trash-repo
-      summary: Drop the studio's mirror of a repository
+      summary: Drop the studio's mirror and references of a repository
       description: |-
-        Moves the repository's mirror into the studio's trash (purged within
-        the hour); GitHub is not touched. No mirror is success. A later
-        operation on the repository clones it again.
+        Moves the repository's mirror and its stored reference documents into
+        the studio's trash (purged within the hour); GitHub is not touched.
+        Nothing stored is success. A later operation on the repository clones
+        it again. The owner must be the org's connected GitHub account
+        (compared case-insensitively), else 403 owner_not_allowed and nothing
+        moves.
       tags:
       - Repos
       parameters:
@@ -1473,18 +1476,21 @@ components:
       in: path
       required: true
       description: GitHub owner of the repository (one path segment, the
-        store's rule)
+        store's rule; never . or ..)
       schema:
         type: string
-        pattern: ^[A-Za-z0-9._-]{1,200}$
+        maxLength: 200
+        pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
     Repo:
       name: repo
       in: path
       required: true
-      description: GitHub repository name (one path segment, the store's rule)
+      description: GitHub repository name (one path segment, the store's
+        rule; never . or ..)
       schema:
         type: string
-        pattern: ^[A-Za-z0-9._-]{1,200}$
+        maxLength: 200
+        pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
     At:
       name: at
       in: query
@@ -2416,10 +2422,13 @@ components:
         owner:
           type: string
           description: Must be the org's connected GitHub account
-          pattern: ^[A-Za-z0-9._-]{1,200}$
+          maxLength: 200
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
         name:
           type: string
-          pattern: ^[A-Za-z0-9._-]{1,100}$
+          description: GitHub's charset; never . or ..
+          maxLength: 100
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
         private:
           type: boolean
         description:
@@ -2455,10 +2464,15 @@ components:
         events:
           type: array
           minItems: 1
-          maxItems: 20
+          maxItems: 4
+          uniqueItems: true
           items:
             type: string
-            pattern: ^[a-z_]{1,64}$
+            enum:
+            - pull_request
+            - push
+            - issue_comment
+            - issues
     Hook:
       type: object
       required:
@@ -2476,7 +2490,10 @@ components:
       properties:
         owner:
           type: string
-          pattern: ^[A-Za-z0-9._-]{1,200}$
+          description: Must be the org's connected GitHub account
+          maxLength: 200
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
         repo:
           type: string
-          pattern: ^[A-Za-z0-9._-]{1,200}$
+          maxLength: 200
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$

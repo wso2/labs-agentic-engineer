@@ -143,6 +143,20 @@ func (e *Engine) PutReferences(_ context.Context, r OwnerRepo, docs []ReferenceD
 	return nil
 }
 
+// TrashReferences moves the repository's reference store into trash/ (a
+// deleted project's documents; the reaper purges trash). A missing store is
+// a no-op. An overlay racing it is best-effort, as for PutReferences.
+func (e *Engine) TrashReferences(_ context.Context, r OwnerRepo) error {
+	dir, err := ReferenceStoreDir(e.root, r)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(dir, trashDest(e.root)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("repo: trash references %s/%s: %w", r.Owner, r.Repo, err)
+	}
+	return nil
+}
+
 // validateReferenceSet checks the count, every name, every size and that no
 // name appears twice (a later part would silently replace an earlier one).
 func validateReferenceSet(docs []ReferenceDoc) error {

@@ -210,10 +210,12 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 }
 
 // CreateOrgRepo creates a repo owned by owner and answers it as GitHub holds
-// it. A 404 on POST /orgs/{owner}/repos means owner is a user account, not
-// an org: the call is retried once on POST /user/repos, which creates under
-// the gitpat's own account (the answer names that owner; the caller checks
-// it). A taken name is ErrRepoNameConflict.
+// it. A 404 on POST /orgs/{owner}/repos means owner is not an org the gitpat
+// can see: when owner IS the gitpat's own user (GET /user, compared
+// case-insensitively) the call is retried once on POST /user/repos, which
+// creates under that account; otherwise the 404 is the answer, so nothing
+// is ever created under an account the caller did not name. A taken name is
+// ErrRepoNameConflict.
 func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgRepoRequest) (*Repository, error) {
 	if owner == "" {
 		return nil, errors.New("repo owner is required")
@@ -230,6 +232,13 @@ func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgR
 		return nil, err
 	}
 	if r.status == http.StatusNotFound {
+		u, err := c.User(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(u.Login, owner) {
+			return nil, statusError(r, url, time.Now())
+		}
 		url = c.apiBase + "/user/repos"
 		if r, err = c.send(ctx, http.MethodPost, url, payload); err != nil {
 			return nil, err

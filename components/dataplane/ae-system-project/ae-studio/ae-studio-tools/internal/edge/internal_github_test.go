@@ -17,12 +17,14 @@
 package edge
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/github/githubtest"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
 )
 
@@ -214,8 +216,8 @@ func TestInternalGitHub_HookEnsureOverHTTP(t *testing.T) {
 	}
 }
 
-// TestInternalTrash_DropsTheMirror: POST /internal/v1/trash is 204 and the
-// next read clones again.
+// TestInternalTrash_DropsTheMirror: POST /internal/v1/trash is 204, a
+// foreign owner 403 owner_not_allowed, and the next read clones again.
 func TestInternalTrash_DropsTheMirror(t *testing.T) {
 	origin := repotest.NewOrigin(t, map[string]string{"specs/a.md": "a"})
 	h := newHarness(t, withGitOrigin(origin))
@@ -228,7 +230,64 @@ func TestInternalTrash_DropsTheMirror(t *testing.T) {
 	if rec := h.doJSON("POST", "/internal/v1/trash", `{"owner":"acme-gh"}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("trash without repo: %d", rec.Code)
 	}
+	if rec := h.doJSON("POST", "/internal/v1/trash", `{"owner":"someone-else","repo":"greeter"}`); rec.Code != http.StatusForbidden ||
+		!strings.Contains(rec.Body.String(), `"code":"owner_not_allowed"`) {
+		t.Fatalf("trash as a foreign owner: %d %s", rec.Code, rec.Body.String())
+	}
 	if rec := h.do("GET", ghRepoPath+"/head", h.m2m(), "ou-1", nil); rec.Code != http.StatusOK || strings.Count(h.logs(), `"repo.clone"`) != 2 {
 		t.Fatalf("head after trash: %d, logs %s", rec.Code, h.logs())
+	}
+}
+
+// TestInternalTrash_DropsTheReferences: the repository's stored reference
+// documents go with its mirror.
+func TestInternalTrash_DropsTheReferences(t *testing.T) {
+	h := newHarness(t)
+	if rec := h.putReferences(ghRepoPath+"/references", h.m2m(), false, refFile("notes.md", 10)); rec.Code != http.StatusNoContent {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	if h.referencesStoreEmpty() {
+		t.Fatal("no store to trash")
+	}
+	if rec := h.doJSON("POST", "/internal/v1/trash", `{"owner":"acme-gh","repo":"greeter"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("trash: %d %s", rec.Code, rec.Body.String())
+	}
+	names, err := h.engine.ListReferences(context.Background(), repo.OwnerRepo{Owner: "acme-gh", Repo: "greeter"})
+	if err != nil || len(names) != 0 {
+		t.Fatalf("references after trash %v (%v)", names, err)
+	}
+}
+
+// TestInternalGitHub_NamesAndEventsAreAllowListed: "." and ".." are never a
+// repository or owner name, and hook events are exactly the four the
+// platform subscribes to.
+func TestInternalGitHub_NamesAndEventsAreAllowListed(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	h := newHarness(t, withGitHubAPI(gh))
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"create .":        h.doJSON("POST", "/internal/v1/repos", `{"owner":"acme-gh","name":".","private":true}`),
+		"create ..":       h.doJSON("POST", "/internal/v1/repos", `{"owner":"acme-gh","name":"..","private":true}`),
+		"create owner ..": h.doJSON("POST", "/internal/v1/repos", `{"owner":"..","name":"x","private":true}`),
+		"trash .":         h.doJSON("POST", "/internal/v1/trash", `{"owner":"acme-gh","repo":"."}`),
+		"trash ..":        h.doJSON("POST", "/internal/v1/trash", `{"owner":"acme-gh","repo":".."}`),
+		"trash owner .":   h.doJSON("POST", "/internal/v1/trash", `{"owner":".","repo":"x"}`),
+		"event unknown":   h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["push","release"]}`),
+		"event wildcard":  h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["*"]}`),
+		"event duplicate": h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["push","push"]}`),
+		"update unknown":  h.doJSON("PATCH", ghRepoPath+"/hooks/9", `{"events":["create"]}`),
+	} {
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+	}
+	if n := len(gh.Requests()); n != 0 {
+		t.Fatalf("a refused request reached GitHub %d times", n)
+	}
+	// Names that merely start with dots stay legal (GitHub has .github).
+	if rec := h.doJSON("POST", "/internal/v1/repos", `{"owner":"acme-gh","name":".github","private":true}`); rec.Code != http.StatusCreated {
+		t.Fatalf(".github: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["pull_request","push","issue_comment","issues"]}`); rec.Code == http.StatusBadRequest {
+		t.Fatalf("the four events: %d %s", rec.Code, rec.Body.String())
 	}
 }

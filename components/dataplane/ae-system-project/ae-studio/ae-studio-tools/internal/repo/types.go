@@ -105,6 +105,10 @@ type Workspace interface {
 	// two-phase delete; the reaper purges trash). A missing mirror is a
 	// no-op; the next op on the ref clones again.
 	TrashRepo(ctx context.Context, ref RepoRef) error
+	// TrashReferences moves the repo's reference store into trash/ (never
+	// called by the reaper: reference stores are not evicted). A missing
+	// store is a no-op.
+	TrashReferences(ctx context.Context, r OwnerRepo) error
 }
 
 // Tx is the staged overlay handed to a Mutate fn. Write/Delete record

@@ -193,7 +193,7 @@ func run() error {
 			References: engine,
 			// aep-api's git content ops, by GitHub owner/repo, on the
 			// Room's mirrors.
-			Git: repo.NewHandler(engine, commitAuthor, repo.GitHubCloneURL),
+			Git: repo.NewHandler(engine, commitAuthor, repo.GitHubCloneURL, repo.WithOwner(cfg.GitHubOwner)),
 			// aep-api's GitHub ops (repo create, issues, milestones, pulls,
 			// hooks) over the gitpat; repos are created for AE_GITHUB_OWNER
 			// only.

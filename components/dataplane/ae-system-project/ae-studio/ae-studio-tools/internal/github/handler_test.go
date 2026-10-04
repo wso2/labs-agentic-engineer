@@ -43,6 +43,15 @@ func quietLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+// events is the contract's hook events.
+func events(names ...string) []gen.HookEventsRequestEvents {
+	out := make([]gen.HookEventsRequestEvents, 0, len(names))
+	for _, n := range names {
+		out = append(out, gen.HookEventsRequestEvents(n))
+	}
+	return out
+}
+
 // problemOf is the problem answer a handler gave, failing the test when the
 // answer is not one.
 func problemOf(t *testing.T, resp any) problemReply {
@@ -333,8 +342,8 @@ func TestRegisterHook_IsAnEnsure(t *testing.T) {
 	gh := githubtest.NewStub(t)
 	gh.SeedRepo("acme", "greeter")
 	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
-	first, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push"}}})
-	second, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push", "issues"}}})
+	first, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: events("push")}})
+	second, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: events("push", "issues")}})
 	a, b := first.(gen.RegisterHook200JSONResponse), second.(gen.RegisterHook200JSONResponse)
 	if a.ID != b.ID || !slices.Equal(gh.HookEvents("acme", "greeter", a.ID), []string{"push", "issues"}) {
 		t.Fatalf("second register must reuse hook %d and patch its events", a.ID)
@@ -347,7 +356,7 @@ func TestRegisterHook_CreatesWithoutAPatch(t *testing.T) {
 	gh := githubtest.NewStub(t)
 	gh.SeedRepo("acme", "greeter")
 	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
-	resp, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push", "issues"}}})
+	resp, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: events("push", "issues")}})
 	id := resp.(gen.RegisterHook200JSONResponse).ID
 	if !slices.Equal(gh.HookEvents("acme", "greeter", id), []string{"push", "issues"}) {
 		t.Fatalf("events %v", gh.HookEvents("acme", "greeter", id))
@@ -369,9 +378,9 @@ func TestHookEvents_UpdateAndDelete(t *testing.T) {
 	gh.SeedRepo("acme", "greeter")
 	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
 	ctx := context.Background()
-	resp, _ := h.RegisterHook(ctx, gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push"}}})
+	resp, _ := h.RegisterHook(ctx, gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: events("push")}})
 	id := resp.(gen.RegisterHook200JSONResponse).ID
-	upd, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: []string{"issues"}}})
+	upd, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: events("issues")}})
 	if _, ok := upd.(gen.UpdateHookEvents204Response); !ok || !slices.Equal(gh.HookEvents("acme", "greeter", id), []string{"issues"}) {
 		t.Fatalf("update %#v, events %v", upd, gh.HookEvents("acme", "greeter", id))
 	}
@@ -382,7 +391,7 @@ func TestHookEvents_UpdateAndDelete(t *testing.T) {
 		}
 	}
 	quietLogs(t)
-	missing, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: []string{"push"}}})
+	missing, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: events("push")}})
 	if p := problemOf(t, missing); p.Status != http.StatusBadGateway || p.GithubStatus != http.StatusNotFound {
 		t.Fatalf("update of a gone hook %#v, want 502 githubStatus 404", missing)
 	}
@@ -425,29 +434,45 @@ func TestCreateRepo_GuardRunsBeforeAnyCall(t *testing.T) {
 	}
 }
 
-// TestCreateRepo_RefusesARepoUnderAnotherOwner: when /orgs/{owner}/repos is
-// 404 the client falls back to /user/repos, which creates under the
-// gitpat's own account; a repository GitHub answers under any owner but the
-// connected one is refused (and logged), never handed to aep-api.
-func TestCreateRepo_RefusesARepoUnderAnotherOwner(t *testing.T) {
+// TestCreateRepo_NeverCreatesUnderAnotherAccount: when /orgs/{owner}/repos
+// is 404 and the gitpat's user is not the owner (the gitpat cannot see the
+// org), nothing is created: no POST /user/repos, and the answer is 502
+// github_error with githubStatus 404. When the gitpat's user is the owner,
+// the /user/repos fallback is that account and is accepted. A repository
+// GitHub still answers under another owner is refused (defence in depth).
+func TestCreateRepo_NeverCreatesUnderAnotherAccount(t *testing.T) {
 	logs := quietLogs(t)
 	gh := githubtest.NewStub(t)
 	gh.On("POST", "/orgs/acme/repos", 404, `{"message":"Not Found"}`)
+	gh.On("GET", "/user", 200, `{"login":"gitpat-user","id":7}`)
 	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"gitpat-user"},"default_branch":"main"}`)
 	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t")}), WithOwner("acme"))
 	resp, _ := h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
+	if p := problemOf(t, resp); p.Status != http.StatusBadGateway || p.Code != "github_error" || p.GithubStatus != http.StatusNotFound {
+		t.Fatalf("got %#v, want 502 github_error githubStatus 404", resp)
+	}
+	for _, r := range gh.Requests() {
+		if r.Method == http.MethodPost && r.Path == "/user/repos" {
+			t.Fatal("POST /user/repos made for an owner that is not the gitpat's user")
+		}
+	}
+
+	// The connected owner is the gitpat's user: the fallback is its own
+	// account, accepted.
+	gh.On("GET", "/user", 200, `{"login":"Acme","id":7}`)
+	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"Acme"},"default_branch":"trunk"}`)
+	resp, _ = h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
+	if r, ok := resp.(gen.CreateRepo201JSONResponse); !ok || r.CloneURL != "https://github.com/Acme/x.git" || r.DefaultBranch != "trunk" {
+		t.Fatalf("got %#v", resp)
+	}
+
+	// Defence in depth: an answer under another owner is refused and logged.
+	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"someone"},"default_branch":"main"}`)
+	resp, _ = h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
 	if p := problemOf(t, resp); p.Status != http.StatusForbidden || p.Code != "owner_not_allowed" {
 		t.Fatalf("got %#v", resp)
 	}
 	if !strings.Contains(logs.String(), "github.repo_owner_mismatch") {
 		t.Fatalf("logs %q", logs)
-	}
-
-	// The connected owner is the gitpat's user: the fallback is its own
-	// account, accepted.
-	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"Acme"},"default_branch":"trunk"}`)
-	resp, _ = h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
-	if r, ok := resp.(gen.CreateRepo201JSONResponse); !ok || r.CloneURL != "https://github.com/Acme/x.git" || r.DefaultBranch != "trunk" {
-		t.Fatalf("got %#v", resp)
 	}
 }
