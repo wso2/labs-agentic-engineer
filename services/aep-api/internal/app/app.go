@@ -309,12 +309,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
 	// the kickoff and Plan turns and the reference uploads run through it.
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
-	// aep-api's own commits and tags go out through the same pod, authored as
-	// the org credential's identity (sourcecontrol.WithSaveIdentity).
-	studioGit := sourcecontrol.WithSaveIdentity(studioTools, credResolver)
 	// A project's repository content is read through its org's pod, and the
-	// version tag is cut there.
-	artifactSvcGit := spec.NewArtifactService(repoRepo, studioGit)
+	// version tag is cut there. aep-api's own commits and tags name no
+	// author, committer or tagger: the pod uses its gitpat identity (05 §3).
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools)
 	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
 	// hooks — goes to the org's pod through the same adapter; the project's
@@ -391,7 +389,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the project .claude/skills mirror. Built-ins + flow skills
 	// seed/reconcile from the embedded files on demand.
 	// docs/design/skills-repo-storage.md.
-	skillSvc := spec.NewSkillService(studioGit, studioTools, repoService, os.DirFS(cfg.SkillsDir))
+	skillSvc := spec.NewSkillService(studioTools, studioTools, repoService, os.DirFS(cfg.SkillsDir))
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
 
@@ -472,7 +470,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Stamp specs/.agentic-engineer.toml into each new project's repo: the
 	// Agentic Engineer marker, carrying the idea the user typed at create for
 	// the /start flow to generate requirements from.
-	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(studioGit, repoRepo))
+	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(studioTools, repoRepo))
 
 	// The journey starts itself (#562): creation fires `/start` server-side,
 	// in the org's AE Studio pod, so the user lands on a project whose agent
@@ -977,7 +975,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org docs repo: registered resources' contract documents. Register
 	// writes them; the design write path copies one into a project when a
 	// stub dependency names the resource (spec/registry_copy.go).
-	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioGit)
+	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioTools)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
 	// The AE Studio tools pod has its saves' dependency stubs completed here,
 	// over the registry and the guarded fetch (04 §4).
@@ -1288,7 +1286,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// records the user's acceptance of an assumed one — read and committed
 	// through the pod. Composition-root adapter keeps the repository port out
 	// of the design feature.
-	designService.SetFileCommitter(designFilesCommitter{git: studioGit, repos: repoRepo})
+	designService.SetFileCommitter(designFilesCommitter{git: studioTools, repos: repoRepo})
 	// Grant cascade → design: commit the exposesAPI.orgPublished durability marker
 	// on a provider component when its cross-project access request is granted.
 	// Setter-wired at the root (provisioning holds a narrow design port).

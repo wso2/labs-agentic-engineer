@@ -89,7 +89,7 @@ const (
 // exactly as passed, DefaultBranch included (the Fake keys state without it,
 // so assert it here). At, Local and Filter are set on the Git reads that take
 // them; Author and Committer on Commit (Committer defaulted to Author, as the
-// pod does); Tagger on Tag; Skills and Pinned on MirrorSkills; Repo on CreateOrgRepo;
+// pod does); Skills and Pinned on MirrorSkills; Repo on CreateOrgRepo;
 // Milestone on ListMilestoneIssues; Ref.Org alone on the org-wide ops
 // (GitHubIdentity).
 type Call struct {
@@ -100,7 +100,6 @@ type Call struct {
 	Filter    sourcecontrol.BundleFilter
 	Author    *sourcecontrol.GitIdentity
 	Committer *sourcecontrol.GitIdentity
-	Tagger    *sourcecontrol.GitIdentity
 	Skills    sourcecontrol.RepoRef
 	Pinned    []string
 	Repo      sourcecontrol.CreateOrgRepoRequest

@@ -19,8 +19,6 @@ package spec
 import (
 	"context"
 	"errors"
-	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -239,33 +237,15 @@ func (o testOrigin) Remove(t *testing.T, msg string, paths ...string) {
 	o.h.commitIn(o.org, o.project, nil, paths, msg)
 }
 
-// commitIn commits writes and deletes on the (org, project) pair's tip, each
-// under the path's current blob sha (an external writer's commit).
+// commitIn commits writes and deletes on the (org, project) pair's tip
+// (commitAtTip).
 func (h *testGitHost) commitIn(orgID, projectID string, writes map[string]string, deletes []string, msg string) {
 	h.t.Helper()
 	ref, ok := h.refIn(orgID, projectID)
 	if !ok {
 		h.t.Fatalf("commit %q: repository not provisioned", msg)
 	}
-	ctx := context.Background()
-	entries, _, err := h.pod.List(ctx, ref, "")
-	if err != nil {
-		h.t.Fatalf("commit %q: %v", msg, err)
-	}
-	current := map[string]string{}
-	for _, e := range entries {
-		current[e.Path] = e.SHA
-	}
-	req := sourcecontrol.CommitRequest{Message: msg}
-	for _, p := range slices.Sorted(maps.Keys(writes)) {
-		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: writes[p], BaseSHA: current[p]})
-	}
-	for _, p := range deletes {
-		req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: p, BaseSHA: current[p]})
-	}
-	if _, err := h.pod.Commit(ctx, ref, req); err != nil {
-		h.t.Fatalf("commit %q: %v", msg, err)
-	}
+	commitAtTip(h.t, h.pod, ref, writes, deletes, msg)
 }
 
 // newTestStore builds a REAL SkillService over the pod-backed host.
@@ -750,4 +730,39 @@ func keysOfStr(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestSkillReads_ManifestAtTheLibrarysSha pins the catalog's one-snapshot
+// rule: the library is read at the skills repo's tip, then the manifest at
+// the exact sha that read answered — never at the tip again, which could pair
+// a manifest with a different tree.
+func TestSkillReads_ManifestAtTheLibrarysSha(t *testing.T) {
+	t.Parallel()
+	svc, host := newTestStore(t)
+	ctx := context.Background()
+	if _, err := svc.List(ctx, "org1"); err != nil { // provision + seed
+		t.Fatalf("seed skills repo: %v", err)
+	}
+	seen := len(host.pod.Calls())
+
+	if _, err := svc.List(ctx, "org1"); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var reads []aestudiotest.Call
+	for _, c := range host.pod.Calls()[seen:] {
+		if c.Op == aestudiotest.OpReadBundle {
+			reads = append(reads, c)
+		}
+	}
+	skillsRef := sourcecontrol.RepoRef{Org: "org1", Owner: "test-org", Repo: SkillsRepoName, DefaultBranch: "main"}
+	tip := host.head("org1")
+	if len(reads) != 2 {
+		t.Fatalf("bundle reads = %+v, want 2", reads)
+	}
+	if r := reads[0]; r.Ref != skillsRef || r.At != "" || r.Filter.Prefix != "skills/" || len(r.Filter.Paths) != 0 {
+		t.Fatalf("library read = %+v, want skills/ at the tip", r)
+	}
+	if r := reads[1]; r.Ref != skillsRef || r.At != tip || len(r.Filter.Paths) != 1 || r.Filter.Paths[0] != skillsManifestPath {
+		t.Fatalf("manifest read = %+v, want %s at %s", r, skillsManifestPath, tip)
+	}
 }

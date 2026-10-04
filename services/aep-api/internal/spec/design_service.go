@@ -135,11 +135,11 @@ type DesignFileWrite struct {
 	BaseSHA string
 }
 
-// designFileCommitter is design_service's narrow consumer port over the Files
-// API (feature/files) — the committed-truth single-commit write surface. The
-// composition root adapts *files.service to it (design imports only artifacts;
-// the port keeps the files package out of this feature). Nil is a documented
-// no-op: CollectSpec then returns an error and the route 503s.
+// designFileCommitter is design_service's narrow consumer port over the
+// project repository — the committed-truth single-commit write surface. The
+// composition root adapts the Git port to it (app.designFilesCommitter), so
+// this feature names no repository port. Nil is a documented no-op:
+// CollectSpec then returns an error and the route 503s.
 type designFileCommitter interface {
 	// ReadFile returns the file's current content + blob sha (the CAS token),
 	// ok=false when the path does not exist yet, or an error on infra failure.

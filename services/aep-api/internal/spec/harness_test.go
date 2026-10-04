@@ -116,45 +116,45 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 
 // ----- arrange / assert helpers (against the branch tip = the draft) -----
 
-// seed advances the default branch with the given files (a new draft
-// commit) and answers the new tip.
-func (r *rig) seed(files map[string]string, msg string) string {
-	r.t.Helper()
+// commitAtTip commits writes and deletes on ref's tip in one commit, each
+// under the path's current blob sha (an external writer's commit), and
+// answers the new tip.
+func commitAtTip(t *testing.T, pod *aestudiotest.Fake, ref sourcecontrol.RepoRef, writes map[string]string, deletes []string, msg string) string {
+	t.Helper()
 	ctx := context.Background()
-	entries, _, err := r.pod.List(ctx, r.repoRef(), "")
+	entries, _, err := pod.List(ctx, ref, "")
 	if err != nil {
-		r.t.Fatalf("seed: %v", err)
+		t.Fatalf("commit %q: %v", msg, err)
 	}
 	current := map[string]string{}
 	for _, e := range entries {
 		current[e.Path] = e.SHA
 	}
 	req := sourcecontrol.CommitRequest{Message: msg}
-	for _, p := range slices.Sorted(maps.Keys(files)) {
-		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: files[p], BaseSHA: current[p]})
+	for _, p := range slices.Sorted(maps.Keys(writes)) {
+		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: writes[p], BaseSHA: current[p]})
 	}
-	res, err := r.pod.Commit(ctx, r.repoRef(), req)
+	for _, p := range deletes {
+		req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: p, BaseSHA: current[p]})
+	}
+	res, err := pod.Commit(ctx, ref, req)
 	if err != nil {
-		r.t.Fatalf("seed: %v", err)
+		t.Fatalf("commit %q: %v", msg, err)
 	}
 	return res.CommitSHA
+}
+
+// seed advances the default branch with the given files (a new draft
+// commit) and answers the new tip.
+func (r *rig) seed(files map[string]string, msg string) string {
+	r.t.Helper()
+	return commitAtTip(r.t, r.pod, r.repoRef(), files, nil, msg)
 }
 
 // remove deletes paths from the default branch in one commit.
 func (r *rig) remove(msg string, paths ...string) {
 	r.t.Helper()
-	ctx := context.Background()
-	req := sourcecontrol.CommitRequest{Message: msg}
-	for _, p := range paths {
-		_, sha, err := r.pod.ReadFile(ctx, r.repoRef(), "", p)
-		if err != nil {
-			r.t.Fatalf("remove %s: %v", p, err)
-		}
-		req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: p, BaseSHA: sha})
-	}
-	if _, err := r.pod.Commit(ctx, r.repoRef(), req); err != nil {
-		r.t.Fatalf("remove: %v", err)
-	}
+	commitAtTip(r.t, r.pod, r.repoRef(), nil, paths, msg)
 }
 
 // tag creates an annotated tag on the current tip.
