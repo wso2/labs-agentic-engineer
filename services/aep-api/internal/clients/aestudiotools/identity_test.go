@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -42,16 +43,28 @@ func TestGitHubIdentity(t *testing.T) {
 			t.Fatalf("identity=%+v request=%s %s", got, method, path)
 		}
 	})
-	t.Run("rate limited is a retryable StatusError", func(t *testing.T) {
+	t.Run("rate limited is a retryable RateLimitedError", func(t *testing.T) {
 		srv := identityServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
 			w.Header().Set("Retry-After", "30")
 			writeProblem(w, http.StatusTooManyRequests, "github_rate_limited", "")
 		})
 		a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 		_, err := a.GitHubIdentity(context.Background(), "default")
-		var se *StatusError
-		if !errors.As(err, &se) || se.Status != 429 || se.Code != "github_rate_limited" || IsPermanent(err) {
-			t.Fatalf("err = %v, want a retryable 429 StatusError", err)
+		var rl *sourcecontrol.RateLimitedError
+		if !errors.As(err, &rl) || rl.RetryAfter != 30*time.Second || sourcecontrol.IsPermanent(err) {
+			t.Fatalf("err = %v, want a retryable RateLimitedError{30s}", err)
+		}
+	})
+	t.Run("a GitHub failure is an HTTPStatusError", func(t *testing.T) {
+		srv := identityServer(t, func(w http.ResponseWriter, _ *http.Request, _ int) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"type":"about:blank","title":"Bad Gateway","status":502,"code":"github_error","githubStatus":401}`))
+		})
+		a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
+		_, err := a.GitHubIdentity(context.Background(), "default")
+		if !sourcecontrol.IsHTTPStatus(err, http.StatusUnauthorized) || !sourcecontrol.IsPermanent(err) {
+			t.Fatalf("err = %v, want a permanent HTTPStatusError 401 (the gitpat was refused)", err)
 		}
 	})
 	t.Run("a garbled 200 is an error", func(t *testing.T) {

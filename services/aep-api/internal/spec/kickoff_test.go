@@ -161,9 +161,9 @@ func TestKickoff_CreditsTheVerifiedCaller(t *testing.T) {
 // leaves the project un-started, which the spec view offers to begin.
 func TestKickoff_SwallowsAPodFailure(t *testing.T) {
 	svc, f := newKickoff(kickoffLedger{})
-	f.FailOp(aestudiotest.OpStartTurn, aestudiotools.ErrAEStudioUnavailable)
+	f.FailOp(aestudiotest.OpStartTurn, sourcecontrol.ErrAEStudioUnavailable)
 
-	if _, _, err := svc.StartKickoff(t.Context(), kickoffOrg, kickoffProj); !errors.Is(err, aestudiotools.ErrAEStudioUnavailable) {
+	if _, _, err := svc.StartKickoff(t.Context(), kickoffOrg, kickoffProj); !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
 		t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
 	}
 	svc.Kickoff(t.Context(), kickoffOrg, kickoffProj) // returns; nothing to assert but no panic

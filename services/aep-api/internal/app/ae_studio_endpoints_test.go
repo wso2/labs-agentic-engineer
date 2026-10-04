@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 type studioStatusStub struct {
@@ -64,13 +65,13 @@ func TestAEStudioEndpoints_Resolve(t *testing.T) {
 		err    error
 		want   error
 	}{
-		{name: "absent", status: organization.AEStudioStatus{State: organization.AEStudioAbsent}, want: aestudiotools.ErrAEStudioAbsent},
-		{name: "provisioning", status: organization.AEStudioStatus{State: organization.AEStudioProvisioning}, want: aestudiotools.ErrAEStudioUnavailable},
-		{name: "failed", status: organization.AEStudioStatus{State: organization.AEStudioFailed}, want: aestudiotools.ErrAEStudioUnavailable},
-		{name: "status read fails", err: errors.New("openchoreo down"), want: aestudiotools.ErrAEStudioUnavailable},
-		{name: "ready without a tools URL", status: organization.AEStudioStatus{State: organization.AEStudioReady, URLs: &organization.AEStudioURLs{}, OUID: "ou-123"}, want: aestudiotools.ErrAEStudioUnavailable},
-		{name: "ready without URLs", status: organization.AEStudioStatus{State: organization.AEStudioReady, OUID: "ou-123"}, want: aestudiotools.ErrAEStudioUnavailable},
-		{name: "ready without an OU id", status: organization.AEStudioStatus{State: organization.AEStudioReady, URLs: ready.URLs}, want: aestudiotools.ErrAEStudioUnavailable},
+		{name: "absent", status: organization.AEStudioStatus{State: organization.AEStudioAbsent}, want: sourcecontrol.ErrAEStudioAbsent},
+		{name: "provisioning", status: organization.AEStudioStatus{State: organization.AEStudioProvisioning}, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "failed", status: organization.AEStudioStatus{State: organization.AEStudioFailed}, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "status read fails", err: errors.New("openchoreo down"), want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "ready without a tools URL", status: organization.AEStudioStatus{State: organization.AEStudioReady, URLs: &organization.AEStudioURLs{}, OUID: "ou-123"}, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "ready without URLs", status: organization.AEStudioStatus{State: organization.AEStudioReady, OUID: "ou-123"}, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "ready without an OU id", status: organization.AEStudioStatus{State: organization.AEStudioReady, URLs: ready.URLs}, want: sourcecontrol.ErrAEStudioUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := aeStudioEndpoints{status: &studioStatusStub{status: tc.status, err: tc.err}}.Resolve(context.Background(), "default")
@@ -93,7 +94,7 @@ func TestAEStudioTools_WithoutTheInternalClientSecretIsMisconfigured(t *testing.
 		State: organization.AEStudioReady, URLs: &organization.AEStudioURLs{Tools: pod.URL}, OUID: "ou-123",
 	}}
 	_, err := aeStudioTools(cfg, status).GitHubIdentity(context.Background(), "default")
-	if !errors.Is(err, aestudiotools.ErrAEStudioMisconfigured) || !aestudiotools.IsPermanent(err) {
+	if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || !sourcecontrol.IsPermanent(err) {
 		t.Fatalf("err = %v, want a permanent ErrAEStudioMisconfigured", err)
 	}
 }

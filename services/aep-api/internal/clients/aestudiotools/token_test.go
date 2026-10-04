@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // idpServer is a client_credentials token endpoint that checks the form and
@@ -102,8 +104,8 @@ func TestClientCredentials_Failures(t *testing.T) {
 		srv := httptest.NewServer(idp)
 		defer srv.Close()
 		_, err := NewClientCredentials(srv.URL, "ae-studio-internal-client", "", nil).Token(context.Background())
-		if !errors.Is(err, ErrAEStudioMisconfigured) || !errors.Is(err, errClientCredentialsMissing) {
-			t.Fatalf("err = %v, want ErrAEStudioMisconfigured (client credentials missing)", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || !errors.Is(err, errClientCredentialsMissing) {
+			t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioMisconfigured (client credentials missing)", err)
 		}
 		if idp.count() != 0 {
 			t.Fatal("no token request without a secret")
@@ -123,8 +125,8 @@ func TestClientCredentials_Failures(t *testing.T) {
 		srv := httptest.NewServer(&idpServer{})
 		defer srv.Close()
 		_, err := NewClientCredentials(srv.URL, "ae-studio-internal-client", "wrong", nil).Token(context.Background())
-		if !errors.Is(err, ErrAEStudioMisconfigured) || errors.Is(err, errClientCredentialsMissing) {
-			t.Fatalf("err = %v, want ErrAEStudioMisconfigured (token refused)", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || errors.Is(err, errClientCredentialsMissing) {
+			t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioMisconfigured (token refused)", err)
 		}
 		if strings.Contains(err.Error(), "invalid_client") || strings.Contains(err.Error(), "wrong") {
 			t.Fatalf("err %q echoes the IdP reply or the secret", err)
@@ -134,14 +136,14 @@ func TestClientCredentials_Failures(t *testing.T) {
 		srv := httptest.NewServer(&idpServer{status: http.StatusBadGateway})
 		defer srv.Close()
 		_, err := NewClientCredentials(srv.URL, "ae-studio-internal-client", "s3cret", nil).Token(context.Background())
-		if !errors.Is(err, ErrAEStudioUnavailable) {
-			t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+			t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioUnavailable", err)
 		}
 	})
 	t.Run("an unreachable IdP is unavailable", func(t *testing.T) {
 		_, err := NewClientCredentials("http://127.0.0.1:1", "ae-studio-internal-client", "s3cret", nil).Token(context.Background())
-		if !errors.Is(err, ErrAEStudioUnavailable) {
-			t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+			t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioUnavailable", err)
 		}
 	})
 }
@@ -153,8 +155,8 @@ func TestAdapter_RefusedClientIsMisconfiguredAndLogged(t *testing.T) {
 	logs := captureSlog(t)
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), NewClientCredentials(idp.URL, "ae-studio-internal-client", "wrong", nil))
 	_, err := a.GitHubIdentity(context.Background(), "default")
-	if !errors.Is(err, ErrAEStudioMisconfigured) || !IsPermanent(err) {
-		t.Fatalf("err = %v, want a permanent ErrAEStudioMisconfigured", err)
+	if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || !sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v, want a permanent sourcecontrol.ErrAEStudioMisconfigured", err)
 	}
 	lines := logs.events(t, "ae_studio.misconfigured")
 	if len(lines) != 1 || lines[0]["reason"] != "token_refused" || lines[0]["org"] != "default" {

@@ -34,7 +34,7 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | Port | Dir | Peer · contract |
 |---|---|---|
 | `Host` | needs | the git host — implemented by `githubhost` (the domain's own adapter; it lives here, not in `platform/clients`, because an adapter for a domain's port cannot sit in a domain-free kernel) |
-| `Git` · `TrashOps` · `SkillsMirrorOps` · `ReferencesOps` · `IdentityOps` | needs | the org's AE Studio pod (`git.go`, `ports.go`) — served by `clients/aestudiotools`, and by `aestudiotest.Fake` in tests; its answers are this domain's sentinels (`ErrAEStudioAbsent/Unavailable/Misconfigured`, `ErrOwnerNotAllowed`, `ErrReferenceRejected`, `*CommitConflictError`, `*RateLimitedError`), which `IsPermanent` classifies |
+| `Git` · `TrashOps` · `SkillsMirrorOps` · `ReferencesOps` · `IdentityOps` | needs | the org's AE Studio pod (`git.go`, `ports.go`) — served by `clients/aestudiotools`, and by `aestudiotest.Fake` in tests; its answers are this domain's sentinels (`ErrAEStudioAbsent/Unavailable/Misconfigured`, `ErrOwnerNotAllowed`, `ErrReferenceRejected`, `*CommitConflictError`, `*RateLimitedError`), which `IsPermanent` classifies (with any adapter error whose `Permanent()` says so: the pod's other 4xx refusals) |
 | `RepoRefFor` · `RefForRow` | offers | the one rule from a `git_repositories` row to the `RepoRef` {org, owner, repo, default branch} the pod is addressed by (`repo_ref.go`); no row in the org is `ErrRepoNotFound` |
 | `secrets.Credential` | needs | `platform/secrets` — App-installation / per-org PAT |
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |

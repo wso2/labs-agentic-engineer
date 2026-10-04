@@ -3,6 +3,8 @@
 # by HTTP status. Run via `make gen-api`.
 # Optional fields are values, tagged `omitzero` so an unset one is left out of
 # the body: an empty `scope` object would fail the spec's required fields.
+# Optional query parameters are the exception (the overlay): pointers, so an
+# unset one is left out of the query rather than sent empty.
 package: gen
 generate:
   client: true
@@ -15,3 +17,6 @@ output-options:
   prefer-skip-optional-pointer: true
   prefer-skip-optional-pointer-with-omitzero: true
   name-normalizer: ToCamelCaseWithInitialisms
+  overlay:
+    path: internal/clients/aestudiotools/gen/optional-query-params.overlay.yaml
+    strict: true

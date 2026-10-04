@@ -97,7 +97,7 @@ func planErr(err error, providerLimits int, now time.Time) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, aestudiotools.ErrAEStudioMisconfigured):
+	case errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured):
 		// C3: aep-api's own AE-only client cannot call the pod. An operator
 		// fixes that, never a retry, so it fails under its own type.
 		return temporal.NewNonRetryableApplicationError(err.Error(), errTypeAEStudioMisconfigured, err)
@@ -154,11 +154,10 @@ func providerLimitRetryDelay(err error, now time.Time) time.Duration {
 
 // planPermanent reports whether repeating a planning round trip cannot
 // change its answer, after providerLimits provider-limited tries:
-//   - a permanent source-control failure;
-//   - an AE Studio answer that is one (aestudiotools.IsPermanent: a
-//     misconfigured client, a 4xx of the pod);
-//   - an org with no AE Studio: it has no GitHub token, and only a person
-//     connecting GitHub changes that;
+//   - a permanent source-control failure (sourcecontrol.IsPermanent), the
+//     AE Studio's included: a misconfigured client, a 4xx of the pod, an org
+//     with no AE Studio (no GitHub token: only a person connecting GitHub
+//     changes that);
 //   - a turn the pod ended failed (R1-I1), unless it was interrupted (a
 //     shutdown, a dead stream: retried like a blip) or stopped by the
 //     provider's limit before its last bounded try. Any other ending
@@ -176,9 +175,7 @@ func planPermanent(err error, providerLimits int) bool {
 			return true
 		}
 	}
-	return sourcecontrol.IsPermanent(err) ||
-		aestudiotools.IsPermanent(err) ||
-		errors.Is(err, aestudiotools.ErrAEStudioAbsent)
+	return sourcecontrol.IsPermanent(err)
 }
 
 // providerLimited reports a planning turn the model provider's limit stopped.

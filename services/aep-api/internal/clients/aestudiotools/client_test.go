@@ -29,6 +29,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // fixedEndpoints answers one Target for every org and counts the lookups.
@@ -219,14 +221,14 @@ func TestAdapter_AuthFailureIsMisconfiguredAndLogged(t *testing.T) {
 			calls := 0
 			srv := identityServer(t, func(w http.ResponseWriter, _ *http.Request, n int) {
 				calls = n
-				writeProblem(w, status, "forbidden", "")
+				writeProblem(w, status, "org_mismatch", "")
 			})
 			logs := captureSlog(t)
 			tok := &countingTokens{}
 			a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), tok)
 			_, err := a.GitHubIdentity(context.Background(), "default")
-			if !errors.Is(err, ErrAEStudioMisconfigured) || !IsPermanent(err) {
-				t.Fatalf("err = %v, want a permanent ErrAEStudioMisconfigured (C3)", err)
+			if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || !sourcecontrol.IsPermanent(err) {
+				t.Fatalf("err = %v, want a permanent sourcecontrol.ErrAEStudioMisconfigured (C3)", err)
 			}
 			if calls != 2 || tok.invalidations() != 2 {
 				t.Fatalf("calls=%d invalidated=%d, want one retry with a fresh token and both refused tokens dropped", calls, tok.invalidations())
@@ -250,8 +252,8 @@ func TestAdapter_AuthFailureIsMisconfiguredAndLogged(t *testing.T) {
 		logs := captureSlog(t)
 		a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 		_, err := a.GitHubIdentity(context.Background(), "default")
-		if !errors.Is(err, ErrAEStudioUnavailable) || errors.Is(err, ErrAEStudioMisconfigured) || IsPermanent(err) {
-			t.Fatalf("err = %v, want a retryable ErrAEStudioUnavailable", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) || errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || sourcecontrol.IsPermanent(err) {
+			t.Fatalf("err = %v, want a retryable sourcecontrol.ErrAEStudioUnavailable", err)
 		}
 		if n := len(logs.events(t, "ae_studio.auth_failed")); n != 0 {
 			t.Fatalf("ae_studio.auth_failed lines = %d on a 503", n)
@@ -268,8 +270,8 @@ func TestAdapter_MissingClientCredentialsFailLoudOnce(t *testing.T) {
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), NewClientCredentials(idp.URL, "ae-studio-internal-client", "", nil))
 	for range 2 {
 		_, err := a.GitHubIdentity(context.Background(), "default")
-		if !errors.Is(err, ErrAEStudioMisconfigured) || !IsPermanent(err) {
-			t.Fatalf("err = %v, want a permanent ErrAEStudioMisconfigured (C5)", err)
+		if !errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured) || !sourcecontrol.IsPermanent(err) {
+			t.Fatalf("err = %v, want a permanent sourcecontrol.ErrAEStudioMisconfigured (C5)", err)
 		}
 	}
 	if reached {
@@ -319,8 +321,8 @@ func TestEndpointCache_DropsOnDialError(t *testing.T) {
 	ep := fixedTarget("http://127.0.0.1:1", "ou-123") // nothing listens
 	a := newAdapter(t, ep, &countingTokens{})
 	_, err := a.GitHubIdentity(context.Background(), "default")
-	if !errors.Is(err, ErrAEStudioUnavailable) {
-		t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
+	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioUnavailable", err)
 	}
 	_, _ = a.GitHubIdentity(context.Background(), "default")
 	if ep.count() != 2 {
@@ -329,11 +331,11 @@ func TestEndpointCache_DropsOnDialError(t *testing.T) {
 }
 
 func TestEndpointCache_DoesNotCacheRefusals(t *testing.T) {
-	ep := &fixedEndpoints{err: ErrAEStudioAbsent}
+	ep := &fixedEndpoints{err: sourcecontrol.ErrAEStudioAbsent}
 	a := newAdapter(t, ep, &countingTokens{})
 	for range 2 {
-		if _, err := a.GitHubIdentity(context.Background(), "default"); !errors.Is(err, ErrAEStudioAbsent) {
-			t.Fatalf("err = %v, want ErrAEStudioAbsent", err)
+		if _, err := a.GitHubIdentity(context.Background(), "default"); !errors.Is(err, sourcecontrol.ErrAEStudioAbsent) {
+			t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioAbsent", err)
 		}
 	}
 	if ep.count() != 2 {
@@ -349,8 +351,8 @@ func TestAdapter_CallTimeoutIsUnavailableTheCallersDeadlineIsNot(t *testing.T) {
 	ep := fixedTarget(srv.URL, "ou-123")
 	a := New(Config{Endpoints: ep, Tokens: &countingTokens{}, CallTimeout: 200 * time.Millisecond})
 
-	if _, err := a.GitHubIdentity(context.Background(), "default"); !errors.Is(err, ErrAEStudioUnavailable) {
-		t.Fatalf("err = %v, want ErrAEStudioUnavailable at the call timeout", err)
+	if _, err := a.GitHubIdentity(context.Background(), "default"); !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+		t.Fatalf("err = %v, want sourcecontrol.ErrAEStudioUnavailable at the call timeout", err)
 	}
 	if ep.count() != 1 {
 		t.Fatalf("resolve calls = %d, want 1", ep.count())
@@ -359,7 +361,7 @@ func TestAdapter_CallTimeoutIsUnavailableTheCallersDeadlineIsNot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	_, err := a.GitHubIdentity(ctx, "default")
-	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAEStudioUnavailable) {
+	if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
 		t.Fatalf("err = %v, want the caller's deadline", err)
 	}
 	_, _ = a.GitHubIdentity(ctx, "default")

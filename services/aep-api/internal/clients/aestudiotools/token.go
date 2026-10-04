@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // TokenSource hands out the AE-only bearer. Invalidate drops the cached one,
@@ -42,9 +44,9 @@ type TokenSource interface {
 var (
 	// errClientCredentialsMissing: the AE-only client id, secret or token URL
 	// is not configured (C5). aep-api boots without them; the first call fails.
-	errClientCredentialsMissing = fmt.Errorf("%w: client credentials missing", ErrAEStudioMisconfigured)
+	errClientCredentialsMissing = fmt.Errorf("%w: client credentials missing", sourcecontrol.ErrAEStudioMisconfigured)
 	// errTokenRefused: the IdP refused the AE-only client (400/401).
-	errTokenRefused = fmt.Errorf("%w: the IdP refused the client", ErrAEStudioMisconfigured)
+	errTokenRefused = fmt.Errorf("%w: the IdP refused the client", sourcecontrol.ErrAEStudioMisconfigured)
 )
 
 const (
@@ -112,7 +114,7 @@ func (c *clientCredentials) fetch(ctx context.Context) (string, time.Duration, e
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", 0, fmt.Errorf("%w: token request: %w", ErrAEStudioMisconfigured, err)
+		return "", 0, fmt.Errorf("%w: token request: %w", sourcecontrol.ErrAEStudioMisconfigured, err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
@@ -121,21 +123,21 @@ func (c *clientCredentials) fetch(ctx context.Context) (string, time.Duration, e
 		if ctx.Err() != nil {
 			return "", 0, ctx.Err()
 		}
-		return "", 0, fmt.Errorf("%w: token endpoint unreachable: %w", ErrAEStudioUnavailable, err)
+		return "", 0, fmt.Errorf("%w: token endpoint unreachable: %w", sourcecontrol.ErrAEStudioUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnauthorized:
 		return "", 0, fmt.Errorf("%w (status %d)", errTokenRefused, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
-		return "", 0, fmt.Errorf("%w: token endpoint answered %d", ErrAEStudioUnavailable, resp.StatusCode)
+		return "", 0, fmt.Errorf("%w: token endpoint answered %d", sourcecontrol.ErrAEStudioUnavailable, resp.StatusCode)
 	}
 	var body struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int64  `json:"expires_in"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, tokenBodyLimit)).Decode(&body); err != nil || body.AccessToken == "" {
-		return "", 0, fmt.Errorf("%w: token endpoint answered no access token", ErrAEStudioUnavailable)
+		return "", 0, fmt.Errorf("%w: token endpoint answered no access token", sourcecontrol.ErrAEStudioUnavailable)
 	}
 	return body.AccessToken, time.Duration(body.ExpiresIn) * time.Second, nil
 }

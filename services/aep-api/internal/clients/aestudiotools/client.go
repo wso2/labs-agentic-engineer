@@ -57,12 +57,20 @@ type Config struct {
 	HTTP *http.Client
 	// CallTimeout bounds each unary call. Zero means 110 s.
 	CallTimeout time.Duration
+	// CacheBytes bounds the read cache of immutable (sha-addressed) reads.
+	// Zero means 64 MiB.
+	CacheBytes int64
 }
 
-// Adapter calls an org's ae-studio-tools. It implements Turns,
-// sourcecontrol.ReferencesOps and sourcecontrol.IdentityOps.
+// defaultCacheBytes is the read cache's bound per aep-api replica.
+const defaultCacheBytes = 64 << 20
+
+// Adapter calls an org's ae-studio-tools. It implements sourcecontrol.Git,
+// the GitHub ports keyed by RepoRef (repos, issues, milestones, pulls,
+// hooks), TrashOps, SkillsMirrorOps, ReferencesOps, IdentityOps and Turns.
 type Adapter struct {
 	endpoints   *endpointCache
+	reads       *readCache
 	tokens      TokenSource
 	http        *http.Client
 	callTimeout time.Duration
@@ -71,9 +79,12 @@ type Adapter struct {
 }
 
 var (
-	_ Turns                     = (*Adapter)(nil)
-	_ References                = (*Adapter)(nil)
-	_ sourcecontrol.IdentityOps = (*Adapter)(nil)
+	_ Turns                         = (*Adapter)(nil)
+	_ References                    = (*Adapter)(nil)
+	_ sourcecontrol.IdentityOps     = (*Adapter)(nil)
+	_ sourcecontrol.Git             = (*Adapter)(nil)
+	_ sourcecontrol.TrashOps        = (*Adapter)(nil)
+	_ sourcecontrol.SkillsMirrorOps = (*Adapter)(nil)
 )
 
 // New builds the Adapter. It does no I/O.
@@ -88,27 +99,36 @@ func New(cfg Config) *Adapter {
 	if timeout <= 0 {
 		timeout = defaultCallTimeout
 	}
-	return &Adapter{endpoints: newEndpointCache(cfg.Endpoints), tokens: cfg.Tokens, http: hc, callTimeout: timeout}
+	cacheBytes := cfg.CacheBytes
+	if cacheBytes <= 0 {
+		cacheBytes = defaultCacheBytes
+	}
+	return &Adapter{
+		endpoints: newEndpointCache(cfg.Endpoints), reads: newReadCache(cacheBytes),
+		tokens: cfg.Tokens, http: hc, callTimeout: timeout,
+	}
 }
 
 // call sends one request with the generated client c; auth sets the bearer.
 type call func(ctx context.Context, c *gen.Client, impersonateOrg string, auth gen.RequestEditorFn) (*http.Response, error)
 
 // send runs fn against the org's pod and returns a 2xx response with its
-// body open, or the mapped error. A refused token (401, or a 403 other than
-// owner_not_allowed) is dropped and the call sent once more with a fresh one when
-// replayable says the request can be sent again; refused again, the call is
-// ErrAEStudioMisconfigured and logs ae_studio.auth_failed {org, status}.
+// body open, or the mapped error (errorFromProblem). A refused token (401, or
+// a 403 the pod's auth layer wrote) is dropped and the call sent once more
+// with a fresh one when replayable says the request can be sent again; a 403
+// also drops the org's Target first (K-14: a stale URL may point at another
+// org's pod). Refused again, the call is ErrAEStudioMisconfigured and logs
+// ae_studio.auth_failed {org, status}.
 func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable func() bool) (*http.Response, error) {
-	target, err := a.endpoints.resolve(ctx, org)
-	if err != nil {
-		return nil, err
-	}
-	c, err := gen.NewClient(target.BaseURL, gen.WithHTTPClient(a.http))
-	if err != nil {
-		return nil, fmt.Errorf("%w: tools URL: %w", ErrAEStudioUnavailable, err)
-	}
 	for refreshed := false; ; refreshed = true {
+		target, err := a.endpoints.resolve(ctx, org)
+		if err != nil {
+			return nil, err
+		}
+		c, err := gen.NewClient(target.BaseURL, gen.WithHTTPClient(a.http))
+		if err != nil {
+			return nil, fmt.Errorf("%w: tools URL: %w", sourcecontrol.ErrAEStudioUnavailable, err)
+		}
 		tok, err := a.tokens.Token(ctx)
 		if err != nil {
 			return nil, a.tokenFailed(ctx, org, err)
@@ -120,20 +140,23 @@ func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable 
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			return resp, nil
 		}
-		ans := readAnswer(resp)
+		ans := readAnswer(resp, op)
 		if !ans.authRefused() {
 			if ans.gatewayGone() {
 				a.endpoints.drop(org)
 			}
-			return nil, ans.toError(op)
+			return nil, errorFromProblem(ans)
 		}
 		a.tokens.Invalidate()
+		if ans.status == http.StatusForbidden {
+			a.endpoints.drop(org)
+		}
 		if refreshed {
 			slog.ErrorContext(ctx, "ae_studio.auth_failed", "org", org, "status", ans.status)
-			return nil, fmt.Errorf("%w: %s answered %d to a fresh token", ErrAEStudioMisconfigured, op, ans.status)
+			return nil, fmt.Errorf("%w: %s answered %d to a fresh token", sourcecontrol.ErrAEStudioMisconfigured, op, ans.status)
 		}
 		if !replayable() {
-			return nil, fmt.Errorf("%w: %s refused the token after the body was sent; send it again", ErrAEStudioUnavailable, op)
+			return nil, fmt.Errorf("%w: %s refused the token after the body was sent; send it again", sourcecontrol.ErrAEStudioUnavailable, op)
 		}
 	}
 }
@@ -174,7 +197,7 @@ func (a *Adapter) transportFailed(ctx context.Context, org, op string, err error
 		return fmt.Errorf("ae studio: %s: %w", op, ctx.Err())
 	}
 	a.endpoints.drop(org)
-	return fmt.Errorf("%w: %s: %w", ErrAEStudioUnavailable, op, err)
+	return fmt.Errorf("%w: %s: %w", sourcecontrol.ErrAEStudioUnavailable, op, err)
 }
 
 // errCallTimeout is the cause of a unary call cut by the call timeout, which

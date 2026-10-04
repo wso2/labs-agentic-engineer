@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // multipartBody is a files upload of the named parts.
@@ -101,9 +103,9 @@ func TestPutReferences_Refusals(t *testing.T) {
 		want      error
 		permanent bool
 	}{
-		{name: "reference_rejected", status: 400, code: "reference_rejected", want: ErrReferenceRejected, permanent: true},
-		{name: "disk_full", status: 503, code: "disk_full", want: ErrAEStudioUnavailable},
-		{name: "owner_not_allowed", status: 403, code: "owner_not_allowed", permanent: true},
+		{name: "reference_rejected", status: 400, code: "reference_rejected", want: sourcecontrol.ErrReferenceRejected, permanent: true},
+		{name: "disk_full", status: 503, code: "disk_full", want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "owner_not_allowed", status: 403, code: "owner_not_allowed", want: sourcecontrol.ErrOwnerNotAllowed, permanent: true},
 		{name: "payload_too_large", status: 413, code: "payload_too_large", permanent: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,8 +128,8 @@ func TestPutReferences_Refusals(t *testing.T) {
 			if tc.want == nil && (!errors.As(err, &se) || se.Code != tc.code || se.Status != tc.status) {
 				t.Fatalf("err = %v, want StatusError %d %s", err, tc.status, tc.code)
 			}
-			if IsPermanent(err) != tc.permanent {
-				t.Fatalf("IsPermanent(%v) = %v, want %v", err, IsPermanent(err), tc.permanent)
+			if sourcecontrol.IsPermanent(err) != tc.permanent {
+				t.Fatalf("sourcecontrol.IsPermanent(%v) = %v, want %v", err, sourcecontrol.IsPermanent(err), tc.permanent)
 			}
 			if calls != 1 || tok.invalidations() != 0 || len(logs.events(t, "ae_studio.auth_failed")) != 0 {
 				t.Fatalf("calls=%d invalidated=%d: %s is not an auth failure", calls, tok.invalidations(), tc.code)
@@ -185,8 +187,8 @@ func TestPutReferences_401AfterTheUploadWasSentIsUnavailable(t *testing.T) {
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), tok)
 	ct, body := multipartBody(t, map[string]string{"sketch.png": "png"})
 	err := a.PutReferences(context.Background(), acmeGreeter, ct, body)
-	if !errors.Is(err, ErrAEStudioUnavailable) || IsPermanent(err) {
-		t.Fatalf("err = %v, want a retryable ErrAEStudioUnavailable", err)
+	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) || sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v, want a retryable sourcecontrol.ErrAEStudioUnavailable", err)
 	}
 	if calls != 1 || tok.invalidations() != 1 || len(logs.events(t, "ae_studio.auth_failed")) != 0 {
 		t.Fatalf("calls=%d invalidated=%d, want one call and a dropped token", calls, tok.invalidations())
@@ -196,7 +198,7 @@ func TestPutReferences_401AfterTheUploadWasSentIsUnavailable(t *testing.T) {
 // PutReferences owns the body: an io.Closer is closed on every return, so a
 // producer writing into an io.Pipe is released even when no byte was read.
 func TestPutReferences_ClosesTheBody(t *testing.T) {
-	ep := &fixedEndpoints{err: ErrAEStudioAbsent}
+	ep := &fixedEndpoints{err: sourcecontrol.ErrAEStudioAbsent}
 	a := newAdapter(t, ep, &countingTokens{})
 	pr, pw := io.Pipe()
 	done := make(chan error, 1)
@@ -204,7 +206,7 @@ func TestPutReferences_ClosesTheBody(t *testing.T) {
 		_, err := pw.Write([]byte("--boundary"))
 		done <- err
 	}()
-	if err := a.PutReferences(context.Background(), acmeGreeter, "multipart/form-data; boundary=boundary", pr); !errors.Is(err, ErrAEStudioAbsent) {
+	if err := a.PutReferences(context.Background(), acmeGreeter, "multipart/form-data; boundary=boundary", pr); !errors.Is(err, sourcecontrol.ErrAEStudioAbsent) {
 		t.Fatalf("err = %v", err)
 	}
 	select {

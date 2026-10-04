@@ -26,27 +26,10 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-)
-
-// The AE Studio sentinels are sourcecontrol's (one identity across the port
-// seam); these names are the same values until Task 4.12 repoints their
-// callers.
-var (
-	// ErrAEStudioAbsent: the org has no AE Studio (no GitHub token yet).
-	ErrAEStudioAbsent = sourcecontrol.ErrAEStudioAbsent
-	// ErrAEStudioUnavailable: the org's AE Studio is not serving right now
-	// (provisioning, failed, unreachable, out of disk, its IdP down). Retry.
-	ErrAEStudioUnavailable = sourcecontrol.ErrAEStudioUnavailable
-	// ErrAEStudioMisconfigured: aep-api's own AE-only client cannot call the
-	// pod, its credentials are missing or refused (C3, C5). Permanent: no
-	// retry fixes it, an operator must.
-	ErrAEStudioMisconfigured = sourcecontrol.ErrAEStudioMisconfigured
-	// ErrReferenceRejected: the pod refused a reference file (400
-	// reference_rejected); the error text carries the pod's detail.
-	ErrReferenceRejected = sourcecontrol.ErrReferenceRejected
 )
 
 // ErrTurnInProgress: a different turn runs for the project (409
@@ -115,40 +98,34 @@ func (e *StatusError) Error() string {
 	return msg
 }
 
-// IsPermanent reports whether retrying the same call cannot succeed: what
-// sourcecontrol.IsPermanent calls permanent (an absent AE Studio, a
-// misconfigured AE-only client, a refused reference, ...), or any other 4xx
-// StatusError except 408 and 429. Temporal activities return such errors
-// non-retryable.
-func IsPermanent(err error) bool {
-	if sourcecontrol.IsPermanent(err) {
-		return true
-	}
-	var se *StatusError
-	if errors.As(err, &se) {
-		return se.Status >= 400 && se.Status < 500 &&
-			se.Status != http.StatusRequestTimeout && se.Status != http.StatusTooManyRequests
-	}
-	return false
+// Permanent reports a refusal the same request cannot change: any 4xx except
+// 408 and 429 (the pod has no IsPermanent of its own; sourcecontrol.IsPermanent
+// asks this).
+func (e *StatusError) Permanent() bool {
+	return e.Status >= 400 && e.Status < 500 &&
+		e.Status != http.StatusRequestTimeout && e.Status != http.StatusTooManyRequests
 }
 
 // problemBodyLimit bounds how much of an error answer is read.
 const problemBodyLimit = 64 << 10
 
-// answer is a non-2xx reply, read and closed: its status and, when the body
-// is a JSON object with a code, the code, detail and (409 turn_in_progress)
-// the running turn's id.
+// answer is a non-2xx reply of op, read and closed: its status and, when the
+// body is a JSON object with a code, the problem's fields callers branch on.
 type answer struct {
+	op           string
 	status       int
 	problem      bool // the body is a JSON object with a code
 	code, detail string
-	activeTurnID string
+	githubStatus int                      // github_error: GitHub's status, 0 when it named none
+	activeTurnID string                   // 409 turn_in_progress
+	conflicts    []sourcecontrol.Conflict // 409 conflict on create-commit
+	retryAfter   time.Duration            // 429: the Retry-After header
 }
 
-// readAnswer reads and closes a non-2xx response.
-func readAnswer(resp *http.Response) answer {
+// readAnswer reads and closes a non-2xx response of op.
+func readAnswer(resp *http.Response, op string) answer {
 	defer func() { _ = resp.Body.Close() }()
-	a := answer{status: resp.StatusCode}
+	a := answer{op: op, status: resp.StatusCode, retryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if mt != "application/problem+json" && mt != "application/json" {
 		return a
@@ -156,18 +133,46 @@ func readAnswer(resp *http.Response) answer {
 	var body struct {
 		Code         string `json:"code"`
 		Detail       string `json:"detail"`
+		GithubStatus int    `json:"githubStatus"`
 		ActiveTurnID string `json:"activeTurnId"`
+		Conflicts    []struct {
+			Path       string `json:"path"`
+			BaseSha    string `json:"baseSha"`
+			CurrentSha string `json:"currentSha"`
+		} `json:"conflicts"`
 	}
-	if json.NewDecoder(io.LimitReader(resp.Body, problemBodyLimit)).Decode(&body) == nil && body.Code != "" {
-		a.problem, a.code, a.detail, a.activeTurnID = true, body.Code, body.Detail, body.ActiveTurnID
+	if json.NewDecoder(io.LimitReader(resp.Body, problemBodyLimit)).Decode(&body) != nil || body.Code == "" {
+		return a
+	}
+	a.problem, a.code, a.detail, a.githubStatus, a.activeTurnID = true, body.Code, body.Detail, body.GithubStatus, body.ActiveTurnID
+	for _, c := range body.Conflicts {
+		a.conflicts = append(a.conflicts, sourcecontrol.Conflict{Path: c.Path, BaseSHA: c.BaseSha, CurrentSHA: c.CurrentSha})
 	}
 	return a
 }
 
-// authRefused is a refusal of the AE-only token itself: a 401, or a 403 that
-// is not the pod's owner_not_allowed verdict on the request.
+// retryAfter reads a Retry-After of whole seconds (the pod's form); anything
+// else is zero, "not said".
+func retryAfter(v string) time.Duration {
+	s, err := strconv.Atoi(v)
+	if err != nil || s <= 0 {
+		return 0
+	}
+	return time.Duration(s) * time.Second
+}
+
+// authRefused is a refusal of the AE-only token itself: a 401, or a 403 the
+// pod's auth layer wrote (no problem body, or org_mismatch). Any other 403 is
+// the pod's verdict on the request (owner_not_allowed), never a token fault
+// (Q-8).
 func (a answer) authRefused() bool {
-	return a.status == http.StatusUnauthorized || (a.status == http.StatusForbidden && a.code != "owner_not_allowed")
+	switch a.status {
+	case http.StatusUnauthorized:
+		return true
+	case http.StatusForbidden:
+		return !a.problem || a.code == "org_mismatch"
+	}
+	return false
 }
 
 // gatewayGone is an answer no pod handler wrote (no problem body) on a
@@ -184,17 +189,47 @@ func (a answer) gatewayGone() bool {
 	return false
 }
 
-// toError maps a non-auth refusal of op to the error callers branch on.
-func (a answer) toError(op string) error {
-	switch {
-	case a.status == http.StatusConflict && a.code == "turn_in_progress":
-		return fmt.Errorf("%w (active turn %s)", ErrTurnInProgress, a.activeTurnID)
-	case a.status == http.StatusBadRequest && a.code == "reference_rejected":
-		return fmt.Errorf("%w: %s", ErrReferenceRejected, a.detail)
-	case a.status == http.StatusServiceUnavailable:
-		return fmt.Errorf("%w: %s answered 503 %s", ErrAEStudioUnavailable, op, a.code)
-	case a.gatewayGone():
-		return fmt.Errorf("%w: %s answered %d from the gateway", ErrAEStudioUnavailable, op, a.status)
+// codeSentinels are the pod's problem codes that name one port error.
+var codeSentinels = map[string]error{
+	"project_unknown":     sourcecontrol.ErrRepoNotFound,
+	"ref_not_found":       sourcecontrol.ErrRefNotFound,
+	"path_not_found":      sourcecontrol.ErrPathNotFound,
+	"issue_not_found":     sourcecontrol.ErrIssueNotFound,
+	"milestone_not_found": sourcecontrol.ErrMilestoneNotFound,
+	"tag_exists":          sourcecontrol.ErrTagAlreadyExists,
+	"not_fast_forward":    sourcecontrol.ErrRefNotFastForward,
+	"repo_name_conflict":  sourcecontrol.ErrRepoNameConflict,
+	"owner_not_allowed":   sourcecontrol.ErrOwnerNotAllowed,
+	"disk_full":           sourcecontrol.ErrAEStudioUnavailable,
+	"aep_api_unavailable": sourcecontrol.ErrAEStudioUnavailable,
+}
+
+// errorFromProblem maps a non-auth refusal to the error callers branch on:
+// the code first (one code is one error), then the status (any 503, or a
+// gateway's answer, is the pod not serving), else a StatusError.
+func errorFromProblem(a answer) error {
+	if sentinel, ok := codeSentinels[a.code]; ok {
+		return fmt.Errorf("%w (ae studio: %s answered %d %s)", sentinel, a.op, a.status, a.code)
 	}
-	return &StatusError{Op: op, Status: a.status, Code: a.code, Detail: a.detail}
+	switch {
+	case a.code == "turn_in_progress":
+		return fmt.Errorf("%w (active turn %s)", ErrTurnInProgress, a.activeTurnID)
+	case a.code == "reference_rejected":
+		return fmt.Errorf("%w: %s", sourcecontrol.ErrReferenceRejected, a.detail)
+	case a.code == "conflict":
+		return &sourcecontrol.CommitConflictError{Conflicts: a.conflicts}
+	case a.code == "github_rate_limited":
+		return &sourcecontrol.RateLimitedError{RetryAfter: a.retryAfter}
+	case a.code == "github_error":
+		status := a.githubStatus
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		return &sourcecontrol.HTTPStatusError{StatusCode: status, Body: a.detail, URL: "ae-studio " + a.op}
+	case a.status == http.StatusServiceUnavailable:
+		return fmt.Errorf("%w: %s answered 503 %s", sourcecontrol.ErrAEStudioUnavailable, a.op, a.code)
+	case a.gatewayGone():
+		return fmt.Errorf("%w: %s answered %d from the gateway", sourcecontrol.ErrAEStudioUnavailable, a.op, a.status)
+	}
+	return &StatusError{Op: a.op, Status: a.status, Code: a.code, Detail: a.detail}
 }

@@ -382,10 +382,10 @@ func TestPlanTap_ABrokenStreamIsAnError(t *testing.T) {
 		if !yield(keepAlive, nil) {
 			return
 		}
-		yield(aestudiotools.TurnEvent{}, aestudiotools.ErrAEStudioUnavailable)
+		yield(aestudiotools.TurnEvent{}, sourcecontrol.ErrAEStudioUnavailable)
 	}
 
-	if err := tap.Stream(broken, noAbort); !errors.Is(err, aestudiotools.ErrAEStudioUnavailable) {
+	if err := tap.Stream(broken, noAbort); !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
 		t.Fatalf("err = %v, want the stream's error", err)
 	}
 }

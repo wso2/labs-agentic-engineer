@@ -27,6 +27,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // aeStudioEndpoints resolves an org's ae-studio-tools Target. The status
@@ -44,17 +45,17 @@ var _ aestudiotools.Endpoints = aeStudioEndpoints{}
 func (e aeStudioEndpoints) Resolve(ctx context.Context, org string) (aestudiotools.Target, error) {
 	st, err := e.status.Status(ctx, org)
 	if err != nil {
-		return aestudiotools.Target{}, fmt.Errorf("%w: read the AE Studio status: %w", aestudiotools.ErrAEStudioUnavailable, err)
+		return aestudiotools.Target{}, fmt.Errorf("%w: read the AE Studio status: %w", sourcecontrol.ErrAEStudioUnavailable, err)
 	}
 	switch st.State {
 	case organization.AEStudioAbsent:
-		return aestudiotools.Target{}, aestudiotools.ErrAEStudioAbsent
+		return aestudiotools.Target{}, sourcecontrol.ErrAEStudioAbsent
 	case organization.AEStudioReady:
 	default:
-		return aestudiotools.Target{}, fmt.Errorf("%w: AE Studio is %s", aestudiotools.ErrAEStudioUnavailable, st.State)
+		return aestudiotools.Target{}, fmt.Errorf("%w: AE Studio is %s", sourcecontrol.ErrAEStudioUnavailable, st.State)
 	}
 	if st.URLs == nil || st.URLs.Tools == "" || st.OUID == "" {
-		return aestudiotools.Target{}, fmt.Errorf("%w: a ready AE Studio without a tools URL or OU id", aestudiotools.ErrAEStudioUnavailable)
+		return aestudiotools.Target{}, fmt.Errorf("%w: a ready AE Studio without a tools URL or OU id", sourcecontrol.ErrAEStudioUnavailable)
 	}
 	return aestudiotools.Target{
 		BaseURL:        strings.TrimSuffix(st.URLs.Tools, "/") + aestudiotools.InternalAPIPath,

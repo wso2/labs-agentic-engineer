@@ -36,12 +36,13 @@ type References = sourcecontrol.ReferencesOps
 // PutReferences streams body (a multipart upload of field `files`, typed by
 // contentType) to the pod, which replaces the stored set. 400
 // reference_rejected is ErrReferenceRejected (with the pod's detail), 503
-// (disk_full) ErrAEStudioUnavailable; 403 owner_not_allowed and 413 are permanent
-// StatusErrors. The upload asks for 100 Continue, so a token refused before
-// any byte was sent is refreshed and the same body sent once more; refused
-// after the body went out, the token is dropped and the call is
-// ErrAEStudioUnavailable (send again). PutReferences owns body: an io.Closer
-// is closed on return, which releases a producer writing into an io.Pipe.
+// (disk_full) ErrAEStudioUnavailable, 403 owner_not_allowed ErrOwnerNotAllowed;
+// 413 is a permanent StatusError. The upload asks for 100 Continue, so a
+// token refused before any byte was sent is refreshed and the same body sent
+// once more; refused after the body went out, the token is dropped and the
+// call is ErrAEStudioUnavailable (send again). PutReferences owns body: an
+// io.Closer is closed on return, which releases a producer writing into an
+// io.Pipe.
 func (a *Adapter) PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error {
 	if c, ok := body.(io.Closer); ok {
 		defer func() { _ = c.Close() }()

@@ -134,16 +134,21 @@ func mapReferenceError(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, sourcecontrol.ErrRepoNotFound):
 		return apierr.NotFound("project repository not found")
-	case errors.Is(err, aestudiotools.ErrReferenceRejected):
-		return apierr.BadRequest(strings.TrimPrefix(err.Error(), aestudiotools.ErrReferenceRejected.Error()+": "))
-	case errors.Is(err, aestudiotools.ErrAEStudioMisconfigured):
+	case errors.Is(err, sourcecontrol.ErrReferenceRejected):
+		return apierr.BadRequest(strings.TrimPrefix(err.Error(), sourcecontrol.ErrReferenceRejected.Error()+": "))
+	case errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured):
 		return apierr.New(http.StatusServiceUnavailable, codeAEStudioMisconfigured,
 			"AE Studio is not configured on this platform — contact your platform admin", nil)
-	case errors.Is(err, aestudiotools.ErrAEStudioUnavailable):
+	case errors.Is(err, sourcecontrol.ErrAEStudioUnavailable):
 		return apierr.New(http.StatusServiceUnavailable, codeAEStudioUnavailable,
 			"AE Studio is not ready — try again in a few seconds", nil)
-	case errors.Is(err, aestudiotools.ErrAEStudioAbsent):
+	case errors.Is(err, sourcecontrol.ErrAEStudioAbsent):
 		return apierr.New(http.StatusConflict, codeGitHubNotConnected, "connect GitHub to continue", nil)
+	case errors.Is(err, sourcecontrol.ErrOwnerNotAllowed):
+		// The pod refuses a repository outside the org's GitHub account
+		// (Task 4.17 gives it its own 409 code).
+		slog.WarnContext(ctx, "references: AE Studio refused the upload", "status", http.StatusForbidden, "code", "owner_not_allowed")
+		return apierr.BadGateway(fmt.Sprintf("AE Studio refused the upload (%d)", http.StatusForbidden))
 	case errors.As(err, &se) && se.Status == http.StatusRequestEntityTooLarge:
 		return apierr.New(http.StatusRequestEntityTooLarge, codeRequestTooLarge, "the reference documents are too large", nil)
 	case errors.As(err, &se):

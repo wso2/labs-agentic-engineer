@@ -157,6 +157,11 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //     operator has to fix the platform configuration.
 //   - ErrOwnerNotAllowed — the repository is not under the org's GitHub owner.
 //   - ErrReferenceRejected — the pod refused the document itself.
+//   - 400 / 422 — GitHub refused the request itself (malformed, or failing
+//     its validation); the same request is refused again.
+//   - An error whose Permanent() says so: a refusal by the AE Studio pod
+//     (clients/aestudiotools.StatusError, a 4xx other than 408 / 429), which
+//     has no sentinel of its own here.
 //
 // Deliberately NOT permanent, and each for a reason:
 //   - 403, because GitHub answers its SECONDARY RATE LIMIT with one, and that
@@ -184,10 +189,17 @@ func IsPermanent(err error) bool {
 		return true
 	case IsHTTPStatus(err, http.StatusNotFound),
 		IsHTTPStatus(err, http.StatusGone),
-		IsHTTPStatus(err, http.StatusUnauthorized):
+		IsHTTPStatus(err, http.StatusUnauthorized),
+		IsHTTPStatus(err, http.StatusBadRequest),
+		IsHTTPStatus(err, http.StatusUnprocessableEntity):
 		return true
 	case IsGraphQLType(err, GraphQLTypeNotFound):
 		return true
 	}
-	return false
+	var p permanence
+	return errors.As(err, &p) && p.Permanent()
 }
+
+// permanence is an error that classifies itself: an adapter's refusal type
+// that this package cannot name without importing the adapter.
+type permanence interface{ Permanent() bool }

@@ -32,6 +32,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // The planning turn runs in the org's AE Studio pod (Task 3.17). What its
@@ -66,14 +67,14 @@ func TestPlanMilestone_ATurnInProgressIsRetried(t *testing.T) {
 // C3: aep-api's AE-only client is misconfigured. No retry fixes that, an
 // operator must, so the activity fails non-retryable under its own type.
 func TestPlanMilestone_AMisconfiguredAEStudioFailsFast(t *testing.T) {
-	acts, runs := planWith(fmt.Errorf("plan: %w", aestudiotools.ErrAEStudioMisconfigured))
+	acts, runs := planWith(fmt.Errorf("plan: %w", sourcecontrol.ErrAEStudioMisconfigured))
 
 	err := acts.PlanMilestone(context.Background(), PlanMilestoneInput{RunID: "run-1"})
 
 	appErr, permanent := nonRetryable(err)
 	require.True(t, permanent, "a misconfigured AE-only client must not be retried")
 	require.Equal(t, "ae_studio_misconfigured", appErr.Type())
-	require.ErrorIs(t, err, aestudiotools.ErrAEStudioMisconfigured, "the cause stays legible")
+	require.ErrorIs(t, err, sourcecontrol.ErrAEStudioMisconfigured, "the cause stays legible")
 	require.Len(t, runs.recorded, 1)
 	require.True(t, runs.recorded[0].Permanent, "the record and the retry policy must agree")
 }
@@ -83,7 +84,7 @@ func TestPlanMilestone_AMisconfiguredAEStudioFailsFast(t *testing.T) {
 // A permanent answer of the pod (an unknown project, a 4xx) is the same.
 func TestPlanMilestone_APermanentAEStudioAnswerFailsFast(t *testing.T) {
 	for name, cause := range map[string]error{
-		"absent":          aestudiotools.ErrAEStudioAbsent,
+		"absent":          sourcecontrol.ErrAEStudioAbsent,
 		"unknown project": &aestudiotools.StatusError{Op: "start-repo-turn", Status: 404, Code: "project_unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -101,7 +102,7 @@ func TestPlanMilestone_APermanentAEStudioAnswerFailsFast(t *testing.T) {
 
 // An unreachable pod is a blip, retried like any other.
 func TestPlanMilestone_AnUnavailableAEStudioIsRetried(t *testing.T) {
-	acts, _ := planWith(fmt.Errorf("plan: %w", aestudiotools.ErrAEStudioUnavailable))
+	acts, _ := planWith(fmt.Errorf("plan: %w", sourcecontrol.ErrAEStudioUnavailable))
 
 	_, permanent := nonRetryable(acts.PlanMilestone(context.Background(), PlanMilestoneInput{RunID: "run-1"}))
 	require.False(t, permanent)

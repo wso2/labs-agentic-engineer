@@ -104,6 +104,11 @@ func TestIsPermanent(t *testing.T) {
 		{name: "reference document rejected", err: sourcecontrol.ErrReferenceRejected, want: true},
 		{name: "AE Studio unavailable is the retry case", err: sourcecontrol.ErrAEStudioUnavailable, want: false},
 		{name: "GitHub rate limit clears on its own", err: &sourcecontrol.RateLimitedError{RetryAfter: time.Minute}, want: false},
+		{name: "GitHub refused the request itself (400)", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusBadRequest}, want: true},
+		{name: "GitHub's validation refused it (422)", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusUnprocessableEntity}, want: true},
+		{name: "405 not mergeable is reconciled by its caller", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusMethodNotAllowed}, want: false},
+		{name: "an adapter refusal that calls itself permanent", err: fmt.Errorf("x: %w", selfClassified(true)), want: true},
+		{name: "an adapter refusal that calls itself transient", err: selfClassified(false), want: false},
 		{
 			name: "a commit conflict is re-read and retried by its caller",
 			err:  &sourcecontrol.CommitConflictError{Conflicts: []sourcecontrol.Conflict{{Path: "a.md"}}},
@@ -117,3 +122,9 @@ func TestIsPermanent(t *testing.T) {
 		})
 	}
 }
+
+// selfClassified is an adapter error that says whether it is permanent.
+type selfClassified bool
+
+func (s selfClassified) Error() string   { return "adapter refusal" }
+func (s selfClassified) Permanent() bool { return bool(s) }

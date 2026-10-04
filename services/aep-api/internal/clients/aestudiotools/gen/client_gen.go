@@ -783,13 +783,13 @@ type CreateRepoParams struct {
 // ReadBundleParams defines parameters for ReadBundle.
 type ReadBundleParams struct {
 	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
-	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+	At *At `form:"at,omitempty" json:"at,omitempty"`
 
 	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
-	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+	Local *Local `form:"local,omitempty" json:"local,omitempty"`
 
 	// Prefix Only paths (tag names, for list-tags) starting with this.
-	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+	Prefix *Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
 
 	// Ext File-name endings to keep (e.g. `.json`), repeated.
 	Ext []string `form:"ext,omitempty" json:"ext,omitempty,omitzero"`
@@ -798,7 +798,7 @@ type ReadBundleParams struct {
 	Path []string `form:"path,omitempty" json:"path,omitempty,omitzero"`
 
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -807,7 +807,7 @@ type ReadBundleParams struct {
 // CreateCommitParams defines parameters for CreateCommit.
 type CreateCommitParams struct {
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -816,10 +816,10 @@ type CreateCommitParams struct {
 // ReadFileParams defines parameters for ReadFile.
 type ReadFileParams struct {
 	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
-	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+	At *At `form:"at,omitempty" json:"at,omitempty"`
 
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -828,13 +828,13 @@ type ReadFileParams struct {
 // GetHeadParams defines parameters for GetHead.
 type GetHeadParams struct {
 	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
-	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+	At *At `form:"at,omitempty" json:"at,omitempty"`
 
 	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
-	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+	Local *Local `form:"local,omitempty" json:"local,omitempty"`
 
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -951,7 +951,7 @@ type EnsureLabelParams struct {
 // ListMilestonesParams defines parameters for ListMilestones.
 type ListMilestonesParams struct {
 	// State Milestones in this state; omitted, all.
-	State ListMilestonesParamsState `form:"state,omitempty" json:"state,omitempty,omitzero"`
+	State *ListMilestonesParamsState `form:"state,omitempty" json:"state,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -990,7 +990,7 @@ type GetMilestoneCountsParams struct {
 // ListMilestoneIssuesParams defines parameters for ListMilestoneIssues.
 type ListMilestoneIssuesParams struct {
 	// State Issues in this state; omitted, open.
-	State ListMilestoneIssuesParamsState `form:"state,omitempty" json:"state,omitempty,omitzero"`
+	State *ListMilestoneIssuesParamsState `form:"state,omitempty" json:"state,omitempty"`
 
 	// Labels Only issues carrying every one of these labels.
 	Labels []string `form:"labels,omitempty" json:"labels,omitempty,omitzero"`
@@ -1035,7 +1035,7 @@ type PutRepoReferencesParams struct {
 // MirrorSkillsParams defines parameters for MirrorSkills.
 type MirrorSkillsParams struct {
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -1044,10 +1044,10 @@ type MirrorSkillsParams struct {
 // ListTagsParams defines parameters for ListTags.
 type ListTagsParams struct {
 	// Prefix Only paths (tag names, for list-tags) starting with this.
-	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+	Prefix *Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
 
 	// Local List the tags the studio's mirror already holds, without fetching from GitHub (every tag the studio cuts is there).
-	Local bool `form:"local,omitempty" json:"local,omitempty,omitzero"`
+	Local *bool `form:"local,omitempty" json:"local,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -1056,7 +1056,7 @@ type ListTagsParams struct {
 // CreateTagParams defines parameters for CreateTag.
 type CreateTagParams struct {
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -1065,16 +1065,16 @@ type CreateTagParams struct {
 // ListTreeParams defines parameters for ListTree.
 type ListTreeParams struct {
 	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
-	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+	At *At `form:"at,omitempty" json:"at,omitempty"`
 
 	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
-	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+	Local *Local `form:"local,omitempty" json:"local,omitempty"`
 
 	// Prefix Only paths (tag names, for list-tags) starting with this.
-	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+	Prefix *Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
 
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
-	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+	DefaultBranch *DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
@@ -2193,28 +2193,40 @@ func NewReadBundleRequest(server string, owner Owner, repo Repo, params *ReadBun
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.At != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Local != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", *params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Prefix != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if params.Ext != nil {
@@ -2241,12 +2253,16 @@ func NewReadBundleRequest(server string, owner Owner, repo Repo, params *ReadBun
 
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -2329,12 +2345,16 @@ func NewCreateCommitRequestWithBody(server string, owner Owner, repo Repo, param
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -2415,20 +2435,28 @@ func NewReadFileRequest(server string, owner Owner, repo Repo, path string, para
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.At != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -2500,28 +2528,40 @@ func NewGetHeadRequest(server string, owner Owner, repo Repo, params *GetHeadPar
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.At != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Local != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", *params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -3789,12 +3829,16 @@ func NewListMilestonesRequest(server string, owner Owner, repo Repo, params *Lis
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -4146,12 +4190,16 @@ func NewListMilestoneIssuesRequest(server string, owner Owner, repo Repo, number
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if params.Labels != nil {
@@ -4546,12 +4594,16 @@ func NewMirrorSkillsRequestWithBody(server string, owner Owner, repo Repo, param
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -4625,20 +4677,28 @@ func NewListTagsRequest(server string, owner Owner, repo Repo, params *ListTagsP
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Prefix != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Local != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", *params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -4721,12 +4781,16 @@ func NewCreateTagRequestWithBody(server string, owner Owner, repo Repo, params *
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {
@@ -4800,36 +4864,52 @@ func NewListTreeRequest(server string, owner Owner, repo Repo, params *ListTreeP
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.At != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", *params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Local != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", *params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.Prefix != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
-		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-			return nil, err
-		} else {
-			for _, qp := range strings.Split(queryFrag, "&") {
-				rawQueryFragments = append(rawQueryFragments, qp)
+		if params.DefaultBranch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", *params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
 			}
+
 		}
 
 		if encoded := queryValues.Encode(); encoded != "" {

@@ -28,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 const turnID = "6f1a2c1e-6c39-4f0e-9a51-7a1d0e5a6b10"
@@ -168,10 +170,10 @@ func TestStartTurn_Refusals(t *testing.T) {
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"code":"turn_in_progress","activeTurnId":"0d1f8a8e-1f2a-4c1e-9a51-7a1d0e5a6b10"}`))
 		}, want: ErrTurnInProgress},
-		{name: "503 disk_full", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "disk_full", "") }, want: ErrAEStudioUnavailable},
-		{name: "503 agent_unavailable", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "agent_unavailable", "") }, want: ErrAEStudioUnavailable},
-		{name: "502 from the gateway", reply: func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, want: ErrAEStudioUnavailable},
-		{name: "404 project_unknown", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "project_unknown", "") }, code: "project_unknown", permanent: true},
+		{name: "503 disk_full", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "disk_full", "") }, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "503 agent_unavailable", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "agent_unavailable", "") }, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "502 from the gateway", reply: func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, want: sourcecontrol.ErrAEStudioUnavailable},
+		{name: "404 project_unknown", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "project_unknown", "") }, want: sourcecontrol.ErrRepoNotFound, permanent: true},
 		{name: "409 no_default_key", reply: func(w http.ResponseWriter) { writeProblem(w, 409, "no_default_key", "") }, code: "no_default_key", permanent: true},
 		{name: "400 validation_failed", reply: func(w http.ResponseWriter) { writeProblem(w, 400, "validation_failed", "kind") }, code: "validation_failed", permanent: true},
 		{name: "502 agent_error", reply: func(w http.ResponseWriter) { writeProblem(w, 502, "agent_error", "") }, code: "agent_error"},
@@ -193,8 +195,8 @@ func TestStartTurn_Refusals(t *testing.T) {
 					t.Fatalf("err = %v, want a StatusError with code %s", err, tc.code)
 				}
 			}
-			if IsPermanent(err) != tc.permanent {
-				t.Fatalf("IsPermanent(%v) = %v, want %v", err, IsPermanent(err), tc.permanent)
+			if sourcecontrol.IsPermanent(err) != tc.permanent {
+				t.Fatalf("sourcecontrol.IsPermanent(%v) = %v, want %v", err, sourcecontrol.IsPermanent(err), tc.permanent)
 			}
 		})
 	}
@@ -208,8 +210,8 @@ func TestStartTurn_StreamCutBeforeResultIsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	evs, err := collect(t, seq)
-	if len(evs) != 1 || !errors.Is(err, ErrAEStudioUnavailable) {
-		t.Fatalf("events=%d err=%v, want the one event then ErrAEStudioUnavailable", len(evs), err)
+	if len(evs) != 1 || !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+		t.Fatalf("events=%d err=%v, want the one event then sourcecontrol.ErrAEStudioUnavailable", len(evs), err)
 	}
 }
 
@@ -307,7 +309,7 @@ func TestStartTurn_TheCallersDeadlineIsNotUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	evs, err := collect(t, seq)
-	if len(evs) != 1 || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrAEStudioUnavailable) {
+	if len(evs) != 1 || !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
 		t.Fatalf("events=%d err=%v, want the keep-alive then the caller's deadline", len(evs), err)
 	}
 	seq, err = a.StartTurn(context.Background(), acmeGreeter, startReq())

@@ -107,7 +107,7 @@ func TestPutProjectReferences_StreamsThenKicksOff(t *testing.T) {
 	if kick.calls != 1 {
 		t.Fatal("kickoff must fire after a 2xx")
 	}
-	f.FailOp(aestudiotest.OpPutReferences, aestudiotools.ErrReferenceRejected)
+	f.FailOp(aestudiotest.OpPutReferences, sourcecontrol.ErrReferenceRejected)
 	_, err := h.PutProjectReferences(tenantCtx("default"), multipartRequest(t, map[string][]byte{"x.exe": {1}}))
 	var ae *apierr.Error
 	if !errors.As(err, &ae) || ae.Status != 400 || kick.calls != 1 {
@@ -208,13 +208,14 @@ func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
 		wantStatus int
 		wantCode   string
 	}{
-		{"rejected", fmt.Errorf("%w: x.exe: not an allowed type", aestudiotools.ErrReferenceRejected), http.StatusBadRequest, apierr.CodeBadRequest},
+		{"rejected", fmt.Errorf("%w: x.exe: not an allowed type", sourcecontrol.ErrReferenceRejected), http.StatusBadRequest, apierr.CodeBadRequest},
 		// C3: an operator fault, not a blip: 503 with its own code and no Retry-After.
-		{"misconfigured", aestudiotools.ErrAEStudioMisconfigured, http.StatusServiceUnavailable, "ae_studio_misconfigured"},
-		{"unavailable", aestudiotools.ErrAEStudioUnavailable, http.StatusServiceUnavailable, "ae_studio_unavailable"},
-		{"absent", aestudiotools.ErrAEStudioAbsent, http.StatusConflict, "github_not_connected"},
+		{"misconfigured", sourcecontrol.ErrAEStudioMisconfigured, http.StatusServiceUnavailable, "ae_studio_misconfigured"},
+		{"unavailable", sourcecontrol.ErrAEStudioUnavailable, http.StatusServiceUnavailable, "ae_studio_unavailable"},
+		{"absent", sourcecontrol.ErrAEStudioAbsent, http.StatusConflict, "github_not_connected"},
 		{"too large", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusRequestEntityTooLarge}, http.StatusRequestEntityTooLarge, "request_too_large"},
-		{"anything else", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusForbidden, Code: "owner_not_allowed"}, http.StatusBadGateway, apierr.CodeBadGateway},
+		{"owner not allowed", fmt.Errorf("%w (put-repo-references)", sourcecontrol.ErrOwnerNotAllowed), http.StatusBadGateway, apierr.CodeBadGateway},
+		{"anything else", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusBadRequest, Code: "validation_failed"}, http.StatusBadGateway, apierr.CodeBadGateway},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

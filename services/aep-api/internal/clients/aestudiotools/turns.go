@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/gen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Turn kinds the pod starts for aep-api.
@@ -196,7 +197,7 @@ func (a *Adapter) turnEvents(ctx context.Context, org string, body io.ReadCloser
 			yield(TurnEvent{}, a.transportFailed(ctx, org, "start-repo-turn stream", err))
 			return
 		}
-		yield(TurnEvent{}, fmt.Errorf("%w: the turn stream ended without a result", ErrAEStudioUnavailable))
+		yield(TurnEvent{}, fmt.Errorf("%w: the turn stream ended without a result", sourcecontrol.ErrAEStudioUnavailable))
 	}
 }
 
