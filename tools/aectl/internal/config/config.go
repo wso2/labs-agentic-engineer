@@ -63,6 +63,7 @@ var ConfigMapKeys = []string{
 	"openbao.addr",
 	"webhook.delivery_url",
 	"webhook.local_smee.enabled",
+	"ae_studio.webhook_relay.enabled",
 	"gateway.hostname",
 	"environment.idp_base_domain",
 	"environment.gateway_base_domain",
@@ -132,6 +133,10 @@ var keyRegistry = map[string]configKeyMeta{
 	"openbao.addr":                       {required: false, kind: kindURL},
 	"webhook.delivery_url":               {required: false, kind: kindURL},
 	"webhook.local_smee.enabled":         {required: false, kind: kindBool},
+	// The per-org AE Studio webhook relay (smee.io channel per org) for a
+	// cluster GitHub cannot reach. Passed as aeStudio.webhookRelay.enabled on
+	// install and update; absent is false. Never true in production.
+	"ae_studio.webhook_relay.enabled": {required: false, kind: kindBool},
 	// gateway.hostname, when set, lets `aectl platform install` configure the
 	// external gateway ingress non-interactively (CI-friendly path).
 	"gateway.hostname": {required: false, kind: kindString},

@@ -328,6 +328,8 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.Storage.BudgetBytes = r.readOptionalInt64("AE_STUDIO_STORAGE_BUDGET_BYTES", 2147483648)
 	c.PullSecret.Key = r.readOptionalString("AE_STUDIO_PULL_SECRET_KEY", "")
 	c.PullSecret.Property = r.readOptionalString("AE_STUDIO_PULL_SECRET_PROPERTY", "")
+	c.WebhookRelaySeed = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_SEED", "")
+	c.WebhookRelayImage = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_IMAGE", "")
 
 	egress := r.readOptionalString("AE_STUDIO_EXTRA_EGRESS", "[]")
 	if !json.Valid([]byte(egress)) {

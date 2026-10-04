@@ -20,6 +20,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"math/big"
 	"strings"
@@ -37,6 +38,15 @@ func GeneratePassword(length int) (string, error) {
 		b[i] = charset[n.Int64()]
 	}
 	return string(b), nil
+}
+
+// GenerateHex returns n cryptographically random bytes as lowercase hex text.
+func GenerateHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // GenerateRSAPrivateKey returns a fresh 2048-bit RSA private key in PKCS8 PEM format.

@@ -45,6 +45,9 @@ spec:
           type: string
           default: ""
         githubOwner: { type: string, default: "" }   # remote-git owner guard, repo-create guard
+        # Task 4.20: the org's smee.io relay channel (aep-api derives it from the install's relay seed); "" = no
+        # relay (Cloud), the repo hooks deliver to the webhookUrl output.
+        webhookRelayUrl: { type: string, default: "" }
         secrets:
           type: object
           required: [designAgent, studioTools]
@@ -104,6 +107,12 @@ spec:
           type: array
           default: []
           items: { type: object, x-kubernetes-preserve-unknown-fields: true }
+        webhookRelay:
+          # The relay container's image (gosmee, pinned by digest); used only when parameters.webhookRelayUrl is set.
+          type: object
+          default: { image: "" }
+          properties:
+            image: { type: string, default: "" }
   resources:
     # Retire timing: a rotation retires the previous org-secret reference (and
     # its vault path) right after the row and stamp commit, before the
@@ -216,8 +225,8 @@ spec:
                 - { name: tmp-agent,  emptyDir: { sizeLimit: 256Mi } }
                 - { name: tmp-collab, emptyDir: { sizeLimit: 64Mi } }
                 - { name: tmp-tools,  emptyDir: { sizeLimit: 256Mi } }
-              # A container added here mounts no socket dir unless it is one end of that socket: the relay
-              # container (Task 4.20) mounts none, since any process that can reach a socket is trusted by it.
+              # A container added here mounts no socket dir unless it is one end of that socket: the webhook-relay
+              # container (Task 4.20, last below) mounts none, since any process that can reach a socket is trusted by it.
               containers:
                 - name: ae-design-agent
                   image: ${parameters.images.designAgent}
@@ -294,8 +303,10 @@ spec:
                     - { name: AE_LISTEN_PORT, value: "8082" }
                     - { name: AE_HEALTH_PORT, value: "9082" }
                     - { name: AE_GITHUB_OWNER, value: "${parameters.githubOwner}" }
-                    # Where the repo hooks this container registers deliver (= the webhookUrl output).
-                    - { name: AE_WEBHOOK_URL, value: "${environmentConfigs.publicScheme}://${oc_dns_label(metadata.resourceNamespace, 'ae-studio-tools')}.${environmentConfigs.gatewayHost}${environmentConfigs.publicPortSuffix}/webhooks/github" }
+                    # Where the repo hooks this container registers deliver: the org's relay channel when set
+                    # (Task 4.20), else the webhookUrl output.
+                    - name: AE_WEBHOOK_URL
+                      value: '${parameters.webhookRelayUrl != "" ? parameters.webhookRelayUrl : environmentConfigs.publicScheme + "://" + oc_dns_label(metadata.resourceNamespace, "ae-studio-tools") + "." + environmentConfigs.gatewayHost + environmentConfigs.publicPortSuffix + "/webhooks/github"}'
                   envFrom:
                     - secretRef: { name: "${metadata.name}-tools" }
                   startupProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 2, failureThreshold: 30 }
@@ -309,6 +320,18 @@ spec:
                     - { name: mcp-sock, mountPath: /run/ae/mcp }
                     - { name: studio-data, mountPath: /studio-data }            # 20: git root, rw
                     - { name: tmp-tools, mountPath: /tmp }
+                # Task 4.20: webhook-relay (gosmee) subscribes to the org's smee.io channel and posts each delivery
+                # (GitHub's headers, the signature among them, and the body as smee.io relays it) to ae-studio-tools
+                # over the pod's loopback; ae-studio-tools verifies the HMAC as for a direct delivery. Present only when parameters.webhookRelayUrl is set:
+                # includeWhen is per resource, so the item is one CEL map that renders to oc_omit() (dropped from the
+                # list) otherwise. It mounts no socket dir and no volume, exposes no port and reads no Secret.
+                - '${parameters.webhookRelayUrl != "" ? {
+                    "name": "webhook-relay",
+                    "image": environmentConfigs.webhookRelay.image,
+                    "args": ["client", parameters.webhookRelayUrl, "http://127.0.0.1:8082/webhooks/github"],
+                    "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "64Mi"}},
+                    "securityContext": {"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "capabilities": {"drop": ["ALL"]}}
+                  } : oc_omit()}'
     - id: service
       template:
         apiVersion: v1

@@ -25,6 +25,7 @@
 # One ok/FAIL line per check; exit 1 on any FAIL. A kubectl read that fails
 # is a FAIL line too, never an abort without a summary. Never reads a Secret
 # value: only key names, and AE_SECRET_REV compared in-shell and never
+# printed; the relay channel URL (Task 4.20) is compared in-shell too, never
 # printed. It writes nothing; the one POST is an unsigned GitHub ping, which
 # the tools container refuses (401) before acting on it.
 
@@ -85,6 +86,9 @@ check "ResourceType ae-studio has its template-hash annotation" test -n "$rt_has
 
 read_into latest "Resource ae-studio" kcp get resource ae-studio -n "$ORG" -o jsonpath='{.status.latestRelease.name}'
 check "Resource ae-studio has a latestRelease" test -n "$latest"
+# The org's relay channel (Task 4.20): set = the pod runs a webhook-relay container.
+read_into relay_url "Resource ae-studio webhookRelayUrl" kcp get resource ae-studio -n "$ORG" \
+  -o jsonpath='{.spec.parameters.webhookRelayUrl}'
 
 read_into rrbs "ResourceReleaseBindings in namespace '$ORG'" kcp get resourcereleasebinding -n "$ORG" \
   -l "openchoreo.dev/resource=ae-studio" -o name
@@ -108,7 +112,8 @@ check "exactly one ae-studio Deployment in the cell namespace (found $ndeploy)" 
 if [ "$ndeploy" = 1 ]; then
   dpns=${deploys%%/*}
   dname=${deploys##*/}
-  want=${AE_STUDIO_EXPECT_CONTAINERS:-3}
+  if [ -n "$relay_url" ]; then want_default=4; else want_default=3; fi
+  want=${AE_STUDIO_EXPECT_CONTAINERS:-$want_default}
   read_into sel "Deployment $dpns/$dname selector" kdp get deploy "$dname" -n "$dpns" \
     -o go-template='{{range $k, $v := .spec.selector.matchLabels}}{{$k}}={{$v}},{{end}}'
   sel=${sel%,}
@@ -145,6 +150,23 @@ if [ "$ndeploy" = 1 ]; then
     live_rev=$(printf '%s' "$rev_b64" | base64 -d 2>/dev/null || true)
     check "Secret AE_SECRET_REV matches the container's AE_EXPECTED_SECRET_REV" \
       test -n "$expect_rev" -a "$live_rev" = "$expect_rev"
+  fi
+
+  # Webhook relay (Task 4.20): present exactly when the Resource names a channel;
+  # then the tools container's hooks point at it and gosmee has subscribed.
+  read_into cnames "Deployment $dpns/$dname container names" kdp get deploy "$dname" -n "$dpns" \
+    -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}'
+  has_relay=$(grep -cx webhook-relay <<<"$cnames" || true)
+  if [ -n "$relay_url" ]; then
+    check "webhook-relay container present (webhookRelayUrl is set)" test "$has_relay" = 1
+    read_into hook_url "tools container's AE_WEBHOOK_URL" kdp get deploy "$dname" -n "$dpns" \
+      -o jsonpath='{.spec.template.spec.containers[?(@.name=="ae-studio-tools")].env[?(@.name=="AE_WEBHOOK_URL")].value}'
+    check "tools container's AE_WEBHOOK_URL is the relay channel" test "$hook_url" = "$relay_url"
+    read_into relay_logs "webhook-relay logs" kdp logs "deploy/$dname" -n "$dpns" -c webhook-relay
+    check "webhook-relay subscribed and forwards to 127.0.0.1:8082/webhooks/github" \
+      grep -q "Forwarding .*127\.0\.0\.1:8082/webhooks/github" <<<"$relay_logs"
+  else
+    check "no webhook-relay container (webhookRelayUrl is empty)" test "$has_relay" = 0
   fi
 else
   echo "     expected one Deployment labelled openchoreo.dev/resource=ae-studio,openchoreo.dev/namespace=$ORG (context ${DP_CONTEXT:-$CUR})"

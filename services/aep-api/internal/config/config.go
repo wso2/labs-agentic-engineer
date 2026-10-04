@@ -365,6 +365,14 @@ type AEStudioConfig struct {
 		BudgetBytes                 int64
 	}
 	PullSecret struct{ Key, Property string }
+
+	// WebhookRelaySeed (AE_STUDIO_WEBHOOK_RELAY_SEED) keys each org's smee.io
+	// relay channel (aestudio.WebhookRelayURL); its text is the HMAC key as
+	// stored. A secret: never logged. Unset (Cloud) = no relay.
+	WebhookRelaySeed string
+	// WebhookRelayImage (AE_STUDIO_WEBHOOK_RELAY_IMAGE) is the relay
+	// container's image, needed only with a seed.
+	WebhookRelayImage string
 }
 
 // Missing returns the env names Ensure needs and lacks, in a stable order.
@@ -390,6 +398,9 @@ func (c AEStudioConfig) Missing() []string {
 	}
 	if len(c.IDP.UserAudiences) == 0 {
 		missing = append(missing, "AE_STUDIO_IDP_USER_AUDIENCES")
+	}
+	if c.WebhookRelaySeed != "" && c.WebhookRelayImage == "" {
+		missing = append(missing, "AE_STUDIO_WEBHOOK_RELAY_IMAGE")
 	}
 	return missing
 }

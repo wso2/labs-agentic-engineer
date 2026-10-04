@@ -183,3 +183,45 @@ func TestDesired_MissingInputsAreFailed(t *testing.T) {
 		})
 	}
 }
+
+// Task 4.20: with the install's relay seed, the Resource names the org's
+// relay channel and the binding the relay image; without it (Cloud), no relay.
+func TestDesired_WebhookRelay(t *testing.T) {
+	f := newFixture(t).withAllRefs()
+	d, err := f.svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := json.Marshal(d.Params)
+	if !strings.Contains(string(p), `"webhookRelayUrl":""`) {
+		t.Errorf("no seed: params %s, want webhookRelayUrl empty", p)
+	}
+
+	f = newFixture(t).withAllRefs()
+	f.svc.cfg.WebhookRelaySeed = "0123456789abcdef"
+	f.svc.cfg.WebhookRelayImage = "ghcr.io/chmouel/gosmee@sha256:abc"
+	d, err = f.svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := WebhookRelayURL([]byte("0123456789abcdef"), "default"); want == "" || d.Params.WebhookRelayURL != want {
+		t.Errorf("webhookRelayUrl = %q, want %q", d.Params.WebhookRelayURL, want)
+	}
+	e, _ := json.Marshal(d.EnvConfigs)
+	if !strings.Contains(string(e), `"webhookRelay":{"image":"ghcr.io/chmouel/gosmee@sha256:abc"}`) {
+		t.Errorf("env configs %s lack the relay image", e)
+	}
+}
+
+// A relay seed without the relay image would render a container with no
+// image: the Ensure reports "not configured" instead.
+func TestDesired_WebhookRelaySeedNeedsImage(t *testing.T) {
+	f := newFixture(t).withAllRefs()
+	f.svc.cfg.WebhookRelaySeed = "0123456789abcdef"
+	if st, err := f.svc.Status(userCtx(), "default"); err != nil || st.State != StateFailed {
+		t.Fatalf("state %s err %v", st.State, err)
+	}
+	if f.oc.writes() != 0 {
+		t.Fatalf("nothing to ensure, yet wrote: %v", f.oc.calls)
+	}
+}

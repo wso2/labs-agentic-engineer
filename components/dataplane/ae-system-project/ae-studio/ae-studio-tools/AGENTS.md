@@ -51,7 +51,8 @@ Required: `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
 `AE_USER_AUDIENCES` (comma list), `AE_M2M_CLIENT_ID`, `GITHUB_PAT`,
 `GITHUB_WEBHOOK_SECRET`, `AE_IDP_TOKEN_URL`, `AEP_API_BASE_URL` and
 `AE_WEBHOOK_URL` (absolute http(s); where the repo hooks the pod registers
-deliver, rendered from the ResourceType's `webhookUrl` output expression), `AE_PUBLISHER_CLIENT_ID`, `AE_PUBLISHER_CLIENT_SECRET`,
+deliver: the org's smee.io relay channel when the Resource's `webhookRelayUrl` is set, else the ResourceType's
+`webhookUrl` output expression), `AE_PUBLISHER_CLIENT_ID`, `AE_PUBLISHER_CLIENT_SECRET`,
 `AE_STUDIO_DATA_DIR` (absolute path, the studio-data root),
 `AE_STORAGE_BUDGET_BYTES` (int64 > 0, the reaper's budget), `AE_FILES_SOCKET`
 (absolute path, the Files socket on the emptyDir shared with ae-collab),

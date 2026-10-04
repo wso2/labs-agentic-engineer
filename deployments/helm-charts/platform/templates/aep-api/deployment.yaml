@@ -245,6 +245,19 @@ spec:
               value: {{ (default dict $ae.storage).ephemeralRequest | default "1Gi" | quote }}
             - name: AE_STUDIO_STORAGE_BUDGET_BYTES
               value: {{ (default dict $ae.storage).budgetBytes | default "2147483648" | quote }}
+            {{- $relay := default dict $ae.webhookRelay }}
+            {{- if $relay.enabled }}
+            # Per-org webhook relay (values.yaml aeStudio.webhookRelay). The seed
+            # is optional: aep-api boots, without a relay, before it is imported.
+            - name: AE_STUDIO_WEBHOOK_RELAY_IMAGE
+              value: {{ required "aeStudio.webhookRelay.image is required when the relay is enabled" $relay.image | quote }}
+            - name: AE_STUDIO_WEBHOOK_RELAY_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: aep-webhook-relay
+                  key: AE_STUDIO_WEBHOOK_RELAY_SEED
+                  optional: true
+            {{- end }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
             # absent there. OPENBAO_TOKEN comes from the ESO-synced

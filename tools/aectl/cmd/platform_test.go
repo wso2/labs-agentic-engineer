@@ -19,6 +19,8 @@ package cmd
 import (
 	"context"
 	"errors"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -262,5 +264,37 @@ func TestAEStudioOverrides_EmptyGatewayHostOmitted(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	if got := strings.Join(aeStudioOverrides("wso2-aep"), " "); strings.Contains(got, "gatewayHost") {
 		t.Errorf("empty gateway.hostname must not be set (would wipe a reused value): %s", got)
+	}
+}
+
+// Task 4.20 (Q-11): install and update both carry the relay switch from
+// ae_studio.webhook_relay.enabled; absent is false.
+func TestAEStudioOverrides_WebhookRelaySwitch(t *testing.T) {
+	t.Cleanup(viper.Reset)
+	if got := strings.Join(aeStudioOverrides("wso2-aep"), " "); !strings.Contains(got, "--set aeStudio.webhookRelay.enabled=false") {
+		t.Errorf("absent key: want the relay off, got %s", got)
+	}
+	viper.Set("ae_studio.webhook_relay.enabled", true)
+	if got := strings.Join(aeStudioOverrides("wso2-aep"), " "); !strings.Contains(got, "--set aeStudio.webhookRelay.enabled=true") {
+		t.Errorf("want the relay on, got %s", got)
+	}
+}
+
+// The relay seed is generated with the install's secrets but is not one of
+// the paths whose absence means a wiped store: an install that predates the
+// relay is not "wiped".
+func TestWebhookRelaySeed_GeneratedNotRequired(t *testing.T) {
+	if slices.Contains(requiredOpenBaoPaths, webhookRelaySeedPath) {
+		t.Error("aep/webhook-relay-seed must not be in requiredOpenBaoPaths")
+	}
+	seed, err := webhookRelaySeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(seed) {
+		t.Errorf("seed must be 32 random bytes as hex text (aectl secret import trims), got %d chars", len(seed))
+	}
+	if other, _ := webhookRelaySeed(); other == seed {
+		t.Error("seed must be random")
 	}
 }

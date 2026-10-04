@@ -82,7 +82,10 @@ type params struct {
 	ModelConnection string `json:"modelConnection"`
 	// GitHubOwner is org_credentials.github_login (AE_GITHUB_OWNER).
 	GitHubOwner string `json:"githubOwner"`
-	Secrets     struct {
+	// WebhookRelayURL is the org's smee.io relay channel, "" without the
+	// install's relay seed (Task 4.20).
+	WebhookRelayURL string `json:"webhookRelayUrl"`
+	Secrets         struct {
 		DesignAgent secretSet `json:"designAgent"`
 		StudioTools secretSet `json:"studioTools"`
 	} `json:"secrets"`
@@ -116,7 +119,10 @@ type envConfigs struct {
 		RemoteKey string `json:"remoteKey"`
 		Property  string `json:"property"`
 	} `json:"pullSecret"`
-	ExtraEgress json.RawMessage `json:"extraEgress"`
+	ExtraEgress  json.RawMessage `json:"extraEgress"`
+	WebhookRelay struct {
+		Image string `json:"image"`
+	} `json:"webhookRelay"`
 }
 
 // desiredState is everything the converge writes and the drift check
@@ -225,6 +231,7 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 		return d, err
 	}
 	d.Params.GitHubOwner = login
+	d.Params.WebhookRelayURL = WebhookRelayURL([]byte(cfg.WebhookRelaySeed), org)
 	tools, agent, err := secretSets(ctx, s.oc, org, set)
 	if err != nil {
 		return d, err
@@ -373,5 +380,6 @@ func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	e.PullSecret.RemoteKey = cfg.PullSecret.Key
 	e.PullSecret.Property = cfg.PullSecret.Property
 	e.ExtraEgress = cfg.ExtraEgress
+	e.WebhookRelay.Image = cfg.WebhookRelayImage
 	return e
 }

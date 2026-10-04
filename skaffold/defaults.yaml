@@ -151,6 +151,14 @@ webhook:
     # k3d installs that have no public ingress. Never true in production.
     enabled: true
 
+ae_studio:
+  webhook_relay:
+    # Gives each org's AE Studio pod a webhook-relay container on its own
+    # smee.io channel (derived from the OpenBao seed aep/webhook-relay-seed),
+    # so GitHub reaches a local k3d install's repo hooks. smee.io is a
+    # third-party public relay: never true in production (absent = false).
+    enabled: true
+
 thunder:
   # Kubernetes namespace where Thunder is deployed.
   # Used when patching Thunder's CORS config and rolling its Deployment.

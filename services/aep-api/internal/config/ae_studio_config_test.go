@@ -38,6 +38,7 @@ func setMinimalEnv(t *testing.T) {
 		"AE_STUDIO_RUNTIME_CLASS_NAME", "AE_STUDIO_CILIUM", "AE_STUDIO_EXTRA_EGRESS",
 		"AE_STUDIO_STORAGE_SIZE_LIMIT", "AE_STUDIO_STORAGE_EPHEMERAL_REQUEST",
 		"AE_STUDIO_STORAGE_BUDGET_BYTES", "AE_STUDIO_PULL_SECRET_KEY", "AE_STUDIO_PULL_SECRET_PROPERTY",
+		"AE_STUDIO_WEBHOOK_RELAY_SEED", "AE_STUDIO_WEBHOOK_RELAY_IMAGE",
 	} {
 		t.Setenv(k, "")
 	}
@@ -78,5 +79,34 @@ func TestLoad_AEStudioParsed(t *testing.T) {
 	t.Setenv("AE_STUDIO_EXTRA_EGRESS", `{not json`)
 	if _, err := Load(); err == nil {
 		t.Fatal("malformed AE_STUDIO_EXTRA_EGRESS must fail boot (it is a deployment typo, not an absent feature)")
+	}
+}
+
+// Task 4.20: the relay seed and image are optional; unset is no relay. The
+// image is needed only once a seed is set.
+func TestLoad_WebhookRelay(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("AE_STUDIO_WEBHOOK_RELAY_SEED", "")
+	t.Setenv("AE_STUDIO_WEBHOOK_RELAY_IMAGE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AEStudio.WebhookRelaySeed != "" || slices.Contains(cfg.AEStudio.Missing(), "AE_STUDIO_WEBHOOK_RELAY_IMAGE") {
+		t.Fatalf("no seed is no relay and needs no image: %v", cfg.AEStudio.Missing())
+	}
+	t.Setenv("AE_STUDIO_WEBHOOK_RELAY_SEED", "seed-hex-text")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AEStudio.WebhookRelaySeed != "seed-hex-text" || !slices.Contains(cfg.AEStudio.Missing(), "AE_STUDIO_WEBHOOK_RELAY_IMAGE") {
+		t.Fatalf("a seed needs the relay image: %v", cfg.AEStudio.Missing())
+	}
+	t.Setenv("AE_STUDIO_WEBHOOK_RELAY_IMAGE", "ghcr.io/chmouel/gosmee@sha256:abc")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AEStudio.WebhookRelayImage != "ghcr.io/chmouel/gosmee@sha256:abc" || slices.Contains(cfg.AEStudio.Missing(), "AE_STUDIO_WEBHOOK_RELAY_IMAGE") {
+		t.Fatalf("image %q missing %v", cfg.AEStudio.WebhookRelayImage, cfg.AEStudio.Missing())
 	}
 }

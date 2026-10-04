@@ -195,6 +195,8 @@ func aeStudioOverrides(platformNamespace string) []string {
 			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
 		)
 	}
+	// Always set, so update's --reuse-values follows the config both ways.
+	args = append(args, "--set", fmt.Sprintf("aeStudio.webhookRelay.enabled=%t", viper.GetBool("ae_studio.webhook_relay.enabled")))
 	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress(platformNamespace))
 }
 
@@ -980,6 +982,16 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 	return err
 }
 
+// webhookRelaySeedPath keys every org's AE Studio relay channel (aep-api's
+// AE_STUDIO_WEBHOOK_RELAY_SEED). Seeded with the install's secrets but not in
+// requiredOpenBaoPaths: an install that predates the relay imports it
+// (`platform secret import`), it is not a wiped store.
+const webhookRelaySeedPath = "aep/webhook-relay-seed"
+
+// webhookRelaySeed is 32 random bytes as hex text: `platform secret import`
+// trims values, so the seed is stored and used (as the HMAC key) as text.
+func webhookRelaySeed() (string, error) { return bootstrap.GenerateHex(32) }
+
 // requiredOpenBaoPaths are the secrets an install seeds that aectl does not
 // generate on top-up. Missing any of them means the store was wiped (or never
 // installed), not that it predates one Thunder client.
@@ -1128,6 +1140,11 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate opensearch password: %w", err)
 	}
+	relaySeed, err := webhookRelaySeed()
+	if err != nil {
+		sp.Fail("Secret generation failed")
+		return fmt.Errorf("generate webhook relay seed: %w", err)
+	}
 
 	thunderClientSecrets := make(map[string]string, len(generatedThunderClientNames))
 	for _, name := range generatedThunderClientNames {
@@ -1145,6 +1162,7 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/postgres-password", postgresPassword},
 		{"aep/task-signing-key", signingKey},
 		{"aep/webhook-secret", webhookSecret},
+		{webhookRelaySeedPath, relaySeed},
 		{"aep/opensearch-username", "admin"},
 		{"aep/opensearch-password", openSearchPassword},
 		{"aep/thunder-admin/client-id", thunderAdminClientID},

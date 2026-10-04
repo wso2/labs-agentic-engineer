@@ -18,6 +18,7 @@ package config
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -173,5 +174,16 @@ func TestLoadFromCluster_GatewayHostname_Absent(t *testing.T) {
 		if strings.Contains(e, "gateway.hostname") {
 			t.Errorf("optional gateway.hostname must not cause a validation error, got: %s", e)
 		}
+	}
+}
+
+// Task 4.20 (Q-11): the relay switch is a persisted, optional bool key.
+func TestWebhookRelayEnabled_IsAPersistedBoolKey(t *testing.T) {
+	if !slices.Contains(ConfigMapKeys, "ae_studio.webhook_relay.enabled") {
+		t.Error("ae_studio.webhook_relay.enabled must be present in ConfigMapKeys")
+	}
+	meta, ok := keyRegistry["ae_studio.webhook_relay.enabled"]
+	if !ok || meta.required || meta.kind != kindBool {
+		t.Errorf("ae_studio.webhook_relay.enabled registry = %+v (present %v), want optional bool", meta, ok)
 	}
 }
