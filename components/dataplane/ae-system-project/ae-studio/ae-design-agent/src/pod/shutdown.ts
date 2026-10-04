@@ -29,17 +29,24 @@
  *    new pod. A relayed turn is a request in flight on ae-studio-tools'
  *    public listener, which drains for only 5 s, so this ends well inside it
  *    (`abortAll` returns within 2 s even when a run ignores its abort).
- * 3. Hand the finished turns' records over (`outbox.drain`), within
- *    `OUTBOX_DRAIN_MS`: ae-studio-tools keeps its sockets accepting for a
- *    10 s window after SIGTERM (`socketDrainWindow`, ae-studio-tools
- *    `cmd/ae-studio-tools/main.go`), which assumes this drain takes ≤ 8 s.
+ * 3. Hand the finished turns' records over (`outbox.drain`) with what is left
+ *    of `SHUTDOWN_HANDOVER_MS`, counted from the shutdown's start.
  * 4. Close the listeners (the Turn socket file goes with them).
  *
- * In all ≤ 2 + 8 + 1 s, inside the pod's ≥ 30 s termination grace.
+ * The arithmetic: ae-studio-tools keeps its MCP socket accepting for 10 s
+ * after SIGTERM (`socketDrainWindow`, ae-studio-tools
+ * `cmd/ae-studio-tools/main.go`). Abort (≤ 2 s) plus drain (the rest) end
+ * ≤ 8 s after SIGTERM, a 2 s margin inside that window, so a record retried
+ * late in the drain still lands before the sidecar stops accepting. Then the
+ * close (≤ 1 s): in all ≤ 9 s, inside the pod's ≥ 30 s termination grace.
  */
 
-/** The longest the usage outbox may drain (ae-studio-tools' 10 s socket window assumes ≤ 8 s). */
-export const OUTBOX_DRAIN_MS = 8_000;
+/**
+ * Abort plus outbox drain, counted from the shutdown's start: ≤ 8 s, 2 s
+ * inside ae-studio-tools' 10 s socket window (see above). Raise the two
+ * together.
+ */
+export const SHUTDOWN_HANDOVER_MS = 8_000;
 
 /** One structured, value-free log line. */
 export interface ShutdownLogLine {
@@ -53,6 +60,8 @@ export interface ShutdownDeps {
   outbox: { drain(timeoutMs: number): Promise<boolean> };
   listeners: { close(): Promise<void> };
   log?: (line: ShutdownLogLine) => void;
+  /** The clock the handover is counted on (tests). */
+  now?: () => number;
 }
 
 const stdoutLog = (line: ShutdownLogLine): void => {
@@ -62,10 +71,13 @@ const stdoutLog = (line: ShutdownLogLine): void => {
 /** Run the shutdown steps in order; resolves once the listeners are closed. */
 export async function shutdown(deps: ShutdownDeps): Promise<void> {
   const log = deps.log ?? stdoutLog;
+  const now = deps.now ?? Date.now;
+  const started = now();
   log({ msg: "pod_shutdown_started", source: "ae-design-agent" });
   deps.turns.refuse();
   await deps.desk.abortAll("shutdown");
   // A record still queued after the bound is lost with the pod (07 §7).
-  if (!(await deps.outbox.drain(OUTBOX_DRAIN_MS))) log({ msg: "usage_drain_incomplete", source: "ae-design-agent" });
+  const left = Math.max(0, SHUTDOWN_HANDOVER_MS - (now() - started));
+  if (!(await deps.outbox.drain(left))) log({ msg: "usage_drain_incomplete", source: "ae-design-agent" });
   await deps.listeners.close();
 }

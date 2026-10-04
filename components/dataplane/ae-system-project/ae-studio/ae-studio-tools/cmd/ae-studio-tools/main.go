@@ -84,8 +84,10 @@ const (
 	// moment, ae-collab flushes every Room through the Files socket and the
 	// agent drains its outbox through the MCP socket (07 §10). Coupled to
 	// ae-collab's shutdown flush budget (SHUTDOWN_FLUSH_BUDGET_MS, 8 s,
-	// ae-collab/src/committer.ts) and the agent's outbox drain (8 s), which
-	// must end inside this window with a margin; raise them together.
+	// ae-collab/src/committer.ts) and the agent's handover
+	// (SHUTDOWN_HANDOVER_MS, ae-design-agent/src/pod/shutdown.ts: turn abort
+	// ≤ 2 s plus outbox drain, ≤ 8 s in all from SIGTERM). Both end ≤ 8 s
+	// after SIGTERM, a 2 s margin inside this window; raise them together.
 	socketDrainWindow = 10 * time.Second
 	// socketShutdownTimeout bounds the wait for requests still in flight on
 	// either socket once they stop accepting.

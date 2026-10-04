@@ -96,8 +96,9 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   streams beside the contract. A caller that leaves only detaches.
 - **Shutdown** (`pod/shutdown.ts`, SIGTERM): refuse new turns (503 on `/v1`
   and the Turn socket), `desk.abortAll("shutdown")` (≤ 2 s; inside
-  ae-studio-tools' 5 s public drain), `outbox.drain(8 s)` (inside its 10 s
-  socket window), close the listeners, exit.
+  ae-studio-tools' 5 s public drain), `outbox.drain` with what is left of
+  `SHUTDOWN_HANDOVER_MS` (abort + drain ≤ 8 s from SIGTERM, 2 s inside its
+  10 s socket window), close the listeners, exit.
 - **`/v1`** (07 §1, `packages/contracts/api/ae-design-agent/v1/openapi.yaml`):
   `edge/project-routes.ts` (current conversation, rotate, messages, turn
   start, active turn, turn status, stream) and `edge/marketplace-routes.ts`

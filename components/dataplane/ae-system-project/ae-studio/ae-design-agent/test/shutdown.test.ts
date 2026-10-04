@@ -35,7 +35,7 @@ import { createServer as createNetServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mockModel } from "../src/shared/mock-model.js";
-import { OUTBOX_DRAIN_MS, shutdown, type ShutdownLogLine } from "../src/pod/shutdown.js";
+import { SHUTDOWN_HANDOVER_MS, shutdown, type ShutdownLogLine } from "../src/pod/shutdown.js";
 import type { TurnRecord } from "../src/tools-socket/client.js";
 import { PROJECT, call, postTurnSocket, readSse, startEdge } from "./helpers/edge.js";
 
@@ -103,14 +103,17 @@ test("SIGTERM during a turn: refuse, end it (SSE and Turn socket), hand its reco
   }
 });
 
-test("shutdown order: refuse, abort, drain ≤ 8 s, close; an incomplete drain is logged", async () => {
+test("shutdown order: refuse, abort, drain, close; abort + drain end ≤ 8 s after the start; an incomplete drain is logged", async () => {
   const steps: string[] = [];
   const logs: ShutdownLogLine[] = [];
+  let clock = 1_000;
   await shutdown({
+    now: () => clock,
     turns: { refuse: () => void steps.push("refuse") },
     desk: {
       abortAll: async (reason) => {
         steps.push(`abortAll:${reason}`);
+        clock += 2_000; // the desk's whole abort grace
       },
     },
     outbox: {
@@ -126,9 +129,24 @@ test("shutdown order: refuse, abort, drain ≤ 8 s, close; an incomplete drain i
     },
     log: (l) => logs.push(l),
   });
-  assert.deepEqual(steps, ["refuse", "abortAll:shutdown", `drain:${OUTBOX_DRAIN_MS}`, "close"]);
-  assert.ok(OUTBOX_DRAIN_MS <= 8_000, "ae-studio-tools' 10 s socket window assumes ≤ 8 s");
+  // The drain gets what the abort left of the handover: 8 - 2 = 6 s.
+  assert.deepEqual(steps, ["refuse", "abortAll:shutdown", "drain:6000", "close"]);
+  assert.ok(SHUTDOWN_HANDOVER_MS <= 8_000, "ae-studio-tools' 10 s socket window needs the handover to end ≤ 8 s after SIGTERM");
   assert.deepEqual(logs.map((l) => l.msg), ["pod_shutdown_started", "usage_drain_incomplete"]);
+});
+
+test("an abort that spends the whole handover leaves the drain no time, never a negative bound", async () => {
+  let clock = 0;
+  let drained: number | undefined;
+  await shutdown({
+    now: () => clock,
+    turns: { refuse: () => {} },
+    desk: { abortAll: async () => void (clock += 9_000) },
+    outbox: { drain: async (ms) => ((drained = ms), true) },
+    listeners: { close: async () => {} },
+    log: () => {},
+  });
+  assert.equal(drained, 0);
 });
 
 /** A stand-in for ae-studio-tools' MCP socket: one project, room tokens, and the usage records it receives. */
