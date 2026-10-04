@@ -196,7 +196,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Cfg:        cfg,
 		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 		GitHub:     deps.gh,
-		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
+		Webhook:    WebhookHandler(testWebhookSecret, &fakeForwarder{err: webhook.ErrUpstreamUnavailable}),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
 		Git:        repo.NewHandler(engine, nil, cloneURL, repo.WithOwner(cfg.GitHubOwner)),

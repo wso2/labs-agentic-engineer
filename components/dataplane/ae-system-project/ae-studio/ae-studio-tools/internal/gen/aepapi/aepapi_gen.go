@@ -87,6 +87,27 @@ func (e AEStudioTurnRecordStatus) Valid() bool {
 	}
 }
 
+// Defines values for AEStudioWebhookEventResultResult.
+const (
+	Dispatched AEStudioWebhookEventResultResult = "dispatched"
+	Duplicate  AEStudioWebhookEventResultResult = "duplicate"
+	Held       AEStudioWebhookEventResultResult = "held"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioWebhookEventResultResult enum.
+func (e AEStudioWebhookEventResultResult) Valid() bool {
+	switch e {
+	case Dispatched:
+		return true
+	case Duplicate:
+		return true
+	case Held:
+		return true
+	default:
+		return false
+	}
+}
+
 // AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
 type AEStudioCompletedDependency struct {
 	Definition string         `json:"definition"`
@@ -186,6 +207,20 @@ type AEStudioWarning struct {
 	Path    string `json:"path"`
 }
 
+// AEStudioWebhookEvent A GitHub webhook payload, exactly as GitHub sent it. Declares no
+// properties or defaults, so validation never rewrites it, and is
+// generated as json.RawMessage so the handler gets the bytes as they
+// arrived.
+type AEStudioWebhookEvent = json.RawMessage
+
+// AEStudioWebhookEventResult What became of an ingested delivery.
+type AEStudioWebhookEventResult struct {
+	Result AEStudioWebhookEventResultResult `json:"result"`
+}
+
+// AEStudioWebhookEventResultResult defines model for AEStudioWebhookEventResult.Result.
+type AEStudioWebhookEventResultResult string
+
 // Error Flat error envelope returned by every non-2xx response.
 type Error struct {
 	// Code Machine-readable error code (stable slug).
@@ -216,6 +251,15 @@ type sreHandoffContextKey string
 // taskJWTContextKey is the context key for taskJWT security scheme
 type taskJWTContextKey string
 
+// IngestWebhookEventParams defines parameters for IngestWebhookEvent.
+type IngestWebhookEventParams struct {
+	// XGitHubDelivery GitHub's delivery id (X-GitHub-Delivery), the dedup key.
+	XGitHubDelivery string `json:"X-GitHub-Delivery"`
+
+	// XGitHubEvent GitHub's event name (X-GitHub-Event).
+	XGitHubEvent string `json:"X-GitHub-Event"`
+}
+
 // CallMcpToolJSONBody defines parameters for CallMcpTool.
 type CallMcpToolJSONBody = map[string]interface{}
 
@@ -224,6 +268,9 @@ type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletions
 
 // RecordTurnUsageJSONRequestBody defines body for RecordTurnUsage for application/json ContentType.
 type RecordTurnUsageJSONRequestBody = AEStudioTurnUsageRequest
+
+// IngestWebhookEventJSONRequestBody defines body for IngestWebhookEvent for application/json ContentType.
+type IngestWebhookEventJSONRequestBody = AEStudioWebhookEvent
 
 // CallMcpToolJSONRequestBody defines body for CallMcpTool for application/json ContentType.
 type CallMcpToolJSONRequestBody = CallMcpToolJSONBody
@@ -317,6 +364,11 @@ type ClientInterface interface {
 
 	RecordTurnUsage(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// IngestWebhookEventWithBody request with any body
+	IngestWebhookEventWithBody(ctx context.Context, params *IngestWebhookEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	IngestWebhookEvent(ctx context.Context, params *IngestWebhookEventParams, body IngestWebhookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CallMcpToolWithBody request with any body
 	CallMcpToolWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -385,6 +437,30 @@ func (c *Client) RecordTurnUsageWithBody(ctx context.Context, contentType string
 
 func (c *Client) RecordTurnUsage(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRecordTurnUsageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IngestWebhookEventWithBody(ctx context.Context, params *IngestWebhookEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestWebhookEventRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) IngestWebhookEvent(ctx context.Context, params *IngestWebhookEventParams, body IngestWebhookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewIngestWebhookEventRequest(c.Server, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -560,6 +636,68 @@ func NewRecordTurnUsageRequestWithBody(server string, contentType string, body i
 	return req, nil
 }
 
+// NewIngestWebhookEventRequest calls the generic IngestWebhookEvent builder with application/json body
+func NewIngestWebhookEventRequest(server string, params *IngestWebhookEventParams, body IngestWebhookEventJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewIngestWebhookEventRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewIngestWebhookEventRequestWithBody generates requests for IngestWebhookEvent with any type of body
+func NewIngestWebhookEventRequestWithBody(server string, params *IngestWebhookEventParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/ae-studio/webhook-events")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-GitHub-Delivery", params.XGitHubDelivery, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-GitHub-Delivery", headerParam0)
+
+		var headerParam1 string
+
+		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-GitHub-Event", params.XGitHubEvent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-GitHub-Event", headerParam1)
+
+	}
+
+	return req, nil
+}
+
 // NewCallMcpToolRequest calls the generic CallMcpTool builder with application/json body
 func NewCallMcpToolRequest(server string, body CallMcpToolJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -658,6 +796,11 @@ type ClientWithResponsesInterface interface {
 	RecordTurnUsageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error)
 
 	RecordTurnUsageWithResponse(ctx context.Context, body RecordTurnUsageJSONRequestBody, reqEditors ...RequestEditorFn) (*RecordTurnUsageResponse, error)
+
+	// IngestWebhookEventWithBodyWithResponse request with any body
+	IngestWebhookEventWithBodyWithResponse(ctx context.Context, params *IngestWebhookEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestWebhookEventResponse, error)
+
+	IngestWebhookEventWithResponse(ctx context.Context, params *IngestWebhookEventParams, body IngestWebhookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestWebhookEventResponse, error)
 
 	// CallMcpToolWithBodyWithResponse request with any body
 	CallMcpToolWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CallMcpToolResponse, error)
@@ -790,6 +933,39 @@ func (r RecordTurnUsageResponse) ContentType() string {
 	return ""
 }
 
+type IngestWebhookEventResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AEStudioWebhookEventResult
+	JSON202      *AEStudioWebhookEventResult
+	JSON404      *Error
+	JSONDefault  *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r IngestWebhookEventResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r IngestWebhookEventResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r IngestWebhookEventResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type CallMcpToolResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -871,6 +1047,23 @@ func (c *ClientWithResponses) RecordTurnUsageWithResponse(ctx context.Context, b
 		return nil, err
 	}
 	return ParseRecordTurnUsageResponse(rsp)
+}
+
+// IngestWebhookEventWithBodyWithResponse request with arbitrary body returning *IngestWebhookEventResponse
+func (c *ClientWithResponses) IngestWebhookEventWithBodyWithResponse(ctx context.Context, params *IngestWebhookEventParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IngestWebhookEventResponse, error) {
+	rsp, err := c.IngestWebhookEventWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestWebhookEventResponse(rsp)
+}
+
+func (c *ClientWithResponses) IngestWebhookEventWithResponse(ctx context.Context, params *IngestWebhookEventParams, body IngestWebhookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*IngestWebhookEventResponse, error) {
+	rsp, err := c.IngestWebhookEvent(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseIngestWebhookEventResponse(rsp)
 }
 
 // CallMcpToolWithBodyWithResponse request with arbitrary body returning *CallMcpToolResponse
@@ -1010,6 +1203,53 @@ func ParseRecordTurnUsageResponse(rsp *http.Response) (*RecordTurnUsageResponse,
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseIngestWebhookEventResponse parses an HTTP response from a IngestWebhookEventWithResponse call
+func ParseIngestWebhookEventResponse(rsp *http.Response) (*IngestWebhookEventResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &IngestWebhookEventResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AEStudioWebhookEventResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest AEStudioWebhookEventResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

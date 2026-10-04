@@ -17,18 +17,24 @@
 package edge
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/gen/aepapi"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
 )
 
@@ -62,7 +68,7 @@ func webhookRequest(body []byte, sig string) *http.Request {
 
 func TestWebhook(t *testing.T) {
 	secret := "s3cret"
-	h := WebhookHandler(secret, webhook.Unwired())
+	h := WebhookHandler(secret, &fakeForwarder{err: webhook.ErrUpstreamUnavailable})
 	body := []byte(`{"zen":"ok"}`)
 	validHex := strings.TrimPrefix(signBody(secret, body), "sha256=")
 	cases := []struct {
@@ -78,7 +84,7 @@ func TestWebhook(t *testing.T) {
 		{"not hex", "sha256=zz" + validHex[2:], body, 401, "signature_invalid"},
 		{"truncated digest", "sha256=" + validHex[:32], body, 401, "signature_invalid"},
 		{"other body", signBody(secret, []byte(`{"zen":"no"}`)), body, 401, "signature_invalid"},
-		{"valid, upstream not wired", signBody(secret, body), body, 503, "aep_api_unavailable"},
+		{"valid, aep-api unavailable", signBody(secret, body), body, 503, "aep_api_unavailable"},
 		{"too large", signBody(secret, body), bytes.Repeat([]byte("a"), 25<<20+1), 413, "payload_too_large"},
 	}
 	for _, c := range cases {
@@ -95,8 +101,8 @@ func TestWebhook(t *testing.T) {
 			if c.want == 401 && !strings.Contains(logs.String(), `"msg":"webhook.rejected"`) {
 				t.Fatal("no webhook.rejected event")
 			}
-			if strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), "zen") {
-				t.Fatal("secret or payload in logs")
+			if strings.Contains(logs.String(), secret) || strings.Contains(logs.String(), "zen") || strings.Contains(logs.String(), validHex) {
+				t.Fatal("secret, signature or payload in logs")
 			}
 		})
 	}
@@ -104,7 +110,7 @@ func TestWebhook(t *testing.T) {
 
 func TestWebhook_RejectedEventNamesDeliveryEventReason(t *testing.T) {
 	logs := captureLogs(t)
-	WebhookHandler("s3cret", webhook.Unwired()).ServeHTTP(httptest.NewRecorder(), webhookRequest([]byte(`{}`), ""))
+	WebhookHandler("s3cret", &fakeForwarder{}).ServeHTTP(httptest.NewRecorder(), webhookRequest([]byte(`{}`), ""))
 	for _, want := range []string{`"delivery":"d-1"`, `"event":"ping"`, `"reason":"signature_invalid"`} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("webhook.rejected lacks %s: %s", want, logs.String())
@@ -112,22 +118,23 @@ func TestWebhook_RejectedEventNamesDeliveryEventReason(t *testing.T) {
 	}
 }
 
-// fakeForwarder records what it was handed and answers err.
+// fakeForwarder records what it was handed and answers upstream and err.
 type fakeForwarder struct {
+	upstream              int
 	err                   error
 	calls                 int
 	delivery, event, body string
 }
 
-func (f *fakeForwarder) Forward(_ context.Context, delivery, event string, body []byte) error {
+func (f *fakeForwarder) Forward(_ context.Context, delivery, event string, body []byte) (int, error) {
 	f.calls++
 	f.delivery, f.event, f.body = delivery, event, string(body)
-	return f.err
+	return f.upstream, f.err
 }
 
 func TestWebhook_ForwardsVerifiedDelivery(t *testing.T) {
 	logs := captureLogs(t)
-	f := &fakeForwarder{}
+	f := &fakeForwarder{upstream: http.StatusAccepted}
 	body := []byte(`{"zen":"ok"}`)
 	rec := httptest.NewRecorder()
 	WebhookHandler("s3cret", f).ServeHTTP(rec, webhookRequest(body, signBody("s3cret", body)))
@@ -137,7 +144,7 @@ func TestWebhook_ForwardsVerifiedDelivery(t *testing.T) {
 	if f.calls != 1 || f.delivery != "d-1" || f.event != "ping" || f.body != string(body) {
 		t.Fatalf("forwarded %+v", f)
 	}
-	if !strings.Contains(logs.String(), `"msg":"webhook.forwarded"`) || strings.Contains(logs.String(), "zen") {
+	if !strings.Contains(logs.String(), `"msg":"webhook.forwarded"`) || !strings.Contains(logs.String(), `"status":202`) || strings.Contains(logs.String(), "zen") {
 		t.Fatalf("logs = %s", logs.String())
 	}
 }
@@ -171,7 +178,7 @@ func TestWebhookHandler_EmptySecretPanics(t *testing.T) {
 			t.Fatal("an empty secret must panic: anyone can sign with it")
 		}
 	}()
-	WebhookHandler("", webhook.Unwired())
+	WebhookHandler("", &fakeForwarder{})
 }
 
 func TestWebhook_UnknownLengthOverCapIs413(t *testing.T) {
@@ -180,8 +187,205 @@ func TestWebhook_UnknownLengthOverCapIs413(t *testing.T) {
 	r := webhookRequest(big, signBody("s3cret", big))
 	r.ContentLength = -1 // chunked: only the read cap can catch it
 	rec := httptest.NewRecorder()
-	WebhookHandler("s3cret", webhook.Unwired()).ServeHTTP(rec, r)
+	WebhookHandler("s3cret", &fakeForwarder{}).ServeHTTP(rec, r)
 	if rec.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rec.Body.String(), "payload_too_large") {
 		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The reply rule (04 §8), end to end through the real forwarder: GitHub sees
+// 200 when aep-api took the delivery or refused it for good, 503 when aep-api
+// failed or could not be reached, and the log names aep-api's status.
+func TestWebhook_ReplyRule(t *testing.T) {
+	body := []byte(`{"repository":{"full_name":"acme/greeter"}}`)
+	down := httptest.NewServer(http.NotFoundHandler())
+	unreachable := down.URL
+	down.Close()
+	for name, tc := range map[string]struct {
+		upstream int // 0: aep-api not reachable
+		want     int
+		log      []string
+	}{
+		"dispatched":          {http.StatusAccepted, http.StatusOK, []string{`"msg":"webhook.forwarded"`, `"status":202`}},
+		"duplicate":           {http.StatusOK, http.StatusOK, []string{`"msg":"webhook.forwarded"`, `"status":200`}},
+		"unknown repository":  {http.StatusNotFound, http.StatusOK, []string{`"msg":"webhook.forwarded"`, `"status":404`}},
+		"aep-api 5xx":         {http.StatusInternalServerError, http.StatusServiceUnavailable, []string{`"msg":"webhook.rejected"`, `"reason":"aep_api_unavailable"`, `"status":500`}},
+		"aep-api unreachable": {0, http.StatusServiceUnavailable, []string{`"msg":"webhook.rejected"`, `"reason":"aep_api_unavailable"`, `"status":0`}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			base := unreachable
+			if tc.upstream != 0 {
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(tc.upstream) }))
+				defer srv.Close()
+				base = srv.URL
+			}
+			client, err := aepapi.NewClientWithResponses(base + "/internal/v1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			WebhookHandler("s3cret", webhook.NewForwarder(client)).ServeHTTP(rec, webhookRequest(body, signBody("s3cret", body)))
+			if rec.Code != tc.want {
+				t.Fatalf("GitHub sees %d, want %d", rec.Code, tc.want)
+			}
+			for _, want := range append(tc.log, `"delivery":"d-1"`, `"event":"ping"`) {
+				if !strings.Contains(logs.String(), want) {
+					t.Fatalf("logs lack %s: %s", want, logs.String())
+				}
+			}
+			if strings.Contains(logs.String(), "webhook.forward_failed") || strings.Contains(logs.String(), "greeter") {
+				t.Fatalf("logs = %s", logs.String())
+			}
+		})
+	}
+}
+
+// Delivery and event are attacker-chosen before the signature check: every
+// webhook log line carries at most 64 runes of each.
+func TestWebhook_LogFieldsTruncated(t *testing.T) {
+	long := strings.Repeat("é", 64)
+	for name, f := range map[string]*fakeForwarder{
+		"rejected":  {err: webhook.ErrUpstreamUnavailable},
+		"forwarded": {upstream: http.StatusAccepted},
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs := captureLogs(t)
+			body := []byte(`{}`)
+			r := webhookRequest(body, signBody("s3cret", body))
+			r.Header.Set("X-GitHub-Delivery", long+"TAIL-D")
+			r.Header.Set("X-GitHub-Event", long+"TAIL-E")
+			WebhookHandler("s3cret", f).ServeHTTP(httptest.NewRecorder(), r)
+			if !strings.Contains(logs.String(), `"delivery":"`+long+`"`) || !strings.Contains(logs.String(), `"event":"`+long+`"`) {
+				t.Fatalf("logs = %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "TAIL") {
+				t.Fatalf("untruncated field: %s", logs.String())
+			}
+			if f.delivery != long+"TAIL-D" || f.event != long+"TAIL-E" {
+				t.Fatalf("aep-api must get the headers whole: %q %q", f.delivery, f.event)
+			}
+		})
+	}
+}
+
+// A body that trickles in is cut at the read deadline: the connection is not
+// held open by an unauthenticated sender.
+func TestWebhook_SlowBodyHitsTheReadDeadline(t *testing.T) {
+	logs := captureLogs(t)
+	f := &fakeForwarder{}
+	srv := httptest.NewServer(webhookHandler("s3cret", f, webhookLimits{readTimeout: 200 * time.Millisecond, concurrency: 1}))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = io.WriteString(conn, "POST /webhooks/github HTTP/1.1\r\nHost: x\r\nX-GitHub-Delivery: d-1\r\nX-GitHub-Event: ping\r\nContent-Length: 100\r\n\r\n{\"zen\"")
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestTimeout {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if !strings.Contains(logs.String(), `"msg":"webhook.rejected"`) || !strings.Contains(logs.String(), `"reason":"request_timeout"`) {
+		t.Fatalf("logs = %s", logs.String())
+	}
+	if f.calls != 0 {
+		t.Fatal("a cut-off body was forwarded")
+	}
+}
+
+// After the body is read, the read deadline no longer applies: a forward that
+// outlasts it still answers GitHub.
+func TestWebhook_ForwardMayOutlastTheReadDeadline(t *testing.T) {
+	captureLogs(t)
+	slow := &slowForwarder{delay: 400 * time.Millisecond}
+	srv := httptest.NewServer(webhookHandler("s3cret", slow, webhookLimits{readTimeout: 100 * time.Millisecond, concurrency: 1}))
+	defer srv.Close()
+	body := []byte(`{}`)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-Hub-Signature-256", signBody("s3cret", body))
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || slow.ctxErr != nil {
+		t.Fatalf("status %d, forward ctx %v", resp.StatusCode, slow.ctxErr)
+	}
+}
+
+// slowForwarder takes delay and records whether its ctx ended meanwhile.
+type slowForwarder struct {
+	delay  time.Duration
+	ctxErr error
+}
+
+func (f *slowForwarder) Forward(ctx context.Context, _, _ string, _ []byte) (int, error) {
+	select {
+	case <-time.After(f.delay):
+	case <-ctx.Done():
+	}
+	f.ctxErr = ctx.Err()
+	return http.StatusAccepted, nil
+}
+
+// Past the concurrency cap a delivery is refused before its body is read.
+func TestWebhook_OverTheConcurrencyCapIsRefusedUnread(t *testing.T) {
+	logs := captureLogs(t)
+	blocked := &blockingForwarder{entered: make(chan struct{}), release: make(chan struct{})}
+	h := webhookHandler("s3cret", blocked, webhookLimits{readTimeout: time.Second, concurrency: 1})
+	body := []byte(`{}`)
+	done := make(chan int)
+	go func() {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, webhookRequest(body, signBody("s3cret", body)))
+		done <- rec.Code
+	}()
+	<-blocked.entered
+	counted := &countingReader{r: bytes.NewReader(body)}
+	r := webhookRequest(body, signBody("s3cret", body))
+	r.Body = io.NopCloser(counted)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "busy") || counted.reads != 0 {
+		t.Fatalf("%d %s, %d reads", rec.Code, rec.Body.String(), counted.reads)
+	}
+	if !strings.Contains(logs.String(), `"reason":"busy"`) {
+		t.Fatalf("logs = %s", logs.String())
+	}
+	close(blocked.release)
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("held delivery answered %d", code)
+	}
+	// The slot is free again.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, webhookRequest(body, signBody("s3cret", body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("after release: %d", rec.Code)
+	}
+}
+
+type blockingForwarder struct {
+	entered, release chan struct{}
+	once             sync.Once
+}
+
+func (f *blockingForwarder) Forward(context.Context, string, string, []byte) (int, error) {
+	f.once.Do(func() {
+		close(f.entered)
+		<-f.release
+	})
+	return http.StatusAccepted, nil
+}
+
+type countingReader struct {
+	r     io.Reader
+	reads int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) { c.reads++; return c.r.Read(p) }

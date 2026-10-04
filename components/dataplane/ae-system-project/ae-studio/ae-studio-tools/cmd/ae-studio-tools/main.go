@@ -137,7 +137,7 @@ func run() error {
 		TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
 	}
 	// aep-api's ae-studio/ ops (project and skills lookups, dependency
-	// completions, turn usage) as the org's ae-studio client.
+	// completions, turn usage, webhook ingest) as the org's ae-studio client.
 	aepAPI, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, studioClient)
 	if err != nil {
 		slog.Error("aep_api_client_invalid")
@@ -198,10 +198,12 @@ func run() error {
 	public := &http.Server{
 		Addr: fmt.Sprintf(":%d", cfg.ListenPort),
 		Handler: edge.Routes(edge.Deps{
-			Cfg:        cfg,
-			Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
-			GitHub:     gh,
-			Webhook:    edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
+			Cfg:      cfg,
+			Verifier: auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
+			GitHub:   gh,
+			// Verified GitHub deliveries go to aep-api's ingest-webhook-event
+			// as the org's ae-studio client.
+			Webhook:    edge.WebhookHandler(cfg.WebhookSecret, webhook.NewForwarder(aepAPI)),
 			Files:      reader,
 			References: engine,
 			// aep-api's git content ops, by GitHub owner/repo, on the

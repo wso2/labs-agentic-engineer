@@ -16,5 +16,6 @@ output-options:
   - complete-ae-studio-dependencies
   - call-mcp-tool
   - record-turn-usage
+  - ingest-webhook-event
   prefer-skip-optional-pointer: true
   name-normalizer: ToCamelCaseWithInitialisms
