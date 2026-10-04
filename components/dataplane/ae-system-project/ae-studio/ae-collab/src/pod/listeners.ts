@@ -25,8 +25,11 @@
  *           matching, so an unknown `/v1` path is 401/403 before 404; no `/v1`
  *           operation yet). A WebSocket upgrade must pass `originAllowed` (403)
  *           and name exactly `/v1/rooms` (404).
- *   local   127.0.0.1:`localPort` (8091), for the in-pod agent: any upgrade
- *           path, no Origin check; plain HTTP is 404.
+ *   local   the Room socket, a Unix socket at `roomSocket` (mode 0660) on an
+ *           emptyDir shared with ae-design-agent only, for the in-pod agent:
+ *           the mount is the gate, so no token is read there. Any upgrade
+ *           path, no Origin check; plain HTTP is 404. A socket file a
+ *           previous run left is replaced; closing unlinks it.
  *   health  `/healthz` (liveness) and `/readyz` (200 once both room listeners
  *           are bound, 503 while closing); not in the Service, not routed.
  *
@@ -37,10 +40,11 @@
  * health listener closes last; close resolves only then.
  *
  * The listener a socket came in on rides in its Hocuspocus context
- * (`{listener}`), which is how `auth.ts` picks the token kind; the client
- * cannot set it.
+ * (`{listener}`), which is how `auth.ts` tells a user from the agent; the
+ * client cannot set it.
  */
 
+import { chmodSync, lstatSync, unlinkSync } from "node:fs";
 import { createServer, STATUS_CODES, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
@@ -53,7 +57,8 @@ import { stdoutLog, type PodLog, type PodLogLine } from "./log.js";
 
 export interface PodListeners {
   publicUrl: string;
-  localUrl: string;
+  /** The Room socket's path (the in-pod agent's listener). */
+  roomSocket: string;
   healthUrl: string;
   close(): Promise<void>;
 }
@@ -79,7 +84,8 @@ const BEARER = /^Bearer ([^\s]+)$/i;
 /** `/v1` and everything under it, any casing (the gate must not be dodged by `/V1`). */
 const V1 = /^\/v1(?:\/|$)/i;
 const ROOMS_PATH = "/v1/rooms";
-const LOOPBACK = "127.0.0.1";
+/** The Room socket's mode: the pod's shared group (fsGroup) may connect. */
+const SOCKET_MODE = 0o660;
 /**
  * The largest WebSocket frame either listener takes (1009 above it), buffered
  * before auth: above the 25 MiB Files apply cap, far below ws's 100 MiB.
@@ -248,7 +254,7 @@ function publicServer(cfg: ListenerConfig, deps: Pick<Required<PodListenerDeps>,
   });
 }
 
-/** The agent's listener: every upgrade goes to the Room, which checks the token. */
+/** The agent's listener: every upgrade goes to the Room, which reads no token here. */
 function localServer(rooms: Hocuspocus<CollabContext>, wss: WebSocketServer): Server {
   return roomServer("local", wss, { rooms, accept: () => true }, (_req, res) =>
     sendProblem(res, 404, "not_found", "no such route"),
@@ -269,14 +275,39 @@ function healthServer(ready: () => boolean): Server {
   });
 }
 
-function listen(server: Server, port: number, host?: string): Promise<Server> {
+function listen(server: Server, at: number | string): Promise<Server> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, host, () => {
+    server.listen(at, () => {
       server.off("error", reject);
       resolve(server);
     });
   });
+}
+
+/**
+ * Removes a socket file a previous run left at `path` (the emptyDir outlives a
+ * container restart); nothing there is fine, and any other file is an error,
+ * never removed (as ae-design-agent's Turn socket and ae-studio-tools' sockets).
+ */
+function removeStaleSocket(path: string): void {
+  let isSocket: boolean;
+  try {
+    isSocket = lstatSync(path).isSocket();
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
+  if (!isSocket) throw new Error(`room socket ${path}: exists and is not a socket`);
+  unlinkSync(path);
+}
+
+/** Binds the Room socket at `path`, mode 0660. Closing the server unlinks it. */
+async function listenSocket(server: Server, path: string): Promise<Server> {
+  removeStaleSocket(path);
+  await listen(server, path);
+  chmodSync(path, SOCKET_MODE);
+  return server;
 }
 
 /** Stops accepting and ends open connections (keep-alive ones included) at once. */
@@ -313,8 +344,8 @@ export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDe
   try {
     await listen(pub, cfg.listenPort);
     log(line("pod_public_listening", pub));
-    await listen(local, cfg.localPort, LOOPBACK);
-    log(line("pod_local_listening", local));
+    await listenSocket(local, cfg.roomSocket);
+    log(line("pod_room_socket_listening"));
   } catch (err) {
     await Promise.all([closeServer(pub), closeServer(local), closeServer(health)]);
     throw err;
@@ -322,7 +353,7 @@ export async function startPodListeners(cfg: ListenerConfig, deps: PodListenerDe
   ready = true;
   return {
     publicUrl: urlOf(pub),
-    localUrl: urlOf(local),
+    roomSocket: cfg.roomSocket,
     healthUrl: urlOf(health),
     async close() {
       ready = false;

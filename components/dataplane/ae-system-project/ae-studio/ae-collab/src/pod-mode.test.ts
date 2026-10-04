@@ -22,7 +22,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, request, type Server } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { generateKeyPairSync, randomBytes, sign as rsaSign, type KeyObject } from "node:crypto";
 import { selectModes } from "./modes.js";
@@ -90,9 +94,9 @@ function podEnv(over: Record<string, string> = {}): Record<string, string> {
     AE_IDP_ISSUER: ISSUER,
     AE_IDP_JWKS_URL: "http://unused",
     AE_USER_AUDIENCES: USER_AUDIENCE,
-    AE_AGENT_CLIENT_ID: "ae-studio-default",
     AE_ALLOWED_ORIGINS: "http://console.ae.localhost:8080,http://localhost:8090",
     AE_FILES_SOCKET: "/run/ae/files/files.sock",
+    AE_ROOM_SOCKET: "/run/ae/room/room.sock",
     ...over,
   };
 }
@@ -106,27 +110,34 @@ async function freePort(): Promise<string> {
   return String(port);
 }
 
-/** A pod config on free ports, verifying against the test keys. */
-async function podCfg(keys: TestKeys, over: Record<string, string> = {}): Promise<PodConfig> {
-  const ports = { AE_LISTEN_PORT: await freePort(), AE_HEALTH_PORT: await freePort() };
-  const cfg = loadPodConfig(podEnv({ AE_IDP_JWKS_URL: keys.jwksUrl, ...ports, ...over }));
-  assert.ok(cfg);
-  // The local port is fixed (8091) in a pod; a test takes any free one.
-  return { ...cfg, localPort: 0 };
+/** A fresh directory for a test's Room socket (short: a Unix socket path has a length cap). */
+function socketDir(): string {
+  return mkdtempSync(join(tmpdir(), "aec-"));
 }
 
+/** A pod config on free ports and a fresh Room socket, verifying against the test keys. */
+async function podCfg(keys: TestKeys, over: Record<string, string> = {}): Promise<PodConfig> {
+  const ports = { AE_LISTEN_PORT: await freePort(), AE_HEALTH_PORT: await freePort() };
+  const room = { AE_ROOM_SOCKET: join(socketDir(), "room.sock") };
+  const cfg = loadPodConfig(podEnv({ AE_IDP_JWKS_URL: keys.jwksUrl, ...ports, ...room, ...over }));
+  assert.ok(cfg);
+  return cfg;
+}
+
+/** Where an upgrade goes: a URL, or a path on a Unix socket. */
+type Target = string | { socketPath: string; path: string };
+
 /** A WebSocket opening handshake; resolves with the status the server answered. */
-function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ status: number; contentType?: string | undefined }> {
+function wsUpgrade(target: Target, opts: { origin?: string } = {}): Promise<{ status: number; contentType?: string | undefined }> {
   return new Promise((resolve, reject) => {
-    const req = request(url, {
-      headers: {
+    const headers = {
         connection: "Upgrade",
         upgrade: "websocket",
         "sec-websocket-version": "13",
         "sec-websocket-key": randomBytes(16).toString("base64"),
         ...(opts.origin ? { origin: opts.origin } : {}),
-      },
-    });
+    };
+    const req = typeof target === "string" ? request(target, { headers }) : request({ ...target, headers });
     req.on("response", (res) => {
       res.resume();
       resolve({ status: res.statusCode ?? 0, contentType: res.headers["content-type"] });
@@ -223,10 +234,10 @@ test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the p
     assert.equal((await wsUpgrade(`${pod.publicUrl}/V1/rooms`, { origin: "http://localhost:8090" })).status, 404);
     assert.equal((await wsUpgrade(`${pod.publicUrl}/v1/rooms/`, { origin: "http://localhost:8090" })).status, 404);
 
-    // The local listener serves upgrades only, and checks no Origin: the
-    // in-pod agent joins there without one.
-    assert.equal((await fetch(`${pod.localUrl}/v1/rooms`)).status, 404);
-    assert.equal((await wsUpgrade(pod.localUrl)).status, 101);
+    // The Room socket serves upgrades only, and checks no Origin: the in-pod
+    // agent joins there without one. Plain HTTP is 404.
+    assert.equal((await httpOverSocket(pod.roomSocket, "/v1/rooms")).status, 404);
+    assert.equal((await wsUpgrade({ socketPath: pod.roomSocket, path: "/" })).status, 101);
 
     assert.equal((await fetch(`${pod.healthUrl}/healthz`)).status, 200);
     assert.equal((await fetch(`${pod.healthUrl}/readyz`)).status, 200);
@@ -237,8 +248,54 @@ test("pod: HTTP under /v1 is gated; room upgrades pass the origin rule and the p
   }
   assert.deepEqual(
     lines.map((l) => l.msg),
-    ["pod_health_listening", "pod_public_listening", "pod_local_listening", "pod_listeners_stopped"],
+    ["pod_health_listening", "pod_public_listening", "pod_room_socket_listening", "pod_listeners_stopped"],
   );
+});
+
+/** A plain GET over a Unix socket; resolves with the status. */
+function httpOverSocket(socketPath: string, path: string): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const req = request({ socketPath, path }, (res) => {
+      res.resume();
+      resolve({ status: res.statusCode ?? 0 });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+test("pod: the Room socket is mode 0660, replaces a stale socket, and is gone after close", async () => {
+  const keys = await testKeys();
+  const cfg = await podCfg(keys);
+  // A socket file a killed process left behind (the emptyDir outlives a container restart).
+  spawnSync(process.execPath, [
+    "-e",
+    `require("net").createServer().listen(${JSON.stringify(cfg.roomSocket)}, () => process.kill(process.pid, "SIGKILL"))`,
+  ]);
+  assert.ok(statSync(cfg.roomSocket).isSocket(), "a stale socket file is left");
+  const pod = await startPod(cfg, { log: () => {} });
+  try {
+    assert.equal(statSync(pod.roomSocket).mode & 0o777, 0o660);
+    assert.equal((await wsUpgrade({ socketPath: pod.roomSocket, path: "/" })).status, 101);
+  } finally {
+    await pod.close();
+    await keys.close();
+  }
+  assert.throws(() => statSync(cfg.roomSocket), /ENOENT/);
+});
+
+test("pod: a non-socket file at the Room socket path fails the start, untouched", async () => {
+  const keys = await testKeys();
+  const dir = socketDir();
+  const path = join(dir, "room.sock");
+  writeFileSync(path, "not a socket");
+  try {
+    await assert.rejects(startPod(await podCfg(keys, { AE_ROOM_SOCKET: path }), { log: () => {} }), /not a socket/);
+    assert.ok(statSync(path).isFile());
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    await keys.close();
+  }
 });
 
 test("pod: close ends open connections and stops both listeners", async () => {
@@ -287,12 +344,11 @@ test("pod config: defaults and lists", () => {
     issuer: ISSUER,
     jwksUrl: "http://unused",
     userAudiences: ["aep-console-client", "other"],
-    agentClientId: "ae-studio-default",
     allowedOrigins: ["http://localhost:8090"],
     filesSocket: "/run/ae/files/files.sock",
+    roomSocket: "/run/ae/room/room.sock",
     listenPort: 8081,
     healthPort: 9081,
-    localPort: 8091,
   });
 });
 
@@ -301,7 +357,7 @@ test("pod config: AE_ORG_ID without the rest fails, naming every missing key and
     () => loadPodConfig({ AE_ORG_ID: "ou-1" }),
     new Error(
       "ae-collab pod env: missing AE_ORG_HANDLE, missing AE_IDP_ISSUER, missing AE_IDP_JWKS_URL, " +
-        "missing AE_USER_AUDIENCES, missing AE_AGENT_CLIENT_ID, missing AE_ALLOWED_ORIGINS, missing AE_FILES_SOCKET",
+        "missing AE_USER_AUDIENCES, missing AE_ALLOWED_ORIGINS, missing AE_FILES_SOCKET, missing AE_ROOM_SOCKET",
     ),
   );
   assert.throws(() => loadPodConfig(podEnv({ AE_ALLOWED_ORIGINS: " , " })), /missing AE_ALLOWED_ORIGINS/);
@@ -339,17 +395,20 @@ test("modes: no dev mode in pod mode: a legacy key in a pod env fails the boot",
   }
 });
 
-test("modes: COLLAB_DEV alone is dev mode: the pod's listeners, fixed local port", () => {
+test("modes: COLLAB_DEV alone is dev mode: the pod's listeners, a Room socket in the temp dir", () => {
   assert.deepEqual(selectModes({ COLLAB_DEV: "1" }), {
     mode: "dev",
-    config: { allowedOrigins: [], listenPort: 8081, healthPort: 9081, localPort: 8091 },
+    config: { allowedOrigins: [], listenPort: 8081, healthPort: 9081, roomSocket: join(tmpdir(), "ae-collab-room.sock") },
   });
-  assert.deepEqual(loadDevConfig({ AE_ALLOWED_ORIGINS: "http://localhost:5173", AE_LISTEN_PORT: "18081" }), {
-    allowedOrigins: ["http://localhost:5173"],
-    listenPort: 18081,
-    healthPort: 9081,
-    localPort: 8091,
-  });
+  assert.deepEqual(
+    loadDevConfig({ AE_ALLOWED_ORIGINS: "http://localhost:5173", AE_LISTEN_PORT: "18081", AE_ROOM_SOCKET: "/tmp/r.sock" }),
+    {
+      allowedOrigins: ["http://localhost:5173"],
+      listenPort: 18081,
+      healthPort: 9081,
+      roomSocket: "/tmp/r.sock",
+    },
+  );
   assert.throws(
     () => loadDevConfig({ AE_ALLOWED_ORIGINS: "http://localhost:5173/", AE_HEALTH_PORT: "0" }),
     (err: Error) => err.message === "ae-collab dev env: invalid AE_ALLOWED_ORIGINS, invalid AE_HEALTH_PORT",

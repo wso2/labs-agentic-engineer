@@ -26,7 +26,7 @@ export interface PodLogLine {
   msg:
     | "pod_health_listening"
     | "pod_public_listening"
-    | "pod_local_listening"
+    | "pod_room_socket_listening"
     | "pod_listeners_stopped"
     | "pod_request_failed"
     | "pod_dev_mode"

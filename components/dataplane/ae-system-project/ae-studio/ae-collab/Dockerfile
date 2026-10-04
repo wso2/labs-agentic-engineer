@@ -55,7 +55,7 @@ RUN chmod -R a+rX "$COREPACK_HOME"
 WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-collab
 
 USER 1000
-# Pod mode: public room listener 8081, health 9081 (the local listener is
-# 127.0.0.1:8091, inside the pod only).
+# Pod mode: public room listener 8081, health 9081 (the agent's Room socket
+# is a Unix socket on a pod-only emptyDir, AE_ROOM_SOCKET).
 EXPOSE 8081 9081
 CMD ["pnpm", "start"]

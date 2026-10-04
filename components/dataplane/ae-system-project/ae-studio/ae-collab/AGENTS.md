@@ -12,19 +12,22 @@ path are all decided there.
 ## Trust model
 
 - **Pod mode** (`src/pod/`) verifies itself (07 §11). One Hocuspocus instance,
-  two listeners; the listener a socket came in on picks the token kind
+  two listeners; the listener a socket came in on decides who it is
   (`pod/auth.ts`):
   - public `0.0.0.0:8081`, upgrades only on `/v1/rooms`: a Platform IdP user
     token of the pod's org (`userRule`). The participant is the token's user
     (`name`, else given + family name, else `sub`; `email`, else the noreply
     address). A `credit` connection parameter is ignored.
-  - local `127.0.0.1:8091`, any path, no Origin check: only the pod's
-    `ae-studio-<org>` client token (`orgRule`). The participant is the user
-    the `credit` query parameter names (`{"name","email"}` JSON, name
-    required); the in-pod agent runs the turn for them.
+  - local: the Room socket (`AE_ROOM_SOCKET`, a Unix socket, mode 0660, on
+    an emptyDir mounted only into ae-design-agent), any path, no Origin
+    check, and no token: socket access is the in-pod agent's identity, so
+    the ae-studio client token never leaves ae-studio-tools. The
+    participant is the user the `credit` query parameter names
+    (`{"name","email"}` JSON, name required); the agent runs the turn for
+    them. Its connection has no deadline; a token synced on it is ignored.
   Then the room: `spec-<orgHandle>-<project>` with the pod's own handle, and
-  a project the Files socket's lookup knows (once per connection). The token
-  is kept only as its `exp`: the connection is closed then (`pod/expiry.ts`,
+  a project the Files socket's lookup knows (once per connection). A user
+  token is kept only as its `exp`: the connection is closed then (`pod/expiry.ts`,
   reason `token-expired`) unless the client pushed a fresher token
   (`provider.sendToken()`) that `onTokenSync` re-verified with the same
   check; a refused sync closes it at once (reason `permission-denied`). An
@@ -149,11 +152,11 @@ the document: no other connection holds a room whose load failed.
 
 Pod mode (all required once `AE_ORG_ID` is set, except the ports):
 `AE_ORG_ID`, `AE_ORG_HANDLE`, `AE_IDP_ISSUER`, `AE_IDP_JWKS_URL`,
-`AE_USER_AUDIENCES` (comma list), `AE_AGENT_CLIENT_ID`, `AE_ALLOWED_ORIGINS`
-(comma list of bare origins), `AE_FILES_SOCKET`, `AE_LISTEN_PORT` (8081),
-`AE_HEALTH_PORT` (9081); ports 1-65535. The local listener is fixed at
-`127.0.0.1:8091`. Dev mode reads `COLLAB_DEV`, the two ports and an optional
-`AE_ALLOWED_ORIGINS`.
+`AE_USER_AUDIENCES` (comma list), `AE_ALLOWED_ORIGINS` (comma list of bare
+origins), `AE_FILES_SOCKET`, `AE_ROOM_SOCKET`, `AE_LISTEN_PORT` (8081),
+`AE_HEALTH_PORT` (9081); ports 1-65535. Dev mode reads `COLLAB_DEV`, the two
+ports, an optional `AE_ALLOWED_ORIGINS` and an optional `AE_ROOM_SOCKET`
+(default `<tmpdir>/ae-collab-room.sock`).
 
 Commands: uniform verbs via the root `Makefile`; locally
 `pnpm --filter @aep/ae-collab dev|test|lint|typecheck`.

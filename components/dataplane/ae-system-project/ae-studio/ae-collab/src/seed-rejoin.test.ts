@@ -37,6 +37,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as joinPath } from "node:path";
 import * as Y from "yjs";
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from "@hocuspocus/provider";
 import WebSocket from "ws";
@@ -84,12 +87,12 @@ async function startRoom(): Promise<{ pod: PodListeners; files: FakeFilesSocket;
       issuer: "http://thunder.test",
       jwksUrl: "http://thunder.test/oauth2/jwks",
       userAudiences: ["aep-console-client"],
-      agentClientId: "ae-studio-acme",
       allowedOrigins: [CONSOLE_ORIGIN],
       filesSocket: files.path,
+      // Unused here (no agent joins), but bound like the pod's.
+      roomSocket: joinPath(mkdtempSync(joinPath(tmpdir(), "aec-")), "room.sock"),
       listenPort: 0,
       healthPort: 0,
-      localPort: 0,
     },
     // The default 60 s debounce: no store fires mid-test; the assertions read the doc.
     { verify, log: () => {} },

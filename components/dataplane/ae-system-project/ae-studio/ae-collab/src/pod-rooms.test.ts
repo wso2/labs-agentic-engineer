@@ -18,7 +18,8 @@
 
 /**
  * The Room in the pod (07 §11), end to end over real sockets: a real
- * HocuspocusProvider against both listeners, a loopback JWKS standing in for
+ * HocuspocusProvider against both listeners (the public port and the agent's
+ * Room socket), a loopback JWKS standing in for
  * the Platform IdP, and the fake Files socket. Token deadlines run on a test
  * clock, so expiry is stepped, never slept.
  *
@@ -28,7 +29,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request, type Server } from "node:http";
+import { mkdtempSync } from "node:fs";
 import { connect, type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateKeyPairSync, randomBytes, sign as rsaSign, type KeyObject } from "node:crypto";
 import * as Y from "yjs";
 import WebSocket from "ws";
@@ -59,6 +63,19 @@ class ConsoleWebSocket extends WebSocket {
   constructor(address: string | URL, protocols?: string | string[]) {
     super(address, protocols, { origin: CONSOLE_ORIGIN });
   }
+}
+
+/** The agent's join on the Room socket sends no token: the socket is its identity. */
+const NO_TOKEN = "";
+
+/** A fresh Room socket path (short: a Unix socket path has a length cap). */
+function roomSocketPath(): string {
+  return join(mkdtempSync(join(tmpdir(), "aec-")), "room.sock");
+}
+
+/** The ws URL of a Unix socket (`ws`'s `ws+unix:<socket>:<path>` form). */
+function socketWsUrl(socketPath: string, path = "/"): string {
+  return `ws+unix:${socketPath}:${path}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -200,17 +217,19 @@ async function waitFor(cond: () => boolean, what: string, ms = 5_000): Promise<v
   }
 }
 
-function wsUpgrade(url: string, opts: { origin?: string } = {}): Promise<{ status: number }> {
+/** Where an upgrade goes: a URL, or a path on a Unix socket. */
+type Target = string | { socketPath: string; path: string };
+
+function wsUpgrade(target: Target, opts: { origin?: string } = {}): Promise<{ status: number }> {
   return new Promise((resolve, reject) => {
-    const req = request(url, {
-      headers: {
-        connection: "Upgrade",
-        upgrade: "websocket",
-        "sec-websocket-version": "13",
-        "sec-websocket-key": randomBytes(16).toString("base64"),
-        ...(opts.origin ? { origin: opts.origin } : {}),
-      },
-    });
+    const headers = {
+      connection: "Upgrade",
+      upgrade: "websocket",
+      "sec-websocket-version": "13",
+      "sec-websocket-key": randomBytes(16).toString("base64"),
+      ...(opts.origin ? { origin: opts.origin } : {}),
+    };
+    const req = typeof target === "string" ? request(target, { headers }) : request({ ...target, headers });
     req.on("response", (res) => {
       res.resume();
       resolve({ status: res.statusCode ?? 0 });
@@ -241,12 +260,11 @@ async function startTestCollab(
     issuer: ISSUER,
     jwksUrl: idp.jwksUrl,
     userAudiences: [USER_AUDIENCE],
-    agentClientId: "ae-studio-acme",
     allowedOrigins: o.allowedOrigins ?? [CONSOLE_ORIGIN],
     filesSocket: files.path,
+    roomSocket: roomSocketPath(),
     listenPort: 0,
     healthPort: 0,
-    localPort: 0,
   };
   const pod = await startPod(cfg, { clock, log: (l) => lines.push(l), ...(o.cadence ? { cadence: o.cadence } : {}) });
   const peers: { provider: HocuspocusProvider; socket: HocuspocusProviderWebsocket }[] = [];
@@ -268,11 +286,13 @@ async function startTestCollab(
     pod,
     async join(listener, room, token, params = {}) {
       rooms.add(room);
-      const base = listener === "public" ? `${pod.publicUrl}/v1/rooms` : pod.localUrl;
+      const base = listener === "public" ? `${pod.publicUrl}/v1/rooms`.replace(/^http/, "ws") : socketWsUrl(pod.roomSocket);
       // Connection parameters ride in the upgrade URL's query.
       const query = new URLSearchParams(params).toString();
       const socket = new HocuspocusProviderWebsocket({
-        url: `${base.replace(/^http/, "ws")}${query ? `?${query}` : ""}`,
+        url: `${base}${query ? `?${query}` : ""}`,
+        // `ws+unix:<socket>:/` must keep its `/`: without it there is no request path.
+        preserveTrailingSlash: true,
         WebSocketPolyfill: listener === "public" ? ConsoleWebSocket : WebSocket,
         // Short reconnect sleeps: a pending one outlives destroy() and holds the process open.
         ...FAST_RETRY,
@@ -371,21 +391,25 @@ test("public listener: user JWT ok, agent token refused, credit param ignored", 
   }
 });
 
-test("local listener: agent token ok and credits the named user, user JWT refused", async () => {
+test("Room socket: the agent joins with no token and credits the named user; the room stays the pod org's", async () => {
   const s = await startTestCollab();
   try {
-    await s.join("local", ROOM, s.idp.agentToken("ae-studio-acme"), { credit: JSON.stringify({ name: "Ann", email: "ann@x" }) });
+    const credit = { credit: JSON.stringify({ name: "Ann", email: "ann@x" }) };
+    const peer = await s.join("local", ROOM, NO_TOKEN, credit);
+    assert.equal(peer.provider.synced, true);
+    assert.match(markdown(peer.doc), /The greeter says hello/);
     assert.deepEqual(s.participants(ROOM), [{ name: "Ann", email: "ann@x" }]);
-
-    await assert.rejects(s.join("local", ROOM, s.idp.userToken()), /permission-denied/);
-    // Another org's agent client, and this pod's client minted in another org.
-    await assert.rejects(
-      s.join("local", ROOM, s.idp.agentToken("ae-studio-evil"), { credit: JSON.stringify({ name: "Ann" }) }),
-      /permission-denied/,
-    );
-    await assert.rejects(
-      s.join("local", ROOM, s.idp.agentToken("ae-studio-acme", { ouHandle: "evil" }), { credit: JSON.stringify({ name: "Ann" }) }),
-      /permission-denied/,
+    // The socket is the identity: whatever token rides along is never read.
+    await s.join("local", ROOM, "not-a-jwt", credit);
+    // Another org's room, and a malformed one, are refused as on the public listener.
+    await assert.rejects(s.join("local", "spec-evil-greeter", NO_TOKEN, credit), /permission-denied/);
+    await assert.rejects(s.join("local", "spec-acme-", NO_TOKEN, credit), /permission-denied/);
+    assert.deepEqual(
+      events(s, "room_auth_refused").map((l) => [l.listener, l.cause]),
+      [
+        ["local", "room"],
+        ["local", "room"],
+      ],
     );
     assert.deepEqual(s.participants(ROOM), [{ name: "Ann", email: "ann@x" }]);
   } finally {
@@ -393,40 +417,36 @@ test("local listener: agent token ok and credits the named user, user JWT refuse
   }
 });
 
-test("local listener: a token shaped like Thunder's live client_credentials token is accepted (D-7)", async () => {
+test("public listener: no token, and the agent client's token, are refused (there is no agent kind)", async () => {
   const s = await startTestCollab();
   try {
-    // The claim set of a Thunder client_credentials access token for the
-    // ae-studio-<org> client (research/03 §3; claim names of the phase-1
-    // mints, no values): `sub` is the application's entity id, not the client
-    // id; `aud` defaults to the client id; iat/nbf/jti/scope and the OU's name
-    // ride along. Only aud, client_id, grant_type, ouId and ouHandle decide.
-    const now = Math.floor(Date.now() / 1000);
-    const live = s.idp.agentToken("ae-studio-acme", {
-      extra: { sub: "0f9c6a52-3c1e-4d8e-9a4b-2b7f1d0c5e11", iat: now, nbf: now, jti: "7c1d2e3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f", scope: "", ouName: "Acme" },
-    });
-    // The design agent's credit when the turn's credit has no name: the user id (local-room.ts).
-    await s.join("local", ROOM, live, { credit: JSON.stringify({ name: "u-ann", email: "" }) });
-    assert.deepEqual(s.participants(ROOM), [{ name: "u-ann", email: "u-ann@users.noreply.aep.dev" }]);
-    assert.deepEqual(events(s, "room_auth_refused"), []);
+    await assert.rejects(s.join("public", ROOM, NO_TOKEN), /permission-denied/);
+    await assert.rejects(s.join("public", ROOM, s.idp.agentToken("ae-studio-acme")), /permission-denied/);
+    assert.deepEqual(
+      events(s, "room_auth_refused").map((l) => [l.listener, l.cause]),
+      [
+        ["public", "token"],
+        ["public", "token"],
+      ],
+    );
+    assert.deepEqual(s.participants(ROOM), []);
   } finally {
     await s.close();
   }
 });
 
-test("local listener: the agent must name the credited user", async () => {
+test("Room socket: the agent must name the credited user", async () => {
   const s = await startTestCollab();
   try {
-    const agent = s.idp.agentToken("ae-studio-acme");
-    await assert.rejects(s.join("local", ROOM, agent), /permission-denied/);
-    await assert.rejects(s.join("local", ROOM, agent, { credit: "not json" }), /permission-denied/);
-    await assert.rejects(s.join("local", ROOM, agent, { credit: JSON.stringify({ email: "a@x" }) }), /permission-denied/);
+    await assert.rejects(s.join("local", ROOM, NO_TOKEN), /permission-denied/);
+    await assert.rejects(s.join("local", ROOM, NO_TOKEN, { credit: "not json" }), /permission-denied/);
+    await assert.rejects(s.join("local", ROOM, NO_TOKEN, { credit: JSON.stringify({ email: "a@x" }) }), /permission-denied/);
     assert.deepEqual(
       events(s, "room_auth_refused").map((l) => l.cause),
       ["credit", "credit", "credit"],
     );
     // No email: the noreply address, as for a user token without one.
-    await s.join("local", ROOM, agent, { credit: JSON.stringify({ name: "Ann" }) });
+    await s.join("local", ROOM, NO_TOKEN, { credit: JSON.stringify({ name: "Ann" }) });
     assert.deepEqual(s.participants(ROOM), [{ name: "Ann", email: "Ann@users.noreply.aep.dev" }]);
   } finally {
     await s.close();
@@ -533,37 +553,30 @@ test("connection closes at exp without a synced token; a synced valid token keep
   }
 });
 
-test("a synced token must be valid and of the listener's kind", async () => {
+test("a synced token must be valid; the Room socket has no token, so a sync there changes nothing", async () => {
   const s = await startTestCollab();
   try {
-    const credit = { credit: JSON.stringify({ name: "Ann" }) };
     const garbage = await s.join("public", ROOM, s.idp.userToken());
     garbage.provider.configuration.token = "not-a-jwt";
     await garbage.provider.sendToken();
     await waitFor(() => garbage.closed, "a garbage sync to close");
 
-    // A user JWT synced onto the agent's connection is listener confusion too.
-    const agent = await s.join("local", ROOM, s.idp.agentToken("ae-studio-acme"), credit);
-    agent.provider.configuration.token = s.idp.userToken();
+    // The agent's connection has no deadline and no token to replace.
+    const agent = await s.join("local", ROOM, NO_TOKEN, { credit: JSON.stringify({ name: "Ann" }) });
+    agent.provider.configuration.token = s.idp.userToken({ expiresInSec: 2 });
     await agent.provider.sendToken();
-    await waitFor(() => agent.closed, "a user JWT synced on the local listener to close");
-
-    // The agent's own fresh token keeps its connection.
-    const agentShort = s.idp.agentToken("ae-studio-acme", { expiresInSec: 2 });
-    const agent2 = await s.join("local", ROOM, agentShort, credit);
-    agent2.provider.configuration.token = s.idp.agentToken("ae-studio-acme");
-    await agent2.provider.sendToken();
-    await waitFor(() => events(s, "room_token_refreshed").length === 1, "the agent's sync");
-    s.clock.advanceToExp(agentShort, 1_000);
+    agent.provider.configuration.token = "not-a-jwt";
+    await agent.provider.sendToken();
+    // A round trip on the same socket: both syncs were handled before it answers.
+    assert.equal((await flush(agent, "after-sync")).type, "flushed");
+    s.clock.advance(3_600_000);
+    assert.equal(agent.closed, false);
     assert.deepEqual(
       events(s, "room_token_refused").map((l) => [l.listener, l.cause]),
-      [
-        ["public", "token"],
-        ["local", "token"],
-      ],
+      [["public", "token"]],
     );
+    assert.equal(events(s, "room_token_refreshed").length, 0);
     assert.equal(events(s, "room_token_expired").length, 0);
-    assert.equal(agent2.closed, false);
   } finally {
     await s.close();
   }
@@ -638,17 +651,17 @@ test("a refused room load leaves no participant behind", async () => {
 // ---------------------------------------------------------------------------
 // The public listener's upgrade rules
 
-test("Origin: listed origin ok; unlisted or absent Origin refused on the public listener; local listener has no Origin check", async () => {
+test("Origin: listed origin ok; unlisted or absent Origin refused on the public listener; the Room socket has no Origin check", async () => {
   const s = await startTestCollab({ allowedOrigins: [CONSOLE_ORIGIN] });
   try {
     assert.equal((await s.rawUpgrade("/v1/rooms", { origin: CONSOLE_ORIGIN })).status, 101);
     assert.equal((await s.rawUpgrade("/v1/rooms", { origin: "https://evil.example" })).status, 403);
     assert.equal((await s.rawUpgrade("/v1/rooms", {})).status, 403);
     assert.equal((await s.rawUpgrade("/collab", { origin: CONSOLE_ORIGIN })).status, 404);
-    // The local listener checks no Origin and takes any path: the in-pod
-    // agent joins there without one.
-    assert.equal((await wsUpgrade(`${s.pod.localUrl}/`)).status, 101);
-    assert.equal((await wsUpgrade(`${s.pod.localUrl}/anything`, { origin: "https://evil.example" })).status, 101);
+    // The Room socket checks no Origin and takes any path: the in-pod agent
+    // joins there without one.
+    assert.equal((await wsUpgrade({ socketPath: s.pod.roomSocket, path: "/" })).status, 101);
+    assert.equal((await wsUpgrade({ socketPath: s.pod.roomSocket, path: "/anything" }, { origin: "https://evil.example" })).status, 101);
   } finally {
     await s.close();
   }
@@ -657,8 +670,8 @@ test("Origin: listed origin ok; unlisted or absent Origin refused on the public 
 test("a frame over 32 MiB closes the socket (1009) before any auth", async () => {
   const s = await startTestCollab();
   try {
-    for (const url of [`${s.pod.publicUrl}/v1/rooms`, s.pod.localUrl]) {
-      const ws = new ConsoleWebSocket(url.replace(/^http/, "ws"));
+    for (const url of [`${s.pod.publicUrl}/v1/rooms`.replace(/^http/, "ws"), socketWsUrl(s.pod.roomSocket)]) {
+      const ws = new ConsoleWebSocket(url);
       await new Promise((resolve, reject) => {
         ws.once("open", resolve);
         ws.once("error", reject);
@@ -682,9 +695,8 @@ test("a frame over 32 MiB closes the socket (1009) before any auth", async () =>
 test("a malformed absolute-form upgrade target is refused, not a crash", async () => {
   const s = await startTestCollab();
   try {
-    const { port } = new URL(s.pod.localUrl);
     const reply = await new Promise<string>((resolve, reject) => {
-      const sock = connect(Number(port), "127.0.0.1", () => {
+      const sock = connect(s.pod.roomSocket, () => {
         sock.write(
           "GET http://[bad/ HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n" +
             `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\n\r\n`,
@@ -699,7 +711,7 @@ test("a malformed absolute-form upgrade target is refused, not a crash", async (
     // Either refused by the HTTP parser or upgraded and then held to auth;
     // the process survives and the listener still serves.
     void reply;
-    assert.equal((await wsUpgrade(`${s.pod.localUrl}/`)).status, 101);
+    assert.equal((await wsUpgrade({ socketPath: s.pod.roomSocket, path: "/" })).status, 101);
   } finally {
     await s.close();
   }
@@ -711,16 +723,16 @@ test("close ends open room sockets on both listeners", async () => {
     // Raw sockets, not providers: a provider would reconnect into the close.
     const open = (url: string) =>
       new Promise<WebSocket>((resolve, reject) => {
-        const ws = new ConsoleWebSocket(url.replace(/^http/, "ws"));
+        const ws = new ConsoleWebSocket(url);
         ws.once("open", () => resolve(ws));
         ws.once("error", reject);
       });
-    const sockets = [await open(`${s.pod.publicUrl}/v1/rooms`), await open(s.pod.localUrl)];
+    const sockets = [await open(`${s.pod.publicUrl}/v1/rooms`.replace(/^http/, "ws")), await open(socketWsUrl(s.pod.roomSocket))];
     const closed = sockets.map((ws) => new Promise<void>((resolve) => ws.once("close", () => resolve())));
     await s.pod.close();
     await Promise.all(closed);
     await assert.rejects(fetch(`${s.pod.healthUrl}/readyz`));
-    await assert.rejects(wsUpgrade(`${s.pod.localUrl}/`));
+    await assert.rejects(wsUpgrade({ socketPath: s.pod.roomSocket, path: "/" }));
   } finally {
     await s.close();
   }
@@ -732,11 +744,12 @@ test("close ends open room sockets on both listeners", async () => {
 test("dev mode: no token, rooms seeded from the dev fixtures", async () => {
   const lines: PodLogLine[] = [];
   const dev = await startDev(
-    { allowedOrigins: [], listenPort: 0, healthPort: 0, localPort: 0 },
+    { allowedOrigins: [], listenPort: 0, healthPort: 0, roomSocket: roomSocketPath() },
     { log: (l) => lines.push(l) },
   );
   const socket = new HocuspocusProviderWebsocket({
-    url: dev.localUrl.replace(/^http/, "ws"),
+    url: socketWsUrl(dev.roomSocket),
+    preserveTrailingSlash: true,
     WebSocketPolyfill: WebSocket,
     ...FAST_RETRY,
   });
@@ -772,7 +785,7 @@ test("a quiet period commits the room and every peer hears the commit's warnings
   });
   try {
     const ann = await s.join("public", ROOM, s.idp.userToken({ name: "Ann", email: "ann@x" }));
-    const agent = await s.join("local", ROOM, s.idp.agentToken("ae-studio-acme"), { credit: JSON.stringify({ name: "Bob", email: "bob@x" }) });
+    const agent = await s.join("local", ROOM, NO_TOKEN, { credit: JSON.stringify({ name: "Bob", email: "bob@x" }) });
     typeInto(ann.doc, "Typed by Ann.");
     await waitFor(() => s.files.commits().length === 1, "the debounced commit");
     assert.match(s.files.file(PRD_PATH)!, /Typed by Ann\./);
@@ -994,17 +1007,17 @@ test("close: no edit reaches a room after its shutdown flush read it, and close 
 
 test("close: drain runs after the listeners stop accepting, and ends the open sockets before it flushes", async () => {
   let atDrain: { socketOpen: boolean; upgradeRefused: boolean; ready: number; endedBeforeFlush: boolean } | undefined;
-  let localUrl = "";
+  const roomSocket = roomSocketPath();
   let healthUrl = "";
   const open: WebSocket[] = [];
   const pod = await startPodListeners(
-    { allowedOrigins: [], listenPort: 0, healthPort: 0, localPort: 0 },
+    { allowedOrigins: [], listenPort: 0, healthPort: 0, roomSocket },
     {
       rooms: new Hocuspocus(),
       gate: () => Promise.resolve(null),
       log: () => {},
       drain: async (endSockets) => {
-        const upgradeRefused = await wsUpgrade(`${localUrl}/`).then(
+        const upgradeRefused = await wsUpgrade({ socketPath: roomSocket, path: "/" }).then(
           () => false,
           () => true,
         );
@@ -1017,9 +1030,8 @@ test("close: drain runs after the listeners stop accepting, and ends the open so
       },
     },
   );
-  localUrl = pod.localUrl;
   healthUrl = pod.healthUrl;
-  const ws = new WebSocket(localUrl.replace(/^http/, "ws"));
+  const ws = new WebSocket(socketWsUrl(roomSocket));
   open.push(ws);
   await new Promise((resolve, reject) => {
     ws.once("open", resolve);
@@ -1030,8 +1042,13 @@ test("close: drain runs after the listeners stop accepting, and ends the open so
 });
 
 test("dev mode: a flush is acked through the fake Files socket", async () => {
-  const dev = await startDev({ allowedOrigins: [], listenPort: 0, healthPort: 0, localPort: 0 }, { log: () => {} });
-  const socket = new HocuspocusProviderWebsocket({ url: dev.localUrl.replace(/^http/, "ws"), WebSocketPolyfill: WebSocket, ...FAST_RETRY });
+  const dev = await startDev({ allowedOrigins: [], listenPort: 0, healthPort: 0, roomSocket: roomSocketPath() }, { log: () => {} });
+  const socket = new HocuspocusProviderWebsocket({
+    url: socketWsUrl(dev.roomSocket),
+    preserveTrailingSlash: true,
+    WebSocketPolyfill: WebSocket,
+    ...FAST_RETRY,
+  });
   const doc = new Y.Doc();
   const provider = new HocuspocusProvider({ websocketProvider: socket, name: "spec-default-demo-shop", document: doc, token: "" });
   const stateless: Peer["stateless"] = [];

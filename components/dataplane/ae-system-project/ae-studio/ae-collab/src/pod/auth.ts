@@ -19,18 +19,21 @@
 /**
  * Who may join a Room, per listener (07 §11). One Hocuspocus instance serves
  * two listeners, and the listener a socket came in on (`context.listener`,
- * set by the listener, never by the client) picks the token kind:
+ * set by the listener, never by the client) decides who it is:
  *
  *   public  a Platform IdP user token of the pod's org (`userRule`). The
  *           participant is the token's user; a `credit` parameter is ignored.
- *   local   the pod's own `ae-studio-<org>` client token (`orgRule`). The
+ *   local   the Room socket, mounted only into ae-design-agent: the socket is
+ *           the agent's identity and no token is read (Task 4.7a: the
+ *           ae-studio client token never leaves ae-studio-tools). The
  *           participant is the user the `credit` parameter names
  *           (`{name, email}`), for whom the in-pod agent runs the turn.
  *
  * Then the room: `spec-<orgHandle>-<project>` with the pod's own handle, and a
- * project the Files socket knows (looked up once per connection). The token is
- * kept only as its `exp`: the connection closes then (`expiry.ts`) unless
- * `onTokenSync` re-verifies a fresher token of the same kind and org first.
+ * project the Files socket knows (looked up once per connection). A user
+ * token is kept only as its `exp`: the connection closes then (`expiry.ts`)
+ * unless `onTokenSync` re-verifies a fresher user token of the org first. The
+ * agent's connection has no deadline, and a token synced on it is ignored.
  *
  * A refusal is thrown with an empty message, so Hocuspocus logs nothing of
  * its own, and a `reason` the client reads: `permission-denied` is a verdict,
@@ -38,7 +41,7 @@
  */
 
 import type { onAuthenticatePayload, onTokenSyncPayload } from "@hocuspocus/server";
-import { IdpUnavailableError, orgRule, UnauthenticatedError, userRule, type TokenKind, type VerifiedToken } from "@aep/platform-idp-auth";
+import { IdpUnavailableError, UnauthenticatedError, userRule, type TokenKind, type VerifiedToken } from "@aep/platform-idp-auth";
 import { FilesDeniedError, type FilesClient } from "../files-client.js";
 import { addParticipant, ensureRoomState } from "../rooms.js";
 import { isSpecRoom } from "../room.js";
@@ -59,16 +62,16 @@ export interface CollabContext {
   listener: ListenerKind;
   user: CollabUser;
   projectName: string | null;
-  /** The verified token's `exp` (seconds); kept current by `onTokenSync`. */
+  /** The verified user token's `exp` (seconds), kept current by `onTokenSync`; infinite for the agent and dev. */
   exp: number;
-  /** The user token's `sub` at connect; null for the agent's client token and dev. */
+  /** The user token's `sub` at connect; null for the agent and dev. */
   subject: string | null;
 }
 
 /** `verify` from `@aep/platform-idp-auth`'s `createVerifier`. */
 export type Verify = (token: string, kinds: TokenKind[]) => Promise<VerifiedToken>;
 
-export type AuthConfig = Pick<PodConfig, "orgId" | "orgHandle" | "userAudiences" | "agentClientId">;
+export type AuthConfig = Pick<PodConfig, "orgId" | "orgHandle" | "userAudiences">;
 
 /** What the client is told, in `permission-denied` frames and close reasons. */
 export const PERMISSION_DENIED = "permission-denied";
@@ -100,35 +103,31 @@ class Refused extends Error {
 
 interface Checked {
   exp: number;
-  /** The token's user; null for the agent's client token, which names no person. */
-  user: CollabUser | null;
-  subject: string | null;
+  user: CollabUser;
+  subject: string;
 }
 
 /**
- * The token check of one listener. Throws `Refused` for any token this
- * listener does not take, and `IdpUnavailableError` when the IdP's keys could
- * not be fetched (no verdict was reached).
+ * The public listener's token check: a user token of the pod's org, and only
+ * that kind. Throws `Refused` for any other token, and `IdpUnavailableError`
+ * when the IdP's keys could not be fetched (no verdict was reached).
  */
-function checkerFor(cfg: AuthConfig, verify: Verify) {
+function userCheckerFor(cfg: AuthConfig, verify: Verify) {
   const pod = { orgId: cfg.orgId, orgHandle: cfg.orgHandle };
   const userKinds: TokenKind[] = [{ name: "user", audiences: cfg.userAudiences }];
-  const agentKinds: TokenKind[] = [{ name: "ae-studio", audiences: [cfg.agentClientId] }];
-  return async (listener: ListenerKind, token: string): Promise<Checked> => {
+  return async (token: string): Promise<Checked> => {
     let verified: VerifiedToken;
     try {
-      verified = await verify(token, listener === "public" ? userKinds : agentKinds);
+      verified = await verify(token, userKinds);
     } catch (err) {
       // IdpUnavailableError passes up; anything else is a wiring fault.
       if (!(err instanceof UnauthenticatedError)) throw err;
       throw new Refused("token");
     }
-    if (verified.kind === "user") {
-      if (!userRule(verified.claims, pod)) throw new Refused("org");
-      return { exp: verified.claims.exp, user: userOf(verified.claims), subject: verified.claims.sub };
-    }
-    if (!orgRule(verified.claims, pod)) throw new Refused("org");
-    return { exp: verified.claims.exp, user: null, subject: null };
+    // Only the user kind is offered, so anything else is a wiring fault.
+    if (verified.kind !== "user") throw new Error("room auth: unexpected token kind");
+    if (!userRule(verified.claims, pod)) throw new Refused("org");
+    return { exp: verified.claims.exp, user: userOf(verified.claims), subject: verified.claims.sub };
   };
 }
 
@@ -172,26 +171,31 @@ function listenerOf(context: Partial<CollabContext> | undefined): ListenerKind {
   return listener;
 }
 
-/** `onAuthenticate`: token by listener, then the room, then the project lookup. */
+/**
+ * `onAuthenticate`: who by listener (a user token on the public listener, the
+ * `credit` on the Room socket), then the room, then the project lookup.
+ */
 export function authenticateFor(
   cfg: AuthConfig,
   verify: Verify,
   files: FilesClient,
   log: PodLog,
 ): (data: AuthPayload) => Promise<CollabContext> {
-  const check = checkerFor(cfg, verify);
+  const check = userCheckerFor(cfg, verify);
   return async (data) => {
     const listener = listenerOf(data.context);
     const refuse = (cause: RefusalCause, reason: Parameters<typeof refusal>[0] = PERMISSION_DENIED): Error => {
       log({ msg: "room_auth_refused", source: "ae-collab", listener, cause });
       return refusal(reason);
     };
-    let verified;
-    let user: CollabUser;
+    let who: Pick<CollabContext, "user" | "exp" | "subject">;
     try {
-      verified = await check(listener, data.token);
-      // The public listener never reads `credit`: a user is credited as themself.
-      user = verified.user ?? creditOf(data.requestParameters);
+      // The public listener never reads `credit`: a user is credited as
+      // themself. The Room socket never reads a token: the socket is the agent.
+      who =
+        listener === "public"
+          ? await check(data.token)
+          : { user: creditOf(data.requestParameters), exp: Number.POSITIVE_INFINITY, subject: null };
     } catch (err) {
       if (err instanceof Refused) throw refuse(err.why);
       if (err instanceof IdpUnavailableError) throw refuse("idp_unavailable", UPSTREAM_UNAVAILABLE);
@@ -206,18 +210,19 @@ export function authenticateFor(
       throw refuse("files_unavailable", UPSTREAM_UNAVAILABLE);
     }
     ensureRoomState(data.documentName, projectName);
-    addParticipant(data.documentName, user);
-    return { listener, user, projectName, exp: verified.exp, subject: verified.subject };
+    addParticipant(data.documentName, who.user);
+    return { listener, projectName, ...who };
   };
 }
 
 /**
- * `onTokenSync`: the client pushed a token. It must pass the same check as at
- * connect (signature, issuer, kind of this listener, the pod's org); then the
- * deadline moves to its `exp`. A refused token closes the connection at once.
- * An IdP that cannot be reached decides nothing: the old deadline stands.
- * A user token for another subject of the org is accepted (it passes the same
- * rule a fresh connection would) and logged without the subjects.
+ * `onTokenSync`: the client pushed a token. On the public listener it must
+ * pass the same check as at connect (signature, issuer, user kind, the pod's
+ * org); then the deadline moves to its `exp`. A refused token closes the
+ * connection at once. An IdP that cannot be reached decides nothing: the old
+ * deadline stands. A user token for another subject of the org is accepted
+ * (it passes the same rule a fresh connection would) and logged without the
+ * subjects. On the Room socket no token is read, so a sync changes nothing.
  */
 export function onTokenSyncFor(
   cfg: AuthConfig,
@@ -225,12 +230,13 @@ export function onTokenSyncFor(
   expiry: ExpiryGuard,
   log: PodLog,
 ): (data: TokenSyncPayload) => Promise<void> {
-  const check = checkerFor(cfg, verify);
+  const check = userCheckerFor(cfg, verify);
   return async ({ token, connection }) => {
     const context = connection.context;
     const listener = listenerOf(context);
+    if (listener === "local") return;
     try {
-      const { exp, subject } = await check(listener, token);
+      const { exp, subject } = await check(token);
       if (subject !== context.subject) log({ msg: "room_token_subject_changed", source: "ae-collab", listener });
       context.exp = exp;
       expiry.arm(connection, exp);
