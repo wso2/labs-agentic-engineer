@@ -30,8 +30,6 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
 )
 
-const testOrg = "acme"
-
 type rig struct {
 	reader   files.Reader
 	origin   *repotest.Origin
@@ -53,7 +51,7 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 		Owner: "Acme", Repo: "Greeter-App", DefaultBranch: repotest.Branch, CloneURL: origin.URL(),
 	}})
 	return &rig{
-		reader:   files.Reader{Engine: engine, Projects: fake, Org: testOrg},
+		reader:   files.Reader{Engine: engine, Projects: fake},
 		origin:   origin,
 		projects: fake,
 		root:     root,
@@ -197,9 +195,9 @@ func TestReader_ResolvesEveryCallAndFailsClosed(t *testing.T) {
 	if n := r.projects.CallCount(); n != 4 {
 		t.Fatalf("resolver calls = %d, want 4 (one per call)", n)
 	}
-	// The clone sits under the pod's org and a slug derived from aep-api's
-	// owner/repo, never from the clone URL.
-	if _, err := os.Stat(filepath.Join(repo.ReposDir(r.root), testOrg, "greeter", "acme-greeter-app", "git")); err != nil {
+	// The clone sits at aep-api's owner/repo, lower-cased, never at a name
+	// taken from the clone URL or the project.
+	if _, err := os.Stat(filepath.Join(repo.ReposDir(r.root), "acme", "greeter-app", "git")); err != nil {
 		t.Fatalf("clone location: %v", err)
 	}
 
@@ -210,7 +208,7 @@ func TestReader_ResolvesEveryCallAndFailsClosed(t *testing.T) {
 	if _, err := r.reader.List(ctx, "greeter", ""); !errors.Is(err, projects.ErrUnavailable) {
 		t.Errorf("aep-api down = %v, want ErrUnavailable", err)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(repo.ReposDir(r.root), testOrg)); len(entries) != 1 {
+	if entries, _ := os.ReadDir(filepath.Join(repo.ReposDir(r.root), "acme")); len(entries) != 1 {
 		t.Fatalf("a refused project reached git: %v", entries)
 	}
 }

@@ -193,9 +193,9 @@ func (e *Engine) ListReferences(_ context.Context, r OwnerRepo) ([]string, error
 	return names, nil
 }
 
-// OverlayReferences brings the snapshot of ref's commit sha up to date with
-// the repository's stored set at ReferenceOverlayDir. The snapshot must
-// already exist (EnsureSnapshot); a missing one is left alone.
+// OverlayReferences brings project's snapshot of ref's commit sha up to date
+// with ref's stored set (its owner/repo store) at ReferenceOverlayDir. The
+// snapshot must already exist (EnsureSnapshot); a missing one is left alone.
 //
 // It runs on every project lookup, not only when a snapshot is first made: a
 // snapshot is immutable for its sha, but references are a second input keyed
@@ -219,14 +219,15 @@ func (e *Engine) ListReferences(_ context.Context, r OwnerRepo) ([]string, error
 // Best-effort by design: a failure must not fail the lookup, which every
 // turn on the project needs, including those that attached nothing. A lost
 // overlay is logged (references.overlay_failed), not returned.
-func (e *Engine) OverlayReferences(ctx context.Context, ref RepoRef, store OwnerRepo, sha string) {
-	snap, err := SnapshotDir(e.root, ref.Project, sha)
+func (e *Engine) OverlayReferences(ctx context.Context, ref RepoRef, project, sha string) {
+	snap, err := SnapshotDir(e.root, project, sha)
 	if err != nil || !dirExists(snap) {
 		return
 	}
 	warn := func(step string, err error) {
-		slog.WarnContext(ctx, "references.overlay_failed", "project", ref.Project, "step", step, "error", err)
+		slog.WarnContext(ctx, "references.overlay_failed", "project", project, "step", step, "error", err)
 	}
+	store := ref.OwnerRepo()
 	names, err := e.ListReferences(ctx, store)
 	if err != nil {
 		warn("list", err)

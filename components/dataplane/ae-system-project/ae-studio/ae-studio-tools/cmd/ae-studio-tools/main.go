@@ -141,7 +141,7 @@ func run() error {
 	// record-turn-usage, as the publisher, for the process lifetime.
 	usageOutbox := startUsageOutbox(usage.New(usage.NewAEPAPIPost(aepAPI)))
 	defer usageOutbox.stopRun()
-	reader := files.Reader{Engine: engine, Projects: resolver, Org: cfg.OrgHandle}
+	reader := files.Reader{Engine: engine, Projects: resolver}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
 	// GitHub account, the other tools forwarded to aep-api as the publisher,
 	// the agent's room token minted as ae-studio-<org>, and the project and

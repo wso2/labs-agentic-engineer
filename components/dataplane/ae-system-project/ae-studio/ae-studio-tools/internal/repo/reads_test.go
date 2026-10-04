@@ -216,13 +216,13 @@ func TestRawShaReadsUseLocalObjects(t *testing.T) {
 func TestInvalidPathSegmentsRejected(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	bad := fx.Ref
-	bad.Org = "../escape"
+	bad.Owner = "../escape"
 	if _, err := fx.Engine.Head(context.Background(), bad, ""); err == nil {
-		t.Fatal("Head with traversal org segment succeeded, want validation error")
+		t.Fatal("Head with traversal owner segment succeeded, want validation error")
 	}
 	bad = fx.Ref
-	bad.RepoSlug = "a/b"
+	bad.Repo = "a/b"
 	if _, err := fx.Engine.Head(context.Background(), bad, ""); err == nil {
-		t.Fatal("Head with separator slug succeeded, want validation error")
+		t.Fatal("Head with separator repo succeeded, want validation error")
 	}
 }

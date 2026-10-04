@@ -25,7 +25,7 @@
 //     the engine's askpass shim;
 //  2. trash reclamation: purge trash/<id> entries older than TrashMaxAge;
 //  3. snapshot age: trash snapshot <sha> leaves unused for longer than
-//     SnapshotMaxAge that are not their mirror's current HEAD;
+//     SnapshotMaxAge whose sha is no mirror's current HEAD;
 //  4. git maintenance: repack/prune/pack-refs on loose- or pack-heavy
 //     mirrors under the repo's EX flock (before the budget, so eviction sees
 //     reclaimed space);
@@ -161,7 +161,7 @@ func (r *Reaper) sweep(ctx context.Context) {
 // sweepOnce runs the five passes, publishes UsagePct onto the engine (it
 // feeds DiskFullError) and logs the reaper.sweep line. It returns what the
 // budget evicted (snapshots as their path under the root, then repos as
-// "org/project/slug") and the joined errors of the passes that failed; a
+// "owner/repo") and the joined errors of the passes that failed; a
 // failed pass never stops the next one.
 func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 	var errs []error
@@ -192,54 +192,38 @@ func (r *Reaper) sweepOnce(ctx context.Context) ([]string, error) {
 	return evicted, errors.Join(errs...)
 }
 
-// walkRepoDirs visits every repos/<org>/<project>/<slug> directory. Only real
+// walkRepoDirs visits every repos/<owner>/<repo> mirror directory. Only real
 // directories are visited (a symlink is never followed), so every visited
 // path lies inside the root. Unreadable levels are skipped: a concurrent trash
 // rename is normal and the next sweep reconverges.
 func (r *Reaper) walkRepoDirs(ctx context.Context, visit func(ref repo.RepoRef, repoDir string)) error {
 	reposDir := repo.ReposDir(r.engine.Root())
-	orgs, err := os.ReadDir(reposDir)
+	owners, err := os.ReadDir(reposDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	for _, org := range orgs {
-		if !org.IsDir() {
+	for _, owner := range owners {
+		if !owner.IsDir() {
 			continue
 		}
-		orgDir := filepath.Join(reposDir, org.Name())
-		projects, err := os.ReadDir(orgDir)
+		ownerDir := filepath.Join(reposDir, owner.Name())
+		names, err := os.ReadDir(ownerDir)
 		if err != nil {
 			continue
 		}
-		for _, proj := range projects {
-			if !proj.IsDir() {
+		for _, name := range names {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if !name.IsDir() {
 				continue
 			}
-			projDir := filepath.Join(orgDir, proj.Name())
-			slugs, err := os.ReadDir(projDir)
-			if err != nil {
-				continue
-			}
-			for _, slug := range slugs {
-				if ctx.Err() != nil {
-					return ctx.Err()
-				}
-				if !slug.IsDir() {
-					continue
-				}
-				ref := repo.RepoRef{Org: org.Name(), Project: proj.Name(), RepoSlug: slug.Name()}
-				visit(ref, filepath.Join(projDir, slug.Name()))
-			}
+			ref := repo.RepoRef{Owner: owner.Name(), Repo: name.Name()}
+			visit(ref, filepath.Join(ownerDir, name.Name()))
 		}
 	}
 	return nil
-}
-
-// repoName is the "org/project/slug" form a ref takes in eviction results
-// and log lines.
-func repoName(ref repo.RepoRef) string {
-	return ref.Org + "/" + ref.Project + "/" + ref.RepoSlug
 }

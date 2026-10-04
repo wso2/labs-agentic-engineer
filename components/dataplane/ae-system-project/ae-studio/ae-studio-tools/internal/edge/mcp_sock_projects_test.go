@@ -58,7 +58,7 @@ func newLookupHarness(t *testing.T) *lookupHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reader := files.Reader{Engine: engine, Projects: fake, Org: "default"}
+	reader := files.Reader{Engine: engine, Projects: fake}
 	h := newMCPHarness(t, &fakeUpstream{}, withSnapshots(reader))
 	return &lookupHarness{mcpHarness: h, root: root, engine: engine, origin: origin, skills: skills, projects: fake}
 }

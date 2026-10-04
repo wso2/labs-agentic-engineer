@@ -21,9 +21,13 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
 // TestRunStartupSweepThenForcedSweep: Run sweeps once at start (young trash
@@ -92,7 +96,7 @@ func TestSweep_LogLineIsValueFree(t *testing.T) {
 
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1000})
-	writeMirror(t, root, "acme/secret-project/r", 900, time.Now().Add(-time.Hour))
+	writeMirror(t, root, "acme/secret-repo", 900, time.Now().Add(-time.Hour))
 	r.sweep(context.Background())
 
 	var line map[string]any
@@ -101,7 +105,7 @@ func TestSweep_LogLineIsValueFree(t *testing.T) {
 			if err := json.Unmarshal([]byte(l), &line); err != nil {
 				t.Fatalf("parse: %v", err)
 			}
-			if strings.Contains(l, "secret-project") {
+			if strings.Contains(l, "secret-repo") {
 				t.Fatalf("reaper.sweep names a repo: %s", l)
 			}
 		}
@@ -127,5 +131,26 @@ func waitGone(t *testing.T, path, msg string) {
 			t.Fatal(msg)
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// The walk visits every repos/<owner>/<repo> mirror dir (Q-4: the pod keys
+// its mirrors by GitHub repository) and nothing that is not a directory.
+func TestWalkRepoDirsVisitsOwnerRepoMirrors(t *testing.T) {
+	root := t.TempDir()
+	r := newReaperForTest(t, root, Config{Budget: 1 << 30})
+	greeter := writeMirror(t, root, "acme/greeter", 1, time.Now())
+	skills := writeMirror(t, root, "acme/org-skills", 1, time.Now())
+	mkFile(t, filepath.Join(repo.ReposDir(root), "acme", "stray-file"), []byte("x"))
+
+	got := map[string]string{}
+	if err := r.walkRepoDirs(context.Background(), func(ref repo.RepoRef, dir string) {
+		got[ref.FullName()] = dir
+	}); err != nil {
+		t.Fatalf("walkRepoDirs: %v", err)
+	}
+	want := map[string]string{"acme/greeter": greeter, "acme/org-skills": skills}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("visited %v, want %v", got, want)
 	}
 }

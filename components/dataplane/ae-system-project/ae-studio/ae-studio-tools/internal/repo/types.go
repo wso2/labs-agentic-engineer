@@ -27,8 +27,6 @@ import (
 	"context"
 	"errors"
 	"time"
-
-	"github.com/wso2/aep/ae-studio-tools/internal/repo/naming"
 )
 
 // Sentinel errors.
@@ -95,27 +93,24 @@ type Snapshot interface {
 	Walk(prefix string, fn func(rel, blobSHA string) error) error
 }
 
-// RepoRef addresses one repo on the volume. Org/Project/RepoSlug are the path
-// key (a pure function of the resolved project, never of client input);
-// CloneURL/DefaultBranch drive the remote ops. The engine, not the ref, holds
-// the Credential.
+// RepoRef addresses one GitHub repository's mirror on the volume. Owner/Repo
+// are the path key, lower-cased (repos/<owner>/<repo>): the pod serves one
+// org, and every caller (the Room through its project, aep-api by
+// owner/repo) lands on the one mirror of a repository. CloneURL/DefaultBranch
+// drive the remote ops. The engine, not the ref, holds the Credential.
 type RepoRef struct {
-	Org           string
-	Project       string
-	RepoSlug      string
+	Owner         string
+	Repo          string
 	CloneURL      string
 	DefaultBranch string
 }
 
-// FullName is the `<owner>/<repo>` name from CloneURL, for log lines; "" when
-// the URL is not a GitHub HTTPS URL. It never includes userinfo.
-func (r RepoRef) FullName() string {
-	owner, name := naming.OwnerRepoFromURL(r.CloneURL)
-	if owner == "" {
-		return ""
-	}
-	return owner + "/" + name
-}
+// FullName is the ref's `<owner>/<repo>`, case kept, for log lines and
+// errors. It never reads CloneURL, so URL userinfo cannot reach a log line.
+func (r RepoRef) FullName() string { return r.Owner + "/" + r.Repo }
+
+// OwnerRepo is the ref's repository name: the key of its reference store.
+func (r RepoRef) OwnerRepo() OwnerRepo { return OwnerRepo{Owner: r.Owner, Repo: r.Repo} }
 
 // Entry is one blob of a tree listing.
 type Entry struct {

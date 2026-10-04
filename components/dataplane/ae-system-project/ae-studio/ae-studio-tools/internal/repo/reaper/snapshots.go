@@ -33,9 +33,9 @@ import (
 // snapshots/skills/<sha> tree.
 type snapshotLeaf struct {
 	path    string
-	project string // repo.SkillsProject for a skills snapshot
-	// isHead is true when sha is the current HEAD of the project's mirror:
-	// the tree a new turn on the project reads.
+	project string // skillsLeafProject for a skills snapshot
+	// isHead is true when sha is the current HEAD of a mirror: the tree a
+	// new turn on the repository reads.
 	isHead bool
 	// lastUse is the leaf's mtime: set when it is made and again whenever a
 	// lookup reuses it (repo.Engine.EnsureSnapshot).
@@ -51,11 +51,18 @@ func (l snapshotLeaf) rel(root string) string {
 	return filepath.ToSlash(rel)
 }
 
+// skillsLeafProject labels a skills snapshot leaf in log lines. A project
+// name is a DNS label, so no project can take it.
+const skillsLeafProject = "_skills"
+
 // reapSnapshots is the snapshot-age pass: trash every snapshot leaf unused
-// for longer than SnapshotMaxAge whose sha is not its mirror's current HEAD.
+// for longer than SnapshotMaxAge whose sha is not a mirror's current HEAD.
 // Snapshots are immutable, so age and not-HEAD are the whole liveness rule; a
-// project with no mirror has no HEAD, so all its aged snapshots go. Only
-// <sha> leaves are ever trashed (repo.Engine.TrashSnapshot).
+// project with no mirror has no HEAD, so all its aged snapshots go. Mirrors
+// are keyed by owner/repo, not project, so HEAD is any mirror's HEAD: a leaf
+// whose sha some other repository also has at its tip (a fork) is kept too,
+// which only ever errs toward keeping. Only <sha> leaves are ever trashed
+// (repo.Engine.TrashSnapshot).
 func (r *Reaper) reapSnapshots(ctx context.Context) error {
 	leaves, err := r.snapshotLeaves(ctx)
 	if err != nil {
@@ -97,11 +104,11 @@ func (r *Reaper) snapshotLeaves(ctx context.Context) ([]snapshotLeaf, error) {
 	if projects, err := os.ReadDir(repo.ProjectSnapshotsDir(root)); err == nil {
 		for _, p := range projects {
 			if p.IsDir() {
-				leaves = appendLeaves(leaves, filepath.Join(repo.ProjectSnapshotsDir(root), p.Name()), p.Name(), heads[p.Name()])
+				leaves = appendLeaves(leaves, filepath.Join(repo.ProjectSnapshotsDir(root), p.Name()), p.Name(), heads)
 			}
 		}
 	}
-	return appendLeaves(leaves, repo.SkillsSnapshotsDir(root), repo.SkillsProject, heads[repo.SkillsProject]), nil
+	return appendLeaves(leaves, repo.SkillsSnapshotsDir(root), skillsLeafProject, heads), nil
 }
 
 // appendLeaves adds the <sha> dirs under dir, all belonging to project.
@@ -128,19 +135,13 @@ func appendLeaves(leaves []snapshotLeaf, dir, project string, heads map[string]b
 	return leaves
 }
 
-// mirrorHeads maps each project (repo.SkillsProject for the org skills
-// repository) to the current HEAD shas of its mirrors.
-func (r *Reaper) mirrorHeads(ctx context.Context) (map[string]map[string]bool, error) {
-	heads := map[string]map[string]bool{}
-	err := r.walkRepoDirs(ctx, func(ref repo.RepoRef, repoDir string) {
-		head := mirrorHead(repo.GitSubdir(repoDir))
-		if head == "" {
-			return
+// mirrorHeads is the set of every mirror's current HEAD sha.
+func (r *Reaper) mirrorHeads(ctx context.Context) (map[string]bool, error) {
+	heads := map[string]bool{}
+	err := r.walkRepoDirs(ctx, func(_ repo.RepoRef, repoDir string) {
+		if head := mirrorHead(repo.GitSubdir(repoDir)); head != "" {
+			heads[head] = true
 		}
-		if heads[ref.Project] == nil {
-			heads[ref.Project] = map[string]bool{}
-		}
-		heads[ref.Project][head] = true
 	})
 	return heads, err
 }
@@ -152,8 +153,8 @@ var sha40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // visits every repo). HEAD names the default branch; the branch resolves
 // through a loose ref first (written by every fetch and push) and falls back
 // to packed-refs (where a fresh clone leaves all refs). "" when the mirror is
-// missing or the ref cannot be resolved: the caller then treats every
-// snapshot of the project as not HEAD.
+// missing or the ref cannot be resolved: that mirror then contributes no
+// HEAD.
 func mirrorHead(gitDir string) string {
 	data, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
 	if err != nil {

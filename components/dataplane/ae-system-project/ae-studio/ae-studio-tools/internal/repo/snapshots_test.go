@@ -31,7 +31,7 @@ import (
 
 func projectSnapshotDir(t *testing.T, fx *Fixture, sha string) string {
 	t.Helper()
-	d, err := repo.SnapshotDir(fx.Engine.Root(), fx.Ref.Project, sha)
+	d, err := repo.SnapshotDir(fx.Engine.Root(), defaultProject, sha)
 	if err != nil {
 		t.Fatalf("SnapshotDir: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestEnsureSnapshotMaterializesImmutableTree(t *testing.T) {
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
 
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatalf("EnsureSnapshot: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestEnsureSnapshotMaterializesImmutableTree(t *testing.T) {
 
 	// Idempotent: a second call short-circuits without running git at all.
 	rec := recordCommands(t, fx.Engine)
-	again, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	again, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil || again != dir {
 		t.Fatalf("EnsureSnapshot(again) = %q, %v", again, err)
 	}
@@ -130,7 +130,7 @@ func TestEnsureSnapshotReuseRefreshesAge(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatalf("EnsureSnapshot: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestEnsureSnapshotReuseRefreshesAge(t *testing.T) {
 	if err := os.Chtimes(dir, old, old); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha); err != nil {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha); err != nil {
 		t.Fatalf("EnsureSnapshot(again): %v", err)
 	}
 	st, err := os.Stat(dir)
@@ -156,7 +156,7 @@ func TestEnsureSnapshotFetchesUnseenShaAndRejectsUnknown(t *testing.T) {
 	mustHead(t, fx, "") // prime the mirror
 	sha2 := fx.Origin.Commit(t, map[string]string{"new.md": "new\n"}, "second")
 
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha2)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha2)
 	if err != nil {
 		t.Fatalf("EnsureSnapshot(unseen sha): %v", err)
 	}
@@ -166,14 +166,14 @@ func TestEnsureSnapshotFetchesUnseenShaAndRejectsUnknown(t *testing.T) {
 	}
 
 	missing := strings.Repeat("deadbeef", 5)
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, missing); !errors.Is(err, repo.ErrRefNotFound) {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, missing); !errors.Is(err, repo.ErrRefNotFound) {
 		t.Fatalf("EnsureSnapshot(unknown sha) err = %v, want ErrRefNotFound", err)
 	}
 	if _, err := os.Stat(projectSnapshotDir(t, fx, missing)); !os.IsNotExist(err) {
 		t.Fatalf("unknown-sha snapshot dir published (err=%v)", err)
 	}
 
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, "main"); err == nil {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, "main"); err == nil {
 		t.Fatal("EnsureSnapshot(symbolic ref) succeeded, want validation error")
 	}
 }
@@ -183,7 +183,7 @@ func TestEnsureSnapshotFetchesUnseenShaAndRejectsUnknown(t *testing.T) {
 func TestEnsureSnapshotIsCrossUIDReadable(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(context.Background(), fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(context.Background(), fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatalf("EnsureSnapshot: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestEnsureSnapshotConcurrentNeverTearsDir(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, errs[i] = fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+			_, errs[i] = fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 		}(i)
 	}
 	wg.Wait()
@@ -251,7 +251,7 @@ func TestEnsureSkillsSnapshot(t *testing.T) {
 	if b, err := os.ReadFile(filepath.Join(dir, "designer", "SKILL.md")); err != nil || string(b) != "# designer\n" {
 		t.Fatalf("skill = (%q, %v)", b, err)
 	}
-	if _, err := os.Stat(repo.ProjectSnapshotsDir(fx.Engine.Root()) + "/" + fx.Ref.Project); !os.IsNotExist(err) {
+	if _, err := os.Stat(repo.ProjectSnapshotsDir(fx.Engine.Root()) + "/" + defaultProject); !os.IsNotExist(err) {
 		t.Fatalf("a skills snapshot wrote under snapshots/projects (err=%v)", err)
 	}
 }
@@ -262,14 +262,14 @@ func TestEnsureSnapshotAdmissionAt90(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	existing, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	existing, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sha2 := fx.Origin.Commit(t, map[string]string{"n.md": "n\n"}, "n")
 
 	fx.Engine.SetDiskUsagePct(90)
-	_, err = fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha2)
+	_, err = fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha2)
 	if !errors.Is(err, repo.ErrDiskFull) || !errors.Is(err, repo.ErrDiskAdmission) {
 		t.Fatalf("err = %v, want ErrDiskAdmission (an ErrDiskFull)", err)
 	}
@@ -279,18 +279,18 @@ func TestEnsureSnapshotAdmissionAt90(t *testing.T) {
 	if _, err := fx.Engine.EnsureSkillsSnapshot(ctx, fx.Ref, sha2); !errors.Is(err, repo.ErrDiskAdmission) {
 		t.Fatalf("skills err = %v, want ErrDiskAdmission", err)
 	}
-	if got, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha); err != nil || got != existing {
+	if got, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha); err != nil || got != existing {
 		t.Fatalf("existing snapshot at 90%% = %q, %v; want served", got, err)
 	}
 
 	// The gauge (the reaper's live UsagePct) wins over the last sweep's value.
 	fx.Engine.SetDiskUsagePct(0)
 	fx.Engine.SetUsageGauge(func() int { return 95 })
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha2); !errors.Is(err, repo.ErrDiskAdmission) {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha2); !errors.Is(err, repo.ErrDiskAdmission) {
 		t.Fatalf("gauge 95: err = %v, want ErrDiskAdmission", err)
 	}
 	fx.Engine.SetUsageGauge(func() int { return 89 })
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha2); err != nil {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha2); err != nil {
 		t.Fatalf("gauge 89: %v", err)
 	}
 }
@@ -301,7 +301,7 @@ func TestTrashSnapshotOnlyTakesShaLeaves(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,14 +347,14 @@ func TestEnsureSnapshotRematerializesATrashedLeaf(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if trashed, err := fx.Engine.TrashSnapshot(dir, time.Now().Add(time.Hour)); err != nil || !trashed {
 		t.Fatalf("TrashSnapshot = %v, %v", trashed, err)
 	}
-	again, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	again, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil || again != dir {
 		t.Fatalf("EnsureSnapshot(after trash) = %q, %v", again, err)
 	}
@@ -368,7 +368,7 @@ func TestTrashSnapshotKeepsALeafUsedAfterTheCutoff(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestTrashSnapshotKeepsALeafUsedAfterTheCutoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The reaper listed it as unused; a lookup now reuses it.
-	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha); err != nil {
+	if _, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha); err != nil {
 		t.Fatal(err)
 	}
 	trashed, err := fx.Engine.TrashSnapshot(dir, cutoff)

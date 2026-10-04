@@ -149,7 +149,7 @@ func (r *Reaper) evictLeaves(ctx context.Context, leaves []snapshotLeaf, target 
 	return evicted, freed
 }
 
-// mirrorCandidate is one eviction unit: a whole repos/<org>/<project>/<slug>.
+// mirrorCandidate is one eviction unit: a whole repos/<owner>/<repo>.
 type mirrorCandidate struct {
 	ref     repo.RepoRef
 	size    int64
@@ -159,7 +159,7 @@ type mirrorCandidate struct {
 // evictLRU trashes mirrors least recently used first until about target
 // bytes are freed. TrashRepo takes the repo's EX flock; the bounded lockCtx
 // makes that a try, so a mirror in use (any SH or EX holder) is skipped.
-// Returns the evicted repos as "org/project/slug".
+// Returns the evicted repos as "owner/repo".
 func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 	mirrors, err := r.collectMirrors(ctx)
 	if err != nil {
@@ -176,12 +176,12 @@ func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 		err := r.engine.TrashRepo(lockCtx, m.ref)
 		cancel()
 		if err != nil {
-			slog.InfoContext(ctx, "reaper.evict_skipped", "repo", repoName(m.ref), "reason", err)
+			slog.InfoContext(ctx, "reaper.evict_skipped", "repo", m.ref.FullName(), "reason", err)
 			continue
 		}
 		freed += m.size
-		evicted = append(evicted, repoName(m.ref))
-		slog.InfoContext(ctx, "reaper.evicted", "repo", repoName(m.ref), "bytes", m.size)
+		evicted = append(evicted, m.ref.FullName())
+		slog.InfoContext(ctx, "reaper.evicted", "repo", m.ref.FullName(), "bytes", m.size)
 	}
 	if freed < target {
 		slog.WarnContext(ctx, "reaper.evict_short", "freedBytes", freed, "targetBytes", target)

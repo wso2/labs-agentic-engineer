@@ -19,8 +19,6 @@ package files
 import (
 	"context"
 	"fmt"
-
-	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
 // The snapshots a turn reads (ticket 04 §6, 07 §6): the agent's project
@@ -50,7 +48,7 @@ func (r Reader) Snapshot(ctx context.Context, project, at string) (*ProjectSnaps
 	if err := validateCommit(at); err != nil {
 		return nil, err
 	}
-	rep, ref, err := r.resolve(ctx, project)
+	ref, err := r.repoRef(ctx, project)
 	if err != nil {
 		return nil, err
 	}
@@ -58,23 +56,22 @@ func (r Reader) Snapshot(ctx context.Context, project, at string) (*ProjectSnaps
 	if err != nil {
 		return nil, repoError(ref, fmt.Errorf("resolve %s: %w", commitLabel(at), err))
 	}
-	if _, err := r.Engine.EnsureSnapshot(ctx, ref, head); err != nil {
+	if _, err := r.Engine.EnsureSnapshot(ctx, ref, project, head); err != nil {
 		return nil, repoError(ref, fmt.Errorf("snapshot %s: %w", head, err))
 	}
-	store := repo.OwnerRepo{Owner: rep.Owner, Repo: rep.Repo}
-	r.Engine.OverlayReferences(ctx, ref, store, head)
+	r.Engine.OverlayReferences(ctx, ref, project, head)
 	skills, err := r.SkillsSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	refs, err := r.Engine.ListReferences(ctx, store)
+	refs, err := r.Engine.ListReferences(ctx, ref.OwnerRepo())
 	if err != nil {
 		return nil, repoError(ref, fmt.Errorf("list references: %w", err))
 	}
 	if refs == nil {
 		refs = []string{}
 	}
-	return &ProjectSnapshot{HeadSHA: head, SkillsSHA: skills, References: refs, Idea: r.projectIdea(ctx, ref, head)}, nil
+	return &ProjectSnapshot{HeadSHA: head, SkillsSHA: skills, References: refs, Idea: r.projectIdea(ctx, ref, project, head)}, nil
 }
 
 // SkillsSnapshot resolves the org's skills repository through aep-api (every
@@ -85,7 +82,7 @@ func (r Reader) SkillsSnapshot(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ref, err := r.cloneRef(rep, repo.SkillsProject)
+	ref, err := cloneRef(rep)
 	if err != nil {
 		return "", err
 	}

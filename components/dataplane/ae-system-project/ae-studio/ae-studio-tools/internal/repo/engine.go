@@ -432,7 +432,7 @@ func (e *Engine) cloneMirror(ctx context.Context, ref RepoRef, p repoPaths) (clo
 	stagingGit := filepath.Join(staging, "git")
 	started := time.Now()
 	if _, err := e.remoteGit(ctx, ref, execOpts{}, "clone", "--bare", ref.CloneURL, stagingGit); err != nil {
-		return false, fmt.Errorf("repo: bare clone %s: %w", ref.RepoSlug, err)
+		return false, fmt.Errorf("repo: bare clone %s: %w", ref.FullName(), err)
 	}
 	// A bare clone carries no fetch refspec and no PR refs. Configure the
 	// refresh refspecs so a plain `fetch origin` keeps branches and tags
@@ -446,7 +446,7 @@ func (e *Engine) cloneMirror(ctx context.Context, ref RepoRef, p repoPaths) (clo
 		}
 	}
 	if _, err := e.remoteGit(ctx, ref, execOpts{}, "--git-dir", stagingGit, "fetch", "--prune", "origin"); err != nil {
-		return false, fmt.Errorf("repo: initial fetch %s: %w", ref.RepoSlug, err)
+		return false, fmt.Errorf("repo: initial fetch %s: %w", ref.FullName(), err)
 	}
 	// gc.auto=0 turns off the classic `gc --auto` path only; automatic
 	// maintenance is closed by forcedConfig (maintenance.auto=false) on every
@@ -482,7 +482,7 @@ func (e *Engine) fetch(ctx context.Context, ref RepoRef, p repoPaths) error {
 		"--git-dir", p.gitDir, "fetch", "--prune", "origin",
 		"+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
 	if err != nil {
-		return fmt.Errorf("repo: fetch %s: %w", ref.RepoSlug, err)
+		return fmt.Errorf("repo: fetch %s: %w", ref.FullName(), err)
 	}
 	return nil
 }
@@ -578,9 +578,9 @@ func (e *Engine) resolveCommit(ctx context.Context, ref RepoRef, p repoPaths, at
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-			return "", fmt.Errorf("repo: resolve %q in %s: %w: %w", at, ref.RepoSlug, ErrRefNotFound, err)
+			return "", fmt.Errorf("repo: resolve %q in %s: %w: %w", at, ref.FullName(), ErrRefNotFound, err)
 		}
-		return "", fmt.Errorf("repo: resolve %q in %s: %w", at, ref.RepoSlug, err)
+		return "", fmt.Errorf("repo: resolve %q in %s: %w", at, ref.FullName(), err)
 	}
 	return strings.TrimSpace(string(out)), nil
 }
@@ -612,13 +612,13 @@ func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
 	}
 	defer release()
 	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "repack", "-ad", "--quiet"); err != nil {
-		return fmt.Errorf("repo: repack %s: %w", ref.RepoSlug, err)
+		return fmt.Errorf("repo: repack %s: %w", ref.FullName(), err)
 	}
 	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "prune", "--expire=2.hours.ago"); err != nil {
-		return fmt.Errorf("repo: prune %s: %w", ref.RepoSlug, err)
+		return fmt.Errorf("repo: prune %s: %w", ref.FullName(), err)
 	}
 	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "pack-refs", "--all", "--prune"); err != nil {
-		return fmt.Errorf("repo: pack-refs %s: %w", ref.RepoSlug, err)
+		return fmt.Errorf("repo: pack-refs %s: %w", ref.FullName(), err)
 	}
 	return nil
 }
@@ -672,7 +672,7 @@ func (e *Engine) TrashRepo(ctx context.Context, ref RepoRef) error {
 		if os.IsNotExist(err) {
 			return nil // concurrently trashed
 		}
-		return fmt.Errorf("repo: trash repo %s: %w", ref.RepoSlug, err)
+		return fmt.Errorf("repo: trash repo %s: %w", ref.FullName(), err)
 	}
 	return nil
 }

@@ -87,7 +87,7 @@ func newSocketHarness(t *testing.T, seed map[string]string) *socketHarness {
 		t.Fatal(err)
 	}
 	applier := files.Applier{
-		Reader:    files.Reader{Engine: engine, Projects: fake, Org: "default"},
+		Reader:    files.Reader{Engine: engine, Projects: fake},
 		Completer: noCompletions{},
 		Identity:  fixedIdentity{},
 	}
@@ -444,7 +444,7 @@ func (r deadlineResolver) ResolveSkills(context.Context) (projects.Repository, e
 // answers before ae-collab's per-call deadline (REQUEST_TIMEOUT_MS) gives up.
 func TestFilesSocket_RequestsRunUnderTheBudget(t *testing.T) {
 	res := deadlineResolver{got: make(chan time.Time, 1)}
-	h := FilesSocketRoutes(files.Applier{Reader: files.Reader{Projects: res, Org: "default"}})
+	h := FilesSocketRoutes(files.Applier{Reader: files.Reader{Projects: res}})
 	start := time.Now()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/greeter", nil))

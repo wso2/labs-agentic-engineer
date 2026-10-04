@@ -138,11 +138,13 @@ func mirrorGitDir(t *testing.T, fx *Fixture) string {
 	return repo.GitSubdir(repoDir)
 }
 
-// Default path-key segments a Fixture addresses its repo with.
+// Default owner/repo a Fixture addresses its origin as.
 const (
-	defaultOrg     = "org-1"
+	defaultOwner = "acme"
+	defaultRepo  = "repo"
+	// defaultProject names the fixture repo's snapshots
+	// (snapshots/projects/<project>/<sha>); it is not part of the mirror key.
 	defaultProject = "proj-1"
-	defaultSlug    = "acme-repo"
 )
 
 // Fixture bundles one real bare origin, one engine over a fresh root, and the
@@ -166,7 +168,7 @@ func NewFixtureWithCred(t *testing.T, seed map[string]string, cred repo.Credenti
 	return &Fixture{
 		Origin: origin,
 		Engine: NewEngine(t, cred),
-		Ref:    RefFor(origin, defaultOrg, defaultProject, defaultSlug),
+		Ref:    RefFor(origin, defaultOwner, defaultRepo),
 	}
 }
 
@@ -180,7 +182,7 @@ func NewEngine(t *testing.T, cred repo.Credential) *repo.Engine {
 	return e
 }
 
-// RefFor addresses origin under the given path-key segments.
-func RefFor(origin *repotest.Origin, org, project, slug string) repo.RepoRef {
-	return repo.RepoRef{Org: org, Project: project, RepoSlug: slug, CloneURL: origin.URL(), DefaultBranch: "main"}
+// RefFor addresses origin as the GitHub repository owner/name.
+func RefFor(origin *repotest.Origin, owner, name string) repo.RepoRef {
+	return repo.RepoRef{Owner: owner, Repo: name, CloneURL: origin.URL(), DefaultBranch: "main"}
 }

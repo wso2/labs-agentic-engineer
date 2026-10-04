@@ -24,12 +24,12 @@ import (
 )
 
 // The mount layout (design §4). All helpers are pure functions of the
-// workspace root and the RepoRef path key — the path is a function of the DB
-// row, never of client input, and every segment is validated defensively
-// anyway (defense in depth against a poisoned row).
+// workspace root and the RepoRef path key (the GitHub owner/repo,
+// lower-cased); every segment is validated, so a hostile name can never
+// traverse out of its dir.
 //
-//	<root>/repos/<org>/<project>/<repoSlug>/git/       bare clone (never checked out)
-//	<root>/repos/<org>/<project>/<repoSlug>/repo.lock  flock: SH reads, EX fetch/push/ref-move
+//	<root>/repos/<owner>/<repo>/git/                   bare clone (never checked out)
+//	<root>/repos/<owner>/<repo>/repo.lock              flock: SH reads, EX fetch/push/ref-move
 //	<root>/snapshots/projects/<project>/<sha>/         immutable plain-file tree of a project commit
 //	<root>/snapshots/skills/<sha>/                     immutable plain-file tree of an Org skills commit
 //	<root>/references/<owner>/<repo>/                  a repo's stored reference documents (never committed)
@@ -42,8 +42,9 @@ import (
 // children, or the agent sees an empty tree until it restarts. Only <sha>
 // leaves are ever removed (TrashSnapshot).
 
-// segmentPattern is the allowed shape of one path segment (org, project,
-// slug): dot, dash, underscore, alphanumerics — no separators, no traversal.
+// segmentPattern is the allowed shape of one path segment (owner, repo,
+// project): dot, dash, underscore, alphanumerics — no separators, no
+// traversal.
 var segmentPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
 
 // sha40Pattern matches a full 40-hex git object name.
@@ -59,15 +60,18 @@ func validateSegment(kind, s string) error {
 	return nil
 }
 
-// validateRef validates the three path-key segments of a RepoRef.
-func validateRef(ref RepoRef) error {
-	if err := validateSegment("org", ref.Org); err != nil {
-		return err
+// ownerRepoDir is <base>/<owner>/<repo>, lower-cased: GitHub names are
+// case-insensitive, so one repository has one dir whichever spelling a caller
+// has.
+func ownerRepoDir(base, owner, name string) (string, error) {
+	owner, name = strings.ToLower(owner), strings.ToLower(name)
+	if err := validateSegment("owner", owner); err != nil {
+		return "", err
 	}
-	if err := validateSegment("project", ref.Project); err != nil {
-		return err
+	if err := validateSegment("repo", name); err != nil {
+		return "", err
 	}
-	return validateSegment("repo slug", ref.RepoSlug)
+	return filepath.Join(base, owner, name), nil
 }
 
 // ReposDir is <root>/repos.
@@ -78,11 +82,6 @@ func TrashDir(root string) string { return filepath.Join(root, "trash") }
 
 // TmpDir is <root>/tmp — atomic clone staging and the askpass shim.
 func TmpDir(root string) string { return filepath.Join(root, "tmp") }
-
-// SkillsProject is the project path segment of the org's skills repository
-// clone (repos/<org>/_skills/<slug>). A project name is a DNS label, so no
-// project can take it.
-const SkillsProject = "_skills"
 
 // SnapshotsDir is <root>/snapshots, the dir ae-design-agent mounts.
 func SnapshotsDir(root string) string { return filepath.Join(root, "snapshots") }
@@ -116,31 +115,27 @@ func SkillsSnapshotDir(root, sha string) (string, error) {
 // ReferencesDir is <root>/references, the reference document stores.
 func ReferencesDir(root string) string { return filepath.Join(root, "references") }
 
-// ReferenceStoreDir is <root>/references/<owner>/<repo>, lower-cased: GitHub
-// names are case-insensitive, so one repository has one store whichever
-// spelling a caller has.
+// ReferenceStoreDir is <root>/references/<owner>/<repo>, lower-cased (see
+// ownerRepoDir).
 func ReferenceStoreDir(root string, r OwnerRepo) (string, error) {
-	owner, name := strings.ToLower(r.Owner), strings.ToLower(r.Repo)
-	if err := validateSegment("owner", owner); err != nil {
-		return "", err
-	}
-	if err := validateSegment("repo", name); err != nil {
-		return "", err
-	}
-	return filepath.Join(ReferencesDir(root), owner, name), nil
+	return ownerRepoDir(ReferencesDir(root), r.Owner, r.Repo)
 }
 
-// RepoDir is <root>/repos/<org>/<project>/<repoSlug> — the renamable
-// parent holding git/ and repo.lock.
+// Validate reports whether ref's owner/repo can key a mirror: the check
+// RepoDir applies, for a caller that classifies a bad name before any git.
+func (r RepoRef) Validate() error {
+	_, err := ownerRepoDir("", r.Owner, r.Repo)
+	return err
+}
+
+// RepoDir is <root>/repos/<owner>/<repo>, lower-cased (see ownerRepoDir) —
+// the renamable parent holding git/ and repo.lock.
 func RepoDir(root string, ref RepoRef) (string, error) {
-	if err := validateRef(ref); err != nil {
-		return "", err
-	}
-	return filepath.Join(ReposDir(root), ref.Org, ref.Project, ref.RepoSlug), nil
+	return ownerRepoDir(ReposDir(root), ref.Owner, ref.Repo)
 }
 
 // GitSubdir is the leaf-name helper for callers holding the repo dir.
-func GitSubdir(slugDir string) string { return filepath.Join(slugDir, "git") }
+func GitSubdir(repoDir string) string { return filepath.Join(repoDir, "git") }
 
 // repoPaths bundles the derived per-repo paths one engine operation needs.
 type repoPaths struct {

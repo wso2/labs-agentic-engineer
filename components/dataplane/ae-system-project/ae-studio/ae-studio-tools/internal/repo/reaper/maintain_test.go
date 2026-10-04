@@ -105,7 +105,7 @@ func TestMaintainReposSkipsBusyLock(t *testing.T) {
 // them) and returns the git dir.
 func looseHeavyMirror(t *testing.T, root, prefix string) string {
 	t.Helper()
-	gitDir := repo.GitSubdir(filepath.Join(repo.ReposDir(root), "o1", "p1", "r1"))
+	gitDir := repo.GitSubdir(filepath.Join(repo.ReposDir(root), "o1", "r1"))
 	initSyntheticMirror(t, gitDir)
 	work := t.TempDir()
 	for i := 0; i < 1101; i++ {

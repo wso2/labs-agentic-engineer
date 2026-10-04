@@ -24,12 +24,12 @@ import (
 )
 
 func TestPathDerivation(t *testing.T) {
-	ref := repo.RepoRef{Org: "org-1", Project: "_skills", RepoSlug: "org-skills"}
+	ref := repo.RepoRef{Owner: "Acme-GH", Repo: "Org-Skills"}
 	const root = "/workspaces"
 
 	repoDir, err := repo.RepoDir(root, ref)
-	if err != nil || repoDir != "/workspaces/repos/org-1/_skills/org-skills" {
-		t.Fatalf("RepoDir = (%q, %v)", repoDir, err)
+	if err != nil || repoDir != "/workspaces/repos/acme-gh/org-skills" {
+		t.Fatalf("RepoDir = (%q, %v), want the lower-cased owner/repo key", repoDir, err)
 	}
 	if repo.TrashDir(root) != "/workspaces/trash" || repo.TmpDir(root) != "/workspaces/tmp" ||
 		repo.ReposDir(root) != "/workspaces/repos" {
@@ -37,19 +37,32 @@ func TestPathDerivation(t *testing.T) {
 	}
 }
 
+// GitHub names are case-insensitive: every spelling of one repository is one
+// mirror (Q-4), so the Room's save path and a direct owner/repo caller share
+// one lock and one disk copy.
+func TestRepoDirIsCaseInsensitive(t *testing.T) {
+	const root = "/workspaces"
+	a, errA := repo.RepoDir(root, repo.RepoRef{Owner: "Acme", Repo: "Greeter-App"})
+	b, errB := repo.RepoDir(root, repo.RepoRef{Owner: "acme", Repo: "greeter-app"})
+	if errA != nil || errB != nil || a != b {
+		t.Fatalf("RepoDir = (%q, %v) vs (%q, %v), want one dir", a, errA, b, errB)
+	}
+}
+
 func TestPathDerivationRejectsHostileSegments(t *testing.T) {
 	const root = "/workspaces"
-	base := repo.RepoRef{Org: "org", Project: "proj", RepoSlug: "slug"}
+	base := repo.RepoRef{Owner: "owner", Repo: "repo"}
 
 	mutations := []func(*repo.RepoRef){
-		func(r *repo.RepoRef) { r.Org = "" },
-		func(r *repo.RepoRef) { r.Org = ".." },
-		func(r *repo.RepoRef) { r.Org = "a/b" },
-		func(r *repo.RepoRef) { r.Project = "." },
-		func(r *repo.RepoRef) { r.Project = "p\\q" },
-		func(r *repo.RepoRef) { r.RepoSlug = "s g" },
-		func(r *repo.RepoRef) { r.RepoSlug = "../../etc" },
-		func(r *repo.RepoRef) { r.RepoSlug = strings.Repeat("x", 201) },
+		func(r *repo.RepoRef) { r.Owner = "" },
+		func(r *repo.RepoRef) { r.Owner = ".." },
+		func(r *repo.RepoRef) { r.Owner = "a/b" },
+		func(r *repo.RepoRef) { r.Repo = "" },
+		func(r *repo.RepoRef) { r.Repo = "." },
+		func(r *repo.RepoRef) { r.Repo = "p\\q" },
+		func(r *repo.RepoRef) { r.Repo = "s g" },
+		func(r *repo.RepoRef) { r.Repo = "../../etc" },
+		func(r *repo.RepoRef) { r.Repo = strings.Repeat("x", 201) },
 	}
 	for i, mutate := range mutations {
 		ref := base

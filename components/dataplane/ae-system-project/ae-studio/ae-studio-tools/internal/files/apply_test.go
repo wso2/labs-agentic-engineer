@@ -93,7 +93,7 @@ func newApplier(t *testing.T, seed map[string]string, opts ...applyOpt) (*applyR
 	fake := projectstest.NewFake(map[string]projects.Repository{"greeter": {
 		Owner: "Acme", Repo: "Greeter-App", DefaultBranch: repotest.Branch, CloneURL: origin.URL(),
 	}})
-	reader := files.Reader{Engine: engine, Projects: fake, Org: testOrg}
+	reader := files.Reader{Engine: engine, Projects: fake}
 	a := files.Applier{Reader: reader, Completer: &fakeCompleter{}}
 	withIdentity("aep-bot", "")(t, &a, origin)
 	for _, o := range opts {
@@ -197,6 +197,33 @@ func sameStrings(got, want []string) bool {
 const paymentsStub = `{"name":"payments","resource":{"ref":"payments","name":"payments"}}`
 
 // ---- Review Focus 1 + the brief's cases ---------------------------------
+
+// Q-4: the Room's save path (project → owner/repo through aep-api) and a
+// caller that addresses the repository directly by owner/repo, in any case,
+// share one mirror: repos/ holds exactly one, and the direct caller reads the
+// Room's commit through it.
+func TestApply_RoomSaveAndOwnerRepoCallerShareOneMirror(t *testing.T) {
+	a, origin := newApplier(t, map[string]string{"specs/requirements/prd.md": "v1"})
+	res, _, err := a.Apply(ctx, "greeter", files.ApplyRequest{Writes: []files.WriteOp{
+		{Path: "specs/requirements/prd.md", Content: "v2", BaseSHA: origin.Git(t, "rev-parse", repotest.Branch+":specs/requirements/prd.md")},
+	}})
+	if err != nil || !res.Changed {
+		t.Fatalf("Room save = %+v, %v", res, err)
+	}
+	direct := repo.RepoRef{Owner: "ACME", Repo: "greeter-app", CloneURL: origin.URL(), DefaultBranch: repotest.Branch}
+	sha, err := a.reader.Engine.Head(ctx, direct, "")
+	if err != nil || sha != res.CommitSHA {
+		t.Fatalf("direct owner/repo Head = %q, %v; want the Room's commit %s", sha, err, res.CommitSHA)
+	}
+	owners, _ := os.ReadDir(repo.ReposDir(a.reader.Engine.Root()))
+	if len(owners) != 1 || owners[0].Name() != "acme" {
+		t.Fatalf("repos/ = %v, want one owner dir acme", owners)
+	}
+	mirrors, _ := os.ReadDir(filepath.Join(repo.ReposDir(a.reader.Engine.Root()), "acme"))
+	if len(mirrors) != 1 || mirrors[0].Name() != "greeter-app" {
+		t.Fatalf("repos/acme = %v, want one mirror greeter-app", mirrors)
+	}
+}
 
 // The Room seeds from a bundle and applies with its blob shas. A commit made
 // outside the Room after the seed must surface as a conflict naming exactly

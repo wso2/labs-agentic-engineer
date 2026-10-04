@@ -70,7 +70,7 @@ func (e *Engine) credEnv(ctx context.Context, ref RepoRef) (map[string]string, e
 	}
 	token, err := e.cred.Token(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("repo: mint token for %s: %w", ref.RepoSlug, err)
+		return nil, fmt.Errorf("repo: mint token for %s: %w", ref.FullName(), err)
 	}
 	return map[string]string{
 		"GIT_ASKPASS": e.askpass,

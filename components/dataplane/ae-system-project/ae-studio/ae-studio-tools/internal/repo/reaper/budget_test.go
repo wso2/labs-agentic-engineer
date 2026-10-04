@@ -31,14 +31,14 @@ import (
 func TestBudget_LRUEvictsDownTo70(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1})
-	writeMirror(t, root, "acme/old/old", 500*kib, time.Now().Add(-2*time.Hour))
-	writeMirror(t, root, "acme/new/new", 400*kib, time.Now())
+	writeMirror(t, root, "acme/old", 500*kib, time.Now().Add(-2*time.Hour))
+	writeMirror(t, root, "acme/new", 400*kib, time.Now())
 	r.cfg.Budget = budgetAt(t, root, 90)
 	evicted, err := r.sweepOnce(context.Background()) // usage 90% ≥ 85%
 	if err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
-	if want := []string{"acme/old/old"}; !reflect.DeepEqual(evicted, want) {
+	if want := []string{"acme/old"}; !reflect.DeepEqual(evicted, want) {
 		t.Fatalf("evicted = %v, want %v (least recently used first)", evicted, want)
 	}
 	if got := r.UsagePct(); got > 70 {
@@ -57,12 +57,12 @@ func TestUsagePct_TakesHigherOfBudgetAndStatfs(t *testing.T) {
 func TestNoOrphanPass(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1 << 30})
-	writeMirror(t, root, "acme/unlisted/unlisted", 10, time.Now())
+	writeMirror(t, root, "acme/unlisted", 10, time.Now())
 	if _, err := r.sweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 	// Nothing lists live repos; LRU and rolls clean up.
-	mustExist(t, filepath.Join(root, "repos/acme/unlisted/unlisted"))
+	mustExist(t, filepath.Join(root, "repos/acme/unlisted"))
 }
 
 // Under the high mark nothing is evicted and young trash is left for the
@@ -70,7 +70,7 @@ func TestNoOrphanPass(t *testing.T) {
 func TestBudget_UnderHighEvictsNothing(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1})
-	writeMirror(t, root, "acme/p/r", 500*kib, time.Now().Add(-48*time.Hour))
+	writeMirror(t, root, "acme/r", 500*kib, time.Now().Add(-48*time.Hour))
 	young := trashEntry(t, root, trashName(time.Now(), "young"), 100*kib)
 	r.cfg.Budget = budgetAt(t, root, 50)
 	evicted, err := r.sweepOnce(context.Background())
@@ -85,7 +85,7 @@ func TestBudget_UnderHighEvictsNothing(t *testing.T) {
 func TestBudget_PurgesTrashBeforeEvicting(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1})
-	m := writeMirror(t, root, "acme/p/r", 500*kib, time.Now().Add(-48*time.Hour))
+	m := writeMirror(t, root, "acme/r", 500*kib, time.Now().Add(-48*time.Hour))
 	young := trashEntry(t, root, trashName(time.Now(), "young"), 1400*kib) // fresh: age-gated pass keeps it
 	r.cfg.Budget = budgetAt(t, root, 100)                                  // trash purge alone drops it to ~26%
 	evicted, err := r.sweepOnce(context.Background())
@@ -101,8 +101,8 @@ func TestBudget_PurgesTrashBeforeEvicting(t *testing.T) {
 func TestBudget_NeverEvictsLockedMirror(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1})
-	busy := writeMirror(t, root, "acme/p/busy", 500*kib, time.Now().Add(-3*time.Hour))
-	next := writeMirror(t, root, "acme/p/next", 400*kib, time.Now().Add(-1*time.Hour))
+	busy := writeMirror(t, root, "acme/busy", 500*kib, time.Now().Add(-3*time.Hour))
+	next := writeMirror(t, root, "acme/next", 400*kib, time.Now().Add(-1*time.Hour))
 
 	lock, err := os.OpenFile(filepath.Join(busy, "repo.lock"), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
@@ -118,7 +118,7 @@ func TestBudget_NeverEvictsLockedMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
-	if want := []string{"acme/p/next"}; !reflect.DeepEqual(evicted, want) {
+	if want := []string{"acme/next"}; !reflect.DeepEqual(evicted, want) {
 		t.Fatalf("evicted = %v, want %v", evicted, want)
 	}
 	mustExist(t, busy)
@@ -131,11 +131,11 @@ func TestBudget_StaysInsideRoot(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1})
-	foreign := writeMirror(t, outside, "evil/p/r", 900*kib, time.Now().Add(-48*time.Hour))
+	foreign := writeMirror(t, outside, "evil/r", 900*kib, time.Now().Add(-48*time.Hour))
 	if err := os.Symlink(filepath.Join(repo.ReposDir(outside), "evil"), filepath.Join(repo.ReposDir(root), "evil")); err != nil {
 		t.Fatalf("symlink: %v", err)
 	}
-	writeMirror(t, root, "acme/p/r", 900*kib, time.Now())
+	writeMirror(t, root, "acme/r", 900*kib, time.Now())
 	r.cfg.Budget = budgetAt(t, root, 90)
 
 	if _, err := r.sweepOnce(context.Background()); err != nil {

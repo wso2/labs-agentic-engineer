@@ -34,14 +34,14 @@ func TestTrashThenPurgeKeepsOpenFds(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1 << 30, TrashMaxAge: time.Nanosecond})
-	dir := writeMirror(t, root, "acme/p/r", 64, time.Now())
+	dir := writeMirror(t, root, "acme/r", 64, time.Now())
 	f, err := os.Open(filepath.Join(repo.GitSubdir(dir), "payload"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer f.Close()
 
-	if err := r.engine.TrashRepo(ctx, repo.RepoRef{Org: "acme", Project: "p", RepoSlug: "r"}); err != nil {
+	if err := r.engine.TrashRepo(ctx, repo.RepoRef{Owner: "acme", Repo: "r"}); err != nil {
 		t.Fatalf("TrashRepo: %v", err)
 	}
 	mustNotExist(t, dir)

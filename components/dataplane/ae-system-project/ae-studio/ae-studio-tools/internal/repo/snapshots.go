@@ -34,10 +34,11 @@ import (
 // /snapshots/projects/<project>/<sha> and /snapshots/skills/<sha>.
 
 // EnsureSnapshot materializes the immutable tree of ref's commit sha at
-// snapshots/projects/<ref.Project>/<sha> iff absent, and returns its path.
-// sha must be a full 40-hex commit name.
-func (e *Engine) EnsureSnapshot(ctx context.Context, ref RepoRef, sha string) (string, error) {
-	dest, err := SnapshotDir(e.root, ref.Project, sha)
+// snapshots/projects/<project>/<sha> iff absent, and returns its path. The
+// project names the snapshot (the agent's contract), not the mirror. sha
+// must be a full 40-hex commit name.
+func (e *Engine) EnsureSnapshot(ctx context.Context, ref RepoRef, project, sha string) (string, error) {
+	dest, err := SnapshotDir(e.root, project, sha)
 	if err != nil {
 		return "", err
 	}

@@ -33,7 +33,6 @@ import (
 
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
-	"github.com/wso2/aep/ae-studio-tools/internal/repo/naming"
 )
 
 var (
@@ -53,8 +52,6 @@ var (
 type Reader struct {
 	Engine   *repo.Engine
 	Projects projects.Resolver
-	// Org is the pod's org handle: the first path segment of every clone.
-	Org string
 }
 
 // Meta is one file of a listing.
@@ -224,38 +221,32 @@ func (r Reader) repoRef(ctx context.Context, project string) (repo.RepoRef, erro
 }
 
 // resolve resolves project through aep-api (every call, never cached) and
-// addresses its clone under the pod's org. The slug is derived from aep-api's
-// owner/repo with the function aep-api uses for its git_repositories column.
+// addresses its repository's mirror by aep-api's owner/repo.
 func (r Reader) resolve(ctx context.Context, project string) (projects.Repository, repo.RepoRef, error) {
 	rep, err := r.Projects.Resolve(ctx, project)
 	if err != nil {
 		return projects.Repository{}, repo.RepoRef{}, err
 	}
-	ref, err := r.cloneRef(rep, project)
+	ref, err := cloneRef(rep)
 	if err != nil {
 		return projects.Repository{}, repo.RepoRef{}, err
 	}
 	return rep, ref, nil
 }
 
-// cloneRef addresses rep's clone under the pod's org as project (the
-// project's name, or repo.SkillsProject for the org skills repository).
-func (r Reader) cloneRef(rep projects.Repository, project string) (repo.RepoRef, error) {
-	slug := naming.SlugForURL("https://github.com/" + rep.Owner + "/" + rep.Repo)
-	if slug == "" {
+// cloneRef addresses rep's mirror by its owner/repo (never by the clone URL
+// or a project, so the Room and an owner/repo caller share one mirror).
+func cloneRef(rep projects.Repository) (repo.RepoRef, error) {
+	ref := repo.RepoRef{Owner: rep.Owner, Repo: rep.Repo, DefaultBranch: rep.DefaultBranch}
+	if err := ref.Validate(); err != nil {
 		return repo.RepoRef{}, fmt.Errorf("%w: repository answer is not an owner/repo pair", projects.ErrUnavailable)
 	}
 	cloneURL, err := withoutUserinfo(rep.CloneURL)
 	if err != nil {
 		return repo.RepoRef{}, fmt.Errorf("%w: repository answer has an unusable clone URL", projects.ErrUnavailable)
 	}
-	return repo.RepoRef{
-		Org:           r.Org,
-		Project:       project,
-		RepoSlug:      slug,
-		CloneURL:      cloneURL,
-		DefaultBranch: rep.DefaultBranch,
-	}, nil
+	ref.CloneURL = cloneURL
+	return ref, nil
 }
 
 // withoutUserinfo drops any user:password@ from a clone URL: the engine

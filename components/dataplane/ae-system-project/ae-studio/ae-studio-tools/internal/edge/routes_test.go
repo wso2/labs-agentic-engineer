@@ -153,7 +153,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Verifier:   auth.NewVerifier(cfg.IDPIssuer, auth.NewJWKSCache(cfg.IDPJWKSURL)),
 		GitHub:     deps.gh,
 		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
-		Files:      files.Reader{Engine: engine, Projects: h.projects, Org: cfg.OrgHandle},
+		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
 		Projects:   h.projects,
 		Turns:      turns.Relay{Turns: turns.NewClient(deps.turnSocket)},

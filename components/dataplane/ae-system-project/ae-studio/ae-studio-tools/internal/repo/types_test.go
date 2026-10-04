@@ -22,20 +22,11 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// FullName is the owner/repo of a GitHub URL for log lines: suffix and
-// trailing slash dropped, case kept, userinfo never included.
+// FullName is the ref's owner/repo for log lines, case kept. It never reads
+// CloneURL, so userinfo in a URL can never reach a log line through it.
 func TestRepoRef_FullName(t *testing.T) {
-	for _, c := range []struct{ url, want string }{
-		{"https://github.com/Acme/Greeter-App.git", "Acme/Greeter-App"},
-		{"https://github.com/acme/greeter", "acme/greeter"},
-		{"https://github.com/acme/greeter/", "acme/greeter"},
-		{"https://x-access-token:not-a-real-token@github.com/acme/greeter.git", "acme/greeter"},
-		{"https://user@github.com/acme/greeter", "acme/greeter"},
-		{"https://gitlab.com/acme/greeter.git", ""},
-		{"file:///tmp/origin.git", ""},
-	} {
-		if got := (repo.RepoRef{CloneURL: c.url}).FullName(); got != c.want {
-			t.Errorf("FullName(%q) = %q, want %q", c.url, got, c.want)
-		}
+	ref := repo.RepoRef{Owner: "Acme", Repo: "Greeter-App", CloneURL: "https://user:not-a-real-token@github.com/acme/greeter-app.git"}
+	if got := ref.FullName(); got != "Acme/Greeter-App" {
+		t.Fatalf("FullName = %q, want Acme/Greeter-App", got)
 	}
 }

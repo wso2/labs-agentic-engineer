@@ -47,18 +47,18 @@ type descriptor struct {
 // malformed one answer "", because a lost idea costs the user one question
 // from the start skill while a failed lookup costs them the turn. The log
 // lines carry no descriptor content (a parse error can quote it).
-func (r Reader) projectIdea(ctx context.Context, ref repo.RepoRef, sha string) string {
+func (r Reader) projectIdea(ctx context.Context, ref repo.RepoRef, project, sha string) string {
 	raw, _, err := r.Engine.ReadFile(ctx, ref, sha, DescriptorPath)
 	if errors.Is(err, repo.ErrPathNotFound) {
 		return ""
 	}
 	if err != nil {
-		slog.WarnContext(ctx, "snapshot.idea_unreadable", "project", ref.Project, "step", "read", "error", err)
+		slog.WarnContext(ctx, "snapshot.idea_unreadable", "project", project, "step", "read", "error", err)
 		return ""
 	}
 	var d descriptor
 	if _, err := toml.Decode(string(raw), &d); err != nil {
-		slog.WarnContext(ctx, "snapshot.idea_unreadable", "project", ref.Project, "step", "parse")
+		slog.WarnContext(ctx, "snapshot.idea_unreadable", "project", project, "step", "parse")
 		return ""
 	}
 	return strings.TrimSpace(d.Idea)

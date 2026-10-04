@@ -31,12 +31,12 @@ import (
 
 func fakeSha(n int) string { return fmt.Sprintf("%040x", n) }
 
-// writeMirrorAt lays out repos/<org>/<project>/<slug>/git with HEAD on main
-// and main at head (a loose ref), so the reaper resolves it as the mirror's
-// current HEAD.
-func writeMirrorAt(t *testing.T, root, org, project, slug, head string) {
+// writeMirrorAt lays out repos/<owner>/<repo>/git with HEAD on main and main
+// at head (a loose ref), so the reaper resolves it as the mirror's current
+// HEAD.
+func writeMirrorAt(t *testing.T, root, owner, name, head string) {
 	t.Helper()
-	gitDir := repo.GitSubdir(filepath.Join(repo.ReposDir(root), org, project, slug))
+	gitDir := repo.GitSubdir(filepath.Join(repo.ReposDir(root), owner, name))
 	mkFile(t, filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"))
 	mkFile(t, filepath.Join(gitDir, "refs", "heads", "main"), []byte(head+"\n"))
 }
@@ -59,15 +59,16 @@ func skillsSnap(root, sha string) string {
 }
 
 // The snapshot-age pass (20 §3) trashes a <sha> leaf unused for longer than
-// SnapshotMaxAge unless it is its repository mirror's current HEAD; the
-// skills snapshots follow the org skills mirror. A project with no mirror
-// (evicted, or never cloned since a roll) has no HEAD to keep.
+// SnapshotMaxAge unless its sha is a mirror's current HEAD (mirrors are keyed
+// by owner/repo, not project, so any mirror's HEAD keeps a leaf); the skills
+// snapshots follow the org skills mirror. A project with no mirror (evicted,
+// or never cloned since a roll) has no HEAD to keep.
 func TestSnapshotAgeReap(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1 << 30})
 	head, skillsHead := fakeSha(1), fakeSha(2)
-	writeMirrorAt(t, root, "acme", "greeter", "acme-greeter", head)
-	writeMirrorAt(t, root, "acme", repo.SkillsProject, "acme-org-skills", skillsHead)
+	writeMirrorAt(t, root, "acme", "greeter", head)
+	writeMirrorAt(t, root, "acme", "org-skills", skillsHead)
 	aged, fresh := time.Now().Add(-25*time.Hour), time.Now()
 
 	keepHead := writeSnapshot(t, projectSnap(root, "greeter", head), 10, aged)
@@ -101,8 +102,8 @@ func TestBudget_EvictsSnapshotsBeforeMirrors(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1, SnapshotMaxAge: 24 * time.Hour})
 	head := fakeSha(1)
-	writeMirrorAt(t, root, "acme", "greeter", "acme-greeter", head)
-	mirror := writeMirror(t, root, "acme/greeter/acme-greeter", 300*kib, time.Now().Add(-48*time.Hour))
+	writeMirrorAt(t, root, "acme", "greeter", head)
+	mirror := writeMirror(t, root, "acme/greeter", 300*kib, time.Now().Add(-48*time.Hour))
 	oldest := writeSnapshot(t, projectSnap(root, "greeter", fakeSha(2)), 400*kib, time.Now().Add(-3*time.Hour))
 	headSnap := writeSnapshot(t, projectSnap(root, "greeter", head), 400*kib, time.Now().Add(-4*time.Hour))
 	inUse := writeSnapshot(t, skillsSnap(root, fakeSha(3)), 400*kib, time.Now().Add(-10*time.Minute))
@@ -126,14 +127,14 @@ func TestBudget_EvictsMirrorsAfterSnapshots(t *testing.T) {
 	root := t.TempDir()
 	r := newReaperForTest(t, root, Config{Budget: 1, SnapshotMaxAge: 24 * time.Hour})
 	snap := writeSnapshot(t, projectSnap(root, "greeter", fakeSha(2)), 50*kib, time.Now().Add(-3*time.Hour))
-	mirror := writeMirror(t, root, "acme/greeter/acme-greeter", 800*kib, time.Now().Add(-48*time.Hour))
+	mirror := writeMirror(t, root, "acme/greeter", 800*kib, time.Now().Add(-48*time.Hour))
 	r.cfg.Budget = budgetAt(t, root, 90)
 
 	evicted, err := r.sweepOnce(context.Background())
 	if err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
-	if want := []string{"snapshots/projects/greeter/" + fakeSha(2), "acme/greeter/acme-greeter"}; !reflect.DeepEqual(evicted, want) {
+	if want := []string{"snapshots/projects/greeter/" + fakeSha(2), "acme/greeter"}; !reflect.DeepEqual(evicted, want) {
 		t.Fatalf("evicted = %v, want %v", evicted, want)
 	}
 	mustNotExist(t, snap)
@@ -159,14 +160,14 @@ func TestSnapshotRootsAreNeverMoved(t *testing.T) {
 	aged := time.Now().Add(-48 * time.Hour)
 	writeSnapshot(t, projectSnap(root, "greeter", fakeSha(1)), 300*kib, aged)
 	writeSnapshot(t, skillsSnap(root, fakeSha(2)), 300*kib, aged)
-	writeMirror(t, root, "acme/greeter/acme-greeter", 300*kib, aged)
+	writeMirror(t, root, "acme/greeter", 300*kib, aged)
 	r.cfg.Budget = budgetAt(t, root, 100)
 
 	if _, err := r.sweepOnce(context.Background()); err != nil {
 		t.Fatalf("sweepOnce: %v", err)
 	}
 	r.ForceSweep(context.Background())
-	if err := r.engine.TrashRepo(context.Background(), repo.RepoRef{Org: "acme", Project: "greeter", RepoSlug: "acme-greeter"}); err != nil {
+	if err := r.engine.TrashRepo(context.Background(), repo.RepoRef{Owner: "acme", Repo: "greeter"}); err != nil {
 		t.Fatalf("TrashRepo: %v", err)
 	}
 	for i, d := range roots {

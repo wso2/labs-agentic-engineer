@@ -137,25 +137,25 @@ func TestOverlayReferences(t *testing.T) {
 	})
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, sha)
+	dir, err := fx.Engine.EnsureSnapshot(ctx, fx.Ref, defaultProject, sha)
 	if err != nil {
 		t.Fatal(err)
 	}
 	refsDir := filepath.Join(dir, repo.ReferenceOverlayDir)
 
 	// Nothing stored: the snapshot stays exactly as git produced it.
-	fx.Engine.OverlayReferences(ctx, fx.Ref, greeterRefs, sha)
+	fx.Engine.OverlayReferences(ctx, fx.Ref, defaultProject, sha)
 	if _, err := os.Stat(filepath.Join(refsDir, ".aep-references.json")); !os.IsNotExist(err) {
 		t.Fatalf("manifest written with nothing stored (err=%v)", err)
 	}
 
-	if err := fx.Engine.PutReferences(ctx, greeterRefs, []repo.ReferenceDoc{
+	if err := fx.Engine.PutReferences(ctx, fx.Ref.OwnerRepo(), []repo.ReferenceDoc{
 		{Name: "brief.pdf", Content: []byte("%PDF-1")},
 		{Name: "old.md", Content: []byte("uploaded\n")},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	fx.Engine.OverlayReferences(ctx, fx.Ref, greeterRefs, sha)
+	fx.Engine.OverlayReferences(ctx, fx.Ref, defaultProject, sha)
 	for name, want := range map[string]string{"brief.pdf": "%PDF-1", "old.md": "uploaded\n"} {
 		b, err := os.ReadFile(filepath.Join(refsDir, name))
 		if err != nil || string(b) != want {
@@ -168,10 +168,10 @@ func TestOverlayReferences(t *testing.T) {
 
 	// A replacement that drops both: brief.pdf is removed, old.md (committed
 	// at this sha) is restored to its git blob.
-	if err := fx.Engine.PutReferences(ctx, greeterRefs, []repo.ReferenceDoc{{Name: "new.txt", Content: []byte("n")}}); err != nil {
+	if err := fx.Engine.PutReferences(ctx, fx.Ref.OwnerRepo(), []repo.ReferenceDoc{{Name: "new.txt", Content: []byte("n")}}); err != nil {
 		t.Fatal(err)
 	}
-	fx.Engine.OverlayReferences(ctx, fx.Ref, greeterRefs, sha)
+	fx.Engine.OverlayReferences(ctx, fx.Ref, defaultProject, sha)
 	if _, err := os.Stat(filepath.Join(refsDir, "brief.pdf")); !os.IsNotExist(err) {
 		t.Fatalf("dropped brief.pdf still overlaid (err=%v)", err)
 	}
@@ -199,10 +199,10 @@ func TestOverlayReferencesNeedsSnapshot(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	sha := mustHead(t, fx, "")
-	if err := fx.Engine.PutReferences(ctx, greeterRefs, []repo.ReferenceDoc{{Name: "a.md", Content: []byte("a")}}); err != nil {
+	if err := fx.Engine.PutReferences(ctx, fx.Ref.OwnerRepo(), []repo.ReferenceDoc{{Name: "a.md", Content: []byte("a")}}); err != nil {
 		t.Fatal(err)
 	}
-	fx.Engine.OverlayReferences(ctx, fx.Ref, greeterRefs, sha)
+	fx.Engine.OverlayReferences(ctx, fx.Ref, defaultProject, sha)
 	if _, err := os.Stat(projectSnapshotDir(t, fx, sha)); !os.IsNotExist(err) {
 		t.Fatalf("overlay created a snapshot (err=%v)", err)
 	}

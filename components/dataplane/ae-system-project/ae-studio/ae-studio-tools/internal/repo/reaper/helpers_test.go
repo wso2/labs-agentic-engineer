@@ -50,13 +50,14 @@ func newReaperForTest(t *testing.T, root string, cfg Config) *Reaper {
 	return r
 }
 
-// writeMirror lays out repos/<slug>/git by hand with one size-byte payload
+// writeMirror lays out repos/<owner>/<repo>/git (ownerRepo is "owner/repo")
+// by hand with one size-byte payload
 // file, then pins the git dir's mtime
 // (the LRU signal) to lastUse. It has no HEAD, so maintenance passes it by.
 // Returns the repo dir.
-func writeMirror(t *testing.T, root, slug string, size int, lastUse time.Time) string {
+func writeMirror(t *testing.T, root, ownerRepo string, size int, lastUse time.Time) string {
 	t.Helper()
-	dir := filepath.Join(repo.ReposDir(root), filepath.FromSlash(slug))
+	dir := filepath.Join(repo.ReposDir(root), filepath.FromSlash(ownerRepo))
 	gitDir := repo.GitSubdir(dir)
 	mkFile(t, filepath.Join(gitDir, "payload"), bytes.Repeat([]byte("x"), size))
 	chtimes(t, gitDir, lastUse)
