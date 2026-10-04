@@ -114,7 +114,7 @@ async function startPod(cfg: PodConfig, connection: ReturnType<typeof connection
     orgId: cfg.orgId,
   });
   const listeners = await startPodListeners(cfg, {
-    edge: { turns, desk, threads, marketplace: new MarketplaceBook(store), keepAliveMs: config.keepAliveMs },
+    edge: { turns, desk, threads, marketplace: new MarketplaceBook(store, { busy: (conversationId) => desk.active({ kind: "marketplace", conversationId }) !== null }), keepAliveMs: config.keepAliveMs },
   });
   return { turns, desk, outbox, listeners };
 }

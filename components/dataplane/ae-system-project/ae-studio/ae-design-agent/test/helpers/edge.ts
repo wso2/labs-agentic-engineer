@@ -176,7 +176,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
       turns,
       desk,
       threads,
-      marketplace: new MarketplaceBook(store),
+      marketplace: new MarketplaceBook(store, { busy: (conversationId) => desk.active({ kind: "marketplace", conversationId }) !== null }),
       ...(opts.keepAliveMs ? { keepAliveMs: opts.keepAliveMs } : {}),
     },
   });

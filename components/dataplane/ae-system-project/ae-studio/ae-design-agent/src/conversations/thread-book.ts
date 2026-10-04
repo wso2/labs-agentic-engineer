@@ -29,7 +29,10 @@
  * to the current thread, and a thread whose last measured context is past
  * 80 % of the connection's declared window is rotated before the send, which
  * is then refused (`409 conversation_rotated`). A connection that declares no
- * window never rotates.
+ * window has no token bound, so the thread's stored messages are bounded
+ * instead (R2-I2): past `THREAD_FALLBACK_BYTES` (base64 attachments counted)
+ * it rotates the same way. Without it, a thread on such a connection would
+ * grow in the pod's memory until the pod's death.
  */
 
 import { randomUUID } from "node:crypto";
@@ -42,6 +45,26 @@ export type ThreadView = components["schemas"]["ProjectConversationView"];
 /** Rotation fires once the context is past ROTATE_AT_NUM/ROTATE_AT_DEN of the window. */
 const ROTATE_AT_NUM = 4;
 const ROTATE_AT_DEN = 5;
+
+/**
+ * The stored size past which a thread rotates when the connection declares no
+ * context window: 8 MiB of messages, base64 file parts included.
+ */
+export const THREAD_FALLBACK_BYTES = 8 << 20;
+
+/**
+ * The approximate stored size of `value`: string lengths (base64 and most
+ * prose are one byte a character), binary byte lengths, object keys.
+ */
+function storedBytes(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  if (value instanceof Uint8Array || value instanceof ArrayBuffer) return value.byteLength;
+  if (Array.isArray(value)) return value.reduce((n: number, v) => n + storedBytes(v), 0);
+  if (typeof value === "object" && value !== null) {
+    return Object.entries(value).reduce((n, [k, v]) => n + k.length + storedBytes(v), 0);
+  }
+  return 8;
+}
 
 /** Whether `tokens` is past the rotation share of `window` (strictly, as in Go). */
 function contextFull(tokens: number, window: number): boolean {
@@ -127,17 +150,19 @@ export class ThreadBook {
   async admit(project: string, conversationId: string, contextWindow?: number): Promise<"ok" | "rotated"> {
     const thread = this.threads.get(project);
     if (thread?.id !== conversationId) return "rotated";
-    if (
-      contextWindow === undefined ||
-      contextWindow <= 0 ||
-      thread.contextTokens === undefined ||
-      !contextFull(thread.contextTokens, contextWindow)
-    ) {
-      return "ok";
-    }
+    if (!(await this.full(thread, contextWindow))) return "ok";
     this.threads.delete(project);
     await this.store.delete(thread.id);
     return "rotated";
+  }
+
+  /** Past 80 % of a declared window, or past `THREAD_FALLBACK_BYTES` stored when none is declared. */
+  private async full(thread: Thread, contextWindow: number | undefined): Promise<boolean> {
+    if (contextWindow !== undefined && contextWindow > 0) {
+      return thread.contextTokens !== undefined && contextFull(thread.contextTokens, contextWindow);
+    }
+    const stored = await this.store.get(thread.id);
+    return stored !== null && storedBytes(stored.messages) > THREAD_FALLBACK_BYTES;
   }
 
   private open(project: string, by?: string): Thread {

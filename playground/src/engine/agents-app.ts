@@ -103,7 +103,7 @@ export async function bootAgentsApp(opts: BootOptions): Promise<AgentsApp> {
   });
   const auth = devAuth();
 
-  const edge = createApp({ authenticate: auth.authenticate, turns, desk, threads, marketplace: new MarketplaceBook(store) }).listen(
+  const edge = createApp({ authenticate: auth.authenticate, turns, desk, threads, marketplace: new MarketplaceBook(store, { busy: (conversationId) => desk.active({ kind: "marketplace", conversationId }) !== null }) }).listen(
     0,
     "127.0.0.1",
   );

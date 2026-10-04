@@ -167,8 +167,10 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   [text]` is a flow, `/start` takes the idea typed inline, else the lookup's
   `idea`; `/start` and flow turns list the lookup's references.
 - **Conversations**: `conversations/thread-book.ts` (one current thread per
-  project, rotation, auto-rotation) and `conversations/marketplace-book.ts`
-  (per-user marketplace conversations), messages behind the
+  project, rotation, auto-rotation past 80 % of the declared window or, with
+  none declared, past 8 MiB stored) and `conversations/marketplace-book.ts`
+  (per-user marketplace conversations, evicted after 2 h unused, 5 per user;
+  `design/pod-memory-bounds.md` lists every in-process bound), messages behind the
   `ConversationStore` port (in memory; a restart starts every thread fresh;
   the playground has a file adapter). The messages read is a DISPLAY
   projection: user rows carry the journal text + author; each journal entry

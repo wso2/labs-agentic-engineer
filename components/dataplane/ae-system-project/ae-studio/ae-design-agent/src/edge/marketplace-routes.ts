@@ -33,8 +33,8 @@ export function marketplaceRoutes(ctx: RouteContext): Router {
   const { deps } = ctx;
   const router = express.Router();
 
-  router.post("/conversations", (_req, res) => {
-    res.status(201).json(deps.marketplace.create(userOf(res).sub));
+  router.post("/conversations", async (_req, res) => {
+    res.status(201).json(await deps.marketplace.create(userOf(res).sub));
   });
 
   router.get("/conversations/:conversationId/messages", async (req, res) => {

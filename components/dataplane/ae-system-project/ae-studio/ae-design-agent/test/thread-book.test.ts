@@ -20,7 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Conversation } from "../src/store/conversation-store.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
-import { ThreadBook } from "../src/conversations/thread-book.js";
+import { THREAD_FALLBACK_BYTES, ThreadBook } from "../src/conversations/thread-book.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WINDOW = 200_000;
@@ -151,13 +151,39 @@ test("admit keeps the thread at exactly 80 % (the Go rule is strictly past it)",
   assert.equal(await threads.admit("greeter", conversationId, WINDOW), "ok");
 });
 
-test("no contextWindow (or a non-positive one) never rotates", async () => {
+test("no contextWindow (or a non-positive one) never rotates on tokens", async () => {
   const { threads } = book();
   const { conversationId } = threads.current("greeter", "Ann");
   threads.noteContextTokens("greeter", conversationId, 10_000_000);
   assert.equal(await threads.admit("greeter", conversationId), "ok");
   assert.equal(await threads.admit("greeter", conversationId, 0), "ok");
   assert.equal(threads.current("greeter").conversationId, conversationId);
+});
+
+/** A stored thread whose messages carry `bytes` of base64 file data. */
+function withAttachment(id: string, bytes: number): Conversation {
+  const c = conversation(id);
+  c.messages.push({ role: "user", content: [{ type: "file", mediaType: "application/pdf", filename: "spec.pdf", data: "A".repeat(bytes) }] });
+  return c;
+}
+
+test("no contextWindow: a thread past 8 MiB of stored messages (attachments counted) rotates (R2-I2)", async () => {
+  const { store, threads } = book();
+  const { conversationId } = threads.current("greeter", "Ann");
+  await store.save(withAttachment(conversationId, THREAD_FALLBACK_BYTES - 64 * 1024));
+  assert.equal(await threads.admit("greeter", conversationId), "ok", "under the bound");
+
+  await store.save(withAttachment(conversationId, THREAD_FALLBACK_BYTES + 1));
+  assert.equal(await threads.admit("greeter", conversationId, 0), "rotated");
+  assert.equal(await store.get(conversationId), null, "the rotated thread's messages are dropped");
+  assert.notEqual(threads.current("greeter").conversationId, conversationId);
+});
+
+test("a declared contextWindow rotates on tokens only, never on bytes", async () => {
+  const { store, threads } = book();
+  const { conversationId } = threads.current("greeter", "Ann");
+  await store.save(withAttachment(conversationId, THREAD_FALLBACK_BYTES + 1));
+  assert.equal(await threads.admit("greeter", conversationId, WINDOW), "ok");
 });
 
 test("context tokens noted for a thread that is no longer current are ignored", async () => {
