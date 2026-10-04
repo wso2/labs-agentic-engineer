@@ -261,6 +261,43 @@ func TestRecordFinished_NewestIsTheLatestStartedTurn(t *testing.T) {
 	}
 }
 
+// A pod clock running ahead must not pin a turn as the newest (3.16 carry):
+// created_at is min(startedAt, now), so a turn recorded later still wins
+// Newest, which drives the kickoff guard and spec.agent.
+func TestRecordFinished_AFutureStartDoesNotPinNewest(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
+	ctx := context.Background()
+	skewed := finishedTurn("p1")
+	skewed.StartedAt = time.Now().UTC().Add(24 * time.Hour).Truncate(time.Microsecond)
+	skewed.FinishedAt = skewed.StartedAt.Add(time.Minute)
+
+	before := time.Now().UTC()
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{skewed}); err != nil {
+		t.Fatalf("RecordFinished skewed: %v", err)
+	}
+	row := getTurn(t, db, "o1", "p1", skewed.TurnID)
+	if row == nil || row.CreatedAt.After(time.Now().UTC()) || row.CreatedAt.Before(before.Add(-time.Second)) {
+		t.Fatalf("created_at = %+v, want clamped to the ingest time", row)
+	}
+	if !row.StartedAt.Equal(skewed.StartedAt) {
+		t.Fatalf("started_at = %v, want the pod's own %v", row.StartedAt, skewed.StartedAt)
+	}
+
+	next := finishedTurn("p1")
+	next.StartedAt = time.Now().UTC().Add(time.Millisecond)
+	next.FinishedAt = next.StartedAt.Add(time.Millisecond)
+	time.Sleep(2 * time.Millisecond)
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{next}); err != nil {
+		t.Fatalf("RecordFinished next: %v", err)
+	}
+	newest, err := repo.Newest(ctx, "o1", "p1")
+	if err != nil || newest == nil || newest.ID != next.TurnID {
+		t.Fatalf("Newest = (%+v, %v), want the turn recorded after the skewed one", newest, err)
+	}
+}
+
 // The ledger's identity is (org, turn id): the pod chooses turn ids (the
 // kickoff's is uuidv5 of org/project, so anyone can compute it), and another
 // org's row with the same id must never stand in for this org's record. Org B

@@ -145,8 +145,15 @@ func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []
 // (host, model) rate). created_at is the turn's start, as it was for a row the
 // in-process engine admitted: Newest and NewestCompletedFlow order by it, so
 // a batch's order or a late delivery never makes an older turn the newest.
+// It is clamped to now: the start is the pod's clock, and a pod running ahead
+// would otherwise pin its row as Newest (the kickoff guard, spec.agent) until
+// real time caught up. started_at keeps the pod's own value.
 func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
 	finished := rec.FinishedAt
+	created := rec.StartedAt
+	if now := time.Now().UTC(); created.After(now) {
+		created = now
+	}
 	row := AgentTurn{
 		ID:                  rec.TurnID,
 		OrgID:               org,
@@ -170,7 +177,7 @@ func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
 		ContextTokens:       rec.ContextTokens,
 		StartedAt:           rec.StartedAt,
 		FinishedAt:          &finished,
-		CreatedAt:           rec.StartedAt,
+		CreatedAt:           created,
 	}
 	if r.stamper != nil {
 		row.CostUsd = r.stamper.Cost(modelcost.Tokens{
