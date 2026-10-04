@@ -30,6 +30,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/skills"
 )
 
 // Deps is what the public listener's routes need. main.go builds it from a
@@ -52,6 +53,8 @@ type Deps struct {
 	// milestones, pulls and hooks (github.NewHandler over the gitpat's
 	// client, WithOwner(AE_GITHUB_OWNER)).
 	GitHubOps github.Handler
+	// Skills serves mirror-skills (skills.NewHandler over the engine).
+	Skills skills.Handler
 	// Projects resolves a project to its repository through aep-api (the
 	// turns op checks the path against it).
 	Projects projects.Resolver
@@ -77,7 +80,7 @@ func Routes(d Deps) http.Handler {
 		return accessLog(capOpBody(internalRouteFinder, internalBodyCaps, internalBodyBytes, m2mGate(next)))
 	}
 	internalSrv := internalServer{
-		Handler: d.Git, gitHubOps: d.GitHubOps,
+		Handler: d.Git, gitHubOps: d.GitHubOps, skillsOps: d.Skills,
 		gh: d.GitHub, refs: d.References, githubOwner: d.Cfg.GitHubOwner,
 		projects: d.Projects, turns: d.Turns,
 	}

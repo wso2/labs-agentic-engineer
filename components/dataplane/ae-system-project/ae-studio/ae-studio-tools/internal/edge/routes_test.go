@@ -43,6 +43,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects/projectstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
+	"github.com/wso2/aep/ae-studio-tools/internal/skills"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns/turnstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
@@ -98,6 +99,9 @@ type harnessDeps struct {
 	// gitOrigin is the clone URL of every owner/repo the git ops address;
 	// none (a failing clone) unless withGitOrigin names one.
 	gitOrigin string
+	// gitOrigins overrides gitOrigin per lower-cased owner/repo
+	// (withGitOrigins).
+	gitOrigins map[string]string
 	// githubAPI is the GitHub API base the GitHub ops call; nothing listens
 	// there unless withGitHubAPI names a stub.
 	githubAPI string
@@ -116,6 +120,17 @@ func withProjects(repos map[string]projects.Repository) harnessOpt {
 // ops clones.
 func withGitOrigin(origin *repotest.Origin) harnessOpt {
 	return func(d *harnessDeps) { d.gitOrigin = origin.URL() }
+}
+
+// withGitOrigins makes each origin the repository of its lower-cased
+// owner/repo key; any other owner/repo clones withGitOrigin's.
+func withGitOrigins(origins map[string]*repotest.Origin) harnessOpt {
+	return func(d *harnessDeps) {
+		d.gitOrigins = map[string]string{}
+		for k, o := range origins {
+			d.gitOrigins[k] = o.URL()
+		}
+	}
 }
 
 // withGitHubAPI points the GitHub ops (issues, milestones, pulls) at stub.
@@ -170,6 +185,12 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		M2MClientID:   testClientID,
 		GitHubOwner:   "Acme-GH",
 	}
+	cloneURL := func(owner, name string) string {
+		if u, ok := deps.gitOrigins[strings.ToLower(owner+"/"+name)]; ok {
+			return u
+		}
+		return deps.gitOrigin
+	}
 	h.logBuf = captureLogs(t)
 	h.handler = Routes(Deps{
 		Cfg:        cfg,
@@ -178,12 +199,13 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
-		Git:        repo.NewHandler(engine, nil, func(string, string) string { return deps.gitOrigin }, repo.WithOwner(cfg.GitHubOwner)),
+		Git:        repo.NewHandler(engine, nil, cloneURL, repo.WithOwner(cfg.GitHubOwner)),
 		GitHubOps: github.NewHandler(github.New(github.Config{
 			APIBase: deps.githubAPI,
 			Token:   func(context.Context) (string, error) { return "test-gitpat", nil },
 			HookURL: "https://tools.example/webhooks/github", HookSecret: testWebhookSecret,
 		}), github.WithOwner(cfg.GitHubOwner)),
+		Skills:   skills.NewHandler(skills.NewMirror(engine), cloneURL, cfg.GitHubOwner),
 		Projects: h.projects,
 		Turns:    turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
 	})

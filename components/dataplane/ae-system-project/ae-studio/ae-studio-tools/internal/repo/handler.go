@@ -269,7 +269,7 @@ func (h Handler) CreateCommit(ctx context.Context, req gen.CreateCommitRequestOb
 	if err == nil {
 		author := c.author
 		if author == nil {
-			author = h.gitpatIdentity(ctx)
+			author = AuthorOf(ctx, h.identity, "create-commit")
 		}
 		res, conflicts, cerr := h.ws.Commit(ctx, ref, c.writes, c.deletes, c.message, author, c.committer)
 		switch {
@@ -352,16 +352,16 @@ func parseCommit(body *gen.CreateCommitRequest) (commitRequest, error) {
 	return c, nil
 }
 
-// gitpatIdentity is the gitpat user, or nil (the engine's AEP default) when
-// there is no source or the lookup failed: a failed lookup does not gate the
-// commit (20 §5).
-func (h Handler) gitpatIdentity(ctx context.Context) *GitIdentity {
-	if h.identity == nil {
+// AuthorOf is the gitpat user as src names it, or nil (the engine's AEP
+// default) when there is no source or the lookup failed: a failed lookup
+// does not gate the commit (20 §5); it is logged under op.
+func AuthorOf(ctx context.Context, src IdentitySource, op string) *GitIdentity {
+	if src == nil {
 		return nil
 	}
-	name, email, err := h.identity.Identity(ctx)
+	name, email, err := src.Identity(ctx)
 	if err != nil {
-		slog.WarnContext(ctx, "commit.identity_unavailable", "op", "create-commit")
+		slog.WarnContext(ctx, "commit.identity_unavailable", "op", op)
 		return nil
 	}
 	return &GitIdentity{Name: name, Email: email}
@@ -385,7 +385,14 @@ func identity(id gen.GitIdentity) (*GitIdentity, error) {
 // ref addresses owner/repo's mirror, cloned from GitHub, with the caller's
 // default branch ("" is the engine's main).
 func (h Handler) ref(owner, name, branch string) (RepoRef, error) {
-	ref := RepoRef{Owner: owner, Repo: name, CloneURL: h.cloneURL(owner, name), DefaultBranch: branch}
+	return NewRepoRef(owner, name, branch, h.cloneURL)
+}
+
+// NewRepoRef addresses owner/name's mirror, cloned from cloneURL(owner, name),
+// with the caller's default branch ("" is the engine's main). A name the
+// store cannot hold, or a branch git would refuse, is a 400 for Problem.
+func NewRepoRef(owner, name, branch string, cloneURL func(owner, name string) string) (RepoRef, error) {
+	ref := RepoRef{Owner: owner, Repo: name, CloneURL: cloneURL(owner, name), DefaultBranch: branch}
 	if err := ref.Validate(); err != nil {
 		return RepoRef{}, fmt.Errorf("%w: %w", errBadRequest, err)
 	}
@@ -449,36 +456,45 @@ func checkRefName(name string) error {
 	return nil
 }
 
-// problem maps an op's failure to its answer. The caller leaving is the
-// caller's (its ctx error, the generic 500, which it never sees); an engine
-// error's text (git's stderr, the clone URL) never reaches the answer or a
-// log line.
+// problem is Problem as this handler's reply.
 func (h Handler) problem(ctx context.Context, op, owner, name string, err error) (problemReply, error) {
+	p, err := Problem(ctx, op, owner, name, err)
+	return problemReply(p), err
+}
+
+// Problem maps a git op's failure on owner/name to its answer, for every
+// handler over the engine. The caller leaving is the caller's (its ctx
+// error, the generic 500, which it never sees); an engine error's text
+// (git's stderr, the clone URL) never reaches the answer or a log line.
+func Problem(ctx context.Context, op, owner, name string, err error) (gen.Problem, error) {
 	if ctx.Err() != nil {
-		return problemReply{}, ctx.Err()
+		return gen.Problem{}, ctx.Err()
 	}
 	repoName := strings.ToLower(owner + "/" + name)
 	switch {
 	case errors.Is(err, errBadPath):
-		return newProblemReply(http.StatusBadRequest, "path_invalid", "the request names a path git cannot hold"), nil
+		return NewProblem(http.StatusBadRequest, "path_invalid", "the request names a path git cannot hold"), nil
 	case errors.Is(err, errBadRequest):
-		return newProblemReply(http.StatusBadRequest, "validation_failed", "the request does not match the contract"), nil
+		return NewProblem(http.StatusBadRequest, "validation_failed", "the request does not match the contract"), nil
 	case errors.Is(err, ErrRefNotFound):
-		return newProblemReply(http.StatusNotFound, "ref_not_found", "the ref names no commit in this repository"), nil
+		return NewProblem(http.StatusNotFound, "ref_not_found", "the ref names no commit in this repository"), nil
 	case errors.Is(err, ErrPathNotFound):
-		return newProblemReply(http.StatusNotFound, "path_not_found", "no such file at this commit"), nil
+		return NewProblem(http.StatusNotFound, "path_not_found", "no such file at this commit"), nil
 	case errors.Is(err, ErrTagAlreadyExists):
-		return newProblemReply(http.StatusConflict, "tag_exists", "the tag name is taken"), nil
+		return NewProblem(http.StatusConflict, "tag_exists", "the tag name is taken"), nil
+	case errors.Is(err, ErrCommitConflict):
+		slog.WarnContext(ctx, "repo.commit_conflict", "op", op, "repo", repoName)
+		return NewProblem(http.StatusConflict, "conflict", "the tree kept changing under the commit; nothing was applied"), nil
 	case errors.Is(err, ErrRefNotFastForward):
 		slog.WarnContext(ctx, "repo.not_fast_forward", "op", op, "repo", repoName)
-		return newProblemReply(http.StatusConflict, "not_fast_forward", "the branch moved during the commit; re-read and retry"), nil
+		return NewProblem(http.StatusConflict, "not_fast_forward", "the branch moved during the commit; re-read and retry"), nil
 	case errors.Is(err, ErrDiskFull):
 		slog.WarnContext(ctx, "repo.disk_full", "op", op, "repo", repoName)
-		return newProblemReply(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full"), nil
+		return NewProblem(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full"), nil
 	default:
 		status := remoteHTTPStatus(err)
 		slog.WarnContext(ctx, "repo.git_failed", "op", op, "repo", repoName, "githubStatus", status)
-		p := newProblemReply(http.StatusBadGateway, "github_error", "the repository could not be reached")
+		p := NewProblem(http.StatusBadGateway, "github_error", "the repository could not be reached")
 		if status != 0 {
 			p.GithubStatus = status
 			p.Detail = fmt.Sprintf("GitHub answered %d", status)
@@ -487,12 +503,17 @@ func (h Handler) problem(ctx context.Context, op, owner, name string, err error)
 	}
 }
 
+// NewProblem is an RFC 9457 problem with status, code and detail.
+func NewProblem(status int, code, detail string) gen.Problem {
+	return gen.Problem{Type: "about:blank", Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
+}
+
 // problemReply is a problem answer for any git op: it satisfies every op's
 // generated response interface, which one per-status type per op cannot.
 type problemReply gen.Problem
 
 func newProblemReply(status int, code, detail string) problemReply {
-	return problemReply{Type: "about:blank", Title: http.StatusText(status), Status: status, Code: code, Detail: detail}
+	return problemReply(NewProblem(status, code, detail))
 }
 
 func (p problemReply) write(w http.ResponseWriter) error {

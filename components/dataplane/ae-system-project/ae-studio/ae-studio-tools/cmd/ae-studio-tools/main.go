@@ -52,6 +52,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo/reaper"
+	"github.com/wso2/aep/ae-studio-tools/internal/skills"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns"
 	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
@@ -198,7 +199,10 @@ func run() error {
 			// hooks) over the gitpat; repos are created for AE_GITHUB_OWNER
 			// only.
 			GitHubOps: github.NewHandler(gh, github.WithOwner(cfg.GitHubOwner)),
-			Projects:  resolver,
+			// aep-api's skills-mirror: the org skill library into a
+			// project's .claude/skills, authored as the gitpat user.
+			Skills:   skills.NewHandler(skills.NewMirror(engine, skills.WithAuthor(commitAuthor)), repo.GitHubCloneURL, cfg.GitHubOwner),
+			Projects: resolver,
 			// The turns aep-api starts run on the agent's Turn socket.
 			Turns: turns.Relay{Turns: turns.NewClient(cfg.TurnSocket)},
 		}),

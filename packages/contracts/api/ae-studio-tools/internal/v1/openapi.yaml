@@ -14,8 +14,9 @@ info:
     any handler runs. A multipart body is the exception: its handler reads and
     checks the parts itself.
 
-    Every /repos/{owner}/{repo}/... operation, and create-repo and
-    trash-repo for their body's owner, answer 403 owner_not_allowed, once the
+    Every /repos/{owner}/{repo}/... operation, and create-repo, trash-repo
+    and mirror-skills (its skillsRepo) for their body's owner, answer 403
+    owner_not_allowed, once the
     request is validated and before the operation runs, when owner is not the
     org's connected GitHub account (compared case-insensitively).
     Errors are RFC 9457 problems (application/problem+json).
@@ -46,6 +47,8 @@ tags:
   description: The repository's pull requests on GitHub.
 - name: Hooks
   description: The studio's webhook on the repository.
+- name: Skills
+  description: The org skill library's mirror in a project repository.
 security:
 - aeOnly: []
 paths:
@@ -1425,6 +1428,63 @@ paths:
           $ref: '#/components/responses/GitHubAPIError'
         '503':
           $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/skills-mirror:
+    post:
+      operationId: mirror-skills
+      summary: Mirror the org skill library into the repository's .claude/skills
+      description: |-
+        Reads skillsRepo (the org skill library) at its default-branch tip and
+        makes `.claude/skills/` in owner/repo the coding agent's slice of it:
+        every enabled skill whose audience includes coding, plus every skill
+        named in pinned (a pin overrides audience and the enabled flag). One
+        commit to the default branch writes every desired file that differs
+        and deletes every other file under `.claude/skills/`, each pinned to
+        the blob it read; nothing differing commits nothing (changed false,
+        commitSha the tip). A failed library read answers before owner/repo
+        is touched. A commit conflict (the tree moved under
+        `.claude/skills/`) recomputes against the new tip, at most three
+        times, then answers 409 conflict. skillsRepo's owner must be the
+        org's connected GitHub account, else 403 owner_not_allowed.
+      tags:
+      - Skills
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/DefaultBranch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillsMirrorRequest'
+      responses:
+        '200':
+          description: Mirrored (changed false when the tree was already the mirror)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillsMirrorResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '409':
+          description: 'The tree kept moving under `.claude/skills/` (problem
+            code: conflict), or the branch kept moving through every push retry
+            (problem code: not_fast_forward).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
   /trash:
     post:
       operationId: trash-repo
@@ -2481,6 +2541,58 @@ components:
         id:
           type: integer
           format: int64
+    SkillsMirrorRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - skillsRepo
+      - pinned
+      properties:
+        skillsRepo:
+          $ref: '#/components/schemas/SkillsRepo'
+        pinned:
+          type: array
+          description: The skill names the project's components pin
+            (skillsPinned, read by aep-api from their design.json). Compared
+            with the library's names only; a name the library lacks is
+            ignored.
+          maxItems: 1000
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+    SkillsRepo:
+      type: object
+      additionalProperties: false
+      required:
+      - owner
+      - repo
+      properties:
+        owner:
+          type: string
+          description: Must be the org's connected GitHub account
+          maxLength: 200
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
+        repo:
+          type: string
+          maxLength: 200
+          pattern: ^(\.?[A-Za-z0-9_-][A-Za-z0-9._-]*|\.\.[A-Za-z0-9._-]+)$
+        defaultBranch:
+          type: string
+          description: The skills repository's default branch, as aep-api's
+            row names it. Omitted, main.
+          pattern: ^[A-Za-z0-9._/-]{1,255}$
+    SkillsMirrorResult:
+      type: object
+      required:
+      - commitSha
+      - changed
+      properties:
+        commitSha:
+          type: string
+          description: The mirror commit, or the tip when nothing changed
+        changed:
+          type: boolean
     TrashRepoRequest:
       type: object
       additionalProperties: false

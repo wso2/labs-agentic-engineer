@@ -595,6 +595,31 @@ type ResultFrameStatus string
 // ResultFrameType defines model for ResultFrame.Type.
 type ResultFrameType string
 
+// SkillsMirrorRequest defines model for SkillsMirrorRequest.
+type SkillsMirrorRequest struct {
+	// Pinned The skill names the project's components pin (skillsPinned, read by aep-api from their design.json). Compared with the library's names only; a name the library lacks is ignored.
+	Pinned     []string   `json:"pinned"`
+	SkillsRepo SkillsRepo `json:"skillsRepo"`
+}
+
+// SkillsMirrorResult defines model for SkillsMirrorResult.
+type SkillsMirrorResult struct {
+	Changed bool `json:"changed"`
+
+	// CommitSha The mirror commit, or the tip when nothing changed
+	CommitSha string `json:"commitSha"`
+}
+
+// SkillsRepo defines model for SkillsRepo.
+type SkillsRepo struct {
+	// DefaultBranch The skills repository's default branch, as aep-api's row names it. Omitted, main.
+	DefaultBranch string `json:"defaultBranch,omitempty,omitzero"`
+
+	// Owner Must be the org's connected GitHub account
+	Owner string `json:"owner"`
+	Repo  string `json:"repo"`
+}
+
 // Tag defines model for Tag.
 type Tag struct {
 	// CommitHash The commit the tag points at (annotated tags peeled)
@@ -1007,6 +1032,15 @@ type PutRepoReferencesParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// MirrorSkillsParams defines parameters for MirrorSkills.
+type MirrorSkillsParams struct {
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // ListTagsParams defines parameters for ListTags.
 type ListTagsParams struct {
 	// Prefix Only paths (tag names, for list-tags) starting with this.
@@ -1099,6 +1133,9 @@ type CreateMilestoneJSONRequestBody = CreateMilestoneRequest
 
 // PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
 type PutRepoReferencesMultipartRequestBody = ReferenceUpload
+
+// MirrorSkillsJSONRequestBody defines body for MirrorSkills for application/json ContentType.
+type MirrorSkillsJSONRequestBody = SkillsMirrorRequest
 
 // CreateTagJSONRequestBody defines body for CreateTag for application/json ContentType.
 type CreateTagJSONRequestBody = CreateTagRequest
@@ -1309,6 +1346,11 @@ type ClientInterface interface {
 
 	// PutRepoReferencesWithBody request with any body
 	PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// MirrorSkillsWithBody request with any body
+	MirrorSkillsWithBody(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	MirrorSkills(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, body MirrorSkillsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListTags request
 	ListTags(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1886,6 +1928,30 @@ func (c *Client) MergePull(ctx context.Context, owner Owner, repo Repo, number N
 
 func (c *Client) PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutRepoReferencesRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MirrorSkillsWithBody(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMirrorSkillsRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) MirrorSkills(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, body MirrorSkillsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewMirrorSkillsRequest(c.Server, owner, repo, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4427,6 +4493,96 @@ func NewPutRepoReferencesRequestWithBody(server string, owner Owner, repo Repo, 
 	return req, nil
 }
 
+// NewMirrorSkillsRequest calls the generic MirrorSkills builder with application/json body
+func NewMirrorSkillsRequest(server string, owner Owner, repo Repo, params *MirrorSkillsParams, body MirrorSkillsJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewMirrorSkillsRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewMirrorSkillsRequestWithBody generates requests for MirrorSkills with any type of body
+func NewMirrorSkillsRequestWithBody(server string, owner Owner, repo Repo, params *MirrorSkillsParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/skills-mirror", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewListTagsRequest generates requests for ListTags
 func NewListTagsRequest(server string, owner Owner, repo Repo, params *ListTagsParams) (*http.Request, error) {
 	var err error
@@ -4993,6 +5149,11 @@ type ClientWithResponsesInterface interface {
 
 	// PutRepoReferencesWithBodyWithResponse request with any body
 	PutRepoReferencesWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutRepoReferencesResponse, error)
+
+	// MirrorSkillsWithBodyWithResponse request with any body
+	MirrorSkillsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MirrorSkillsResponse, error)
+
+	MirrorSkillsWithResponse(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, body MirrorSkillsJSONRequestBody, reqEditors ...RequestEditorFn) (*MirrorSkillsResponse, error)
 
 	// ListTagsWithResponse request
 	ListTagsWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*ListTagsResponse, error)
@@ -6231,6 +6392,43 @@ func (r PutRepoReferencesResponse) ContentType() string {
 	return ""
 }
 
+type MirrorSkillsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *SkillsMirrorResult
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON409 *Problem
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r MirrorSkillsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r MirrorSkillsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r MirrorSkillsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type ListTagsResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -6818,6 +7016,23 @@ func (c *ClientWithResponses) PutRepoReferencesWithBodyWithResponse(ctx context.
 		return nil, err
 	}
 	return ParsePutRepoReferencesResponse(rsp)
+}
+
+// MirrorSkillsWithBodyWithResponse request with arbitrary body returning *MirrorSkillsResponse
+func (c *ClientWithResponses) MirrorSkillsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MirrorSkillsResponse, error) {
+	rsp, err := c.MirrorSkillsWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMirrorSkillsResponse(rsp)
+}
+
+func (c *ClientWithResponses) MirrorSkillsWithResponse(ctx context.Context, owner Owner, repo Repo, params *MirrorSkillsParams, body MirrorSkillsJSONRequestBody, reqEditors ...RequestEditorFn) (*MirrorSkillsResponse, error) {
+	rsp, err := c.MirrorSkills(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseMirrorSkillsResponse(rsp)
 }
 
 // ListTagsWithResponse request returning *ListTagsResponse
@@ -9125,6 +9340,81 @@ func ParsePutRepoReferencesResponse(rsp *http.Response) (*PutRepoReferencesRespo
 			return nil, err
 		}
 		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseMirrorSkillsResponse parses an HTTP response from a MirrorSkillsWithResponse call
+func ParseMirrorSkillsResponse(rsp *http.Response) (*MirrorSkillsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &MirrorSkillsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SkillsMirrorResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem

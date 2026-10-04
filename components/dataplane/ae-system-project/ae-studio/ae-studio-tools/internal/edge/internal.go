@@ -29,6 +29,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/skills"
 )
 
 // The /internal/v1 route group is served contract-first from
@@ -77,12 +78,16 @@ var internalRouteFinder = internalReadFile.routes(mustRouter("internal", gen.Get
 // embedded fields cannot share the name Handler).
 type gitHubOps = github.Handler
 
+// skillsOps names skills.Handler for embedding beside repo.Handler.
+type skillsOps = skills.Handler
+
 // internalServer implements gen.StrictServerInterface. The git content ops
 // are repo.Handler's; the issue, milestone and pull request ops
-// github.Handler's.
+// github.Handler's; mirror-skills skills.Handler's.
 type internalServer struct {
 	repo.Handler
 	gitHubOps
+	skillsOps
 	gh github.Identity
 	// refs is the reference store; githubOwner the org's connected GitHub
 	// account (AE_GITHUB_OWNER), the only owner whose repos it stores for.

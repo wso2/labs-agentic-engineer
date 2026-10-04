@@ -83,6 +83,7 @@ func repoOps(h *harness, base string) map[string]func() *httptest.ResponseRecord
 		"create-tag":      post("/tags", `{"name":"v1","message":"m"}`),
 		"create-commit":   post("/commits", `{"message":"m","writes":[{"path":"specs/b.md","content":"Yg==","baseSha":""}]}`),
 		"start-repo-turn": post("/turns", turnRequest("11111111-1111-5111-8111-111111111111")),
+		"mirror-skills":   post("/skills-mirror", `{"skillsRepo":{"owner":"acme-gh","repo":"org-skills"},"pinned":[]}`),
 		"put-repo-references": func() *httptest.ResponseRecorder {
 			return h.putReferences(base+"/references", h.m2m(), false, refFile("notes.md", 10))
 		},
