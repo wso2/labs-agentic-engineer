@@ -140,7 +140,7 @@ function refuseUpgrade(socket: Duplex, status: number, code: string, detail: str
 /**
  * The public listener's Origin rule (07 §11): the `Origin` must be present
  * and listed in `AE_ALLOWED_ORIGINS`, exactly. Only browsers join here; the
- * in-pod agent joins on the local listener, which has no Origin check.
+ * in-pod agent joins on the Room socket, which has no Origin check.
  */
 export function originAllowed(origin: string | undefined, cfg: Pick<ListenerConfig, "allowedOrigins">): boolean {
   return origin !== undefined && cfg.allowedOrigins.includes(origin);
@@ -181,7 +181,7 @@ export function userGate(cfg: Pick<PodConfig, "orgId" | "orgHandle" | "userAudie
 /**
  * Hands an accepted socket to Hocuspocus. Only the query of the upgrade URL
  * travels (the connection parameters); no path and no request header does,
- * so a malformed request target (the local listener takes any) cannot fail
+ * so a malformed request target (the Room socket takes any) cannot fail
  * the URL parse.
  */
 function attach(rooms: Hocuspocus<CollabContext>, ws: WebSocket, req: IncomingMessage, listener: ListenerKind): void {

@@ -53,7 +53,7 @@ missing key.
   unreachable → 503 `idp_unavailable`, all before route matching; no `/v1` operation yet, so an admitted request is a 404 problem).
   A room upgrade there must pass `originAllowed`: the `Origin` must be
   present and listed in `AE_ALLOWED_ORIGINS` (403 otherwise); the in-pod
-  agent joins on the local listener, which has no Origin check. Rooms seed from and
+  agent joins on the Room socket, which has no Origin check. Rooms seed from and
   commit through the Files socket (`AE_FILES_SOCKET`). The health port
   (`AE_HEALTH_PORT`, 9081, not routed) serves `/healthz` and `/readyz` (503
   until both room listeners are bound and while closing). SIGTERM/SIGINT run

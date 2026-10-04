@@ -20,7 +20,7 @@
  * The Turn socket (07 §5, `packages/contracts/sockets/ae-studio/turn/`): the
  * server-started turns ae-studio-tools relays. A Plan turn's ok Task results
  * become `task-op` lines and nothing else does; a kickoff joins the project's
- * Room on ae-collab's local listener as the credited user; a retry with the
+ * Room on ae-collab's Room socket as the credited user; a retry with the
  * same `turnId` reattaches; the lines are the golden streams ae-studio-tools
  * is tested against. Driven over the real Unix socket.
  */
@@ -303,7 +303,7 @@ test("a turn whose Room writes did not all land ends failed room_unavailable, no
     },
   ));
 
-test("the credit parameter names the user id when the credit has no name (the local listener needs a name)", () => {
+test("the credit parameter names the user id when the credit has no name (the Room socket needs a name)", () => {
   assert.equal(creditParameter({ userId: "u-ann", name: "", email: "" }), '{"name":"u-ann","email":""}');
   assert.equal(creditParameter({ userId: "u-ann", name: "  ", email: "a@x" }), '{"name":"u-ann","email":"a@x"}');
   assert.equal(creditParameter(ANN), '{"name":"Ann","email":"ann@x"}');

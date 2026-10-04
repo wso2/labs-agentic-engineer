@@ -89,7 +89,7 @@ export function refusal(reason: typeof PERMISSION_DENIED | typeof UPSTREAM_UNAVA
  */
 export const TOKEN_REFUSED = { code: 4401, reason: PERMISSION_DENIED } as const;
 
-/** The connection parameter that names the credited user on the local listener. */
+/** The connection parameter that names the credited user on the Room socket. */
 const CREDIT_PARAM = "credit";
 
 type AuthPayload = Pick<onAuthenticatePayload<Partial<CollabContext>>, "token" | "documentName" | "context" | "requestParameters">;
@@ -139,7 +139,7 @@ function userOf(claims: { sub: string; name?: string; given_name?: string; famil
   return { name, email: claims.email?.trim() ?? "", kind: "user" };
 }
 
-/** The local listener's `credit` parameter: `{name, email}` JSON with a name. */
+/** The Room socket's `credit` parameter: `{name, email}` JSON with a name. */
 function creditOf(params: URLSearchParams): CollabUser {
   const raw = params.get(CREDIT_PARAM);
   if (raw === null) throw new Refused("credit");
