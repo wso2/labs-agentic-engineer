@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -453,4 +455,42 @@ func TestPlanTap_KeepAlivesHoldAQuietTurnOpen(t *testing.T) {
 			t.Fatalf("created %d issues, want both Tasks", len(issues.created))
 		}
 	})
+}
+
+// The Turn socket's golden stream (packages/contracts/sockets/ae-studio/turn/
+// golden/completed.ndjson) is what the pod sends, ae-studio-tools relays
+// unchanged and this tap consumes (R2-M3): its planTask op mints a Task and
+// its updateTask op (by this-turn title) reaches the same issue, with no op
+// skipped as undecodable.
+func TestPlanTap_TheGoldenStreamMintsAndUpdates(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "packages", "contracts", "sockets", "ae-studio", "turn", "golden", "completed.ndjson"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evs []aestudiotools.TurnEvent
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var ev struct {
+			Type, Op, Status, Code string
+			Output                 json.RawMessage
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("golden line %q: %v", line, err)
+		}
+		evs = append(evs, aestudiotools.TurnEvent{Type: ev.Type, Op: ev.Op, Output: ev.Output, Status: ev.Status, Code: ev.Code})
+	}
+	issues := newFakeIssues()
+	tap := newTestTap(issues)
+
+	if err := tap.Stream(turn(evs...), noAbort); err != nil {
+		t.Fatalf("Stream: %v", err)
+	}
+	if len(issues.created) != 1 || issues.created[0].Title != "Add the greeting endpoint" {
+		t.Fatalf("created = %+v, want the golden planTask's one Task", issues.created)
+	}
+	if tap.failures != 0 {
+		t.Fatalf("failures = %d", tap.failures)
+	}
+	if st := tap.state[tap.titleToNumber["add the greeting endpoint"]]; st.Rationale != "Stories 1 and 2 both need it." {
+		t.Fatalf("state = %+v, want the golden updateTask's rationale applied", st)
+	}
 }

@@ -35,8 +35,9 @@ import { randomUUID } from "node:crypto";
 import { Server, type Document } from "@hocuspocus/server";
 import { readDocFile, setDocFile } from "@aep/collab-doc";
 import type { LanguageModel } from "ai";
+import { PLAN_TASK, UPDATE_TASK } from "@aep/agent-stream";
 import { mockModel } from "../src/shared/mock-model.js";
-import { frameLine, parseTurnRequest, taskOpOf, type TurnSocketFrame } from "../src/edge/turn-socket.js";
+import { frameLine, parseTurnRequest, taskOpOf, type TaskOpFrame, type TurnSocketFrame } from "../src/edge/turn-socket.js";
 import { creditParameter } from "../src/collab/local-room.js";
 import { SEED_FILES } from "./seed-files.js";
 import { PROJECT, call, postTurnSocket, startEdge, streamOf, type Edge } from "./helpers/edge.js";
@@ -94,6 +95,17 @@ test("the lines are the golden streams' lines, byte for byte", () => {
     for (const line of goldenLines(name)) {
       assert.equal(frameLine(JSON.parse(line) as TurnSocketFrame), `${line}\n`, `${name}: ${line}`);
     }
+  }
+});
+
+test("the golden task-op lines carry the tool output the agent projects (ok and op included)", () => {
+  const ops = goldenLines("completed.ndjson")
+    .map((l) => JSON.parse(l) as TurnSocketFrame)
+    .filter((f): f is TaskOpFrame => f.type === "task-op");
+  assert.equal(ops.length, 2);
+  for (const frame of ops) {
+    const toolName = frame.op === "plan" ? PLAN_TASK : UPDATE_TASK;
+    assert.deepEqual(taskOpOf({ type: "tool-result", toolName, output: frame.output }), { op: frame.op, output: frame.output });
   }
 });
 

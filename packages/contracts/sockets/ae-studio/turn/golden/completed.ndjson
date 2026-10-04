@@ -1,4 +1,4 @@
-{"type":"task-op","op":"plan","output":{"tasks":[{"title":"Add the greeting endpoint","story":1}]}}
+{"type":"task-op","op":"plan","output":{"ok":true,"op":"plan","component":"greeter","title":"Add the greeting endpoint","dependsOn":[],"origin":"spec-plan","rationale":"Story 1 asks for a greeting."}}
 {"type":"keep-alive"}
-{"type":"task-op","op":"update","output":{"task":1,"status":"ready"}}
+{"type":"task-op","op":"update","output":{"ok":true,"op":"update","ref":{"title":"Add the greeting endpoint"},"set":{"rationale":"Stories 1 and 2 both need it."}}}
 {"type":"result","status":"completed"}
