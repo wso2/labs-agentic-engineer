@@ -273,21 +273,7 @@ spec:
                   name: aep-openbao-secrets
                   key: OPENBAO_TOKEN
             {{- end }}
-            # GitHub webhook delivery URL registered on each repo. Local → smee.io
-            # channel (forwarded in-cluster by the smee-client); prod → the real
-            # public ingress URL. Unset → webhooks not registered (task state won't
-            # advance on PR events).
-            {{- if .Values.webhook.deliveryURL }}
-            - name: GITHUB_WEBHOOK_DELIVERY_URL
-              value: {{ .Values.webhook.deliveryURL | quote }}
-            {{- end }}
-
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
-            - name: GITHUB_WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: aep-webhook-secrets
-                  key: GITHUB_WEBHOOK_SECRET
             - name: THUNDER_SYSTEM_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

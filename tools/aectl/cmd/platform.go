@@ -317,8 +317,6 @@ func init() {
 	_ = viper.BindPFlag("oc.observability_api_url", initCmd.Flags().Lookup("oc-observability-api-url"))
 	initCmd.Flags().Bool("data-plane-gateway-tls", false, "Whether the data-plane gateway terminates TLS (overrides config; false is correct for aectl's own plain-HTTP gateway setup, set true only against a gateway that genuinely fronts TLS)")
 	_ = viper.BindPFlag("oc.data_plane_gateway_tls", initCmd.Flags().Lookup("data-plane-gateway-tls"))
-	initCmd.Flags().String("webhook-delivery-url", "", "Public URL registered on each repo's webhook (overrides config)")
-	_ = viper.BindPFlag("webhook.delivery_url", initCmd.Flags().Lookup("webhook-delivery-url"))
 	initCmd.Flags().BoolVar(&initOpenBaoDirect, "openbao-direct", false, "Enable OpenBao-direct secrets delivery — injects OPENBAO_ADDR/TOKEN into aep-api (required for local/OSS installs)")
 	_ = viper.BindPFlag("codingagent.openbao_direct.enabled", initCmd.Flags().Lookup("openbao-direct"))
 	initCmd.Flags().String("openbao-addr", "", "In-cluster URL of the OpenBao service (overrides config)")
@@ -498,11 +496,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		// ESO-synced aep-openbao-secrets Secret (provisionOpenBao seeds
 		// aep/openbao-token), never a literal Helm value.
 		helmArgs = append(helmArgs, "--set", "openbao.addr="+viper.GetString("openbao.addr"))
-	}
-	helmArgs = append(helmArgs, "--set",
-		fmt.Sprintf("webhook.localSmee.enabled=%t", viper.GetBool("webhook.local_smee.enabled")))
-	if u := viper.GetString("webhook.delivery_url"); u != "" {
-		helmArgs = append(helmArgs, "--set", "webhook.deliveryURL="+u)
 	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")),
@@ -1000,7 +993,6 @@ var requiredOpenBaoPaths = []string{
 	"aep/openbao-token",
 	"aep/postgres-password",
 	"aep/task-signing-key",
-	"aep/webhook-secret",
 	"aep/opensearch-username",
 	"aep/opensearch-password",
 	"aep/thunder-admin/client-id",
@@ -1130,11 +1122,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate signing key: %w", err)
 	}
-	webhookSecret, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate webhook secret: %w", err)
-	}
 	openSearchPassword, err := bootstrap.GeneratePassword(24)
 	if err != nil {
 		sp.Fail("Secret generation failed")
@@ -1161,7 +1148,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
 		{"aep/task-signing-key", signingKey},
-		{"aep/webhook-secret", webhookSecret},
 		{webhookRelaySeedPath, relaySeed},
 		{"aep/opensearch-username", "admin"},
 		{"aep/opensearch-password", openSearchPassword},

@@ -61,8 +61,6 @@ var ConfigMapKeys = []string{
 	"platform.workspaces.access_mode",
 	"codingagent.openbao_direct.enabled",
 	"openbao.addr",
-	"webhook.delivery_url",
-	"webhook.local_smee.enabled",
 	"ae_studio.webhook_relay.enabled",
 	"gateway.hostname",
 	"environment.idp_base_domain",
@@ -131,8 +129,6 @@ var keyRegistry = map[string]configKeyMeta{
 	"platform.workspaces.access_mode":    {required: false, kind: kindEnum, enumValues: []string{"", "ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"}},
 	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
 	"openbao.addr":                       {required: false, kind: kindURL},
-	"webhook.delivery_url":               {required: false, kind: kindURL},
-	"webhook.local_smee.enabled":         {required: false, kind: kindBool},
 	// The per-org AE Studio webhook relay (smee.io channel per org) for a
 	// cluster GitHub cannot reach. Passed as aeStudio.webhookRelay.enabled on
 	// install and update; absent is false. Never true in production.

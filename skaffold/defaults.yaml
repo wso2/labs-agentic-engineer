@@ -137,20 +137,6 @@ environment:
 tls:
   enabled: false
 
-webhook:
-  # Public URL registered on each GitHub repo's webhook.
-  # GitHub posts pull_request/push/issues events here so aep-api can advance
-  # task state (e.g. merged PR ends a coding task and triggers a build).
-  # Local: set to your smee.io channel URL.
-  # Production: set to the public HTTPS URL of aep-api's /api/v1/webhooks/github.
-  delivery_url: "https://smee.io/woTo6w45shQo21QQ"
-
-  local_smee:
-    # Deploys an in-cluster smee-client that subscribes to the smee.io channel
-    # in delivery_url and forwards GitHub events to aep-api. Needed for local
-    # k3d installs that have no public ingress. Never true in production.
-    enabled: true
-
 ae_studio:
   webhook_relay:
     # Gives each org's AE Studio pod a webhook-relay container on its own

@@ -104,7 +104,7 @@ plus the connection) and to each coding run at dispatch.
 loop — run it again after every edit you want reflected in the cluster. It
 only rebuilds images whose dependencies changed and re-points the
 already-installed `aep-platform` release at them; it does not re-derive any of
-aectl's own settings (Thunder/OpenBao/webhook URLs), which is why its Helm
+aectl's own settings (Thunder/OpenBao URLs), which is why its Helm
 step passes `--reuse-values`.
 
 The three images of the `ae-studio` data-plane pod (design agent, collab,
@@ -295,7 +295,6 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    | Vault path | Secret (namespace `wso2-aep`) | Key |
    |---|---|---|
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
-   | `aep/webhook-secret` | `aep-webhook-secrets` | `GITHUB_WEBHOOK_SECRET` |
    | `aep/openbao-token` | `aep-openbao-secrets` | `OPENBAO_TOKEN` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
    | `aep/task-signing-key` | `aep-task-signing-key` | `task-signing.pem` |
