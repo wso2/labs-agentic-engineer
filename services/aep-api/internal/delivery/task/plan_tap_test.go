@@ -359,6 +359,21 @@ func TestPlanTap_AFailedTurnIsAnError(t *testing.T) {
 	}
 }
 
+// A provider_limit result's reset time rides on the error, so the planning
+// activity can wait until then (K-1).
+func TestPlanTap_AProviderLimitCarriesTheResetTime(t *testing.T) {
+	resetAt := time.Date(2026, 10, 4, 10, 15, 0, 0, time.UTC)
+	tap := newTestTap(newFakeIssues())
+
+	err := tap.Stream(turn(
+		aestudiotools.TurnEvent{Type: aestudiotools.EventResult, Status: "failed", Code: aestudiotools.TurnCodeProviderLimit, ResetAt: resetAt},
+	), noAbort)
+	var failed *aestudiotools.TurnFailedError
+	if !errors.As(err, &failed) || !failed.ProviderLimited() || !failed.ResetAt.Equal(resetAt) {
+		t.Fatalf("err = %v, want a provider_limit TurnFailedError reset at %v", err, resetAt)
+	}
+}
+
 // A stream that breaks (the adapter yields an error: the pod went away, a
 // malformed line) is an error, never a quiet success.
 func TestPlanTap_ABrokenStreamIsAnError(t *testing.T) {

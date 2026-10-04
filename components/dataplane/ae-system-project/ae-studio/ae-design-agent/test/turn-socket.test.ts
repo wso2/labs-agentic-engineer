@@ -37,7 +37,7 @@ import { readDocFile, setDocFile } from "@aep/collab-doc";
 import type { LanguageModel } from "ai";
 import { PLAN_TASK, UPDATE_TASK } from "@aep/agent-stream";
 import { mockModel } from "../src/shared/mock-model.js";
-import { frameLine, parseTurnRequest, taskOpOf, type TaskOpFrame, type TurnSocketFrame } from "../src/edge/turn-socket.js";
+import { frameLine, parseTurnRequest, resultOf, taskOpOf, type TaskOpFrame, type TurnSocketFrame } from "../src/edge/turn-socket.js";
 import { creditParameter } from "../src/collab/local-room.js";
 import { SEED_FILES } from "./seed-files.js";
 import { PROJECT, call, postTurnSocket, startEdge, streamOf, type Edge } from "./helpers/edge.js";
@@ -91,11 +91,21 @@ test("taskOpOf: only an ok planTask/updateTask result is a Task operation", () =
 });
 
 test("the lines are the golden streams' lines, byte for byte", () => {
-  for (const name of ["completed.ndjson", "shutdown.ndjson"]) {
+  for (const name of ["completed.ndjson", "shutdown.ndjson", "provider_limit.ndjson"]) {
     for (const line of goldenLines(name)) {
       assert.equal(frameLine(JSON.parse(line) as TurnSocketFrame), `${line}\n`, `${name}: ${line}`);
     }
   }
+});
+
+test("a provider_limit result carries the provider's reset time when it stated one, and omits it otherwise", () => {
+  const message = "api.anthropic.com's usage limit is reached. Try again after 2026-10-04T10:15:00.000Z.";
+  const resetAt = "2026-10-04T10:15:00.000Z";
+  const limited = { type: "turn-failed", reason: "agent-error", code: "provider_limit", host: "api.anthropic.com", message } as const;
+  assert.equal(frameLine(resultOf({ ...limited, resetAt })), `${goldenLines("provider_limit.ndjson").at(-1)}\n`);
+  assert.deepEqual(resultOf({ ...limited, message: "later" }), { type: "result", status: "failed", code: "provider_limit", message: "later" });
+  // resetAt belongs to the provider limit: no other ending carries one.
+  assert.equal("resetAt" in resultOf({ type: "turn-failed", reason: "agent-error", code: "output_truncated", resetAt }), false);
 });
 
 test("the golden task-op lines carry the tool output the agent projects (ok and op included)", () => {

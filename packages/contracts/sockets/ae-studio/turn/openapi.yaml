@@ -246,3 +246,8 @@ components:
           type: string
         message:
           type: string
+        resetAt:
+          type: string
+          format: date-time
+          description: With code provider_limit, when the model provider said its
+            limit resets, if it said.

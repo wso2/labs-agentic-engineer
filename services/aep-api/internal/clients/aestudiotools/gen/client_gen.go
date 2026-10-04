@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/oapi-codegen/runtime"
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -186,8 +187,11 @@ type ReferenceUpload struct {
 
 // ResultFrame The last line of the turn stream. A shutdown ends a running turn with status failed and code shutdown.
 type ResultFrame struct {
-	Code    string            `json:"code,omitempty,omitzero"`
-	Message string            `json:"message,omitempty,omitzero"`
+	Code    string `json:"code,omitempty,omitzero"`
+	Message string `json:"message,omitempty,omitzero"`
+
+	// ResetAt With code provider_limit, when the model provider said its limit resets, if it said.
+	ResetAt time.Time         `json:"resetAt,omitempty,omitzero"`
 	Status  ResultFrameStatus `json:"status"`
 	Type    ResultFrameType   `json:"type"`
 }

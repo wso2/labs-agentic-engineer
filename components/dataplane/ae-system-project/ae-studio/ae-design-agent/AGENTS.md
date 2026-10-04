@@ -91,8 +91,10 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   reattaches, a retry after the end gets the final result) and answers
   NDJSON: `task-op` lines for ok `planTask`/`updateTask` results
   (`taskOpOf`, aep-api's plan tap filter), `keep-alive` every
-  `AGENT_KEEPALIVE_MS`, then one `result {status, code?, message?}` (a failed
-  turn's code is its own, else its reason). The lines match the golden
+  `AGENT_KEEPALIVE_MS`, then one `result {status, code?, message?, resetAt?}`
+  (a failed turn's code is its own, else its reason; a `provider_limit`
+  carries the provider's stated reset time, which aep-api waits for before
+  its next Plan try). The lines match the golden
   streams beside the contract. A caller that leaves only detaches.
 - **Shutdown** (`pod/shutdown.ts`, SIGTERM): refuse new turns (503 on `/v1`
   and the Turn socket), `desk.abortAll("shutdown")` (≤ 2 s; inside

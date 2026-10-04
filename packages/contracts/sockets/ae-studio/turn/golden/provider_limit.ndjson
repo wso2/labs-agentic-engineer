@@ -1,0 +1,2 @@
+{"type":"keep-alive"}
+{"type":"result","status":"failed","code":"provider_limit","message":"api.anthropic.com's usage limit is reached. Try again after 2026-10-04T10:15:00.000Z.","resetAt":"2026-10-04T10:15:00.000Z"}

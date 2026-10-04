@@ -133,9 +133,10 @@ func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient
 
 // Stream reads the turn's events to the end, performing each task-op's
 // GitHub write as it passes, and reports how the turn ended: nil for a
-// completed turn, an aestudiotools.TurnFailedError carrying the pod's code for
-// a failed one (the planning activity's retry policy reads it), the stream's own error
-// when it broke off, or errPlanTurnSilent when the idle watchdog fired.
+// completed turn, an aestudiotools.TurnFailedError carrying the pod's code
+// (and a provider_limit's reset time) for a failed one (the planning
+// activity's retry policy reads it), the stream's own error when it broke
+// off, or errPlanTurnSilent when the idle watchdog fired.
 //
 // Every event, keep-alives included, resets the watchdog and reports progress
 // on t.ctx, which the planning activity turns into a heartbeat (04 §5, D-2).
@@ -181,7 +182,7 @@ func (t *planTap) Stream(events iter.Seq2[aestudiotools.TurnEvent, error], abort
 			t.consume(ev)
 		case aestudiotools.EventResult:
 			if ev.Status != "completed" {
-				return fmt.Errorf("plan: %w", &aestudiotools.TurnFailedError{Code: ev.Code})
+				return fmt.Errorf("plan: %w", &aestudiotools.TurnFailedError{Code: ev.Code, ResetAt: ev.ResetAt})
 			}
 			return nil
 		}

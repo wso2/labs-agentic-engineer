@@ -95,20 +95,33 @@ function result(status: ResultFrame["status"], code?: string, message?: string):
   return { type: "result", status, ...(code !== undefined ? { code } : {}), ...(message !== undefined ? { message } : {}) };
 }
 
-/** A failed turn's code: its own code, else the reason it failed for (`shutdown`, `stream-died`, ...). */
-function failedResult(reason: string, code: string | undefined, message: string | undefined): ResultFrame {
-  return result("failed", code ?? reason, message ?? (reason === "shutdown" ? SHUTDOWN_MESSAGE : undefined));
+/** How a failed turn ended, as its terminal part or its status records it. */
+interface Failure {
+  reason: string;
+  code?: string;
+  message?: string;
+  resetAt?: string;
+}
+
+/**
+ * A failed turn's result: its own code, else the reason it failed for
+ * (`shutdown`, `stream-died`, ...). A `provider_limit` carries the reset time
+ * the provider stated, so aep-api waits until then before its next try.
+ */
+function failedResult({ reason, code, message, resetAt }: Failure): ResultFrame {
+  const frame = result("failed", code ?? reason, message ?? (reason === "shutdown" ? SHUTDOWN_MESSAGE : undefined));
+  return code === "provider_limit" && resetAt !== undefined ? { ...frame, resetAt } : frame;
 }
 
 /** The result line of a turn's terminal part. */
 export function resultOf(end: TurnEndPart): ResultFrame {
-  return end.type === "turn-completed" ? result("completed") : failedResult(end.reason, end.code, end.message);
+  return end.type === "turn-completed" ? result("completed") : failedResult(end);
 }
 
 /** The result line of a finished turn whose frames are gone (past the replay retention). */
 function resultOfStatus(status: TurnStatus): ResultFrame {
   if (status.status === "completed") return result("completed");
-  return failedResult(status.reason ?? "agent-error", status.code, status.message);
+  return failedResult({ ...status, reason: status.reason ?? "agent-error" });
 }
 
 function isTurnEnd(part: ReplayPart): part is TurnEndPart {

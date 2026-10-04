@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -500,16 +501,22 @@ func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) e
 	// long, and a cancel pressed mid-turn should end the turn rather than let it
 	// run on to mint a plan for a version nobody is building. On top of the
 	// wrapper's clock, the turn beats per event it sends (04 §5, D-2/Q-8),
-	// keep-alives included, each beat carrying the event count: the beats then
-	// say the turn is moving, not only that the worker is.
-	return heartbeating(ctx, func(ctx context.Context) error {
-		err := a.planner.PlanIntoMilestone(withTurnBeats(ctx), in.OrgID, in.ProjectID, in.MilestoneNumber)
+	// keep-alives included: the beats then say the turn is moving, not only
+	// that the worker is. Every beat also carries the count of provider-limited
+	// tries, which is what bounds them (planBeat).
+	beat := newPlanBeat(ctx)
+	return heartbeatingWith(ctx, beat.beat, func(ctx context.Context) error {
+		err := a.planner.PlanIntoMilestone(beat.withTurnBeats(ctx), in.OrgID, in.ProjectID, in.MilestoneNumber)
+		providerLimits := beat.providerLimitCount()
+		if providerLimited(err) {
+			providerLimits = beat.countProviderLimit()
+		}
 		// Same record as ProvisionGates. This activity retries UNBOUNDED on a
 		// blip, which used to be a silent spinner for as long as it lasted;
 		// the record is what lets the console say "retrying, attempt N".
 		attempt := activityAttempt(ctx)
-		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt), attempt)
-		return planErr(err, attempt)
+		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt, providerLimits), attempt)
+		return planErr(err, providerLimits, time.Now())
 	})
 }
 

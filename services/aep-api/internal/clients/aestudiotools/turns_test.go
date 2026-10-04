@@ -321,3 +321,34 @@ func TestStartTurn_TheCallersDeadlineIsNotUnavailable(t *testing.T) {
 		t.Fatalf("resolve calls = %d, want 1 (the Target survives the caller's deadline)", ep.count())
 	}
 }
+
+// K-1: a provider_limit result may say when the provider's limit resets. The
+// adapter reads it, so the planning activity can wait that long rather than
+// a fixed delay; a value that is not an RFC 3339 time is dropped (the fixed
+// delay applies), never a broken stream.
+func TestStartTurn_TheResultCarriesTheProvidersResetTime(t *testing.T) {
+	for name, tc := range map[string]struct {
+		line string
+		want time.Time
+	}{
+		"stated":    {`{"type":"result","status":"failed","code":"provider_limit","resetAt":"2026-10-04T10:15:00Z"}`, time.Date(2026, 10, 4, 10, 15, 0, 0, time.UTC)},
+		"absent":    {`{"type":"result","status":"failed","code":"provider_limit"}`, time.Time{}},
+		"malformed": {`{"type":"result","status":"failed","code":"provider_limit","resetAt":"soon"}`, time.Time{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := ndjsonServer(t, nil, tc.line)
+			a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
+			seq, err := a.StartTurn(context.Background(), acmeGreeter, startReq())
+			if err != nil {
+				t.Fatal(err)
+			}
+			evs, err := collect(t, seq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(evs) != 1 || evs[0].Code != TurnCodeProviderLimit || !evs[0].ResetAt.Equal(tc.want) {
+				t.Fatalf("events = %+v, want one provider_limit result with resetAt %v", evs, tc.want)
+			}
+		})
+	}
+}

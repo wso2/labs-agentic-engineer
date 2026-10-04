@@ -152,6 +152,25 @@ func TestRelay_StreamsEveryFrameUnchanged(t *testing.T) {
 	}
 }
 
+// K-1: a provider_limit result's resetAt reaches aep-api: the relay passes
+// the line through unchanged, a field it does not read included.
+func TestRelay_PassesTheResultsResetTimeThrough(t *testing.T) {
+	golden := turnstest.Golden(t, "provider_limit.ndjson")
+	sock := turnstest.New(t, turnstest.GoldenScript(t, "provider_limit.ndjson", 0))
+	h := newRelayHarness(t, sock.Path())
+
+	got := readAllLines(t, h.post(turnBody(testTurnID)))
+	if strings.Join(got, "\n") != strings.Join(golden, "\n") {
+		t.Fatalf("relayed\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(golden, "\n"))
+	}
+	if !strings.Contains(got[len(got)-1], `"resetAt":"2026-10-04T10:15:00.000Z"`) {
+		t.Fatalf("the result line lost its resetAt: %s", got[len(got)-1])
+	}
+	eventually(t, func() bool {
+		return h.logCount(`"msg":"turns.result"`, `"turnId":"`+testTurnID+`"`, `"status":"failed"`) == 1
+	}, "turns.result not logged")
+}
+
 func TestRelay_CallerLeavesTurnStillDrainedAndLogged(t *testing.T) {
 	sock := turnstest.New(t, turnstest.Script{
 		Events: []string{`{"type":"task-op","op":"plan","output":{"ok":true}}`},

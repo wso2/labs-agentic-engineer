@@ -78,7 +78,10 @@ func sourceControlErr(err error) error {
 const errTypePermanentPlan = "PermanentPlanFailure"
 
 // planErr classifies a planning round trip, and is the whole point of moving
-// planning into the workflow. attempt is the activity's attempt number.
+// planning into the workflow. providerLimits is how many of this activity's
+// attempts so far, this one included, the provider's limit stopped (counted
+// in the heartbeat details, planBeat); now is the clock a stated reset time
+// is measured against.
 //
 // The detached goroutine this replaced had no such distinction: a seven-second
 // TCP connect timeout to GitHub and "the repository was deleted" both settled
@@ -90,7 +93,7 @@ const errTypePermanentPlan = "PermanentPlanFailure"
 // worth telling apart are the ones sourceControlErr already names, the AE
 // Studio adapter's permanent answers, and how the turn itself ended
 // (planPermanent).
-func planErr(err error, attempt int) error {
+func planErr(err error, providerLimits int, now time.Time) error {
 	switch {
 	case err == nil:
 		return nil
@@ -98,14 +101,14 @@ func planErr(err error, attempt int) error {
 		// C3: aep-api's own AE-only client cannot call the pod. An operator
 		// fixes that, never a retry, so it fails under its own type.
 		return temporal.NewNonRetryableApplicationError(err.Error(), errTypeAEStudioMisconfigured, err)
-	case planPermanent(err, attempt):
+	case planPermanent(err, providerLimits):
 		return temporal.NewNonRetryableApplicationError(err.Error(), errTypePermanentPlan, err)
 	case providerLimited(err):
-		// The result line carries no reset time, so the next attempt waits a
-		// fixed delay rather than the default backoff (seconds), which would
-		// spend the bounded attempts before any limit resets.
+		// The next attempt waits for the limit to reset rather than the
+		// default backoff (seconds), which would spend the bounded tries
+		// before any limit resets.
 		return temporal.NewApplicationErrorWithOptions(err.Error(), errTypeProviderLimitedPlan, temporal.ApplicationErrorOptions{
-			NextRetryDelay: planProviderLimitRetryDelay,
+			NextRetryDelay: providerLimitRetryDelay(err, now),
 			Cause:          err,
 		})
 	}
@@ -122,17 +125,35 @@ const errTypeAEStudioMisconfigured = "ae_studio_misconfigured"
 // the model provider's limit stopped, while it is still being retried.
 const errTypeProviderLimitedPlan = "ProviderLimitedPlan"
 
-// A planning turn the provider's limit stopped is retried this many attempts
-// in all, planProviderLimitRetryDelay apart (about 30 min of waiting): long
-// enough for a per-minute or hourly limit to reset, short of looping a run on
-// a spent plan for ever. Every attempt is a new paid turn (R1-I1).
+// A planning turn the provider's limit stopped is tried this many times in
+// all, counted apart from the attempts a shutdown or a dead stream ended
+// (those retry freely and never spend it): long enough for a per-minute or
+// hourly limit to reset, short of looping a run on a spent plan for ever.
+// Every try is a new paid turn (R1-I1).
+//
+// Between tries the activity waits until the reset time the provider stated,
+// clamped to [planProviderLimitMinDelay, planProviderLimitMaxDelay] so a
+// past or far-off time neither hammers the provider nor parks the run for
+// hours; with no stated time it waits planProviderLimitRetryDelay.
 const (
 	planProviderLimitAttempts   = 4
 	planProviderLimitRetryDelay = 10 * time.Minute
+	planProviderLimitMinDelay   = time.Minute
+	planProviderLimitMaxDelay   = 30 * time.Minute
 )
 
+// providerLimitRetryDelay is how long a provider-limited planning turn waits
+// before its next try (see planProviderLimitAttempts).
+func providerLimitRetryDelay(err error, now time.Time) time.Duration {
+	var failed *aestudiotools.TurnFailedError
+	if !errors.As(err, &failed) || failed.ResetAt.IsZero() {
+		return planProviderLimitRetryDelay
+	}
+	return min(max(failed.ResetAt.Sub(now), planProviderLimitMinDelay), planProviderLimitMaxDelay)
+}
+
 // planPermanent reports whether repeating a planning round trip cannot
-// change its answer, at this attempt:
+// change its answer, after providerLimits provider-limited tries:
 //   - a permanent source-control failure;
 //   - an AE Studio answer that is one (aestudiotools.IsPermanent: a
 //     misconfigured client, a 4xx of the pod);
@@ -140,17 +161,17 @@ const (
 //     connecting GitHub changes that;
 //   - a turn the pod ended failed (R1-I1), unless it was interrupted (a
 //     shutdown, a dead stream: retried like a blip) or stopped by the
-//     provider's limit before its last bounded attempt. Any other ending
+//     provider's limit before its last bounded try. Any other ending
 //     (agent-error, output_truncated, internal) is the model's answer, and a
 //     retry would pay for a new turn to likely meet it again.
-func planPermanent(err error, attempt int) bool {
+func planPermanent(err error, providerLimits int) bool {
 	var failed *aestudiotools.TurnFailedError
 	if errors.As(err, &failed) {
 		switch {
 		case failed.Interrupted():
 			return false
 		case failed.ProviderLimited():
-			return attempt >= planProviderLimitAttempts
+			return providerLimits >= planProviderLimitAttempts
 		default:
 			return true
 		}

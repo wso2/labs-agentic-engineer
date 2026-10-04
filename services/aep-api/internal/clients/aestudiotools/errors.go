@@ -26,6 +26,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"time"
 )
 
 var (
@@ -60,11 +61,15 @@ const (
 )
 
 // TurnFailedError is a turn the pod ended `failed`. It carries the result's
-// code only: the result's free-text message is the agent's, possibly a
+// code, and on a provider_limit the reset time the provider stated (zero when
+// it stated none). The result's free-text message is the agent's, possibly a
 // provider's error body, so the adapter never reads it and it cannot reach an
 // error string, a log line or Temporal history (R1-M4). Whether to start the
-// turn again is the caller's policy; IsPermanent does not judge it.
-type TurnFailedError struct{ Code string }
+// turn again, and when, is the caller's policy; IsPermanent does not judge it.
+type TurnFailedError struct {
+	Code    string
+	ResetAt time.Time
+}
 
 func (e *TurnFailedError) Error() string {
 	code := e.Code

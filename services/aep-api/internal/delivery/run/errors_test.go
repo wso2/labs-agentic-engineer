@@ -39,6 +39,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -254,6 +255,36 @@ func TestPlanMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.Equal(t, 1, planner.count(), "a permanent planning failure must be asked exactly once")
+}
+
+// K-1: the provider-limit bound counts provider limits, not Temporal
+// attempts. Four shutdowns first (attempts 1-4) leave all four
+// provider-limit tries (attempts 5-8); the count crosses each retry in the
+// heartbeat details. Under the old attempt-number rule the provider limit at
+// attempt 5 failed the run with no wait at all.
+func TestPlanMilestoneCountsProviderLimitsApartFromInterruptions(t *testing.T) {
+	shutdown := &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeShutdown}
+	limited := &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeProviderLimit}
+
+	t.Run("a provider limit after four shutdowns is retried", func(t *testing.T) {
+		env, planner := planEnv(t, shutdown, shutdown, shutdown, shutdown, limited, limited, limited, nil)
+
+		executePlan(env)
+
+		require.True(t, env.IsWorkflowCompleted())
+		require.NoError(t, env.GetWorkflowError())
+		require.Equal(t, 8, planner.count(), "three provider limits after four shutdowns stay inside the bound")
+	})
+
+	t.Run("the bound still holds after an interruption", func(t *testing.T) {
+		env, planner := planEnv(t, shutdown, shutdown, shutdown, limited)
+
+		executePlan(env)
+
+		require.True(t, env.IsWorkflowCompleted())
+		require.Equal(t, 3+planProviderLimitAttempts, planner.count(),
+			"each provider limit is one try of the bound, however many interruptions came first")
+	})
 }
 
 // scriptedGates answers ProvisionForBuild from a queued script — one entry per
