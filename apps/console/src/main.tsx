@@ -27,6 +27,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { AppAuthProvider } from "./auth/AuthProvider";
 import { router } from "./router";
+import { dropSharedMarketplaceLogs } from "./features/agent-chat/chatScope";
 
 // api-guidelines: retry 3 for queries (TanStack default, made explicit),
 // no automatic retry for mutations; per-query staleTime set at the hook.
@@ -47,6 +48,10 @@ async function enableMocking(): Promise<void> {
   const { worker } = await import("./mocks/browser");
   await worker.start({ onUnhandledRequest: "bypass" });
 }
+
+// Privacy hygiene: the marketplace chat log used to be shared by every user
+// of the browser; it is per user now, and the shared one is dropped.
+dropSharedMarketplaceLogs();
 
 void enableMocking().then(() => {
   createRoot(document.getElementById("app")!).render(

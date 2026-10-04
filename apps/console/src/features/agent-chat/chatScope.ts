@@ -25,7 +25,7 @@
 // ae-design-agent serves the two on parallel route families (/projects/{p}/…
 // and /marketplace/…); this type is how a caller picks one.
 
-import { chatKeyFor } from "./chatStore.js";
+import { chatKeyFor, dropChatLogsOfScope } from "./chatStore.js";
 
 export type ChatScope = { kind: "project"; project: string } | { kind: "marketplace" };
 
@@ -50,4 +50,14 @@ export function scopeName(scope: ChatScope): string {
  */
 export function chatKeyForScope(org: string, scope: ChatScope, userId: string): string {
   return chatKeyFor(org, scope.kind === "project" ? scopeName(scope) : `${scopeName(scope)}.${userId}`);
+}
+
+/**
+ * Before the per-user key, every user of a browser shared one marketplace log
+ * per org (`aep.chat.v1.<org>.~marketplace`). The console removes those on
+ * load, so a later user on the same browser never reads an earlier one's
+ * register conversation. The per-user keys (`~marketplace.<sub>`) stay.
+ */
+export function dropSharedMarketplaceLogs(): void {
+  dropChatLogsOfScope(scopeName(MARKETPLACE_SCOPE));
 }

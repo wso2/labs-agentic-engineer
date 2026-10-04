@@ -137,8 +137,33 @@ const MAX_MESSAGES = 200;
 const logs = new Map<string, ChatMessage[]>();
 const listeners = new Map<string, Set<() => void>>();
 
+const STORAGE_PREFIX = "aep.chat.v1.";
+
 function storageKey(org: string, project: string): string {
-  return `aep.chat.v1.${org}.${project}`;
+  return `${STORAGE_PREFIX}${org}.${project}`;
+}
+
+/**
+ * Remove the persisted log of the scope segment `scope` (as `chatKeyFor`
+ * names it) in every org. Best-effort: storage that throws leaves the logs.
+ */
+export function dropChatLogsOfScope(scope: string): void {
+  const suffix = `.${scope}`;
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(STORAGE_PREFIX) && key.endsWith(suffix) && key.length > STORAGE_PREFIX.length + suffix.length) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) {
+      localStorage.removeItem(key);
+      logs.delete(key);
+    }
+  } catch {
+    // best-effort, like every other storage access here
+  }
 }
 
 /**
