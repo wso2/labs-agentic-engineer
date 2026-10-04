@@ -30,6 +30,11 @@ import (
 type RepoRepository interface {
 	GetByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) (*GitRepository, error)
 	GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*GitRepository, error)
+	// FindInOrgByFullName returns the org's repo row whose clone URL is the
+	// GitHub repository fullName ("owner/name"), or nil. The webhook ingest
+	// checks a delivery's repository with it, so a repository another org
+	// owns is never found.
+	FindInOrgByFullName(ctx context.Context, ocOrgID, fullName string) (*GitRepository, error)
 	// ListAllReady returns every repo in `ready` status across all orgs.
 	// Used by cross-org sweeps (eventcore) and org-filtered project listing
 	// (provisioning) — not a clone pre-warm. Bounded by the table size; not
@@ -94,6 +99,22 @@ func (r *repoRepository) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug 
 	return &repo, nil
 }
 
+func (r *repoRepository) FindInOrgByFullName(ctx context.Context, ocOrgID, fullName string) (*GitRepository, error) {
+	if ocOrgID == "" || fullName == "" {
+		return nil, nil
+	}
+	var rows []GitRepository
+	if err := r.db.WithContext(ctx).
+		Where("org_id = ? AND repo_url IN ?", ocOrgID, githubRepoURLs(fullName)).
+		Limit(1).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
 func (r *repoRepository) ListAllReady(ctx context.Context) ([]GitRepository, error) {
 	var rows []GitRepository
 	if err := r.db.WithContext(ctx).
@@ -156,15 +177,46 @@ func LookupOrgProjectByRepoURL(db *gorm.DB, repoFullName string) (orgID, project
 	// unanchored `ILIKE '%'+fullName` whose leading wildcard matched any host
 	// and any path suffix — a payload could otherwise resolve another org's
 	// repo. Anchored on host+owner+repo; both `.git` and bare shapes.
-	canonical := "https://github.com/" + repoFullName
 	err = db.Raw(`
 		SELECT org_id, project_id
 		FROM git_repositories
-		WHERE repo_url = ? OR repo_url = ?
+		WHERE repo_url IN ?
 		LIMIT 1
-	`, canonical, canonical+".git").Scan(&r).Error
+	`, githubRepoURLs(repoFullName)).Scan(&r).Error
 	if err != nil {
 		return "", "", err
 	}
 	return r.OrgID, r.ProjectID, nil
+}
+
+// LookupOrgProjectByRepoURLInOrg is LookupOrgProjectByRepoURL restricted to
+// orgID's rows: a webhook handler running under a delivery org resolves a
+// repository only there, so a payload naming another org's repository yields
+// ("", "", nil), the same as an unknown one.
+func LookupOrgProjectByRepoURLInOrg(db *gorm.DB, orgID, repoFullName string) (string, string, error) {
+	if orgID == "" || repoFullName == "" {
+		return "", "", nil
+	}
+	var r struct {
+		OrgID     string
+		ProjectID string
+	}
+	err := db.Raw(`
+		SELECT org_id, project_id
+		FROM git_repositories
+		WHERE org_id = ? AND repo_url IN ?
+		LIMIT 1
+	`, orgID, githubRepoURLs(repoFullName)).Scan(&r).Error
+	if err != nil {
+		return "", "", err
+	}
+	return r.OrgID, r.ProjectID, nil
+}
+
+// githubRepoURLs are the clone URLs a repo row stores for a GitHub full name:
+// the canonical URL, bare and with ".git". Matched exactly (INT-2), never as a
+// pattern.
+func githubRepoURLs(fullName string) []string {
+	canonical := "https://github.com/" + fullName
+	return []string{canonical, canonical + ".git"}
 }

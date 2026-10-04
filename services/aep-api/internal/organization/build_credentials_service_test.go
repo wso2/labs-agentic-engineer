@@ -71,6 +71,10 @@ func (f *fakeRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRe
 func (f *fakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (f *fakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (f *fakeRepoRepo) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*sourcecontrol.GitRepository, error) {
 	return f.rows[ocOrgID+"/"+repoSlug], nil
 }

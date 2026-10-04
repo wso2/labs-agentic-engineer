@@ -64,6 +64,10 @@ var _ sourcecontrol.RepoRepository = (*stubRepoRepo)(nil)
 func (s *stubRepoRepo) GetByOrgAndProjectID(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return s.rec, nil
 }
+func (s *stubRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (s *stubRepoRepo) GetByOrgAndSlug(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return nil, sourcecontrol.ErrRepoNotFound
 }

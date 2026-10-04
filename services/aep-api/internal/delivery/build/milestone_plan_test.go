@@ -67,6 +67,10 @@ type planFakeRepoRepo struct{}
 func (planFakeRepoRepo) GetByOrgAndProjectID(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return &sourcecontrol.GitRepository{OrgID: "acme", ProjectID: "shop", RepoURL: "https://github.com/acme/widgets"}, nil
 }
+func (planFakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (planFakeRepoRepo) GetByOrgAndSlug(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return nil, nil
 }

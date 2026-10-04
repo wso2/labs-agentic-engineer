@@ -133,6 +133,10 @@ func (f *fakeRepoRepo) GetByOrgAndProjectID(_ context.Context, orgID, projectID 
 	return &cp, nil
 }
 
+func (f *fakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (f *fakeRepoRepo) GetByOrgAndSlug(_ context.Context, orgID, repoSlug string) (*sourcecontrol.GitRepository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

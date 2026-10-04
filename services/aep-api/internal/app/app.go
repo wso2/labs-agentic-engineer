@@ -836,7 +836,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// incident run over it.
 	taskCommands := task.NewCommands(componentService, eventcoreAdopter{events: eventPlane})
 	webhook.RegisterInstallationHandlers(webhookRouter, credService, issueService, trashWorkspaceOrg)
-	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
+	// One Ingestor runs every accepted delivery's tail (persist, claim, ack,
+	// detached dispatch): the AE Studio tools pod's ingest-webhook-event, and
+	// the GitHub App receiver until it is retired.
+	webhookIngestor := webhook.NewIngestor(deliveryStore, webhookRouter, repoRepo)
+	webhookCtrl := webhook.NewWebhookController(webhookVerifier, webhookIngestor, routingLookup, routingCache)
 
 	// The reconcile sweep (missed webhooks / disaster recovery) + the exec
 	// watcher (OC WorkflowRun → execution-row outcomes + build terminals).

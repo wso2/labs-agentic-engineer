@@ -122,7 +122,14 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   What a delivery past its window was for is `eventcore`'s reconcile sweeps' to heal
   (`webhook.ReplayHorizon` sets their grace). Every handler must stay idempotent: a replay re-runs
   whatever the failed attempt got through. A routing failure is answered before anything is
-  persisted, so nothing replays it.
+  persisted, so nothing replays it. The persist/claim/dispatch tail is `webhook.Ingestor`, shared by
+  `webhook.Receive` and the AE Studio tools pod's `ingest-webhook-event` (`Ingestor.Ingest`).
+- **A delivery acts only on its own org's repositories.** `Ingestor.Ingest` refuses
+  (`ErrRepositoryUnknown`, nothing stored) a delivery whose `repository.full_name` is not one of the
+  caller's org's repositories (`RepoRepository.FindInOrgByFullName`), and every handler run, the
+  `Replayer`'s included, carries the delivery's org on its context (`webhook.DeliveryOrg`): the
+  full-name lookups the handlers use (`app`'s `repoLocator`, `repoNamer`) then resolve only in that
+  org (`LookupOrgProjectByRepoURLInOrg`), so a payload naming another org's repository finds nothing.
 - **A stored delivery never carries a published credential.** Every verified webhook delivery's
   body is persisted to `webhook_payloads` — for audit, and as what the `Replayer` re-runs — so a comment the
   platform posts *on purpose* carrying credentials would land in the database in cleartext, the one

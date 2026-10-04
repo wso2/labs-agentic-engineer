@@ -17,7 +17,6 @@
 package webhook
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,8 +26,6 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/organization"
-	"github.com/wso2/aep/aep-api/internal/platform/async"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // isLookupNotFound reports whether err is a 404 surfaced by the routing
@@ -68,22 +65,22 @@ type WebhookController interface {
 }
 
 type webhookController struct {
-	verifier   *Verifier
-	deliveries *sourcecontrol.DeliveryStore
-	runner     deliveryRunner
-	lookup     OcOrgIDLookup // served by CredentialService
-	cache      *RoutingCache // 60s in-process cache
+	verifier *Verifier
+	// ingest runs steps 5-7 (Ingestor.accept). The receiver has already bound
+	// the org through the routing lookup, so it skips Ingest's repository check.
+	ingest *Ingestor
+	lookup OcOrgIDLookup // served by CredentialService
+	cache  *RoutingCache // 60s in-process cache
 }
 
 // NewWebhookController wires the receiver. lookup + cache are required;
 // passing nil disables the receiver.
-func NewWebhookController(verifier *Verifier, deliveries *sourcecontrol.DeliveryStore, router *Router, lookup OcOrgIDLookup, cache *RoutingCache) WebhookController {
+func NewWebhookController(verifier *Verifier, ingest *Ingestor, lookup OcOrgIDLookup, cache *RoutingCache) WebhookController {
 	return &webhookController{
-		verifier:   verifier,
-		deliveries: deliveries,
-		runner:     deliveryRunner{deliveries: deliveries, router: router},
-		lookup:     lookup,
-		cache:      cache,
+		verifier: verifier,
+		ingest:   ingest,
+		lookup:   lookup,
+		cache:    cache,
 	}
 }
 
@@ -154,54 +151,25 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	verified := time.Now()
-	action := actionFromPayload(body)
-	res, err := c.deliveries.Persist(ctx, deliveryID, ocOrgID, event, action,
-		redactPublishedCredentials(body), deliveryLease)
+	res, err := c.ingest.accept(ctx, ocOrgID, deliveryID, event, body, "receiver")
 	if err != nil {
-		slog.ErrorContext(ctx, "webhook: persist failed",
-			"deliveryId", deliveryID, "event", event, "error", err, "result", "persist_failed")
 		http.Error(w, "persist", http.StatusInternalServerError)
 		return
 	}
-	if res.AlreadyProcessed {
-		// Replay of finished work — ack and move on.
-		slog.InfoContext(ctx, "webhook: dedup — already processed",
-			"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID, "result", "dedup")
+	switch res {
+	case IngestDuplicate:
 		w.WriteHeader(http.StatusOK)
-		return
-	}
-	if !res.Claimed {
-		// A duplicate of a delivery another attempt holds: its first run is still
-		// going, or it failed and is inside its retry backoff. Either way the
-		// holder settles it, and running it here too would run it twice.
-		slog.InfoContext(ctx, "webhook: duplicate of a held delivery — ack without running",
-			"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID, "result", "held")
+	case IngestHeld:
 		w.WriteHeader(http.StatusAccepted)
-		return
+	default:
+		accepted := time.Now()
+		slog.InfoContext(ctx, "webhook: receiver timings",
+			"deliveryId", deliveryID, "event", event, "ocOrgId", ocOrgID,
+			"readMs", read.Sub(received).Milliseconds(), "routeMs", routed.Sub(read).Milliseconds(),
+			"verifyMs", verified.Sub(routed).Milliseconds(), "persistMs", accepted.Sub(verified).Milliseconds(),
+			"ackMs", accepted.Sub(received).Milliseconds())
+		w.WriteHeader(http.StatusAccepted)
 	}
-
-	// Ack FIRST, then run the handlers detached from the request. GitHub closes
-	// a delivery's connection at 10 seconds, which cancels r.Context(); a
-	// handler running on it lost every in-flight GitHub and OpenChoreo call
-	// with it. The handlers get context.WithoutCancel (the correlation id
-	// survives, the cancellation does not) under their own handlerBudget, and
-	// this attempt holds the delivery's lease until it settles. A pod that dies
-	// mid-run leaves the lease to lapse, and the Replayer runs it again.
-	persisted := time.Now()
-	slog.InfoContext(ctx, "webhook: accepted — dispatching",
-		"deliveryId", deliveryID, "event", event, "action", action, "ocOrgId", ocOrgID,
-		"attempt", res.Attempts, "result", "dispatched",
-		"readMs", read.Sub(received).Milliseconds(), "routeMs", routed.Sub(read).Milliseconds(),
-		"verifyMs", verified.Sub(routed).Milliseconds(), "persistMs", persisted.Sub(verified).Milliseconds(),
-		"ackMs", persisted.Sub(received).Milliseconds())
-	w.WriteHeader(http.StatusAccepted)
-	attempt := deliveryAttempt{
-		deliveryID: deliveryID, event: event, action: action, ocOrgID: ocOrgID,
-		attempt: res.Attempts, payload: body, source: "receiver",
-	}
-	async.Go(context.WithoutCancel(ctx), "webhook:"+event, func(ctx context.Context) {
-		c.runner.run(ctx, attempt)
-	})
 }
 
 func actionFromPayload(body []byte) string {

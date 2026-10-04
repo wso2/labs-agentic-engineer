@@ -121,8 +121,7 @@ func newReceiverHarness(t *testing.T) *receiverHarness {
 	clock := newTestClock()
 	ctrl := NewWebhookController(
 		NewVerifier(newStaticProvider(receiverSecret)),
-		sourcecontrol.NewDeliveryStore(db).WithClock(clock.Now),
-		router,
+		NewIngestor(sourcecontrol.NewDeliveryStore(db).WithClock(clock.Now), router, reposIn{}),
 		lookup,
 		NewRoutingCache(0),
 	)

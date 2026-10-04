@@ -318,3 +318,33 @@ func TestRepoRepository_ListByOrg(t *testing.T) {
 		t.Fatalf("ListByOrg(orgc) = %d rows, want 0", len(empty))
 	}
 }
+
+// FindInOrgByFullName finds only the org's own row, by the bare or .git clone
+// URL, and never by a pattern: the same repository URL on another org's row,
+// a longer name sharing the prefix, or another host is no match.
+func TestRepoRepository_FindInOrgByFullName(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := sourcecontrol.NewRepoRepository(db)
+	ctx := context.Background()
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p1", RepoURL: "https://github.com/acme/greeter.git", Status: "ready"})
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orgb", ProjectID: "p9", RepoURL: "https://github.com/acme/other", Status: "ready"})
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p2", RepoURL: "https://evil.example/acme/hosted", Status: "ready"})
+
+	got, err := repo.FindInOrgByFullName(ctx, "orga", "acme/greeter")
+	if err != nil || got == nil || got.ProjectID != "p1" {
+		t.Fatalf("orga acme/greeter = %+v %v, want p1", got, err)
+	}
+	for _, tc := range []struct{ org, name string }{
+		{"orgb", "acme/greeter"}, // another org's repository
+		{"orga", "acme/other"},   // orgb's repository, asked in orga
+		{"orga", "acme/greet"},   // a prefix
+		{"orga", "acme/hosted"},  // another host
+		{"orga", ""},
+		{"", "acme/greeter"},
+	} {
+		if got, err := repo.FindInOrgByFullName(ctx, tc.org, tc.name); err != nil || got != nil {
+			t.Errorf("FindInOrgByFullName(%q, %q) = %+v %v, want nil", tc.org, tc.name, got, err)
+		}
+	}
+}
