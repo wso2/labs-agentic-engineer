@@ -169,9 +169,9 @@ func (a *Adapter) turnEvents(ctx context.Context, org string, body io.ReadCloser
 				continue
 			}
 			var ev struct {
-				Type   string          `json:"type"`
-				Op     string          `json:"op"`
-				Output json.RawMessage `json:"output"`
+				Type    string          `json:"type"`
+				Op      string          `json:"op"`
+				Output  json.RawMessage `json:"output"`
 				Status  string          `json:"status"`
 				Code    string          `json:"code"`
 				ResetAt string          `json:"resetAt"`
