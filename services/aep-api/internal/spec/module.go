@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Deps is what this domain must be handed to exist: typed ports / services,
@@ -31,8 +32,8 @@ import (
 type Deps struct {
 	// References is the org pods' reference-document store (references upload).
 	References aestudiotools.References
-	// Repos resolves a project to its repository (references upload).
-	Repos ProjectRepos
+	// Repos reads a project's repository row (references upload).
+	Repos sourcecontrol.ProjectRepoRows
 	// Kickoff fires the kickoff a create held for its reference documents.
 	// Nil: an upload fires none.
 	Kickoff *KickoffService

@@ -20,7 +20,7 @@ import (
 	"context"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
-	"github.com/wso2/aep/aep-api/internal/spec"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Handler serves the files feature's one remaining operation, the reference
@@ -28,7 +28,7 @@ import (
 // token org before it runs.
 type Handler struct {
 	refs    aestudiotools.References
-	repos   spec.ProjectRepos
+	repos   sourcecontrol.ProjectRepoRows
 	kickoff kickoffStarter
 }
 
@@ -44,6 +44,6 @@ type kickoffStarter interface {
 // NewHandler returns the slice's handler: refs is the org pods' reference
 // store, repos resolves the project's repository, kickoff fires the held
 // kickoff (nil: none).
-func NewHandler(refs aestudiotools.References, repos spec.ProjectRepos, kickoff kickoffStarter) *Handler {
+func NewHandler(refs aestudiotools.References, repos sourcecontrol.ProjectRepoRows, kickoff kickoffStarter) *Handler {
 	return &Handler{refs: refs, repos: repos, kickoff: kickoff}
 }

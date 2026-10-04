@@ -47,8 +47,6 @@ type (
 	Entry = gitfs.Entry
 	// CommitOpts parametrizes one Mutate (message, identities, retry policy).
 	CommitOpts = gitfs.CommitOpts
-	// CommitResult reports what a Mutate did.
-	CommitResult = gitfs.CommitResult
 	// TagSpec describes one annotated tag.
 	TagSpec = gitfs.TagSpec
 	// RetryPolicy bounds Mutate's CAS retry loop (the one shared retry

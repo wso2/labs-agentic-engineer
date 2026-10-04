@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -96,6 +97,18 @@ func TestIsPermanent(t *testing.T) {
 			want: false,
 		},
 		{name: "transport failure", err: errors.New("dial tcp: connection refused"), want: false},
+
+		{name: "AE Studio absent: GitHub is not connected, an answer", err: fmt.Errorf("head: %w", sourcecontrol.ErrAEStudioAbsent), want: true},
+		{name: "AE-only token refused after a refresh (C3)", err: sourcecontrol.ErrAEStudioMisconfigured, want: true},
+		{name: "repository owner is not the org's", err: sourcecontrol.ErrOwnerNotAllowed, want: true},
+		{name: "reference document rejected", err: sourcecontrol.ErrReferenceRejected, want: true},
+		{name: "AE Studio unavailable is the retry case", err: sourcecontrol.ErrAEStudioUnavailable, want: false},
+		{name: "GitHub rate limit clears on its own", err: &sourcecontrol.RateLimitedError{RetryAfter: time.Minute}, want: false},
+		{
+			name: "a commit conflict is re-read and retried by its caller",
+			err:  &sourcecontrol.CommitConflictError{Conflicts: []sourcecontrol.Conflict{{Path: "a.md"}}},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {

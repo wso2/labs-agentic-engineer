@@ -31,7 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
-	"github.com/wso2/aep/aep-api/internal/spec"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // referencesField is the multipart field the console repeats once per document.
@@ -53,7 +53,7 @@ func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProje
 	if request.Body == nil {
 		return nil, apierr.BadRequest("missing '" + referencesField + "' field")
 	}
-	ref, _, err := spec.RepoRefFor(ctx, h.repos, org, request.ProjectName)
+	ref, _, err := sourcecontrol.RepoRefFor(ctx, h.repos, org, request.ProjectName)
 	if err != nil {
 		return nil, mapReferenceError(ctx, err)
 	}
@@ -132,7 +132,7 @@ const (
 func mapReferenceError(ctx context.Context, err error) error {
 	var se *aestudiotools.StatusError
 	switch {
-	case errors.Is(err, spec.ErrProjectRepoNotFound):
+	case errors.Is(err, sourcecontrol.ErrRepoNotFound):
 		return apierr.NotFound("project repository not found")
 	case errors.Is(err, aestudiotools.ErrReferenceRejected):
 		return apierr.BadRequest(strings.TrimPrefix(err.Error(), aestudiotools.ErrReferenceRejected.Error()+": "))

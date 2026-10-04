@@ -43,6 +43,10 @@ type CreateOrgRepoRequest struct {
 	Private     bool
 	AutoInit    bool
 	Description string
+	// AdoptExisting answers the existing repository instead of
+	// ErrRepoNameConflict when the name is taken (the AE Studio create-repo
+	// op's adoptExisting).
+	AdoptExisting bool
 }
 
 // CreateIssueRequest maps to the fields we send to POST /repos/{owner}/{repo}/issues.

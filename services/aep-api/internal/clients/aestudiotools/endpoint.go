@@ -18,8 +18,8 @@ package aestudiotools
 
 // endpoint.go — where an org's ae-studio-tools answers (R13): its internal
 // API root and the OU id it pins, cached for about 30 s. The composition root
-// resolves them from the org's AE Studio status, so this package stays free
-// of domain imports.
+// resolves them from the org's AE Studio status, so this package imports no
+// domain beyond the sourcecontrol ports it serves (and never the reverse).
 
 import (
 	"context"

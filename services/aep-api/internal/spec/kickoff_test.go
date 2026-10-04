@@ -39,12 +39,12 @@ const (
 	kickoffProj = "p"
 )
 
-// kickoffRepos serves one project's repository row.
+// kickoffRepos serves one project's repository row (nil when absent).
 type kickoffRepos struct{ row *sourcecontrol.GitRepository }
 
-func (r kickoffRepos) GetRepo(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
+func (r kickoffRepos) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
 	if r.row == nil || r.row.OrgID != org || r.row.ProjectID != project {
-		return nil, sourcecontrol.ErrRepoNotFound
+		return nil, nil
 	}
 	return r.row, nil
 }
@@ -97,7 +97,7 @@ func TestKickoff_EveryAttemptCarriesTheSameTurnID(t *testing.T) {
 		t.Fatalf("pod saw %+v, want two starts with one turn id", calls)
 	}
 	got := calls[0]
-	if got.Ref != (aestudiotools.RepoRef{Org: kickoffOrg, Owner: "acme", Repo: "greeter"}) {
+	if got.Ref != (aestudiotools.RepoRef{Org: kickoffOrg, Owner: "acme", Repo: "greeter", DefaultBranch: "main"}) {
 		t.Fatalf("ref = %+v, want the project's repository in the org", got.Ref)
 	}
 	if got.Request.Kind != aestudiotools.TurnKindStart || got.Request.Project != kickoffProj {
@@ -173,8 +173,8 @@ func TestKickoff_SwallowsAPodFailure(t *testing.T) {
 func TestKickoff_ProjectWithoutARepository(t *testing.T) {
 	svc, f := newKickoff(kickoffLedger{})
 
-	if _, _, err := svc.StartKickoff(t.Context(), kickoffOrg, "missing"); !errors.Is(err, spec.ErrProjectRepoNotFound) {
-		t.Fatalf("err = %v, want ErrProjectRepoNotFound", err)
+	if _, _, err := svc.StartKickoff(t.Context(), kickoffOrg, "missing"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("err = %v, want ErrRepoNotFound", err)
 	}
 	if n := len(f.TurnCalls()); n != 0 {
 		t.Fatalf("pod saw %d turn starts, want none", n)

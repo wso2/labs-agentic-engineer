@@ -32,11 +32,13 @@ import (
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/gen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // RepoRef names a project's repository in an org: the org (its OpenChoreo
-// namespace, which picks the pod) and the GitHub owner and repository.
-type RepoRef struct{ Org, Owner, Repo string }
+// namespace, which picks the pod), the GitHub owner and repository, and its
+// default branch. The port's own type.
+type RepoRef = sourcecontrol.RepoRef
 
 // defaultCallTimeout bounds a unary call (the gateway's /internal/v1 route
 // allows 120 s). A turn stream is bounded by the caller's ctx only.
@@ -57,8 +59,8 @@ type Config struct {
 	CallTimeout time.Duration
 }
 
-// Adapter calls an org's ae-studio-tools. It implements Turns, References and
-// Identity.
+// Adapter calls an org's ae-studio-tools. It implements Turns,
+// sourcecontrol.ReferencesOps and sourcecontrol.IdentityOps.
 type Adapter struct {
 	endpoints   *endpointCache
 	tokens      TokenSource
@@ -69,9 +71,9 @@ type Adapter struct {
 }
 
 var (
-	_ Turns      = (*Adapter)(nil)
-	_ References = (*Adapter)(nil)
-	_ Identity   = (*Adapter)(nil)
+	_ Turns                     = (*Adapter)(nil)
+	_ References                = (*Adapter)(nil)
+	_ sourcecontrol.IdentityOps = (*Adapter)(nil)
 )
 
 // New builds the Adapter. It does no I/O.

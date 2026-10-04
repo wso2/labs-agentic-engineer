@@ -38,7 +38,7 @@ import (
 // describe. One turn per project is the pod's lock: a different turn running
 // is aestudiotools.ErrTurnInProgress, which the planning activity retries.
 type PlanService struct {
-	repos    RepoResolver
+	repos    sourcecontrol.ProjectRepoRows
 	versions VersionReader
 	turns    aestudiotools.Turns
 	issues   IssueClient
@@ -57,7 +57,7 @@ func (s *PlanService) SetComponentPaths(r ComponentPathReader) { s.paths = r }
 // org's pod; issues is the READ half the turn's context is assembled from and
 // writer is the domain's issue-write surface, which is what the tap mints
 // each planned Task through.
-func NewPlanService(repos RepoResolver, versions VersionReader, turns aestudiotools.Turns, issues IssueClient, writer *delivery.IssueWriter) *PlanService {
+func NewPlanService(repos sourcecontrol.ProjectRepoRows, versions VersionReader, turns aestudiotools.Turns, issues IssueClient, writer *delivery.IssueWriter) *PlanService {
 	return &PlanService{repos: repos, versions: versions, turns: turns, issues: issues, writer: writer}
 }
 
@@ -75,7 +75,11 @@ func NewPlanService(repos RepoResolver, versions VersionReader, turns aestudioto
 // or the pod's (aestudiotools.ErrTurnInProgress, ErrAEStudioUnavailable,
 // ErrAEStudioMisconfigured, ErrAEStudioAbsent, *StatusError).
 func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID string, milestoneNumber int) error {
-	ref, err := s.projectRepoRef(ctx, orgID, projectID)
+	// A row that is missing, or not provisioned yet, has nothing to plan in.
+	ref, row, err := sourcecontrol.RepoRefFor(ctx, s.repos, orgID, projectID)
+	if errors.Is(err, sourcecontrol.ErrRepoNotFound) || (err == nil && row.Status != "" && row.Status != "ready") {
+		return ErrProjectRepoNotFound
+	}
 	if err != nil {
 		return err
 	}
@@ -168,22 +172,6 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 		return fmt.Errorf("plan: %d issue write(s) failed for milestone %d", tap.failures, milestoneNumber)
 	}
 	return nil
-}
-
-// projectRepoRef resolves the project's repository as the pod serves it. A
-// row that is missing, or not provisioned yet, has nothing to plan in.
-func (s *PlanService) projectRepoRef(ctx context.Context, orgID, projectID string) (aestudiotools.RepoRef, error) {
-	ref, row, err := spec.RepoRefFor(ctx, s.repos, orgID, projectID)
-	if errors.Is(err, spec.ErrProjectRepoNotFound) {
-		return aestudiotools.RepoRef{}, ErrProjectRepoNotFound
-	}
-	if err != nil {
-		return aestudiotools.RepoRef{}, err
-	}
-	if row.Status != "" && row.Status != "ready" {
-		return aestudiotools.RepoRef{}, ErrProjectRepoNotFound
-	}
-	return ref, nil
 }
 
 // componentPaths reads each component's appPath, lowercased for lookup.

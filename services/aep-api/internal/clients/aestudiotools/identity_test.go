@@ -21,6 +21,8 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 func TestGitHubIdentity(t *testing.T) {
@@ -29,14 +31,14 @@ func TestGitHubIdentity(t *testing.T) {
 		srv := identityServer(t, func(w http.ResponseWriter, r *http.Request, _ int) {
 			method, path = r.Method, r.URL.Path
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"login":"acme-bot","id":4242}`))
+			_, _ = w.Write([]byte(`{"login":"acme-bot","id":4242,"name":"Acme Bot"}`))
 		})
 		a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 		got, err := a.GitHubIdentity(context.Background(), "default")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != (GitHubIdentity{Login: "acme-bot", ID: 4242}) || method != http.MethodGet || path != "/github/identity" {
+		if *got != (sourcecontrol.GitHubUser{Login: "acme-bot", ID: 4242, Name: "Acme Bot"}) || method != http.MethodGet || path != "/github/identity" {
 			t.Fatalf("identity=%+v request=%s %s", got, method, path)
 		}
 	})

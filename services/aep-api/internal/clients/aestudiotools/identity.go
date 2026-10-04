@@ -27,40 +27,30 @@ import (
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/gen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // identityBodyLimit bounds the identity reply read.
 const identityBodyLimit = 64 << 10
 
-// GitHubIdentity is the gitpat's GitHub user.
-type GitHubIdentity struct {
-	Login string
-	ID    int64
-}
-
-// Identity reads the org's GitHub identity through its pod.
-type Identity interface {
-	GitHubIdentity(ctx context.Context, org string) (GitHubIdentity, error)
-}
-
-// GitHubIdentity answers the GitHub user of the org's gitpat. A GitHub rate
-// limit is a 429 StatusError (github_rate_limited), any other GitHub failure
+// GitHubIdentity answers the GitHub user of the org's gitpat (name and email
+// only when public). A GitHub rate limit is a 429 StatusError (github_rate_limited), any other GitHub failure
 // a 502 StatusError (github_error).
 //
 //deadcode:keep wired in Task 4.13 (ProbePAT through the pod)
-func (a *Adapter) GitHubIdentity(ctx context.Context, org string) (GitHubIdentity, error) {
+func (a *Adapter) GitHubIdentity(ctx context.Context, org string) (*sourcecontrol.GitHubUser, error) {
 	ctx, cancel := a.unary(ctx)
 	defer cancel()
 	resp, err := a.send(ctx, org, "get-github-identity", func(ctx context.Context, c *gen.Client, impersonateOrg string, auth gen.RequestEditorFn) (*http.Response, error) {
 		return c.GetGithubIdentity(ctx, &gen.GetGithubIdentityParams{XImpersonateOrg: impersonateOrg}, auth)
 	}, always)
 	if err != nil {
-		return GitHubIdentity{}, err
+		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var body gen.GitHubIdentity
 	if err := json.NewDecoder(io.LimitReader(resp.Body, identityBodyLimit)).Decode(&body); err != nil {
-		return GitHubIdentity{}, fmt.Errorf("ae studio: decode get-github-identity: %w", err)
+		return nil, fmt.Errorf("ae studio: decode get-github-identity: %w", err)
 	}
-	return GitHubIdentity{Login: body.Login, ID: body.ID}, nil
+	return &sourcecontrol.GitHubUser{Login: body.Login, ID: body.ID, Name: body.Name, Email: body.Email}, nil
 }

@@ -48,12 +48,12 @@ type kickoffSpy struct{ calls int }
 
 func (k *kickoffSpy) Kickoff(context.Context, string, string) { k.calls++ }
 
-// repoRows serves one project's repository row.
+// repoRows serves one project's repository row (nil when absent).
 type repoRows struct{ row *sourcecontrol.GitRepository }
 
-func (r repoRows) GetRepo(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
+func (r repoRows) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
 	if r.row == nil || r.row.OrgID != org || r.row.ProjectID != project {
-		return nil, sourcecontrol.ErrRepoNotFound
+		return nil, nil
 	}
 	return r.row, nil
 }
@@ -107,7 +107,7 @@ func TestPutProjectReferences_StreamsThenKicksOff(t *testing.T) {
 	if kick.calls != 1 {
 		t.Fatal("kickoff must fire after a 2xx")
 	}
-	f.FailOp("put-references", aestudiotools.ErrReferenceRejected)
+	f.FailOp(aestudiotest.OpPutReferences, aestudiotools.ErrReferenceRejected)
 	_, err := h.PutProjectReferences(tenantCtx("default"), multipartRequest(t, map[string][]byte{"x.exe": {1}}))
 	var ae *apierr.Error
 	if !errors.As(err, &ae) || ae.Status != 400 || kick.calls != 1 {

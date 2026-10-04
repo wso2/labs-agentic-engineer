@@ -27,25 +27,31 @@ import (
 	"mime"
 	"net/http"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
+// The AE Studio sentinels are sourcecontrol's (one identity across the port
+// seam); these names are the same values until Task 4.12 repoints their
+// callers.
 var (
 	// ErrAEStudioAbsent: the org has no AE Studio (no GitHub token yet).
-	ErrAEStudioAbsent = errors.New("ae studio: absent for the org")
+	ErrAEStudioAbsent = sourcecontrol.ErrAEStudioAbsent
 	// ErrAEStudioUnavailable: the org's AE Studio is not serving right now
 	// (provisioning, failed, unreachable, out of disk, its IdP down). Retry.
-	ErrAEStudioUnavailable = errors.New("ae studio: unavailable")
+	ErrAEStudioUnavailable = sourcecontrol.ErrAEStudioUnavailable
 	// ErrAEStudioMisconfigured: aep-api's own AE-only client cannot call the
 	// pod, its credentials are missing or refused (C3, C5). Permanent: no
 	// retry fixes it, an operator must.
-	ErrAEStudioMisconfigured = errors.New("ae studio: aep-api's AE-only client is misconfigured")
-	// ErrTurnInProgress: a different turn runs for the project (409
-	// turn_in_progress). Retry after it ends.
-	ErrTurnInProgress = errors.New("ae studio: a different turn runs for the project")
+	ErrAEStudioMisconfigured = sourcecontrol.ErrAEStudioMisconfigured
 	// ErrReferenceRejected: the pod refused a reference file (400
 	// reference_rejected); the error text carries the pod's detail.
-	ErrReferenceRejected = errors.New("ae studio: reference rejected")
+	ErrReferenceRejected = sourcecontrol.ErrReferenceRejected
 )
+
+// ErrTurnInProgress: a different turn runs for the project (409
+// turn_in_progress). Retry after it ends.
+var ErrTurnInProgress = errors.New("ae studio: a different turn runs for the project")
 
 // Failure codes the pod ends a turn with (the result line's code) that a
 // caller branches on. The rest (agent-error, output_truncated, internal, ...)
@@ -109,11 +115,13 @@ func (e *StatusError) Error() string {
 	return msg
 }
 
-// IsPermanent reports whether retrying the same call cannot succeed: a
-// misconfigured AE-only client, a refused reference, or any other 4xx
-// except 408 and 429. Temporal activities return such errors non-retryable.
+// IsPermanent reports whether retrying the same call cannot succeed: what
+// sourcecontrol.IsPermanent calls permanent (an absent AE Studio, a
+// misconfigured AE-only client, a refused reference, ...), or any other 4xx
+// StatusError except 408 and 429. Temporal activities return such errors
+// non-retryable.
 func IsPermanent(err error) bool {
-	if errors.Is(err, ErrAEStudioMisconfigured) || errors.Is(err, ErrReferenceRejected) {
+	if sourcecontrol.IsPermanent(err) {
 		return true
 	}
 	var se *StatusError

@@ -18,7 +18,9 @@ package sourcecontrol
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
@@ -72,6 +74,54 @@ var (
 	ErrRepoNameConflict = errors.New("repo name already taken")
 )
 
+// The AE Studio answers every caller of the git port (Git, the GitHub
+// sub-ports, the adapter ports) branches on. The adapter (clients/aestudiotools)
+// and the in-memory Fake return these exact values, so `errors.Is` holds across
+// the seam.
+var (
+	// ErrAEStudioAbsent: the org has no AE Studio because GitHub is not
+	// connected for it. Permanent until someone connects GitHub.
+	ErrAEStudioAbsent = errors.New("ae studio absent: GitHub is not connected for this org")
+	// ErrAEStudioUnavailable: the org's AE Studio is not serving right now
+	// (provisioning, failed, unreachable, out of disk, its IdP down). Retry.
+	ErrAEStudioUnavailable = errors.New("ae studio unavailable")
+	// ErrAEStudioMisconfigured: aep-api's own AE-only client is refused by the
+	// pod after one token refresh, or has no credentials (C3). Permanent: an
+	// operator fixes it, no retry does.
+	ErrAEStudioMisconfigured = errors.New("ae studio rejected the AE-only token: platform configuration error")
+	// ErrCommitConflict: a Commit's baseSha precondition failed on at least
+	// one path. *CommitConflictError carries the paths; callers re-read and
+	// retry.
+	ErrCommitConflict = errors.New("commit precondition failed")
+	// ErrReferenceRejected: the pod refused a reference document; the error
+	// text carries the pod's detail.
+	ErrReferenceRejected = errors.New("reference document rejected")
+	// ErrOwnerNotAllowed: the repository's owner is not the org's connected
+	// GitHub owner, so the pod refuses to touch it.
+	ErrOwnerNotAllowed = errors.New("repository owner is not the org's GitHub owner")
+)
+
+// CommitConflictError is ErrCommitConflict with the paths whose baseSha did
+// not match the tip.
+type CommitConflictError struct{ Conflicts []Conflict }
+
+//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (the conflict code map)
+func (e *CommitConflictError) Error() string {
+	return fmt.Sprintf("commit precondition failed on %d path(s)", len(e.Conflicts))
+}
+
+// Is makes errors.Is(err, ErrCommitConflict) hold.
+//
+//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (the conflict code map)
+func (e *CommitConflictError) Is(target error) bool { return target == ErrCommitConflict }
+
+// RateLimitedError is GitHub's rate limit as the pod relays it. RetryAfter
+// is when GitHub said to come back (zero when it did not say). Transient.
+type RateLimitedError struct{ RetryAfter time.Duration }
+
+//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (github_rate_limited)
+func (e *RateLimitedError) Error() string { return "github rate limited" }
+
 // IsRepoNameConflict reports whether err represents a host name-conflict rejection.
 func IsRepoNameConflict(err error) bool {
 	return errors.Is(err, ErrRepoNameConflict)
@@ -101,6 +151,12 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //     githubhost.authHeaders), so a short-lived App token has already been
 //     re-minted by the time one arrives: a repeat presents the same rejection.
 //   - GraphQL NOT_FOUND — the 404 of the GraphQL surface.
+//   - ErrAEStudioAbsent — GitHub is not connected for the org; a person has
+//     to connect it.
+//   - ErrAEStudioMisconfigured — aep-api's AE-only token is refused (C3); an
+//     operator has to fix the platform configuration.
+//   - ErrOwnerNotAllowed — the repository is not under the org's GitHub owner.
+//   - ErrReferenceRejected — the pod refused the document itself.
 //
 // Deliberately NOT permanent, and each for a reason:
 //   - 403, because GitHub answers its SECONDARY RATE LIMIT with one, and that
@@ -110,6 +166,9 @@ const GraphQLTypeNotFound = "NOT_FOUND"
 //   - 5xx and every transport error, which are the blips retries exist for.
 //   - GraphQL RATE_LIMITED, same reason as 403.
 //   - ErrRepoNotReady, which is a state the mirror heals out of.
+//   - ErrAEStudioUnavailable and *RateLimitedError: the pod or GitHub is
+//     busy or coming up, which is what retries are for.
+//   - ErrCommitConflict, which the caller resolves by re-reading.
 func IsPermanent(err error) bool {
 	if err == nil {
 		return false
@@ -117,7 +176,11 @@ func IsPermanent(err error) bool {
 	switch {
 	case errors.Is(err, ErrRepoNotFound),
 		errors.Is(err, ErrIssueNotFound),
-		errors.Is(err, ErrMilestoneNotFound):
+		errors.Is(err, ErrMilestoneNotFound),
+		errors.Is(err, ErrAEStudioAbsent),
+		errors.Is(err, ErrAEStudioMisconfigured),
+		errors.Is(err, ErrOwnerNotAllowed),
+		errors.Is(err, ErrReferenceRejected):
 		return true
 	case IsHTTPStatus(err, http.StatusNotFound),
 		IsHTTPStatus(err, http.StatusGone),

@@ -26,12 +26,12 @@ import (
 	"sync/atomic"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/gen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// References replaces a project's stored reference documents.
-type References interface {
-	PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error
-}
+// References replaces a project's stored reference documents: the port the
+// Adapter and aestudiotest.Fake share.
+type References = sourcecontrol.ReferencesOps
 
 // PutReferences streams body (a multipart upload of field `files`, typed by
 // contentType) to the pod, which replaces the stored set. 400

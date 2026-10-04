@@ -127,7 +127,7 @@ func (h *hookedWorkspace) Tag(ctx context.Context, ref sourcecontrol.WorkspaceRe
 	return h.Workspace.Tag(ctx, ref, spec)
 }
 
-func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.WorkspaceRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (sourcecontrol.CommitResult, error) {
+func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.WorkspaceRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (gitfs.CommitResult, error) {
 	if h.BeforeMutateFn == nil {
 		return h.Workspace.Mutate(ctx, ref, fn, opts)
 	}

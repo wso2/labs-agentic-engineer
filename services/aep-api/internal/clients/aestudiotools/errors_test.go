@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 func TestIsPermanent(t *testing.T) {
@@ -41,7 +43,9 @@ func TestIsPermanent(t *testing.T) {
 		{&StatusError{Status: 429, Code: "github_rate_limited"}, false},
 		{&StatusError{Status: 502, Code: "agent_error"}, false},
 		{ErrAEStudioUnavailable, false},
-		{ErrAEStudioAbsent, false},
+		{ErrAEStudioAbsent, true},
+		{sourcecontrol.ErrOwnerNotAllowed, true},
+		{&sourcecontrol.HTTPStatusError{StatusCode: 404}, true},
 		{ErrTurnInProgress, false},
 		{context.Canceled, false},
 		{errors.New("other"), false},

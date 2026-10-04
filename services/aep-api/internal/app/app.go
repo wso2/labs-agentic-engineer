@@ -491,7 +491,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
-	taskPlan := task.NewPlanService(repoService, artifactSvcGit, studioTools, issueService, deliveryIssues)
+	taskPlan := task.NewPlanService(repoRepo, artifactSvcGit, studioTools, issueService, deliveryIssues)
 
 	// Eagerly provision each org's skills repo on project creation.
 	projectService.SetSkillsProvisioner(skillSvc)
@@ -509,7 +509,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// a button. Wired after the descriptor writer above because that is the
 	// order the create path runs them in — the turn reads the idea from the
 	// file that write commits. The finished-turn ledger is its guard.
-	kickoff := spec.NewKickoffService(studioTools, repoService, turnRepo)
+	kickoff := spec.NewKickoffService(studioTools, repoRepo, turnRepo)
 	projectService.SetKickoffStarter(kickoff)
 	// …and the status poll reports whether it is still running, which is the
 	// one thing the git-derived spec fields cannot say.
@@ -1059,7 +1059,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
 		References:  studioTools,
-		Repos:       repoService,
+		Repos:       repoRepo,
 		Kickoff:     kickoff,
 		Artifacts:   artifactSvcGit,
 		Skills:      skillSvc,

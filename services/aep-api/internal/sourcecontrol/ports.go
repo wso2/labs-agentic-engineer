@@ -18,6 +18,7 @@ package sourcecontrol
 
 import (
 	"context"
+	"io"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
@@ -246,4 +247,32 @@ type Host interface {
 	IssueOps
 	WebhookOps
 	AppInstallOps
+}
+
+// The narrow AE Studio adapter ports beside Host: each is one pod operation a
+// single consumer drives. clients/aestudiotools' Adapter and
+// aestudiotest.Fake serve them, next to Git (git.go).
+
+// TrashOps drops a deleted project's repository mirror (and its reference
+// documents) from the org's pod.
+type TrashOps interface {
+	TrashRepo(ctx context.Context, ref RepoRef) error
+}
+
+// SkillsMirrorOps mirrors the org skills library's pinned skills into a
+// project's repository in one commit.
+type SkillsMirrorOps interface {
+	MirrorSkills(ctx context.Context, project, skills RepoRef, pinned []string) (CommitResult, error)
+}
+
+// ReferencesOps replaces a project's stored reference documents with a
+// multipart upload (field `files`) typed by contentType. It owns body: an
+// io.Closer is closed on return.
+type ReferencesOps interface {
+	PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error
+}
+
+// IdentityOps reads the GitHub user the org's gitpat belongs to.
+type IdentityOps interface {
+	GitHubIdentity(ctx context.Context, org string) (*GitHubUser, error)
 }

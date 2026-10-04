@@ -89,7 +89,7 @@ func TestPlanMilestone_StartsAPlanTurnInThePod(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v1"})
 	call := r.plan(t)
 
-	if call.Ref != (aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets"}) {
+	if call.Ref != (aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}) {
 		t.Errorf("ref = %+v, want the project's repository in org1", call.Ref)
 	}
 	req := call.Request

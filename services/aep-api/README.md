@@ -76,7 +76,9 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
   `aestudiotools` — each org's ae-studio-tools `/internal/v1` (turns, references,
   GitHub identity) as aep-api's AE-only M2M client with `X-Impersonate-Org` = the
-  pod's OU id; `aestudiotest` is its in-memory fake.
+  pod's OU id, behind `sourcecontrol`'s ports; `aestudiotest` is the in-memory pod
+  (git content, issues, milestones, pull requests, hooks, failure injection) every
+  package's tests run against.
 - **supporting:** `app` (public composition **seam** — `Run(Options)`), `config`,
   `migrate` (ordered schema steps), `gen`/`igen` (generated contract types),
   `arch` (the executable rules), `seed`.

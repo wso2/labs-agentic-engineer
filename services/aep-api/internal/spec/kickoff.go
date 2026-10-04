@@ -49,6 +49,7 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/platform/async"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // kickoffBudget bounds the whole kickoff on aep-api's side: the ledger read,
@@ -81,12 +82,12 @@ type KickoffLedger interface {
 // KickoffService fires a project's opening `/start` turn in its org's pod.
 type KickoffService struct {
 	turns  aestudiotools.Turns
-	repos  ProjectRepos
+	repos  sourcecontrol.ProjectRepoRows
 	ledger KickoffLedger
 }
 
 // NewKickoffService wires the kickoff.
-func NewKickoffService(turns aestudiotools.Turns, repos ProjectRepos, ledger KickoffLedger) *KickoffService {
+func NewKickoffService(turns aestudiotools.Turns, repos sourcecontrol.ProjectRepoRows, ledger KickoffLedger) *KickoffService {
 	return &KickoffService{turns: turns, repos: repos, ledger: ledger}
 }
 
@@ -139,7 +140,7 @@ func (k *KickoffService) StartKickoff(ctx context.Context, orgID, projectID stri
 	if newest != nil {
 		return "", nil, ErrKickoffAlreadyRan
 	}
-	ref, _, err := RepoRefFor(ctx, k.repos, orgID, projectID)
+	ref, _, err := sourcecontrol.RepoRefFor(ctx, k.repos, orgID, projectID)
 	if err != nil {
 		return "", nil, err
 	}

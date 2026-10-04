@@ -19,5 +19,5 @@
 // (09 §1). Spec file reads and writes run in the pod too.
 //
 // Trigger: put-project-references.
-// Ports:   aestudiotools.References, spec.ProjectRepos, the held-kickoff starter.
+// Ports:   aestudiotools.References, sourcecontrol.ProjectRepoRows, the held-kickoff starter.
 package files
