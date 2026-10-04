@@ -74,6 +74,8 @@ type CommitRequest struct {
 	Deletes []FileDelete
 	Message string
 	Author  *GitIdentity // nil = the pod's gitpat identity
+	// Committer nil = Author (the pod's default).
+	Committer *GitIdentity
 }
 
 // CommittedFile is a written path and its new blob sha.

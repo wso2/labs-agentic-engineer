@@ -156,7 +156,8 @@ func (f *Fake) GetIssue(_ context.Context, ref sourcecontrol.RepoRef, number int
 	return &info, nil
 }
 
-// ListIssueComments answers the newest limit comments, oldest first.
+// ListIssueComments answers the newest limit comments, oldest first (limit 0:
+// none, as the pod answers).
 func (f *Fake) ListIssueComments(_ context.Context, ref sourcecontrol.RepoRef, number, limit int) ([]sourcecontrol.IssueComment, error) {
 	st, unlock, err := f.issueOp(OpListIssueComments, ref)
 	if err != nil {
@@ -171,10 +172,10 @@ func (f *Fake) ListIssueComments(_ context.Context, ref sourcecontrol.RepoRef, n
 }
 
 func newest(comments []sourcecontrol.IssueComment, limit int) []sourcecontrol.IssueComment {
-	if len(comments) == 0 {
+	if len(comments) == 0 || limit <= 0 {
 		return nil
 	}
-	if limit > 0 && len(comments) > limit {
+	if len(comments) > limit {
 		comments = comments[len(comments)-limit:]
 	}
 	return slices.Clone(comments)
@@ -448,8 +449,8 @@ func (f *Fake) MilestoneIssueCounts(_ context.Context, ref sourcecontrol.RepoRef
 }
 
 // ListMilestoneIssueComments answers the newest perIssue comments of every
-// issue in the milestone, by issue number; an issue without comments is
-// absent.
+// issue in the milestone, by issue number; an issue without comments (or
+// perIssue 0) is absent.
 func (f *Fake) ListMilestoneIssueComments(_ context.Context, ref sourcecontrol.RepoRef, number, perIssue int) (map[int][]sourcecontrol.IssueComment, error) {
 	st, unlock, err := f.issueOp(OpListMilestoneIssueComments, ref)
 	if err != nil {

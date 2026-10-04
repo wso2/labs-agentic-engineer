@@ -17,23 +17,18 @@
 package aestudiotest
 
 // repos.go — a repository's lifecycle and attachments: create (RepoAdmin),
-// trash, webhooks (WebhookOps), the skills mirror and reference documents.
+// trash, webhooks (WebhookOps), skills-mirror calls and reference documents.
 
 import (
 	"context"
 	"errors"
 	"io"
-	"maps"
 	"mime"
 	"mime/multipart"
 	"slices"
-	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
-
-// claudeSkillsDir is where MirrorSkills writes a project's skills.
-const claudeSkillsDir = ".claude/skills/"
 
 // HookEvents answers ref's webhooks: hook id → subscribed events.
 func (f *Fake) HookEvents(ref sourcecontrol.RepoRef) map[int64][]string {
@@ -127,54 +122,21 @@ func (f *Fake) DeleteWebhook(_ context.Context, ref sourcecontrol.RepoRef, hookI
 	return nil
 }
 
-// MirrorSkills writes each pinned skill of the skills library (its top-level
-// `<name>/` directory) to the project's `.claude/skills/<name>/` and prunes
-// every other path there, in one commit; nothing to change commits nothing.
-// The library's own catalog rules (enabled, audience) are the pod's, not the
-// Fake's: only pinned skills are copied.
+// MirrorSkills records the call (Calls: Ref = project, Skills, Pinned) and
+// answers the project's tip unchanged. It copies nothing: which library files
+// a mirror writes is the pod's catalog rule, tested in ae-studio-tools, so
+// this Fake keeps no second copy of it. Inject outcomes with FailOp.
 func (f *Fake) MirrorSkills(_ context.Context, project, skills sourcecontrol.RepoRef, pinned []string) (sourcecontrol.CommitResult, error) {
-	if err := f.begin(Call{Op: OpMirrorSkills, Ref: project}); err != nil {
+	if err := f.begin(Call{Op: OpMirrorSkills, Ref: project, Skills: skills, Pinned: slices.Clone(pinned)}); err != nil {
 		return sourcecontrol.CommitResult{}, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	lib, err := f.content(skills)
-	if err != nil {
-		return sourcecontrol.CommitResult{}, err
-	}
 	st, err := f.content(project)
 	if err != nil {
 		return sourcecontrol.CommitResult{}, err
 	}
-	desired := map[string]string{}
-	for p, content := range lib.commits[lib.head].files {
-		name, _, ok := strings.Cut(p, "/")
-		if ok && slices.Contains(pinned, name) {
-			desired[claudeSkillsDir+p] = content
-		}
-	}
-	tip := st.commits[st.head]
-	var req sourcecontrol.CommitRequest
-	for _, p := range slices.Sorted(maps.Keys(desired)) {
-		cur, exists := tip.files[p]
-		if exists && cur == desired[p] {
-			continue
-		}
-		base := ""
-		if exists {
-			base = blobSHA(cur)
-		}
-		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: desired[p], BaseSHA: base})
-	}
-	for _, p := range slices.Sorted(maps.Keys(tip.files)) {
-		if _, keep := desired[p]; strings.HasPrefix(p, claudeSkillsDir) && !keep {
-			req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: p, BaseSHA: blobSHA(tip.files[p])})
-		}
-	}
-	if len(req.Writes)+len(req.Deletes) == 0 {
-		return sourcecontrol.CommitResult{CommitSHA: tip.sha}, nil
-	}
-	return st.apply(req)
+	return sourcecontrol.CommitResult{CommitSHA: st.head}, nil
 }
 
 // PutReferences reads the multipart upload of field `files` and stores its

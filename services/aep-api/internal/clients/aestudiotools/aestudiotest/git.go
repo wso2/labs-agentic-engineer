@@ -275,7 +275,11 @@ func (f *Fake) Tag(_ context.Context, ref sourcecontrol.RepoRef, spec sourcecont
 // Commit applies req on the tip in one commit, or answers
 // *CommitConflictError naming every path whose baseSha did not hold.
 func (f *Fake) Commit(_ context.Context, ref sourcecontrol.RepoRef, req sourcecontrol.CommitRequest) (sourcecontrol.CommitResult, error) {
-	if err := f.begin(Call{Op: OpCommit, Ref: ref}); err != nil {
+	committer := req.Committer
+	if committer == nil {
+		committer = req.Author
+	}
+	if err := f.begin(Call{Op: OpCommit, Ref: ref, Author: req.Author, Committer: committer}); err != nil {
 		return sourcecontrol.CommitResult{}, err
 	}
 	f.mu.Lock()

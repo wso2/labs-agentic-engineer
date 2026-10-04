@@ -281,6 +281,14 @@ func TestFake_CallsAndBeforeCommit(t *testing.T) {
 	if !calls[0].Local || !calls[1].Local || calls[2].Local || calls[2].At != sha || calls[2].Filter.Exts[0] != ".md" || calls[0].Ref != ref {
 		t.Fatalf("calls = %+v", calls)
 	}
+	// A ref's DefaultBranch never splits state, so Calls is where it is asserted.
+	branched := sourcecontrol.RepoRef{Org: ref.Org, Owner: ref.Owner, Repo: ref.Repo, DefaultBranch: "trunk"}
+	if got, err := f.Head(ctx, branched, ""); err != nil || got == "" {
+		t.Fatalf("head via a branch-carrying ref: %q %v", got, err)
+	}
+	if last := f.Calls()[len(f.Calls())-1]; last.Ref.DefaultBranch != "trunk" {
+		t.Fatalf("the call lost the ref's DefaultBranch: %+v", last.Ref)
+	}
 }
 
 func TestFake_FailOpAndRateLimit(t *testing.T) {
@@ -362,6 +370,15 @@ func TestFake_IssuesMilestonesAndPulls(t *testing.T) {
 	if len(comments) != 1 || comments[work.Number][0].Body != "hello" {
 		t.Fatalf("comments = %+v", comments)
 	}
+	if none, _ := f.ListMilestoneIssueComments(ctx, ref, ms.Number, 0); len(none) != 0 {
+		t.Fatalf("perIssue 0 answers none, got %+v", none)
+	}
+	if none, _ := f.ListIssueComments(ctx, ref, work.Number, 0); none != nil {
+		t.Fatalf("limit 0 answers none, got %+v", none)
+	}
+	if one, _ := f.ListIssueComments(ctx, ref, work.Number, 1); len(one) != 1 {
+		t.Fatalf("limit 1 = %+v", one)
+	}
 	if err := f.CloseIssue(ctx, ref, gate.Number); err != nil {
 		t.Fatal(err)
 	}
@@ -440,22 +457,54 @@ func TestFake_ReposHooksAndIdentity(t *testing.T) {
 	}
 }
 
-func TestFake_MirrorSkills(t *testing.T) {
+// MirrorSkills is recorded, not simulated: the pod owns the catalog rule.
+func TestFake_MirrorSkillsRecordsTheCall(t *testing.T) {
 	f := aestudiotest.New()
 	ctx := context.Background()
-	skills := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "org-skills"}
-	f.SeedRepo(skills, map[string]string{"lint/SKILL.md": "lint", "lint/refs/a.md": "a", "test/SKILL.md": "test", "skills-manifest.json": "{}"})
-	f.SeedRepo(ref, map[string]string{".claude/skills/stale/SKILL.md": "old", "README.md": "r"})
-	res, err := f.MirrorSkills(ctx, ref, skills, []string{"lint"})
-	if err != nil || !res.Changed {
-		t.Fatalf("res=%+v err=%v", res, err)
+	project := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "trunk"}
+	skills := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "org-skills", DefaultBranch: "main"}
+	f.SeedRepo(skills, map[string]string{"lint/SKILL.md": "lint"})
+	f.SeedRepo(project, map[string]string{"README.md": "r"})
+	tip, _ := f.Head(ctx, project, "")
+
+	res, err := f.MirrorSkills(ctx, project, skills, []string{"lint"})
+	if err != nil || res.Changed || res.CommitSHA != tip {
+		t.Fatalf("res=%+v err=%v, want the tip unchanged", res, err)
 	}
-	files, _, _ := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{})
-	if !maps.Equal(files, map[string]string{".claude/skills/lint/SKILL.md": "lint", ".claude/skills/lint/refs/a.md": "a", "README.md": "r"}) {
-		t.Fatalf("project tree = %v", files)
+	if files, _, _ := f.ReadBundle(ctx, project, "", sourcecontrol.BundleFilter{}); !maps.Equal(files, map[string]string{"README.md": "r"}) {
+		t.Fatalf("the Fake copied skill content: %v", files)
 	}
-	if again, _ := f.MirrorSkills(ctx, ref, skills, []string{"lint"}); again.Changed {
-		t.Fatal("an unchanged mirror commits nothing")
+	calls := f.Calls()
+	c := calls[1]
+	if c.Op != aestudiotest.OpMirrorSkills || c.Ref != project || c.Skills != skills || !slices.Equal(c.Pinned, []string{"lint"}) {
+		t.Fatalf("call = %+v", c)
+	}
+	f.FailOp(aestudiotest.OpMirrorSkills, &sourcecontrol.CommitConflictError{})
+	if _, err := f.MirrorSkills(ctx, project, skills, nil); !errors.Is(err, sourcecontrol.ErrCommitConflict) {
+		t.Fatalf("injected: err = %v", err)
+	}
+}
+
+// Commit records the author and the committer; an omitted committer is the
+// author, as the pod defaults it.
+func TestFake_CommitRecordsAuthorAndCommitter(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, nil)
+	author := &sourcecontrol.GitIdentity{Name: "Ada", Email: "ada@example.com"}
+	bot := &sourcecontrol.GitIdentity{Name: "AEP", Email: "aep@example.com"}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1"}}, Author: author, Committer: bot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "1"}}, Author: author}); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.Calls()
+	if calls[0].Author != author || calls[0].Committer != bot {
+		t.Fatalf("explicit committer: %+v", calls[0])
+	}
+	if calls[1].Author != author || calls[1].Committer != author {
+		t.Fatalf("omitted committer must default to the author: %+v", calls[1])
 	}
 }
 

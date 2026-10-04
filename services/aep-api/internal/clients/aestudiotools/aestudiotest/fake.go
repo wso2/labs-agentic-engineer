@@ -85,15 +85,22 @@ const (
 	OpDeleteWebhook       = "delete-webhook"
 )
 
-// Call is one port call the Fake saw, failed ones included. At, Local and
-// Filter are set on the Git reads that take them; Ref.Org alone on the
-// org-wide ops (GitHubIdentity).
+// Call is one port call the Fake saw, failed ones included. Ref is the ref
+// exactly as passed, DefaultBranch included (the Fake keys state without it,
+// so assert it here). At, Local and Filter are set on the Git reads that take
+// them; Author and Committer on Commit (Committer defaulted to Author, as the
+// pod does); Skills and Pinned on MirrorSkills; Ref.Org alone on the org-wide
+// ops (GitHubIdentity).
 type Call struct {
-	Op     string
-	Ref    sourcecontrol.RepoRef
-	At     string
-	Local  bool
-	Filter sourcecontrol.BundleFilter
+	Op        string
+	Ref       sourcecontrol.RepoRef
+	At        string
+	Local     bool
+	Filter    sourcecontrol.BundleFilter
+	Author    *sourcecontrol.GitIdentity
+	Committer *sourcecontrol.GitIdentity
+	Skills    sourcecontrol.RepoRef
+	Pinned    []string
 }
 
 // TurnCall is one StartTurn the fake saw.
