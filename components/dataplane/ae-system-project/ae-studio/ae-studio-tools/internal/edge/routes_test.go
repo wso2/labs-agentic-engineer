@@ -55,19 +55,20 @@ const (
 	testWebhookSecret = "test-webhook-secret"
 )
 
-// fakeGitHub is the github.Identity the harness serves: e2e-bot/42, or err.
+// fakeGitHub is the github.Identity the harness serves: e2e-bot/42 (with a
+// public name and email), or err.
 // calls counts the requests that reached the handler.
 type fakeGitHub struct {
 	err   error
 	calls *int
 }
 
-func (f fakeGitHub) Whoami(context.Context) (string, int64, error) {
+func (f fakeGitHub) User(context.Context) (github.User, error) {
 	*f.calls++
 	if f.err != nil {
-		return "", 0, f.err
+		return github.User{}, f.err
 	}
-	return "e2e-bot", 42, nil
+	return github.User{Login: "e2e-bot", ID: 42, Name: "E2E Bot", Email: "bot@example.com"}, nil
 }
 
 type harness struct {
@@ -181,7 +182,8 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		GitHubOps: github.NewHandler(github.New(github.Config{
 			APIBase: deps.githubAPI,
 			Token:   func(context.Context) (string, error) { return "test-gitpat", nil },
-		})),
+			HookURL: "https://tools.example/webhooks/github", HookSecret: testWebhookSecret,
+		}), github.WithOwner(cfg.GitHubOwner)),
 		Projects: h.projects,
 		Turns:    turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
 	})
@@ -300,11 +302,11 @@ func TestRoutes_UnknownV1PathGatedFirst(t *testing.T) {
 		t.Fatalf("unknown project body = %s", rec.Body.String())
 	}
 	var body struct {
-		Login string
-		ID    int64
+		Login, Name, Email string
+		ID                 int64
 	}
 	_ = json.Unmarshal(h.do("GET", "/internal/v1/github/identity", h.m2m(), "ou-1", nil).Body.Bytes(), &body)
-	if body.Login != "e2e-bot" || body.ID != 42 {
+	if body.Login != "e2e-bot" || body.ID != 42 || body.Name != "E2E Bot" || body.Email != "bot@example.com" {
 		t.Fatalf("identity = %+v", body)
 	}
 }

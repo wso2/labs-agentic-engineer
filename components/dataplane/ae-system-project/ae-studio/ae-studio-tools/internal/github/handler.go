@@ -29,22 +29,114 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// The /internal/v1/repos/{owner}/{repo} issue, milestone and pull request
-// ops (04 §3): one Client call each, one shared error map (problem), no
-// retries (04 §12; aep-api decides). The edge embeds Handler in its
-// /internal/v1 server; the gate, the body cap, the request validator and the
-// owner guard ran before any method here.
+// The /internal/v1 GitHub ops (04 §3): POST /repos, and under
+// /repos/{owner}/{repo} the issue, milestone, pull request and hook ops. One
+// Client call each (two for an adopt or a hook ensure), one shared error map
+// (problem), no retries (04 §12; aep-api decides). The edge embeds Handler
+// in its /internal/v1 server; the gate, the body cap, the request validator
+// and the owner guard (for the path-scoped ops) ran before any method here.
 
 // Handler serves the GitHub ops over the gitpat's Client.
 type Handler struct {
 	gh *Client
+	// owner is the org's connected GitHub account (AE_GITHUB_OWNER), the
+	// only owner create-repo creates for; empty refuses every create.
+	owner string
+}
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithOwner names the org's connected GitHub account.
+func WithOwner(owner string) Option {
+	return func(h *Handler) { h.owner = owner }
 }
 
 // NewHandler serves gh.
-func NewHandler(gh *Client) Handler {
-	return Handler{gh: gh}
+func NewHandler(gh *Client, opts ...Option) Handler {
+	h := Handler{gh: gh}
+	for _, o := range opts {
+		o(&h)
+	}
+	return h
+}
+
+// ownerAllowed reports whether owner is the connected account. GitHub owner
+// names are case-insensitive; an unset account matches nothing.
+func (h Handler) ownerAllowed(owner string) bool {
+	return h.owner != "" && strings.EqualFold(h.owner, owner)
+}
+
+func ownerNotAllowed() problemReply {
+	return newProblemReply(http.StatusForbidden, "owner_not_allowed", "the repository's owner is not the org's connected GitHub account")
+}
+
+// CreateRepo creates owner/name, initialised, under the connected account.
+// The owner is checked before any GitHub call, so the client's /user/repos
+// fallback only ever runs for the connected owner; a repository GitHub
+// answers under any other owner (the fallback landing on the gitpat's own
+// account) is refused too. A taken name is 409 unless adoptExisting, which
+// answers the existing repository (200).
+func (h Handler) CreateRepo(ctx context.Context, req gen.CreateRepoRequestObject) (gen.CreateRepoResponseObject, error) {
+	b := req.Body
+	if !h.ownerAllowed(b.Owner) {
+		return ownerNotAllowed(), nil
+	}
+	created := true
+	got, err := h.gh.CreateOrgRepo(ctx, b.Owner, CreateOrgRepoRequest{Name: b.Name, Private: b.Private, AutoInit: true, Description: b.Description})
+	if errors.Is(err, ErrRepoNameConflict) {
+		if !b.AdoptExisting {
+			return newProblemReply(http.StatusConflict, "repo_name_conflict", "the repository name is taken"), nil
+		}
+		created = false
+		got, err = h.gh.GetRepo(ctx, b.Owner, b.Name)
+	}
+	if err != nil {
+		return h.problem(ctx, "create-repo", b.Owner, b.Name, err)
+	}
+	if !h.ownerAllowed(got.Owner) {
+		slog.WarnContext(ctx, "github.repo_owner_mismatch", "owner", b.Owner, "githubOwner", got.Owner, "repo", strings.ToLower(got.Owner+"/"+got.Name))
+		return ownerNotAllowed(), nil
+	}
+	coords := gen.RepoCoordinates{Owner: got.Owner, Repo: got.Name, CloneURL: repo.GitHubCloneURL(got.Owner, got.Name), DefaultBranch: got.DefaultBranch}
+	if created {
+		return gen.CreateRepo201JSONResponse(coords), nil
+	}
+	return gen.CreateRepo200JSONResponse(coords), nil
+}
+
+// RegisterHook ensures the studio's hook on the repository with these
+// events: GitHub creates it, or, when a hook for the pod's URL exists, its
+// events are replaced. A failed replace fails the call (the hook keeps its
+// old events; aep-api's retry ensures again).
+func (h Handler) RegisterHook(ctx context.Context, req gen.RegisterHookRequestObject) (gen.RegisterHookResponseObject, error) {
+	id, existed, err := h.gh.RegisterWebhook(ctx, req.Owner, req.Repo, req.Body.Events)
+	if err == nil && existed {
+		err = h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, id, req.Body.Events)
+	}
+	if err != nil {
+		return h.problem(ctx, "register-hook", req.Owner, req.Repo, err)
+	}
+	return gen.RegisterHook200JSONResponse{ID: id}, nil
+}
+
+// UpdateHookEvents replaces a hook's events.
+func (h Handler) UpdateHookEvents(ctx context.Context, req gen.UpdateHookEventsRequestObject) (gen.UpdateHookEventsResponseObject, error) {
+	if err := h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, req.HookID, req.Body.Events); err != nil {
+		return h.problem(ctx, "update-hook-events", req.Owner, req.Repo, err)
+	}
+	return gen.UpdateHookEvents204Response{}, nil
+}
+
+// DeleteHook deletes a hook; one GitHub no longer has is success.
+func (h Handler) DeleteHook(ctx context.Context, req gen.DeleteHookRequestObject) (gen.DeleteHookResponseObject, error) {
+	if err := h.gh.DeleteWebhook(ctx, req.Owner, req.Repo, req.HookID); err != nil {
+		return h.problem(ctx, "delete-hook", req.Owner, req.Repo, err)
+	}
+	return gen.DeleteHook204Response{}, nil
 }
 
 // ListIssues answers the repository's issues, newest first.
@@ -450,3 +542,15 @@ func (p problemReply) VisitMergePullResponse(w http.ResponseWriter) error { retu
 
 // VisitListPullFilesResponse implements gen.ListPullFilesResponseObject.
 func (p problemReply) VisitListPullFilesResponse(w http.ResponseWriter) error { return p.write(w) }
+
+// VisitCreateRepoResponse implements gen.CreateRepoResponseObject.
+func (p problemReply) VisitCreateRepoResponse(w http.ResponseWriter) error { return p.write(w) }
+
+// VisitRegisterHookResponse implements gen.RegisterHookResponseObject.
+func (p problemReply) VisitRegisterHookResponse(w http.ResponseWriter) error { return p.write(w) }
+
+// VisitUpdateHookEventsResponse implements gen.UpdateHookEventsResponseObject.
+func (p problemReply) VisitUpdateHookEventsResponse(w http.ResponseWriter) error { return p.write(w) }
+
+// VisitDeleteHookResponse implements gen.DeleteHookResponseObject.
+func (p problemReply) VisitDeleteHookResponse(w http.ResponseWriter) error { return p.write(w) }

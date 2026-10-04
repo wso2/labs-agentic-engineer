@@ -276,6 +276,18 @@ type CreateMilestoneRequest struct {
 	Title       string `json:"title"`
 }
 
+// CreateRepoRequest defines model for CreateRepoRequest.
+type CreateRepoRequest struct {
+	// AdoptExisting A taken name answers the existing repository (200) instead of 409
+	AdoptExisting bool   `json:"adoptExisting,omitempty"`
+	Description   string `json:"description,omitempty"`
+	Name          string `json:"name"`
+
+	// Owner Must be the org's connected GitHub account
+	Owner   string `json:"owner"`
+	Private bool   `json:"private"`
+}
+
 // CreateTagRequest tagger omitted, the AEP default identity.
 type CreateTagRequest struct {
 	Message string `json:"message"`
@@ -307,8 +319,13 @@ type FileContent struct {
 
 // GitHubIdentity defines model for GitHubIdentity.
 type GitHubIdentity struct {
+	// Email The user's public email; absent when not public
+	Email string `json:"email,omitempty"`
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
+
+	// Name The user's public name; absent when not public
+	Name string `json:"name,omitempty"`
 }
 
 // GitIdentity defines model for GitIdentity.
@@ -321,6 +338,16 @@ type GitIdentity struct {
 type Head struct {
 	// Sha The commit's 40-hex sha
 	Sha string `json:"sha"`
+}
+
+// Hook defines model for Hook.
+type Hook struct {
+	ID int64 `json:"id"`
+}
+
+// HookEventsRequest defines model for HookEventsRequest.
+type HookEventsRequest struct {
+	Events []string `json:"events"`
 }
 
 // IssueBodyRequest defines model for IssueBodyRequest.
@@ -521,6 +548,15 @@ type ReferenceUpload struct {
 	Files []openapi_types.File `json:"files"`
 }
 
+// RepoCoordinates defines model for RepoCoordinates.
+type RepoCoordinates struct {
+	// CloneURL https://github.com/<owner>/<repo>.git
+	CloneURL      string `json:"cloneUrl"`
+	DefaultBranch string `json:"defaultBranch"`
+	Owner         string `json:"owner"`
+	Repo          string `json:"repo"`
+}
+
 // ResultFrame The last line of the turn stream. A shutdown ends a running turn with status failed and code shutdown.
 type ResultFrame struct {
 	Code    string `json:"code,omitempty"`
@@ -573,6 +609,12 @@ type TaskOpFrameOp string
 
 // TaskOpFrameType defines model for TaskOpFrame.Type.
 type TaskOpFrameType string
+
+// TrashRepoRequest defines model for TrashRepoRequest.
+type TrashRepoRequest struct {
+	Owner string `json:"owner"`
+	Repo  string `json:"repo"`
+}
 
 // Tree defines model for Tree.
 type Tree struct {
@@ -634,6 +676,9 @@ type At = string
 // DefaultBranch defines model for DefaultBranch.
 type DefaultBranch = string
 
+// HookID defines model for HookID.
+type HookID = int64
+
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
 
@@ -678,6 +723,12 @@ type aeOnlyContextKey string
 
 // GetGithubIdentityParams defines parameters for GetGithubIdentity.
 type GetGithubIdentityParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateRepoParams defines parameters for CreateRepo.
+type CreateRepoParams struct {
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
@@ -738,6 +789,24 @@ type GetHeadParams struct {
 	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
 	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
 
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// RegisterHookParams defines parameters for RegisterHook.
+type RegisterHookParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// DeleteHookParams defines parameters for DeleteHook.
+type DeleteHookParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// UpdateHookEventsParams defines parameters for UpdateHookEvents.
+type UpdateHookEventsParams struct {
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
@@ -961,8 +1030,23 @@ type StartRepoTurnParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// TrashRepoParams defines parameters for TrashRepo.
+type TrashRepoParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateRepoJSONRequestBody defines body for CreateRepo for application/json ContentType.
+type CreateRepoJSONRequestBody = CreateRepoRequest
+
 // CreateCommitJSONRequestBody defines body for CreateCommit for application/json ContentType.
 type CreateCommitJSONRequestBody = CreateCommitRequest
+
+// RegisterHookJSONRequestBody defines body for RegisterHook for application/json ContentType.
+type RegisterHookJSONRequestBody = HookEventsRequest
+
+// UpdateHookEventsJSONRequestBody defines body for UpdateHookEvents for application/json ContentType.
+type UpdateHookEventsJSONRequestBody = HookEventsRequest
 
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
@@ -1000,11 +1084,17 @@ type CreateTagJSONRequestBody = CreateTagRequest
 // StartRepoTurnJSONRequestBody defines body for StartRepoTurn for application/json ContentType.
 type StartRepoTurnJSONRequestBody = TurnRequest
 
+// TrashRepoJSONRequestBody defines body for TrashRepo for application/json ContentType.
+type TrashRepoJSONRequestBody = TrashRepoRequest
+
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(w http.ResponseWriter, r *http.Request, params GetGithubIdentityParams)
+	// Create the org's repository on GitHub (or adopt the existing one)
+	// (POST /repos)
+	CreateRepo(w http.ResponseWriter, r *http.Request, params CreateRepoParams)
 	// Read a set of files of one commit
 	// (GET /repos/{owner}/{repo}/bundle)
 	ReadBundle(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ReadBundleParams)
@@ -1017,6 +1107,15 @@ type ServerInterface interface {
 	// Resolve a ref to its commit
 	// (GET /repos/{owner}/{repo}/head)
 	GetHead(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params GetHeadParams)
+	// Ensure the studio's webhook on the repository
+	// (POST /repos/{owner}/{repo}/hooks)
+	RegisterHook(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params RegisterHookParams)
+	// Delete a hook (already gone is success)
+	// (DELETE /repos/{owner}/{repo}/hooks/{hookId})
+	DeleteHook(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params DeleteHookParams)
+	// Replace a hook's events
+	// (PATCH /repos/{owner}/{repo}/hooks/{hookId})
+	UpdateHookEvents(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params UpdateHookEventsParams)
 	// List the repository's issues, newest first
 	// (GET /repos/{owner}/{repo}/issues)
 	ListIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListIssuesParams)
@@ -1104,6 +1203,9 @@ type ServerInterface interface {
 	// Start (or reattach to) a kickoff or plan turn and stream its result
 	// (POST /repos/{owner}/{repo}/turns)
 	StartRepoTurn(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params StartRepoTurnParams)
+	// Drop the studio's mirror of a repository
+	// (POST /trash)
+	TrashRepo(w http.ResponseWriter, r *http.Request, params TrashRepoParams)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -1157,6 +1259,57 @@ func (siw *ServerInterfaceWrapper) GetGithubIdentity(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetGithubIdentity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateRepo operation middleware
+func (siw *ServerInterfaceWrapper) CreateRepo(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateRepoParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateRepo(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1598,6 +1751,231 @@ func (siw *ServerInterfaceWrapper) GetHead(w http.ResponseWriter, r *http.Reques
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetHead(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RegisterHook operation middleware
+func (siw *ServerInterfaceWrapper) RegisterHook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RegisterHookParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RegisterHook(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteHook operation middleware
+func (siw *ServerInterfaceWrapper) DeleteHook(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "hookId" -------------
+	var hookID HookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hookId", r.PathValue("hookId"), &hookID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hookId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DeleteHookParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteHook(w, r, owner, repo, hookID, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UpdateHookEvents operation middleware
+func (siw *ServerInterfaceWrapper) UpdateHookEvents(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "hookId" -------------
+	var hookID HookID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "hookId", r.PathValue("hookId"), &hookID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hookId", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateHookEventsParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UpdateHookEvents(w, r, owner, repo, hookID, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3957,6 +4335,57 @@ func (siw *ServerInterfaceWrapper) StartRepoTurn(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// TrashRepo operation middleware
+func (siw *ServerInterfaceWrapper) TrashRepo(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params TrashRepoParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.TrashRepo(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -4078,10 +4507,14 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/github/identity", wrapper.GetGithubIdentity)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos", wrapper.CreateRepo)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/bundle", wrapper.ReadBundle)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/commits", wrapper.CreateCommit)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/files/{path}", wrapper.ReadFile)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/head", wrapper.GetHead)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks", wrapper.RegisterHook)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks/{hookId}", wrapper.DeleteHook)
+	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks/{hookId}", wrapper.UpdateHookEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.ListIssues)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.CreateIssue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}", wrapper.GetIssue)
@@ -4111,6 +4544,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/tags", wrapper.CreateTag)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/tree", wrapper.ListTree)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/turns", wrapper.StartRepoTurn)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/trash", wrapper.TrashRepo)
 
 	return m
 }
@@ -4222,6 +4656,148 @@ func (response GetGithubIdentity502ApplicationProblemPlusJSONResponse) VisitGetG
 type GetGithubIdentity503ApplicationProblemPlusJSONResponse Problem
 
 func (response GetGithubIdentity503ApplicationProblemPlusJSONResponse) VisitGetGithubIdentityResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepoRequestObject struct {
+	Params CreateRepoParams
+	Body   *CreateRepoJSONRequestBody
+}
+
+type CreateRepoResponseObject interface {
+	VisitCreateRepoResponse(w http.ResponseWriter) error
+}
+
+type CreateRepo200JSONResponse RepoCoordinates
+
+func (response CreateRepo200JSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo201JSONResponse RepoCoordinates
+
+func (response CreateRepo201JSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateRepo400ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateRepo401ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateRepo403ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo409ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateRepo409ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response CreateRepo429ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateRepo502ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateRepo503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateRepo503ApplicationProblemPlusJSONResponse) VisitCreateRepoResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -4708,6 +5284,343 @@ func (response GetHead502ApplicationProblemPlusJSONResponse) VisitGetHeadRespons
 type GetHead503ApplicationProblemPlusJSONResponse Problem
 
 func (response GetHead503ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHookRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params RegisterHookParams
+	Body   *RegisterHookJSONRequestBody
+}
+
+type RegisterHookResponseObject interface {
+	VisitRegisterHookResponse(w http.ResponseWriter) error
+}
+
+type RegisterHook200JSONResponse Hook
+
+func (response RegisterHook200JSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterHook400ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook401ApplicationProblemPlusJSONResponse Problem
+
+func (response RegisterHook401ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook403ApplicationProblemPlusJSONResponse Problem
+
+func (response RegisterHook403ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterHook429ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response RegisterHook502ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RegisterHook503ApplicationProblemPlusJSONResponse Problem
+
+func (response RegisterHook503ApplicationProblemPlusJSONResponse) VisitRegisterHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHookRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	HookID HookID `json:"hookId"`
+	Params DeleteHookParams
+}
+
+type DeleteHookResponseObject interface {
+	VisitDeleteHookResponse(w http.ResponseWriter) error
+}
+
+type DeleteHook204Response struct {
+}
+
+func (response DeleteHook204Response) VisitDeleteHookResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type DeleteHook400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteHook400ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHook401ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteHook401ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHook403ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteHook403ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHook429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteHook429ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHook502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response DeleteHook502ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DeleteHook503ApplicationProblemPlusJSONResponse Problem
+
+func (response DeleteHook503ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEventsRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	HookID HookID `json:"hookId"`
+	Params UpdateHookEventsParams
+	Body   *UpdateHookEventsJSONRequestBody
+}
+
+type UpdateHookEventsResponseObject interface {
+	VisitUpdateHookEventsResponse(w http.ResponseWriter) error
+}
+
+type UpdateHookEvents204Response struct {
+}
+
+func (response UpdateHookEvents204Response) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type UpdateHookEvents400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateHookEvents400ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEvents401ApplicationProblemPlusJSONResponse Problem
+
+func (response UpdateHookEvents401ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEvents403ApplicationProblemPlusJSONResponse Problem
+
+func (response UpdateHookEvents403ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEvents429ApplicationProblemPlusJSONResponse struct {
+	RateLimitedApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateHookEvents429ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEvents502ApplicationProblemPlusJSONResponse struct {
+	GitHubAPIErrorApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateHookEvents502ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateHookEvents503ApplicationProblemPlusJSONResponse Problem
+
+func (response UpdateHookEvents503ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -8122,11 +9035,89 @@ func (response StartRepoTurn503ApplicationProblemPlusJSONResponse) VisitStartRep
 	return err
 }
 
+type TrashRepoRequestObject struct {
+	Params TrashRepoParams
+	Body   *TrashRepoJSONRequestBody
+}
+
+type TrashRepoResponseObject interface {
+	VisitTrashRepoResponse(w http.ResponseWriter) error
+}
+
+type TrashRepo204Response struct {
+}
+
+func (response TrashRepo204Response) VisitTrashRepoResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type TrashRepo400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response TrashRepo400ApplicationProblemPlusJSONResponse) VisitTrashRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TrashRepo401ApplicationProblemPlusJSONResponse Problem
+
+func (response TrashRepo401ApplicationProblemPlusJSONResponse) VisitTrashRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TrashRepo403ApplicationProblemPlusJSONResponse Problem
+
+func (response TrashRepo403ApplicationProblemPlusJSONResponse) VisitTrashRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type TrashRepo503ApplicationProblemPlusJSONResponse Problem
+
+func (response TrashRepo503ApplicationProblemPlusJSONResponse) VisitTrashRepoResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(ctx context.Context, request GetGithubIdentityRequestObject) (GetGithubIdentityResponseObject, error)
+	// Create the org's repository on GitHub (or adopt the existing one)
+	// (POST /repos)
+	CreateRepo(ctx context.Context, request CreateRepoRequestObject) (CreateRepoResponseObject, error)
 	// Read a set of files of one commit
 	// (GET /repos/{owner}/{repo}/bundle)
 	ReadBundle(ctx context.Context, request ReadBundleRequestObject) (ReadBundleResponseObject, error)
@@ -8139,6 +9130,15 @@ type StrictServerInterface interface {
 	// Resolve a ref to its commit
 	// (GET /repos/{owner}/{repo}/head)
 	GetHead(ctx context.Context, request GetHeadRequestObject) (GetHeadResponseObject, error)
+	// Ensure the studio's webhook on the repository
+	// (POST /repos/{owner}/{repo}/hooks)
+	RegisterHook(ctx context.Context, request RegisterHookRequestObject) (RegisterHookResponseObject, error)
+	// Delete a hook (already gone is success)
+	// (DELETE /repos/{owner}/{repo}/hooks/{hookId})
+	DeleteHook(ctx context.Context, request DeleteHookRequestObject) (DeleteHookResponseObject, error)
+	// Replace a hook's events
+	// (PATCH /repos/{owner}/{repo}/hooks/{hookId})
+	UpdateHookEvents(ctx context.Context, request UpdateHookEventsRequestObject) (UpdateHookEventsResponseObject, error)
 	// List the repository's issues, newest first
 	// (GET /repos/{owner}/{repo}/issues)
 	ListIssues(ctx context.Context, request ListIssuesRequestObject) (ListIssuesResponseObject, error)
@@ -8226,6 +9226,9 @@ type StrictServerInterface interface {
 	// Start (or reattach to) a kickoff or plan turn and stream its result
 	// (POST /repos/{owner}/{repo}/turns)
 	StartRepoTurn(ctx context.Context, request StartRepoTurnRequestObject) (StartRepoTurnResponseObject, error)
+	// Drop the studio's mirror of a repository
+	// (POST /trash)
+	TrashRepo(ctx context.Context, request TrashRepoRequestObject) (TrashRepoResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -8276,6 +9279,39 @@ func (sh *strictHandler) GetGithubIdentity(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetGithubIdentityResponseObject); ok {
 		if err := validResponse.VisitGetGithubIdentityResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateRepo operation middleware
+func (sh *strictHandler) CreateRepo(w http.ResponseWriter, r *http.Request, params CreateRepoParams) {
+	var request CreateRepoRequestObject
+
+	request.Params = params
+
+	var body CreateRepoJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateRepo(ctx, request.(CreateRepoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateRepo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateRepoResponseObject); ok {
+		if err := validResponse.VisitCreateRepoResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -8396,6 +9432,106 @@ func (sh *strictHandler) GetHead(w http.ResponseWriter, r *http.Request, owner O
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(GetHeadResponseObject); ok {
 		if err := validResponse.VisitGetHeadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RegisterHook operation middleware
+func (sh *strictHandler) RegisterHook(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params RegisterHookParams) {
+	var request RegisterHookRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body RegisterHookJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RegisterHook(ctx, request.(RegisterHookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RegisterHook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RegisterHookResponseObject); ok {
+		if err := validResponse.VisitRegisterHookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// DeleteHook operation middleware
+func (sh *strictHandler) DeleteHook(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params DeleteHookParams) {
+	var request DeleteHookRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.HookID = hookID
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.DeleteHook(ctx, request.(DeleteHookRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DeleteHook")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(DeleteHookResponseObject); ok {
+		if err := validResponse.VisitDeleteHookResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateHookEvents operation middleware
+func (sh *strictHandler) UpdateHookEvents(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params UpdateHookEventsParams) {
+	var request UpdateHookEventsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.HookID = hookID
+	request.Params = params
+
+	var body UpdateHookEventsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateHookEvents(ctx, request.(UpdateHookEventsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateHookEvents")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UpdateHookEventsResponseObject); ok {
+		if err := validResponse.VisitUpdateHookEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -9319,149 +10455,200 @@ func (sh *strictHandler) StartRepoTurn(w http.ResponseWriter, r *http.Request, o
 	}
 }
 
+// TrashRepo operation middleware
+func (sh *strictHandler) TrashRepo(w http.ResponseWriter, r *http.Request, params TrashRepoParams) {
+	var request TrashRepoRequestObject
+
+	request.Params = params
+
+	var body TrashRepoJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.TrashRepo(ctx, request.(TrashRepoRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "TrashRepo")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(TrashRepoResponseObject); ok {
+		if err := validResponse.VisitTrashRepoResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

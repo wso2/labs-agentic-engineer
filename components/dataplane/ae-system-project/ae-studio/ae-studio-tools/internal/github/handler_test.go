@@ -307,3 +307,147 @@ func TestReadHandlers_ProjectGitHubAnswers(t *testing.T) {
 		t.Fatalf("files %+v", f)
 	}
 }
+
+func TestCreateRepo_OwnerGuardAndAdopt(t *testing.T) {
+	quietLogs(t)
+	gh := githubtest.NewStub(t)
+	gh.SeedRepo("acme", "e2e-reference")
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t")}), WithOwner("acme"))
+	ctx := context.Background()
+
+	other, _ := h.CreateRepo(ctx, gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "evil", Name: "x"}})
+	if p := problemOf(t, other); p.Status != http.StatusForbidden || p.Code != "owner_not_allowed" {
+		t.Fatalf("got %#v, want 403 owner_not_allowed", other)
+	}
+	dup, _ := h.CreateRepo(ctx, gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "e2e-reference"}})
+	if p := problemOf(t, dup); p.Status != http.StatusConflict || p.Code != "repo_name_conflict" {
+		t.Fatalf("got %#v, want 409 repo_name_conflict", dup)
+	}
+	adopted, _ := h.CreateRepo(ctx, gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "e2e-reference", AdoptExisting: true}})
+	if r, ok := adopted.(gen.CreateRepo200JSONResponse); !ok || r.CloneURL != "https://github.com/acme/e2e-reference.git" {
+		t.Fatalf("got %#v, want adopted coordinates", adopted)
+	}
+}
+
+func TestRegisterHook_IsAnEnsure(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	gh.SeedRepo("acme", "greeter")
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
+	first, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push"}}})
+	second, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push", "issues"}}})
+	a, b := first.(gen.RegisterHook200JSONResponse), second.(gen.RegisterHook200JSONResponse)
+	if a.ID != b.ID || !slices.Equal(gh.HookEvents("acme", "greeter", a.ID), []string{"push", "issues"}) {
+		t.Fatalf("second register must reuse hook %d and patch its events", a.ID)
+	}
+}
+
+// TestRegisterHook_CreatesWithoutAPatch: a new hook is created with the
+// events and the URL and secret are the pod's; no PATCH follows.
+func TestRegisterHook_CreatesWithoutAPatch(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	gh.SeedRepo("acme", "greeter")
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
+	resp, _ := h.RegisterHook(context.Background(), gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push", "issues"}}})
+	id := resp.(gen.RegisterHook200JSONResponse).ID
+	if !slices.Equal(gh.HookEvents("acme", "greeter", id), []string{"push", "issues"}) {
+		t.Fatalf("events %v", gh.HookEvents("acme", "greeter", id))
+	}
+	for _, r := range gh.Requests() {
+		if r.Method == http.MethodPatch {
+			t.Fatal("a created hook needs no PATCH")
+		}
+		if r.Method == http.MethodPost && !strings.Contains(r.Body, `"url":"https://x/webhooks/github"`) {
+			t.Fatalf("register body %s", r.Body)
+		}
+	}
+}
+
+// TestHookEvents_UpdateAndDelete: update replaces the events; delete is 204
+// also when GitHub no longer has the hook.
+func TestHookEvents_UpdateAndDelete(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	gh.SeedRepo("acme", "greeter")
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
+	ctx := context.Background()
+	resp, _ := h.RegisterHook(ctx, gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: []string{"push"}}})
+	id := resp.(gen.RegisterHook200JSONResponse).ID
+	upd, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: []string{"issues"}}})
+	if _, ok := upd.(gen.UpdateHookEvents204Response); !ok || !slices.Equal(gh.HookEvents("acme", "greeter", id), []string{"issues"}) {
+		t.Fatalf("update %#v, events %v", upd, gh.HookEvents("acme", "greeter", id))
+	}
+	for range 2 { // the second finds no hook (GitHub 404): still 204
+		del, _ := h.DeleteHook(ctx, gen.DeleteHookRequestObject{Owner: "acme", Repo: "greeter", HookID: id})
+		if _, ok := del.(gen.DeleteHook204Response); !ok {
+			t.Fatalf("delete %#v", del)
+		}
+	}
+	quietLogs(t)
+	missing, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: []string{"push"}}})
+	if p := problemOf(t, missing); p.Status != http.StatusBadGateway || p.GithubStatus != http.StatusNotFound {
+		t.Fatalf("update of a gone hook %#v, want 502 githubStatus 404", missing)
+	}
+}
+
+// TestCreateRepo_Creates: a new name is 201 with GitHub's coordinates; the
+// owner compares case-insensitively; the repo is created initialised.
+func TestCreateRepo_Creates(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t")}), WithOwner("Acme"))
+	resp, _ := h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "greeter", Private: true, Description: "d"}})
+	r, ok := resp.(gen.CreateRepo201JSONResponse)
+	if !ok || r != (gen.CreateRepo201JSONResponse{Owner: "acme", Repo: "greeter", CloneURL: "https://github.com/acme/greeter.git", DefaultBranch: "main"}) {
+		t.Fatalf("got %#v", resp)
+	}
+	body := gh.Requests()[0].Body
+	for _, want := range []string{`"auto_init":true`, `"private":true`, `"description":"d"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("create body %s lacks %s", body, want)
+		}
+	}
+}
+
+// TestCreateRepo_GuardRunsBeforeAnyCall: a foreign owner (or an unset
+// connected owner) never reaches GitHub, so the client's /user/repos
+// fallback cannot create a repository under the gitpat's own account for
+// anyone but the connected owner.
+func TestCreateRepo_GuardRunsBeforeAnyCall(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"gitpat-user"},"default_branch":"main"}`)
+	for _, connected := range []string{"acme", ""} {
+		h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t")}), WithOwner(connected))
+		resp, _ := h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "evil", Name: "x", AdoptExisting: true}})
+		if p := problemOf(t, resp); p.Code != "owner_not_allowed" {
+			t.Fatalf("connected %q: %#v", connected, resp)
+		}
+	}
+	if n := len(gh.Requests()); n != 0 {
+		t.Fatalf("a refused owner reached GitHub %d times", n)
+	}
+}
+
+// TestCreateRepo_RefusesARepoUnderAnotherOwner: when /orgs/{owner}/repos is
+// 404 the client falls back to /user/repos, which creates under the
+// gitpat's own account; a repository GitHub answers under any owner but the
+// connected one is refused (and logged), never handed to aep-api.
+func TestCreateRepo_RefusesARepoUnderAnotherOwner(t *testing.T) {
+	logs := quietLogs(t)
+	gh := githubtest.NewStub(t)
+	gh.On("POST", "/orgs/acme/repos", 404, `{"message":"Not Found"}`)
+	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"gitpat-user"},"default_branch":"main"}`)
+	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t")}), WithOwner("acme"))
+	resp, _ := h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
+	if p := problemOf(t, resp); p.Status != http.StatusForbidden || p.Code != "owner_not_allowed" {
+		t.Fatalf("got %#v", resp)
+	}
+	if !strings.Contains(logs.String(), "github.repo_owner_mismatch") {
+		t.Fatalf("logs %q", logs)
+	}
+
+	// The connected owner is the gitpat's user: the fallback is its own
+	// account, accepted.
+	gh.On("POST", "/user/repos", 201, `{"name":"x","owner":{"login":"Acme"},"default_branch":"trunk"}`)
+	resp, _ = h.CreateRepo(context.Background(), gen.CreateRepoRequestObject{Body: &gen.CreateRepoJSONRequestBody{Owner: "acme", Name: "x"}})
+	if r, ok := resp.(gen.CreateRepo201JSONResponse); !ok || r.CloneURL != "https://github.com/Acme/x.git" || r.DefaultBranch != "trunk" {
+		t.Fatalf("got %#v", resp)
+	}
+}

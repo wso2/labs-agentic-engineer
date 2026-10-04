@@ -54,23 +54,23 @@ func fakeGitHub(t *testing.T, status int, headers map[string]string, body string
 	return srv
 }
 
-func TestWhoami_ReturnsLoginAndID(t *testing.T) {
-	srv := fakeGitHub(t, http.StatusOK, nil, `{"login":"e2e-bot","id":42,"name":"ignored"}`)
-	login, id, err := newClient(srv.URL, testPAT).Whoami(context.Background())
-	if err != nil || login != "e2e-bot" || id != 42 {
-		t.Fatalf("Whoami = %q, %d, %v", login, id, err)
+func TestUser_ReturnsLoginIDNameAndEmail(t *testing.T) {
+	srv := fakeGitHub(t, http.StatusOK, nil, `{"login":"e2e-bot","id":42,"name":"E2E Bot","email":"bot@example.com"}`)
+	u, err := newClient(srv.URL, testPAT).User(context.Background())
+	if err != nil || u != (User{Login: "e2e-bot", ID: 42, Name: "E2E Bot", Email: "bot@example.com"}) {
+		t.Fatalf("User = %+v, %v", u, err)
 	}
 }
 
-func TestWhoami_WrongPATIsHTTPStatusError(t *testing.T) {
+func TestUser_WrongPATIsHTTPStatusError(t *testing.T) {
 	srv := fakeGitHub(t, http.StatusOK, nil, `{"login":"e2e-bot","id":42}`)
-	_, _, err := newClient(srv.URL, "ghp_wrong").Whoami(context.Background())
+	_, err := newClient(srv.URL, "ghp_wrong").User(context.Background())
 	if !IsHTTPStatus(err, http.StatusUnauthorized) {
 		t.Fatalf("err = %v, want HTTPStatusError 401", err)
 	}
 }
 
-func TestWhoami_RateLimited(t *testing.T) {
+func TestUser_RateLimited(t *testing.T) {
 	reset := strconv.FormatInt(time.Now().Add(90*time.Second).Unix(), 10)
 	cases := []struct {
 		name    string
@@ -87,7 +87,7 @@ func TestWhoami_RateLimited(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv := fakeGitHub(t, c.status, c.headers, `{"message":"rate limited"}`)
-			_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
+			_, err := newClient(srv.URL, testPAT).User(context.Background())
 			wait, ok := RateLimited(err)
 			if !ok || !IsHTTPStatus(err, http.StatusTooManyRequests) {
 				t.Fatalf("err = %v, want HTTPStatusError 429", err)
@@ -99,18 +99,18 @@ func TestWhoami_RateLimited(t *testing.T) {
 	}
 }
 
-func TestWhoami_ForbiddenWithoutRateLimitIsHTTPStatusError(t *testing.T) {
+func TestUser_ForbiddenWithoutRateLimitIsHTTPStatusError(t *testing.T) {
 	srv := fakeGitHub(t, http.StatusForbidden, map[string]string{"X-RateLimit-Remaining": "4999"}, `{}`)
-	_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
+	_, err := newClient(srv.URL, testPAT).User(context.Background())
 	if _, limited := RateLimited(err); limited || !IsHTTPStatus(err, http.StatusForbidden) {
 		t.Fatalf("err = %v, want HTTPStatusError 403, not a rate limit", err)
 	}
 }
 
-func TestWhoami_MalformedBody(t *testing.T) {
+func TestUser_MalformedBody(t *testing.T) {
 	for _, body := range []string{`not json`, `{"login":"","id":42}`, `{"login":"x","id":0}`} {
 		srv := fakeGitHub(t, http.StatusOK, nil, body)
-		_, _, err := newClient(srv.URL, testPAT).Whoami(context.Background())
+		_, err := newClient(srv.URL, testPAT).User(context.Background())
 		var se *HTTPStatusError
 		if err == nil || errors.As(err, &se) {
 			t.Fatalf("body %q: err = %v, want a decode error", body, err)
@@ -118,8 +118,8 @@ func TestWhoami_MalformedBody(t *testing.T) {
 	}
 }
 
-func TestWhoami_ErrorsNeverCarryThePAT(t *testing.T) {
-	_, _, err := newClient("http://127.0.0.1:1", testPAT).Whoami(context.Background())
+func TestUser_ErrorsNeverCarryThePAT(t *testing.T) {
+	_, err := newClient("http://127.0.0.1:1", testPAT).User(context.Background())
 	if err == nil || strings.Contains(err.Error(), testPAT) {
 		t.Fatalf("err = %v", err)
 	}

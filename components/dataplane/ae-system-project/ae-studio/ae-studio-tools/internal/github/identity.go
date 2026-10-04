@@ -23,7 +23,7 @@ import (
 
 // Identity reports the GitHub user the gitpat belongs to.
 type Identity interface {
-	Whoami(ctx context.Context) (login string, id int64, err error)
+	User(ctx context.Context) (User, error)
 }
 
 var _ Identity = (*Client)(nil)
@@ -35,15 +35,6 @@ type User struct {
 	ID    int64
 	Name  string
 	Email string
-}
-
-// Whoami answers GET /user: the login and numeric id of the gitpat's user.
-func (c *Client) Whoami(ctx context.Context) (string, int64, error) {
-	u, err := c.User(ctx)
-	if err != nil {
-		return "", 0, err
-	}
-	return u.Login, u.ID, nil
 }
 
 // User answers GET /user: the gitpat's user, with name and email when

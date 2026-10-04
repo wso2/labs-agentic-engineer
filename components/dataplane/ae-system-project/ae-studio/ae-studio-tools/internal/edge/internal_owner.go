@@ -48,8 +48,9 @@ func ownerGuard(connected string, next http.Handler) http.Handler {
 }
 
 // repoOwner is the {owner} segment of a /internal/v1/repos/{owner}/…
-// address; scoped is false for any other address (POST /internal/v1/repos
-// guards its body's owner itself). The validator already held the segment to
+// address; scoped is false for any other address (POST /internal/v1/repos,
+// create-repo, applies the same rule and code to its body's owner in
+// github.Handler, before any GitHub call). The validator already held the segment to
 // the contract's pattern, which admits no escapes.
 func repoOwner(r *http.Request) (owner string, scoped bool) {
 	rest, ok := strings.CutPrefix(r.URL.EscapedPath(), reposScope)

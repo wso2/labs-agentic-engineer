@@ -100,6 +100,11 @@ type Workspace interface {
 	// ListTagsLocal is ListTags without the origin fetch: it serves whatever
 	// the mirror already holds (every tag Tag cuts is there).
 	ListTagsLocal(ctx context.Context, ref RepoRef, prefix string) ([]TagInfo, error)
+
+	// TrashRepo moves the repo's mirror into trash/ (phase one of the
+	// two-phase delete; the reaper purges trash). A missing mirror is a
+	// no-op; the next op on the ref clones again.
+	TrashRepo(ctx context.Context, ref RepoRef) error
 }
 
 // Tx is the staged overlay handed to a Mutate fn. Write/Delete record

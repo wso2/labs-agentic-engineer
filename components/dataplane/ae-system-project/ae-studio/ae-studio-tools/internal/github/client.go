@@ -209,15 +209,14 @@ func (c *Client) getJSON(ctx context.Context, url string, out any) error {
 	return c.doJSON(ctx, http.MethodGet, url, nil, out, http.StatusOK)
 }
 
-// CreateOrgRepo creates a repo owned by owner and answers its clone URL. A
-// 404 on POST /orgs/{owner}/repos means owner is a user account, not an org:
-// the call is retried once on POST /user/repos (the gitpat's own account).
-// A taken name is ErrRepoNameConflict.
-//
-//deadcode:keep wired in Task 4.4 (create-repo)
-func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgRepoRequest) (string, error) {
+// CreateOrgRepo creates a repo owned by owner and answers it as GitHub holds
+// it. A 404 on POST /orgs/{owner}/repos means owner is a user account, not
+// an org: the call is retried once on POST /user/repos, which creates under
+// the gitpat's own account (the answer names that owner; the caller checks
+// it). A taken name is ErrRepoNameConflict.
+func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgRepoRequest) (*Repository, error) {
 	if owner == "" {
-		return "", errors.New("repo owner is required")
+		return nil, errors.New("repo owner is required")
 	}
 	payload := map[string]any{
 		"name":        req.Name,
@@ -228,30 +227,53 @@ func (c *Client) CreateOrgRepo(ctx context.Context, owner string, req CreateOrgR
 	url := fmt.Sprintf(c.apiBase+"/orgs/%s/repos", owner)
 	r, err := c.send(ctx, http.MethodPost, url, payload)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if r.status == http.StatusNotFound {
 		url = c.apiBase + "/user/repos"
 		if r, err = c.send(ctx, http.MethodPost, url, payload); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	switch {
 	case r.status == http.StatusCreated:
-		var created struct {
-			CloneURL string `json:"clone_url"`
-		}
-		if err := json.Unmarshal(r.body, &created); err != nil {
-			return "", fmt.Errorf("decode response: %w", err)
-		}
-		if created.CloneURL == "" {
-			return "", errors.New("github response missing clone_url")
-		}
-		return created.CloneURL, nil
+		return decodeRepository(r.body)
 	case r.status == http.StatusUnprocessableEntity && bytes.Contains(r.body, []byte("name already exists")):
-		return "", ErrRepoNameConflict
+		return nil, ErrRepoNameConflict
 	}
-	return "", statusError(r, url, time.Now())
+	return nil, statusError(r, url, time.Now())
+}
+
+// GetRepo answers owner/name as GitHub holds it (GET /repos/{owner}/{name}).
+func (c *Client) GetRepo(ctx context.Context, owner, name string) (*Repository, error) {
+	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s", owner, name)
+	r, err := c.send(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.status != http.StatusOK {
+		return nil, statusError(r, url, time.Now())
+	}
+	return decodeRepository(r.body)
+}
+
+// decodeRepository reads the fields Repository keeps from a GitHub
+// repository object.
+func decodeRepository(body []byte) (*Repository, error) {
+	var raw struct {
+		Name  string `json:"name"`
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	if raw.Name == "" || raw.Owner.Login == "" || raw.DefaultBranch == "" {
+		return nil, errors.New("github response missing name, owner or default_branch")
+	}
+	return &Repository{Owner: raw.Owner.Login, Name: raw.Name, DefaultBranch: raw.DefaultBranch}, nil
 }
 
 // CreateIssue opens an issue (POST /repos/{owner}/{repo}/issues).
@@ -473,10 +495,9 @@ func (c *Client) SetIssueLabels(ctx context.Context, owner, repo string, number 
 // RegisterWebhook installs a repo webhook delivering to Config.HookURL,
 // signed with Config.HookSecret, and answers its id. GitHub's 422 "Hook
 // already exists" (same URL) answers the existing hook's id, found across
-// every page of the repo's hooks; its events are left as they are.
-//
-//deadcode:keep wired in Task 4.4 (register-hook)
-func (c *Client) RegisterWebhook(ctx context.Context, owner, repo string, events []string) (int64, error) {
+// every page of the repo's hooks, with existed set; its events are left as
+// they are (UpdateWebhookEvents replaces them).
+func (c *Client) RegisterWebhook(ctx context.Context, owner, repo string, events []string) (id int64, existed bool, err error) {
 	payload := map[string]any{
 		"name":   "web",
 		"active": true,
@@ -491,7 +512,7 @@ func (c *Client) RegisterWebhook(ctx context.Context, owner, repo string, events
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks", owner, repo)
 	r, err := c.send(ctx, http.MethodPost, url, payload)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	switch {
 	case r.status == http.StatusCreated:
@@ -499,13 +520,14 @@ func (c *Client) RegisterWebhook(ctx context.Context, owner, repo string, events
 			ID int64 `json:"id"`
 		}
 		if err := json.Unmarshal(r.body, &hook); err != nil {
-			return 0, fmt.Errorf("decode response: %w", err)
+			return 0, false, fmt.Errorf("decode response: %w", err)
 		}
-		return hook.ID, nil
+		return hook.ID, false, nil
 	case r.status == http.StatusUnprocessableEntity && bytes.Contains(r.body, []byte("Hook already exists")):
-		return c.findHookByURL(ctx, owner, repo, c.cfg.HookURL)
+		id, err := c.findHookByURL(ctx, owner, repo, c.cfg.HookURL)
+		return id, err == nil, err
 	}
-	return 0, statusError(r, url, time.Now())
+	return 0, false, statusError(r, url, time.Now())
 }
 
 // maxHookPages bounds findHookByURL's walk (GitHub allows 20 hooks per event
@@ -569,8 +591,6 @@ func nextPageURL(h http.Header) string {
 
 // UpdateWebhookEvents replaces an existing hook's event list
 // (PATCH /hooks/{id}).
-//
-//deadcode:keep wired in Task 4.4 (register-hook, update-hook-events)
 func (c *Client) UpdateWebhookEvents(ctx context.Context, owner, repo string, hookID int64, events []string) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks/%d", owner, repo, hookID)
 	return c.doJSON(ctx, http.MethodPatch, url, map[string]any{"events": events}, nil, http.StatusOK)
@@ -580,8 +600,6 @@ func (c *Client) UpdateWebhookEvents(ctx context.Context, owner, repo string, ho
 // registration, never one found by scanning, so no other integration's hook
 // can be caught. 404 and 410 (GitHub reaped a failing hook) are success: the
 // hook is already gone.
-//
-//deadcode:keep wired in Task 4.4 (delete-hook)
 func (c *Client) DeleteWebhook(ctx context.Context, owner, repo string, hookID int64) error {
 	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks/%d", owner, repo, hookID)
 	return c.doJSON(ctx, http.MethodDelete, url, nil, nil,

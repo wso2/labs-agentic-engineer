@@ -168,13 +168,14 @@ func writeResponseError(w http.ResponseWriter, r *http.Request, err error) {
 	problem.Write(w, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 }
 
-// GetGithubIdentity answers the gitpat's GitHub user. A rate limit is 429 with
+// GetGithubIdentity answers the gitpat's GitHub user (name and email when
+// public). A rate limit is 429 with
 // Retry-After; any other GitHub failure is 502 github_error with GitHub's
 // status in githubStatus when it answered one.
 func (s internalServer) GetGithubIdentity(ctx context.Context, _ gen.GetGithubIdentityRequestObject) (gen.GetGithubIdentityResponseObject, error) {
-	login, id, err := s.gh.Whoami(ctx)
+	u, err := s.gh.User(ctx)
 	if err == nil {
-		return gen.GetGithubIdentity200JSONResponse{Login: login, ID: id}, nil
+		return gen.GetGithubIdentity200JSONResponse{Login: u.Login, ID: u.ID, Name: u.Name, Email: u.Email}, nil
 	}
 	if wait, limited := github.RateLimited(err); limited {
 		return gen.GetGithubIdentity429ApplicationProblemPlusJSONResponse{

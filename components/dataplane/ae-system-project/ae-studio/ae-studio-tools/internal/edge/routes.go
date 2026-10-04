@@ -48,8 +48,9 @@ type Deps struct {
 	// Git serves the /internal/v1 git content ops (repo.NewHandler over the
 	// git engine).
 	Git repo.Handler
-	// GitHubOps serves the /internal/v1 issue, milestone and pull request
-	// ops (github.NewHandler over the gitpat's client).
+	// GitHubOps serves the /internal/v1 GitHub ops: create-repo, issues,
+	// milestones, pulls and hooks (github.NewHandler over the gitpat's
+	// client, WithOwner(AE_GITHUB_OWNER)).
 	GitHubOps github.Handler
 	// Projects resolves a project to its repository through aep-api (the
 	// turns op checks the path against it).

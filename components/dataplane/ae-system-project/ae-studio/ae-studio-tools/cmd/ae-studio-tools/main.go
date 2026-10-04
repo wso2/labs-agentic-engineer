@@ -157,9 +157,9 @@ func run() error {
 		Snapshots: reader,
 		Usage:     usageOutbox.sender,
 	}
-	// The GitHub client over the gitpat: commit identity, aep-api's issue,
-	// milestone and pull request ops, and the hooks it registers deliver to
-	// AE_WEBHOOK_URL signed with the webhook secret.
+	// The GitHub client over the gitpat: commit identity and aep-api's
+	// GitHub ops; the hooks it registers deliver to AE_WEBHOOK_URL signed
+	// with the webhook secret.
 	gh := github.New(github.Config{
 		Token:      func(context.Context) (string, error) { return cfg.GitHubPAT, nil },
 		HookURL:    cfg.WebhookURL,
@@ -194,9 +194,10 @@ func run() error {
 			// aep-api's git content ops, by GitHub owner/repo, on the
 			// Room's mirrors.
 			Git: repo.NewHandler(engine, commitAuthor, repo.GitHubCloneURL),
-			// aep-api's issue, milestone and pull request ops, one GitHub
-			// call each over the gitpat.
-			GitHubOps: github.NewHandler(gh),
+			// aep-api's GitHub ops (repo create, issues, milestones, pulls,
+			// hooks) over the gitpat; repos are created for AE_GITHUB_OWNER
+			// only.
+			GitHubOps: github.NewHandler(gh, github.WithOwner(cfg.GitHubOwner)),
 			Projects:  resolver,
 			// The turns aep-api starts run on the agent's Turn socket.
 			Turns: turns.Relay{Turns: turns.NewClient(cfg.TurnSocket)},

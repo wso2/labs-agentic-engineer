@@ -32,6 +32,14 @@ type CreateOrgRepoRequest struct {
 	Description string
 }
 
+// Repository is a GitHub repository's coordinates: the owner's login and
+// the name in GitHub's case, and its default branch.
+type Repository struct {
+	Owner         string
+	Name          string
+	DefaultBranch string
+}
+
 // CreateIssueRequest is marshalled as POST /repos/{owner}/{repo}/issues'
 // body. Milestone is the milestone NUMBER (GitHub answers 422 to a title);
 // nil leaves the issue unassigned.

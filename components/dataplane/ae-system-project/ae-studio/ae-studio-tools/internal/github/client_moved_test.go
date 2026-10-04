@@ -43,11 +43,11 @@ func TestRegisterWebhook_FindsExistingHookAcrossPages(t *testing.T) {
 	srv = httptest.NewServer(mux)
 	defer srv.Close()
 	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: hookURL, HookSecret: "s"})
-	id, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
+	id, existed, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 202 {
+	if id != 202 || !existed {
 		t.Fatalf("hook id = %d, want 202 (found on page 2)", id)
 	}
 }
@@ -78,11 +78,11 @@ func TestRegisterWebhook_FollowsGitHubsRepositoriesNextLink(t *testing.T) {
 	srv = httptest.NewServer(mux)
 	defer srv.Close()
 	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: hookURL, HookSecret: "s"})
-	id, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
+	id, existed, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id != 303 {
+	if id != 303 || !existed {
 		t.Fatalf("hook id = %d, want 303 (found on the repositories/<id> page)", id)
 	}
 }
@@ -120,7 +120,7 @@ func TestWrites_ReturnHTTPStatusError(t *testing.T) {
 	c := New(Config{APIBase: srv.URL, Token: staticToken("t")})
 	for name, call := range map[string]func() error{
 		"close":    func() error { return c.CloseIssue(context.Background(), "acme", "greeter", 7) },
-		"register": func() error { _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); return err },
+		"register": func() error { _, _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); return err },
 	} {
 		if err := call(); !IsHTTPStatus(err, http.StatusNotFound) {
 			t.Errorf("%s: err = %v, want *HTTPStatusError 404", name, err)
@@ -151,7 +151,7 @@ func TestRegisterWebhook_NeverFollowsANextPageOffTheAPIBase(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: "https://tools.example/webhooks/github"})
-	if _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); err == nil {
+	if _, _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); err == nil {
 		t.Fatal("err = nil, want a refusal to follow the off-base next page")
 	}
 }
