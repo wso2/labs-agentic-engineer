@@ -18,6 +18,7 @@ package aestudiotools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -35,6 +36,12 @@ var (
 	// trunkRef is a project on a non-main default branch: every git op must
 	// name it (carry: omitted, the pod reads main).
 	trunkRef = RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "trunk"}
+)
+
+const (
+	// pngHead is the first bytes of a PNG file: not valid UTF-8 (0x89).
+	pngHead = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
+	badUTF8 = "ok\xc3\x28\xa0\xa1end"
 )
 
 // opCase is one adapter call against the stub pod: the request it must send
@@ -145,7 +152,7 @@ func TestGitOps_RequestAndReply(t *testing.T) {
 		{
 			name: "read bundle by prefix and ext", method: "GET", path: "/repos/acme/greeter/bundle",
 			query: "at=tags%2Fv1&defaultBranch=trunk&ext=.md&ext=.yaml&prefix=specs%2F",
-			reply: `{"commitSha":"` + sha40 + `","files":{"specs/a.md":"# A"}}`,
+			reply: `{"commitSha":"` + sha40 + `","files":{"specs/a.md":"IyBB"}}`,
 			want:  pair{map[string]string{"specs/a.md": "# A"}, sha40},
 			call: func(ctx context.Context, a *Adapter) (any, error) {
 				f, s, err := a.ReadBundle(ctx, trunkRef, "tags/v1", sourcecontrol.BundleFilter{Prefix: "specs/", Exts: []string{".md", ".yaml"}})
@@ -159,6 +166,19 @@ func TestGitOps_RequestAndReply(t *testing.T) {
 			want:  pair{map[string]string{}, sha40},
 			call: func(ctx context.Context, a *Adapter) (any, error) {
 				f, s, err := a.ReadBundle(ctx, trunkRef, "", sourcecontrol.BundleFilter{Paths: []string{"a.md", "b.md"}}, sourcecontrol.Local())
+				return pair{f, s}, err
+			},
+		},
+		{
+			// Each file is base64 on the wire; binary bytes (PNG, invalid
+			// UTF-8) come back byte for byte.
+			name: "read bundle keeps binary files", method: "GET", path: "/repos/acme/greeter/bundle",
+			query: "defaultBranch=trunk&prefix=skills%2F",
+			reply: `{"commitSha":"` + sha40 + `","files":{"skills/a/logo.png":"` + base64.StdEncoding.EncodeToString([]byte(pngHead)) +
+				`","skills/a/raw.bin":"` + base64.StdEncoding.EncodeToString([]byte(badUTF8)) + `"}}`,
+			want: pair{map[string]string{"skills/a/logo.png": pngHead, "skills/a/raw.bin": badUTF8}, sha40},
+			call: func(ctx context.Context, a *Adapter) (any, error) {
+				f, s, err := a.ReadBundle(ctx, trunkRef, "", sourcecontrol.BundleFilter{Prefix: "skills/"})
 				return pair{f, s}, err
 			},
 		},

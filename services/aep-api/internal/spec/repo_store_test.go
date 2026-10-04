@@ -41,7 +41,10 @@ import (
 // production provisions the GitHub repo (it supersedes the old in-memory
 // git-host fake — the store now drives genuine git plumbing end to end). It
 // implements sourcecontrol.RepoService (the row store) and hands out origins
-// for arrange/assert. Rows/origins are keyed by repoKey(orgID, projectID) —
+// for arrange/assert. A row names a GitHub repository
+// (https://github.com/test-org/<repoName>, which RefForRow needs); the
+// workspace (ws) and the Git port (git) re-point every engine call at the
+// row's file:// origin. Rows/origins are keyed by repoKey(orgID, projectID) —
 // most existing tests only ever address the org's skills repo (a single
 // implicit projectID, SkillsRepoProject), so keying on the pair is a
 // no-behaviour-change refactor for them; the skill-mirror tests are the first
@@ -63,6 +66,95 @@ func newTestGitHost(t *testing.T) *testGitHost {
 		rows:    map[string]*sourcecontrol.GitRepository{},
 		origins: map[string]*gittest.Remote{},
 	}
+}
+
+// ws is the engine with every ref re-pointed at its row's origin: the
+// workspace the store's writes go through.
+func (h *testGitHost) ws() sourcecontrol.Workspace {
+	return originWorkspace{Workspace: h.engine, host: h}
+}
+
+// git is the Git port the store's reads go through, over ws.
+func (h *testGitHost) git() sourcecontrol.Git {
+	return workspaceGit{ws: h.ws(), refFor: h.workspaceRefFor}
+}
+
+// workspaceRefFor finds the row ref names (the org's repository with that
+// owner/repo) and answers its mount ref.
+func (h *testGitHost) workspaceRefFor(ref sourcecontrol.RepoRef) (sourcecontrol.WorkspaceRef, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, row := range h.rows {
+		if row.OrgID != ref.Org {
+			continue
+		}
+		if got, err := sourcecontrol.RefForRow(ref.Org, row); err == nil && got.Owner == ref.Owner && got.Repo == ref.Repo {
+			return sourcecontrol.WorkspaceRefFor(ref.Org, row, fakeCred{}), nil
+		}
+	}
+	return sourcecontrol.WorkspaceRef{}, sourcecontrol.ErrRepoNotFound
+}
+
+// originURL is the file:// origin of the (org, project) pair ref mounts.
+func (h *testGitHost) originURL(ref sourcecontrol.WorkspaceRef) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if o, ok := h.origins[repoKey(ref.OrgID, ref.ProjectID)]; ok {
+		return o.URL()
+	}
+	return ref.CloneURL
+}
+
+// originWorkspace is a Workspace whose every call reaches the ref's file://
+// origin instead of the GitHub URL its row names.
+type originWorkspace struct {
+	sourcecontrol.Workspace
+	host *testGitHost
+}
+
+func (w originWorkspace) at(ref sourcecontrol.WorkspaceRef) sourcecontrol.WorkspaceRef {
+	ref.CloneURL = w.host.originURL(ref)
+	return ref
+}
+
+func (w originWorkspace) Head(ctx context.Context, ref sourcecontrol.WorkspaceRef, at string) (string, error) {
+	return w.Workspace.Head(ctx, w.at(ref), at)
+}
+
+func (w originWorkspace) HeadLocal(ctx context.Context, ref sourcecontrol.WorkspaceRef) (string, error) {
+	return w.Workspace.HeadLocal(ctx, w.at(ref))
+}
+
+func (w originWorkspace) List(ctx context.Context, ref sourcecontrol.WorkspaceRef, at string) ([]sourcecontrol.Entry, string, error) {
+	return w.Workspace.List(ctx, w.at(ref), at)
+}
+
+func (w originWorkspace) ReadFile(ctx context.Context, ref sourcecontrol.WorkspaceRef, at, path string) ([]byte, string, error) {
+	return w.Workspace.ReadFile(ctx, w.at(ref), at, path)
+}
+
+func (w originWorkspace) ReadBundle(ctx context.Context, ref sourcecontrol.WorkspaceRef, at string, keep func(string) bool) (map[string]string, string, error) {
+	return w.Workspace.ReadBundle(ctx, w.at(ref), at, keep)
+}
+
+func (w originWorkspace) Mutate(ctx context.Context, ref sourcecontrol.WorkspaceRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (gitfs.CommitResult, error) {
+	return w.Workspace.Mutate(ctx, w.at(ref), fn, opts)
+}
+
+func (w originWorkspace) Tag(ctx context.Context, ref sourcecontrol.WorkspaceRef, spec sourcecontrol.TagSpec) error {
+	return w.Workspace.Tag(ctx, w.at(ref), spec)
+}
+
+func (w originWorkspace) ListTags(ctx context.Context, ref sourcecontrol.WorkspaceRef, prefix string) ([]sourcecontrol.TagInfo, error) {
+	return w.Workspace.ListTags(ctx, w.at(ref), prefix)
+}
+
+func (w originWorkspace) ListTagsLocal(ctx context.Context, ref sourcecontrol.WorkspaceRef, prefix string) ([]sourcecontrol.TagInfo, error) {
+	return w.Workspace.ListTagsLocal(ctx, w.at(ref), prefix)
+}
+
+func (w originWorkspace) Diff(ctx context.Context, ref sourcecontrol.WorkspaceRef, base, head string) (*gitfs.CompareResult, error) {
+	return w.Workspace.Diff(ctx, w.at(ref), base, head)
 }
 
 // repoKey composes the (orgID, projectID) pair into the map key rows/origins
@@ -89,12 +181,11 @@ func (h *testGitHost) EnsureBareRepo(_ context.Context, orgID, projectID, repoNa
 	r := &sourcecontrol.GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
-		RepoURL:       origin.URL(),
+		RepoURL:       "https://github.com/test-org/" + repoName + ".git",
 		DefaultBranch: "main",
 		Status:        "ready",
-		// Production persists sourcecontrol.RepoSlugFor(cloneURL); file:// URLs have no
-		// owner/repo shape, so the tests pin the stable repo name as the slug —
-		// the path key the engine derives the mirror location from.
+		// The tests pin the stable repo name as the slug — the path key the
+		// engine derives the mirror location from.
 		RepoSlug: repoName,
 	}
 	h.origins[key] = origin
@@ -202,7 +293,7 @@ func (fakeResolver) Resolve(context.Context, string) (secrets.Credential, error)
 // as the Workspace port.
 func newTestStore(t *testing.T) (*SkillService, *testGitHost) {
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, testLibraryFS(t))
+	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), host.git(), host, testLibraryFS(t))
 	return svc, host
 }
 
@@ -277,7 +368,7 @@ func TestRepoWebURL_ProjectsCloneURLToHTMLURL(t *testing.T) {
 // catalog's degrade-to-empty; the console shows its connect-GitHub guidance.
 func TestRepoWebURL_DegradesToEmpty(t *testing.T) {
 	t.Parallel()
-	svc := NewSkillService(nil, nil, nil)
+	svc := NewSkillService(nil, nil, nil, nil)
 	if got := svc.RepoWebURL(context.Background(), "org1"); got != "" {
 		t.Fatalf("RepoWebURL on degraded service = %q, want empty", got)
 	}

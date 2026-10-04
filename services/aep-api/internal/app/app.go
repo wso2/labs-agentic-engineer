@@ -410,12 +410,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	artifactStore := spec.NewArtifactStore(artifactSvcGit)
 
 	// Repo-backed skills store (single source of truth = per-org org-skills
-	// repo). Reads walk the shared-volume mirror at branch tip and writes
-	// commit to main through the Workspace port
+	// repo). Reads go through the org's AE Studio pod (studioTools); writes
+	// commit to main through the Workspace port until Task 4.16
 	// (services/aep-api/design/shared-workspace-volume.md). Built-ins + flow
 	// skills seed/reconcile from the embedded files on demand.
 	// docs/design/skills-repo-storage.md.
-	skillSvc := spec.NewSkillService(gitOpsService, repoService, os.DirFS(cfg.SkillsDir))
+	skillSvc := spec.NewSkillService(gitOpsService, studioTools, repoService, os.DirFS(cfg.SkillsDir))
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
 

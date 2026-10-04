@@ -17,14 +17,14 @@
 package spec
 
 // Repo-backed skills store. The per-org `org-skills` GitHub repo is the
-// single source of truth (docs/design/skills-repo-storage.md); the store
-// reads and writes it through the Workspace port over the shared-volume
-// mirror (Phase 1):
+// single source of truth (docs/design/skills-repo-storage.md):
 //
-//   - reads are one ReadBundle at the branch tip (fetch + local plumbing —
-//     REST-parity freshness; no cache tier);
-//   - writes are one Mutate commit to `main`; Mutate owns the CAS retry
-//     (no per-feature retry wrapper).
+//   - reads go through the org's AE Studio pod (sourcecontrol.Git): the
+//     library at the fetched branch tip, then the manifest at the sha that
+//     read answered, so both are one snapshot;
+//   - writes are one Workspace.Mutate commit to `main` over the shared-volume
+//     mirror until Task 4.16 moves them to Git.Commit; Mutate owns the CAS
+//     retry (no per-feature retry wrapper).
 //
 // The platform library (platform + org kinds) is seeded + content-reconciled
 // from the on-disk skill library (config.SkillsDir, injected as an fs.FS;
@@ -91,7 +91,12 @@ var legacyUserDirs = map[string]bool{
 // holds the low-level git read/write primitives that the mutation + import
 // services and the reconciler compose with.
 type SkillService struct {
-	git   sourcecontrol.GitOpsService
+	// git commits through the workspace mirror until Task 4.16 moves the
+	// writes to Git.Commit.
+	git sourcecontrol.GitOpsService
+	// reads is the org's AE Studio pod: every skills-repo and project-repo
+	// read.
+	reads sourcecontrol.Git
 	repos sourcecontrol.RepoService
 	// library is the platform skill source read at reconcile time — os.DirFS
 	// over the on-disk library (config.SkillsDir) in production, a test fs.FS in
@@ -115,13 +120,19 @@ func (s *SkillService) orgLock(orgID string) *sync.Mutex {
 }
 
 // NewSkillService wires the repo-backed store. `git` provides the Workspace
-// engine, credential resolver, and save identities; `repos` provisions/looks
-// up the per-org skills repo row; `library` is the platform skill source read
-// during seed/reconcile (os.DirFS(config.SkillsDir) in production, a test fs.FS
-// in tests). Any may be nil in degraded/test boot (reads then return empty; a
+// engine, credential resolver, and save identities for the writes; `reads` is
+// the Git port every read goes through; `repos` provisions/looks up the
+// per-org skills repo row; `library` is the platform skill source read during
+// seed/reconcile (os.DirFS(config.SkillsDir) in production, a test fs.FS in
+// tests). Any may be nil in degraded/test boot (reads then return empty; a
 // nil library seeds nothing).
-func NewSkillService(git sourcecontrol.GitOpsService, repos sourcecontrol.RepoService, library fs.FS) *SkillService {
-	return &SkillService{git: git, repos: repos, library: library}
+func NewSkillService(git sourcecontrol.GitOpsService, reads sourcecontrol.Git, repos sourcecontrol.RepoService, library fs.FS) *SkillService {
+	return &SkillService{git: git, reads: reads, repos: repos, library: library}
+}
+
+// configured reports whether the store has everything a read needs.
+func (s *SkillService) configured() bool {
+	return s != nil && s.git != nil && s.reads != nil && s.repos != nil
 }
 
 // ---- read surface (unchanged contract) -------------------------------------
@@ -156,7 +167,7 @@ func (s *SkillService) Resolve(ctx context.Context, orgID, name string) (*Skill,
 // cross-replica TOCTOU window: git has no unique constraint
 // (docs/design/skills-repo-storage.md §9).
 func (s *SkillService) resolveFresh(ctx context.Context, orgID, name string) (*Skill, error) {
-	if s == nil || s.git == nil || s.repos == nil || orgID == "" {
+	if !s.configured() || orgID == "" {
 		return nil, nil
 	}
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
@@ -180,7 +191,7 @@ func (s *SkillService) resolveFresh(ctx context.Context, orgID, name string) (*S
 // project's copy of every skill — so it must be able to tell "the library is
 // genuinely empty" apart from "the read failed".
 func (s *SkillService) ListForMirror(ctx context.Context, orgID string) ([]Skill, error) {
-	if s == nil || s.git == nil || s.repos == nil || orgID == "" {
+	if !s.configured() || orgID == "" {
 		return nil, fmt.Errorf("skills: service not configured for org %q", orgID)
 	}
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
@@ -233,7 +244,7 @@ func (s *SkillService) ListSummaries(ctx context.Context, orgID string) ([]Skill
 // same posture as the catalog (§12); the console shows its connect-GitHub
 // guidance for an empty URL.
 func (s *SkillService) RepoWebURL(ctx context.Context, orgID string) string {
-	if s == nil || s.git == nil || s.repos == nil || orgID == "" {
+	if !s.configured() || orgID == "" {
 		return ""
 	}
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
@@ -250,7 +261,7 @@ func (s *SkillService) RepoWebURL(ctx context.Context, orgID string) string {
 // any git/provisioning failure so a transient outage never fails a design/task
 // run. §12.
 func (s *SkillService) catalog(ctx context.Context, orgID string) []Skill {
-	if s == nil || s.git == nil || s.repos == nil || orgID == "" {
+	if !s.configured() || orgID == "" {
 		return nil
 	}
 	repo, err := s.ensureSkillsRepo(ctx, orgID)
@@ -266,31 +277,39 @@ func (s *SkillService) catalog(ctx context.Context, orgID string) []Skill {
 	return skills
 }
 
-// loadEntriesAndManifest reads skills/ at the branch tip (one
-// Workspace.ReadBundle: fetch + local ls-tree/cat-file, filtered to the
-// catalog layout, parsed in-memory — with per-entry layout info for the
-// reconciler) plus the skills-manifest.json baseline, read from the SAME ref
-// so entries and manifest are a consistent snapshot. Branch-tip reads always
-// revalidate origin, so freshness matches the retired REST walk without any
-// cache. The manifest is tolerant-parsed (absent/corrupt → empty). The
+// loadEntriesAndManifest reads skills/ at the fetched branch tip through the
+// pod (one Git.ReadBundle, kept to the catalog layout, parsed in-memory —
+// with per-entry layout info for the reconciler) plus the
+// skills-manifest.json baseline, read at the commit sha that bundle answered
+// so entries and manifest are a consistent snapshot. Every file comes back
+// byte for byte (the bundle is base64 on the wire), so a binary aux file the
+// reconciler writes back is never mangled. The manifest is tolerant-parsed
+// (absent/corrupt → empty). The
 // returned manifestPresent reports whether the manifest FILE existed at all —
 // distinct from an empty parse — so a caller can tell a pre-manifest (or
 // manually deleted) repo apart from one whose manifest is simply empty, and
 // lazily backfill it (see UpdatesAvailable).
 func (s *SkillService) loadEntriesAndManifest(ctx context.Context, orgID string, repo *sourcecontrol.GitRepository) ([]catalogEntry, SkillsManifest, bool, error) {
-	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+	ref, err := sourcecontrol.RefForRow(orgID, repo)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, fmt.Errorf("resolve skills repository: %w", err)
 	}
-	keep := func(rel string) bool { return rel == skillsManifestPath || isCatalogPath(rel) }
-	files, _, err := s.git.Workspace().ReadBundle(ctx, ref, "", keep)
+	tree, sha, err := s.reads.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: skillsRootDir + "/"})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("read skills bundle: %w", err)
 	}
-	_, manifestPresent := files[skillsManifestPath]
-	manifest := parseSkillsManifest([]byte(files[skillsManifestPath]))
-	delete(files, skillsManifestPath) // never let it near the skill parser
-	return parseBundleEntries(ctx, files), manifest, manifestPresent, nil
+	files := make(map[string]string, len(tree))
+	for p, c := range tree {
+		if isCatalogPath(p) {
+			files[p] = c
+		}
+	}
+	manifestFile, _, err := s.reads.ReadBundle(ctx, ref, sha, sourcecontrol.BundleFilter{Paths: []string{skillsManifestPath}})
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read skills manifest: %w", err)
+	}
+	raw, manifestPresent := manifestFile[skillsManifestPath]
+	return parseBundleEntries(ctx, files), parseSkillsManifest([]byte(raw)), manifestPresent, nil
 }
 
 // loadCatalog is loadEntriesAndManifest projected to the Skill catalog shape,

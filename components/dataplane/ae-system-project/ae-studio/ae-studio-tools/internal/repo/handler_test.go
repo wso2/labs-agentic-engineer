@@ -118,15 +118,52 @@ func TestReadBundle_ExactPathAndExtFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 	files := got.(gen.ReadBundle200JSONResponse).Files
-	if len(files) != 1 || files["specs/design/components/a/design.json"] != "{}" {
+	if len(files) != 1 || string(files["specs/design/components/a/design.json"]) != "{}" {
 		t.Fatalf("files = %v", files)
 	}
 	exact, _ := h.ReadBundle(context.Background(), gen.ReadBundleRequestObject{
 		Owner: "acme", Repo: "greeter",
 		Params: gen.ReadBundleParams{Path: []string{"specs/.agentic-engineer.toml"}},
 	})
-	if exact.(gen.ReadBundle200JSONResponse).Files["specs/.agentic-engineer.toml"] != "idea" {
+	if string(exact.(gen.ReadBundle200JSONResponse).Files["specs/.agentic-engineer.toml"]) != "idea" {
 		t.Fatal("exact-path form must read dot-files")
+	}
+}
+
+// pngHead is the first bytes of a PNG file: not valid UTF-8 (0x89).
+const pngHead = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
+
+// TestReadBundle_BinaryFilesSurviveTheWire reads a PNG and an invalid-UTF-8
+// blob through the handler and its JSON reply: each file is base64 on the
+// wire and decodes to the exact bytes committed.
+func TestReadBundle_BinaryFilesSurviveTheWire(t *testing.T) {
+	files := map[string]string{
+		"skills/a/logo.png": pngHead,
+		"skills/a/raw.bin":  "ok\xc3\x28\xa0\xa1end",
+		"skills/a/SKILL.md": "# A ✓",
+	}
+	h, _ := newHandlerWithOrigin(t, files)
+	resp, err := h.ReadBundle(context.Background(), gen.ReadBundleRequestObject{
+		Owner: "acme", Repo: "greeter", Params: gen.ReadBundleParams{Prefix: "skills/"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if err := resp.VisitReadBundleResponse(rec); err != nil {
+		t.Fatal(err)
+	}
+	var wire gen.Bundle
+	if err := json.Unmarshal(rec.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("body %q: %v", rec.Body.String(), err)
+	}
+	if len(wire.Files) != len(files) {
+		t.Fatalf("files = %d, want %d", len(wire.Files), len(files))
+	}
+	for p, want := range files {
+		if got := string(wire.Files[p]); got != want {
+			t.Fatalf("%s = %q, want %q", p, got, want)
+		}
 	}
 }
 
@@ -392,12 +429,12 @@ func TestReadBundle_LocalAndAt(t *testing.T) {
 		}
 		return resp.(gen.ReadBundle200JSONResponse)
 	}
-	if got := bundle(gen.ReadBundleParams{At: "tags/v1"}); got.CommitSha != first || got.Files["specs/a.md"] != "a" {
+	if got := bundle(gen.ReadBundleParams{At: "tags/v1"}); got.CommitSha != first || string(got.Files["specs/a.md"]) != "a" {
 		t.Fatalf("at tags/v1: %+v", got)
 	}
 	// The first read cloned the mirror after the out-of-band commit; local
 	// serves that clone's tip.
-	if got := bundle(gen.ReadBundleParams{Local: true}); got.Files["specs/a.md"] != "a2" {
+	if got := bundle(gen.ReadBundleParams{Local: true}); string(got.Files["specs/a.md"]) != "a2" {
 		t.Fatalf("local: %+v", got)
 	}
 	if got := bundle(gen.ReadBundleParams{Path: []string{"specs/a.md", "specs/missing.md"}}); len(got.Files) != 1 {

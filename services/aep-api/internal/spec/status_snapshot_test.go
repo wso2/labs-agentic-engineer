@@ -29,19 +29,34 @@ import (
 // local), and every other read addressed by a sha, which the adapter serves
 // from its cache.
 func TestStatusSnapshot_TwoHopsThenCache(t *testing.T) {
+	ctx := context.Background()
 	f := aestudiotest.New()
 	ref := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
-	f.SeedRepo(ref, map[string]string{"specs/requirements.md": "r", "specs/design/design.cell": "c"})
-	if err := f.Tag(context.Background(), ref, sourcecontrol.TagSpec{Name: "v1", Message: "v1"}); err != nil {
+	f.SeedRepo(ref, map[string]string{"specs/requirements/prd.md": "r", "specs/design/design.cell": "c"})
+	// A version tag (its subject carries specTagSubject), then a later edit:
+	// the poll must read the tag's tree at the tag's own sha.
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: specTagSubject + "v1"}); err != nil {
 		t.Fatal(err)
 	}
+	tagSHA, err := f.Head(ctx, ref, "tags/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "edit", Writes: []sourcecontrol.FileWrite{{Path: "specs/requirements/prd.md", Content: "r2", BaseSHA: blobSHA([]byte("r"))}}}); err != nil {
+		t.Fatal(err)
+	}
+	seeded := len(f.Calls())
 	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
 
-	if _, err := svc.StatusSnapshot(context.Background(), "default", "p"); err != nil {
+	snap, err := svc.StatusSnapshot(ctx, "default", "p")
+	if err != nil {
 		t.Fatal(err)
 	}
-	mutable := 0
-	for _, c := range f.Calls() {
+	if !snap.HasSpec || !snap.HasDesign || snap.SpecVersion != "v1" || !snap.SpecDirty {
+		t.Fatalf("snapshot = %+v, want spec, design, version v1 and dirty", snap)
+	}
+	mutable, atTag := 0, 0
+	for _, c := range f.Calls()[seeded:] {
 		if c.Op == aestudiotest.OpHead || c.Op == aestudiotest.OpListTags {
 			mutable++
 			if !c.Local {
@@ -51,9 +66,15 @@ func TestStatusSnapshot_TwoHopsThenCache(t *testing.T) {
 		if c.At != "" && len(c.At) != 40 {
 			t.Errorf("%s read at %q, want a sha", c.Op, c.At)
 		}
+		if c.At == tagSHA {
+			atTag++
+		}
 	}
 	if mutable != 2 {
 		t.Fatalf("mutable hops = %d, want 2", mutable)
+	}
+	if atTag == 0 {
+		t.Fatal("no read at the version tag's sha")
 	}
 }
 

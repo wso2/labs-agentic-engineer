@@ -197,7 +197,7 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 	ws := &hookedWorkspace{Workspace: engine, origin: remote.URL()}
 	gitOps := sourcecontrol.NewGitOpsService(stubResolver{}, ws)
 	r := &rig{t: t, remote: remote, engine: engine, ws: ws, rec: rec, org: org, proj: proj}
-	r.svc = NewArtifactService(repoRepo, workspaceGit{ws: ws, ref: r.workspaceRef()}, gitOps)
+	r.svc = NewArtifactService(repoRepo, workspaceGit{ws: ws, refFor: fixedWorkspaceRef(r.workspaceRef())}, gitOps)
 	return r
 }
 
@@ -211,59 +211,74 @@ func (r *rig) workspaceRef() sourcecontrol.WorkspaceRef {
 
 // ----- the Git port over the rig's engine -----
 
-// errRigWrite: the rig's writes go through the VersionTagGateway, never the
-// read port.
-var errRigWrite = errors.New("workspaceGit: writes go through the VersionTagGateway")
+// errRigWrite: the tests' writes go through the gitfs workspace (the
+// VersionTagGateway, Workspace.Mutate) until Task 4.16, never the read port.
+var errRigWrite = errors.New("workspaceGit: writes go through the gitfs workspace")
 
-// workspaceGit is sourcecontrol.Git's reads over the rig's gitfs engine, with
-// the pod's semantics: a read at "" fetches first unless Local() is passed (a
+// workspaceGit is sourcecontrol.Git's reads over a gitfs engine, with the
+// pod's semantics: a read at "" fetches first unless Local() is passed (a
 // local read pins the mirror's tip), a sha read is local, and ReadBundle
-// applies the pod's filter (exact Paths, else Prefix + any of Exts).
+// applies the pod's filter (exact Paths, else Prefix + any of Exts). refFor
+// maps the port's RepoRef to the engine's mount ref (file:// origin).
 type workspaceGit struct {
-	ws  sourcecontrol.Workspace
-	ref sourcecontrol.WorkspaceRef
+	ws     sourcecontrol.Workspace
+	refFor func(sourcecontrol.RepoRef) (sourcecontrol.WorkspaceRef, error)
 }
 
 var _ sourcecontrol.Git = workspaceGit{}
 
-// pin answers the `at` a read addresses: a local read of the tip is the
-// mirror's tip sha.
-func (g workspaceGit) pin(ctx context.Context, at string, opts []sourcecontrol.ReadOption) (string, error) {
+// fixedWorkspaceRef answers ref for every RepoRef (the artifact rig's one
+// repository).
+func fixedWorkspaceRef(ref sourcecontrol.WorkspaceRef) func(sourcecontrol.RepoRef) (sourcecontrol.WorkspaceRef, error) {
+	return func(sourcecontrol.RepoRef) (sourcecontrol.WorkspaceRef, error) { return ref, nil }
+}
+
+// pin answers the mount ref and the `at` a read addresses: a local read of
+// the tip is the mirror's tip sha.
+func (g workspaceGit) pin(ctx context.Context, ref sourcecontrol.RepoRef, at string, opts []sourcecontrol.ReadOption) (sourcecontrol.WorkspaceRef, string, error) {
+	wref, err := g.refFor(ref)
+	if err != nil {
+		return wref, "", err
+	}
 	if at == "" && sourcecontrol.ReadOptionsOf(opts...).Local {
-		return g.ws.HeadLocal(ctx, g.ref)
+		at, err = g.ws.HeadLocal(ctx, wref)
 	}
-	return at, nil
+	return wref, at, err
 }
 
-func (g workspaceGit) Head(ctx context.Context, _ sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) (string, error) {
+func (g workspaceGit) Head(ctx context.Context, ref sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) (string, error) {
+	wref, err := g.refFor(ref)
+	if err != nil {
+		return "", err
+	}
 	if at == "" && sourcecontrol.ReadOptionsOf(opts...).Local {
-		return g.ws.HeadLocal(ctx, g.ref)
+		return g.ws.HeadLocal(ctx, wref)
 	}
-	return g.ws.Head(ctx, g.ref, at)
+	return g.ws.Head(ctx, wref, at)
 }
 
-func (g workspaceGit) List(ctx context.Context, _ sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.Entry, string, error) {
-	at, err := g.pin(ctx, at, opts)
+func (g workspaceGit) List(ctx context.Context, ref sourcecontrol.RepoRef, at string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.Entry, string, error) {
+	wref, at, err := g.pin(ctx, ref, at, opts)
 	if err != nil {
 		return nil, "", err
 	}
-	return g.ws.List(ctx, g.ref, at)
+	return g.ws.List(ctx, wref, at)
 }
 
-func (g workspaceGit) ReadFile(ctx context.Context, _ sourcecontrol.RepoRef, at, path string, opts ...sourcecontrol.ReadOption) ([]byte, string, error) {
-	at, err := g.pin(ctx, at, opts)
+func (g workspaceGit) ReadFile(ctx context.Context, ref sourcecontrol.RepoRef, at, path string, opts ...sourcecontrol.ReadOption) ([]byte, string, error) {
+	wref, at, err := g.pin(ctx, ref, at, opts)
 	if err != nil {
 		return nil, "", err
 	}
-	return g.ws.ReadFile(ctx, g.ref, at, path)
+	return g.ws.ReadFile(ctx, wref, at, path)
 }
 
-func (g workspaceGit) ReadBundle(ctx context.Context, _ sourcecontrol.RepoRef, at string, f sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
-	at, err := g.pin(ctx, at, opts)
+func (g workspaceGit) ReadBundle(ctx context.Context, ref sourcecontrol.RepoRef, at string, f sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
+	wref, at, err := g.pin(ctx, ref, at, opts)
 	if err != nil {
 		return nil, "", err
 	}
-	return g.ws.ReadBundle(ctx, g.ref, at, func(path string) bool {
+	return g.ws.ReadBundle(ctx, wref, at, func(path string) bool {
 		if len(f.Paths) > 0 {
 			return slices.Contains(f.Paths, path)
 		}
@@ -274,11 +289,15 @@ func (g workspaceGit) ReadBundle(ctx context.Context, _ sourcecontrol.RepoRef, a
 	})
 }
 
-func (g workspaceGit) ListTags(ctx context.Context, _ sourcecontrol.RepoRef, prefix string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.TagInfo, error) {
-	if sourcecontrol.ReadOptionsOf(opts...).Local {
-		return g.ws.ListTagsLocal(ctx, g.ref, prefix)
+func (g workspaceGit) ListTags(ctx context.Context, ref sourcecontrol.RepoRef, prefix string, opts ...sourcecontrol.ReadOption) ([]sourcecontrol.TagInfo, error) {
+	wref, err := g.refFor(ref)
+	if err != nil {
+		return nil, err
 	}
-	return g.ws.ListTags(ctx, g.ref, prefix)
+	if sourcecontrol.ReadOptionsOf(opts...).Local {
+		return g.ws.ListTagsLocal(ctx, wref, prefix)
+	}
+	return g.ws.ListTags(ctx, wref, prefix)
 }
 
 func (workspaceGit) Tag(context.Context, sourcecontrol.RepoRef, sourcecontrol.TagSpec) error {

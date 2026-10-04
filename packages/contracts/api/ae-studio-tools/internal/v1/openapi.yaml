@@ -1772,9 +1772,10 @@ components:
           type: string
         files:
           type: object
-          description: path → content
+          description: path → content, base64 per file (binary-safe)
           additionalProperties:
             type: string
+            format: byte
     TagList:
       type: object
       required:

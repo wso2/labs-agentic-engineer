@@ -24,10 +24,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -322,6 +324,27 @@ func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
 	}
 	if got := r.tags(); len(got) != 0 {
 		t.Errorf("tags = %v, want none", got)
+	}
+}
+
+// A caller's commit sha must be the pod's shape (40 lowercase hex): an
+// abbreviated or upper-case one is refused here, before any pod call.
+func TestCommitSHA_OnlyAFullLowercaseShaReachesThePod(t *testing.T) {
+	t.Parallel()
+	f := aestudiotest.New()
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
+	ctx := context.Background()
+	full := strings.Repeat("a", 40)
+	for _, sha := range []string{full[:7], strings.ToUpper(full), full + "aa"} {
+		if _, err := svc.SaveSpec(ctx, "default", "p", SaveRequest{CommitSHA: sha}); !errors.Is(err, ErrArtifactPathInvalid) {
+			t.Errorf("SaveSpec(%q) err = %v, want ErrArtifactPathInvalid", sha, err)
+		}
+		if _, err := svc.GetDesignAtCommit(ctx, "default", "p", sha); !errors.Is(err, ErrArtifactPathInvalid) {
+			t.Errorf("GetDesignAtCommit(%q) err = %v, want ErrArtifactPathInvalid", sha, err)
+		}
+	}
+	if calls := f.Calls(); len(calls) != 0 {
+		t.Fatalf("pod calls = %+v, want none", calls)
 	}
 }
 

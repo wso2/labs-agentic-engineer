@@ -75,7 +75,7 @@ func NewComponentStore(t *testing.T) *ComponentStore {
 // against the real embedded skill count.
 func NewComponentStoreWithLibrary(t *testing.T, library fs.FS) *ComponentStore {
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, library)
+	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), host.git(), host, library)
 	return &ComponentStore{Svc: svc, host: host}
 }
 
@@ -85,7 +85,7 @@ func NewComponentStoreWithLibrary(t *testing.T, library fs.FS) *ComponentStore {
 func newTestStoreWithLibrary(t *testing.T, fsys fs.FS) (*SkillService, *testGitHost) {
 	t.Helper()
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, fsys)
+	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), host.git(), host, fsys)
 	return svc, host
 }
 

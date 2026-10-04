@@ -206,8 +206,8 @@ func (e ListMilestoneIssuesParamsState) Valid() bool {
 type Bundle struct {
 	CommitSha string `json:"commitSha"`
 
-	// Files path → content
-	Files map[string]string `json:"files"`
+	// Files path → content, base64 per file (binary-safe)
+	Files map[string][]byte `json:"files"`
 }
 
 // CommitConflict A problem; with code conflict, conflicts names every failed baseSha.

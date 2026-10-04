@@ -100,10 +100,8 @@ func audienceIncludesCoding(audience []string) bool {
 }
 
 // resolvePinnedSkills reads every component's `skillsPinned` at the project
-// repo ref's tree and returns their union as a set. This is a plain
-// Workspace read (its own flock), always called BEFORE the SyncProjectSkills
-// Mutate opens — Workspace forbids nested calls (a read's flock and Mutate's
-// exclusive lock would self-deadlock on the same repo).
+// repository's fetched tip through the pod and returns their union as a set.
+// Called BEFORE the SyncProjectSkills Mutate opens.
 //
 // No design yet (a brand-new project repo has no specs/design/ tree at all)
 // reads back as zero files, hence zero pins — not an error. A malformed
@@ -111,11 +109,8 @@ func audienceIncludesCoding(audience []string) bool {
 // whole sync: one bad file must not block every OTHER project's skill guidance
 // from refreshing (that specific component simply loses its pins for this
 // pass — it re-establishes them once it is next saved).
-func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontrol.WorkspaceRef) (map[string]bool, error) {
-	keep := func(rel string) bool {
-		return strings.HasPrefix(rel, designComponentsPrefix) && strings.HasSuffix(rel, designJSONSuffix)
-	}
-	files, _, err := s.git.Workspace().ReadBundle(ctx, ref, "", keep)
+func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontrol.RepoRef) (map[string]bool, error) {
+	files, _, err := s.reads.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: designComponentsPrefix, Exts: []string{designJSONSuffix}})
 	if err != nil {
 		return nil, fmt.Errorf("read component designs: %w", err)
 	}
@@ -124,7 +119,7 @@ func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontro
 		rel := strings.TrimPrefix(p, designComponentsPrefix)
 		name := strings.TrimSuffix(rel, designJSONSuffix)
 		if name == "" || strings.Contains(name, "/") {
-			continue // not a direct components/<name>/design.json (keep already filters; defensive)
+			continue // a design.json nested deeper than components/<name>/
 		}
 		comp, perr := parseComponentDesignJSON(name, raw)
 		if perr != nil {
@@ -164,7 +159,7 @@ func (s *SkillService) resolvePinnedSkills(ctx context.Context, ref sourcecontro
 // dispatch (codingagent.SkillMirror, so the clone the agent works in is
 // current).
 func (s *SkillService) SyncProjectSkills(ctx context.Context, orgID, projectID string) error {
-	if s == nil || s.git == nil || s.repos == nil || orgID == "" || projectID == "" {
+	if !s.configured() || orgID == "" || projectID == "" {
 		return fmt.Errorf("skills: service not configured for project skill sync")
 	}
 
@@ -177,14 +172,18 @@ func (s *SkillService) SyncProjectSkills(ctx context.Context, orgID, projectID s
 	if err != nil {
 		return fmt.Errorf("get project repo: %w", err)
 	}
+	projectRef, err := sourcecontrol.RefForRow(orgID, repo)
+	if err != nil {
+		return fmt.Errorf("resolve project repository: %w", err)
+	}
+	pinned, err := s.resolvePinnedSkills(ctx, projectRef)
+	if err != nil {
+		return fmt.Errorf("resolve component skill pins: %w", err)
+	}
+
 	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
 	if err != nil {
 		return fmt.Errorf("resolve project workspace ref: %w", err)
-	}
-
-	pinned, err := s.resolvePinnedSkills(ctx, ref)
-	if err != nil {
-		return fmt.Errorf("resolve component skill pins: %w", err)
 	}
 
 	desired := desiredMirror(lib, pinned)

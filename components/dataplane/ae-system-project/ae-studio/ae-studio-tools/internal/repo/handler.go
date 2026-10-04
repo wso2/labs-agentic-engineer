@@ -154,14 +154,21 @@ func (h Handler) ReadBundle(ctx context.Context, req gen.ReadBundleRequestObject
 			var files map[string]string
 			var sha string
 			if files, sha, err = h.ws.ReadBundle(ctx, ref, at, keep); err == nil {
-				if files == nil {
-					files = map[string]string{}
-				}
-				return gen.ReadBundle200JSONResponse{CommitSha: sha, Files: files}, nil
+				return gen.ReadBundle200JSONResponse{CommitSha: sha, Files: bundleBytes(files)}, nil
 			}
 		}
 	}
 	return h.problem(ctx, "read-bundle", req.Owner, req.Repo, err)
+}
+
+// bundleBytes is a bundle as the wire carries it: each file's bytes, which
+// the JSON encoder sends as base64, so a binary file survives the trip.
+func bundleBytes(files map[string]string) map[string][]byte {
+	out := make(map[string][]byte, len(files))
+	for p, c := range files {
+		out[p] = []byte(c)
+	}
+	return out
 }
 
 // bundleFilter keeps exactly paths when any are named, else the paths under

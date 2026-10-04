@@ -18,6 +18,7 @@ package aestudiotools
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -36,7 +37,7 @@ func bundleServer(t *testing.T, sha string, hits *int) *httptest.Server {
 		mu.Lock()
 		*hits++
 		mu.Unlock()
-		writeJSON(w, 200, `{"commitSha":"`+sha+`","files":{"specs/a.md":"# A"}}`)
+		writeJSON(w, 200, `{"commitSha":"`+sha+`","files":{"specs/a.md":"IyBB"}}`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -98,9 +99,9 @@ func TestReadCache_StoresOnlyUnderAShaAndHandsOutCopies(t *testing.T) {
 	p, srv := newPodStub(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/bundle") && r.URL.Query().Get("prefix") == "odd/":
-			writeJSON(w, 200, `{"commitSha":"not-a-sha","files":{"x":"1"}}`)
+			writeJSON(w, 200, `{"commitSha":"not-a-sha","files":{"x":"MQ=="}}`)
 		case strings.HasSuffix(r.URL.Path, "/bundle"):
-			writeJSON(w, 200, `{"commitSha":"`+sha+`","files":{"specs/a.md":"# A"}}`)
+			writeJSON(w, 200, `{"commitSha":"`+sha+`","files":{"specs/a.md":"IyBB"}}`)
 		case strings.HasSuffix(r.URL.Path, "/tree"):
 			writeJSON(w, 200, `{"commitSha":"`+sha+`","entries":[{"path":"a","sha":"`+strings.Repeat("1", 40)+`","size":1}]}`)
 		case strings.Contains(r.URL.Path, "/files/"):
@@ -177,5 +178,31 @@ func TestReadCache_EvictsLeastRecentlyUsedByBytes(t *testing.T) {
 	c.put("c", "C2", 10) // replace keeps the size accounting right
 	if v, _ := c.get("c"); v != "C2" || c.used != 52 {
 		t.Fatalf("c=%v used=%d, want C2 and 52 (a: 40+1, c: 10+1)", v, c.used)
+	}
+}
+
+// A bundle's cache entry is sized by its decoded bytes (path + content), not
+// by the base64 the wire carried.
+func TestReadCache_BundleSizeIsDecodedBytes(t *testing.T) {
+	sha := strings.Repeat("e", 40)
+	content := strings.Repeat("\xff", 300) // 400 bytes of base64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, `{"commitSha":"`+sha+`","files":{"b.bin":"`+base64.StdEncoding.EncodeToString([]byte(content))+`"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	a := New(Config{Endpoints: fixedTarget(srv.URL, "ou"), Tokens: &countingTokens{}, HTTP: srv.Client(), CacheBytes: 1 << 20})
+	files, _, err := a.ReadBundle(context.Background(), acmeGreeter, sha, sourcecontrol.BundleFilter{Prefix: "b"})
+	if err != nil || files["b.bin"] != content {
+		t.Fatalf("files = %q, err = %v", files, err)
+	}
+	if len(a.reads.items) != 1 {
+		t.Fatalf("cache entries = %d, want 1", len(a.reads.items))
+	}
+	var key string
+	for k := range a.reads.items {
+		key = k
+	}
+	if want := int64(len(key) + len("b.bin") + len(content)); a.reads.used != want {
+		t.Fatalf("cache used = %d, want %d (key + path + decoded content)", a.reads.used, want)
 	}
 }

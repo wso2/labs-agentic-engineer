@@ -20,8 +20,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // ---- Task 2: desiredMirror (pure) ------------------------------------------
@@ -654,5 +658,67 @@ func TestRealLibrary_RunnerSkillsAreCodingAudienceAndMirrored(t *testing.T) {
 		if strings.Contains(p, "/overlays/") {
 			t.Errorf("mirror carries compose-time input: %s", p)
 		}
+	}
+}
+
+// bundleRead is one ReadBundle a recordingGit saw.
+type bundleRead struct {
+	Ref    sourcecontrol.RepoRef
+	At     string
+	Filter sourcecontrol.BundleFilter
+}
+
+// recordingGit is a Git port that records every ReadBundle and delegates.
+type recordingGit struct {
+	sourcecontrol.Git
+	mu    sync.Mutex
+	reads []bundleRead
+}
+
+func (g *recordingGit) ReadBundle(ctx context.Context, ref sourcecontrol.RepoRef, at string, f sourcecontrol.BundleFilter, opts ...sourcecontrol.ReadOption) (map[string]string, string, error) {
+	g.mu.Lock()
+	g.reads = append(g.reads, bundleRead{Ref: ref, At: at, Filter: f})
+	g.mu.Unlock()
+	return g.Git.ReadBundle(ctx, ref, at, f, opts...)
+}
+
+func (g *recordingGit) take() []bundleRead {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := g.reads
+	g.reads = nil
+	return out
+}
+
+// Every skills read goes through the Git port: the library at the fetched
+// tip of the org's skills repository, then the manifest at the sha that read
+// answered, then the project's component design.json files for the pins.
+func TestSkillReads_GoThroughTheGitPortAtOneSha(t *testing.T) {
+	t.Parallel()
+	host := newTestGitHost(t)
+	port := &recordingGit{Git: host.git()}
+	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), port, host, testLibraryFS(t))
+	ctx := context.Background()
+	orgID := "org1"
+
+	if _, err := svc.List(ctx, orgID); err != nil { // provision + seed
+		t.Fatalf("seed skills repo: %v", err)
+	}
+	provisionProjectRepo(t, host, orgID)
+	port.take()
+
+	if err := svc.SyncProjectSkills(ctx, orgID, testProjectID); err != nil {
+		t.Fatalf("SyncProjectSkills: %v", err)
+	}
+	tip := strings.TrimSpace(gitDirOut(t, host.origin(orgID).Dir(), "rev-parse", "main"))
+	skillsRef := sourcecontrol.RepoRef{Org: orgID, Owner: "test-org", Repo: SkillsRepoName, DefaultBranch: "main"}
+	projectRef := sourcecontrol.RepoRef{Org: orgID, Owner: "test-org", Repo: testProjectRepoName, DefaultBranch: "main"}
+	want := []bundleRead{
+		{Ref: skillsRef, At: "", Filter: sourcecontrol.BundleFilter{Prefix: "skills/"}},
+		{Ref: skillsRef, At: tip, Filter: sourcecontrol.BundleFilter{Paths: []string{skillsManifestPath}}},
+		{Ref: projectRef, At: "", Filter: sourcecontrol.BundleFilter{Prefix: "specs/design/components/", Exts: []string{"/design.json"}}},
+	}
+	if got := port.take(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reads =\n%+v\nwant\n%+v", got, want)
 	}
 }

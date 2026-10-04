@@ -224,7 +224,7 @@ func TestEnsureProvisioned_Guards(t *testing.T) {
 	if err := nilSvc.EnsureProvisioned(ctx, "org1"); err != nil {
 		t.Fatalf("nil service: %v", err)
 	}
-	if err := NewSkillService(nil, nil, nil).EnsureProvisioned(ctx, "org1"); err != nil {
+	if err := NewSkillService(nil, nil, nil, nil).EnsureProvisioned(ctx, "org1"); err != nil {
 		t.Fatalf("nil repos: %v", err)
 	}
 	svc, _ := newTestStore(t)

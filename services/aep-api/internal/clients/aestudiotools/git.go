@@ -145,15 +145,16 @@ func (a *Adapter) ReadBundle(ctx context.Context, ref RepoRef, at string, f sour
 	if err != nil {
 		return nil, "", err
 	}
-	if body.Files == nil {
-		body.Files = map[string]string{}
-	}
+	// Each file arrives base64-decoded; string(c) keeps its bytes exactly,
+	// binary ones included, and the cache counts the decoded size.
+	files := make(map[string]string, len(body.Files))
 	size := int64(0)
 	for p, c := range body.Files {
+		files[p] = string(c)
 		size += int64(len(p) + len(c))
 	}
-	a.store(ref, body.CommitSha, op, args, bundle{files: maps.Clone(body.Files), sha: body.CommitSha}, size)
-	return body.Files, body.CommitSha, nil
+	a.store(ref, body.CommitSha, op, args, bundle{files: maps.Clone(files), sha: body.CommitSha}, size)
+	return files, body.CommitSha, nil
 }
 
 // ListTags lists the tags whose name starts with prefix. Never cached: tags

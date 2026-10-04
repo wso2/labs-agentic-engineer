@@ -96,9 +96,10 @@ type SaveRequest struct {
 	CommitSHA string `json:"commitSha,omitempty"`
 }
 
-// commitSHAPattern is the accepted shape of a caller-provided CommitSHA
-// (abbreviated or full hex object name).
-var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+// commitSHAPattern is the accepted shape of a caller-provided CommitSHA: a
+// full 40-hex lowercase commit sha, the pod's rule for `at`, so a bad sha is
+// refused here rather than by the pod.
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // resolveSaveCommit returns the commit a save operates on: the caller-provided
 // CommitSHA when set (validated, never a ref read), else the current HEAD via
