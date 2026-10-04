@@ -19,6 +19,8 @@ package repo
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -62,4 +64,32 @@ func isENOSPC(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, enospcMsg) || strings.Contains(msg, "enospc")
+}
+
+// requestedURLStatus is how git's http transport reports GitHub's status.
+var requestedURLStatus = regexp.MustCompile(`the requested url returned error: (\d{3})`)
+
+// remoteHTTPStatus is GitHub's HTTP status for a failed clone, fetch or
+// push, read from git's stderr in err's text (the exit error carries none);
+// 0 when git reported none. GitHub answers a token without access to a
+// repository with 404 ("Repository not found"), a wrong token with 401
+// ("Authentication failed"), a token without push rights with 403.
+func remoteHTTPStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	msg := strings.ToLower(err.Error())
+	if m := requestedURLStatus.FindStringSubmatch(msg); m != nil {
+		status, _ := strconv.Atoi(m[1])
+		return status
+	}
+	switch {
+	case strings.Contains(msg, "repository not found"):
+		return 404
+	case strings.Contains(msg, "authentication failed"), strings.Contains(msg, "invalid username or password"):
+		return 401
+	case strings.Contains(msg, "permission to") && strings.Contains(msg, "denied"):
+		return 403
+	}
+	return 0
 }

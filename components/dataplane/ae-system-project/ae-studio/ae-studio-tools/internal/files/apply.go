@@ -193,7 +193,7 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 				for _, p := range sortedPaths(c.Files) {
 					tx.Write(p, []byte(c.Files[p]))
 					batch[p] = true
-					files = append(files, Meta{Path: p, SHA: blobSHA([]byte(c.Files[p]))})
+					files = append(files, Meta{Path: p, SHA: repo.BlobSHA([]byte(c.Files[p]))})
 				}
 			}
 			tx.Write(w.Path, []byte(content))
@@ -201,7 +201,7 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 			// The staged blob's object name is a pure function of its content
 			// (what `git hash-object` produces), so the result carries the
 			// exact sha a later read returns.
-			files = append(files, Meta{Path: w.Path, SHA: blobSHA([]byte(content))})
+			files = append(files, Meta{Path: w.Path, SHA: repo.BlobSHA([]byte(content))})
 			warnings = append(warnings, softValidate(w.Path, content)...)
 		}
 		for _, d := range req.Deletes {
@@ -224,7 +224,7 @@ func (a Applier) Apply(ctx context.Context, project string, req ApplyRequest) (*
 				content := scaffolds[path]
 				tx.Write(path, []byte(content))
 				batchContent[path] = content
-				files = append(files, Meta{Path: path, SHA: blobSHA([]byte(content))})
+				files = append(files, Meta{Path: path, SHA: repo.BlobSHA([]byte(content))})
 				warnings = append(warnings, Warning{Path: path, Message: "scaffolded from design.cell — enrich, don't author, the mechanical fields"})
 			}
 		}

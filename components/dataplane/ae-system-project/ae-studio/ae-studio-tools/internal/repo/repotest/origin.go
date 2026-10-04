@@ -110,6 +110,12 @@ func (o *Origin) HeadSHA(t *testing.T) string {
 	return o.Git(t, "rev-parse", "refs/heads/"+Branch)
 }
 
+// BlobSHA is the blob sha of path at the Branch tip.
+func (o *Origin) BlobSHA(t *testing.T, path string) string {
+	t.Helper()
+	return o.Git(t, "rev-parse", "refs/heads/"+Branch+":"+path)
+}
+
 // Tag creates an annotated tag with msg on the Branch tip.
 func (o *Origin) Tag(t *testing.T, name, msg string) {
 	t.Helper()

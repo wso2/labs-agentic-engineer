@@ -41,6 +41,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects/projectstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns/turnstest"
 	"github.com/wso2/aep/ae-studio-tools/internal/webhook"
@@ -92,6 +93,9 @@ type harnessDeps struct {
 	// turnSocket is the Turn socket's path; a missing socket unless
 	// withTurnSocket names one.
 	turnSocket string
+	// gitOrigin is the clone URL of every owner/repo the git ops address;
+	// none (a failing clone) unless withGitOrigin names one.
+	gitOrigin string
 }
 
 type harnessOpt func(*harnessDeps)
@@ -101,6 +105,12 @@ func withGitHubErr(err error) harnessOpt { return func(d *harnessDeps) { d.gh.er
 // withProjects is aep-api's project → repository answers.
 func withProjects(repos map[string]projects.Repository) harnessOpt {
 	return func(d *harnessDeps) { d.projects = repos }
+}
+
+// withGitOrigin makes origin the repository every owner/repo of the git
+// ops clones.
+func withGitOrigin(origin *repotest.Origin) harnessOpt {
+	return func(d *harnessDeps) { d.gitOrigin = origin.URL() }
 }
 
 // withTurnSocket points the turns relay at a fake Turn socket.
@@ -155,6 +165,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		Webhook:    WebhookHandler(testWebhookSecret, webhook.Unwired()),
 		Files:      files.Reader{Engine: engine, Projects: h.projects},
 		References: engine,
+		Git:        repo.NewHandler(engine, nil, func(string, string) string { return deps.gitOrigin }),
 		Projects:   h.projects,
 		Turns:      turns.Relay{Turns: turns.NewClient(deps.turnSocket)},
 	})
@@ -307,7 +318,7 @@ func TestRoutes_GitHubErrorIsProblem(t *testing.T) {
 	h := newHarness(t, withGitHubStatus(401))
 	rec := h.do("GET", "/internal/v1/github/identity", h.m2m(), "ou-1", nil)
 	if rec.Code != 502 || !strings.Contains(rec.Body.String(), `"code":"github_error"`) ||
-		!strings.Contains(rec.Body.String(), "401") {
+		!strings.Contains(rec.Body.String(), `"githubStatus":401`) {
 		t.Fatalf("got %d %s", rec.Code, rec.Body.String())
 	}
 	if rec.Header().Get("Content-Type") != "application/problem+json" {

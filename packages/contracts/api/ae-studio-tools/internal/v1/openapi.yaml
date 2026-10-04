@@ -8,10 +8,15 @@ info:
     cannot be fetched the answer is 503 idp_unavailable with Retry-After (no
     verdict on the token).
 
-    Every request body is capped (1 MiB, 80 MiB for put-repo-references),
-    then the caller is authenticated, then the request is validated against
-    this spec, before any handler runs. A multipart body is the exception: its
-    handler reads and checks the parts itself.
+    Every request body is capped (1 MiB; 4 MiB for start-repo-turn, 16 MiB
+    for create-commit, 80 MiB for put-repo-references), then the caller is
+    authenticated, then the request is validated against this spec, before
+    any handler runs. A multipart body is the exception: its handler reads and
+    checks the parts itself.
+
+    Every /repos/{owner}/{repo}/... operation answers 403 owner_not_allowed,
+    once the request is validated and before the operation runs, when owner
+    is not the org's connected GitHub account (compared case-insensitively).
     Errors are RFC 9457 problems (application/problem+json).
   version: 1.0.0
 servers:
@@ -23,6 +28,9 @@ tags:
   description: Turns aep-api starts in the studio (kickoff and plan).
 - name: Repos
   description: Per-repository data the studio keeps outside git.
+- name: Git
+  description: The repository's git content, read from and written through the
+    studio's mirror. No path allow-list.
 security:
 - aeOnly: []
 paths:
@@ -125,7 +133,7 @@ paths:
         reduced to a bare, lower-case name; two files that reduce to the same
         name, a type the models cannot read, or no file at all is refused. The
         owner must be the org's connected GitHub account, else 403
-        owner_refused and nothing is stored.
+        owner_not_allowed and nothing is stored.
       tags:
       - Repos
       parameters:
@@ -154,7 +162,7 @@ paths:
           $ref: '#/components/responses/Problem'
         '403':
           description: 'The gate refused the caller, or the owner is not the org''s
-            connected GitHub account (problem code: owner_refused).'
+            connected GitHub account (problem code: owner_not_allowed).'
           content:
             application/problem+json:
               schema:
@@ -169,6 +177,301 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /repos/{owner}/{repo}/head:
+    get:
+      operationId: get-head
+      summary: Resolve a ref to its commit
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/At'
+      - $ref: '#/components/parameters/Local'
+      - $ref: '#/components/parameters/DefaultBranch'
+      responses:
+        '200':
+          description: The commit `at` names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Head'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/tree:
+    get:
+      operationId: list-tree
+      summary: List every file of a commit
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/At'
+      - $ref: '#/components/parameters/Local'
+      - $ref: '#/components/parameters/Prefix'
+      - $ref: '#/components/parameters/DefaultBranch'
+      responses:
+        '200':
+          description: The files of the commit (blobs, recursive), under prefix
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tree'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/files/{path}:
+    get:
+      operationId: read-file
+      summary: Read one file of a commit
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - name: path
+        in: path
+        required: true
+        description: Repo-relative file path. A trailing wildcard, it may span
+          several segments (contain slashes) and is served by a catch-all. No
+          allow-list, any file of the repository.
+        schema:
+          type: string
+      - $ref: '#/components/parameters/At'
+      - $ref: '#/components/parameters/DefaultBranch'
+      responses:
+        '200':
+          description: The file at the commit `at` names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileContent'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/bundle:
+    get:
+      operationId: read-bundle
+      summary: Read a set of files of one commit
+      description: |-
+        With `path`, exactly the named files (a missing one is left out);
+        otherwise every file under `prefix` whose name ends in one of `ext`
+        (any, when `ext` is not given).
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/At'
+      - $ref: '#/components/parameters/Local'
+      - $ref: '#/components/parameters/Prefix'
+      - name: ext
+        in: query
+        required: false
+        description: File-name endings to keep (e.g. `.json`), repeated.
+        style: form
+        explode: true
+        schema:
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            pattern: ^\.[A-Za-z0-9._-]{1,32}$
+      - name: path
+        in: query
+        required: false
+        description: Exact repo-relative paths to read, repeated. Overrides
+          prefix and ext.
+        style: form
+        explode: true
+        schema:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+            minLength: 1
+      - $ref: '#/components/parameters/DefaultBranch'
+      responses:
+        '200':
+          description: The files read, at one commit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/tags:
+    get:
+      operationId: list-tags
+      summary: List the repository's tags
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/Prefix'
+      - name: local
+        in: query
+        required: false
+        description: List the tags the studio's mirror already holds, without
+          fetching from GitHub (every tag the studio cuts is there).
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: The tags whose name starts with prefix
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: create-tag
+      summary: Cut an annotated tag and push it
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/DefaultBranch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTagRequest'
+      responses:
+        '201':
+          description: Tagged and pushed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TagCreated'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '409':
+          description: 'The tag name is taken (problem code: tag_exists).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /repos/{owner}/{repo}/commits:
+    post:
+      operationId: create-commit
+      summary: Commit writes and deletes to the default branch
+      description: |-
+        One commit of the writes then the deletes, each pinned to the blob it
+        expects (`baseSha`), pushed to the default branch under a lease. Every
+        precondition is checked against the tip the commit builds on; one
+        failure answers 409 conflict and nothing is applied. The engine's
+        commit only: no scaffolding, soft validation or completions, so
+        `warnings` is empty. The body is capped at 16 MiB.
+      tags:
+      - Git
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      - $ref: '#/components/parameters/DefaultBranch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCommitRequest'
+      responses:
+        '200':
+          description: Committed (changed false when the content equals the tip)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommitResult'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/GitNotFound'
+        '409':
+          description: 'A baseSha no longer holds (problem code: conflict, with
+            conflicts), or the branch kept moving through every retry (problem
+            code: not_fast_forward).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/CommitConflict'
+        '413':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/GitHubError'
+        '503':
+          $ref: '#/components/responses/Problem'
 components:
   securitySchemes:
     aeOnly:
@@ -200,6 +503,43 @@ components:
       schema:
         type: string
         pattern: ^[A-Za-z0-9._-]{1,200}$
+    At:
+      name: at
+      in: query
+      required: false
+      description: The commit to read. Omitted, the default-branch tip (fetched
+        from GitHub first); `tags/<name>`, the commit the tag points at; a
+        40-hex sha, that commit (read locally, fetched only when missing).
+      schema:
+        type: string
+        pattern: ^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$
+    Local:
+      name: local
+      in: query
+      required: false
+      description: Read the default-branch tip the studio's mirror already
+        holds, without fetching from GitHub (every commit the studio writes is
+        there; a push made elsewhere shows after the next fetching call). Only
+        with `at` omitted, else 400.
+      schema:
+        type: boolean
+    Prefix:
+      name: prefix
+      in: query
+      required: false
+      description: Only paths (tag names, for list-tags) starting with this.
+      schema:
+        type: string
+        maxLength: 1024
+    DefaultBranch:
+      name: defaultBranch
+      in: query
+      required: false
+      description: The repository's default branch, as aep-api's row names it
+        (the branch the Room reads for the same repository). Omitted, main.
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9._/-]{1,255}$
   responses:
     Problem:
       description: RFC 9457 problem
@@ -214,6 +554,21 @@ components:
           description: Seconds to wait before retrying.
           schema:
             type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GitNotFound:
+      description: 'The ref or the file does not exist (problem codes:
+        ref_not_found, path_not_found).'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    GitHubError:
+      description: 'GitHub refused or failed a git clone, fetch or push (problem
+        code: github_error; githubStatus is GitHub''s HTTP status when git
+        reported one).'
       content:
         application/problem+json:
           schema:
@@ -248,6 +603,282 @@ components:
           type: string
         code:
           type: string
+        githubStatus:
+          type: integer
+          description: With code github_error, GitHub's HTTP status, when it
+            answered one.
+    Head:
+      type: object
+      required:
+      - sha
+      properties:
+        sha:
+          type: string
+          description: The commit's 40-hex sha
+    Tree:
+      type: object
+      required:
+      - commitSha
+      - entries
+      properties:
+        commitSha:
+          type: string
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/TreeEntry'
+    TreeEntry:
+      type: object
+      required:
+      - path
+      - sha
+      - size
+      properties:
+        path:
+          type: string
+        sha:
+          type: string
+          description: The blob's sha
+        size:
+          type: integer
+          format: int64
+    FileContent:
+      type: object
+      required:
+      - commitSha
+      - path
+      - sha
+      - content
+      properties:
+        commitSha:
+          type: string
+        path:
+          type: string
+        sha:
+          type: string
+          description: The blob's sha (the next write's baseSha)
+        content:
+          type: string
+          format: byte
+    Bundle:
+      type: object
+      required:
+      - commitSha
+      - files
+      properties:
+        commitSha:
+          type: string
+        files:
+          type: object
+          description: path → content
+          additionalProperties:
+            type: string
+    TagList:
+      type: object
+      required:
+      - tags
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tag'
+    Tag:
+      type: object
+      required:
+      - name
+      - commitHash
+      properties:
+        name:
+          type: string
+        commitHash:
+          type: string
+          description: The commit the tag points at (annotated tags peeled)
+        message:
+          type: string
+          description: The annotated tag's subject; absent for a lightweight tag
+        createdAt:
+          type: string
+          format: date-time
+          description: When the tag was made (the commit's date for a
+            lightweight tag); absent when git could not date it
+          x-go-type-skip-optional-pointer: false
+    CreateTagRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - message
+      properties:
+        name:
+          type: string
+          description: The tag name, a valid git ref name
+          pattern: ^[A-Za-z0-9._/-]{1,200}$
+        target:
+          type: string
+          description: The commit to tag, as `at` names one; omitted, the
+            default-branch tip
+          pattern: ^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$
+        message:
+          type: string
+          minLength: 1
+        tagger:
+          $ref: '#/components/schemas/GitIdentity'
+      description: tagger omitted, the AEP default identity.
+    TagCreated:
+      type: object
+      additionalProperties: false
+    GitIdentity:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - email
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          minLength: 1
+    CreateCommitRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - message
+      properties:
+        writes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitWrite'
+        deletes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitDelete'
+        message:
+          type: string
+          minLength: 1
+        author:
+          $ref: '#/components/schemas/GitIdentity'
+        committer:
+          $ref: '#/components/schemas/GitIdentity'
+      description: At least one write or delete, no path twice. author omitted,
+        the gitpat's user; committer omitted, the author.
+    CommitWrite:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - content
+      - baseSha
+      properties:
+        path:
+          type: string
+          minLength: 1
+        content:
+          type: string
+          format: byte
+        baseSha:
+          type: string
+          description: The blob sha the path must have at the tip; empty, the
+            path must not exist
+          pattern: ^([0-9a-f]{40})?$
+    CommitDelete:
+      type: object
+      additionalProperties: false
+      required:
+      - path
+      - baseSha
+      properties:
+        path:
+          type: string
+          minLength: 1
+        baseSha:
+          type: string
+          description: The blob sha the path must have at the tip; empty,
+            whatever is there (it must exist)
+          pattern: ^([0-9a-f]{40})?$
+    CommitResult:
+      type: object
+      required:
+      - commitSha
+      - changed
+      - files
+      - warnings
+      properties:
+        commitSha:
+          type: string
+        changed:
+          type: boolean
+        files:
+          type: array
+          description: Each written file and its new blob sha, in request order
+          items:
+            $ref: '#/components/schemas/CommitFile'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommitWarning'
+    CommitFile:
+      type: object
+      required:
+      - path
+      - sha
+      properties:
+        path:
+          type: string
+        sha:
+          type: string
+    CommitWarning:
+      type: object
+      required:
+      - path
+      - code
+      - message
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    CommitConflict:
+      type: object
+      description: A problem; with code conflict, conflicts names every failed
+        baseSha.
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+        conflicts:
+          type: array
+          items:
+            $ref: '#/components/schemas/Conflict'
+    Conflict:
+      type: object
+      required:
+      - path
+      - baseSha
+      - currentSha
+      properties:
+        path:
+          type: string
+        baseSha:
+          type: string
+        currentSha:
+          type: string
+          description: The blob sha at the tip; empty when the path is absent
     TurnRequest:
       type: object
       additionalProperties: false

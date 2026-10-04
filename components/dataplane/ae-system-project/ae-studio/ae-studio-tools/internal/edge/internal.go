@@ -28,6 +28,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
 // The /internal/v1 route group is served contract-first from
@@ -50,6 +51,9 @@ const (
 	// taskContext carries the open Tasks' bodies, and a cap below the agent's
 	// would refuse here a turn the agent accepts (R1-M3).
 	turnBodyBytes int64 = 4 << 20
+	// commitBodyBytes caps a create-commit: its writes travel base64 in one
+	// JSON body (05 §3, report gap G5).
+	commitBodyBytes int64 = 16 << 20
 )
 
 // internalBodyCaps lists the operations allowed more than internalBodyBytes,
@@ -57,14 +61,22 @@ const (
 var internalBodyCaps = map[string]int64{
 	"put-repo-references": referencesBodyBytes,
 	"start-repo-turn":     turnBodyBytes,
+	"create-commit":       commitBodyBytes,
 }
 
-// internalRouteFinder matches a request to an /internal/v1 contract
-// operation: the cap table's lookup and the validator's.
-var internalRouteFinder routeFinder = mustRouter("internal", gen.GetSpec).FindRoute
+// internalReadFile is read-file's address, whose {path} is a trailing
+// wildcard.
+var internalReadFile = trailingPath{scope: internalV1 + "/repos/", vars: 2, literal: "files"}
 
-// internalServer implements gen.StrictServerInterface.
+// internalRouteFinder matches a request to an /internal/v1 contract
+// operation (a nested read-file path included): the cap table's lookup and
+// the validator's.
+var internalRouteFinder = internalReadFile.routes(mustRouter("internal", gen.GetSpec))
+
+// internalServer implements gen.StrictServerInterface. The git content ops
+// are repo.Handler's.
 type internalServer struct {
+	repo.Handler
 	gh github.Identity
 	// refs is the reference store; githubOwner the org's connected GitHub
 	// account (AE_GITHUB_OWNER), the only owner whose repos it stores for.
@@ -78,11 +90,11 @@ type internalServer struct {
 
 var _ gen.StrictServerInterface = internalServer{}
 
-// internalHandler is the gated part of the group: validator → mux holding the
-// generated routes, with start-repo-turn on its raw route ahead of them
-// (internal_turns.go). A path or method the contract does not declare is 404
-// at the validator; the mux's catch-all keeps any miss behind it a problem
-// body.
+// internalHandler is the gated part of the group: validator → owner guard →
+// mux holding the generated routes and the read-file {path...} catch-all,
+// with start-repo-turn on its raw route ahead of them (internal_turns.go). A
+// path or method the contract does not declare is 404 at the validator; the
+// mux's catch-all keeps any miss behind it a problem body.
 func internalHandler(find routeFinder, s internalServer) http.Handler {
 	strict := gen.NewStrictHandlerWithOptions(s, nil, gen.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc:  writeRequestError,
@@ -94,11 +106,13 @@ func internalHandler(find routeFinder, s internalServer) http.Handler {
 		BaseRouter:       mux,
 		ErrorHandlerFunc: writeRequestError,
 	})
+	siw := &gen.ServerInterfaceWrapper{Handler: strict, ErrorHandlerFunc: writeRequestError}
+	mux.HandleFunc(internalReadFile.pattern("owner", "repo"), siw.ReadFile)
 	mux.Handle(internalV1+"/", http.HandlerFunc(notFound))
 	routes := http.NewServeMux()
 	routes.HandleFunc(startRepoTurnPattern, s.startRepoTurn)
 	routes.Handle("/", mux)
-	return requestValidator(find, "validation_failed", routes)
+	return requestValidator(find, "validation_failed", ownerGuard(s.githubOwner, routes))
 }
 
 // capOpBody bounds a request body before anything reads it, at the matched
@@ -149,7 +163,8 @@ func writeResponseError(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 // GetGithubIdentity answers the gitpat's GitHub user. A rate limit is 429 with
-// Retry-After; any other GitHub failure is 502 naming GitHub's status.
+// Retry-After; any other GitHub failure is 502 github_error with GitHub's
+// status in githubStatus when it answered one.
 func (s internalServer) GetGithubIdentity(ctx context.Context, _ gen.GetGithubIdentityRequestObject) (gen.GetGithubIdentityResponseObject, error) {
 	login, id, err := s.gh.Whoami(ctx)
 	if err == nil {
@@ -163,14 +178,14 @@ func (s internalServer) GetGithubIdentity(ctx context.Context, _ gen.GetGithubId
 			},
 		}, nil
 	}
-	detail := "GitHub could not be reached"
+	p := newProblem(http.StatusBadGateway, "github_error", "GitHub could not be reached")
 	var se *github.HTTPStatusError
 	if errors.As(err, &se) {
-		detail = fmt.Sprintf("GitHub answered %d", se.StatusCode)
+		p.Detail = fmt.Sprintf("GitHub answered %d", se.StatusCode)
+		p.GithubStatus = se.StatusCode
 	}
 	slog.Warn("github.identity_failed", "error", err)
-	return gen.GetGithubIdentity502ApplicationProblemPlusJSONResponse(
-		newProblem(http.StatusBadGateway, "github_error", detail)), nil
+	return gen.GetGithubIdentity502ApplicationProblemPlusJSONResponse(p), nil
 }
 
 // newProblem is the body problem.Write sends, as the generated type.

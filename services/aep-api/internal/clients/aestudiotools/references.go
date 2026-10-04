@@ -36,7 +36,7 @@ type References interface {
 // PutReferences streams body (a multipart upload of field `files`, typed by
 // contentType) to the pod, which replaces the stored set. 400
 // reference_rejected is ErrReferenceRejected (with the pod's detail), 503
-// (disk_full) ErrAEStudioUnavailable; 403 owner_refused and 413 are permanent
+// (disk_full) ErrAEStudioUnavailable; 403 owner_not_allowed and 413 are permanent
 // StatusErrors. The upload asks for 100 Continue, so a token refused before
 // any byte was sent is refreshed and the same body sent once more; refused
 // after the body went out, the token is dropped and the call is

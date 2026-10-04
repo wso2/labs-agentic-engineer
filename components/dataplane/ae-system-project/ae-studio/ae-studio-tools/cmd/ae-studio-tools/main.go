@@ -165,10 +165,12 @@ func run() error {
 		HookURL:    cfg.WebhookURL,
 		HookSecret: cfg.WebhookSecret,
 	})
+	// The gitpat user authors the Room's saves and aep-api's commits alike.
+	commitAuthor := github.NewCommitAuthor(gh)
 	applier := files.Applier{
 		Reader:    reader,
 		Completer: files.NewAEPAPICompleter(aepAPI),
-		Identity:  github.NewCommitAuthor(gh),
+		Identity:  commitAuthor,
 	}
 
 	reaperCtx, stopReaper := context.WithCancel(context.Background())
@@ -189,7 +191,10 @@ func run() error {
 			Webhook:    edge.WebhookHandler(cfg.WebhookSecret, webhook.Unwired()),
 			Files:      reader,
 			References: engine,
-			Projects:   resolver,
+			// aep-api's git content ops, by GitHub owner/repo, on the
+			// Room's mirrors.
+			Git:      repo.NewHandler(engine, commitAuthor, repo.GitHubCloneURL),
+			Projects: resolver,
 			// The turns aep-api starts run on the agent's Turn socket.
 			Turns: turns.Relay{Turns: turns.NewClient(cfg.TurnSocket)},
 		}),

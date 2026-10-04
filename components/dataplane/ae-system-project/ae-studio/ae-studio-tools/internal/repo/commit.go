@@ -18,6 +18,8 @@ package repo
 
 import (
 	"context"
+	"crypto/sha1" //nolint:gosec // git object names are SHA-1 by definition
+	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -39,6 +41,17 @@ type CommitWrite struct {
 type CommitDelete struct {
 	Path    string
 	BaseSHA string
+}
+
+// BlobSHA is the git blob object name of content: SHA-1 over
+// "blob <len>\x00" + content, what `git hash-object` gives for the blobs a
+// commit stages. A write's answer reports it so the caller's next baseSha
+// matches what a later read returns.
+func BlobSHA(content []byte) string {
+	h := sha1.New() //nolint:gosec // git object names are SHA-1 by definition
+	fmt.Fprintf(h, "blob %d\x00", len(content))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Conflict is one failed baseSha precondition. CurrentSHA is empty when the
@@ -99,16 +112,17 @@ var errCommitPreconditions = errors.New("commit preconditions failed")
 // policy) whose fn checks every baseSha against the tip that attempt builds
 // on, then stages the writes and the deletes (writes first, so a path both
 // written and deleted is deleted). A concurrent push re-runs the check
-// against the new tip. author is both author and committer (nil: the AEP
-// default identity), as GitHub's API does when only an author is given.
+// against the new tip. committer nil is the author, as GitHub's API does
+// when only an author is given; author nil is the AEP default identity.
 //
 // On a failed precondition it returns (CommitResult{}, conflicts,
 // ErrCommitConflict) and nothing is applied. Content identical to the tip
 // returns CommitResult{Changed: false} at the tip. Other errors are Mutate's
 // (ErrRefNotFastForward after the retries, DiskFullError, a git failure).
-//
-//deadcode:keep wired in Task 4.2b (create-commit)
-func (e *Engine) Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, deletes []CommitDelete, message string, author *GitIdentity) (CommitResult, []Conflict, error) {
+func (e *Engine) Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, deletes []CommitDelete, message string, author, committer *GitIdentity) (CommitResult, []Conflict, error) {
+	if committer == nil {
+		committer = author
+	}
 	var conflicts []Conflict
 	res, err := e.Mutate(ctx, ref, func(tx Tx) error {
 		conflicts = nil // fn re-runs against a fresh base on a CAS retry
@@ -126,7 +140,7 @@ func (e *Engine) Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, 
 			tx.Delete(d.Path)
 		}
 		return nil
-	}, CommitOpts{Message: message, Author: author, Committer: author})
+	}, CommitOpts{Message: message, Author: author, Committer: committer})
 	if errors.Is(err, errCommitPreconditions) {
 		return CommitResult{}, conflicts, ErrCommitConflict
 	}

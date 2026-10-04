@@ -103,7 +103,7 @@ func TestPutReferences_Refusals(t *testing.T) {
 	}{
 		{name: "reference_rejected", status: 400, code: "reference_rejected", want: ErrReferenceRejected, permanent: true},
 		{name: "disk_full", status: 503, code: "disk_full", want: ErrAEStudioUnavailable},
-		{name: "owner_refused", status: 403, code: "owner_refused", permanent: true},
+		{name: "owner_not_allowed", status: 403, code: "owner_not_allowed", permanent: true},
 		{name: "payload_too_large", status: 413, code: "payload_too_large", permanent: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

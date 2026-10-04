@@ -75,14 +75,6 @@ func TestReadPaths_Commit(t *testing.T) {
 	}
 }
 
-// TestReadPaths_BlobSHA pins blobSHA to git's blob object name.
-func TestReadPaths_BlobSHA(t *testing.T) {
-	// `git hash-object --stdin </dev/null`: the empty blob.
-	if got := blobSHA(nil); got != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" {
-		t.Fatalf("blobSHA(empty) = %s", got)
-	}
-}
-
 // withoutUserinfo strips user:password@ and keeps everything else.
 func TestWithoutUserinfo(t *testing.T) {
 	for _, c := range []struct{ in, want string }{

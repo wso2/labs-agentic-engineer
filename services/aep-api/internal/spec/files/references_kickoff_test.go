@@ -214,7 +214,7 @@ func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
 		{"unavailable", aestudiotools.ErrAEStudioUnavailable, http.StatusServiceUnavailable, "ae_studio_unavailable"},
 		{"absent", aestudiotools.ErrAEStudioAbsent, http.StatusConflict, "github_not_connected"},
 		{"too large", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusRequestEntityTooLarge}, http.StatusRequestEntityTooLarge, "request_too_large"},
-		{"anything else", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusForbidden, Code: "owner_refused"}, http.StatusBadGateway, apierr.CodeBadGateway},
+		{"anything else", &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusForbidden, Code: "owner_not_allowed"}, http.StatusBadGateway, apierr.CodeBadGateway},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

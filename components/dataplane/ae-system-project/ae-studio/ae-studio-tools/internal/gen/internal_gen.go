@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -143,10 +144,118 @@ func (e TurnRequestKind) Valid() bool {
 	}
 }
 
+// Bundle defines model for Bundle.
+type Bundle struct {
+	CommitSha string `json:"commitSha"`
+
+	// Files path → content
+	Files map[string]string `json:"files"`
+}
+
+// CommitConflict A problem; with code conflict, conflicts names every failed baseSha.
+type CommitConflict struct {
+	Code      string     `json:"code"`
+	Conflicts []Conflict `json:"conflicts,omitempty"`
+	Detail    string     `json:"detail,omitempty"`
+	Status    int        `json:"status"`
+	Title     string     `json:"title"`
+	Type      string     `json:"type"`
+}
+
+// CommitDelete defines model for CommitDelete.
+type CommitDelete struct {
+	// BaseSha The blob sha the path must have at the tip; empty, whatever is there (it must exist)
+	BaseSha string `json:"baseSha"`
+	Path    string `json:"path"`
+}
+
+// CommitFile defines model for CommitFile.
+type CommitFile struct {
+	Path string `json:"path"`
+	Sha  string `json:"sha"`
+}
+
+// CommitResult defines model for CommitResult.
+type CommitResult struct {
+	Changed   bool   `json:"changed"`
+	CommitSha string `json:"commitSha"`
+
+	// Files Each written file and its new blob sha, in request order
+	Files    []CommitFile    `json:"files"`
+	Warnings []CommitWarning `json:"warnings"`
+}
+
+// CommitWarning defines model for CommitWarning.
+type CommitWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path"`
+}
+
+// CommitWrite defines model for CommitWrite.
+type CommitWrite struct {
+	// BaseSha The blob sha the path must have at the tip; empty, the path must not exist
+	BaseSha string `json:"baseSha"`
+	Content []byte `json:"content"`
+	Path    string `json:"path"`
+}
+
+// Conflict defines model for Conflict.
+type Conflict struct {
+	BaseSha string `json:"baseSha"`
+
+	// CurrentSha The blob sha at the tip; empty when the path is absent
+	CurrentSha string `json:"currentSha"`
+	Path       string `json:"path"`
+}
+
+// CreateCommitRequest At least one write or delete, no path twice. author omitted, the gitpat's user; committer omitted, the author.
+type CreateCommitRequest struct {
+	Author    GitIdentity    `json:"author,omitempty"`
+	Committer GitIdentity    `json:"committer,omitempty"`
+	Deletes   []CommitDelete `json:"deletes,omitempty"`
+	Message   string         `json:"message"`
+	Writes    []CommitWrite  `json:"writes,omitempty"`
+}
+
+// CreateTagRequest tagger omitted, the AEP default identity.
+type CreateTagRequest struct {
+	Message string `json:"message"`
+
+	// Name The tag name, a valid git ref name
+	Name   string      `json:"name"`
+	Tagger GitIdentity `json:"tagger,omitempty"`
+
+	// Target The commit to tag, as `at` names one; omitted, the default-branch tip
+	Target string `json:"target,omitempty"`
+}
+
+// FileContent defines model for FileContent.
+type FileContent struct {
+	CommitSha string `json:"commitSha"`
+	Content   []byte `json:"content"`
+	Path      string `json:"path"`
+
+	// Sha The blob's sha (the next write's baseSha)
+	Sha string `json:"sha"`
+}
+
 // GitHubIdentity defines model for GitHubIdentity.
 type GitHubIdentity struct {
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
+}
+
+// GitIdentity defines model for GitIdentity.
+type GitIdentity struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// Head defines model for Head.
+type Head struct {
+	// Sha The commit's 40-hex sha
+	Sha string `json:"sha"`
 }
 
 // KeepAliveFrame One line of the turn stream, sent every 15 s.
@@ -181,9 +290,12 @@ type PlanStory struct {
 type Problem struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail,omitempty"`
-	Status int    `json:"status"`
-	Title  string `json:"title"`
-	Type   string `json:"type"`
+
+	// GithubStatus With code github_error, GitHub's HTTP status, when it answered one.
+	GithubStatus int    `json:"githubStatus,omitempty"`
+	Status       int    `json:"status"`
+	Title        string `json:"title"`
+	Type         string `json:"type"`
 }
 
 // ReferenceUpload defines model for ReferenceUpload.
@@ -209,6 +321,27 @@ type ResultFrameStatus string
 // ResultFrameType defines model for ResultFrame.Type.
 type ResultFrameType string
 
+// Tag defines model for Tag.
+type Tag struct {
+	// CommitHash The commit the tag points at (annotated tags peeled)
+	CommitHash string `json:"commitHash"`
+
+	// CreatedAt When the tag was made (the commit's date for a lightweight tag); absent when git could not date it
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
+
+	// Message The annotated tag's subject; absent for a lightweight tag
+	Message string `json:"message,omitempty"`
+	Name    string `json:"name"`
+}
+
+// TagCreated defines model for TagCreated.
+type TagCreated = map[string]interface{}
+
+// TagList defines model for TagList.
+type TagList struct {
+	Tags []Tag `json:"tags"`
+}
+
 // TaskOpFrame One line of the turn stream, a Task operation the agent produced.
 type TaskOpFrame struct {
 	Op TaskOpFrameOp `json:"op"`
@@ -223,6 +356,21 @@ type TaskOpFrameOp string
 
 // TaskOpFrameType defines model for TaskOpFrame.Type.
 type TaskOpFrameType string
+
+// Tree defines model for Tree.
+type Tree struct {
+	CommitSha string      `json:"commitSha"`
+	Entries   []TreeEntry `json:"entries"`
+}
+
+// TreeEntry defines model for TreeEntry.
+type TreeEntry struct {
+	Path string `json:"path"`
+
+	// Sha The blob's sha
+	Sha  string `json:"sha"`
+	Size int64  `json:"size"`
+}
 
 // TurnCredit Who the turn's commits and records are credited to.
 type TurnCredit struct {
@@ -263,14 +411,32 @@ type TurnRequest struct {
 // TurnRequestKind defines model for TurnRequest.Kind.
 type TurnRequestKind string
 
+// At defines model for At.
+type At = string
+
+// DefaultBranch defines model for DefaultBranch.
+type DefaultBranch = string
+
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
+
+// Local defines model for Local.
+type Local = bool
 
 // Owner defines model for Owner.
 type Owner = string
 
+// Prefix defines model for Prefix.
+type Prefix = string
+
 // Repo defines model for Repo.
 type Repo = string
+
+// GitHubError defines model for GitHubError.
+type GitHubError = Problem
+
+// GitNotFound defines model for GitNotFound.
+type GitNotFound = Problem
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -284,8 +450,107 @@ type GetGithubIdentityParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// ReadBundleParams defines parameters for ReadBundle.
+type ReadBundleParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty"`
+
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// Ext File-name endings to keep (e.g. `.json`), repeated.
+	Ext []string `form:"ext,omitempty" json:"ext,omitempty"`
+
+	// Path Exact repo-relative paths to read, repeated. Overrides prefix and ext.
+	Path []string `form:"path,omitempty" json:"path,omitempty"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateCommitParams defines parameters for CreateCommit.
+type CreateCommitParams struct {
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ReadFileParams defines parameters for ReadFile.
+type ReadFileParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetHeadParams defines parameters for GetHead.
+type GetHeadParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // PutRepoReferencesParams defines parameters for PutRepoReferences.
 type PutRepoReferencesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListTagsParams defines parameters for ListTags.
+type ListTagsParams struct {
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// Local List the tags the studio's mirror already holds, without fetching from GitHub (every tag the studio cuts is there).
+	Local bool `form:"local,omitempty" json:"local,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateTagParams defines parameters for CreateTag.
+type CreateTagParams struct {
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListTreeParams defines parameters for ListTree.
+type ListTreeParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty"`
+
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty"`
+
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
@@ -296,8 +561,14 @@ type StartRepoTurnParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// CreateCommitJSONRequestBody defines body for CreateCommit for application/json ContentType.
+type CreateCommitJSONRequestBody = CreateCommitRequest
+
 // PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
 type PutRepoReferencesMultipartRequestBody = ReferenceUpload
+
+// CreateTagJSONRequestBody defines body for CreateTag for application/json ContentType.
+type CreateTagJSONRequestBody = CreateTagRequest
 
 // StartRepoTurnJSONRequestBody defines body for StartRepoTurn for application/json ContentType.
 type StartRepoTurnJSONRequestBody = TurnRequest
@@ -307,9 +578,30 @@ type ServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(w http.ResponseWriter, r *http.Request, params GetGithubIdentityParams)
+	// Read a set of files of one commit
+	// (GET /repos/{owner}/{repo}/bundle)
+	ReadBundle(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ReadBundleParams)
+	// Commit writes and deletes to the default branch
+	// (POST /repos/{owner}/{repo}/commits)
+	CreateCommit(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateCommitParams)
+	// Read one file of a commit
+	// (GET /repos/{owner}/{repo}/files/{path})
+	ReadFile(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, path string, params ReadFileParams)
+	// Resolve a ref to its commit
+	// (GET /repos/{owner}/{repo}/head)
+	GetHead(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params GetHeadParams)
 	// Replace a project's stored reference documents
 	// (PUT /repos/{owner}/{repo}/references)
 	PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams)
+	// List the repository's tags
+	// (GET /repos/{owner}/{repo}/tags)
+	ListTags(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListTagsParams)
+	// Cut an annotated tag and push it
+	// (POST /repos/{owner}/{repo}/tags)
+	CreateTag(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateTagParams)
+	// List every file of a commit
+	// (GET /repos/{owner}/{repo}/tree)
+	ListTree(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListTreeParams)
 	// Start (or reattach to) a kickoff or plan turn and stream its result
 	// (POST /repos/{owner}/{repo}/turns)
 	StartRepoTurn(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params StartRepoTurnParams)
@@ -366,6 +658,447 @@ func (siw *ServerInterfaceWrapper) GetGithubIdentity(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetGithubIdentity(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadBundle operation middleware
+func (siw *ServerInterfaceWrapper) ReadBundle(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadBundleParams
+
+	// ------------- Optional query parameter "at" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "at", r.URL.Query(), &params.At, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "at"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "at", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "local" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "local", r.URL.Query(), &params.Local, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "local"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "local", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "prefix" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "prefix", r.URL.Query(), &params.Prefix, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "prefix"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "prefix", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "ext" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "ext", r.URL.Query(), &params.Ext, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "ext"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "ext", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "path" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "path", r.URL.Query(), &params.Path, runtime.BindQueryParameterOptions{Type: "array", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "path"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadBundle(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateCommit operation middleware
+func (siw *ServerInterfaceWrapper) CreateCommit(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateCommitParams
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateCommit(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ReadFile operation middleware
+func (siw *ServerInterfaceWrapper) ReadFile(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "path" -------------
+	var path string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "path", r.PathValue("path"), &path, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "path", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ReadFileParams
+
+	// ------------- Optional query parameter "at" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "at", r.URL.Query(), &params.At, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "at"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "at", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ReadFile(w, r, owner, repo, path, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetHead operation middleware
+func (siw *ServerInterfaceWrapper) GetHead(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetHeadParams
+
+	// ------------- Optional query parameter "at" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "at", r.URL.Query(), &params.At, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "at"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "at", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "local" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "local", r.URL.Query(), &params.Local, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "local"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "local", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetHead(w, r, owner, repo, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -435,6 +1168,304 @@ func (siw *ServerInterfaceWrapper) PutRepoReferences(w http.ResponseWriter, r *h
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutRepoReferences(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTags operation middleware
+func (siw *ServerInterfaceWrapper) ListTags(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListTagsParams
+
+	// ------------- Optional query parameter "prefix" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "prefix", r.URL.Query(), &params.Prefix, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "prefix"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "prefix", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "local" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "local", r.URL.Query(), &params.Local, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "local"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "local", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTags(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// CreateTag operation middleware
+func (siw *ServerInterfaceWrapper) CreateTag(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params CreateTagParams
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CreateTag(w, r, owner, repo, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListTree operation middleware
+func (siw *ServerInterfaceWrapper) ListTree(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "owner" -------------
+	var owner Owner
+
+	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "repo" -------------
+	var repo Repo
+
+	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
+		return
+	}
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListTreeParams
+
+	// ------------- Optional query parameter "at" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "at", r.URL.Query(), &params.At, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "at"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "at", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "local" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "local", r.URL.Query(), &params.Local, runtime.BindQueryParameterOptions{Type: "boolean", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "local"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "local", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "prefix" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "prefix", r.URL.Query(), &params.Prefix, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "prefix"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "prefix", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "defaultBranch" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "defaultBranch", r.URL.Query(), &params.DefaultBranch, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "defaultBranch"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "defaultBranch", Err: err})
+		}
+		return
+	}
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-Impersonate-Org" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
+		var XImpersonateOrg ImpersonateOrg
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
+			return
+		}
+
+		params.XImpersonateOrg = XImpersonateOrg
+
+	} else {
+		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListTree(w, r, owner, repo, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -634,11 +1665,22 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/github/identity", wrapper.GetGithubIdentity)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/bundle", wrapper.ReadBundle)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/commits", wrapper.CreateCommit)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/files/{path}", wrapper.ReadFile)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/head", wrapper.GetHead)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/repos/{owner}/{repo}/references", wrapper.PutRepoReferences)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/tags", wrapper.ListTags)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/tags", wrapper.CreateTag)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/tree", wrapper.ListTree)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/turns", wrapper.StartRepoTurn)
 
 	return m
 }
+
+type GitHubErrorApplicationProblemPlusJSONResponse Problem
+
+type GitNotFoundApplicationProblemPlusJSONResponse Problem
 
 type ProblemApplicationProblemPlusJSONResponse Problem
 
@@ -748,6 +1790,492 @@ func (response GetGithubIdentity503ApplicationProblemPlusJSONResponse) VisitGetG
 	return err
 }
 
+type ReadBundleRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params ReadBundleParams
+}
+
+type ReadBundleResponseObject interface {
+	VisitReadBundleResponse(w http.ResponseWriter) error
+}
+
+type ReadBundle200JSONResponse Bundle
+
+func (response ReadBundle200JSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReadBundle400ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle401ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadBundle401ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle403ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadBundle403ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ReadBundle404ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ReadBundle502ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadBundle503ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadBundle503ApplicationProblemPlusJSONResponse) VisitReadBundleResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommitRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params CreateCommitParams
+	Body   *CreateCommitJSONRequestBody
+}
+
+type CreateCommitResponseObject interface {
+	VisitCreateCommitResponse(w http.ResponseWriter) error
+}
+
+type CreateCommit200JSONResponse CommitResult
+
+func (response CreateCommit200JSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateCommit400ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateCommit401ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateCommit403ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateCommit404ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit409ApplicationProblemPlusJSONResponse CommitConflict
+
+func (response CreateCommit409ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit413ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateCommit413ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(413)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateCommit502ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateCommit503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateCommit503ApplicationProblemPlusJSONResponse) VisitCreateCommitResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFileRequestObject struct {
+	Owner  Owner  `json:"owner"`
+	Repo   Repo   `json:"repo"`
+	Path   string `json:"path"`
+	Params ReadFileParams
+}
+
+type ReadFileResponseObject interface {
+	VisitReadFileResponse(w http.ResponseWriter) error
+}
+
+type ReadFile200JSONResponse FileContent
+
+func (response ReadFile200JSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ReadFile400ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile401ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadFile401ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile403ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadFile403ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ReadFile404ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ReadFile502ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ReadFile503ApplicationProblemPlusJSONResponse Problem
+
+func (response ReadFile503ApplicationProblemPlusJSONResponse) VisitReadFileResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHeadRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params GetHeadParams
+}
+
+type GetHeadResponseObject interface {
+	VisitGetHeadResponse(w http.ResponseWriter) error
+}
+
+type GetHead200JSONResponse Head
+
+func (response GetHead200JSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response GetHead400ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead401ApplicationProblemPlusJSONResponse Problem
+
+func (response GetHead401ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead403ApplicationProblemPlusJSONResponse Problem
+
+func (response GetHead403ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response GetHead404ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response GetHead502ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetHead503ApplicationProblemPlusJSONResponse Problem
+
+func (response GetHead503ApplicationProblemPlusJSONResponse) VisitGetHeadResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type PutRepoReferencesRequestObject struct {
 	Owner  Owner `json:"owner"`
 	Repo   Repo  `json:"repo"`
@@ -842,6 +2370,347 @@ func (response PutRepoReferences413ApplicationProblemPlusJSONResponse) VisitPutR
 type PutRepoReferences503ApplicationProblemPlusJSONResponse Problem
 
 func (response PutRepoReferences503ApplicationProblemPlusJSONResponse) VisitPutRepoReferencesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTagsRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params ListTagsParams
+}
+
+type ListTagsResponseObject interface {
+	VisitListTagsResponse(w http.ResponseWriter) error
+}
+
+type ListTags200JSONResponse TagList
+
+func (response ListTags200JSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTags400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListTags400ApplicationProblemPlusJSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTags401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTags401ApplicationProblemPlusJSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTags403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTags403ApplicationProblemPlusJSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTags502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListTags502ApplicationProblemPlusJSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTags503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTags503ApplicationProblemPlusJSONResponse) VisitListTagsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTagRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params CreateTagParams
+	Body   *CreateTagJSONRequestBody
+}
+
+type CreateTagResponseObject interface {
+	VisitCreateTagResponse(w http.ResponseWriter) error
+}
+
+type CreateTag201JSONResponse TagCreated
+
+func (response CreateTag201JSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response CreateTag400ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag401ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateTag401ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag403ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateTag403ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response CreateTag404ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag409ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateTag409ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response CreateTag502ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type CreateTag503ApplicationProblemPlusJSONResponse Problem
+
+func (response CreateTag503ApplicationProblemPlusJSONResponse) VisitCreateTagResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTreeRequestObject struct {
+	Owner  Owner `json:"owner"`
+	Repo   Repo  `json:"repo"`
+	Params ListTreeParams
+}
+
+type ListTreeResponseObject interface {
+	VisitListTreeResponse(w http.ResponseWriter) error
+}
+
+type ListTree200JSONResponse Tree
+
+func (response ListTree200JSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree400ApplicationProblemPlusJSONResponse struct {
+	ProblemApplicationProblemPlusJSONResponse
+}
+
+func (response ListTree400ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree401ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTree401ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree403ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTree403ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree404ApplicationProblemPlusJSONResponse struct {
+	GitNotFoundApplicationProblemPlusJSONResponse
+}
+
+func (response ListTree404ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree502ApplicationProblemPlusJSONResponse struct {
+	GitHubErrorApplicationProblemPlusJSONResponse
+}
+
+func (response ListTree502ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(502)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListTree503ApplicationProblemPlusJSONResponse Problem
+
+func (response ListTree503ApplicationProblemPlusJSONResponse) VisitListTreeResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -1040,9 +2909,30 @@ type StrictServerInterface interface {
 	// The GitHub user the org's gitpat belongs to
 	// (GET /github/identity)
 	GetGithubIdentity(ctx context.Context, request GetGithubIdentityRequestObject) (GetGithubIdentityResponseObject, error)
+	// Read a set of files of one commit
+	// (GET /repos/{owner}/{repo}/bundle)
+	ReadBundle(ctx context.Context, request ReadBundleRequestObject) (ReadBundleResponseObject, error)
+	// Commit writes and deletes to the default branch
+	// (POST /repos/{owner}/{repo}/commits)
+	CreateCommit(ctx context.Context, request CreateCommitRequestObject) (CreateCommitResponseObject, error)
+	// Read one file of a commit
+	// (GET /repos/{owner}/{repo}/files/{path})
+	ReadFile(ctx context.Context, request ReadFileRequestObject) (ReadFileResponseObject, error)
+	// Resolve a ref to its commit
+	// (GET /repos/{owner}/{repo}/head)
+	GetHead(ctx context.Context, request GetHeadRequestObject) (GetHeadResponseObject, error)
 	// Replace a project's stored reference documents
 	// (PUT /repos/{owner}/{repo}/references)
 	PutRepoReferences(ctx context.Context, request PutRepoReferencesRequestObject) (PutRepoReferencesResponseObject, error)
+	// List the repository's tags
+	// (GET /repos/{owner}/{repo}/tags)
+	ListTags(ctx context.Context, request ListTagsRequestObject) (ListTagsResponseObject, error)
+	// Cut an annotated tag and push it
+	// (POST /repos/{owner}/{repo}/tags)
+	CreateTag(ctx context.Context, request CreateTagRequestObject) (CreateTagResponseObject, error)
+	// List every file of a commit
+	// (GET /repos/{owner}/{repo}/tree)
+	ListTree(ctx context.Context, request ListTreeRequestObject) (ListTreeResponseObject, error)
 	// Start (or reattach to) a kickoff or plan turn and stream its result
 	// (POST /repos/{owner}/{repo}/turns)
 	StartRepoTurn(ctx context.Context, request StartRepoTurnRequestObject) (StartRepoTurnResponseObject, error)
@@ -1103,6 +2993,126 @@ func (sh *strictHandler) GetGithubIdentity(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// ReadBundle operation middleware
+func (sh *strictHandler) ReadBundle(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ReadBundleParams) {
+	var request ReadBundleRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReadBundle(ctx, request.(ReadBundleRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReadBundle")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReadBundleResponseObject); ok {
+		if err := validResponse.VisitReadBundleResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateCommit operation middleware
+func (sh *strictHandler) CreateCommit(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateCommitParams) {
+	var request CreateCommitRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body CreateCommitJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateCommit(ctx, request.(CreateCommitRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateCommit")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateCommitResponseObject); ok {
+		if err := validResponse.VisitCreateCommitResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ReadFile operation middleware
+func (sh *strictHandler) ReadFile(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, path string, params ReadFileParams) {
+	var request ReadFileRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Path = path
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ReadFile(ctx, request.(ReadFileRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ReadFile")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ReadFileResponseObject); ok {
+		if err := validResponse.VisitReadFileResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetHead operation middleware
+func (sh *strictHandler) GetHead(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params GetHeadParams) {
+	var request GetHeadRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetHead(ctx, request.(GetHeadRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetHead")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetHeadResponseObject); ok {
+		if err := validResponse.VisitGetHeadResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // PutRepoReferences operation middleware
 func (sh *strictHandler) PutRepoReferences(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params PutRepoReferencesParams) {
 	var request PutRepoReferencesRequestObject
@@ -1131,6 +3141,97 @@ func (sh *strictHandler) PutRepoReferences(w http.ResponseWriter, r *http.Reques
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(PutRepoReferencesResponseObject); ok {
 		if err := validResponse.VisitPutRepoReferencesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListTags operation middleware
+func (sh *strictHandler) ListTags(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListTagsParams) {
+	var request ListTagsRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListTags(ctx, request.(ListTagsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListTags")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListTagsResponseObject); ok {
+		if err := validResponse.VisitListTagsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// CreateTag operation middleware
+func (sh *strictHandler) CreateTag(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params CreateTagParams) {
+	var request CreateTagRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	var body CreateTagJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.CreateTag(ctx, request.(CreateTagRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "CreateTag")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(CreateTagResponseObject); ok {
+		if err := validResponse.VisitCreateTagResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListTree operation middleware
+func (sh *strictHandler) ListTree(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListTreeParams) {
+	var request ListTreeRequestObject
+
+	request.Owner = owner
+	request.Repo = repo
+	request.Params = params
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.ListTree(ctx, request.(ListTreeRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListTree")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(ListTreeResponseObject); ok {
+		if err := validResponse.VisitListTreeResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -1178,57 +3279,99 @@ func (sh *strictHandler) StartRepoTurn(w http.ResponseWriter, r *http.Request, o
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"vJKsdktkZC3rj+v/BAAA//8=",
+	"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",
+	"G591FUxHsIurFPgbfYtShWWKRQ8fHv43AAD//w==",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

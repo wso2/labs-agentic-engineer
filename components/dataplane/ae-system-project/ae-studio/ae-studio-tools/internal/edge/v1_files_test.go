@@ -253,7 +253,7 @@ func assertJSONEq(t *testing.T, got, want string) {
 }
 
 // TestNestedReadFile pins which requests the /v1 route finder treats as a
-// nested read-file address, and the probe and path it derives.
+// nested read-file address (v1ReadFile), and the probe and path it derives.
 func TestNestedReadFile(t *testing.T) {
 	req := func(method, rawURL string) *http.Request {
 		return httptest.NewRequest(method, rawURL, nil)
@@ -281,9 +281,9 @@ func TestNestedReadFile(t *testing.T) {
 		{"other group", req("GET", "/internal/v1/projects/greeter/files/specs/a.md"), false, "", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			probe, path, ok := nestedReadFile(c.r)
+			probe, path, ok := v1ReadFile.nested(c.r)
 			if ok != c.ok || path != c.path {
-				t.Fatalf("nestedReadFile = (%q, %v), want (%q, %v)", path, ok, c.path, c.ok)
+				t.Fatalf("nested = (%q, %v), want (%q, %v)", path, ok, c.path, c.ok)
 			}
 			if !ok {
 				return

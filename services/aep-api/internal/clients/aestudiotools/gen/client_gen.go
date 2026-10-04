@@ -136,10 +136,118 @@ func (e TurnRequestKind) Valid() bool {
 	}
 }
 
+// Bundle defines model for Bundle.
+type Bundle struct {
+	CommitSha string `json:"commitSha"`
+
+	// Files path → content
+	Files map[string]string `json:"files"`
+}
+
+// CommitConflict A problem; with code conflict, conflicts names every failed baseSha.
+type CommitConflict struct {
+	Code      string     `json:"code"`
+	Conflicts []Conflict `json:"conflicts,omitempty,omitzero"`
+	Detail    string     `json:"detail,omitempty,omitzero"`
+	Status    int        `json:"status"`
+	Title     string     `json:"title"`
+	Type      string     `json:"type"`
+}
+
+// CommitDelete defines model for CommitDelete.
+type CommitDelete struct {
+	// BaseSha The blob sha the path must have at the tip; empty, whatever is there (it must exist)
+	BaseSha string `json:"baseSha"`
+	Path    string `json:"path"`
+}
+
+// CommitFile defines model for CommitFile.
+type CommitFile struct {
+	Path string `json:"path"`
+	Sha  string `json:"sha"`
+}
+
+// CommitResult defines model for CommitResult.
+type CommitResult struct {
+	Changed   bool   `json:"changed"`
+	CommitSha string `json:"commitSha"`
+
+	// Files Each written file and its new blob sha, in request order
+	Files    []CommitFile    `json:"files"`
+	Warnings []CommitWarning `json:"warnings"`
+}
+
+// CommitWarning defines model for CommitWarning.
+type CommitWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path"`
+}
+
+// CommitWrite defines model for CommitWrite.
+type CommitWrite struct {
+	// BaseSha The blob sha the path must have at the tip; empty, the path must not exist
+	BaseSha string `json:"baseSha"`
+	Content []byte `json:"content"`
+	Path    string `json:"path"`
+}
+
+// Conflict defines model for Conflict.
+type Conflict struct {
+	BaseSha string `json:"baseSha"`
+
+	// CurrentSha The blob sha at the tip; empty when the path is absent
+	CurrentSha string `json:"currentSha"`
+	Path       string `json:"path"`
+}
+
+// CreateCommitRequest At least one write or delete, no path twice. author omitted, the gitpat's user; committer omitted, the author.
+type CreateCommitRequest struct {
+	Author    GitIdentity    `json:"author,omitempty,omitzero"`
+	Committer GitIdentity    `json:"committer,omitempty,omitzero"`
+	Deletes   []CommitDelete `json:"deletes,omitempty,omitzero"`
+	Message   string         `json:"message"`
+	Writes    []CommitWrite  `json:"writes,omitempty,omitzero"`
+}
+
+// CreateTagRequest tagger omitted, the AEP default identity.
+type CreateTagRequest struct {
+	Message string `json:"message"`
+
+	// Name The tag name, a valid git ref name
+	Name   string      `json:"name"`
+	Tagger GitIdentity `json:"tagger,omitempty,omitzero"`
+
+	// Target The commit to tag, as `at` names one; omitted, the default-branch tip
+	Target string `json:"target,omitempty,omitzero"`
+}
+
+// FileContent defines model for FileContent.
+type FileContent struct {
+	CommitSha string `json:"commitSha"`
+	Content   []byte `json:"content"`
+	Path      string `json:"path"`
+
+	// Sha The blob's sha (the next write's baseSha)
+	Sha string `json:"sha"`
+}
+
 // GitHubIdentity defines model for GitHubIdentity.
 type GitHubIdentity struct {
 	ID    int64  `json:"id"`
 	Login string `json:"login"`
+}
+
+// GitIdentity defines model for GitIdentity.
+type GitIdentity struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// Head defines model for Head.
+type Head struct {
+	// Sha The commit's 40-hex sha
+	Sha string `json:"sha"`
 }
 
 // KeepAliveFrame One line of the turn stream, sent every 15 s.
@@ -174,9 +282,12 @@ type PlanStory struct {
 type Problem struct {
 	Code   string `json:"code"`
 	Detail string `json:"detail,omitempty,omitzero"`
-	Status int    `json:"status"`
-	Title  string `json:"title"`
-	Type   string `json:"type"`
+
+	// GithubStatus With code github_error, GitHub's HTTP status, when it answered one.
+	GithubStatus int    `json:"githubStatus,omitempty,omitzero"`
+	Status       int    `json:"status"`
+	Title        string `json:"title"`
+	Type         string `json:"type"`
 }
 
 // ReferenceUpload defines model for ReferenceUpload.
@@ -202,6 +313,27 @@ type ResultFrameStatus string
 // ResultFrameType defines model for ResultFrame.Type.
 type ResultFrameType string
 
+// Tag defines model for Tag.
+type Tag struct {
+	// CommitHash The commit the tag points at (annotated tags peeled)
+	CommitHash string `json:"commitHash"`
+
+	// CreatedAt When the tag was made (the commit's date for a lightweight tag); absent when git could not date it
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
+
+	// Message The annotated tag's subject; absent for a lightweight tag
+	Message string `json:"message,omitempty,omitzero"`
+	Name    string `json:"name"`
+}
+
+// TagCreated defines model for TagCreated.
+type TagCreated = map[string]interface{}
+
+// TagList defines model for TagList.
+type TagList struct {
+	Tags []Tag `json:"tags"`
+}
+
 // TaskOpFrame One line of the turn stream, a Task operation the agent produced.
 type TaskOpFrame struct {
 	Op TaskOpFrameOp `json:"op"`
@@ -216,6 +348,21 @@ type TaskOpFrameOp string
 
 // TaskOpFrameType defines model for TaskOpFrame.Type.
 type TaskOpFrameType string
+
+// Tree defines model for Tree.
+type Tree struct {
+	CommitSha string      `json:"commitSha"`
+	Entries   []TreeEntry `json:"entries"`
+}
+
+// TreeEntry defines model for TreeEntry.
+type TreeEntry struct {
+	Path string `json:"path"`
+
+	// Sha The blob's sha
+	Sha  string `json:"sha"`
+	Size int64  `json:"size"`
+}
 
 // TurnCredit Who the turn's commits and records are credited to.
 type TurnCredit struct {
@@ -256,14 +403,32 @@ type TurnRequest struct {
 // TurnRequestKind defines model for TurnRequest.Kind.
 type TurnRequestKind string
 
+// At defines model for At.
+type At = string
+
+// DefaultBranch defines model for DefaultBranch.
+type DefaultBranch = string
+
 // ImpersonateOrg defines model for ImpersonateOrg.
 type ImpersonateOrg = string
+
+// Local defines model for Local.
+type Local = bool
 
 // Owner defines model for Owner.
 type Owner = string
 
+// Prefix defines model for Prefix.
+type Prefix = string
+
 // Repo defines model for Repo.
 type Repo = string
+
+// GitHubError defines model for GitHubError.
+type GitHubError = Problem
+
+// GitNotFound defines model for GitNotFound.
+type GitNotFound = Problem
 
 // RateLimited defines model for RateLimited.
 type RateLimited = Problem
@@ -277,8 +442,107 @@ type GetGithubIdentityParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// ReadBundleParams defines parameters for ReadBundle.
+type ReadBundleParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+
+	// Ext File-name endings to keep (e.g. `.json`), repeated.
+	Ext []string `form:"ext,omitempty" json:"ext,omitempty,omitzero"`
+
+	// Path Exact repo-relative paths to read, repeated. Overrides prefix and ext.
+	Path []string `form:"path,omitempty" json:"path,omitempty,omitzero"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateCommitParams defines parameters for CreateCommit.
+type CreateCommitParams struct {
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ReadFileParams defines parameters for ReadFile.
+type ReadFileParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// GetHeadParams defines parameters for GetHead.
+type GetHeadParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // PutRepoReferencesParams defines parameters for PutRepoReferences.
 type PutRepoReferencesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListTagsParams defines parameters for ListTags.
+type ListTagsParams struct {
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+
+	// Local List the tags the studio's mirror already holds, without fetching from GitHub (every tag the studio cuts is there).
+	Local bool `form:"local,omitempty" json:"local,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// CreateTagParams defines parameters for CreateTag.
+type CreateTagParams struct {
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
+// ListTreeParams defines parameters for ListTree.
+type ListTreeParams struct {
+	// At The commit to read. Omitted, the default-branch tip (fetched from GitHub first); `tags/<name>`, the commit the tag points at; a 40-hex sha, that commit (read locally, fetched only when missing).
+	At At `form:"at,omitempty" json:"at,omitempty,omitzero"`
+
+	// Local Read the default-branch tip the studio's mirror already holds, without fetching from GitHub (every commit the studio writes is there; a push made elsewhere shows after the next fetching call). Only with `at` omitted, else 400.
+	Local Local `form:"local,omitempty" json:"local,omitempty,omitzero"`
+
+	// Prefix Only paths (tag names, for list-tags) starting with this.
+	Prefix Prefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
+
+	// DefaultBranch The repository's default branch, as aep-api's row names it (the branch the Room reads for the same repository). Omitted, main.
+	DefaultBranch DefaultBranch `form:"defaultBranch,omitempty" json:"defaultBranch,omitempty,omitzero"`
+
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
@@ -289,8 +553,14 @@ type StartRepoTurnParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// CreateCommitJSONRequestBody defines body for CreateCommit for application/json ContentType.
+type CreateCommitJSONRequestBody = CreateCommitRequest
+
 // PutRepoReferencesMultipartRequestBody defines body for PutRepoReferences for multipart/form-data ContentType.
 type PutRepoReferencesMultipartRequestBody = ReferenceUpload
+
+// CreateTagJSONRequestBody defines body for CreateTag for application/json ContentType.
+type CreateTagJSONRequestBody = CreateTagRequest
 
 // StartRepoTurnJSONRequestBody defines body for StartRepoTurn for application/json ContentType.
 type StartRepoTurnJSONRequestBody = TurnRequest
@@ -371,8 +641,33 @@ type ClientInterface interface {
 	// GetGithubIdentity request
 	GetGithubIdentity(ctx context.Context, params *GetGithubIdentityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReadBundle request
+	ReadBundle(ctx context.Context, owner Owner, repo Repo, params *ReadBundleParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCommitWithBody request with any body
+	CreateCommitWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateCommit(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, body CreateCommitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadFile request
+	ReadFile(ctx context.Context, owner Owner, repo Repo, path string, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetHead request
+	GetHead(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PutRepoReferencesWithBody request with any body
 	PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTags request
+	ListTags(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateTagWithBody request with any body
+	CreateTagWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	CreateTag(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, body CreateTagJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListTree request
+	ListTree(ctx context.Context, owner Owner, repo Repo, params *ListTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// StartRepoTurnWithBody request with any body
 	StartRepoTurnWithBody(ctx context.Context, owner Owner, repo Repo, params *StartRepoTurnParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -392,8 +687,116 @@ func (c *Client) GetGithubIdentity(ctx context.Context, params *GetGithubIdentit
 	return c.Client.Do(req)
 }
 
+func (c *Client) ReadBundle(ctx context.Context, owner Owner, repo Repo, params *ReadBundleParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadBundleRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateCommitWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCommitRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateCommit(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, body CreateCommitJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateCommitRequest(c.Server, owner, repo, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReadFile(ctx context.Context, owner Owner, repo Repo, path string, params *ReadFileParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadFileRequest(c.Server, owner, repo, path, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetHead(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetHeadRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPutRepoReferencesRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListTags(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTagsRequest(c.Server, owner, repo, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTagWithBody(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTagRequestWithBody(c.Server, owner, repo, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) CreateTag(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, body CreateTagJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateTagRequest(c.Server, owner, repo, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListTree(ctx context.Context, owner Owner, repo Repo, params *ListTreeParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListTreeRequest(c.Server, owner, repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -468,6 +871,406 @@ func NewGetGithubIdentityRequest(server string, params *GetGithubIdentityParams)
 	return req, nil
 }
 
+// NewReadBundleRequest generates requests for ReadBundle
+func NewReadBundleRequest(server string, owner Owner, repo Repo, params *ReadBundleParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/bundle", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Ext != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "ext", params.Ext, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Path != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "path", params.Path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateCommitRequest calls the generic CreateCommit builder with application/json body
+func NewCreateCommitRequest(server string, owner Owner, repo Repo, params *CreateCommitParams, body CreateCommitJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateCommitRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewCreateCommitRequestWithBody generates requests for CreateCommit with any type of body
+func NewCreateCommitRequestWithBody(server string, owner Owner, repo Repo, params *CreateCommitParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/commits", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewReadFileRequest generates requests for ReadFile
+func NewReadFileRequest(server string, owner Owner, repo Repo, path string, params *ReadFileParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "path", path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/files/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetHeadRequest generates requests for GetHead
+func NewGetHeadRequest(server string, owner Owner, repo Repo, params *GetHeadParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/head", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewPutRepoReferencesRequestWithBody generates requests for PutRepoReferences with any type of body
 func NewPutRepoReferencesRequestWithBody(server string, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -507,6 +1310,282 @@ func NewPutRepoReferencesRequestWithBody(server string, owner Owner, repo Repo, 
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListTagsRequest generates requests for ListTags
+func NewListTagsRequest(server string, owner Owner, repo Repo, params *ListTagsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/tags", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateTagRequest calls the generic CreateTag builder with application/json body
+func NewCreateTagRequest(server string, owner Owner, repo Repo, params *CreateTagParams, body CreateTagJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateTagRequestWithBody(server, owner, repo, params, "application/json", bodyReader)
+}
+
+// NewCreateTagRequestWithBody generates requests for CreateTag with any type of body
+func NewCreateTagRequestWithBody(server string, owner Owner, repo Repo, params *CreateTagParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/tags", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewListTreeRequest generates requests for ListTree
+func NewListTreeRequest(server string, owner Owner, repo Repo, params *ListTreeParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/tree", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "at", params.At, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "local", params.Local, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "defaultBranch", params.DefaultBranch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	if params != nil {
 
@@ -637,8 +1716,33 @@ type ClientWithResponsesInterface interface {
 	// GetGithubIdentityWithResponse request
 	GetGithubIdentityWithResponse(ctx context.Context, params *GetGithubIdentityParams, reqEditors ...RequestEditorFn) (*GetGithubIdentityResponse, error)
 
+	// ReadBundleWithResponse request
+	ReadBundleWithResponse(ctx context.Context, owner Owner, repo Repo, params *ReadBundleParams, reqEditors ...RequestEditorFn) (*ReadBundleResponse, error)
+
+	// CreateCommitWithBodyWithResponse request with any body
+	CreateCommitWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCommitResponse, error)
+
+	CreateCommitWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, body CreateCommitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCommitResponse, error)
+
+	// ReadFileWithResponse request
+	ReadFileWithResponse(ctx context.Context, owner Owner, repo Repo, path string, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error)
+
+	// GetHeadWithResponse request
+	GetHeadWithResponse(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*GetHeadResponse, error)
+
 	// PutRepoReferencesWithBodyWithResponse request with any body
 	PutRepoReferencesWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutRepoReferencesResponse, error)
+
+	// ListTagsWithResponse request
+	ListTagsWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*ListTagsResponse, error)
+
+	// CreateTagWithBodyWithResponse request with any body
+	CreateTagWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTagResponse, error)
+
+	CreateTagWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, body CreateTagJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTagResponse, error)
+
+	// ListTreeWithResponse request
+	ListTreeWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListTreeParams, reqEditors ...RequestEditorFn) (*ListTreeResponse, error)
 
 	// StartRepoTurnWithBodyWithResponse request with any body
 	StartRepoTurnWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *StartRepoTurnParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartRepoTurnResponse, error)
@@ -681,6 +1785,152 @@ func (r GetGithubIdentityResponse) ContentType() string {
 	return ""
 }
 
+type ReadBundleResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *Bundle
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadBundleResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadBundleResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadBundleResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateCommitResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *CommitResult
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON409 *CommitConflict
+	ApplicationProblemJSON413 *Problem
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateCommitResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateCommitResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateCommitResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ReadFileResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *FileContent
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadFileResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetHeadResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *Head
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r GetHeadResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetHeadResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetHeadResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PutRepoReferencesResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -710,6 +1960,114 @@ func (r PutRepoReferencesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PutRepoReferencesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListTagsResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *TagList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTagsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTagsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTagsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateTagResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON201                   *TagCreated
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON409 *Problem
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateTagResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateTagResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateTagResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListTreeResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *Tree
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON404 *GitNotFound
+	ApplicationProblemJSON502 *GitHubError
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListTreeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListTreeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListTreeResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -763,6 +2121,50 @@ func (c *ClientWithResponses) GetGithubIdentityWithResponse(ctx context.Context,
 	return ParseGetGithubIdentityResponse(rsp)
 }
 
+// ReadBundleWithResponse request returning *ReadBundleResponse
+func (c *ClientWithResponses) ReadBundleWithResponse(ctx context.Context, owner Owner, repo Repo, params *ReadBundleParams, reqEditors ...RequestEditorFn) (*ReadBundleResponse, error) {
+	rsp, err := c.ReadBundle(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadBundleResponse(rsp)
+}
+
+// CreateCommitWithBodyWithResponse request with arbitrary body returning *CreateCommitResponse
+func (c *ClientWithResponses) CreateCommitWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCommitResponse, error) {
+	rsp, err := c.CreateCommitWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCommitResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateCommitWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateCommitParams, body CreateCommitJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCommitResponse, error) {
+	rsp, err := c.CreateCommit(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateCommitResponse(rsp)
+}
+
+// ReadFileWithResponse request returning *ReadFileResponse
+func (c *ClientWithResponses) ReadFileWithResponse(ctx context.Context, owner Owner, repo Repo, path string, params *ReadFileParams, reqEditors ...RequestEditorFn) (*ReadFileResponse, error) {
+	rsp, err := c.ReadFile(ctx, owner, repo, path, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadFileResponse(rsp)
+}
+
+// GetHeadWithResponse request returning *GetHeadResponse
+func (c *ClientWithResponses) GetHeadWithResponse(ctx context.Context, owner Owner, repo Repo, params *GetHeadParams, reqEditors ...RequestEditorFn) (*GetHeadResponse, error) {
+	rsp, err := c.GetHead(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetHeadResponse(rsp)
+}
+
 // PutRepoReferencesWithBodyWithResponse request with arbitrary body returning *PutRepoReferencesResponse
 func (c *ClientWithResponses) PutRepoReferencesWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutRepoReferencesResponse, error) {
 	rsp, err := c.PutRepoReferencesWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
@@ -770,6 +2172,41 @@ func (c *ClientWithResponses) PutRepoReferencesWithBodyWithResponse(ctx context.
 		return nil, err
 	}
 	return ParsePutRepoReferencesResponse(rsp)
+}
+
+// ListTagsWithResponse request returning *ListTagsResponse
+func (c *ClientWithResponses) ListTagsWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListTagsParams, reqEditors ...RequestEditorFn) (*ListTagsResponse, error) {
+	rsp, err := c.ListTags(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTagsResponse(rsp)
+}
+
+// CreateTagWithBodyWithResponse request with arbitrary body returning *CreateTagResponse
+func (c *ClientWithResponses) CreateTagWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateTagResponse, error) {
+	rsp, err := c.CreateTagWithBody(ctx, owner, repo, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTagResponse(rsp)
+}
+
+func (c *ClientWithResponses) CreateTagWithResponse(ctx context.Context, owner Owner, repo Repo, params *CreateTagParams, body CreateTagJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateTagResponse, error) {
+	rsp, err := c.CreateTag(ctx, owner, repo, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateTagResponse(rsp)
+}
+
+// ListTreeWithResponse request returning *ListTreeResponse
+func (c *ClientWithResponses) ListTreeWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListTreeParams, reqEditors ...RequestEditorFn) (*ListTreeResponse, error) {
+	rsp, err := c.ListTree(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListTreeResponse(rsp)
 }
 
 // StartRepoTurnWithBodyWithResponse request with arbitrary body returning *StartRepoTurnResponse
@@ -850,6 +2287,292 @@ func ParseGetGithubIdentityResponse(rsp *http.Response) (*GetGithubIdentityRespo
 	return response, nil
 }
 
+// ParseReadBundleResponse parses an HTTP response from a ReadBundleWithResponse call
+func ParseReadBundleResponse(rsp *http.Response) (*ReadBundleResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadBundleResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Bundle
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateCommitResponse parses an HTTP response from a CreateCommitWithResponse call
+func ParseCreateCommitResponse(rsp *http.Response) (*CreateCommitResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateCommitResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CommitResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest CommitConflict
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReadFileResponse parses an HTTP response from a ReadFileWithResponse call
+func ParseReadFileResponse(rsp *http.Response) (*ReadFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FileContent
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetHeadResponse parses an HTTP response from a GetHeadWithResponse call
+func ParseGetHeadResponse(rsp *http.Response) (*GetHeadResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetHeadResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Head
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParsePutRepoReferencesResponse parses an HTTP response from a PutRepoReferencesWithResponse call
 func ParsePutRepoReferencesResponse(rsp *http.Response) (*PutRepoReferencesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -898,6 +2621,210 @@ func ParsePutRepoReferencesResponse(rsp *http.Response) (*PutRepoReferencesRespo
 			return nil, err
 		}
 		response.ApplicationProblemJSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListTagsResponse parses an HTTP response from a ListTagsWithResponse call
+func ParseListTagsResponse(rsp *http.Response) (*ListTagsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTagsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TagList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateTagResponse parses an HTTP response from a CreateTagWithResponse call
+func ParseCreateTagResponse(rsp *http.Response) (*CreateTagResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateTagResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest TagCreated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListTreeResponse parses an HTTP response from a ListTreeWithResponse call
+func ParseListTreeResponse(rsp *http.Response) (*ListTreeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListTreeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Tree
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest GitNotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
+		var dest GitHubError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON502 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem

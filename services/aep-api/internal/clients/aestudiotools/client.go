@@ -94,7 +94,7 @@ type call func(ctx context.Context, c *gen.Client, impersonateOrg string, auth g
 
 // send runs fn against the org's pod and returns a 2xx response with its
 // body open, or the mapped error. A refused token (401, or a 403 other than
-// owner_refused) is dropped and the call sent once more with a fresh one when
+// owner_not_allowed) is dropped and the call sent once more with a fresh one when
 // replayable says the request can be sent again; refused again, the call is
 // ErrAEStudioMisconfigured and logs ae_studio.auth_failed {org, status}.
 func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable func() bool) (*http.Response, error) {

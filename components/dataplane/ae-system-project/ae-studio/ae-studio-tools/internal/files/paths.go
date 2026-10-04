@@ -20,8 +20,6 @@
 package files
 
 import (
-	"crypto/sha1" //nolint:gosec // git object names are SHA-1 by definition
-	"encoding/hex"
 	"fmt"
 	"path"
 	"regexp"
@@ -35,17 +33,6 @@ const specsPrefix = "specs/"
 // commitSHAPattern is the accepted shape of a caller-provided commit
 // (abbreviated or full hex object name).
 var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
-
-// blobSHA computes the git blob object name of content — SHA-1 over
-// "blob <len>\x00" + content, exactly what `git hash-object` produces for the
-// blobs Mutate stages. The apply response reports it per written file so the
-// FE's next baseSha matches what a subsequent read (ls-tree) returns.
-func blobSHA(content []byte) string {
-	h := sha1.New() //nolint:gosec // git object names are SHA-1 by definition
-	fmt.Fprintf(h, "blob %d\x00", len(content))
-	h.Write(content)
-	return hex.EncodeToString(h.Sum(nil))
-}
 
 // validatePath enforces the specs/ scope: repo-relative, canonical, no
 // traversal, under specs/. Mirrors the artifacts working-tree validator so the

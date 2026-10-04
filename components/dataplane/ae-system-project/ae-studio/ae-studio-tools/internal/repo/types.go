@@ -86,8 +86,9 @@ type Workspace interface {
 	// checked against the tip each attempt builds on: writes and deletes land
 	// as one commit, or a failed precondition answers its conflicts with
 	// ErrCommitConflict and nothing is applied. It runs the engine's commit
-	// only: no scaffolding, soft validation or completions.
-	Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, deletes []CommitDelete, message string, author *GitIdentity) (CommitResult, []Conflict, error)
+	// only: no scaffolding, soft validation or completions. committer nil is
+	// the author; author nil is the AEP default identity.
+	Commit(ctx context.Context, ref RepoRef, writes []CommitWrite, deletes []CommitDelete, message string, author, committer *GitIdentity) (CommitResult, []Conflict, error)
 
 	// Tag creates an annotated tag at spec.Target ("" = default-branch tip)
 	// and pushes it. A taken name (seen after fetch, or rejected by origin on

@@ -244,7 +244,7 @@ func TestReferencesUpload(t *testing.T) {
 	t.Run("an owner other than the connected account is refused and writes nothing", func(t *testing.T) {
 		h := newHarness(t)
 		rec := h.putReferences("/internal/v1/repos/someone-else/greeter/references", h.m2m(), false, refFile("a.md", 1))
-		wantProblem(t, rec, http.StatusForbidden, "owner_refused")
+		wantProblem(t, rec, http.StatusForbidden, "owner_not_allowed")
 		if !h.referencesStoreEmpty() {
 			t.Fatal("a foreign owner's upload wrote to the store")
 		}
@@ -254,7 +254,7 @@ func TestReferencesUpload(t *testing.T) {
 		h := newHarness(t)
 		h.handler = internalChain(internalBodyCaps, h.engine, "")
 		rec := h.putReferences(referencesPath, h.m2m(), false, refFile("a.md", 1))
-		wantProblem(t, rec, http.StatusForbidden, "owner_refused")
+		wantProblem(t, rec, http.StatusForbidden, "owner_not_allowed")
 		if !h.referencesStoreEmpty() {
 			t.Fatal("an upload with no connected owner wrote to the store")
 		}
@@ -294,11 +294,11 @@ func TestReferencesUpload(t *testing.T) {
 	})
 }
 
-// TestInternalBodyCaps pins the per-op cap table: only the references upload
-// and the turn start (the agent's own Turn-socket cap) are allowed more than
-// the default.
+// TestInternalBodyCaps pins the per-op cap table: only the references upload,
+// the turn start (the agent's own Turn-socket cap) and a commit (16 MiB, 05
+// §3) are allowed more than the default.
 func TestInternalBodyCaps(t *testing.T) {
-	if want := map[string]int64{"put-repo-references": 80 << 20, "start-repo-turn": 4 << 20}; !reflect.DeepEqual(internalBodyCaps, want) {
+	if want := map[string]int64{"put-repo-references": 80 << 20, "start-repo-turn": 4 << 20, "create-commit": 16 << 20}; !reflect.DeepEqual(internalBodyCaps, want) {
 		t.Fatalf("internalBodyCaps = %v, want %v", internalBodyCaps, want)
 	}
 	if internalBodyBytes != 1<<20 {

@@ -30,8 +30,6 @@ import (
 // EXCLUSIVE flock. The fetch precheck narrows the collision window; origin's
 // push rejection closes it — either path returns ErrTagAlreadyExists so the
 // caller can recompute the next name and retry.
-//
-//deadcode:keep wired in Task 4.2b (create-tag)
 func (e *Engine) Tag(ctx context.Context, ref RepoRef, spec TagSpec) (err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	if spec.Name == "" {
@@ -89,8 +87,6 @@ func (e *Engine) Tag(ctx context.Context, ref RepoRef, spec TagSpec) (err error)
 // commit (annotated tags dereferenced); Message is the tag message subject,
 // empty for lightweight tags. Use this on the freshness-critical paths (the
 // version lists, the save collision precheck, the plan lineage).
-//
-//deadcode:keep wired in Task 4.2b (list-tags)
 func (e *Engine) ListTags(ctx context.Context, ref RepoRef, prefix string) (tags []TagInfo, err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)
@@ -124,8 +120,6 @@ func (e *Engine) ListTags(ctx context.Context, ref RepoRef, prefix string) (tags
 // Intended for best-effort, hot-path reads that must not pay a per-read
 // network round-trip. ensureMirror still clones on first-ever access (a stat
 // when the mirror is already present).
-//
-//deadcode:keep wired in Task 4.2b (list-tags local=true)
 func (e *Engine) ListTagsLocal(ctx context.Context, ref RepoRef, prefix string) (tags []TagInfo, err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)

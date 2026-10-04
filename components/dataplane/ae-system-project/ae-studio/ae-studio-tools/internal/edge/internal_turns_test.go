@@ -151,10 +151,10 @@ func TestTurnsRelay_DrainsAfterCallerLeavesAndReattaches(t *testing.T) {
 	}
 
 	mismatch := h.postStream("/internal/v1/repos/other/greeter/turns", m, strings.Replace(body, "1111-5111", "2222-5222", 1))
-	if mismatch.StatusCode != http.StatusNotFound {
-		t.Fatalf("mismatch = %d: path owner/repo must match the project's lookup", mismatch.StatusCode)
+	if mismatch.StatusCode != http.StatusForbidden {
+		t.Fatalf("mismatch = %d: an owner other than the connected account is refused", mismatch.StatusCode)
 	}
-	if code := responseCode(t, mismatch); code != "project_unknown" {
+	if code := responseCode(t, mismatch); code != "owner_not_allowed" {
 		t.Fatalf("mismatch code %q", code)
 	}
 	if sock.Started() != 1 {

@@ -50,15 +50,12 @@ const referencesField = "files"
 var errMalformedUpload = errors.New("malformed references upload")
 
 // PutRepoReferences replaces the repository's stored set with the uploaded
-// documents. The owner must be the org's connected GitHub account before
-// anything is read or written: the path is the store key, and the store
-// itself does not know which owners the org may use.
+// documents. The owner guard (ownerGuard) already refused an owner that is
+// not the org's connected GitHub account before any part was read: the path
+// is the store key, and the store itself does not know which owners the org
+// may use.
 func (s internalServer) PutRepoReferences(ctx context.Context, request gen.PutRepoReferencesRequestObject) (gen.PutRepoReferencesResponseObject, error) {
 	store := repo.OwnerRepo{Owner: request.Owner, Repo: request.Repo}
-	if !connectedOwner(s.githubOwner, store.Owner) {
-		return gen.PutRepoReferences403ApplicationProblemPlusJSONResponse(newProblem(http.StatusForbidden,
-			"owner_refused", "the repository's owner is not the org's connected GitHub account")), nil
-	}
 	docs, err := readReferenceParts(request.Body)
 	if err == nil {
 		err = s.refs.PutReferences(ctx, store, docs)
@@ -67,13 +64,6 @@ func (s internalServer) PutRepoReferences(ctx context.Context, request gen.PutRe
 		return referencesProblem(ctx, store, err)
 	}
 	return gen.PutRepoReferences204Response{}, nil
-}
-
-// connectedOwner reports whether owner is the org's connected GitHub
-// account. GitHub owner names are case-insensitive; an unset account matches
-// nothing.
-func connectedOwner(connected, owner string) bool {
-	return connected != "" && strings.EqualFold(connected, owner)
 }
 
 // referencesProblem maps an upload failure to its answer. Anything not listed

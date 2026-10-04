@@ -28,12 +28,11 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// IdentitySource names the gitpat user a save is committed as.
-// github.CommitAuthor satisfies it (GET /user, cached; name falls back to
-// the login, email to <login>@users.noreply.github.com).
-type IdentitySource interface {
-	Identity(ctx context.Context) (name, email string, err error)
-}
+// IdentitySource names the gitpat user a save is committed as: the engine's,
+// which authors aep-api's commits too. github.CommitAuthor satisfies it
+// (GET /user, cached; name falls back to the login, email to
+// <login>@users.noreply.github.com).
+type IdentitySource = repo.IdentitySource
 
 // saveIdentities returns the author and committer of a save: both the gitpat
 // user, as two distinct values so a caller changing one never aliases the

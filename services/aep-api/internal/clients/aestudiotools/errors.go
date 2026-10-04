@@ -157,9 +157,9 @@ func readAnswer(resp *http.Response) answer {
 }
 
 // authRefused is a refusal of the AE-only token itself: a 401, or a 403 that
-// is not the pod's owner_refused verdict on the request.
+// is not the pod's owner_not_allowed verdict on the request.
 func (a answer) authRefused() bool {
-	return a.status == http.StatusUnauthorized || (a.status == http.StatusForbidden && a.code != "owner_refused")
+	return a.status == http.StatusUnauthorized || (a.status == http.StatusForbidden && a.code != "owner_not_allowed")
 }
 
 // gatewayGone is an answer no pod handler wrote (no problem body) on a

@@ -20,10 +20,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
-	"strings"
-
-	"github.com/getkin/kin-openapi/routers"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	v1gen "github.com/wso2/aep/ae-studio-tools/internal/gen/v1"
@@ -64,64 +60,13 @@ func v1Handler(reader files.Reader) http.Handler {
 	// One-segment paths keep hitting the generated pattern (more specific);
 	// PathValue("path") serves both.
 	siw := &v1gen.ServerInterfaceWrapper{Handler: strict, ErrorHandlerFunc: writeV1RequestError}
-	mux.HandleFunc("GET "+v1Prefix+"/projects/{projectName}/files/{path...}", siw.ReadFile)
+	mux.HandleFunc(v1ReadFile.pattern("projectName"), siw.ReadFile)
 	mux.Handle(v1Prefix+"/", http.HandlerFunc(notFound))
-	return requestValidator(v1Routes(mustRouter("v1", v1gen.GetSpec)), "path_invalid", mux)
+	return requestValidator(v1ReadFile.routes(mustRouter("v1", v1gen.GetSpec)), "path_invalid", mux)
 }
 
-// v1Routes is the /v1 route finder: the contract's own routes, plus a nested
-// read-file address (see nestedReadFile), which the contract's one-segment
-// {path} cannot match. A nested address is validated as the read-file
-// operation with path set to the whole remainder.
-func v1Routes(router routers.Router) routeFinder {
-	return func(r *http.Request) (*routers.Route, map[string]string, error) {
-		route, params, err := router.FindRoute(r)
-		if err == nil {
-			return route, params, nil
-		}
-		probe, filePath, ok := nestedReadFile(r)
-		if !ok {
-			return nil, nil, err
-		}
-		route, params, perr := router.FindRoute(probe)
-		if perr != nil {
-			return nil, nil, err
-		}
-		params["path"] = filePath
-		return route, params, nil
-	}
-}
-
-// nestedReadFile recognises GET /v1/projects/{p}/files/<a>/<b>[/...]: a
-// read-file address whose path has more than one segment. It returns a probe
-// request for the same project with a one-segment path (which the contract's
-// router matches as read-file) and the decoded remainder. Anything else is
-// not ok.
-func nestedReadFile(r *http.Request) (probe *http.Request, filePath string, ok bool) {
-	if r.Method != http.MethodGet {
-		return nil, "", false
-	}
-	rest, found := strings.CutPrefix(r.URL.EscapedPath(), v1Prefix+"/projects/")
-	if !found {
-		return nil, "", false
-	}
-	parts := strings.SplitN(rest, "/", 3)
-	if len(parts) != 3 || parts[0] == "" || parts[1] != filesSegment || !strings.Contains(parts[2], "/") {
-		return nil, "", false
-	}
-	filePath, err := url.PathUnescape(parts[2])
-	if err != nil {
-		return nil, "", false
-	}
-	probeURL, err := url.Parse(v1Prefix + "/projects/" + parts[0] + "/" + filesSegment + "/_")
-	if err != nil {
-		return nil, "", false
-	}
-	probeURL.RawQuery = r.URL.RawQuery
-	probe = r.Clone(r.Context())
-	probe.URL = probeURL
-	return probe, filePath, true
-}
+// v1ReadFile is read-file's address, whose {path} is a trailing wildcard.
+var v1ReadFile = trailingPath{scope: v1Prefix + "/projects/", vars: 1, literal: filesSegment}
 
 // writeV1RequestError answers a request the generated binder could not parse.
 // Every /v1 input is a project, a path or a ref.

@@ -54,7 +54,7 @@ func TestCommit_LandsWritesAndDeletesAsOneCommit(t *testing.T) {
 			{Path: "specs/new.md", Content: []byte("n")},
 		},
 		[]repo.CommitDelete{{Path: "specs/gone.md", BaseSHA: blobAt(t, fx, "specs/gone.md")}},
-		"edit specs", author)
+		"edit specs", author, nil)
 	if err != nil || conflicts != nil {
 		t.Fatalf("Commit = %+v, %v, %v", res, conflicts, err)
 	}
@@ -76,12 +76,27 @@ func TestCommit_LandsWritesAndDeletesAsOneCommit(t *testing.T) {
 func TestCommit_NilAuthorIsTheDefaultIdentity(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	res, _, err := fx.Engine.Commit(context.Background(), fx.Ref,
-		[]repo.CommitWrite{{Path: "specs/x.md", Content: []byte("x")}}, nil, "x", nil)
+		[]repo.CommitWrite{{Path: "specs/x.md", Content: []byte("x")}}, nil, "x", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if who := fx.Origin.Git(t, "log", "-1", "--format=%an <%ae>", res.CommitSHA); who != "AEP <noreply@aep.dev>" {
 		t.Fatalf("author = %q, want the AEP default", who)
+	}
+}
+
+// A committer apart from the author is recorded as the commit's committer.
+func TestCommit_DistinctCommitter(t *testing.T) {
+	fx := NewFixture(t, seedFiles())
+	author := &repo.GitIdentity{Name: "Alice", Email: "alice@example.com"}
+	committer := &repo.GitIdentity{Name: "AEP Bot", Email: "bot@example.com"}
+	res, _, err := fx.Engine.Commit(context.Background(), fx.Ref,
+		[]repo.CommitWrite{{Path: "specs/x.md", Content: []byte("x")}}, nil, "x", author, committer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if who := fx.Origin.Git(t, "log", "-1", "--format=%an <%ae>|%cn <%ce>", res.CommitSHA); who != "Alice <alice@example.com>|AEP Bot <bot@example.com>" {
+		t.Fatalf("identities = %q", who)
 	}
 }
 
@@ -100,7 +115,7 @@ func TestCommit_StaleBaseShaIsAConflictAndAppliesNothing(t *testing.T) {
 			{Path: "specs/c.md", Content: []byte("c"), BaseSHA: stale},  // expected, absent
 		},
 		[]repo.CommitDelete{{Path: "specs/missing.md"}}, // must exist
-		"stale", nil)
+		"stale", nil, nil)
 	if !errors.Is(err, repo.ErrCommitConflict) {
 		t.Fatalf("err = %v, want ErrCommitConflict", err)
 	}
@@ -127,7 +142,7 @@ func TestCommit_DoesNotScaffold(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	cell := "component lunch-api service\ncomponent lunch-web web-application\n"
 	res, _, err := fx.Engine.Commit(context.Background(), fx.Ref,
-		[]repo.CommitWrite{{Path: "specs/design/design.cell", Content: []byte(cell)}}, nil, "cell", nil)
+		[]repo.CommitWrite{{Path: "specs/design/design.cell", Content: []byte(cell)}}, nil, "cell", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +156,7 @@ func TestCommit_IdenticalContentIsNoChange(t *testing.T) {
 	fx := NewFixture(t, map[string]string{"specs/a.md": "a1"})
 	tip := fx.Origin.HeadSHA(t)
 	res, _, err := fx.Engine.Commit(context.Background(), fx.Ref,
-		[]repo.CommitWrite{{Path: "specs/a.md", Content: []byte("a1"), BaseSHA: blobAt(t, fx, "specs/a.md")}}, nil, "same", nil)
+		[]repo.CommitWrite{{Path: "specs/a.md", Content: []byte("a1"), BaseSHA: blobAt(t, fx, "specs/a.md")}}, nil, "same", nil, nil)
 	if err != nil || res.Changed || res.CommitSHA != tip {
 		t.Fatalf("Commit = %+v, %v; want unchanged at %s", res, err, tip)
 	}
@@ -175,7 +190,7 @@ func TestCommit_RechecksPreconditionsOnCASRetry(t *testing.T) {
 			t.Cleanup(func() { repo.SetExecHook(fx.Engine, nil) })
 
 			res, conflicts, err := fx.Engine.Commit(ctx, fx.Ref,
-				[]repo.CommitWrite{{Path: "specs/a.md", Content: []byte("mine"), BaseSHA: base}}, nil, "mine", nil)
+				[]repo.CommitWrite{{Path: "specs/a.md", Content: []byte("mine"), BaseSHA: base}}, nil, "mine", nil, nil)
 			if tc.wantConflict {
 				if !errors.Is(err, repo.ErrCommitConflict) || len(conflicts) != 1 || conflicts[0].Path != "specs/a.md" {
 					t.Fatalf("Commit = %+v, %+v, %v; want one conflict on specs/a.md", res, conflicts, err)
@@ -215,5 +230,17 @@ func TestCheckPreconditions(t *testing.T) {
 				t.Fatalf("CheckPreconditions = %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// BlobSHA is git's blob object name.
+func TestBlobSHA(t *testing.T) {
+	// `git hash-object --stdin </dev/null`: the empty blob.
+	if got := repo.BlobSHA(nil); got != "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" {
+		t.Fatalf("BlobSHA(empty) = %s", got)
+	}
+	fx := NewFixture(t, map[string]string{"a.md": "hello\n"})
+	if got := repo.BlobSHA([]byte("hello\n")); got != fx.Origin.BlobSHA(t, "a.md") {
+		t.Fatalf("BlobSHA = %s, want git's %s", got, fx.Origin.BlobSHA(t, "a.md"))
 	}
 }
