@@ -1602,7 +1602,7 @@ container.
 | Failed to start | full page: **AE Studio couldn't start** · **Try again** · **Open Settings** — Settings stays reachable |
 | Onboarding's **Set up skills** step | waits inline: **Getting AE Studio ready…**; a failure shows **AE Studio couldn't start** in the step's error area, then *Your skills catalogue can't be set up until it does. You can retry now, or continue and run **Sync** from Settings → Skills later — agents won't have skills until it succeeds.*, with **Retry** and **Continue anyway** |
 | The overview track, when the status poll cannot read the spec | the spec leg, muted: **Spec status unavailable** — no version chip, no call to action; build and deploy keep their own lines |
-| The Spec view, while the poll cannot read the spec | inline beside the title, muted: **AE Studio is restarting — retrying…** — never a full-page hold |
+| The Spec view, while the poll cannot read the spec | inline beside the title, muted, by cause — never a full-page hold: AE Studio restarting, **AE Studio is restarting — retrying…**; GitHub not connected, **Connect GitHub to continue** (a link to Settings → Credentials); AE Studio misconfigured, **AE Studio is misconfigured — contact your administrator**. Only the restart is retried on the fast cadence |
 | Create project, GitHub not connected (`github_not_connected`) | a warning: **Connect GitHub to continue**, with **Connect GitHub** → Settings → Credentials |
 | Create project, AE Studio restarting (`ae_studio_unavailable`) | **AE Studio is restarting — try again**, with **Try again** |
 

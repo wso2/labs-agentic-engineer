@@ -581,8 +581,9 @@ func TestRepoNotReady_ZeroValueStages(t *testing.T) {
 	if st.Phase != "repo-cloning" {
 		t.Fatalf("phase = %q, want repo-cloning", st.Phase)
 	}
-	if st.Spec != (gen.SpecStage{}) {
-		t.Errorf("spec = %+v, want zero-valued", st.Spec)
+	// Zero-valued facts, but the required enum still carries a member (I-1).
+	if st.Spec != (gen.SpecStage{Availability: gen.SpecStageAvailabilityAvailable}) {
+		t.Errorf("spec = %+v, want zero-valued facts, availability available", st.Spec)
 	}
 	if st.Build.Status != "idle" || st.Build.Version != "" {
 		t.Errorf("build = %+v, want idle zero-valued", st.Build)

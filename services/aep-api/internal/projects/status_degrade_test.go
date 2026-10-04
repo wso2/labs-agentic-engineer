@@ -93,11 +93,15 @@ func projectServiceWithFake(t *testing.T, mut func(*aestudiotest.Fake)) *Service
 
 func TestProjectStatus_DegradesTo200(t *testing.T) {
 	t.Parallel()
-	for _, sentinel := range []error{
-		sourcecontrol.ErrAEStudioAbsent,
-		sourcecontrol.ErrAEStudioUnavailable,
-		sourcecontrol.ErrAEStudioMisconfigured, // Q-12: the same degrade
+	for _, tc := range []struct {
+		sentinel error
+		reason   gen.SpecStageUnavailableReason
+	}{
+		{sourcecontrol.ErrAEStudioAbsent, gen.SpecStageUnavailableReasonGithubNotConnected},
+		{sourcecontrol.ErrAEStudioUnavailable, gen.SpecStageUnavailableReasonAeStudioUnavailable},
+		{sourcecontrol.ErrAEStudioMisconfigured, gen.SpecStageUnavailableReasonAeStudioMisconfigured}, // Q-12: the same degrade
 	} {
+		sentinel := tc.sentinel
 		t.Run(sentinel.Error(), func(t *testing.T) {
 			t.Parallel()
 			svc := projectServiceWithFake(t, func(fk *aestudiotest.Fake) { fk.FailOrg("default", sentinel) })
@@ -105,8 +109,9 @@ func TestProjectStatus_DegradesTo200(t *testing.T) {
 			if err != nil || st.Spec.Availability != "unavailable" || st.Build.Status == "" {
 				t.Fatalf("st=%+v err=%v", st, err)
 			}
-			if want := (gen.SpecStage{Availability: gen.SpecStageAvailabilityUnavailable}); st.Spec != want {
-				t.Errorf("spec = %+v, want only availability unavailable (no git fact may be guessed)", st.Spec)
+			// The cause rides along, so the console can say what to do about it.
+			if want := (gen.SpecStage{Availability: gen.SpecStageAvailabilityUnavailable, UnavailableReason: tc.reason}); st.Spec != want {
+				t.Errorf("spec = %+v, want only availability unavailable + reason %s (no git fact may be guessed)", st.Spec, tc.reason)
 			}
 			// The delivery stages are intact; only the git-derived denominator
 			// is unknown.
@@ -131,7 +136,7 @@ func TestProjectStatus_AvailableOverThePod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Spec.Availability != gen.SpecStageAvailabilityAvailable || !st.Spec.Exists || st.Phase != "spec" {
+	if st.Spec.Availability != gen.SpecStageAvailabilityAvailable || st.Spec.UnavailableReason != "" || !st.Spec.Exists || st.Phase != "spec" {
 		t.Fatalf("spec = %+v phase=%q, want available, exists, phase spec", st.Spec, st.Phase)
 	}
 }
@@ -155,7 +160,8 @@ func TestProjectStatus_FingerprintUnavailableDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if st.Spec.Availability != gen.SpecStageAvailabilityUnavailable || st.Spec.DesignOutdated || st.Spec.Exists {
+	if st.Spec.Availability != gen.SpecStageAvailabilityUnavailable || st.Spec.UnavailableReason != gen.SpecStageUnavailableReasonAeStudioUnavailable ||
+		st.Spec.DesignOutdated || st.Spec.Exists {
 		t.Fatalf("spec = %+v, want unavailable with no git fact", st.Spec)
 	}
 	if st.Deploy.Components.Total != 2 {
@@ -172,5 +178,32 @@ func TestProjectStatus_OtherGitFailureStillFails(t *testing.T) {
 	})
 	if _, err := svc.GetProjectStatus(context.Background(), "default", "p"); err == nil {
 		t.Fatal("a non-AE-Studio git failure must fail the poll")
+	}
+}
+
+// I-1: the pre-ready answers (no repo, cloning, repo error) never read git, so
+// their spec facts are known-empty rather than unreadable — and the required
+// enum must carry a member on every answer, not "".
+func TestProjectStatus_PreReadyAnswersAreAvailable(t *testing.T) {
+	t.Parallel()
+	for _, row := range []*sourcecontrol.GitRepository{
+		nil,
+		{Status: "cloning"},
+		{Status: "error", ErrorMessage: "boom"},
+	} {
+		repoSvc := &fakeRepoSvc{GetRepoFunc: func(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+			return row, nil
+		}}
+		st, err := NewProjectService(nil, repoSvc, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web")
+		if err != nil {
+			t.Fatalf("status: %v", err)
+		}
+		if st.Spec.Availability != gen.SpecStageAvailabilityAvailable || st.Spec.UnavailableReason != "" {
+			t.Errorf("phase %q: spec = %+v, want availability available", st.Phase, st.Spec)
+		}
+	}
+	st, err := NewProjectService(nil, nil, nil, nil, nil).GetProjectStatus(context.Background(), "acme", "web")
+	if err != nil || st.Spec.Availability != gen.SpecStageAvailabilityAvailable {
+		t.Fatalf("nil repo service: spec = %+v err = %v, want availability available", st.Spec, err)
 	}
 }

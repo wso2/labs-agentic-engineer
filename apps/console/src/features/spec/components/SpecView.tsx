@@ -1099,7 +1099,8 @@ export function SpecView({ projectName }: { projectName: string }) {
   const publishedTag = tags.data?.latest;
   const hasDraftChanges = Boolean(tags.data?.specDirty);
   const isOffline = collab.status === "offline";
-  const specUnavailable = status.data?.spec.availability === "unavailable";
+  const specUnavailableReason =
+    status.data?.spec.availability === "unavailable" ? status.data.spec.unavailableReason : undefined;
 
   return (
     // oxygen-ui's PageContentInner (the direct parent of these children) has
@@ -1188,13 +1189,23 @@ export function SpecView({ projectName }: { projectName: string }) {
                   </Box>
                 </Tooltip>
               )}
-              {/* The status poll could not read the spec's git facts: the
-                  org's AE Studio is not answering (scenario 8.4). Inline and
-                  muted, never a hold — the poll retries on its own and the
-                  last committed version stays on screen. */}
-              {specUnavailable && (
+              {/* The status poll could not read the spec's git facts, and
+                  says why. Inline and muted, never a hold: the last committed
+                  version stays on screen. Only a restart recovers on its own
+                  (scenario 8.4); the other two name who acts. */}
+              {specUnavailableReason === "ae_studio_unavailable" && (
                 <Typography variant="body2" color="text.secondary" noWrap>
                   AE Studio is restarting — retrying…
+                </Typography>
+              )}
+              {specUnavailableReason === "github_not_connected" && (
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  <Link to="/settings/credentials">Connect GitHub to continue</Link>
+                </Typography>
+              )}
+              {specUnavailableReason === "ae_studio_misconfigured" && (
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  AE Studio is misconfigured — contact your administrator
                 </Typography>
               )}
             </Stack>

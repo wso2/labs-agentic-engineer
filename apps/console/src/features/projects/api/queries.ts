@@ -106,7 +106,14 @@ export function statusIsMoving(status: ProjectStatus): boolean {
     // Scoped to a project that actually has turn history, so an abandoned or
     // never-started one is not parked on the fast cadence forever: this poll
     // fans out to four backend sources, OpenChoreo included.
-    (status.spec.agent === "" && !status.spec.exists) ||
+    //
+    // Unavailable spec facts (AE Studio not answering) say nothing about the
+    // interview, so they are read by their cause instead: only a restart
+    // recovers on its own and earns the fast cadence; not connected and
+    // misconfigured wait on a person and settle to the idle one.
+    (status.spec.availability === "unavailable"
+      ? status.spec.unavailableReason === "ae_studio_unavailable"
+      : status.spec.agent === "" && !status.spec.exists) ||
     status.build.status === "running" ||
     status.deploy.status === "deploying" ||
     status.repoStatus === "pending" ||

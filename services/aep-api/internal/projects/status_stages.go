@@ -39,17 +39,27 @@ import (
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// specFactsUnavailable reports whether a git read failed because the org's AE
-// Studio cannot answer for its repositories right now: GitHub is not
+// specUnavailableReason answers why a git read failed when the cause is the
+// org's AE Studio being unable to answer for its repositories: GitHub is not
 // connected, the pod is not serving, or aep-api's own client is refused (Q-12).
-// The poll degrades on these (spec.availability = "unavailable", build and
-// deploy intact) rather than failing, because they are the org's state, not a
-// fault in this read, and the delivery stages still have true answers (05 §6).
-// Every other git failure still fails the poll.
-func specFactsUnavailable(err error) bool {
-	return errors.Is(err, sourcecontrol.ErrAEStudioAbsent) ||
-		errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) ||
-		errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured)
+// The poll degrades on these (spec.availability = "unavailable" with this
+// reason, build and deploy intact) rather than failing, because they are the
+// org's state, not a fault in this read, and the delivery stages still have
+// true answers (05 §6). "" for every other error, which still fails the poll.
+//
+// The reasons are named after the edge's codes for the same sentinels, so the
+// console speaks of one cause in one word; this maps a sentinel to a status
+// fact, not to HTTP (the edge's classifier stays the only HTTP map, Q-9).
+func specUnavailableReason(err error) gen.SpecStageUnavailableReason {
+	switch {
+	case errors.Is(err, sourcecontrol.ErrAEStudioAbsent):
+		return gen.SpecStageUnavailableReasonGithubNotConnected
+	case errors.Is(err, sourcecontrol.ErrAEStudioUnavailable):
+		return gen.SpecStageUnavailableReasonAeStudioUnavailable
+	case errors.Is(err, sourcecontrol.ErrAEStudioMisconfigured):
+		return gen.SpecStageUnavailableReasonAeStudioMisconfigured
+	}
+	return ""
 }
 
 // Stage status vocabularies (the contract enums).
@@ -238,6 +248,8 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		newestTurn  *spec.AgentTurn
 		deployVer   string
 		deployTotal int64
+		// unavailable is why the spec facts could not be read ("" when they were).
+		unavailable gen.SpecStageUnavailableReason
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	if s.specTurns != nil {
@@ -252,11 +264,12 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	g.Go(func() error {
 		var err error
 		snap, err = s.artifactSvc.StatusSnapshot(gctx, orgName, projectName)
-		switch {
-		case specFactsUnavailable(err):
+		if unavailable = specUnavailableReason(err); unavailable != "" {
 			// nil snap: the spec facts are unavailable (below).
 			snap = nil
 			return nil
+		}
+		switch {
 		case err != nil:
 			return fmt.Errorf("git snapshot: %w", err)
 		}
@@ -293,7 +306,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 			// strict join is for outages. Degrade to an unknown denominator
 			// instead of bricking every poll.
 			return nil
-		case specFactsUnavailable(err):
+		case specUnavailableReason(err) != "":
 			// AE Studio cannot answer for the repo: the denominator is
 			// unknown, the deploy stage's own facts still stand.
 			return nil
@@ -325,8 +338,8 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	if snap != nil && snap.HasDesign {
 		stale, err := s.designOutdated(ctx, orgName, projectName, snap.RequirementsFingerprint)
 		switch {
-		case specFactsUnavailable(err):
-			snap = nil
+		case specUnavailableReason(err) != "":
+			snap, unavailable = nil, specUnavailableReason(err)
 		case err != nil:
 			return err
 		default:
@@ -336,8 +349,12 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	agent := specAgentOf(s.specTurns, newestTurn)
 	if snap == nil {
 		slog.WarnContext(ctx, "project status: AE Studio cannot answer for the repo; spec facts unavailable",
-			"org", orgName, "project", projectName)
-		status.Spec = gen.SpecStage{Agent: agent, Availability: gen.SpecStageAvailabilityUnavailable}
+			"org", orgName, "project", projectName, "reason", unavailable)
+		status.Spec = gen.SpecStage{
+			Agent:             agent,
+			Availability:      gen.SpecStageAvailabilityUnavailable,
+			UnavailableReason: unavailable,
+		}
 	} else {
 		status.Spec = gen.SpecStage{
 			Exists:         snap.HasSpec,

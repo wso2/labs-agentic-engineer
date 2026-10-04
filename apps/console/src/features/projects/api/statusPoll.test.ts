@@ -38,6 +38,16 @@ function status(spec: Partial<ProjectStatus["spec"]>): ProjectStatus {
 }
 
 describe("statusIsMoving", () => {
+  // I-2: unavailable spec facts are read by their cause. Only a restart
+  // recovers on its own; the other two wait on a person, on the idle cadence.
+  it("keeps the fast cadence for a restarting AE Studio only", () => {
+    const unavailable = (unavailableReason: ProjectStatus["spec"]["unavailableReason"]) =>
+      status({ availability: "unavailable", agent: "", exists: false, ...(unavailableReason && { unavailableReason }) });
+    expect(statusIsMoving(unavailable("ae_studio_unavailable"))).toBe(true);
+    expect(statusIsMoving(unavailable("github_not_connected"))).toBe(false);
+    expect(statusIsMoving(unavailable("ae_studio_misconfigured"))).toBe(false);
+  });
+
   // A running turn is read from the AE Studio pod (useActiveTurn), not from
   // the status aggregate: `spec.agent` keeps only never-started | "" | failed.
   it("no longer reads spec.agent === 'working'", () => {

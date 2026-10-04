@@ -199,7 +199,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   query, or origin fetch. Any source failure fails the whole read (the console keeps last-good), with
   two carve-outs: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500;
   and the org's AE Studio being absent, unavailable or misconfigured (the snapshot, the deploy count or
-  the design-staleness baseline) answers 200 with `spec.availability = "unavailable"`, the git-derived
+  the design-staleness baseline) answers 200 with `spec.availability = "unavailable"` and `spec.unavailableReason` (the edge code of the cause), the git-derived
   spec facts and the flat hasSpec/hasDesign/specStatus/phase unset, build and deploy intact (05 §6).
 - **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
   and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a

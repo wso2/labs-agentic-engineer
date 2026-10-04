@@ -60,7 +60,7 @@ const mockSearch = vi.hoisted(() => ({
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => mockNavigate,
   useSearch: () => mockSearch.current,
-  Link: ({ children }: { children: React.ReactNode }) => <a>{children}</a>,
+  Link: ({ children, to }: { children: React.ReactNode; to?: string }) => <a href={to}>{children}</a>,
 }));
 
 // The Agent spec's Model panel reads the org's model connection. Stubbed like
@@ -129,6 +129,7 @@ beforeEach(() => {
   mockCollab = soloCollab();
   mockSpecAgent = "";
   mockSpecAvailability = "available";
+  mockSpecUnavailableReason = undefined;
   mockActiveTurn = null;
   mockSearch.current = {};
 });
@@ -247,6 +248,7 @@ const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
 let mockSpecAgent = "";
 let mockSpecAvailability: "available" | "unavailable" = "available";
+let mockSpecUnavailableReason: "github_not_connected" | "ae_studio_unavailable" | "ae_studio_misconfigured" | undefined;
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
   // `spec.agent` (#562) says how the last attempt ended (never-started, "",
@@ -259,6 +261,7 @@ vi.mock("../../projects/api/queries", () => ({
         agent: mockSpecAgent,
         designOutdated: false,
         availability: mockSpecAvailability,
+        unavailableReason: mockSpecUnavailableReason,
       },
     },
   }),
@@ -439,15 +442,46 @@ beforeEach(() => {
 // Scenario 8.4: the status poll answers but the spec's git facts are
 // unavailable while AE Studio rolls. The view says so inline and stays usable.
 describe("SpecView while AE Studio cannot answer for the repo", () => {
-  it("says AE Studio is restarting, inline, and only then", () => {
+  const RESTARTING = "AE Studio is restarting — retrying…";
+  const CONNECT = "Connect GitHub to continue";
+  const MISCONFIGURED = "AE Studio is misconfigured — contact your administrator";
+  const noFiles = () =>
     mockUseSpecFiles.mockReturnValue({ data: [], isPending: false, isError: false, error: null, refetch: vi.fn() });
-    const { unmount } = render(<SpecView projectName="proj1" />);
-    expect(screen.queryByText("AE Studio is restarting — retrying…")).not.toBeInTheDocument();
-    unmount();
 
-    mockSpecAvailability = "unavailable";
+  it("says nothing while the spec facts read", () => {
+    noFiles();
     render(<SpecView projectName="proj1" />);
-    expect(screen.getByText("AE Studio is restarting — retrying…")).toBeInTheDocument();
+    for (const copy of [RESTARTING, CONNECT, MISCONFIGURED]) {
+      expect(screen.queryByText(copy)).not.toBeInTheDocument();
+    }
+  });
+
+  it("says AE Studio is restarting while it rolls", () => {
+    noFiles();
+    mockSpecAvailability = "unavailable";
+    mockSpecUnavailableReason = "ae_studio_unavailable";
+    render(<SpecView projectName="proj1" />);
+    expect(screen.getByText(RESTARTING)).toBeInTheDocument();
+    expect(screen.queryByText(CONNECT)).not.toBeInTheDocument();
+  });
+
+  // Not connected never recovers by waiting: the line is the way to fix it.
+  it("sends a disconnected org to Settings → Credentials, without promising a retry", () => {
+    noFiles();
+    mockSpecAvailability = "unavailable";
+    mockSpecUnavailableReason = "github_not_connected";
+    render(<SpecView projectName="proj1" />);
+    expect(screen.getByRole("link", { name: CONNECT })).toHaveAttribute("href", "/settings/credentials");
+    expect(screen.queryByText(RESTARTING)).not.toBeInTheDocument();
+  });
+
+  it("names the operator for a misconfigured AE Studio", () => {
+    noFiles();
+    mockSpecAvailability = "unavailable";
+    mockSpecUnavailableReason = "ae_studio_misconfigured";
+    render(<SpecView projectName="proj1" />);
+    expect(screen.getByText(MISCONFIGURED)).toBeInTheDocument();
+    expect(screen.queryByText(RESTARTING)).not.toBeInTheDocument();
   });
 });
 

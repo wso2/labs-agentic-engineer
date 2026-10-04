@@ -7395,6 +7395,19 @@ components:
           - available
           - unavailable
           type: string
+        unavailableReason:
+          description: >-
+            Why the spec facts are unavailable; present only when `availability` is `unavailable`,
+            and named after the edge's error codes. `github_not_connected` — the org has no GitHub
+            connection (a person connects it in Settings → Credentials); `ae_studio_unavailable` —
+            AE Studio is coming up or rolling and the poll recovers on its own;
+            `ae_studio_misconfigured` — aep-api's own AE Studio client is refused (an operator
+            fixes it).
+          enum:
+          - github_not_connected
+          - ae_studio_unavailable
+          - ae_studio_misconfigured
+          type: string
         design:
           description: Design files exist for the spec (gates the Spec view's design button).
           type: boolean

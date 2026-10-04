@@ -311,9 +311,9 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	// Give the project its cell namespace in every environment its pipeline
 	// promotes through, before anything else is attached to it.
 	//
-	// FATAL, and compensating — the only other failure in this function that is
-	// (the repo provisioning failure below). Both share a shape: retrying the create
-	// cannot fix them, because OpenChoreo now answers 409. Leaving the project
+	// FATAL, and compensating, like the project-type wait, the write-target
+	// check and the repo provisioning failure below. They share a shape:
+	// retrying the create cannot fix them, because OpenChoreo now answers 409. Leaving the project
 	// in place instead would leave a project that looks healthy in every status
 	// it reports and cannot deploy a single component.
 	//
@@ -606,6 +606,9 @@ func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName str
 	status := &gen.ProjectStatus{}
 	status.Build.Status = buildIdle
 	status.Deploy.Status = deployNone
+	// Known-empty until the repo is ready, not unreadable: the required enum
+	// says so on every answer, including the no-repo / cloning / error ones.
+	status.Spec.Availability = gen.SpecStageAvailabilityAvailable
 
 	// Check git repo
 	if s.repoSvc == nil {

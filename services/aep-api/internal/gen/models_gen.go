@@ -1105,6 +1105,27 @@ func (e SpecStageAvailability) Valid() bool {
 	}
 }
 
+// Defines values for SpecStageUnavailableReason.
+const (
+	SpecStageUnavailableReasonAeStudioMisconfigured SpecStageUnavailableReason = "ae_studio_misconfigured"
+	SpecStageUnavailableReasonAeStudioUnavailable   SpecStageUnavailableReason = "ae_studio_unavailable"
+	SpecStageUnavailableReasonGithubNotConnected    SpecStageUnavailableReason = "github_not_connected"
+)
+
+// Valid indicates whether the value is a known member of the SpecStageUnavailableReason enum.
+func (e SpecStageUnavailableReason) Valid() bool {
+	switch e {
+	case SpecStageUnavailableReasonAeStudioMisconfigured:
+		return true
+	case SpecStageUnavailableReasonAeStudioUnavailable:
+		return true
+	case SpecStageUnavailableReasonGithubNotConnected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskDetailExecutorClass.
 const (
 	TaskDetailExecutorClassCoding     TaskDetailExecutorClass = "coding"
@@ -3008,12 +3029,18 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
+	// UnavailableReason Why the spec facts are unavailable; present only when `availability` is `unavailable`, and named after the edge's error codes. `github_not_connected` — the org has no GitHub connection (a person connects it in Settings → Credentials); `ae_studio_unavailable` — AE Studio is coming up or rolling and the poll recovers on its own; `ae_studio_misconfigured` — aep-api's own AE Studio client is refused (an operator fixes it).
+	UnavailableReason SpecStageUnavailableReason `json:"unavailableReason,omitempty"`
+
 	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
 
 // SpecStageAvailability Whether the git-derived facts below could be read (05 §6). `unavailable` — the org's AE Studio could not answer for the repository (GitHub not connected, AE Studio restarting or misconfigured): exists, version, dirty, design and designOutdated are then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus / phase fields are left unset. The build and deploy stages and `agent` are unaffected, and the poll still answers 200. The console renders the spec leg as "Spec status unavailable".
 type SpecStageAvailability string
+
+// SpecStageUnavailableReason Why the spec facts are unavailable; present only when `availability` is `unavailable`, and named after the edge's error codes. `github_not_connected` — the org has no GitHub connection (a person connects it in Settings → Credentials); `ae_studio_unavailable` — AE Studio is coming up or rolling and the poll recovers on its own; `ae_studio_misconfigured` — aep-api's own AE Studio client is refused (an operator fixes it).
+type SpecStageUnavailableReason string
 
 // StatusMsg defines model for StatusMsg.
 type StatusMsg struct {

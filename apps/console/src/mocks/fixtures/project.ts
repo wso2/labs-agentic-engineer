@@ -144,7 +144,7 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
   // connected): the poll still answers, the spec facts are unknown, and v1
   // stays built and live (05 §6).
   "spec-unavailable": {
-    spec: { ...noSpec, availability: "unavailable" },
+    spec: { ...noSpec, availability: "unavailable", unavailableReason: "ae_studio_unavailable" },
     build: { version: "v1", status: "succeeded" },
     deploy: {
       version: "v1",
