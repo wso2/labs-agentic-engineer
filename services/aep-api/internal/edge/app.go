@@ -30,7 +30,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
 // internalV1 is the path root for the BFF's internal / server-to-server
@@ -51,11 +50,6 @@ type AppParams struct {
 	// (internal/api/handlers_*.go — the generated router serves the committed
 	// contract, packages/contracts/api/v1). main.go fills it.
 	Deps Deps
-
-	// Controllers still wired as raw handlers: WebhookController (GitHub
-	// webhook HMAC). The runner callbacks are the internal contract-first
-	// route group (InternalDeps).
-	WebhookController webhook.WebhookController
 
 	// InternalDeps carries the services + authorizers for the internal S2S
 	// route group (runner callbacks, SRE handoff), served contract-first from
@@ -122,7 +116,7 @@ type AppParams struct {
 // The console's nginx proxy strips the /aep-api-service prefix before
 // forwarding, so routes are registered at root level.
 func NewHandler(params AppParams) http.Handler {
-	// Every route group (public / internal / webhook / dev + health) is a row in
+	// Every route group (public / internal / dev + health) is a row in
 	// the mount table, routes.go: the whole request boundary on one screen.
 	mux := mountRoutes(params)
 

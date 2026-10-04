@@ -277,7 +277,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	credResolver := secrets.NewOrgResolver(db, credStore, minter)
 
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
-	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
+	credService := organization.NewCredentialService(orgCredRepo, credStore, minter)
 	// Builds clone with the org's github-pat SecretReference, read from its
 	// org_secrets row: aep-api passes the reference name, never the value.
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)
@@ -679,13 +679,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return authn.WithServiceIdentity(ctx)
 	}
 
-	// Webhook receiver wiring. The verifier's HMAC secrets come from the
-	// per-org credential record (via git-service).
-	secretProvider := webhook.NewGitServiceSecretProvider(credService, 30*time.Second)
-	var routingLookup webhook.OcOrgIDLookup = credService
-	webhookVerifier := webhook.NewVerifier(secretProvider).
-		WithRefetchLimiter(webhook.NewRefetchLimiter(1, 5))
-	routingCache := webhook.NewRoutingCache(60 * time.Second)
 	deliveryStore := sourcecontrol.NewDeliveryStore(db)
 	webhookRouter := webhook.NewRouter()
 
@@ -803,10 +796,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// incident run over it.
 	taskCommands := task.NewCommands(componentService, eventcoreAdopter{events: eventPlane})
 	// One Ingestor runs every accepted delivery's tail (persist, claim, ack,
-	// detached dispatch): the AE Studio tools pod's ingest-webhook-event, and
-	// the GitHub App receiver until it is retired.
+	// detached dispatch): the AE Studio tools pod's ingest-webhook-event.
 	webhookIngestor := webhook.NewIngestor(deliveryStore, webhookRouter, repoRepo)
-	webhookCtrl := webhook.NewWebhookController(webhookVerifier, webhookIngestor, routingLookup, routingCache)
 
 	// The reconcile sweep (missed webhooks / disaster recovery) + the exec
 	// watcher (OC WorkflowRun → execution-row outcomes + build terminals).
@@ -905,11 +896,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// The finished-turn ledger the pod hands its turns to; the status
 			// poll, the build gate's design baseline and kickoff read it.
 			TurnLedger: turnRepo,
-			// The pod's verified GitHub hook deliveries, into the same
-			// ledger and handlers as the receiver's.
+			// The pod's verified GitHub hook deliveries.
 			WebhookIngestor: webhookIngestor,
 		},
-		WebhookController:   webhookCtrl,
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,

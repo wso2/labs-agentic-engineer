@@ -145,7 +145,6 @@ func (f fakeGitHubCreds) UpdateColumns(context.Context, string, map[string]any) 
 func (f fakeGitHubCreds) ListActiveRows(context.Context) ([]organization.OrgCredential, error) {
 	return nil, nil
 }
-func (f fakeGitHubCreds) OrgIDByRepoURL(context.Context, string) (string, error) { return "", nil }
 func (f fakeGitHubCreds) Tx(context.Context, func(organization.OrgCredentialTx) error) error {
 	return nil
 }

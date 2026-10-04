@@ -135,8 +135,6 @@ func Load() (Config, error) {
 		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
 		GitHubCommitterName:         r.readOptionalString("GIT_COMMITTER_NAME", "AEP Bot"),
 		GitHubCommitterEmail:        r.readOptionalString("GIT_COMMITTER_EMAIL", "bot@aep.dev"),
-		WebhookDeliveryURL:          r.readOptionalString("GITHUB_WEBHOOK_DELIVERY_URL", ""),
-		WebhookHMACSecret:           r.readOptionalString("GITHUB_WEBHOOK_SECRET", ""),
 		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),

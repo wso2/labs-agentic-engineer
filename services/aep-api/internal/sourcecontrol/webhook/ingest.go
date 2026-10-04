@@ -155,3 +155,11 @@ func (i *Ingestor) accept(ctx context.Context, org, deliveryID, event string, bo
 	})
 	return IngestDispatched, nil
 }
+
+func actionFromPayload(body []byte) string {
+	var withAction struct {
+		Action string `json:"action"`
+	}
+	_ = json.Unmarshal(body, &withAction)
+	return withAction.Action
+}

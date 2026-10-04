@@ -46,13 +46,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // credAESKey is a fixed 32-byte AES-256 key for the test credential store.
 const credAESKey = "0123456789abcdef0123456789abcdef"
-
-const envWebhookSecret = "platform-webhook-secret"
 
 // newCredentialStore builds the real DB-backed, AES-GCM credential store.
 func newCredentialStore(t testing.TB, db *gorm.DB) secrets.CredentialStore {
@@ -74,7 +71,7 @@ func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.Cred
 	if err != nil {
 		t.Fatalf("NewAppTokenMinter: %v", err)
 	}
-	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, envWebhookSecret).WithGitHubAPIBase(gh.URL)
+	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter).WithGitHubAPIBase(gh.URL)
 	return svc, store
 }
 
@@ -149,10 +146,10 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 		t.Fatal("lastValidatedAt must be stamped on connect")
 	}
 
-	// webhook_secrets[0] must be seeded from the platform env secret so per-repo
-	// hooks (signed with the same value) verify.
+	// webhook_secrets is seeded non-empty (the CHECK needs it) until phase 6
+	// drops the column.
 	row := getRow(t, db, "acme")
-	if len(row.WebhookSecrets) != 1 || row.WebhookSecrets[0].Secret != envWebhookSecret {
+	if len(row.WebhookSecrets) != 1 || row.WebhookSecrets[0].Secret == "" {
 		t.Fatalf("webhook_secrets seed: %+v", row.WebhookSecrets)
 	}
 
@@ -306,146 +303,6 @@ func TestDisconnect_Idempotent_DB(t *testing.T) {
 	}
 	if row := getRow(t, db, "acme"); row.Status != "disconnected" {
 		t.Fatalf("status: %q", row.Status)
-	}
-}
-
-// ============================================================================
-// Webhook secrets
-// ============================================================================
-
-func TestWebhookSecrets_RoundTrip_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, _ := newCredSvcDB(t, db, gh)
-	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-
-	// Seeded secret is returned.
-	got, err := svc.GetWebhookSecrets(ctx, "acme")
-	if err != nil || len(got) != 1 || string(got[0]) != envWebhookSecret {
-		t.Fatalf("initial secrets: %q err %v", got, err)
-	}
-
-	// Append prepends (current-first).
-	if err := svc.AppendWebhookSecret(ctx, "acme", "rotated"); err != nil {
-		t.Fatalf("append: %v", err)
-	}
-	got, _ = svc.GetWebhookSecrets(ctx, "acme")
-	if len(got) != 2 || string(got[0]) != "rotated" || string(got[1]) != envWebhookSecret {
-		t.Fatalf("after append: %q", got)
-	}
-
-	// Remove drops the named one.
-	if err := svc.RemoveWebhookSecret(ctx, "acme", envWebhookSecret); err != nil {
-		t.Fatalf("remove: %v", err)
-	}
-	got, _ = svc.GetWebhookSecrets(ctx, "acme")
-	if len(got) != 1 || string(got[0]) != "rotated" {
-		t.Fatalf("after remove: %q", got)
-	}
-
-	// Cannot drop the last secret.
-	err = svc.RemoveWebhookSecret(ctx, "acme", "rotated")
-	var ce *organization.ConflictError
-	if !errors.As(err, &ce) {
-		t.Fatalf("dropping last secret must ConflictError, got %#v", err)
-	}
-}
-
-func TestWebhookSecrets_AppModeConflict_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-	insertAppRow(t, db, "acme", 555, "active", nil)
-
-	// Rotation is PAT-only — App rows 409.
-	var ce *organization.ConflictError
-	if err := svc.AppendWebhookSecret(ctx, "acme", "x"); !errors.As(err, &ce) {
-		t.Fatalf("append on app row must ConflictError, got %#v", err)
-	}
-	if err := svc.RemoveWebhookSecret(ctx, "acme", "x"); !errors.As(err, &ce) {
-		t.Fatalf("remove on app row must ConflictError, got %#v", err)
-	}
-
-	// GetWebhookSecrets on an App row goes through the platform-secret loader,
-	// which has no OpenBao wired here → "no app webhook secrets configured".
-	if _, err := svc.GetWebhookSecrets(ctx, "acme"); !errors.As(err, &ce) {
-		t.Fatalf("app webhook secrets w/o platform config must ConflictError, got %#v", err)
-	}
-}
-
-func TestWebhookSecrets_MissingRow_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-	var nfe *organization.NotFoundError
-	if err := svc.AppendWebhookSecret(ctx, "ghost", "x"); !errors.As(err, &nfe) {
-		t.Fatalf("append on missing row must NotFoundError, got %#v", err)
-	}
-	if err := svc.RemoveWebhookSecret(ctx, "ghost", "x"); !errors.As(err, &nfe) {
-		t.Fatalf("remove on missing row must NotFoundError, got %#v", err)
-	}
-}
-
-// ============================================================================
-// Routing lookups (used by the webhook receiver)
-// ============================================================================
-
-func TestOrgIDByInstallationID_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-	insertAppRow(t, db, "acme", 909, "active", nil)
-
-	org, err := svc.OrgIDByInstallationID(ctx, 909)
-	if err != nil || org != "acme" {
-		t.Fatalf("lookup: org=%q err=%v", org, err)
-	}
-	var nfe *organization.NotFoundError
-	if _, err := svc.OrgIDByInstallationID(ctx, 111111); !errors.As(err, &nfe) {
-		t.Fatalf("absent install must NotFoundError, got %#v", err)
-	}
-}
-
-func TestOrgIDByRepoFullName_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
-
-	// Canonical clone URL for acme/web.
-	if err := db.Create(&sourcecontrol.GitRepository{OrgID: "acme", ProjectID: "web", RepoURL: "https://github.com/acme-org/web"}).Error; err != nil {
-		t.Fatalf("seed repo: %v", err)
-	}
-	// A .git-suffixed clone URL for a second repo.
-	if err := db.Create(&sourcecontrol.GitRepository{OrgID: "globex", ProjectID: "svc", RepoURL: "https://github.com/globex-org/svc.git"}).Error; err != nil {
-		t.Fatalf("seed repo 2: %v", err)
-	}
-	// A same-suffix repo hosted elsewhere — must NOT match "acme-org/web"
-	// (the lookup is anchored on host+owner+repo, not an unanchored LIKE).
-	if err := db.Create(&sourcecontrol.GitRepository{OrgID: "evil", ProjectID: "x", RepoURL: "https://evil.example.com/acme-org/web"}).Error; err != nil {
-		t.Fatalf("seed repo 3: %v", err)
-	}
-
-	if org, err := svc.OrgIDByRepoFullName(ctx, "acme-org/web"); err != nil || org != "acme" {
-		t.Fatalf("exact match: org=%q err=%v", org, err)
-	}
-	if org, err := svc.OrgIDByRepoFullName(ctx, "globex-org/svc"); err != nil || org != "globex" {
-		t.Fatalf(".git match: org=%q err=%v", org, err)
-	}
-
-	var nfe *organization.NotFoundError
-	if _, err := svc.OrgIDByRepoFullName(ctx, "nobody/nope"); !errors.As(err, &nfe) {
-		t.Fatalf("absent repo must NotFoundError, got %#v", err)
-	}
-	if _, err := svc.OrgIDByRepoFullName(ctx, ""); !errors.As(err, &nfe) {
-		t.Fatalf("empty repo must NotFoundError, got %#v", err)
 	}
 }
 

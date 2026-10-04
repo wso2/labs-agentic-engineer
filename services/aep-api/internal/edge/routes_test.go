@@ -71,7 +71,7 @@ func TestRouteTable(t *testing.T) {
 	}
 	for _, p := range []string{
 		"GET /healthz", "GET /readyz", "GET /auth/external/jwks.json",
-		"POST /api/v1/webhooks/github", "/api/",
+		"/api/",
 		"/internal/v1/",
 		"POST /_dev/v1/secret-ref-resync",
 	} {
@@ -79,8 +79,8 @@ func TestRouteTable(t *testing.T) {
 			t.Errorf("mount table lacks %q", p)
 		}
 	}
-	if len(got) != 7 {
-		t.Errorf("mount table has %d rows, want 7", len(got))
+	if len(got) != 6 {
+		t.Errorf("mount table has %d rows, want 6", len(got))
 	}
 	// The SRE handoff is an internal caller (03 §1): /api/ admits user JWTs only.
 	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {

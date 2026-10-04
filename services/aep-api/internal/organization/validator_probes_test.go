@@ -30,7 +30,7 @@ import (
 // probeCredSvc is the credential service the probes delegate their row
 // writes to; ProbePAT itself reads nothing from it.
 func probeCredSvc() *organization.CredentialService {
-	return organization.NewCredentialService(nil, nil, nil, "")
+	return organization.NewCredentialService(nil, nil, nil)
 }
 
 func TestProbePAT_UsesIdentityAndSkipsWhenUnavailable(t *testing.T) {

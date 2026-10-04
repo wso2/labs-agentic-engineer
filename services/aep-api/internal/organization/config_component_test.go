@@ -62,7 +62,6 @@ import (
 const (
 	configPath   = "/api/v1/config"
 	configAESKey = "0123456789abcdef0123456789abcdef"
-	configEnvSec = "platform-webhook-secret"
 	goodAnthKey  = "sk-ant-api03-CONFIGtestKeyABCDEFGHIJKLmnop"
 	goodAnthKey2 = "sk-ant-api03-SECONDkeyZYXWVUTSRQPonmlk9999"
 	platformIss  = "http://platform.test/issuer"
@@ -231,7 +230,7 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes [
 	if !guarded {
 		conns.WithProbeClient(model.client())
 	}
-	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec).WithGitHubAPIBase(gh.URL)
+	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 

@@ -60,34 +60,22 @@ type CredentialService struct {
 	// (composition-root behavior when SecretsProvider is nil).
 	secretRefWriter *SecretRefWriter
 
-	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT
-	// connect path uses this value when seeding `webhook_secrets[0]` on a
-	// fresh or cross-mode-reseeded row so the per-repo webhook (which the
-	// webhook feature registers with the same env value) verifies
-	// against it. Rotation lands by appending a new entry via the
-	// AppendWebhookSecret route. Empty in tests.
-	envWebhookSecret string
-
 	httpClient *http.Client
 }
 
 // NewCredentialService constructs the service. db, store, minter must be
 // non-nil. githubAPI may be empty (defaults to api.github.com).
-// envWebhookSecret is the GITHUB_WEBHOOK_SECRET — used as the seed value
-// for fresh PAT rows and cross-mode reseeds.
 func NewCredentialService(
 	repo OrgCredentialRepository,
 	store secrets.CredentialStore,
 	minter *secrets.AppTokenMinter,
-	envWebhookSecret string,
 ) *CredentialService {
 	return &CredentialService{
-		repo:             repo,
-		store:            store,
-		minter:           minter,
-		envWebhookSecret: envWebhookSecret,
-		githubAPI:        "https://api.github.com",
-		httpClient:       &http.Client{Timeout: 30 * time.Second},
+		repo:       repo,
+		store:      store,
+		minter:     minter,
+		githubAPI:  "https://api.github.com",
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

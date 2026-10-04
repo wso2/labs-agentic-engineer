@@ -97,17 +97,13 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 	}
 
 	if !hadRow {
-		// CREATE — use the platform's GITHUB_WEBHOOK_SECRET so per-repo
-		// webhook registrations (which sign with the same env value) verify
-		// against this row's secret list. Fall back to a fresh random value
-		// only if env is unset (test mode).
-		secret := s.envWebhookSecret
-		if secret == "" {
-			gen, err := generateRandomHex(32)
-			if err != nil {
-				return nil, fmt.Errorf("connect: gen webhook secret: %w", err)
-			}
-			secret = gen
+		// CREATE — seed webhook_secrets with a random value. Nothing verifies
+		// against it any more (the AE Studio pod owns delivery verification);
+		// the secrets_shape_per_kind CHECK still wants a non-empty list for a
+		// user-pat row, until the column is dropped (phase 6).
+		secret, err := generateRandomHex(32)
+		if err != nil {
+			return nil, fmt.Errorf("connect: gen webhook secret: %w", err)
 		}
 		row := OrgCredential{
 			OcOrgID:         ocOrgID,
@@ -157,20 +153,11 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 	}
 	// If switching from App → PAT, the prior row had webhook_secrets=NULL
 	// (the secrets_shape_per_kind CHECK requires NOT NULL with array_length>=1
-	// for user-pat). Seed using the platform's GITHUB_WEBHOOK_SECRET so the
-	// per-repo hooks (registered by the webhook feature against the
-	// same env value) verify against it.
+	// for user-pat). Seed a random value to keep the constraint satisfied.
 	if existing.Kind == "app-installation" {
-		secret := s.envWebhookSecret
-		if secret == "" {
-			// No env secret available — fall back to a fresh random value.
-			// PAT-mode webhooks may not verify against pre-existing repos in
-			// this case, but we keep the constraint satisfied.
-			gen, sErr := generateRandomHex(32)
-			if sErr != nil {
-				return nil, fmt.Errorf("connect: generate webhook secret: %w", sErr)
-			}
-			secret = gen
+		secret, sErr := generateRandomHex(32)
+		if sErr != nil {
+			return nil, fmt.Errorf("connect: generate webhook secret: %w", sErr)
 		}
 		updates["webhook_secrets"] = WebhookSecrets{{Secret: secret, AddedAt: now}}
 	}

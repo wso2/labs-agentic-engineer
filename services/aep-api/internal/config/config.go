@@ -207,11 +207,6 @@ type Config struct {
 	GitHubCommitterName  string
 	GitHubCommitterEmail string
 
-	// WebhookDeliveryURL is the URL the platform registers on each repo.
-	WebhookDeliveryURL string
-	// WebhookHMACSecret is the HMAC key for inbound webhook validation.
-	WebhookHMACSecret string
-
 	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
 	// used to encrypt per-org credentials at rest in org_secrets.
 	CredentialEncryptionKey string

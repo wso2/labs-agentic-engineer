@@ -48,13 +48,6 @@ type OrgCredentialRepository interface {
 	UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error
 	// ListActiveRows returns every row in 'active' or 'suspended' status.
 	ListActiveRows(ctx context.Context) ([]OrgCredential, error)
-	// OrgIDByRepoURL resolves the org_id that owns the given GitHub repo
-	// full name ("owner/repo") by matching git_repositories.repo_url against
-	// the canonical clone URL (with and without a .git suffix), anchored on
-	// host+owner+repo. Returns "" when no row matches. The lookup is
-	// deliberately anchored — an unanchored LIKE would route a webhook to
-	// the wrong org.
-	OrgIDByRepoURL(ctx context.Context, fullName string) (string, error)
 
 	// Tx begins a transaction, runs fn, and commits on nil / rolls back on
 	// error. fn holds the advisory lock (via OrgCredentialTx.AdvisoryLock)
@@ -153,27 +146,6 @@ func (r *orgCredentialRepository) ListActiveRows(ctx context.Context) ([]OrgCred
 		}
 	}
 	return rows, nil
-}
-
-func (r *orgCredentialRepository) OrgIDByRepoURL(ctx context.Context, fullName string) (string, error) {
-	// Match the canonical clone URL EXACTLY, not with an unanchored
-	// `LIKE '%/owner/repo'`. git_repositories stores the canonical
-	// `https://github.com/<owner>/<repo>` (optionally `.git`); match both
-	// exact shapes, anchored on host+owner+repo. No `LIKE`, no leading wildcard.
-	var row struct {
-		OrgID string `gorm:"column:org_id"`
-	}
-	canonical := "https://github.com/" + fullName
-	err := r.db.WithContext(ctx).
-		Table("git_repositories").
-		Select("org_id").
-		Where("repo_url = ? OR repo_url = ?", canonical, canonical+".git").
-		Limit(1).
-		Scan(&row).Error
-	if err != nil {
-		return "", err
-	}
-	return row.OrgID, nil
 }
 
 func (r *orgCredentialRepository) Tx(ctx context.Context, fn func(tx OrgCredentialTx) error) error {

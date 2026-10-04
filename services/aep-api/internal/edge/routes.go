@@ -19,7 +19,6 @@ package edge
 import (
 	"net/http"
 
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
 // route is one row of aep-api's mount table: a ServeMux pattern, who calls
@@ -49,10 +48,6 @@ func routes(p AppParams) []route {
 		{"GET /readyz", "kubelet", "none", readyz()},
 		// Goes with task-token minting (phase 5).
 		{"GET /auth/external/jwks.json", "verifiers of BFF-minted tokens", "none", taskTokenJWKS(p.Deps.TaskTokens)},
-		// Removed in phase 4, when webhooks reach ae-studio-tools. Outside the
-		// /api/ user-JWT chain via its more specific pattern; the controller
-		// authenticates the delivery by HMAC.
-		{"POST /api/v1/webhooks/github", "GitHub (smee locally)", "HMAC in the controller", webhookReceiver(p.WebhookController)},
 		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
 		// One mount: the inner mux registers full paths (raw MCP routes and the
 		// generated ops), so a path it does not name 404s.
@@ -70,15 +65,4 @@ func mountRoutes(p AppParams) *http.ServeMux {
 		}
 	}
 	return mux
-}
-
-// webhookReceiver is the inbound GitHub delivery receiver, or nil when no
-// controller is wired. One path serves both topologies: in cloud the
-// gateway's webhook endpoint forwards to it verbatim, locally smee-client
-// relays to it.
-func webhookReceiver(c webhook.WebhookController) http.Handler {
-	if c == nil {
-		return nil
-	}
-	return http.HandlerFunc(c.Receive)
 }
