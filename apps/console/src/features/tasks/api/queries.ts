@@ -19,7 +19,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../../api/client";
 import { taskKeys } from "./keys";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, retryAfterMs } from "../../../api/errors";
 
 // This read is GitHub-backed, so it is priced differently from the DB-only run
 // reads: it polls ONLY while a run is live, and the caller says when that is.
@@ -48,7 +48,7 @@ export function useAllTasks(
   return useQuery({
     queryKey: taskKeys.list(projectName, tag),
     queryFn: async () => {
-      const { data, error } = await client.GET(
+      const { data, error, response } = await client.GET(
         "/projects/{projectName}/tasks",
         {
           params: {
@@ -58,7 +58,7 @@ export function useAllTasks(
         },
       );
       if (error || data === undefined) {
-        throw new Error(apiErrorMessage(error, "Failed to load tasks"));
+        throw new ApiRequestError(error, "Failed to load tasks", { retryAfterMs: retryAfterMs(response) });
       }
       return data ?? [];
     },
@@ -84,12 +84,13 @@ export function useTask(
   return useQuery({
     queryKey: taskKeys.detail(projectName, issueNumber),
     queryFn: async () => {
-      const { data, error } = await client.GET(
+      const { data, error, response } = await client.GET(
         "/projects/{projectName}/tasks/{issueNumber}",
         { params: { path: { projectName, issueNumber } } },
       );
       if (error || data === undefined) {
-        throw new Error(apiErrorMessage(error, "Failed to load the task"));
+        // Coded, so the query client paces a restarting AE Studio (api/retry.ts).
+        throw new ApiRequestError(error, "Failed to load the task", { retryAfterMs: retryAfterMs(response) });
       }
       return data;
     },

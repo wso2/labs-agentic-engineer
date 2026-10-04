@@ -1601,6 +1601,10 @@ container.
 | Restarting after a settings change | a banner above the page: **AE Studio is restarting…** — the console stays usable |
 | Failed to start | full page: **AE Studio couldn't start** · **Try again** · **Open Settings** — Settings stays reachable |
 | Onboarding's **Set up skills** step | waits inline: **Getting AE Studio ready…**; a failure shows **AE Studio couldn't start** in the step's error area, then *Your skills catalogue can't be set up until it does. You can retry now, or continue and run **Sync** from Settings → Skills later — agents won't have skills until it succeeds.*, with **Retry** and **Continue anyway** |
+| The overview track, when the status poll cannot read the spec | the spec leg, muted: **Spec status unavailable** — no version chip, no call to action; build and deploy keep their own lines |
+| The Spec view, while the poll cannot read the spec | inline beside the title, muted: **AE Studio is restarting — retrying…** — never a full-page hold |
+| Create project, GitHub not connected (`github_not_connected`) | a warning: **Connect GitHub to continue**, with **Connect GitHub** → Settings → Credentials |
+| Create project, AE Studio restarting (`ae_studio_unavailable`) | **AE Studio is restarting — try again**, with **Try again** |
 
 ## Resources
 

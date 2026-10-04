@@ -128,6 +128,7 @@ vi.mock("../../agent-chat/api/useActiveTurn", () => ({
 beforeEach(() => {
   mockCollab = soloCollab();
   mockSpecAgent = "";
+  mockSpecAvailability = "available";
   mockActiveTurn = null;
   mockSearch.current = {};
 });
@@ -245,6 +246,7 @@ vi.mock("@aep/ui-design-view", () => ({
 const mockMutateAsync = vi.fn();
 const mockPreflightRefetch = vi.fn();
 let mockSpecAgent = "";
+let mockSpecAvailability: "available" | "unavailable" = "available";
 vi.mock("../../projects/api/queries", () => ({
   useProject: () => ({ data: { displayName: "Test Project" } }),
   // `spec.agent` (#562) says how the last attempt ended (never-started, "",
@@ -256,6 +258,7 @@ vi.mock("../../projects/api/queries", () => ({
       spec: {
         agent: mockSpecAgent,
         designOutdated: false,
+        availability: mockSpecAvailability,
       },
     },
   }),
@@ -433,6 +436,21 @@ beforeEach(() => {
 // Opening the spec before the interview has asked anything (#562). The kickoff
 // fires at project creation, so this is a real arrival — the user clicks
 // through from the overview while the agent is still writing.
+// Scenario 8.4: the status poll answers but the spec's git facts are
+// unavailable while AE Studio rolls. The view says so inline and stays usable.
+describe("SpecView while AE Studio cannot answer for the repo", () => {
+  it("says AE Studio is restarting, inline, and only then", () => {
+    mockUseSpecFiles.mockReturnValue({ data: [], isPending: false, isError: false, error: null, refetch: vi.fn() });
+    const { unmount } = render(<SpecView projectName="proj1" />);
+    expect(screen.queryByText("AE Studio is restarting — retrying…")).not.toBeInTheDocument();
+    unmount();
+
+    mockSpecAvailability = "unavailable";
+    render(<SpecView projectName="proj1" />);
+    expect(screen.getByText("AE Studio is restarting — retrying…")).toBeInTheDocument();
+  });
+});
+
 describe("SpecView while the kickoff is still writing", () => {
   const withFiles = (data: { path: string; sha: string; group: string }[]) =>
     mockUseSpecFiles.mockReturnValue({

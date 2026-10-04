@@ -75,11 +75,20 @@ function apiErrorFields(error: unknown): string[] {
 export class ApiRequestError extends Error {
   readonly code: string | undefined;
   readonly fields: string[];
+  /** The server's Retry-After, when the failed response carried one. */
+  readonly retryAfterMs: number | undefined;
 
-  constructor(error: unknown, fallback: string) {
+  constructor(error: unknown, fallback: string, { retryAfterMs }: { retryAfterMs?: number | undefined } = {}) {
     super(apiErrorMessage(error, fallback));
     this.name = "ApiRequestError";
     this.code = apiErrorCode(error);
     this.fields = apiErrorFields(error);
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+/** A response's Retry-After (delta-seconds) in ms, when it carries a positive one. */
+export function retryAfterMs(response: Response): number | undefined {
+  const seconds = Number(response.headers.get("Retry-After"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
 }

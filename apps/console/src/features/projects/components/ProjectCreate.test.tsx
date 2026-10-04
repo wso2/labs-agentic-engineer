@@ -339,6 +339,34 @@ describe("ProjectCreate copy (#561)", () => {
     expect(screen.queryByText("server wording")).not.toBeInTheDocument();
   });
 
+  // 10 §7: not connected is the user's to fix in Settings, not a failure to
+  // read out; the server's wording is replaced by the console's.
+  it("sends a create refused for no GitHub connection to Settings → Credentials", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "github_not_connected", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connect GitHub to continue");
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/credentials" });
+  });
+
+  it("offers Try again while AE Studio restarts, and it creates again", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "ae_studio_unavailable", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent("AE Studio is restarting — try again");
+    createProject.mutate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(createProject.mutate).toHaveBeenCalledTimes(1);
+  });
+
   it("still shows an Alert for a failure the user cannot fix in the form", () => {
     createProject.isError = true;
     createProject.error = new ApiRequestError(

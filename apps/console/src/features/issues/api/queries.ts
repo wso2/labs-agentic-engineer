@@ -19,7 +19,7 @@
 import { queryOptions, useQuery } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, retryAfterMs } from "../../../api/errors";
 import { issueKeys } from "./keys";
 
 type WireIssueInfo = components["schemas"]["IssueInfo"];
@@ -39,14 +39,15 @@ export function projectIssuesQueryOptions(projectName: string, labels?: string) 
   return queryOptions({
     queryKey: issueKeys.list(projectName, labels),
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/issues", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/issues", {
         params: {
           path: { projectName },
           query: { ...(labels && { labels }) },
         },
       });
       if (error) {
-        throw new Error(apiErrorMessage(error, "Failed to load issues"));
+        // Coded, so the query client paces a restarting AE Studio (api/retry.ts).
+        throw new ApiRequestError(error, "Failed to load issues", { retryAfterMs: retryAfterMs(response) });
       }
       return (data ?? []) as IssueInfo[];
     },

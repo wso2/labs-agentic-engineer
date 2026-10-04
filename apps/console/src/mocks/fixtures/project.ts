@@ -61,6 +61,7 @@ const noSpec: SpecStage = {
   dirty: false,
   design: false,
   agent: "",
+  availability: "available",
 };
 const idleBuild: BuildStage = { version: "", status: "idle" };
 const noDeploy: DeployStage = {
@@ -89,7 +90,13 @@ const noDeploy: DeployStage = {
  * selected, exactly as the validation override does, rather than adding rungs
  * to a ladder twelve fixture records are keyed on.
  */
-export const TRACK_SCENARIOS = ["amending", "drifting", "build-failed", "on-hold"] as const;
+export const TRACK_SCENARIOS = [
+  "amending",
+  "drifting",
+  "build-failed",
+  "on-hold",
+  "spec-unavailable",
+] as const;
 
 export type TrackScenario = (typeof TRACK_SCENARIOS)[number];
 
@@ -99,13 +106,13 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
   // Two legs unsettled at once: you are editing v1's spec while the platform
   // builds v1. The summary is the only thing that can say so.
   amending: {
-    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "", availability: "available" },
     build: { version: "v1", status: "running" },
     deploy: noDeploy,
   },
   // Three versions on one bar: v2 published, v2 building, v1 still serving dev.
   drifting: {
-    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "", availability: "available" },
     build: { version: "v2", status: "running" },
     deploy: {
       version: "v1",
@@ -116,7 +123,7 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
   },
   // A red leg that keeps its version.
   "build-failed": {
-    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v2", dirty: false, design: true, agent: "", availability: "available" },
     build: { version: "v2", status: "failed" },
     deploy: {
       version: "v1",
@@ -129,9 +136,22 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
   // nothing deployed, because a person still owes stripe its values. The run
   // story for it is `heldRun` — the runs handler serves it under this track.
   "on-hold": {
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available" },
     build: { version: "v1", status: "running" },
     deploy: noDeploy,
+  },
+  // The org's AE Studio cannot answer for the repo (restarting, or GitHub not
+  // connected): the poll still answers, the spec facts are unknown, and v1
+  // stays built and live (05 §6).
+  "spec-unavailable": {
+    spec: { ...noSpec, availability: "unavailable" },
+    build: { version: "v1", status: "succeeded" },
+    deploy: {
+      version: "v1",
+      status: "deployed",
+      components: { total: 0, ready: 3 },
+      validation: "passed",
+    },
   },
 };
 
@@ -164,7 +184,7 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "draft",
-    spec: { exists: true, version: "", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "", dirty: false, design: true, agent: "", availability: "available" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -193,7 +213,7 @@ export const projectStatuses: Record<
     hasDesign: false,
     hasTasks: false,
     specStatus: "failed",
-    spec: { exists: true, version: "", dirty: false, design: false, agent: "" },
+    spec: { exists: true, version: "", dirty: false, design: false, agent: "", availability: "available" },
     build: idleBuild,
     deploy: noDeploy,
   },
@@ -207,7 +227,7 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available" },
     build: {
       version: "v1",
       status: "running",
@@ -223,7 +243,7 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available" },
     build: {
       version: "v1",
       status: "succeeded",
@@ -244,7 +264,7 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: true, design: true, agent: "", availability: "available" },
     build: {
       version: "v1",
       status: "succeeded",
@@ -267,7 +287,7 @@ export const projectStatuses: Record<
     hasDesign: true,
     hasTasks: false,
     specStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available" },
     build: {
       version: "v1",
       status: "succeeded",

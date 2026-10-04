@@ -39,7 +39,7 @@ function status(over: {
     hasDesign: true,
     hasTasks: false,
     specStatus: "",
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", ...over.spec },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available", ...over.spec },
     build: { version: "", status: "idle", ...over.build },
     deploy: {
       version: "",

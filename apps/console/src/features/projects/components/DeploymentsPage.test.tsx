@@ -138,7 +138,7 @@ function status(): ProjectStatus {
     hasDesign: true,
     hasTasks: true,
     specStatus: "approved",
-    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "" },
+    spec: { exists: true, version: "v1", dirty: false, design: true, agent: "", availability: "available" },
     build: { version: mockBuildVersion, status: "succeeded" },
     deploy: mockDeploy,
   };

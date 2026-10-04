@@ -1099,6 +1099,7 @@ export function SpecView({ projectName }: { projectName: string }) {
   const publishedTag = tags.data?.latest;
   const hasDraftChanges = Boolean(tags.data?.specDirty);
   const isOffline = collab.status === "offline";
+  const specUnavailable = status.data?.spec.availability === "unavailable";
 
   return (
     // oxygen-ui's PageContentInner (the direct parent of these children) has
@@ -1186,6 +1187,15 @@ export function SpecView({ projectName }: { projectName: string }) {
                     />
                   </Box>
                 </Tooltip>
+              )}
+              {/* The status poll could not read the spec's git facts: the
+                  org's AE Studio is not answering (scenario 8.4). Inline and
+                  muted, never a hold — the poll retries on its own and the
+                  last committed version stays on screen. */}
+              {specUnavailable && (
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  AE Studio is restarting — retrying…
+                </Typography>
               )}
             </Stack>
           </Box>

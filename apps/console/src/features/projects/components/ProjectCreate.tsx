@@ -369,11 +369,12 @@ export function ProjectCreate() {
               </Box>
             )}
             {createProject.isError && !repoConflict && (
-              <Alert severity="error">
-                {createProject.error instanceof Error
-                  ? createProject.error.message
-                  : "Failed to create project"}
-              </Alert>
+              <CreateFailure
+                error={createProject.error}
+                onConnectGitHub={() => void navigate({ to: "/settings/credentials" })}
+                onRetry={accept}
+                retryDisabled={pending}
+              />
             )}
             {createdName && uploadReferences.isError && (
               <Alert severity="error">
@@ -420,5 +421,55 @@ export function ProjectCreate() {
         )}
       </Box>
     </PageContent>
+  );
+}
+
+/**
+ * A create the platform refused. Two refusals are states rather than failures
+ * and say what to do (10 §7): GitHub not connected goes to Settings →
+ * Credentials, and AE Studio restarting offers Try again (the platform took
+ * the half-made project away, so a retry is a clean create). Anything else is
+ * read out in the server's words.
+ */
+function CreateFailure({
+  error,
+  onConnectGitHub,
+  onRetry,
+  retryDisabled,
+}: {
+  error: unknown;
+  onConnectGitHub: () => void;
+  onRetry: () => void;
+  retryDisabled: boolean;
+}) {
+  const code = error instanceof ApiRequestError ? error.code : undefined;
+  if (code === "github_not_connected") {
+    return (
+      <Alert
+        severity="warning"
+        action={<Button onClick={onConnectGitHub}>Connect GitHub</Button>}
+      >
+        Connect GitHub to continue
+      </Alert>
+    );
+  }
+  if (code === "ae_studio_unavailable") {
+    return (
+      <Alert
+        severity="info"
+        action={
+          <Button onClick={onRetry} disabled={retryDisabled}>
+            Try again
+          </Button>
+        }
+      >
+        AE Studio is restarting — try again
+      </Alert>
+    );
+  }
+  return (
+    <Alert severity="error">
+      {error instanceof Error ? error.message : "Failed to create project"}
+    </Alert>
   );
 }

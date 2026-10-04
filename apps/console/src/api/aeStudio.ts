@@ -21,7 +21,7 @@ import type { paths } from "../generated/ae-studio-tools";
 import type { paths as DesignAgentPaths } from "../generated/ae-design-agent";
 import { getAccessToken, redirectToSignIn, renewAccessToken } from "../auth/token";
 import { createAuthFetch } from "./authFetch";
-import { ApiRequestError } from "./errors";
+import { ApiRequestError, retryAfterMs } from "./errors";
 
 // The org's AE Studio pods have no fixed address: GET /ae-studio names their
 // URLs once AE Studio is `ready`. useAeStudio's query hands each answer to
@@ -95,17 +95,15 @@ export function designAgent(): Client<DesignAgentPaths> {
  */
 export class StudioToolsError extends ApiRequestError {
   readonly status: number | undefined;
-  readonly retryAfterMs: number | undefined;
 
   constructor(
     error: unknown,
     fallback: string,
     { status, retryAfterMs }: { status?: number | undefined; retryAfterMs?: number | undefined },
   ) {
-    super(error, fallback);
+    super(error, fallback, { retryAfterMs });
     this.name = "StudioToolsError";
     this.status = status;
-    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -116,11 +114,6 @@ export class StudioToolsError extends ApiRequestError {
  */
 export function isStudioToolsUnavailable(error: unknown): boolean {
   return error instanceof StudioToolsError && (error.status === undefined || error.status === 503);
-}
-
-function retryAfterMs(response: Response): number | undefined {
-  const seconds = Number(response.headers.get("Retry-After"));
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
 }
 
 function isAbort(error: unknown): boolean {

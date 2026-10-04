@@ -36,7 +36,15 @@ function status(over: {
     hasDesign: false,
     hasTasks: false,
     specStatus: "",
-    spec: { exists: true, version: "", dirty: false, design: false, agent: "", ...over.spec },
+    spec: {
+      exists: true,
+      version: "",
+      dirty: false,
+      design: false,
+      agent: "",
+      availability: "available",
+      ...over.spec,
+    },
     build: { version: "", status: "idle", ...over.build },
     deploy: {
       version: "",
@@ -57,6 +65,26 @@ const leg = (s: ProjectStatus, i: number, engaged = false, activeTurn: Pick<Turn
 
 /** A running turn as the pod reports it (only `kind` matters to the track). */
 const turn = (kind: TurnStatus["kind"] = "browser"): Pick<TurnStatus, "kind"> => ({ kind });
+
+describe("spec facts unavailable (AE Studio cannot answer for the repo)", () => {
+  it("shows spec status unavailable without hiding build and deploy", () => {
+    const s = status({
+      spec: { availability: "unavailable", exists: false },
+      build: { version: "v1", status: "succeeded" },
+      deploy: { version: "v1", status: "deployed" },
+    });
+    const legs = trackView(s, false).legs;
+    expect(legs[0]).toMatchObject({ name: "Spec", state: "waiting", line: "Spec status unavailable", version: "" });
+    expect(legs[0]!.cta).toBeUndefined();
+    expect(legs[1]).toMatchObject({ name: "Build", state: "done", version: "v1" });
+    expect(legs[2]).toMatchObject({ name: "Deploy", state: "done", version: "v1" });
+  });
+
+  it("outranks a running turn and the questions pointer: nothing about the spec is known", () => {
+    const s = status({ spec: { availability: "unavailable" } });
+    expect(leg(s, 0, true, turn())).toMatchObject({ state: "waiting", line: "Spec status unavailable" });
+  });
+});
 
 describe("the track is always three legs", () => {
   it("names them in flow order whatever the state", () => {

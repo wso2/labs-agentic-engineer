@@ -106,6 +106,15 @@ function specLeg(status: ProjectStatus, engaged: boolean, activeTurn: ActiveTurn
   const { exists, version, dirty, agent } = status.spec;
   const leg = { name: "Spec", to: "/projects/$projectName/spec", version } as const;
 
+  // AE Studio could not answer for the repo (not connected, restarting,
+  // misconfigured), so none of the spec facts below say anything. First,
+  // because every other line here is read from them; muted (`waiting`), because
+  // nothing is asked of the reader and the poll recovers on its own. Build and
+  // deploy keep their own answers.
+  if (status.spec.availability === "unavailable") {
+    return { ...leg, version: "", state: "waiting", line: "Spec status unavailable" };
+  }
+
   // A live state overrides the LINE only — the version is a separate fact, so
   // an amendment interview on v2 still reads as v2. The running turn comes from
   // the AE Studio pod that runs it; a Plan turn works on a build, so it says so

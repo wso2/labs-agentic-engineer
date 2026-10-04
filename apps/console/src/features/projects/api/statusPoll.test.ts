@@ -31,7 +31,7 @@ function status(spec: Partial<ProjectStatus["spec"]>): ProjectStatus {
     hasDesign: false,
     hasTasks: false,
     specStatus: "",
-    spec: { exists: true, version: "v1", dirty: false, design: false, agent: "", ...spec },
+    spec: { exists: true, version: "v1", dirty: false, design: false, agent: "", availability: "available", ...spec },
     build: { version: "", status: "idle" },
     deploy: { version: "", status: "none", components: { total: 0, ready: 0 }, validation: "none" },
   };

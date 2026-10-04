@@ -21,7 +21,7 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys, resourceKeys, skillsKeys } from "./keys";
 import { aeStudioKeys } from "../../ae-studio/api/queries";
-import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorMessage, retryAfterMs } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
@@ -143,9 +143,10 @@ export function useSkills() {
   return useQuery({
     queryKey: skillsKeys.lists(),
     queryFn: async () => {
-      const { data, error } = await client.GET("/skills");
+      const { data, error, response } = await client.GET("/skills");
       if (error) {
-        throw new Error(errorMessage(error, "Failed to load skills"));
+        // Coded, so the query client paces a restarting AE Studio (api/retry.ts).
+        throw new ApiRequestError(error, "Failed to load skills", { retryAfterMs: retryAfterMs(response) });
       }
       return { skills: data.skills ?? [], repoUrl: data.repoUrl };
     },
