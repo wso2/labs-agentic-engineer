@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -65,7 +64,7 @@ func (s *SkillsRepositories) Lookup(ctx context.Context, org string) (ProjectRep
 	if _, err := s.skills.Reconcile(ctx, org); err != nil {
 		return ProjectRepository{}, fmt.Errorf("%w: reconcile: %w", ErrSkillsUnavailable, err)
 	}
-	row, err := s.repos.GetRepo(ctx, org, naming.SkillsRepoSentinelProjectID)
+	row, err := s.repos.GetRepo(ctx, org, sourcecontrol.SkillsRepoSentinelProjectID)
 	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		return ProjectRepository{}, ErrSkillsRepositoryNotFound
 	}

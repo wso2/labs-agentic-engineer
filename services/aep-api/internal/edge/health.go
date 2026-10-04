@@ -31,15 +31,10 @@ func healthz() http.Handler {
 	})
 }
 
-// readyz is workspace readiness (R8b): 503 when the shared mount fails root
-// health, so kubelet marks the pod NotReady (PVC-prune detector).
-func readyz(ready interface{ Ready() bool }) http.Handler {
+// readyz is readiness: 200 once the server is up. aep-api holds no local git
+// state, so there is nothing else for it to wait on.
+func readyz() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if ready != nil && !ready.Ready() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte(`{"status":"not_ready"}`)) //nolint:errcheck
-			return
-		}
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 	})

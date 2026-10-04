@@ -28,7 +28,6 @@ var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
 func validConfig() Config {
 	return Config{
 		CredentialEncryptionKey: validKey,
-		GitProvider:             "github",
 		JWKSURL:                 "https://thunder.example/oauth2/jwks",
 		TaskTokenSigningKey:     "-----BEGIN KEY-----\nx\n-----END KEY-----",
 	}
@@ -50,27 +49,6 @@ func TestConfigValidate_CredentialEncryptionKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c := validConfig()
 			c.CredentialEncryptionKey = tt.key
-			if err := c.Validate(); (err != nil) != tt.wantErr {
-				t.Fatalf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestConfigValidate_GitProvider(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		wantErr  bool
-	}{
-		{"github", "github", false},
-		{"empty", "", true},
-		{"gitlab (unsupported)", "gitlab", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := validConfig()
-			c.GitProvider = tt.provider
 			if err := c.Validate(); (err != nil) != tt.wantErr {
 				t.Fatalf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
 			}

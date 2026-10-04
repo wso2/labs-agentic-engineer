@@ -203,12 +203,6 @@ type Config struct {
 
 	// Git-service config fields.
 
-	// GitProvider selects the git host implementation (clients/<provider>)
-	// wired behind gitrepo's provider ports. Read from GIT_PROVIDER; default
-	// and only supported value today is "github". Validate() rejects anything
-	// else with a boot error.
-	GitProvider string
-
 	GitHubRepoVisibility string
 	GitHubCommitterName  string
 	GitHubCommitterEmail string
@@ -273,9 +267,6 @@ func (c Config) Validate() error {
 	var errs []string
 	if key, err := base64.StdEncoding.DecodeString(c.CredentialEncryptionKey); err != nil || len(key) != 32 {
 		errs = append(errs, "CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key")
-	}
-	if c.GitProvider != "github" {
-		errs = append(errs, fmt.Sprintf("unknown GIT_PROVIDER %q — supported: github", c.GitProvider))
 	}
 	// Required config — fail fast at boot instead of soft-warning and surfacing
 	// the failure later at runtime. Both planes (docker-compose + Helm) always set
@@ -412,41 +403,27 @@ type ServiceAuthConfig struct {
 	HostHeader   string // Thunder Host header for k3d routing
 }
 
-// WorkspaceConfig holds the shared git-workspaces mount settings: the mount root
-// where bare repo mirrors + per-SHA snapshots live, plus the disk-lifecycle
-// (reaper) knobs. aep-api is the sole writer of the mount; the agents service
-// consumes read-only snapshots from the same volume.
+// WorkspaceConfig holds the /workspaces mount settings: the coding-agent run
+// recordings and their retention. aep-api is the mount's only user.
 type WorkspaceConfig struct {
 	// Root is the workspace mount root (AEP_WORKSPACE_ROOT). Layout under it:
-	// repos/<orgId>/<projectId>/<repoSlug>/{git,repo.lock,snapshots/<sha>},
-	// trash/<ulid>, tmp/, runs/<orgId>/<cycleId>.
+	// runs/<orgId>/<cycleId>.
 	Root string
-	// ReapInterval is the background reaper sweep cadence (trash purge,
-	// snapshot age-reap, orphan reconciliation, quota/LRU eviction).
+	// ReapInterval is the recording retention sweep cadence.
 	ReapInterval time.Duration
-	// SnapshotMaxAge — snapshots/<sha> dirs older than this and not the
-	// repo's current HEAD are reaped.
-	SnapshotMaxAge time.Duration
-	// TrashMaxAge — trash/<ulid> entries (phase 1 of the two-phase delete)
-	// older than this are purged.
-	TrashMaxAge time.Duration
 	// RecordingMaxAge — runs/<orgId>/<cycleId> coding-agent feed recordings
-	// older than this are removed by the reaper. Days, not hours: unlike every
-	// other tree on this mount a recording cannot be rebuilt, so the window is
-	// how long a run stays inspectable rather than how long a cache stays warm
-	// (ADR-0027).
+	// older than this are removed by the retention sweep. Days, not hours: a
+	// recording cannot be rebuilt, so the window is how long a run stays
+	// inspectable (ADR-0027).
 	RecordingMaxAge time.Duration
 	// RecordingMaxBytes caps ONE cycle's recording. Zero — the default — is no
 	// cap: a 55-minute run wrote about 300KB, so this is a safety valve for a
 	// pathological producer, not an operating limit. A run that trips it records
 	// a notice saying so and keeps running without recording.
 	RecordingMaxBytes int64
-	// OrgQuotaBytes is the per-org disk quota before LRU eviction kicks in.
+	// OrgQuotaBytes is the per-org recordings quota before the oldest are
+	// evicted.
 	OrgQuotaBytes int64
-	// DiskHighPct / DiskLowPct are the statfs water marks (%): usage above
-	// high triggers eviction, which runs until usage drops below low.
-	DiskHighPct int
-	DiskLowPct  int
 }
 
 // ObservabilityConfig holds connection settings for the OpenChoreo Observer

@@ -4,22 +4,21 @@
 
 The git-host integration substrate every other domain builds on: per-project
 repo/issue/milestone/PR/webhook lifecycle over the GitHub capability ports (`RepoAdmin`, `IssueOps`,
-`WebhookOps`), served by the org's AE Studio pod, and the bare-mirror workspace behind
-`platform/gitfs`.
+`WebhookOps`), and repository content through the `Git` port, all served by the org's AE Studio pod.
+aep-api holds no clone.
 
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
   subgraph sourcecontrol
     SL["slices — issues"]
-    CORE["repo · issue · workspace core"]
+    CORE["repo · issue · git core"]
     SL --> CORE
     CORE --> DB[("git_repositories")]
   end
   CORE -->|RepoRef ports| AET[[clients/aestudiotools]]
   AET -->|/internal/v1| POD(["org's ae-studio-tools"])
-  POD -->|REST + GraphQL| GITHUB(["GitHub"])
-  CORE -->|mirrors| GITFS[[platform/gitfs]]
+  POD -->|REST + GraphQL + git| GITHUB(["GitHub"])
 ```
 
 ## Slices
@@ -27,7 +26,7 @@ flowchart LR
 |---|---|---|
 | `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
 
-*In the domain root rather than a slice: repo lifecycle, workspace, and webhook register/receive
+*In the domain root rather than a slice: repo lifecycle, the Git port, and webhook register/receive
 (including the delivery ledger and its `webhook.Replayer`).*
 
 ## Ports
@@ -37,7 +36,7 @@ flowchart LR
 | `OwnerLookup` | needs | `organization.CredentialService.GitHubOwner` — the login new repositories are created under; no connection is `ErrAEStudioAbsent` |
 | `Git` · `TrashOps` · `SkillsMirrorOps` · `ReferencesOps` · `IdentityOps` | needs | the org's AE Studio pod (`git.go`, `ports.go`) — served by `clients/aestudiotools`, and by `aestudiotest.Fake` in tests; its answers are this domain's sentinels (`ErrAEStudioAbsent/Unavailable/Misconfigured`, `ErrOwnerNotAllowed`, `ErrReferenceRejected`, `*CommitConflictError`, `*RateLimitedError`), which `IsPermanent` classifies (with any adapter error whose `Permanent()` says so: the pod's other 4xx refusals) |
 | `RepoRefFor` · `RefForRow` | offers | the one rule from a `git_repositories` row to the `RepoRef` {org, owner, repo, default branch} the pod is addressed by (`repo_ref.go`); no row in the org is `ErrRepoNotFound` |
-| `secrets.Resolver` | needs | `platform/secrets` — the per-org PAT, for the gitfs workspace only (until phase 4 Task 4.16) |
+| `WithSaveIdentity` · `CommitRetrying` | offers | `save_identity.go`: the Git port with aep-api's own commits and tags stamped as the org credential's identity (`secrets.Resolver`; unresolvable → unstamped, the pod authors as the gitpat user, `git.identity_unresolved`); `git.go`: a writer's plan → `Commit`, re-planned from a fresh read on `ErrCommitConflict`, `CommitAttempts` (3) in all |
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
@@ -47,7 +46,6 @@ flowchart LR
   domain (`repository_repo.go` · `repository_webhook_delivery.go` over `repository_entity.go` /
   `webhook_delivery.go`), single write-authority. `GitRepository` is not `x-go-type`-aliased, so it needs
   no wire split.
-- The bare-mirror workspace handle.
 
 ## Invariants — don't break
 - **SRE creation owns incident identity and outcomes.** A trusted transport binds the opaque incident

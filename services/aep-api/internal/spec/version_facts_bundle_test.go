@@ -58,7 +58,7 @@ func TestVersionFacts_OneBundlePerSha(t *testing.T) {
 		"specs/design/components/payments/design.json": componentWithResource("payments", "payments-db"),
 		"specs/design/components/web/design.json":      componentWithResource("web", "web-sessions"),
 	})
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
 	head, err := f.Head(ctx, ref, "")
 	if err != nil {
 		t.Fatal(err)
@@ -117,7 +117,7 @@ func TestVersionFacts_OneBundlePerShaAcrossAVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
 
 	facts, err := svc.BuildVersionFacts(ctx, "default", "p")
 	if err != nil {

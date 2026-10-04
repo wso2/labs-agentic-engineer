@@ -20,9 +20,12 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 )
+
+// SkillsRepoSentinelProjectID is the reserved git_repositories.project_id
+// under which the per-org skills repo row lives (so it is distinguishable
+// from real project repos). See docs/design/skills-repo-storage.md §10.1.
+const SkillsRepoSentinelProjectID = "_skills"
 
 // GitRepository stores metadata about a platform-provisioned git repository.
 type GitRepository struct {
@@ -74,10 +77,3 @@ func RepoSlugFor(url string) string {
 // repoURLPattern extracts `<owner>/<repo>` from a GitHub HTTPS URL, with or
 // without a `.git` suffix.
 var repoURLPattern = regexp.MustCompile(`github\.com/([^/]+/[^/]+?)(?:\.git)?/?$`)
-
-// WorkspaceSlug returns the on-disk directory leaf for this repo row on the
-// shared workspace volume — a pure function of the row's identity, delegating to
-// the canonical naming.WorkspaceSlug.
-func (r *GitRepository) WorkspaceSlug() string {
-	return naming.WorkspaceSlug(r.ProjectID, r.RepoSlug, r.RepoURL)
-}

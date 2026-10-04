@@ -21,20 +21,12 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
-// Sentinel errors. Workspace.Mutate and the artifacts tag loop key off
-// ErrRefNotFastForward and ErrTagAlreadyExists to drive CAS/tag-collision
-// retries, and repoService keys off ErrRepoNameConflict (a Host impl —
-// clients/github today — MUST reproduce it; IsRepoNameConflict /
+// Sentinel errors. The artifacts tag loop keys off ErrTagAlreadyExists to
+// drive tag-collision retries, and repoService keys off ErrRepoNameConflict
+// (the RepoAdmin implementation MUST reproduce it; IsRepoNameConflict /
 // IsHTTPStatus (wire.go) are the caller-side checks).
-//
-// ErrTagAlreadyExists / ErrRefNotFastForward are aliases of the gitfs values:
-// the message strings
-// survived the REST→mount migration unchanged, so `errors.Is` checks and log
-// lines stayed stable.
 var (
 	// ErrIncidentContextRequired rejects SRE handoffs without trusted identity
 	// and a component, before any issue write.
@@ -60,15 +52,16 @@ var (
 	// state from a transport failure.
 	ErrMilestoneNotFound = errors.New("milestone not found")
 
-	// ErrTagAlreadyExists — Workspace.Tag (taken name / rejected push)
-	// returns it so the save flow recomputes the next tag.
-	// Message: "tag already exists".
-	ErrTagAlreadyExists = gitfs.ErrTagAlreadyExists
-	// ErrRefNotFastForward — Workspace.Mutate (push-lease rejection, retries
-	// exhausted) returns it when the ref tip moved between read and write so
-	// the caller re-anchors. Message: "github ref: update is not a
-	// fast-forward" (historical wording kept for log-line stability).
-	ErrRefNotFastForward = gitfs.ErrRefNotFastForward
+	// ErrTagAlreadyExists — Git.Tag returns it for a taken name so the save
+	// flow recomputes the next tag.
+	ErrTagAlreadyExists = errors.New("tag already exists")
+	// ErrRefNotFastForward — the pod's push lost a race on the branch tip
+	// (not_fast_forward); the caller re-reads and retries.
+	ErrRefNotFastForward = errors.New("github ref: update is not a fast-forward")
+	// ErrRefNotFound: `at` (branch, tag, or sha) did not resolve to a commit.
+	ErrRefNotFound = errors.New("git ref not found")
+	// ErrPathNotFound: the path is not a file in the addressed tree.
+	ErrPathNotFound = errors.New("git path not found")
 	// ErrRepoNameConflict — port contract: CreateOrgRepo returns it when the
 	// requested repo name is already taken (repoService retries with a fresh suffix).
 	ErrRepoNameConflict = errors.New("repo name already taken")

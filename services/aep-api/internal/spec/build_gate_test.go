@@ -22,8 +22,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 const gatePRD = `# Lunch — PRD
@@ -106,7 +104,10 @@ func TestBuildGate_UncoveredStory(t *testing.T) {
 func TestBuildGate_DeployableComponentDemandsArtifactsAndEnrichment(t *testing.T) {
 	files := completeDesignFiles()
 	delete(files, "components/lunch-api/openapi.yaml")
-	files["components/lunch-web/design.json"] = renderScaffold("lunch-web", "web-application")
+	// The pod's scaffold for lunch-web, never enriched.
+	files["components/lunch-web/design.json"] = `{"name":"lunch-web","type":"web-application","version":"0.1.0",` +
+		`"language":"TBD","buildpack":"docker","appPath":"lunch-web","entrypoint":"deployment/web-application",` +
+		`"exposure":"internet","dependencies":[],"description":"Scaffolded from design.cell — enrich it."}`
 	errs := gateErrors(t, files)
 	codes := strings.Join(codesOf(errs), ",")
 	if !strings.Contains(codes, "MISSING_COMPONENT_ARTIFACT") {
@@ -376,8 +377,8 @@ func TestBuildGate_RulesThatNeedTheWholeBundle(t *testing.T) {
 	}
 }
 
-// The two coverage warnings are NON-BLOCKING: they never appear among the gate's
-// errors, and they do name the handle nobody uses and the one nobody can reach.
+// The two coverage warnings are NON-BLOCKING: they never appear among the
+// gate's errors.
 func TestBuildGate_CoverageWarningsDoNotBlock(t *testing.T) {
 	files := signInDesignFiles()
 	files["components/lunch-api/openapi.yaml"] = lunchAPISpec
@@ -390,40 +391,6 @@ func TestBuildGate_CoverageWarningsDoNotBlock(t *testing.T) {
 
 	if errs := gateErrors(t, files); len(errs) != 0 {
 		t.Fatalf("a coverage warning must not fail the gate, got %+v", errs)
-	}
-	var codes []string
-	for _, w := range buildGateWarnings(files) {
-		codes = append(codes, w.Code)
-		// Bundle-relative, like every row this file produces; the apply path
-		// prefixes DesignDir for the channel that speaks repo paths.
-		if w.Path != securityspec.BundleKey {
-			t.Errorf("warning path %q is not bundle-relative", w.Path)
-		}
-	}
-	for _, want := range []string{codeSecurityHandleUsedNowhere, codeSecurityHandleUnreachable} {
-		if !slices.Contains(codes, want) {
-			t.Fatalf("want a %s warning, got %v", want, codes)
-		}
-	}
-}
-
-// INFO is not dropped: a role whose assignTo names a group the document does
-// not declare is a deliberate delegation to the org directory, and the record
-// of that decision rides the same channel as the warnings.
-func TestBuildGate_DirectoryCheckedNoteRidesTheWarningsChannel(t *testing.T) {
-	files := signInDesignFiles()
-	files["components/lunch-api/openapi.yaml"] = lunchAPISpec
-	// `Finance` is not one of the document's own groups, so it can only be one
-	// the org directory already holds.
-	files["security.json"] = strings.Replace(rolesDoc("1"),
-		`"assignTo":["Lunch Members"]`, `"assignTo":["Finance"]`, 1)
-
-	var codes []string
-	for _, w := range buildGateWarnings(files) {
-		codes = append(codes, w.Code)
-	}
-	if !slices.Contains(codes, codeSecurityAssignToDirectoryChecked) {
-		t.Fatalf("want a %s note, got %v", codeSecurityAssignToDirectoryChecked, codes)
 	}
 }
 

@@ -16,17 +16,15 @@
 
 package spec
 
-// The version facts over REAL git: real annotated tags with real creation
-// dates, real trees, a real deletion. The unit tests next door pin the rules
-// over hand-built listings; this pins that the rules meet git — that a tag's
-// date parses out of `for-each-ref`, that `Spec <name>` is what marks a
-// version, and that a removed directory reads as a removed row rather than as
-// nothing at all.
+// The version facts over the pod's git semantics: annotated tags dated in
+// creation order (the Fake's clock steps one second per tag), commit trees, a
+// deletion. The unit tests next door pin the rules over hand-built listings;
+// this pins them end to end through the Git port — that `Spec <name>` is what
+// marks a version, and that a removed directory reads as a removed row rather
+// than as nothing at all.
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -51,22 +49,6 @@ const ordersDesignJSONWithResource = `{
   ]
 }`
 
-// tagAt creates an annotated tag on the origin's tip with an explicit date, so
-// ordering is decided by the clock the test sets rather than by the second the
-// test happens to run in.
-func tagAt(t *testing.T, r *rig, name, message, date string) {
-	t.Helper()
-	c := exec.Command("git", "--git-dir="+r.remote.Dir(),
-		"tag", "-a", name, "-m", message, r.headSHA())
-	c.Env = append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull,
-		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@aep.test",
-		"GIT_COMMITTER_DATE="+date)
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("tag %s: %v\n%s", name, err, out)
-	}
-}
-
 func factRows(t *testing.T, facts VersionFacts) map[string]VersionChange {
 	t.Helper()
 	out := make(map[string]VersionChange, len(facts.Changes))
@@ -76,7 +58,7 @@ func factRows(t *testing.T, facts VersionFacts) map[string]VersionChange {
 	return out
 }
 
-func TestBuildVersionFactsOverRealGit(t *testing.T) {
+func TestBuildVersionFactsThroughTheGitPort(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t, map[string]string{
 		"README.md":                 "hello\n",
@@ -100,7 +82,7 @@ func TestBuildVersionFactsOverRealGit(t *testing.T) {
 	}
 
 	// --- the version is cut -------------------------------------------------
-	tagAt(t, r, "v1", specTagSubject+"v1", "2026-01-01T10:00:00+00:00")
+	r.tag("v1", specTagSubject+"v1")
 
 	facts, err = r.svc.BuildVersionFacts(ctx, r.org, r.proj)
 	if err != nil {
@@ -125,7 +107,7 @@ func TestBuildVersionFactsOverRealGit(t *testing.T) {
 		// Not part of the spec: it must not produce a row.
 		"README.md": "hello again\n",
 	}, "edit the spec")
-	r.remote.Remove(t, "drop the mailer", "specs/design/dependencies/legacy-mailer/dependency.json")
+	r.remove("drop the mailer", "specs/design/dependencies/legacy-mailer/dependency.json")
 
 	facts, err = r.svc.BuildVersionFacts(ctx, r.org, r.proj)
 	if err != nil {
@@ -165,9 +147,9 @@ func TestBuildVersionFactsOrdersByCreationNotName(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\n\nfirst\n"})
 
-	tagAt(t, r, "v9", specTagSubject+"v9", "2026-01-01T10:00:00+00:00")
+	r.tag("v9", specTagSubject+"v9")
 	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD\n\nsecond\n"}, "edit")
-	tagAt(t, r, "payments-v2", specTagSubject+"payments-v2", "2026-02-01T10:00:00+00:00")
+	r.tag("payments-v2", specTagSubject+"payments-v2")
 
 	facts, err := r.svc.BuildVersionFacts(ctx, r.org, r.proj)
 	if err != nil {
@@ -190,12 +172,12 @@ func TestBuildVersionFactsIgnoresForeignTags(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\n\nfirst\n"})
 
-	tagAt(t, r, "v1", specTagSubject+"v1", "2026-01-01T10:00:00+00:00")
+	r.tag("v1", specTagSubject+"v1")
 	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD\n\nsecond\n"}, "edit")
 	// Two release tags somebody pushed, newer than the version — and one of them
 	// is named exactly like a version, which is the case a name alone gets wrong.
-	tagAt(t, r, "release-2026-02", "ship it", "2026-02-01T10:00:00+00:00")
-	tagAt(t, r, "v2", "ship it", "2026-02-02T10:00:00+00:00")
+	r.tag("release-2026-02", "ship it")
+	r.tag("v2", "ship it")
 
 	facts, err := r.svc.BuildVersionFacts(ctx, r.org, r.proj)
 	if err != nil {
@@ -220,11 +202,11 @@ func TestBuildVersionFactsSuggestionStepsPastATakenName(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t, map[string]string{"specs/requirements/prd.md": "# PRD\n\nfirst\n"})
 
-	tagAt(t, r, "v1", specTagSubject+"v1", "2026-01-01T10:00:00+00:00")
+	r.tag("v1", specTagSubject+"v1")
 	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD\n\nsecond\n"}, "edit")
 	// The second version was named by hand, and it took the name counting would
 	// have offered next.
-	tagAt(t, r, "v3", specTagSubject+"v3", "2026-02-01T10:00:00+00:00")
+	r.tag("v3", specTagSubject+"v3")
 
 	facts, err := r.svc.BuildVersionFacts(ctx, r.org, r.proj)
 	if err != nil {

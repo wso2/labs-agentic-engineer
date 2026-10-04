@@ -19,9 +19,8 @@
 // through the sourcecontrol.Git port (at the branch tip for the live draft,
 // at a version tag for an approved version), and a save is the hard semantic
 // gate followed by an annotated tag (no commit — the accepted draft is already
-// on the default branch). The tag is still cut through the workspace mirror
-// (VersionTagGateway) until Task 4.16. Drafts live on the frontend; committed
-// truth is the origin.
+// on the default branch), cut through the same port. Drafts live on the
+// frontend; committed truth is the origin.
 package spec
 
 import (
@@ -182,9 +181,6 @@ type ArtifactService interface {
 type artifactService struct {
 	repo sourcecontrol.RepoRepository
 	git  sourcecontrol.Git
-	// tags cuts the version tag on the workspace mirror; nil for a read-only
-	// service. Gone in Task 4.16 (the tag moves to git.Tag).
-	tags VersionTagGateway
 	// designBaseline resolves the commit the newest successful design run read
 	// the project at, or "" when it has never designed. The build gate needs it
 	// to refuse a design the requirements have moved past (#575).
@@ -205,11 +201,10 @@ func (s *artifactService) SetDesignBaselineResolver(
 }
 
 // NewArtifactService builds the ArtifactService. `repo` resolves the
-// project's repository row, `git` serves every read (the aestudiotools
-// adapter), and `tags` cuts the version tag on save (the gitOpsService, until
-// Task 4.16; nil when the service only reads).
-func NewArtifactService(repo sourcecontrol.RepoRepository, git sourcecontrol.Git, tags VersionTagGateway) ArtifactService {
-	return &artifactService{repo: repo, git: git, tags: tags}
+// project's repository row, and `git` serves every read and cuts the
+// version tag on save (the aestudiotools adapter).
+func NewArtifactService(repo sourcecontrol.RepoRepository, git sourcecontrol.Git) ArtifactService {
+	return &artifactService{repo: repo, git: git}
 }
 
 // ----- Allowed extensions -----

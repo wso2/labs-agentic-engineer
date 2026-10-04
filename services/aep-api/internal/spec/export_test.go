@@ -19,13 +19,10 @@ package spec
 // The Go export_test.go pattern: exported test-only helpers that let the
 // EXTERNAL component-test package (skills_test, which must live outside package
 // skills to break the api→skills import cycle) build a REAL *SkillService over
-// the engine-backed git fixture the repo_store_test.go pattern provides (a
-// gitfs engine rooted in t.TempDir() + one real bare file:// origin per org) —
-// without duplicating the host or reaching its unexported doubles. This is the
-// engine-injection seam the later ports (files/artifacts, Phases 2–3) reuse:
-// production gateway (sourcecontrol.NewGitOpsService) + workspacetest engine + a
-// RepoService fake whose rows carry file:// CloneURLs and a pinned RepoSlug.
-// These symbols are compiled only into the test binary.
+// the pod-backed fixture repo_store_test.go provides (aestudiotest.Fake + a
+// RepoService fake whose rows name GitHub repositories) — without duplicating
+// the host or reaching its unexported doubles. These symbols are compiled only
+// into the test binary.
 
 import (
 	"io/fs"
@@ -33,8 +30,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // testLibraryFS is the platform skill source for tests: the repo-root skills/
@@ -53,15 +48,14 @@ func testLibraryFS(t *testing.T) fs.FS {
 }
 
 // ComponentStore is an exported handle around a real SkillService backed by
-// the gitfs engine over real bare origins. The component tier wires Svc into
+// the in-memory pod. The component tier wires Svc into
 // edge.Deps and drives the real HTTP chain against it end-to-end.
 type ComponentStore struct {
 	Svc  *SkillService
 	host *testGitHost
 }
 
-// NewComponentStore builds a SkillService over a fresh engine + per-org real
-// origins, all rooted in t.TempDir(). The first read for an org lazily
+// NewComponentStore builds a SkillService over a fresh in-memory pod. The first read for an org lazily
 // provisions the repo and seeds the embedded built-ins + flow skills, exactly
 // as production does.
 func NewComponentStore(t *testing.T) *ComponentStore {
@@ -75,7 +69,7 @@ func NewComponentStore(t *testing.T) *ComponentStore {
 // against the real embedded skill count.
 func NewComponentStoreWithLibrary(t *testing.T, library fs.FS) *ComponentStore {
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), host.git(), host, library)
+	svc := NewSkillService(host.git(), host.git(), host, library)
 	return &ComponentStore{Svc: svc, host: host}
 }
 
@@ -85,7 +79,7 @@ func NewComponentStoreWithLibrary(t *testing.T, library fs.FS) *ComponentStore {
 func newTestStoreWithLibrary(t *testing.T, fsys fs.FS) (*SkillService, *testGitHost) {
 	t.Helper()
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.ws()), host.git(), host, fsys)
+	svc := NewSkillService(host.git(), host.git(), host, fsys)
 	return svc, host
 }
 
@@ -117,8 +111,8 @@ func EmbeddedLibraryCount(t *testing.T, kind string) int {
 	return n
 }
 
-// DriftOrg rewrites an org-kind skill's SKILL.md directly on the org's ORIGIN
-// (advancing main), so a subsequent read/UpdatesAvailable sees a repo copy
+// DriftOrg rewrites an org-kind skill's SKILL.md directly on the org's skills
+// repository tip, so a subsequent read/UpdatesAvailable sees a repo copy
 // whose content differs from the embedded copy — the state that drives the "updates available"
 // badge. Reads address the branch tip, so the change is visible immediately
 // (no cache to evict). The repo row already exists after the first read, so

@@ -22,9 +22,9 @@ package spec
 //   - reads go through the org's AE Studio pod (sourcecontrol.Git): the
 //     library at the fetched branch tip, then the manifest at the sha that
 //     read answered, so both are one snapshot;
-//   - writes are one Workspace.Mutate commit to `main` over the shared-volume
-//     mirror until Task 4.16 moves them to Git.Commit; Mutate owns the CAS
-//     retry (no per-feature retry wrapper).
+//   - writes are one Git.Commit to `main` through the same pod, planned from
+//     a fresh read and re-planned on a baseSha conflict (commitFiles,
+//     sourcecontrol.CommitRetrying).
 //
 // The platform library (platform + org kinds) is seeded + content-reconciled
 // from the on-disk skill library (config.SkillsDir, injected as an fs.FS;
@@ -39,6 +39,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -91,21 +93,20 @@ var legacyUserDirs = map[string]bool{
 // holds the low-level git read/write primitives that the mutation + import
 // services and the reconciler compose with.
 type SkillService struct {
-	// git commits through the workspace mirror until Task 4.16 moves the
-	// writes to Git.Commit.
-	git sourcecontrol.GitOpsService
-	// reads is the org's AE Studio pod: every skills-repo and project-repo
-	// read.
-	reads sourcecontrol.Git
-	repos sourcecontrol.RepoService
+	// git is the org's AE Studio pod: every skills-repo and project-repo
+	// read, and every skills-repo commit.
+	git sourcecontrol.Git
+	// mirror is the pod's mirror-skills: the project .claude/skills refresh.
+	mirror SkillMirrorPort
+	repos  sourcecontrol.RepoService
 	// library is the platform skill source read at reconcile time — os.DirFS
 	// over the on-disk library (config.SkillsDir) in production, a test fs.FS in
 	// tests. Rooted at the library directory itself ("<name>/SKILL.md"), so
 	// callers read from ".".
 	library fs.FS
-	// provLocks serialises first-time provisioning per org. The gitfs flock +
-	// origin push-CAS make concurrent WRITES safe, but they cannot make the
-	// first page load deterministic: EnsureBareRepo creates the GitHub repo
+	// provLocks serialises first-time provisioning per org. The commits'
+	// baseSha preconditions make concurrent WRITES safe, but they cannot make
+	// the first page load deterministic: EnsureBareRepo creates the GitHub repo
 	// and inserts the row BEFORE the seed commit lands, so an unguarded
 	// concurrent reader could observe the row and list a still-empty repo (and
 	// two concurrent provisions would both hit the GitHub create API —
@@ -119,20 +120,23 @@ func (s *SkillService) orgLock(orgID string) *sync.Mutex {
 	return v.(*sync.Mutex)
 }
 
-// NewSkillService wires the repo-backed store. `git` provides the Workspace
-// engine, credential resolver, and save identities for the writes; `reads` is
-// the Git port every read goes through; `repos` provisions/looks up the
-// per-org skills repo row; `library` is the platform skill source read during
-// seed/reconcile (os.DirFS(config.SkillsDir) in production, a test fs.FS in
-// tests). Any may be nil in degraded/test boot (reads then return empty; a
-// nil library seeds nothing).
-func NewSkillService(git sourcecontrol.GitOpsService, reads sourcecontrol.Git, repos sourcecontrol.RepoService, library fs.FS) *SkillService {
-	return &SkillService{git: git, reads: reads, repos: repos, library: library}
+// SkillMirrorPort is the pod's mirror-skills op SyncProjectSkills drives.
+type SkillMirrorPort = sourcecontrol.SkillsMirrorOps
+
+// NewSkillService wires the repo-backed store. `git` is the Git port every
+// read and commit goes through; `mirror` refreshes a project's
+// .claude/skills; `repos` provisions/looks up the per-org skills repo row;
+// `library` is the platform skill source read during seed/reconcile
+// (os.DirFS(config.SkillsDir) in production, a test fs.FS in tests). Any may
+// be nil in degraded/test boot (reads then return empty; a nil library seeds
+// nothing).
+func NewSkillService(git sourcecontrol.Git, mirror SkillMirrorPort, repos sourcecontrol.RepoService, library fs.FS) *SkillService {
+	return &SkillService{git: git, mirror: mirror, repos: repos, library: library}
 }
 
 // configured reports whether the store has everything a read needs.
 func (s *SkillService) configured() bool {
-	return s != nil && s.git != nil && s.reads != nil && s.repos != nil
+	return s != nil && s.git != nil && s.repos != nil
 }
 
 // ---- read surface (unchanged contract) -------------------------------------
@@ -179,30 +183,6 @@ func (s *SkillService) resolveFresh(ctx context.Context, orgID, name string) (*S
 		return nil, err
 	}
 	return findByName(skills, name), nil
-}
-
-// ListForMirror is List with read errors SURFACED rather than degraded to
-// empty — the same "same read, errors surfaced" shape as resolveFresh, for the
-// one caller that must NOT treat a git outage as "the org library is empty":
-// the project-skill mirror (skill_mirror.go). List/catalog degrade to nil on
-// any failure (§12) because a design/task run reading a stale-but-nonempty
-// catalog is far better than failing the run outright; the mirror's pruning
-// step has the opposite failure mode — an empty read would delete every
-// project's copy of every skill — so it must be able to tell "the library is
-// genuinely empty" apart from "the read failed".
-func (s *SkillService) ListForMirror(ctx context.Context, orgID string) ([]Skill, error) {
-	if !s.configured() || orgID == "" {
-		return nil, fmt.Errorf("skills: service not configured for org %q", orgID)
-	}
-	repo, err := s.ensureSkillsRepo(ctx, orgID)
-	if err != nil {
-		return nil, fmt.Errorf("ensure skills repo: %w", err)
-	}
-	skills, err := s.loadCatalog(ctx, orgID, repo)
-	if err != nil {
-		return nil, fmt.Errorf("load skills catalog: %w", err)
-	}
-	return skills, nil
 }
 
 // List returns every skill visible to the org (including platform skills —
@@ -294,7 +274,7 @@ func (s *SkillService) loadEntriesAndManifest(ctx context.Context, orgID string,
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("resolve skills repository: %w", err)
 	}
-	tree, sha, err := s.reads.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: skillsRootDir + "/"})
+	tree, sha, err := s.git.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: skillsRootDir + "/"})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("read skills bundle: %w", err)
 	}
@@ -304,7 +284,7 @@ func (s *SkillService) loadEntriesAndManifest(ctx context.Context, orgID string,
 			files[p] = c
 		}
 	}
-	manifestFile, _, err := s.reads.ReadBundle(ctx, ref, sha, sourcecontrol.BundleFilter{Paths: []string{skillsManifestPath}})
+	manifestFile, _, err := s.git.ReadBundle(ctx, ref, sha, sourcecontrol.BundleFilter{Paths: []string{skillsManifestPath}})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("read skills manifest: %w", err)
 	}
@@ -516,75 +496,82 @@ func parseBundleEntries(ctx context.Context, files map[string]string) []catalogE
 // ---- low-level write primitive ---------------------------------------------
 
 // commitFiles applies a set of blob writes + path/prefix deletes to the skills
-// repo's default branch in a single commit through Workspace.Mutate, which
-// owns the bounded fast-forward CAS retry (design D5). §9.
+// repo's default branch in a single commit through Git.Commit, planned from
+// the tree it reads at the tip and re-planned when a concurrent commit moved
+// a path first (sourcecontrol.CommitRetrying). §9.
 //
-// manifestFn, when non-nil, is the retry-safe manifest merge: it runs INSIDE
-// the CAS closure on EVERY attempt, re-reading skills-manifest.json from the
-// attempt's current base (tx.Base()) and applying this operation's delta
-// (upsert one entry / drop one entry / reconcile's computed set+delete). This
-// is the fix for the lost-update hazard — a pre-rendered manifest captured
-// outside the closure would, on a non-fast-forward retry, silently clobber any
+// Each attempt lists the tip: every write carries the path's blob sha there
+// as its baseSha ("" when absent), and each delete prefix expands into the
+// exact paths under it (the path itself or anything below it as a dir). A
+// path that is also written is not deleted, so a reference rewritten under a
+// pruning update survives its own prefix delete.
+//
+// manifestFn, when non-nil, is the retry-safe manifest merge: on EVERY
+// attempt it re-reads skills-manifest.json at the commit that attempt listed
+// and applies this operation's delta (upsert one entry / drop one entry /
+// reconcile's computed set+delete). This is the fix for the lost-update
+// hazard — a pre-rendered manifest would, on a retry, silently clobber any
 // entry a concurrent commit added; re-reading + re-merging per attempt folds
-// the concurrent entry in instead. The rendered manifest is staged in the SAME
-// commit as the file writes/deletes below (the same-commit invariant), and
-// only when the merge actually changes the bytes (so a no-op delta never
-// churns the manifest, and a delete of an absent entry never conjures an empty
-// manifest file).
-func (s *SkillService) commitFiles(ctx context.Context, orgID string, repo *sourcecontrol.GitRepository, message string, writes map[string][]byte, deletePrefixes []string, manifestFn func(SkillsManifest) SkillsManifest) (string, error) {
-	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+// the concurrent entry in instead (the manifest's baseSha is what detects the
+// race). The rendered manifest is written in the SAME commit as the file
+// writes/deletes (the same-commit invariant), and only when the merge
+// actually changes the bytes (so a no-op delta never churns the manifest, and
+// a delete of an absent entry never conjures an empty manifest file). The
+// file writes themselves are the caller's, planned once; only their baseSha
+// is re-read per attempt.
+func (s *SkillService) commitFiles(ctx context.Context, orgID string, repo *sourcecontrol.GitRepository, message string, writes map[string][]byte, deletePrefixes []string, manifestFn func(SkillsManifest) SkillsManifest) error {
+	ref, err := sourcecontrol.RefForRow(orgID, repo)
 	if err != nil {
-		return "", err
+		return fmt.Errorf("resolve skills repository: %w", err)
 	}
-	author, committer := s.git.ResolveSaveIdentities(ref.Cred)
-
-	res, err := s.git.Workspace().Mutate(ctx, ref, func(tx sourcecontrol.Tx) error {
-		// Deletes are staged BEFORE writes: Tx is last-op-wins per path, so a
-		// path also being written this commit survives its own prefix delete
-		// (e.g. a reference file being replaced under a pruning update).
-		for _, prefix := range deletePrefixes {
-			if err := tx.Base().Walk(prefix, func(rel, _ string) error {
-				// Walk matches by raw string prefix; keep the exact historical
-				// semantics — the path itself or anything under it as a dir.
-				if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
-					tx.Delete(rel)
-				}
-				return nil
-			}); err != nil {
-				return fmt.Errorf("walk %q for delete: %w", prefix, err)
-			}
+	_, err = sourcecontrol.CommitRetrying(ctx, s.git, ref, func(ctx context.Context) (sourcecontrol.CommitRequest, error) {
+		entries, commit, err := s.git.List(ctx, ref, "")
+		if err != nil {
+			return sourcecontrol.CommitRequest{}, fmt.Errorf("list skills repository: %w", err)
 		}
-		for p, data := range writes {
-			tx.Write(p, data)
+		current := make(map[string]string, len(entries))
+		for _, e := range entries {
+			current[e.Path] = e.SHA
 		}
-		// Manifest merge, re-read + re-applied against THIS attempt's base so
-		// the CAS retry loop never loses a concurrently-added entry. NOTE the
-		// scope boundary: only the manifest is made retry-safe here. The file
-		// writes/deletes above were planned by the caller against the base it
-		// pre-read; a competing commit could in theory invalidate that plan
-		// too, but that hazard pre-dates the shared manifest and full
-		// re-planning inside the closure is out of scope — ONLY the manifest
-		// merge is folded per attempt.
+		req := sourcecontrol.CommitRequest{Message: message}
+		for _, p := range slices.Sorted(maps.Keys(writes)) {
+			req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: string(writes[p]), BaseSHA: current[p]})
+		}
 		if manifestFn != nil {
-			raw, _, rerr := tx.Base().Read(skillsManifestPath)
+			raw, _, rerr := s.git.ReadFile(ctx, ref, commit, skillsManifestPath)
 			if rerr != nil && !errors.Is(rerr, sourcecontrol.ErrPathNotFound) {
-				return fmt.Errorf("read manifest baseline: %w", rerr)
+				return sourcecontrol.CommitRequest{}, fmt.Errorf("read manifest baseline: %w", rerr)
 			}
 			base := parseSkillsManifest(raw)
 			renderedBase := renderSkillsManifest(base)
 			merged := renderSkillsManifest(manifestFn(base)) // manifestFn may mutate base in place
 			if !bytes.Equal(renderedBase, merged) {
-				tx.Write(skillsManifestPath, merged)
+				req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: skillsManifestPath, Content: string(merged), BaseSHA: current[skillsManifestPath]})
 			}
 		}
-		return nil
-	}, sourcecontrol.CommitOpts{Message: message, Author: author, Committer: committer})
-	if err != nil {
-		return "", err
+		written := make(map[string]bool, len(req.Writes))
+		for _, w := range req.Writes {
+			written[w.Path] = true
+		}
+		for _, e := range entries {
+			if !written[e.Path] && underAnyPrefix(e.Path, deletePrefixes) {
+				req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: e.Path, BaseSHA: e.SHA})
+			}
+		}
+		return req, nil
+	})
+	return err
+}
+
+// underAnyPrefix reports whether path is one of prefixes or lies below one of
+// them as a directory.
+func underAnyPrefix(path string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
 	}
-	// Changed=false (nothing staged / identical content) returns the unchanged
-	// tip — same contract as the retired REST path.
-	return res.CommitSHA, nil
+	return false
 }
 
 // writeSkillFiles commits a skill's SKILL.md + references under the flat
@@ -634,7 +621,7 @@ func (s *SkillService) writeSkillFiles(ctx context.Context, orgID, name, skillMD
 		// stages writes after deletes, so rewritten refs win.
 		deletes = append(deletes, skillRepoDir(name)+"/"+strings.TrimSuffix(refsPrefix, "/"))
 	}
-	_, err = s.commitFiles(ctx, orgID, repo, message, writes, deletes, manifestFn)
+	err = s.commitFiles(ctx, orgID, repo, message, writes, deletes, manifestFn)
 	return err
 }
 
@@ -664,7 +651,7 @@ func (s *SkillService) deleteSkillDir(ctx context.Context, orgID, name, message 
 		}
 		return m
 	}
-	_, err = s.commitFiles(ctx, orgID, repo, message, nil, append([]string{skillRepoDir(name)}, legacySkillDirs(name)...), manifestFn)
+	err = s.commitFiles(ctx, orgID, repo, message, nil, append([]string{skillRepoDir(name)}, legacySkillDirs(name)...), manifestFn)
 	return err
 }
 

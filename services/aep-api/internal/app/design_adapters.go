@@ -19,8 +19,10 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -56,13 +58,14 @@ func (c crtTypeCatalog) ResourceTypesByName(ctx context.Context) (map[string]spe
 // designFileCommitter port — the committed-truth single-commit write surface
 // the design service uses to persist a dependency's contract + its
 // dependency.json (and the user's acceptance of an assumed contract) atomically
-// to main. Reads go through the AE Studio pod; the write is still the Files
-// API's (Task 4.16 moves it to Git.Commit). It lives at the composition root
-// so the design feature imports only artifacts (arch boundary), never the
-// files service directly.
+// to main, through the org's AE Studio pod. The design service's writes are
+// already complete files, so they commit raw: no scaffolding, completion or
+// soft validation runs on them (05 §3; the pod runs those for the Room's
+// edits). It lives at the composition root so the design feature names no
+// repository port (arch boundary).
 type designFilesCommitter struct {
-	projectFiles
-	files spec.FilesService
+	git   sourcecontrol.Git
+	repos sourcecontrol.ProjectRepoRows
 }
 
 // workloadReader is the eventcore wiring-conformance check's file read: the
@@ -80,26 +83,28 @@ func (a workloadReader) ReadFile(ctx context.Context, orgID, projectID, path str
 // ReadFile returns a file's current content + blob sha (the CAS token). A file
 // absent at HEAD is reported as ok=false with no error (a fresh spec create).
 func (a designFilesCommitter) ReadFile(ctx context.Context, orgID, projectID, path string) (content, sha string, ok bool, err error) {
-	return a.readFile(ctx, orgID, projectID, "", path)
+	return projectFiles{git: a.git, repos: a.repos}.readFile(ctx, orgID, projectID, "", path)
 }
 
-// Commit writes every file in one atomic apply → main under per-file baseSha
-// CAS. A stale precondition (concurrent design edit) surfaces as
-// spec.ErrSpecCommitConflict so the route can 409.
+// Commit writes every file in one commit on main, each under its own baseSha
+// (the sha the design service read; "" = the file must not exist yet). A
+// baseSha that no longer holds (a concurrent design edit) is
+// spec.ErrSpecCommitConflict so the route can 409; it is not retried, since
+// the caller's baseSha is the point.
 func (a designFilesCommitter) Commit(ctx context.Context, orgID, projectID string, writes []spec.DesignFileWrite, message string) error {
-	ops := make([]spec.WriteOp, 0, len(writes))
-	for _, w := range writes {
-		ops = append(ops, spec.WriteOp{Path: w.Path, Content: w.Content, BaseSHA: w.BaseSHA})
-	}
-	_, conflicts, err := a.files.Apply(ctx, orgID, projectID, spec.ApplyRequest{Writes: ops, Message: message})
+	ref, _, err := sourcecontrol.RepoRefFor(ctx, a.repos, orgID, projectID)
 	if err != nil {
-		if errors.Is(err, spec.ErrApplyConflict) {
-			return spec.ErrSpecCommitConflict
-		}
 		return err
 	}
-	if len(conflicts) > 0 {
-		return spec.ErrSpecCommitConflict
+	req := sourcecontrol.CommitRequest{Message: message}
+	for _, w := range writes {
+		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: w.Path, Content: w.Content, BaseSHA: w.BaseSHA})
+	}
+	if _, err := a.git.Commit(ctx, ref, req); err != nil {
+		if errors.Is(err, sourcecontrol.ErrCommitConflict) {
+			return fmt.Errorf("%w: %w", spec.ErrSpecCommitConflict, err)
+		}
+		return err
 	}
 	return nil
 }

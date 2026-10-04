@@ -94,7 +94,7 @@ type ValidationCycleReader interface {
 
 // ValidationSnapshotReader reads one attempt's evidence AT A COMMIT: the report
 // the runner committed, and the acceptance criteria it was judged against.
-// Satisfied by an app adapter over spec.FilesService.
+// Satisfied by an app adapter over the Git port (app.acceptanceCriteria).
 //
 // Both halves come from the same commit and that is the entire reason this is
 // one port with one `at` rather than two reads a caller pairs up. The report

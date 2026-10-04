@@ -79,8 +79,8 @@ const recordingLineCap = 1 << 20 // 1 MiB
 
 // recordingSegment is the allowed shape of an org / cycle path segment. The
 // values come from database rows, never from client input, and are validated
-// anyway for the same defense-in-depth reason gitfs validates its own path
-// keys: one poisoned row must not be able to name a directory outside the tree.
+// anyway as defense in depth: one poisoned row must not be able to name a
+// directory outside the tree.
 var recordingSegment = regexp.MustCompile(`^[A-Za-z0-9._-]{1,200}$`)
 
 // ErrNoRecording means the platform holds no record of this cycle's feed —

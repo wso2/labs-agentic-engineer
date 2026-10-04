@@ -16,7 +16,11 @@
 
 package sourcecontrol
 
-import "context"
+import (
+	"context"
+	"errors"
+	"time"
+)
 
 // git.go — the Git port: a project's repository content (reads, tags, raw
 // commits) as the org's AE Studio pod serves it. aep-api holds no clone; the
@@ -54,6 +58,43 @@ type BundleFilter struct {
 	Prefix string   // "" = whole tree
 	Exts   []string // empty = any extension
 	Paths  []string // exact paths; when set, Prefix and Exts are ignored
+}
+
+// Entry is one blob of a tree listing.
+type Entry struct {
+	Path string
+	SHA  string
+	Size int64
+}
+
+// GitIdentity is a git author, committer or tagger identity. Date is
+// optional (empty means now).
+type GitIdentity struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+	Date  string `json:"date,omitempty"`
+}
+
+// TagSpec describes one annotated tag. Target is a commit sha ("" = the
+// default-branch tip). Tagger nil is the pod's default (AEP) identity.
+type TagSpec struct {
+	Name    string
+	Target  string
+	Message string
+	Tagger  *GitIdentity
+}
+
+// TagInfo describes a git tag: the peeled commit it points at, the tag
+// message subject (empty for a lightweight tag), and when the tag was made.
+type TagInfo struct {
+	Name       string `json:"name"`
+	CommitHash string `json:"commitHash"`
+	Message    string `json:"message,omitempty"`
+	// CreatedAt is git's `creatordate`: the tag's own date for an annotated
+	// tag, the commit's for a lightweight one. It orders versions, whose
+	// names are the user's (spec ADR-0030) and carry no sequence. Zero when
+	// the ref could not be dated.
+	CreatedAt time.Time `json:"createdAt,omitempty"`
 }
 
 // FileWrite writes one file. BaseSHA is the blob sha the path must have at
@@ -117,4 +158,33 @@ type Git interface {
 	// Commit applies req in one commit on the default branch, or answers
 	// *CommitConflictError naming every path whose baseSha did not hold.
 	Commit(ctx context.Context, ref RepoRef, req CommitRequest) (CommitResult, error)
+}
+
+// CommitAttempts is how many times CommitRetrying plans and commits before a
+// conflict is final.
+const CommitAttempts = 3
+
+// CommitRetrying commits what plan builds from a fresh read, and plans and
+// commits again when a baseSha no longer held (a concurrent writer moved a
+// path between the read and the commit), CommitAttempts times in all; the
+// last *CommitConflictError is returned. A plan with no write and no delete
+// commits nothing: CommitRetrying answers the zero CommitResult. Every other
+// error ends it at once.
+func CommitRetrying(ctx context.Context, git Git, ref RepoRef, plan func(ctx context.Context) (CommitRequest, error)) (CommitResult, error) {
+	var err error
+	for range CommitAttempts {
+		var req CommitRequest
+		if req, err = plan(ctx); err != nil {
+			return CommitResult{}, err
+		}
+		if len(req.Writes) == 0 && len(req.Deletes) == 0 {
+			return CommitResult{}, nil
+		}
+		var res CommitResult
+		res, err = git.Commit(ctx, ref, req)
+		if !errors.Is(err, ErrCommitConflict) {
+			return res, err
+		}
+	}
+	return CommitResult{}, err
 }

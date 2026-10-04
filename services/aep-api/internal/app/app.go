@@ -66,8 +66,6 @@ import (
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/reaper"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/projects"
@@ -145,11 +143,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	db := in.DB
 	credStore := in.CredentialStore
 	minter := in.Minter
-	workspaceEngine := in.Workspace
 
 	// Skills are repo-backed now (one private org-skills repo per org —
-	// docs/design/skills-repo-storage.md). The store needs gitOpsService +
-	// repoService, so it is constructed below once those exist. No startup
+	// docs/design/skills-repo-storage.md). The store needs the org pods' Git
+	// port + repoService, so it is constructed below once those exist. No startup
 	// bootstrap: built-ins seed/reconcile into each org's repo on demand.
 
 	// Repositories
@@ -283,28 +280,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Infra — Assemble does no OpenBao/network I/O.
 	credResolver := secrets.NewOrgResolver(db, credStore, minter)
 
-	// Workspace engine (resolved in Resolve, arrives via Infra) — the disk-backed
-	// git plumbing over the shared /workspaces mount. It backs the disk-lifecycle
-	// pieces (the two best-effort trash hooks below + the reaper watcher) and the
-	// GitOpsService Workspace port.
-	//
-	// Both hooks are phase 1 of the two-phase delete (O(1) rename into
-	// trash/) and best-effort by contract: failures are logged, never
-	// surfaced — the reaper's orphan pass is the correctness backstop.
-	trashWorkspaceRepo := func(ctx context.Context, orgID, projectID, repoSlug string) {
-		if err := workspaceEngine.TrashRepo(ctx, gitfs.RepoRef{OrgID: orgID, ProjectID: projectID, RepoSlug: repoSlug}); err != nil {
-			slog.WarnContext(ctx, "workspace: trash repo subtree failed (reaper will reconcile)",
-				"org", orgID, "project", projectID, "slug", repoSlug, "error", err)
-		}
-	}
-	trashWorkspaceOrg := func(ctx context.Context, ocOrgID string) {
-		if err := workspaceEngine.TrashOrg(ctx, ocOrgID); err != nil {
-			slog.WarnContext(ctx, "workspace: trash org subtree failed (reaper will reconcile)",
-				"ocOrgId", ocOrgID, "error", err)
-		}
-	}
-
-	gitOpsService := sourcecontrol.NewGitOpsService(credResolver, workspaceEngine)
 	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
 	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret)
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
@@ -334,16 +309,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
 	// the kickoff and Plan turns and the reference uploads run through it.
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
-	// A project's repository content is read through its org's pod; the
-	// version tag is still cut on the workspace mirror until Task 4.16.
-	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools, gitOpsService)
+	// aep-api's own commits and tags go out through the same pod, authored as
+	// the org credential's identity (sourcecontrol.WithSaveIdentity).
+	studioGit := sourcecontrol.WithSaveIdentity(studioTools, credResolver)
+	// A project's repository content is read through its org's pod, and the
+	// version tag is cut there.
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioGit)
 	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
 	// hooks — goes to the org's pod through the same adapter; the project's
 	// repo row names the repository and the org's connected login owns new
 	// ones.
-	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, credService, cfg.GitHubRepoVisibility,
-		sourcecontrol.WithWorkspaceTrash(trashWorkspaceRepo))
+	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, credService, cfg.GitHubRepoVisibility)
 	issueService := sourcecontrol.NewIssueService(repoRepo, studioTools)
 	// THE delivery-side issue-write surface: every issue the delivery domain
 	// mints, closes, reopens or labels goes through this one writer, so the
@@ -410,18 +387,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	artifactStore := spec.NewArtifactStore(artifactSvcGit)
 
 	// Repo-backed skills store (single source of truth = per-org org-skills
-	// repo). Reads go through the org's AE Studio pod (studioTools); writes
-	// commit to main through the Workspace port until Task 4.16
-	// (services/aep-api/design/shared-workspace-volume.md). Built-ins + flow
-	// skills seed/reconcile from the embedded files on demand.
+	// repo). Reads and commits go through the org's AE Studio pod, and so does
+	// the project .claude/skills mirror. Built-ins + flow skills
+	// seed/reconcile from the embedded files on demand.
 	// docs/design/skills-repo-storage.md.
-	skillSvc := spec.NewSkillService(gitOpsService, studioTools, repoService, os.DirFS(cfg.SkillsDir))
+	skillSvc := spec.NewSkillService(studioGit, studioTools, repoService, os.DirFS(cfg.SkillsDir))
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
-
-	// Files API — generic specs/-scoped, GitHub-at-HEAD reads + atomic apply
-	// (commits straight to main under CAS retry). No local working tree.
-	filesSvc := spec.NewFilesService(repoService, gitOpsService)
 
 	// The finished-turn ledger: the org pods record every turn they ran into
 	// it; the status poll, the build gate's design baseline and kickoff read it.
@@ -487,7 +459,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
 	// the read + plan surface reads them live and fuses executions. The dispatch
 	// half (funnel, coding executor, watchers) is wired below, after
-	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
+	// asServiceIdentity. repoService/artifactStore/artifactSvcGit
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
 	taskPlan := task.NewPlanService(repoRepo, artifactSvcGit, studioTools, issueService, deliveryIssues)
@@ -500,7 +472,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Stamp specs/.agentic-engineer.toml into each new project's repo: the
 	// Agentic Engineer marker, carrying the idea the user typed at create for
 	// the /start flow to generate requirements from.
-	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(filesSvc))
+	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(studioGit, repoRepo))
 
 	// The journey starts itself (#562): creation fires `/start` server-side,
 	// in the org's AE Studio pod, so the user lands on a project whose agent
@@ -880,8 +852,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Org-scoped GitHub connect/disconnect surface. Tasks are GitHub issues now
 	// (no rows to abandon on disconnect); the disconnect service severs the
 	// credential and the issues become inert to the router (no valid webhook).
-	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService).
-		WithWorkspaceTrash(trashWorkspaceOrg)
+	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService)
 
 	// Internal S2S runner authorizer — keyed to the CYCLE: the id in the runner
 	// bearer is the run cycle the pod was dispatched for, and the publisher-cc
@@ -1006,11 +977,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org docs repo: registered resources' contract documents. Register
 	// writes them; the design write path copies one into a project when a
 	// stub dependency names the resource (spec/registry_copy.go).
-	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioTools, gitOpsService)
+	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioGit)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
-	filesSvc.SetRegisteredResourceReader(registryReader)
 	// The AE Studio tools pod has its saves' dependency stubs completed here,
-	// over the same registry and the same guarded fetch Apply uses (04 §4).
+	// over the registry and the guarded fetch (04 §4).
 	// The request carries the org's publisher token, not a user JWT, so the
 	// registry's OpenChoreo reads run as the BFF's own service identity
 	// (X-Impersonate-Org from the namespace), as the runner's validation
@@ -1315,10 +1285,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Committed-truth write surface for a dependency's directory: the design
 	// service fetches/validates a contract and atomically commits it with the
 	// dependency.json that records it (clearing the needs-contract gate), and
-	// records the user's acceptance of an assumed one — read through the pod,
-	// committed via the Files API until Task 4.16. Composition-root adapter
-	// keeps files out of the design feature.
-	designService.SetFileCommitter(designFilesCommitter{projectFiles: projFiles, files: filesSvc})
+	// records the user's acceptance of an assumed one — read and committed
+	// through the pod. Composition-root adapter keeps the repository port out
+	// of the design feature.
+	designService.SetFileCommitter(designFilesCommitter{git: studioGit, repos: repoRepo})
 	// Grant cascade → design: commit the exposesAPI.orgPublished durability marker
 	// on a provider component when its cross-project access request is granted.
 	// Setter-wired at the root (provisioning holds a narrow design port).
@@ -1532,28 +1502,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
 
-	// R8b readiness gate: true after successful boot layout (Resolve → gitfs.New);
-	// the reaper clears it on root-health failure and sets it again on recovery.
-	var workspaceReady *reaper.ReadyGate
-	if workspaceEngine != nil {
-		workspaceReady = &reaper.ReadyGate{}
-		workspaceReady.Set(true)
-	}
-	params.WorkspaceReady = workspaceReady
 	handler := edge.NewHandler(params)
-
-	// Disk-lifecycle reaper (design §14/D12): trash purge, snapshot age-reap,
-	// DB↔disk orphan reconciliation, quota/LRU eviction. ENOSPC on Ensure/Mutate
-	// triggers ForceSweep (unconditional trash purge + full Sweep). Fake()
-	// leaves Workspace nil (no disk); skip reaper wiring in that case.
-	var workspaceReaper Watcher
-	if workspaceEngine != nil {
-		r := reaper.New(workspaceEngine, reaperRepoLister{repoRepo}, cfg.Workspace, workspaceReady)
-		workspaceEngine.SetOnENOSPC(func() {
-			r.ForceSweep(context.Background())
-		})
-		workspaceReaper = r
-	}
 
 	// Background watchers, launched by main under a shared cancellable context.
 	// State lives in Postgres + GitHub, so a plain goroutine per watcher is
@@ -1602,14 +1551,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// once none of the org's cycles is open.
 		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
 	}
-	// Disk-lifecycle reaper: global passes self-elect via non-blocking flock.
-	// Omitted when Fake() leaves Workspace nil (no disk at assemble time).
-	if workspaceReaper != nil {
-		watchers = append(watchers, workspaceReaper)
-	}
-	// Run-recording retention (age + per-org quota over <root>/runs). It left the
-	// workspace reaper with the recordings pass and so holds no leader lock:
-	// aep-api runs one replica over the RWO /workspaces volume, and phase 5 deletes
+	// Run-recording retention (age + per-org quota over <root>/runs). It holds
+	// no leader lock: aep-api runs one replica over the RWO /workspaces volume, and phase 5 deletes
 	// the recordings tree. Skipped when Fake() leaves no workspace root.
 	if cfg.Workspace.Root != "" {
 		watchers = append(watchers, codingagent.NewRecordingRetention(cfg.Workspace.Root, cfg.Workspace))

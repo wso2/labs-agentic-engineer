@@ -17,21 +17,20 @@
 // UNIT tier: the read/write-surface branches repo_store_test.go leaves open —
 // the SkillMutationService.Update paths beyond the component tier's 403/404
 // (happy round-trip, NAME_IMMUTABLE, imported ⇒ not-found), and the read
-// degrade path (an origin outage serves empty and never fails the run, §12).
-// The commit CAS retry/exhaustion behaviour now
-// lives in Workspace.Mutate and is pinned at the gitfs tier (plus the
-// end-to-end concurrent-commit test in repo_store_test.go), so the old
-// fault-injecting git-host fakes are gone with the REST path.
+// degrade path (a pod outage serves empty and never fails the run, §12).
+// The commit retry on a baseSha conflict is pinned in repo_store_test.go and
+// skills_commit_test.go.
 package spec
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 func TestUpdate_HappyAndGuards(t *testing.T) {
@@ -135,12 +134,9 @@ func TestCatalog_DegradesOnReadError(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	// Simulate an origin outage: nuke the bare origin so the engine's
-	// branch-tip fetch fails. The catalog must degrade (serve empty) rather
-	// than fail the design/task run (§12).
-	if err := os.RemoveAll(host.origin("org1").Dir()); err != nil {
-		t.Fatalf("remove origin: %v", err)
-	}
+	// Simulate an outage: the org's pod stops serving. The catalog must
+	// degrade (serve empty) rather than fail the design/task run (§12).
+	host.pod.FailOrg("org1", sourcecontrol.ErrAEStudioUnavailable)
 
 	got, err := svc.List(ctx, "org1")
 	if err != nil {

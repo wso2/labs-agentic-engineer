@@ -205,11 +205,10 @@ Losing a recording costs a feed, never a fact. (Postgres remains the contained
 fallback: the reader is already an interface and the same recorder could write
 rows keyed by `(cycle_id, attempt, seq)`.)
 
-Retention is a seventh reaper pass (`internal/platform/gitfs/reaper`): **30 days
-by age** (`AEP_WORKSPACE_RECORDING_MAX_AGE`), with the existing per-org quota as
-the backstop, oldest first. Quota/LRU eviction under disk pressure still walks
-`repos/` only — a cache may be thrown away to make room, the only copy of
-something may not. A per-cycle size cap exists
+Retention is its own sweep (`codingagent.RecordingRetention`, every
+`AEP_WORKSPACE_REAP_INTERVAL`): **30 days by age**
+(`AEP_WORKSPACE_RECORDING_MAX_AGE`), with a per-org quota
+(`AEP_WORKSPACE_ORG_QUOTA_BYTES`) as the backstop, oldest first. A per-cycle size cap exists
 (`AEP_WORKSPACE_RECORDING_MAX_BYTES`) and is **off by default**; a run that trips
 it records a notice and carries on without recording, because stopping an agent
 to protect a log would be the wrong way round.

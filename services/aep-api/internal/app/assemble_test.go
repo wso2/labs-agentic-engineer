@@ -34,15 +34,14 @@ import (
 	"github.com/wso2/aep/aep-api/internal/config"
 )
 
-// baseCfg is the minimal config that Assemble accepts. GitProvider must be
-// "github" (buildGitHost rejects anything else), and the OpenChoreo clients use
-// a must-construct pattern that panics on an empty BaseURL — so the structurally-
+// baseCfg is the minimal config that Assemble accepts. The OpenChoreo clients
+// use a must-construct pattern that panics on an empty BaseURL — so the structurally-
 // required (non-degradable) fields are set to dummy non-empty values. Everything
 // OPTIONAL is left at its zero value, so the graph assembles in its maximally-
 // degraded mode. Assemble never calls config.Validate, so the required-at-boot
 // fields (JWKSURL, TaskTokenSigningKey) are irrelevant here.
 func baseCfg() config.Config {
-	c := config.Config{GitProvider: "github"}
+	c := config.Config{}
 	c.PlatformAPI.BaseURL = "http://openchoreo.test"
 	return c
 }

@@ -25,8 +25,7 @@ import (
 // Fake returns a zero-I/O Infra for assembly tests. The DB is a non-nil but
 // UNCONNECTED *gorm.DB: the graph's constructors only store it (and some assert
 // it is non-nil, e.g. JobWatcher) — nothing queries it at assembly time, so no
-// connection is opened. The workspace is nil for the same reason (constructors
-// store the pointer; the trash hooks / reaper only deref it when invoked). The
+// connection is opened. The
 // minter (no-app mode) and credential store (cipher-only over the nil DB) are
 // both pure to construct. app.Assemble(cfg, Fake(), Seam{}) thus builds the same real
 // handler + watchers as production without touching the network, clock, or disk.
@@ -40,6 +39,5 @@ func Fake() Infra {
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
-		Workspace:       nil,
 	}
 }

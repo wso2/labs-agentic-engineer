@@ -15,8 +15,8 @@
 // under the License.
 
 // registry_copy.go — the platform's copy of a Registered External resource
-// into a project, made at the design write (FilesService.Apply, the single
-// specs/ write chokepoint).
+// into a project, made at the design write (the AE Studio pod's saves call
+// CompleteDependencies through the dependency-completions op).
 //
 // The design agent asks for a registered resource by name: it writes a STUB
 // dependency.json — `{ "name": n, "resource": { "ref": n, "name": n } }` —
@@ -30,9 +30,8 @@
 // changed org document is detectable later (the `stale` flag) and a refresh
 // is a re-copy.
 //
-// The registry is read BEFORE Workspace.Mutate — that fn re-runs on every CAS
-// retry, and a catalog read inside it would run once per retry. The lookup
-// never fails the apply: a batch is all-or-nothing over unrelated spec edits,
+// The registry is read before the pod commits. The lookup never fails the
+// save: a batch is all-or-nothing over unrelated spec edits,
 // so an unreachable catalog lands the stub with a warning and the dependency
 // reads needs-input until the registry answers (the status ladder's rule 2);
 // a name nobody registered lands the same way, with a warning that says so.
@@ -44,6 +43,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -82,6 +82,19 @@ type CompletedFile struct {
 	Files      map[string]string
 }
 
+// WriteOp is one file write a completion scans: its path and content.
+type WriteOp struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// Warning is a non-blocking note attached to a written file.
+type Warning struct {
+	Path    string `json:"path"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 // CompleteDependencies is the one completion step for a batch of writes: the
 // registry copy for each registry stub, then the provider-document fetch for
 // each dependency file that owes one (and was not just copied). It returns,
@@ -91,10 +104,10 @@ type CompletedFile struct {
 // ignored. It never fails: a stub it cannot complete lands as written, with a
 // warning.
 //
-// Two callers, one code path: FilesService.Apply, and the AE Studio tools
-// pod's dependency-completions op (04 §4), which keeps the registry read and
-// the fetch of a model-chosen URL on aep-api's side of the CP/DP seam, away
-// from the container that holds the org's git credential (SSRF).
+// Its caller is the AE Studio tools pod's dependency-completions op (04 §4),
+// which keeps the registry read and the fetch of a model-chosen URL on
+// aep-api's side of the CP/DP seam, away from the container that holds the
+// org's git credential (SSRF).
 func CompleteDependencies(ctx context.Context, reg RegisteredResourceReader, fetch func(context.Context, string) ([]byte, error), orgID string, writes []WriteOp) (map[string]CompletedFile, []Warning) {
 	completed, warnings := completeRegistryCopies(ctx, reg, orgID, writes)
 	fetched, fetchWarnings := completeProviderDocuments(ctx, fetch, writes, completed)
@@ -107,11 +120,20 @@ func CompleteDependencies(ctx context.Context, reg RegisteredResourceReader, fet
 // IsDependencyFilePath reports whether p is a canonical, in-scope
 // dependency definition path: specs/design/dependencies/<name>/dependency.json.
 func IsDependencyFilePath(p string) bool {
-	if validatePath(p) != nil {
+	if !isCanonicalSpecPath(p) {
 		return false
 	}
 	_, ok := dependencyFileDir(p)
 	return ok
+}
+
+// isCanonicalSpecPath reports whether p is repo-relative, canonical, free of
+// traversal and under specs/.
+func isCanonicalSpecPath(p string) bool {
+	if p == "" || path.Clean(p) != p || strings.HasPrefix(p, "/") || !strings.HasPrefix(p, "specs/") {
+		return false
+	}
+	return !slices.Contains(strings.Split(p, "/"), "..")
 }
 
 // isRegistryStub: the agent named a registered resource and typed none of it
@@ -241,7 +263,7 @@ func dependencyFileDir(p string) (string, bool) {
 func dependencyDocumentPath(name, file string) (string, bool) {
 	dir := DesignDir + "/" + dependencyDirPrefix + name
 	p := dir + "/" + file
-	if file == "" || file == DependencyDesignFile || validatePath(p) != nil || path.Dir(p) != dir {
+	if file == "" || file == DependencyDesignFile || !isCanonicalSpecPath(p) || path.Dir(p) != dir {
 		return "", false
 	}
 	return p, true

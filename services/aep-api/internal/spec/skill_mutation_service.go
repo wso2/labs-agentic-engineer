@@ -50,7 +50,7 @@ var (
 // copied, and every build in the org would then refuse to start (the runner
 // fails fast rather than improvise — `requireWorkflowBodies`).
 //
-// Refused here rather than force-copied in desiredMirror on purpose. Copying a
+// Refused here rather than force-copied by the mirror on purpose. Copying a
 // disabled skill anyway would leave the console showing `aep` as off while every
 // build loaded it, which makes the flag a lie; a refusal tells the admin why.
 var RequiredSkills = map[string]bool{
@@ -345,7 +345,7 @@ func (m *SkillMutationService) SetEnabled(ctx context.Context, orgID, actor, nam
 		verb = "enable"
 	}
 	msg := fmt.Sprintf("chore(skills): %s %s skill %q\n\nby %s", verb, existing.Kind, name, actor)
-	if _, err := m.skills.commitFiles(ctx, orgID, repo, msg, nil, nil, manifestFn); err != nil {
+	if err := m.skills.commitFiles(ctx, orgID, repo, msg, nil, nil, manifestFn); err != nil {
 		return nil, fmt.Errorf("%s skill %q: %w", verb, name, err)
 	}
 	slog.InfoContext(ctx, "skill availability changed", "orgID", orgID, "name", name, "actor", actor, "enabled", enabled)

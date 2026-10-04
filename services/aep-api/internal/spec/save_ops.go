@@ -16,15 +16,9 @@
 
 package spec
 
-// The write primitive behind Save (annotated tag at the pinned commit), still
-// cut on the workspace mirror through VersionTagGateway until Task 4.16 moves
-// it to Git.Tag. Save creates no commit — the accepted draft is already on
-// the default branch.
-// Push-CAS on origin arbitrates concurrent writers; Mutate owns the bounded
-// fast-forward retry (design D5 — the retired REST path's org-keyed leaky
-// bucket is not ported). (Discard's revert-commit primitive, revertSubtreeToTag, was
-// removed with DiscardRequirements/DiscardDesign — dead once the
-// requirements/design read+discard HTTP surface was removed.)
+// The write primitive behind Save: an annotated tag at the pinned commit, cut
+// through the Git port. Save creates no commit — the accepted draft is
+// already on the default branch.
 
 import (
 	"context"
@@ -58,28 +52,25 @@ var tagRetryAttempts = []time.Duration{
 // suggested: an external pusher can claim it between the tag-list read and the
 // push, so the suggestion is recomputed against a fresh listing and retried,
 // bounded by tagRetryAttempts. `name` carries the name actually cut back out.
-// ref is the repository the refreshed tag list is read from (the pod); wref is
-// the same repository on the workspace mirror the tag is cut on.
+// ref is the repository the tag is cut on and the refreshed tag list read
+// from.
 func (s *artifactService) createVersionTag(
 	ctx context.Context,
 	ref sourcecontrol.RepoRef,
-	wref sourcecontrol.WorkspaceRef,
 	tags *[]sourcecontrol.TagInfo,
 	name *string,
 	message, commitSHA string,
 	resuggest bool,
 ) error {
-	tagger, _ := s.tags.ResolveSaveIdentities(wref.Cred)
 	attempt := func() error {
 		body := specTagSubject + *name
 		if message != "" {
 			body = body + "\n\n" + message
 		}
-		return s.tags.Workspace().Tag(ctx, wref, sourcecontrol.TagSpec{
+		return s.git.Tag(ctx, ref, sourcecontrol.TagSpec{
 			Name:    *name,
 			Target:  commitSHA,
 			Message: body,
-			Tagger:  tagger,
 		})
 	}
 	err := attempt()

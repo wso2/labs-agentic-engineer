@@ -18,7 +18,7 @@ package spec
 
 // SaveSpec = whole-spec hard gate (requirements + design) → one annotated tag
 // covering the specs/ tree, named by the user or suggested. These run over the
-// real gitfs Workspace engine.
+// in-memory AE Studio pod.
 
 import (
 	"context"
@@ -332,7 +332,7 @@ func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
 func TestCommitSHA_OnlyAFullLowercaseShaReachesThePod(t *testing.T) {
 	t.Parallel()
 	f := aestudiotest.New()
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, nil)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
 	ctx := context.Background()
 	full := strings.Repeat("a", 40)
 	for _, sha := range []string{full[:7], strings.ToUpper(full), full + "aa"} {
@@ -363,9 +363,9 @@ func TestSaveSpec_UnknownPinnedSha_RefNotFound(t *testing.T) {
 	}
 }
 
-// The tag the save reports is the same object origin and the mirror resolve,
-// and it is HEAD — a save commits nothing.
-func TestSaveSpec_TagShaConsistency_OriginAndMirror(t *testing.T) {
+// The tag the save reports is the commit the tag resolves to, and it is HEAD —
+// a save commits nothing.
+func TestSaveSpec_TagShaConsistency(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 
@@ -373,11 +373,8 @@ func TestSaveSpec_TagShaConsistency_OriginAndMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveSpec: %v", err)
 	}
-	if origin := r.originRevParse("v1^{commit}"); res.CommitHash != origin {
-		t.Errorf("CommitHash %s != origin peeled v1 %s", res.CommitHash, origin)
-	}
-	if mirror := r.mirrorRevParse("v1^{commit}"); res.CommitHash != mirror {
-		t.Errorf("CommitHash %s != mirror peeled v1 %s", res.CommitHash, mirror)
+	if tagged := r.tagCommit("v1"); res.CommitHash != tagged {
+		t.Errorf("CommitHash %s != v1's commit %s", res.CommitHash, tagged)
 	}
 	if head := r.headSHA(); res.CommitHash != head {
 		t.Errorf("CommitHash %s != origin tip %s (save must tag HEAD)", res.CommitHash, head)
@@ -410,19 +407,23 @@ func TestSaveSpec_SuggestedNameCollision_RecomputesToNextName(t *testing.T) {
 }
 
 // A true external-pusher collision in the window between the save's fresh
-// tag-list read and its Tag push, forced via the harness BeforeTag hook: the
-// engine's fetch+precheck surfaces ErrTagAlreadyExists, and the recompute loop
-// must refresh the tag list and land v2.
+// tag-list read and its Tag, forced via the pod's BeforeTag hook: the pod
+// answers ErrTagAlreadyExists, and the recompute loop must refresh the tag
+// list and land v2.
 func TestSaveSpec_SuggestedNameCollision_InWindowClaim(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 
 	var tagAttempts int32
 	var once sync.Once
-	r.ws.BeforeTag = func(sourcecontrol.TagSpec) {
+	r.pod.BeforeTag(func(sourcecontrol.TagSpec) {
 		atomic.AddInt32(&tagAttempts, 1)
-		once.Do(func() { r.tag("v1", specTagSubject+"v1") })
-	}
+		once.Do(func() {
+			r.pod.BeforeTag(nil)
+			r.tag("v1", specTagSubject+"v1")
+			r.pod.BeforeTag(func(sourcecontrol.TagSpec) { atomic.AddInt32(&tagAttempts, 1) })
+		})
+	})
 
 	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
 	if err != nil {
@@ -450,7 +451,6 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 	s := r.svc.(*artifactService)
-	ref := r.workspaceRef()
 	head := r.headSHA()
 
 	type outcome struct {
@@ -465,7 +465,7 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 			defer wg.Done()
 			tags := []sourcecontrol.TagInfo{} // both believe no tags exist yet
 			name := suggestedVersionName(tags)
-			err := s.createVersionTag(context.Background(), r.repoRef(), ref, &tags, &name,
+			err := s.createVersionTag(context.Background(), r.repoRef(), &tags, &name,
 				"race", head, true)
 			results[i] = outcome{name: name, err: err}
 		}(i)
@@ -482,8 +482,8 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 		t.Fatalf("tag names = %s/%s, want exactly {v1, v2}", results[0].name, results[1].name)
 	}
 	for _, tag := range []string{"v1", "v2"} {
-		if peeled := r.originRevParse(tag + "^{commit}"); peeled != head {
-			t.Errorf("%s peels to %s on origin, want the pinned commit %s", tag, peeled, head)
+		if peeled := r.tagCommit(tag); peeled != head {
+			t.Errorf("%s points at %s, want the pinned commit %s", tag, peeled, head)
 		}
 	}
 }

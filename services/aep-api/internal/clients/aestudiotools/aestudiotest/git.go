@@ -255,8 +255,14 @@ func (f *Fake) ListTags(_ context.Context, ref sourcecontrol.RepoRef, prefix str
 
 // Tag creates an annotated tag at spec.Target ("" = the tip).
 func (f *Fake) Tag(_ context.Context, ref sourcecontrol.RepoRef, spec sourcecontrol.TagSpec) error {
-	if err := f.begin(Call{Op: OpTag, Ref: ref, At: spec.Target}); err != nil {
+	if err := f.begin(Call{Op: OpTag, Ref: ref, At: spec.Target, Tagger: spec.Tagger}); err != nil {
 		return err
+	}
+	f.mu.Lock()
+	hook := f.beforeTag
+	f.mu.Unlock()
+	if hook != nil {
+		hook(spec)
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

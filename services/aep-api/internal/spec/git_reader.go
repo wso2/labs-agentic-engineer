@@ -30,20 +30,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
-
-// VersionTagGateway is the workspace mirror the version tag is still cut
-// through: the tag write, the credential that pushes it and the tagger
-// identity. Reads no longer go through it (they are sourcecontrol.Git); Task
-// 4.16 moves the tag to Git.Tag and deletes this port. The concrete
-// *sourcecontrol.gitOpsService satisfies it structurally.
-type VersionTagGateway interface {
-	Workspace() sourcecontrol.Workspace
-	Resolver() secrets.Resolver
-	ResolveSaveIdentities(cred secrets.Credential) (*sourcecontrol.GitIdentity, *sourcecontrol.GitIdentity)
-}
 
 // The repo-relative directory prefixes the two bundles live under (trailing
 // slash so a prefix match never straddles a sibling like `specs/designs/`).

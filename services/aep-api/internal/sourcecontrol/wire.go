@@ -20,8 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 )
 
 // The request/response DTOs exchanged across the git-provider ports (ports.go).
@@ -343,18 +341,6 @@ type IssueInfo struct {
 	AttentionReason string
 }
 
-// CompareResult is the per-file change summary between two refs the lineage
-// diff consumes (§6) — produced by the Workspace engine's local
-// `git diff base...head` (Workspace.Diff). Alias of the gitfs definition
-// (identical fields). Truncated is always false there (a local diff never
-// truncates); the field survives from the retired GitHub compare shape.
-type CompareResult = gitfs.CompareResult
-
-// ChangedFile is one entry of a compare's files[] list. Alias of the gitfs
-// definition. Status vocabulary is GitHub-compatible: added | removed |
-// modified | renamed | copied | changed | unchanged.
-type ChangedFile = gitfs.ChangedFile
-
 // ----- Account -----
 
 // GitHubUser is the subset of GET /user we consume.
@@ -366,13 +352,6 @@ type GitHubUser struct {
 }
 
 // ----- Git identity -----
-
-// GitIdentity mirrors a git author/committer/tagger identity. Date is
-// optional (defaults to the commit/tag time when omitted). Named with the
-// `Git` prefix to avoid collision with the `Identity` type already declared
-// in credential_service.go. Alias of the gitfs definition — consumers keep
-// importing sourcecontrol.GitIdentity while the engine owns the type.
-type GitIdentity = gitfs.GitIdentity
 
 // PullRequestState is the subset of a pull request the sweep's PR-state
 // reconciliation reads (§5): open/closed + merged + the merge commit SHA.

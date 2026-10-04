@@ -183,8 +183,6 @@ func (a *Adapter) ListTags(ctx context.Context, ref RepoRef, prefix string, opts
 }
 
 // Tag creates an annotated tag; ErrTagAlreadyExists when the name is taken.
-//
-//deadcode:keep wired in Task 4.16 (git writes move to Commit and Tag)
 func (a *Adapter) Tag(ctx context.Context, ref RepoRef, spec sourcecontrol.TagSpec) error {
 	if err := validRef(ref); err != nil {
 		return err
@@ -197,8 +195,6 @@ func (a *Adapter) Tag(ctx context.Context, ref RepoRef, spec sourcecontrol.TagSp
 
 // Commit applies req in one commit on the default branch; a failed baseSha
 // is *CommitConflictError naming every such path.
-//
-//deadcode:keep wired in Task 4.16 (git writes move to Commit and Tag)
 func (a *Adapter) Commit(ctx context.Context, ref RepoRef, req sourcecontrol.CommitRequest) (sourcecontrol.CommitResult, error) {
 	if err := validRef(ref); err != nil {
 		return sourcecontrol.CommitResult{}, err

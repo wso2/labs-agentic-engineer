@@ -12,37 +12,35 @@ flowchart LR
   CB(["/collab/validate"]) -.-> SL
   subgraph spec
     SL["slices — files · tags · skills · collab · designdeps"]
-    CORE["artifacts store/versioning + kickoff + files + design + skills services"]
+    CORE["artifacts store/versioning + kickoff + design + skills services"]
     SL --> CORE
     CORE --> GIT[("git: prd.md · specs/design/** · version tags · org-skills repo")]
     CORE --> TURNS[("agent_turns (finished-turn ledger)")]
   end
-  CORE -->|Git reads · Workspace writes| SC[[sourcecontrol]]
+  CORE -->|Git reads · commits · tags · mirror-skills| SC[[sourcecontrol]]
   CORE -->|CRTType port| DEP[[dependencies]]
-  CORE -->|git tokens| SEC[[platform/secrets]]
   CORE -->|kickoff · references · git reads| POD[["clients/aestudiotools (the org's AE Studio pod)"]]
 ```
 
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
+| `files` | upload a project's reference documents (a pass-through to the org's AE Studio pod) | `PUT .../references` |
 | `tags` | list the project's spec version tags, newest first by creation time | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
 | `collab` | the collab session descriptor + the S2S room-access oracle | `.../spec/collab-session`, `GET /collab/validate` |
 | `designdeps` | the two writes into an external dependency's directory: provide its contract (a URL the platform fetches, or the document itself), and record the user's authorization to build on the design agent's assumed contract — before the agent writes it (the resolve flow's card) or after (the definition's acceptance box) | `POST .../dependencies/{name}/contract`, `POST .../dependencies/{name}/assumption` |
 
 *Still flat in the domain root (not carved into finer slices): the artifacts store/versioning machinery,
-the kickoff, the finished-turn ledger, and the files / design / skills services. Agent turns themselves run
+the kickoff, the finished-turn ledger, and the design / skills services. Agent turns themselves run
 in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores what the pod records.*
 
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`) — every artifact read: bundles, trees, files, tags, the status snapshot (local head + local tags, then sha-addressed reads the adapter caches) |
-| `VersionTagGateway` · `Workspace` · `GitOpsService` · `RepoService` | needs | `sourcecontrol` — the gitfs engine for the writes (the version tag, the Files apply, the skills library and its reads) until Task 4.16 moves them to `Git` |
+| `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`, wrapped by `sourcecontrol.WithSaveIdentity`) — every read (bundles, trees, files, tags, the status snapshot: local head + local tags, then sha-addressed reads the adapter caches) and every write: the version tag (`Tag`), the skills library and the descriptor (`Commit` through `sourcecontrol.CommitRetrying`: each attempt reads the base, a conflict re-reads, 3 tries) |
+| `SkillMirrorPort` (= `sourcecontrol.SkillsMirrorOps`) · `RepoService` | needs | the pod's mirror-skills (the project `.claude/skills` copy; the copy rule is the pod's) · the skills repo row, provisioned on first use |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
-| git-token `Resolver` | needs | `platform/secrets` — sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
@@ -74,13 +72,13 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   (zod in `@aep/agent-stream` at write, `designspec` at save: the schema plus
   `dependency_shape.go`, the shape rules the schema cannot say) validate the file; `consumptionInstructions` and `contract.accepted` are the fields only the platform writes
   (the registry copy, `designdeps`). **The platform copies at the design write** (`registry_copy.go`,
-  inside `FilesService.Apply`): a stub `{ name, resource: { ref, name } }` is completed from the org
+  for the AE Studio pod's saves): a stub `{ name, resource: { ref, name } }` is completed from the org
   record — block, document, provenance — and a `contract` of origin `provider` with a
   `provenance.sourceUrl` and no hash has its document fetched (https, 5 MiB) and landed beside it.
-  Both read the registry / the URL BEFORE `Workspace.Mutate` and never fail the apply: a miss lands the
+  Both read the registry / the URL before the pod commits and never fail the save: a miss lands the
   stub with a warning and the dependency reads needs-input / needs-contract. Only stubs are completed or
   warned about, and a landed document is always a file directly in its dependency's directory
-  (`dependencyDocumentPath`; an escaping `contract.path` is refused before any fetch). `CompleteDependencies` is the one entry point: `Apply` runs it, and so does the AE
+  (`dependencyDocumentPath`; an escaping `contract.path` is refused before any fetch). `CompleteDependencies` is the one entry point, run for the AE
   Studio tools pod's `POST /internal/v1/ae-studio/dependency-completions` (`edge/internal_aestudio.go`),
   so the registry read and the fetch of a model-chosen URL stay in aep-api, never in the container that
   holds the org's git credential. That answer encodes at most 24 MiB of completions (inside the pod's
@@ -154,8 +152,10 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
-  read through the org's AE Studio pod (`sourcecontrol.Git`) and written through sourcecontrol's
-  `Workspace`/gitfs engine (until Task 4.16).
+  read and written through the org's AE Studio pod (`sourcecontrol.Git`). aep-api's own writes are
+  complete files committed raw: no scaffolding, completions or soft validation run on them (the pod
+  runs those for the Room's edits); the design service's writes carry the caller's baseSha, and a
+  stale one is `ErrSpecCommitConflict` (409), not retried.
 - **`agent_turns` is the finished-turn ledger** (07 §12). An org's AE Studio tools pod hands
   over the turns its design agent ran through `record-turn-usage` (`POST
   /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
@@ -174,7 +174,7 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
 
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its version tags — every save/tag/discard
-  runs through this domain's gitfs Workspace engine; no other domain writes spec content.
+  runs through this domain's writers over the Git port; no other domain writes spec content.
 - **A version carries the name the user gave it** (console ADR-0030, `version_naming.go`). The name is
   the tag, the milestone title and the `/builds/<name>` address; `v<N>` is only what the build dialog
   SUGGESTS (`v<count + 1>`, stepped past any taken name). Two consequences: a tag is recognised as a
@@ -189,11 +189,6 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   with the newest version's and reuses that version when they match — the requested name is ignored on
   that path, because cutting a second tag over an identical tree would spend a planning turn to change
   a word. `BuildVersionFacts` reads the same comparison out as the build dialog's change list.
-- **The Files API is text-only.** `WriteOp.encoding` and `FileContent.encoding` are gone with the
-  reference-document reversal (ADR-0017): the one binary this platform had to carry now travels the
-  references endpoint, off git, so nothing binary reaches `files/apply` or `read-file` at all. The
-  5 MiB cap measures the bytes as sent. A future binary-in-git need must argue for an encoding field
-  on its own merits rather than inheriting one.
 - **One authority for which wiring edges are HARD** (`wiring_edges.go`). A hard edge is an address the
   platform must have before a component can serve its first useful byte — today a web app's sibling
   *services*, whose cluster Service URLs are injected as pod env for nginx (`<DEP>_URL`). `projects`

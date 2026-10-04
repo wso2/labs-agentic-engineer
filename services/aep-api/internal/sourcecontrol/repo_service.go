@@ -66,23 +66,6 @@ type repoService struct {
 	github  RepoAdmin
 	owners  OwnerLookup
 	repoVis string
-	// workspaceTrash, when set (from the composition root), renames the
-	// repo's on-disk workspace subtree into trash after the DB row is
-	// deleted — phase 1 of the two-phase disk delete (design §14/D12).
-	// Best-effort by contract: it returns nothing and must never fail the
-	// caller; the reaper's orphan pass is the correctness backstop.
-	workspaceTrash func(ctx context.Context, orgID, projectID, repoSlug string)
-}
-
-// RepoServiceOption customizes NewRepoService wiring without churning its
-// positional signature.
-type RepoServiceOption func(*repoService)
-
-// WithWorkspaceTrash installs the best-effort disk-trash hook DeleteRepo
-// fires after a successful DB delete. nil-safe (a nil fn leaves the hook
-// unset).
-func WithWorkspaceTrash(fn func(ctx context.Context, orgID, projectID, repoSlug string)) RepoServiceOption {
-	return func(s *repoService) { s.workspaceTrash = fn }
 }
 
 func NewRepoService(
@@ -90,18 +73,13 @@ func NewRepoService(
 	github RepoAdmin,
 	owners OwnerLookup,
 	repoVisibility string,
-	opts ...RepoServiceOption,
 ) RepoService {
-	s := &repoService{
+	return &repoService{
 		repo:    repo,
 		github:  github,
 		owners:  owners,
 		repoVis: repoVisibility,
 	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
 }
 
 func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*GitRepository, error) {
@@ -294,13 +272,6 @@ func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) e
 	// under it is refused with ErrRepoNameConflict until a human intervenes.
 	slog.InfoContext(ctx, "repo record deleted; the remote repository is left in place",
 		"org", orgID, "project", projectID, "repoUrl", repo.RepoURL)
-
-	// Best-effort disk cleanup AFTER the DB delete succeeded: rename the
-	// workspace subtree into trash (O(1); open fds keep working — design
-	// §14). The hook logs its own failures and never fails this call.
-	if s.workspaceTrash != nil {
-		s.workspaceTrash(ctx, orgID, projectID, repo.WorkspaceSlug())
-	}
 	return nil
 }
 

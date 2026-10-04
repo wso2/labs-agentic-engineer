@@ -24,6 +24,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // oneRepoRow is a git_repositories table holding org's project p only.
@@ -63,7 +64,7 @@ func TestWorkloadReader_PresentAndAbsent(t *testing.T) {
 func TestDesignFilesCommitter_ReadFileCarriesTheBlobSha(t *testing.T) {
 	ctx := context.Background()
 	f, pf := greeterFiles(t, map[string]string{"specs/design/design.cell": "cell"})
-	c := designFilesCommitter{projectFiles: pf}
+	c := designFilesCommitter{git: pf.git, repos: pf.repos}
 
 	content, sha, ok, err := c.ReadFile(ctx, "default", "p", "specs/design/design.cell")
 	if err != nil || !ok || content != "cell" {
@@ -75,6 +76,54 @@ func TestDesignFilesCommitter_ReadFileCarriesTheBlobSha(t *testing.T) {
 	}
 	if _, _, ok, err := c.ReadFile(ctx, "default", "p", "specs/design/dependencies/x/dependency.json"); ok || err != nil {
 		t.Errorf("absent file = (ok %v, err %v), want ok=false and no error", ok, err)
+	}
+}
+
+// TestDesignCommitter_CommitsUnderEachBaseSha: every write lands in one
+// commit, the existing file under its read blob sha and the new one under ""
+// (must not exist yet).
+func TestDesignCommitter_CommitsUnderEachBaseSha(t *testing.T) {
+	ctx := context.Background()
+	f, pf := greeterFiles(t, map[string]string{"specs/design/design.cell": "cell"})
+	c := designFilesCommitter{git: pf.git, repos: pf.repos}
+	_, sha, _, _ := c.ReadFile(ctx, "default", "p", "specs/design/design.cell")
+	head, _ := f.Head(ctx, greeterRef, "")
+
+	err := c.Commit(ctx, "default", "p", []spec.DesignFileWrite{
+		{Path: "specs/design/design.cell", Content: "cell v2", BaseSHA: sha},
+		{Path: "specs/design/dependencies/x/dependency.json", Content: "{}"},
+	}, "design: x")
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	files, after, _ := f.ReadBundle(ctx, greeterRef, "", sourcecontrol.BundleFilter{Prefix: "specs/design/"})
+	if files["specs/design/design.cell"] != "cell v2" || files["specs/design/dependencies/x/dependency.json"] != "{}" {
+		t.Fatalf("tip = %v, want both writes", files)
+	}
+	if after == head {
+		t.Fatal("no commit landed")
+	}
+}
+
+// TestDesignCommitter_MapsConflict: a baseSha that no longer holds is
+// spec.ErrSpecCommitConflict (the route's 409), not retried.
+func TestDesignCommitter_MapsConflict(t *testing.T) {
+	f := aestudiotest.New()
+	f.SeedRepo(sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "g"}, map[string]string{})
+	f.FailOp(aestudiotest.OpCommit, &sourcecontrol.CommitConflictError{Conflicts: []sourcecontrol.Conflict{{Path: "specs/design/design.cell"}}})
+	err := designFilesCommitter{git: f, repos: oneRepoRow{org: "default", project: "p", url: "https://github.com/acme/g"}}.
+		Commit(context.Background(), "default", "p", []spec.DesignFileWrite{{Path: "specs/design/design.cell", Content: "x"}}, "m")
+	if !errors.Is(err, spec.ErrSpecCommitConflict) {
+		t.Fatalf("err = %v, want ErrSpecCommitConflict", err)
+	}
+	commits := 0
+	for _, c := range f.Calls() {
+		if c.Op == aestudiotest.OpCommit {
+			commits++
+		}
+	}
+	if commits != 1 {
+		t.Fatalf("commits = %d, want 1 (a stale baseSha is not retried)", commits)
 	}
 }
 

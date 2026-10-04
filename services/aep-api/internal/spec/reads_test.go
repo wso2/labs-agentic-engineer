@@ -121,9 +121,8 @@ func TestGetDesignAtCommit_PinsExactCommit(t *testing.T) {
 	}
 }
 
-// Branch-tip bundle reads freshen the mirror on every read: a commit made
-// directly on the ORIGIN (an external writer) is visible immediately — there
-// is no cache tier to go stale.
+// Branch-tip bundle reads are never cached: a commit an external writer
+// lands on the tip is visible on the next read.
 func TestListDesignFiles_SeesOriginAdvanceImmediately(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, map[string]string{"specs/design/design.cell": "v1\n"})

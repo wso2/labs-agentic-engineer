@@ -19,7 +19,7 @@ package spec
 import (
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // Skill is the resolved shape that flows from the `org-skills` repo to the
@@ -104,11 +104,7 @@ func SkillEditable(kind string) bool { return kind != SkillKindPlatform }
 // service would then refuse.
 func SkillDeletable(kind string) bool { return SkillEditable(kind) }
 
-// SkillsRepoSentinelProjectID and SkillsRepoDirName re-export the canonical
-// gitfs constants (§11.3 — the workspace-naming vocabulary lives in the package
-// that owns the workspace layout). Owned by the spec domain; consumers reference
-// them as spec.*. See docs/design/skills-repo-storage.md §10.1.
-const (
-	SkillsRepoSentinelProjectID = naming.SkillsRepoSentinelProjectID
-	SkillsRepoDirName           = naming.SkillsRepoDirName
-)
+// SkillsRepoSentinelProjectID re-exports the skills repo row's reserved
+// project id (sourcecontrol owns the git_repositories vocabulary); consumers
+// reference it as spec.*. See docs/design/skills-repo-storage.md §10.1.
+const SkillsRepoSentinelProjectID = sourcecontrol.SkillsRepoSentinelProjectID

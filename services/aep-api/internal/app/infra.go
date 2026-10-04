@@ -21,7 +21,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"gorm.io/gorm"
@@ -29,7 +28,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/migrate"
 	"github.com/wso2/aep/aep-api/internal/platform/database"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/seed"
@@ -45,7 +43,6 @@ type Infra struct {
 	CredentialStore secrets.TxCredentialStore
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
 	Minter          *secrets.AppTokenMinter
-	Workspace       *gitfs.Engine
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +
 	// execution repositories; nil ⇒ no stamping (cost_usd stays null).
@@ -56,7 +53,7 @@ type Infra struct {
 // opens the database and runs first-boot migrations (Bootstrap), builds the
 // credential store, best-effort loads the GitHub App key / bot identity / OAuth
 // client_secret from OpenBao (each with its own short timeout), runs the dev-only
-// app-platform seed (fatal), and fsck's the workspace root (fatal). This is the ONLY place in the graph that
+// app-platform seed (fatal). This is the ONLY place in the graph that
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
@@ -147,28 +144,11 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		cancelID()
 	}
 
-	// Workspace engine — the disk-backed git plumbing over the shared /workspaces
-	// mount. Fail fast on an unusable root: the volume is mounted in compose/k8s,
-	// and dev runs override AEP_WORKSPACE_ROOT.
-	workspaceEngine, rootLayout, err := gitfs.New(cfg.Workspace.Root)
-	if err != nil {
-		return Infra{}, fmt.Errorf("workspace engine init (root %q): %w", cfg.Workspace.Root, err)
-	}
-	// R8b boot identity: node/pod (fieldRef-injected) + root + found|created.
-	// Two replicas logging different NODE_NAME is the affinity-scatter signature.
-	slog.Info("workspace engine",
-		"node", os.Getenv("NODE_NAME"),
-		"pod", os.Getenv("POD_NAME"),
-		"root", workspaceEngine.Root(),
-		"rootState", string(rootLayout),
-	)
-
 	return Infra{
 		DB:              db,
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
 		Minter:          minter,
-		Workspace:       workspaceEngine,
 		RateStamper:     rateStamper,
 	}, nil
 }

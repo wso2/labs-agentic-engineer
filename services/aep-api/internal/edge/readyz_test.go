@@ -20,59 +20,28 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/config"
 )
 
-type staticReady struct{ ready atomic.Bool }
-
-func (s *staticReady) Ready() bool { return s.ready.Load() }
-func (s *staticReady) Set(v bool)  { s.ready.Store(v) }
-
-func TestReadyz_ReflectsWorkspaceGate(t *testing.T) {
-	gate := &staticReady{}
-	gate.Set(true)
-	handler := NewHandler(AppParams{
-		Config:         config.Config{TestMode: false},
-		WorkspaceReady: gate,
-	})
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	assertStatus := func(path string, want int) {
-		t.Helper()
-		resp, err := http.Get(srv.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
-		}
-		defer resp.Body.Close()
-		_, _ = io.Copy(io.Discard, resp.Body)
-		if resp.StatusCode != want {
-			t.Fatalf("GET %s status = %d, want %d", path, resp.StatusCode, want)
-		}
-	}
-
-	assertStatus("/readyz", http.StatusOK)
-	assertStatus("/healthz", http.StatusOK)
-
-	gate.Set(false)
-	assertStatus("/readyz", http.StatusServiceUnavailable)
-	assertStatus("/healthz", http.StatusOK) // liveness stays up
-}
-
-func TestReadyz_NilGateAlwaysOK(t *testing.T) {
+// TestReadyz_OKWithoutWorkspace: aep-api holds no git mirror, so readiness
+// has no disk to gate on: /readyz answers 200 {"status":"ok"} once the server
+// is up.
+func TestReadyz_OKWithoutWorkspace(t *testing.T) {
 	handler := NewHandler(AppParams{Config: config.Config{TestMode: false}})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/readyz")
-	if err != nil {
-		t.Fatalf("GET /readyz: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	for _, path := range []string{"/readyz", "/healthz"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != `{"status":"ok"}` {
+			t.Fatalf("GET %s = %d %s, want 200 {\"status\":\"ok\"}", path, resp.StatusCode, body)
+		}
 	}
 }

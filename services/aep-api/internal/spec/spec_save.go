@@ -100,7 +100,7 @@ type SpecSaveResult struct {
 // the save is a no-op ("unchanged"). Validation failures aggregate into a
 // *SpecValidationError; nothing malformed acquires a tag.
 func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string, req SaveRequest) (*SpecSaveResult, error) {
-	row, ref, err := s.readyRef(ctx, orgID, projectID)
+	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,14 +173,7 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	} else if verr := ValidateVersionName(tagName); verr != nil {
 		return nil, fmt.Errorf("%w: %w", ErrVersionNameInvalid, verr)
 	}
-	if s.tags == nil {
-		return nil, fmt.Errorf("spec save: no version tag gateway configured")
-	}
-	wref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.tags.Resolver(), orgID, row)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.createVersionTag(ctx, ref, wref, &tags, &tagName, req.Message, commit, !named); err != nil {
+	if err := s.createVersionTag(ctx, ref, &tags, &tagName, req.Message, commit, !named); err != nil {
 		return nil, err
 	}
 

@@ -20,7 +20,7 @@ spec:
     spec:
       serviceAccountName: aep-api
       securityContext:
-        # Shared workspaces PVC is handed to the pod's fsGroup so the
+        # The workspaces PVC is handed to the pod's fsGroup so the
         # non-root runtime user (uid 1000) can write it.
         fsGroup: 1000
       initContainers:
@@ -72,16 +72,8 @@ spec:
               value: "/workspaces"
             - name: AEP_WORKSPACE_REAP_INTERVAL
               value: {{ .Values.workspaces.reapInterval | default "5m" | quote }}
-            - name: AEP_WORKSPACE_SNAPSHOT_MAX_AGE
-              value: {{ .Values.workspaces.snapshotMaxAge | default "1h" | quote }}
-            - name: AEP_WORKSPACE_TRASH_MAX_AGE
-              value: {{ .Values.workspaces.trashMaxAge | default "1h" | quote }}
             - name: AEP_WORKSPACE_ORG_QUOTA_BYTES
               value: {{ .Values.workspaces.orgQuotaBytes | default "2147483648" | quote }}
-            - name: AEP_WORKSPACE_DISK_HIGH_PCT
-              value: {{ .Values.workspaces.diskHighPct | default "85" | quote }}
-            - name: AEP_WORKSPACE_DISK_LOW_PCT
-              value: {{ .Values.workspaces.diskLowPct | default "70" | quote }}
             # /api/v1 takes user tokens only, and the console client is the one
             # that issues them (Thunder sets aud = client id). Machine clients —
             # publisher, system, SRE — have their own /internal/v1 routes, and the

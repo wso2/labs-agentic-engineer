@@ -18,7 +18,7 @@ package spec
 
 // cell_facts.go — the BFF's read of specs/design/design.cell. The cell is the
 // PRIMARY design source: it declares the components the design ships. The
-// scaffold engine and the build-tag gate consume these FACTS — component ids
+// build-tag gate consumes these FACTS — component ids
 // and types — not the diagram semantics; the TS parser
 // (packages/ui/cell-diagram-react) stays the authoritative grammar validator
 // for rendering, so this extractor is deliberately permissive: statements it

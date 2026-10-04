@@ -18,6 +18,7 @@ package provisioning
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -33,18 +34,14 @@ const (
 // _skills.
 type gitOrgResourceDocs struct {
 	repos sourcecontrol.RepoService
-	// reads is the org's AE Studio pod.
-	reads sourcecontrol.Git
-	// git commits through the workspace mirror until Task 4.16 moves the
-	// write to Git.Commit.
-	git sourcecontrol.GitOpsService
+	// git is the org's AE Studio pod: reads and commits.
+	git sourcecontrol.Git
 }
 
-// NewGitOrgResourceDocs wires the org-resource-docs store over EnsureBareRepo,
-// reads through the pod (reads) and commits through Workspace.Mutate (git).
-// Wired only at the composition root.
-func NewGitOrgResourceDocs(repos sourcecontrol.RepoService, reads sourcecontrol.Git, git sourcecontrol.GitOpsService) OrgResourceDocs {
-	return &gitOrgResourceDocs{repos: repos, reads: reads, git: git}
+// NewGitOrgResourceDocs wires the org-resource-docs store over EnsureBareRepo
+// and the pod's Git port. Wired only at the composition root.
+func NewGitOrgResourceDocs(repos sourcecontrol.RepoService, git sourcecontrol.Git) OrgResourceDocs {
+	return &gitOrgResourceDocs{repos: repos, git: git}
 }
 
 func (s *gitOrgResourceDocs) CommitUTF8(ctx context.Context, orgID, logicalName, fileName, content string) (string, error) {
@@ -53,18 +50,22 @@ func (s *gitOrgResourceDocs) CommitUTF8(ctx context.Context, orgID, logicalName,
 	if err != nil {
 		return "", fmt.Errorf("ensure org-resource-docs repo: %w", err)
 	}
-	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+	ref, err := sourcecontrol.RefForRow(orgID, repo)
 	if err != nil {
-		return "", fmt.Errorf("resolve org-resource-docs workspace: %w", err)
+		return "", fmt.Errorf("resolve org-resource-docs repository: %w", err)
 	}
-	author, committer := s.git.ResolveSaveIdentities(ref.Cred)
-	if _, err := s.git.Workspace().Mutate(ctx, ref, func(tx sourcecontrol.Tx) error {
-		tx.Write(path, []byte(content))
-		return nil
-	}, sourcecontrol.CommitOpts{
-		Message:   "docs: add " + path,
-		Author:    author,
-		Committer: committer,
+	// The write replaces whatever the tip holds at path: each attempt reads
+	// the path's blob sha as the commit's baseSha, and a concurrent writer
+	// that moved it first is re-read and retried.
+	if _, err := sourcecontrol.CommitRetrying(ctx, s.git, ref, func(ctx context.Context) (sourcecontrol.CommitRequest, error) {
+		_, base, err := s.git.ReadFile(ctx, ref, "", path)
+		if err != nil && !errors.Is(err, sourcecontrol.ErrPathNotFound) {
+			return sourcecontrol.CommitRequest{}, err
+		}
+		return sourcecontrol.CommitRequest{
+			Writes:  []sourcecontrol.FileWrite{{Path: path, Content: content, BaseSHA: base}},
+			Message: "docs: add " + path,
+		}, nil
 	}); err != nil {
 		return "", fmt.Errorf("commit org-resource-docs %q: %w", path, err)
 	}
@@ -80,7 +81,7 @@ func (s *gitOrgResourceDocs) ReadUTF8(ctx context.Context, orgID, path string) (
 	if err != nil {
 		return "", fmt.Errorf("resolve org-resource-docs repository: %w", err)
 	}
-	content, _, err := s.reads.ReadFile(ctx, ref, "", path)
+	content, _, err := s.git.ReadFile(ctx, ref, "", path)
 	if err != nil {
 		return "", fmt.Errorf("read org-resource-docs %q: %w", path, err)
 	}

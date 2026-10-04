@@ -63,10 +63,6 @@ type AppParams struct {
 	// PlaygroundToken handlers are filled by routes() from the MCP fields below.
 	InternalDeps InternalDeps
 
-	// WorkspaceReady, when non-nil, backs GET /readyz (R8b root-health).
-	// Nil means always ready — Fake()/component tests without a workspace volume.
-	WorkspaceReady interface{ Ready() bool }
-
 	ConfigRepo projects.ConfigRepository
 
 	// OrganizationService backs the JIT org-provisioning middleware. nil

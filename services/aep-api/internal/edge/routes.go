@@ -46,7 +46,7 @@ func routes(p AppParams) []route {
 	internalDeps.MCP, internalDeps.PlaygroundToken = mcpRoutes(p)
 	return []route{
 		{"GET /healthz", "kubelet", "none", healthz()},
-		{"GET /readyz", "kubelet", "none", readyz(p.WorkspaceReady)},
+		{"GET /readyz", "kubelet", "none", readyz()},
 		// Goes with task-token minting (phase 5).
 		{"GET /auth/external/jwks.json", "verifiers of BFF-minted tokens", "none", taskTokenJWKS(p.Deps.TaskTokens)},
 		// Removed in phase 4, when webhooks reach ae-studio-tools. Outside the

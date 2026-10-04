@@ -58,8 +58,8 @@ type IncidentRecurrence interface {
 // ErrIssueNotFound, HTTPStatusError for a GitHub refusal, the ErrAEStudio*
 // family, ...) and the wire DTOs (IssueResult, IssueInfo, GitHubUser, ...)
 // are part of this contract — see errors.go and wire.go. Repo CONTENT
-// (blobs/trees/commits/refs/tags) never goes through these ports: it runs on
-// the Workspace engine (workspace.go / internal/platform/gitfs).
+// (blobs/trees/commits/refs/tags) never goes through these ports: it is the
+// Git port (git.go).
 
 // RepoAdmin is the repository-lifecycle surface. Consumed by repoService
 // (CreateRepo / EnsureBareRepo). Repo delete/get are DB operations in

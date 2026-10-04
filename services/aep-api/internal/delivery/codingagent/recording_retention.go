@@ -39,9 +39,8 @@ package codingagent
 //     small (a 55-minute run wrote about 300KB) and the age window is what
 //     ordinarily bounds the tree.
 //
-// It holds no leader lock (it left the workspace reaper, which elects one
-// replica for its global passes): both rules are idempotent and derive entirely
-// from what is on disk, so replicas racing reach the same answer. aep-api runs
+// It holds no leader lock: both rules are idempotent and derive entirely from
+// what is on disk, so replicas racing reach the same answer. aep-api runs
 // single-replica anyway — the volume is ReadWriteOnce. Phase 5 deletes the
 // recordings tree and this file with it.
 

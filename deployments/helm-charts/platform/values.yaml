@@ -256,17 +256,13 @@ openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
 
-# Shared git workspaces (RWO PVC + co-located pods). aep-api is the sole user.
-# See services/aep-api/design/shared-workspace-volume.md.
+# The aep-api workspace volume (RWO PVC): coding-agent run recordings under
+# runs/ and their retention. aep-api is the sole user.
 workspaces:
   storage: "10Gi"
   storageClassName: ""
   accessMode: "ReadWriteOnce"
-  snapshotMaxAge: "1h"
-  trashMaxAge: "1h"
   orgQuotaBytes: "2147483648"
-  diskHighPct: "85"
-  diskLowPct: "70"
   reapInterval: "5m"
 
 postgres:

@@ -40,11 +40,8 @@ type RepoRepository interface {
 	// (provisioning) — not a clone pre-warm. Bounded by the table size; not
 	// paginated because the caller bounds concurrency separately.
 	ListAllReady(ctx context.Context) ([]GitRepository, error)
-	// ListAll returns every repo row across all orgs and ALL statuses. The
-	// disk reaper's orphan reconciliation set-differences the on-disk mirror
-	// tree against this — pending/error rows must be included so their dirs
-	// are not misread as orphans. Bounded by the table size, like
-	// ListAllReady.
+	// ListAll returns every repo row across all orgs and ALL statuses.
+	// Bounded by the table size, like ListAllReady.
 	ListAll(ctx context.Context) ([]GitRepository, error)
 	// ListByOrg returns the org's repo rows (all statuses). Feeds the
 	// project-list repoUrl annotation (#108); one indexed query per page.

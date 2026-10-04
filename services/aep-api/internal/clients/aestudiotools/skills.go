@@ -34,8 +34,6 @@ import (
 // lost a race on the project's branch (the pod's 409 conflict or
 // not_fast_forward) is ErrCommitConflict: the caller is best-effort and
 // mirrors again on the next save.
-//
-//deadcode:keep wired in Task 4.16 (SyncProjectSkills calls the pod's mirror)
 func (a *Adapter) MirrorSkills(ctx context.Context, project, skills RepoRef, pinned []string) (sourcecontrol.CommitResult, error) {
 	if err := validRef(project); err != nil {
 		return sourcecontrol.CommitResult{}, err

@@ -89,7 +89,7 @@ const (
 // exactly as passed, DefaultBranch included (the Fake keys state without it,
 // so assert it here). At, Local and Filter are set on the Git reads that take
 // them; Author and Committer on Commit (Committer defaulted to Author, as the
-// pod does); Skills and Pinned on MirrorSkills; Repo on CreateOrgRepo;
+// pod does); Tagger on Tag; Skills and Pinned on MirrorSkills; Repo on CreateOrgRepo;
 // Milestone on ListMilestoneIssues; Ref.Org alone on the org-wide ops
 // (GitHubIdentity).
 type Call struct {
@@ -100,6 +100,7 @@ type Call struct {
 	Filter    sourcecontrol.BundleFilter
 	Author    *sourcecontrol.GitIdentity
 	Committer *sourcecontrol.GitIdentity
+	Tagger    *sourcecontrol.GitIdentity
 	Skills    sourcecontrol.RepoRef
 	Pinned    []string
 	Repo      sourcecontrol.CreateOrgRepoRequest
@@ -119,6 +120,7 @@ type Fake struct {
 	failOrg      map[string]error
 	calls        []Call
 	beforeCommit func()
+	beforeTag    func(sourcecontrol.TagSpec)
 	repos        map[repoKey]*repoState
 	references   map[repoKey][]string
 	identities   map[string]*sourcecontrol.GitHubUser
@@ -173,6 +175,15 @@ func (f *Fake) BeforeCommit(fn func()) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.beforeCommit = fn
+}
+
+// BeforeTag runs fn with the requested tag at the start of every later Tag
+// that is not failed by FailOrg / FailOp, outside the Fake's lock: fn may tag
+// itself (a pusher claiming the name first). A nil fn clears it.
+func (f *Fake) BeforeTag(fn func(sourcecontrol.TagSpec)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.beforeTag = fn
 }
 
 // Calls lists every port call so far, in order.

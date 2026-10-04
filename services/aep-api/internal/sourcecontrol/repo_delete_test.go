@@ -17,7 +17,6 @@
 package sourcecontrol_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
@@ -31,7 +30,7 @@ import (
 // made every legitimate re-run log a cleanup error and left callers unable to
 // tell "already clean" from "cleanup broke".
 
-func TestDeleteRepo_DropsTheRowAndTrashesTheWorkspace(t *testing.T) {
+func TestDeleteRepo_DropsTheRow(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
 	repo.put(&sourcecontrol.GitRepository{
@@ -39,14 +38,7 @@ func TestDeleteRepo_DropsTheRowAndTrashesTheWorkspace(t *testing.T) {
 		RepoURL: "https://github.com/test-org/proj1.git",
 		Status:  "ready", RepoSlug: "test-org-proj1",
 	})
-
-	var trashed [3]string
-	var trashCalls int
-	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private",
-		sourcecontrol.WithWorkspaceTrash(func(_ context.Context, orgID, projectID, repoSlug string) {
-			trashCalls++
-			trashed = [3]string{orgID, projectID, repoSlug}
-		}))
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	if err := svc.DeleteRepo(testContext(), "org1", "proj1"); err != nil {
 		t.Fatalf("DeleteRepo: %v", err)
@@ -54,9 +46,6 @@ func TestDeleteRepo_DropsTheRowAndTrashesTheWorkspace(t *testing.T) {
 	// GetRepo, unlike DeleteRepo, is a lookup: an absent row is ErrRepoNotFound.
 	if _, err := svc.GetRepo(testContext(), "org1", "proj1"); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		t.Fatalf("row survived the delete: %v", err)
-	}
-	if trashCalls != 1 || trashed[0] != "org1" || trashed[1] != "proj1" {
-		t.Errorf("workspace trash: calls=%d args=%v", trashCalls, trashed)
 	}
 }
 
@@ -66,16 +55,10 @@ func TestDeleteRepo_DropsTheRowAndTrashesTheWorkspace(t *testing.T) {
 func TestDeleteRepo_AbsentRowIsSuccess(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()
-	trashCalls := 0
-	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private",
-		sourcecontrol.WithWorkspaceTrash(func(context.Context, string, string, string) { trashCalls++ }))
+	svc := sourcecontrol.NewRepoService(repo, aestudiotest.New(), fakeOwners{owner: "test-org"}, "private")
 
 	if err := svc.DeleteRepo(testContext(), "org1", "never-provisioned"); err != nil {
 		t.Fatalf("deleting an absent repo must succeed, got %v", err)
-	}
-	// Nothing was renamed into trash, because there was no slug to rename.
-	if trashCalls != 0 {
-		t.Errorf("workspace trash ran %d times for an absent row, want 0", trashCalls)
 	}
 }
 
