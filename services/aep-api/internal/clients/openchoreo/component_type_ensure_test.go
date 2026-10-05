@@ -194,8 +194,8 @@ func TestEnsureComponentType_ConflictConvergesAStaleType(t *testing.T) {
 	if meta["name"] != CodingAgentComponentTypeName {
 		t.Errorf("PUT body name = %v", meta["name"])
 	}
-	if max := storedDeadlineMaximum(t, got); max != float64(codingAgentDeadlineCeilingSeconds) {
-		t.Errorf("converged maximum = %v, want %d", max, codingAgentDeadlineCeilingSeconds)
+	if max := storedDeadlineMaximum(t, got); max != float64(CodingAgentDeadlineCeilingSeconds) {
+		t.Errorf("converged maximum = %v, want %d", max, CodingAgentDeadlineCeilingSeconds)
 	}
 
 	// The write settled it: a second ensure over the now-current type is a

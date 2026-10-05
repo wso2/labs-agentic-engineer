@@ -286,16 +286,45 @@ pull-request webhook interaction are spelled out in
 Reader mechanics, the `logs_truncated` banner, and legacy execution-row reads are
 in [`cycle-status-and-logs.md`](cycle-status-and-logs.md).
 
-## Retention, and the one case that deletes immediately
+## Settle: the Component is deleted once no pod is left
 
-A finished cycle's Component is **retained** so its archive stays queryable, up
-to `DefaultCodingAgentComponentRetention` (10), overridable per process with
-`CODING_AGENT_COMPONENT_RETENTION` (local compose lowers it so prune is
-observable without eleven cycles). Before each create, terminal Components past
-the cap are pruned oldest-first. Retained Components still hold entitlement
-slots, so the cap is a billing decision as much as a storage one, and an org
-whose plan limit is below the retention cap sees dispatches blocked until older
-cycles are pruned.
+A closed cycle's Component still holds an entitlement slot, and OC re-creates
+its Job after the TTL, so `ComponentSettler` (a watcher, one pass a minute over
+at most 200 closed cycles from `ListSettling`) deletes it at settle. The
+delete waits for all of:
+
+1. the binding still resolves; `ErrNotFound` means someone else deleted the
+   Component, recorded with `MarkComponentDeleted` and nothing more;
+2. no pod of ANY attempt in the binding's tree (the watcher's leftover rule does
+   not apply: deleting with a pod orphans it);
+3. `job_suspended_at` set (by the watcher at the first terminal pod, the cancel,
+   or the settler's backstop), so a Job re-created meanwhile is born suspended.
+   A legacy release (`ErrSuspendUnsupported`) cannot suspend: it is deleted on
+   1, 2 and 4 alone, so it is still never deleted while a pod exists;
+4. a "no pod" read noted on an earlier pass (`pod_gone_at`) at least
+   `CODING_AGENT_SETTLE_GRACE` (5m) ago; any pass that sees a pod clears it.
+   The resource tree can answer 200 and empty under load, so one empty read is
+   never evidence.
+
+Then `DeleteComponent` by name (404 is success; a pre-UID row has no UID) and
+`codingagent.component_deleted {cycle, component, componentUid}`. A finished
+run's Component goes about TTL + grace + one pass after its pod finished; a
+cancelled run's about grace + 30 s after the cancel. Usage capture is done by
+construction: the watcher reads the pod's log while the pod exists.
+
+**The backstop** suspends a closed cycle's Job nobody suspended
+(`codingagent.job_suspended`, `cause` = `backstop`): at once when the pod is
+absent or terminal, or when the cycle was cancelled (its cancel-time suspend
+failed). A merge-closed cycle's `Running`/`Pending` pod is left to the watcher
+until `ended_at` + 3h10m (the deadline ceiling + 10 min), so its last line and
+usage are kept. A suspend that keeps failing (for example a binding naming a
+missing release) leaves the row settling and never deleted.
+
+**Fair paging.** Every visited row is stamped `settle_checked_at` before
+anything else, and `ListSettling` orders never-checked first, then least
+recently checked (partial index `ix_run_cycles_settling`), so rows that never
+settle cannot starve a cycle that closes later. The JobWatcher skips a cycle
+whose Component is deleted.
 
 **Cancel suspends, then settles.** `CycleReaper.ReapRunCycle` (reached from
 `runread.Commands.Cancel` after the run's cancel stamp and the signal) closes

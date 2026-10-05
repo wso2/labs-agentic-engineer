@@ -241,7 +241,8 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 	live := make(map[string]bool, 2*len(rows))
 	for i := range rows {
 		cycle := &rows[i]
-		if !isCodingAgentRun(cycle.JobRef) {
+		// A deleted Component (the settler's) has no binding left to read.
+		if !isCodingAgentRun(cycle.JobRef) || cycle.ComponentDeletedAt != nil {
 			continue
 		}
 		live[cycle.ID] = true

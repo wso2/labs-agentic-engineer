@@ -33,12 +33,11 @@ import (
 type fakeOCSurface struct {
 	mu sync.Mutex
 
-	calls    []string
-	orderLog *[]string // optional shared call-order log (retention tests)
-	create   *openchoreo.CreateComponentRequest
-	load     openchoreo.WorkloadInput
-	rel      string
-	bind     [2]string // environment, releaseName
+	calls  []string
+	create *openchoreo.CreateComponentRequest
+	load   openchoreo.WorkloadInput
+	rel    string
+	bind   [2]string // environment, releaseName
 
 	createErr              error
 	ensureTypeErr          error
@@ -50,9 +49,6 @@ func (f *fakeOCSurface) note(op string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, op)
-	if f.orderLog != nil {
-		*f.orderLog = append(*f.orderLog, op)
-	}
 }
 
 func (f *fakeOCSurface) EnsureComponentType(_ context.Context, _ string, _ map[string]any) error {
@@ -279,51 +275,6 @@ func TestOCDispatcher_ValidationDisplayName(t *testing.T) {
 	if fake.create.DisplayName != "Validation cycle — milestone #4 v3" {
 		t.Errorf("displayName = %q", fake.create.DisplayName)
 	}
-}
-
-func TestOCDispatcher_RetentionErrorContinuesCreate(t *testing.T) {
-	fake := &fakeOCSurface{}
-	ret := &fakeRetention{err: errors.New("list internal components: unavailable")}
-	d := NewOCDispatcher(fake, testWriteTargets()).WithRetention(ret)
-
-	got, err := d.Dispatch(context.Background(), ocDispatchInputs())
-	if err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	if got.RunName != "ca-11111111-2608061200" {
-		t.Errorf("got %q, want RunName", got.RunName)
-	}
-	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding"}
-	if fmt.Sprint(fake.calls) != fmt.Sprint(want) {
-		t.Errorf("chain = %v, want full create path after retention error", want)
-	}
-}
-
-func TestOCDispatcher_RetentionCalledBeforeCreate(t *testing.T) {
-	var order []string
-	fake := &fakeOCSurface{orderLog: &order}
-	ret := &fakeRetention{orderLog: &order}
-	d := NewOCDispatcher(fake, testWriteTargets()).WithRetention(ret)
-
-	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	wantPrefix := []string{"ensure-type", "retention", "create-component"}
-	if len(order) < len(wantPrefix) || fmt.Sprint(order[:len(wantPrefix)]) != fmt.Sprint(wantPrefix) {
-		t.Errorf("call order prefix = %v, want %v", order, wantPrefix)
-	}
-}
-
-type fakeRetention struct {
-	orderLog *[]string
-	err      error
-}
-
-func (f *fakeRetention) Enforce(context.Context, string, string) error {
-	if f.orderLog != nil {
-		*f.orderLog = append(*f.orderLog, "retention")
-	}
-	return f.err
 }
 
 // U1: the configured Job TTL is rendered per Component as the ComponentType's

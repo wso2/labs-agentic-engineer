@@ -22,11 +22,11 @@ import "github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 // per org. Billing aliases key on this exact string (and job/coding-agent).
 const CodingAgentComponentTypeName = "coding-agent"
 
-// codingAgentDeadlineCeilingSeconds is the schema's activeDeadlineSeconds
+// CodingAgentDeadlineCeilingSeconds is the schema's activeDeadlineSeconds
 // maximum (3h). It bounds BOTH cycle kinds: a validation cycle passes 2h and a
 // coding cycle 3h, and the schema — never the caller — is what rejects anything
 // past it.
-const codingAgentDeadlineCeilingSeconds = 10800
+const CodingAgentDeadlineCeilingSeconds = 10800
 
 // CodingAgentComponentTypeRef is what a Component's spec.componentType.name
 // carries — {workloadType}/{typeName}. Matches OC's API name format.
@@ -77,7 +77,7 @@ func CodingAgentComponentType() map[string]any {
 						// mid-run) and a validation cycle 7200. The maximum is the
 						// larger of the two, so it is what actually bounds the Job.
 						"activeDeadlineSeconds": map[string]any{
-							"type": "integer", "default": 3600, "maximum": codingAgentDeadlineCeilingSeconds,
+							"type": "integer", "default": 3600, "maximum": CodingAgentDeadlineCeilingSeconds,
 						},
 						"ttlSecondsAfterFinished": map[string]any{
 							"type": "integer", "default": 86400,

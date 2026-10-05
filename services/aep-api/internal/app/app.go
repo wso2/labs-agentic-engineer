@@ -677,28 +677,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// cycle in the milestone's own project, rendered by OC into the project's
 	// dataplane namespace. It needs only the OC client and the runner image —
 	// no proxy, no in-cluster Kubernetes client, no per-env branch — and it is
-	// the only coding-agent dispatch path.
-	//
-	// Retention shares the same OC client: before each create it deletes the
-	// project's oldest RETIRED agent components (liveness read from the cycle
-	// rows), because a finished component still holds a billing concurrency
-	// slot.
+	// the only coding-agent dispatch path. A cycle's Component is deleted at
+	// settle by the ComponentSettler (watchers below), which is what frees its
+	// billing concurrency slot.
 	if cfg.AgentRunnerImage != "" {
-		retentionLimit := cfg.CodingAgentComponentRetention
-		if retentionLimit <= 0 {
-			retentionLimit = codingagent.DefaultCodingAgentComponentRetention
-		}
 		ocDispatcher := codingagent.NewOCDispatcher(componentClient, writeTargets).
 			WithImage(cfg.AgentRunnerImage).
 			WithOpenCodeImage(cfg.AgentRunnerImageOpenCode).
-			WithJobTTL(cfg.CodingAgentJobTTL).
-			WithRetention(codingagent.NewComponentRetention(
-				componentClient, runCycleRepo, retentionLimit))
+			WithJobTTL(cfg.CodingAgentJobTTL)
 		codingExecutor.WithOCDispatch(ocDispatcher)
 		slog.Info("coding executor: OpenChoreo component dispatch path enabled",
 			"runnerImage", cfg.AgentRunnerImage,
 			"runnerImageOpenCode", cfg.AgentRunnerImageOpenCode,
-			"componentRetention", retentionLimit,
 			"jobTTL", cfg.CodingAgentJobTTL.String())
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
@@ -1522,12 +1512,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// provider's limit stopped it), banks the run's token spend, and then
 	// suspends the cycle's Job at its first terminal pod. It writes no logs and
 	// deletes no components — history is the observability plane's and deletion
-	// is retention's. Always on (no longer gated on cluster-gateway-proxy).
+	// is the settler's. Always on (no longer gated on cluster-gateway-proxy).
 	watchers = append(watchers, codingagent.NewJobWatcher(runtimeClient, runCycleRepo, writeTargets, componentClient, asServiceIdentity).
 		WithRecorder(runRecorder).
 		WithAgentDeathNotifier(agentDeathNotifier{runs: milestoneRunRepo, supervisor: runSupervisor}).
 		WithRunFailures(milestoneRunRepo))
 	slog.Info("codingagent.JobWatcher: enabled (OpenChoreo resource tree)")
+	// The settler deletes each closed cycle's Component once no pod is left
+	// (two no-pod reads a grace apart, the Job suspended), and suspends a
+	// closed cycle's Job nobody suspended (the backstop).
+	watchers = append(watchers, codingagent.NewComponentSettler(runtimeClient, componentClient, componentClient,
+		runCycleRepo, writeTargets, asServiceIdentity).WithGrace(cfg.CodingAgentSettleGrace))
 	// The milestone run supervisor's Temporal worker. Registered only when
 	// Temporal is configured (TEMPORAL_HOSTPORT set). The watcher dials in a
 	// retry loop, so a Temporal server that is down at boot is not fatal — the

@@ -71,7 +71,7 @@ func TestReleaseBindingName_PicksTheEnvironmentsBinding(t *testing.T) {
 	}
 }
 
-// A cycle whose Component has been deleted (retention, or a cancel) has no
+// A cycle whose Component has been deleted (at settle) has no
 // binding. That is ErrNotFound and not a transport failure: it is exactly the
 // signal the watcher counts toward its sustained-404 rule and the progress
 // reader turns into "logs unavailable".

@@ -1072,3 +1072,19 @@ func TestTick_PodFinishedAfterTheRedispatchIsTheCurrentAttempts(t *testing.T) {
 		t.Fatalf("suspends = %v", jobs.suspends)
 	}
 }
+
+// A cycle whose Component the settler deleted has nothing left to watch: the
+// watcher stops reading its (deleted) binding.
+func TestTick_SkipsACycleWhoseComponentIsDeleted(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	c := dispatchedCycle("c1", time.Hour)
+	ended := time.Now().UTC().Add(-time.Hour)
+	c.EndedAt, c.ComponentDeletedAt = &ended, &ended
+	cycles := newWatchedCycles(c)
+
+	newTestWatcher(rt, cycles).Tick(context.Background())
+
+	if rt.bindingCalls != 0 {
+		t.Fatalf("read the binding of a deleted Component %d times", rt.bindingCalls)
+	}
+}

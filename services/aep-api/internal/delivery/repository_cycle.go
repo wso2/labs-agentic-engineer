@@ -83,8 +83,14 @@ type RunCycleRepository interface {
 	FinishCancelled(ctx context.Context, id string) (*RunCycle, error)
 
 	// ListSettling returns closed Job cycles (job_ref 'ca-%') whose Component is
-	// not yet deleted, oldest ended first, at most limit.
+	// not yet deleted, at most limit: never-checked first, then the least
+	// recently checked (settle_checked_at), oldest ended breaking ties. The
+	// order is what makes the sweep fair: a row the settler visits goes to the
+	// back, so a fixed set that never settles cannot hold every page.
 	ListSettling(ctx context.Context, limit int) ([]RunCycle, error)
+
+	// NoteSettleChecked stamps settle_checked_at: the settler visited the cycle.
+	NoteSettleChecked(ctx context.Context, id string, at time.Time) error
 
 	// NotePullRequest records the pull request the agent actually opened, learned
 	// from the pull_request webhook — the platform never dictates branch identity
@@ -190,15 +196,6 @@ type RunCycleRepository interface {
 	//
 	// Unscoped by org on purpose: it drives a platform watcher, not an HTTP read.
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]RunCycle, error)
-
-	// ListOpenCycleIDs returns the ids of the project's cycles that have not
-	// ended — the LIVE set. The agent-component reaper reads it to decide what
-	// it may delete: OpenChoreo registers no health check for a `batch/v1 Job`,
-	// so a Component's own status cannot say whether its pod is still running,
-	// while a cycle row with no ended_at can.
-	//
-	// Org-scoped because it is derived from an already-org-resolved dispatch.
-	ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error)
 
 	// HasOpenCycle reports whether any of the org's cycles has not ended, in
 	// any project: an agent that may still be starting on the credential it
@@ -309,13 +306,19 @@ func (r *runCycleRepository) ListSettling(ctx context.Context, limit int) ([]Run
 	var rows []RunCycle
 	err := r.db.WithContext(ctx).
 		Where("job_ref LIKE 'ca-%' AND ended_at IS NOT NULL AND component_deleted_at IS NULL").
-		Order("ended_at ASC").
+		Order("settle_checked_at ASC NULLS FIRST, ended_at ASC").
 		Limit(limit).
 		Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
 	return rows, nil
+}
+
+func (r *runCycleRepository) NoteSettleChecked(ctx context.Context, id string, at time.Time) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ?", id).
+		Update("settle_checked_at", at.UTC()).Error
 }
 
 func (r *runCycleRepository) NotePullRequest(ctx context.Context, id string, pr CyclePullRequest) (*RunCycle, error) {
@@ -474,19 +477,6 @@ func (r *runCycleRepository) ListRecentDispatched(ctx context.Context, since tim
 		return nil, err
 	}
 	return rows, nil
-}
-
-func (r *runCycleRepository) ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error) {
-	var ids []string
-	err := r.db.WithContext(ctx).
-		Model(&RunCycle{}).
-		Where("org_id = ? AND project_id = ? AND ended_at IS NULL", orgID, projectID).
-		Order("created_at ASC").
-		Pluck("id", &ids).Error
-	if err != nil {
-		return nil, err
-	}
-	return ids, nil
 }
 
 func (r *runCycleRepository) HasOpenCycle(ctx context.Context, orgID string) (bool, error) {

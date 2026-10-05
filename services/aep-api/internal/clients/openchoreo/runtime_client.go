@@ -37,7 +37,7 @@ import (
 type RuntimeClient interface {
 	// ReleaseBindingName resolves the component's binding in one environment.
 	// Wrapped ErrNotFound means the Component (or its binding) is gone —
-	// deleted by retention or by a cancel — which callers treat as a fact, not
+	// deleted at settle or by a project delete — which callers treat as a fact, not
 	// a failure.
 	ReleaseBindingName(ctx context.Context, orgName, projectName, componentName, environment string) (string, error)
 

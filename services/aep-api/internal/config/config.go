@@ -220,12 +220,11 @@ type Config struct {
 	// dispatch fails naming this setting; Claude Code orgs are unaffected.
 	AgentRunnerImageOpenCode string
 
-	// CodingAgentComponentRetention is how many finished coding-agent
-	// Components a project may keep (LRU reap before each create). Defaults
-	// to codingagent.DefaultCodingAgentComponentRetention (10). Override via
-	// CODING_AGENT_COMPONENT_RETENTION so local E2E can observe prune without
-	// eleven cycles; cloud keeps the code default unless explicitly set.
-	CodingAgentComponentRetention int
+	// CodingAgentSettleGrace is how far apart the two "no pod" reads must be
+	// before a closed coding cycle's Component is deleted (the
+	// ComponentSettler). An empty resource tree can be transient, so one read
+	// is never enough. Default 5m (CODING_AGENT_SETTLE_GRACE).
+	CodingAgentSettleGrace time.Duration
 
 	// CodingAgentJobTTL is how long a finished coding-agent Job (and its pod)
 	// is kept before Kubernetes deletes it, rendered per Component as the

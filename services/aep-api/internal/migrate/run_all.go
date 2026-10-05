@@ -263,6 +263,11 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// primary key widens to (org_id, id), and project_conversations is
 		// dropped. Appended last because the list is append-only.
 		ctxStep("phase24_agent_turns_ledger", RunPhase24AgentTurnsLedger),
+		// The coding Component settle sweep's partial index over closed,
+		// undeleted coding cycles, ordered least recently checked first.
+		// settle_checked_at itself comes from AutoMigrate. Appended last because
+		// the list is append-only.
+		ctxStep("phase25_run_cycle_settling", RunPhase25RunCycleSettling),
 	}
 }
 

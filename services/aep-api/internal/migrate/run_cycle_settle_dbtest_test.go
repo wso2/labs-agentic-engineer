@@ -18,6 +18,7 @@ package migrate_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,5 +141,83 @@ func TestRunCycle_FinishCancelledIgnoresPullRequest(t *testing.T) {
 	}
 	if fin, err := cycles.FinishCancelled(ctx, c.ID); err != nil || fin == nil {
 		t.Fatalf("FinishCancelled = (%v, %v)", fin, err)
+	}
+}
+
+// ListSettling pages fairly: a row the settler has checked goes to the back,
+// so a fixed set of rows that never settle (legacy Components with a pod, a
+// binding naming a missing release) cannot starve a cycle that closes later.
+// A never-checked row comes first, then the least recently checked.
+func TestRunCycle_ListSettlingPagesFairly(t *testing.T) {
+	db := dbtest.New(t)
+	bootMigrate(t, db)
+	ctx := context.Background()
+	cycles := delivery.NewRunCycleRepository(db, nil)
+	runs := delivery.NewMilestoneRunRepository(db)
+
+	var ids []string
+	for i := 1; i <= 3; i++ {
+		c := settleCycle(t, cycles, runs, 10+i, "ca-f"+string(rune('0'+i)))
+		if _, err := cycles.FinishCancelled(ctx, c.ID); err != nil {
+			t.Fatal(err)
+		}
+		// The project's build mutex admits one live run: settle it.
+		if _, err := runs.Settle(ctx, c.RunID, delivery.RunStateFailed, delivery.RunReasonPlanFailed); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, c.ID)
+		time.Sleep(5 * time.Millisecond) // distinct ended_at, oldest first
+	}
+	page := func(limit int) []string {
+		t.Helper()
+		rows, err := cycles.ListSettling(ctx, limit)
+		if err != nil {
+			t.Fatalf("ListSettling: %v", err)
+		}
+		var got []string
+		for _, r := range rows {
+			got = append(got, r.ID)
+		}
+		return got
+	}
+	if got := page(2); len(got) != 2 || got[0] != ids[0] || got[1] != ids[1] {
+		t.Fatalf("first page = %v, want the two oldest %v", got, ids[:2])
+	}
+	now := time.Now().UTC()
+	for _, id := range ids[:2] {
+		if err := cycles.NoteSettleChecked(ctx, id, now); err != nil {
+			t.Fatalf("NoteSettleChecked: %v", err)
+		}
+	}
+	if got := page(2); len(got) != 2 || got[0] != ids[2] {
+		t.Fatalf("second page = %v, want the unchecked %s first", got, ids[2])
+	}
+	if err := cycles.NoteSettleChecked(ctx, ids[2], now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := cycles.NoteSettleChecked(ctx, ids[0], now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if got := page(3); len(got) != 3 || got[0] != ids[1] || got[1] != ids[2] || got[2] != ids[0] {
+		t.Fatalf("page = %v, want least recently checked first", got)
+	}
+	if got := getCycle(t, cycles, ids[0]).SettleCheckedAt; got == nil {
+		t.Fatal("settle_checked_at not stored")
+	}
+}
+
+// The sweep's ordering has a partial index over exactly its predicate.
+func TestRunCycle_SettlingIndexExists(t *testing.T) {
+	db := dbtest.New(t)
+	bootMigrate(t, db)
+	var def string
+	if err := db.Raw(`SELECT indexdef FROM pg_indexes WHERE tablename = 'run_cycles' AND indexname = 'ix_run_cycles_settling'`).
+		Scan(&def).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"settle_checked_at NULLS FIRST", "ended_at", "ended_at IS NOT NULL", "component_deleted_at IS NULL", "job_ref ~~ 'ca-%'"} {
+		if !strings.Contains(def, want) {
+			t.Fatalf("index %q lacks %q", def, want)
+		}
 	}
 }

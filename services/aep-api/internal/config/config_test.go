@@ -83,6 +83,27 @@ func TestValidate_NoSigningKeyRequired(t *testing.T) {
 	}
 }
 
+// A settled coding Component is deleted only after two no-pod reads at least
+// CODING_AGENT_SETTLE_GRACE apart; 5m unless set.
+func TestLoad_CodingAgentSettleGrace(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_SETTLE_GRACE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentSettleGrace != 5*time.Minute {
+		t.Fatalf("default CodingAgentSettleGrace = %v, want 5m", cfg.CodingAgentSettleGrace)
+	}
+	t.Setenv("CODING_AGENT_SETTLE_GRACE", "90s")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentSettleGrace != 90*time.Second {
+		t.Fatalf("CodingAgentSettleGrace = %v, want 90s", cfg.CodingAgentSettleGrace)
+	}
+}
+
 // U1: a finished coding-agent Job is kept 600s unless CODING_AGENT_JOB_TTL says
 // otherwise.
 func TestLoad_CodingAgentJobTTL(t *testing.T) {

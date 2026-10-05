@@ -227,6 +227,10 @@ type RunCycle struct {
 	JobSuspendedAt     *time.Time `gorm:"column:job_suspended_at" json:"-"`
 	PodGoneAt          *time.Time `gorm:"column:pod_gone_at" json:"-"`
 	ComponentDeletedAt *time.Time `gorm:"column:component_deleted_at" json:"-"`
+	// SettleCheckedAt is when the settler last visited the closed cycle. The
+	// settle sweep lists the least recently checked first (never-checked
+	// before all), so rows that never settle cannot starve a later one.
+	SettleCheckedAt *time.Time `gorm:"column:settle_checked_at" json:"-"`
 	// DispatchedAt is when the CURRENT attempt was dispatched (NoteDispatch).
 	// A re-dispatch reuses the cycle's Component, so the previous attempt's
 	// finished pod can still be in its tree; the watcher ignores a pod created

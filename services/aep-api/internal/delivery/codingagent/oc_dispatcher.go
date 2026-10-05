@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -29,12 +28,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
-
-// RetentionEnforcer frees finished coding-agent Component slots before create.
-// Task 5 fills the LRU implementation; nil or a no-op is fine for Task 4.
-type RetentionEnforcer interface {
-	Enforce(ctx context.Context, orgID, projectID string) error
-}
 
 // OCJobSurface is the narrow OpenChoreo port the dispatcher needs. ComponentClient
 // satisfies it once EnsureWorkload / EnsureRelease / EnsureReleaseBinding land;
@@ -134,8 +127,7 @@ const (
 // EnsureComponentType → CreateComponent → EnsureWorkload → EnsureRelease →
 // EnsureReleaseBinding into the project's write target.
 type OCDispatcher struct {
-	oc        OCJobSurface
-	retention RetentionEnforcer
+	oc OCJobSurface
 	// targets names the environment each cycle's Job is bound into: the
 	// project's write target, resolved once per dispatch.
 	targets writeTargetResolver
@@ -201,12 +193,6 @@ func (d *OCDispatcher) WithJobTTL(ttl time.Duration) *OCDispatcher {
 	return d
 }
 
-// WithRetention sets the pre-create retention helper (Task 5). Nil skips.
-func (d *OCDispatcher) WithRetention(r RetentionEnforcer) *OCDispatcher {
-	d.retention = r
-	return d
-}
-
 // Dispatch launches one cycle and reports the Component (= RunName) and the
 // environment its Job was bound into.
 //
@@ -226,13 +212,6 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 
 	if err := d.oc.EnsureComponentType(ctx, in.OrgID, openchoreo.CodingAgentComponentType()); err != nil {
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: ensure ComponentType: %w", err)
-	}
-
-	if d.retention != nil {
-		if err := d.retention.Enforce(ctx, in.OrgID, in.ProjectID); err != nil {
-			slog.WarnContext(ctx, "oc dispatch: retention enforce failed; continuing create",
-				"org", in.OrgID, "project", in.ProjectID, "error", err)
-		}
 	}
 
 	image := d.resolveImage(in)
