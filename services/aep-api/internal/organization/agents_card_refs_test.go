@@ -41,8 +41,9 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/patch"
 )
 
-// mintingSM is the secrets client with the org secret writer's three calls
-// served by a fakeVault (new name per write, existence tracked).
+// mintingSM is the secrets client with the org secret writer's two calls
+// (CreateSecretRef, DeleteSecretRef) and the SecretRefWriter's in-place
+// CreateSecret served by a fakeVault (new name per write, existence tracked).
 type mintingSM struct {
 	*fakeSMClient
 	vault *fakeVault

@@ -209,7 +209,23 @@ func newConfigHarnessGuarded(t *testing.T) *configHarness {
 	return newConfigHarnessProbing(t, nil, orgconfig.AgentRuntimes, true)
 }
 
+// newConfigHarnessNoSecrets is newConfigHarness on an installation with no
+// secrets provider (secrets delivery off): no vault to keep a token in.
+func newConfigHarnessNoSecrets(t *testing.T) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, nil, orgconfig.AgentRuntimes, false, false)
+}
+
 func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, thunder, runtimes, guarded, true)
+}
+
+// newConfigHarnessWith assembles the harness. With secretsDelivery, the
+// credential service writes the PAT's github-pat reference to a fake vault
+// (the gitpat submit's write); without, the installation has no secrets
+// provider.
+func newConfigHarnessWith(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded, secretsDelivery bool) *configHarness {
 	t.Helper()
 	db := dbtest.New(t) // self-skips under -short
 	gh := newCfgFakeGH(t)
@@ -227,7 +243,14 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes [
 	if !guarded {
 		conns.WithProbeClient(model.client())
 	}
-	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store).WithGitHubAPIBase(gh.URL)
+	credRepo := organization.NewOrgCredentialRepository(db, nil)
+	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL)
+	if secretsDelivery {
+		vault := &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
+		orgSecrets := organization.NewOrgSecretWriter(vault, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
+		credSvc.WithSecretRefWriter(organization.NewSecretRefWriter(vault, credRepo, anthropicRepo,
+			organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db)).WithOrgSecretWriter(orgSecrets))
+	}
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
@@ -317,7 +340,6 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
 		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
 	}
-	seedGitHubPATRef(t, c.db, "acme")
 	seedCustomIDP(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
@@ -409,7 +431,6 @@ func TestConfigComponent_B5_GitHubPatMode(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
 		t.Fatalf("pat connect: %d %s", r.Code, r.Body.String())
 	}
-	seedGitHubPATRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	m := decodeCfg(t, resp.Body.Bytes())
@@ -579,9 +600,6 @@ func TestConfigComponent_D1_PatConnect(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	c.gh.patHappy()
-	// The row the submit's vault write would leave (no vault here), so the
-	// PATCH response's projection reads connected.
-	seedGitHubPATRef(t, c.db, "acme")
 	resp := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("connect: want 200, got %d body=%s", resp.Code, resp.Body.String())
@@ -609,6 +627,36 @@ func TestConfigComponent_D2_PatProbeFails(t *testing.T) {
 	c.db.Model(&organization.OrgCredential{}).Where("oc_org_id = ?", "acme").Count(&count)
 	if count != 0 {
 		t.Fatalf("failed probe must persist nothing, found %d", count)
+	}
+}
+
+// With no secrets provider the PAT has nowhere to live: the save is refused
+// before anything is written (no credential row, no reference row), instead
+// of answering 200 for a token it kept nowhere.
+func TestConfigComponent_D2b_PatConnectWithoutSecretsDelivery(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarnessNoSecrets(t)
+	c.gh.patHappy()
+
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	p := componenttest.DecodeEnvelope(t, resp.Body.String())
+	if p.Code != "secrets_delivery_unavailable" || len(p.Details) == 0 || p.Details[0].Field != "body.gitProvider" {
+		t.Fatalf("want secrets_delivery_unavailable on body.gitProvider: %s", resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "ghp_live") {
+		t.Fatal("the refusal echoes the token")
+	}
+	for _, table := range []string{"org_credentials", "org_secrets"} {
+		var n int64
+		if err := c.db.Raw(`SELECT count(*) FROM ` + table + ` WHERE oc_org_id = 'acme'`).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("%s has %d rows for the refused save", table, n)
+		}
 	}
 }
 
@@ -946,9 +994,8 @@ func TestConfigComponent_H1b_SkillsRenamed(t *testing.T) {
 // --- test helpers -----------------------------------------------------------
 
 // seedGitHubPATRef records the github-pat reference row the gitpat submit's
-// vault write leaves. This harness has no vault (secrets delivery off), so a
-// PAT connect here writes no row; GET /config projects gitProvider only
-// with one.
+// vault write leaves, for a credential row seeded without a submit; GET
+// /config projects gitProvider only with one.
 func seedGitHubPATRef(t *testing.T, db *gorm.DB, org string) {
 	t.Helper()
 	ref := organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: org + "-github-pat-0000beef"}

@@ -23,6 +23,7 @@ package organization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -206,16 +207,32 @@ func (s *CredentialService) ValidatePAT(ctx context.Context, pat, githubLogin st
 	return err
 }
 
+// ErrSecretsDeliveryUnavailable refuses a PAT save on an installation with
+// no secrets provider: the PAT lives only in vault, so there is nowhere to
+// keep it.
+var ErrSecretsDeliveryUnavailable = errors.New("credentials: no secrets provider is configured")
+
+// RequireSecretsDelivery reports ErrSecretsDeliveryUnavailable when a PAT
+// cannot be stored (no secrets provider). The /config save checks it before
+// it writes anything.
+func (s *CredentialService) RequireSecretsDelivery() error {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return ErrSecretsDeliveryUnavailable
+	}
+	return nil
+}
+
 // WritePATRef stores the org's PAT as a new github-pat reference
 // (SecretRefWriter.WriteGitHubPAT), the only place it is kept. The gitpat
 // submit calls it once, after Connect committed and released the org lock,
 // so the org-secret lock is never taken inside the org lock's transaction.
 // An error fails the submit: AE Studio and the build read the token only
-// from that reference. With secrets delivery off (no SecretsProvider) there
-// is no reference to write and it does nothing.
+// from that reference. With no secrets provider it returns
+// ErrSecretsDeliveryUnavailable (the save refuses that state before it
+// writes anything).
 func (s *CredentialService) WritePATRef(ctx context.Context, ocOrgID, pat string) error {
-	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return nil
+	if err := s.RequireSecretsDelivery(); err != nil {
+		return err
 	}
 	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, pat); err != nil {
 		return fmt.Errorf("credentials: write PAT reference: %w", err)

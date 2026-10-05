@@ -43,16 +43,21 @@ var ErrLLMTestRateLimited = errors.New("orgconfig: too many connection tests")
 // Section into a problem response.
 type SectionError struct {
 	Section string // "llm" | "agents" | "gitProvider" | "idp"
-	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
+	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream) | 503 (no secret store)
 	Code    string // the stable reason slug, when the refusal has one (e.g. agents_subscription_requires_claude_code)
 	Message string
 }
 
 func (e *SectionError) Error() string { return "body." + e.Section + ": " + e.Message }
 
+// SecretsDeliveryUnavailableCode is the section error code of a save that
+// needs the secret store on an installation that has none (503).
+const SecretsDeliveryUnavailableCode = "secrets_delivery_unavailable"
+
 // sectionErrorFrom classifies a reused-service error into a SectionError with
 // the right status: a section-field validation failure is a 422 pointing at the
-// section, a cross-mode conflict a 409, an upstream 5xx a 502. An unclassified
+// section, a cross-mode conflict a 409, an upstream 5xx a 502, no secret store
+// a 503. An unclassified
 // error is returned verbatim (the caller maps it to an opaque 500).
 func sectionErrorFrom(section string, err error) error {
 	var se *SectionError
@@ -66,6 +71,10 @@ func sectionErrorFrom(section string, err error) error {
 	var ce *ConflictError
 	if errors.As(err, &ce) {
 		return &SectionError{Section: section, Status: http.StatusConflict, Message: ce.Error()}
+	}
+	if errors.Is(err, ErrSecretsDeliveryUnavailable) {
+		return &SectionError{Section: section, Status: http.StatusServiceUnavailable, Code: SecretsDeliveryUnavailableCode,
+			Message: "This installation has no secret store configured, so the token cannot be saved. An operator must configure secrets delivery."}
 	}
 	var ue *UpstreamError
 	if errors.As(err, &ue) {
@@ -272,6 +281,11 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 	if p.GitProvider.Sent && !p.GitProvider.Null {
 		if s.credentialSvc == nil {
 			return nil, fmt.Errorf("orgconfig patch gitProvider: service not configured")
+		}
+		// The PAT lives only in vault: with no secret store the save is
+		// refused here, before any section is written.
+		if err := s.credentialSvc.RequireSecretsDelivery(); err != nil {
+			return nil, sectionErrorFrom("gitProvider", err)
 		}
 		if err := s.credentialSvc.ValidatePAT(ctx, p.GitProvider.Value.PAT, p.GitProvider.Value.GitHubLogin); err != nil {
 			return nil, sectionErrorFrom("gitProvider", err)

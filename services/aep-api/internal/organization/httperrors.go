@@ -45,6 +45,8 @@ func MapConfigError(err error) error {
 		return apierr.New(http.StatusConflict, apierr.CodeConflict, se.Message, details)
 	case http.StatusBadGateway:
 		return apierr.New(http.StatusBadGateway, codeOr(se.Code, apierr.CodeBadGateway), se.Message, details)
+	case http.StatusServiceUnavailable:
+		return apierr.New(http.StatusServiceUnavailable, codeOr(se.Code, apierr.CodeServiceUnavailable), se.Message, details)
 	default:
 		return apierr.New(http.StatusBadRequest, codeOr(se.Code, apierr.CodeValidationFailed), se.Message, details)
 	}

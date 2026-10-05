@@ -21,6 +21,7 @@ import (
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // hdrClaims carries a JSON-encoded auth.Claims from the request builder to
@@ -48,6 +49,10 @@ func fakeInboundAuth(next http.Handler) http.Handler {
 			var c auth.Claims
 			if err := json.Unmarshal([]byte(raw), &c); err == nil {
 				ctx := auth.WithClaims(r.Context(), &c)
+				// Production's verifier keeps the verified token claims in
+				// context too (the vault path reads the ouId from them);
+				// mirror the projection back.
+				ctx = jwtassertion.ContextWithTokenClaims(ctx, tokenClaimsOf(&c))
 				// Production's ExtractAuthToken stores the request bearer next
 				// to the verified claims; mirror it with a fixed stand-in so
 				// features that forward the caller's token (collab turns,
@@ -58,4 +63,20 @@ func fakeInboundAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// tokenClaimsOf is the inverse of the production projection (auth.claimsOf):
+// the token claims a verified token with these claims carries.
+func tokenClaimsOf(c *auth.Claims) *jwtassertion.TokenClaims {
+	return &jwtassertion.TokenClaims{
+		Sub:        c.Subject,
+		ClientID:   c.ClientID,
+		OuHandle:   c.OuHandle,
+		OuName:     c.OuName,
+		OuId:       c.OuId,
+		Name:       c.Name,
+		Email:      c.Email,
+		GivenName:  c.GivenName,
+		FamilyName: c.FamilyName,
+	}
 }
