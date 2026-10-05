@@ -163,3 +163,102 @@ func TestAdapter_RefusedClientIsMisconfiguredAndLogged(t *testing.T) {
 		t.Fatalf("ae_studio.misconfigured = %v, want one {org, reason: token_refused}", lines)
 	}
 }
+
+// gatedIdP holds every token request until release is closed, and signals
+// arrived once per request.
+type gatedIdP struct {
+	idp     *idpServer
+	arrived chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newGatedIdP(t *testing.T) (*gatedIdP, *httptest.Server) {
+	t.Helper()
+	g := &gatedIdP{idp: &idpServer{expires: 3600}, arrived: make(chan struct{}, 16), release: make(chan struct{})}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		g.arrived <- struct{}{}
+		<-g.release
+		g.idp.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(g.open) // before srv.Close (cleanups run last-first): never leave a handler parked
+	return g, srv
+}
+
+// open releases every held request; safe to call more than once.
+func (g *gatedIdP) open() { g.once.Do(func() { close(g.release) }) }
+
+// waitFor fails the test unless ch yields within d.
+func waitFor[T any](t *testing.T, ch <-chan T, d time.Duration, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(d):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+	var zero T
+	return zero
+}
+
+type tokenResult struct {
+	tok string
+	err error
+}
+
+// A caller waiting on another caller's in-flight IdP fetch gives up when its
+// own ctx ends, instead of queueing behind the fetch.
+func TestClientCredentials_WaiterHonoursItsContext(t *testing.T) {
+	g, srv := newGatedIdP(t)
+	ts := NewClientCredentials(srv.URL, "ae-studio-internal-client", "s3cret", nil)
+
+	first := make(chan tokenResult, 1)
+	go func() { tok, err := ts.Token(context.Background()); first <- tokenResult{tok, err} }()
+	waitFor(t, g.arrived, 5*time.Second, "the first fetch")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	second := make(chan tokenResult, 1)
+	go func() { tok, err := ts.Token(ctx); second <- tokenResult{tok, err} }()
+	cancel()
+	if r := waitFor(t, second, 2*time.Second, "the cancelled waiter"); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("cancelled waiter = %+v, want context.Canceled", r)
+	}
+
+	g.open()
+	if r := waitFor(t, first, 5*time.Second, "the first caller"); r.err != nil || r.tok != "access-1" {
+		t.Fatalf("first caller = %+v, want access-1", r)
+	}
+}
+
+// Concurrent callers share one IdP fetch, and the caller that started it
+// going away does not fail the others.
+func TestClientCredentials_ConcurrentCallersShareOneFetch(t *testing.T) {
+	g, srv := newGatedIdP(t)
+	ts := NewClientCredentials(srv.URL, "ae-studio-internal-client", "s3cret", nil)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	leader := make(chan tokenResult, 1)
+	go func() { tok, err := ts.Token(leaderCtx); leader <- tokenResult{tok, err} }()
+	waitFor(t, g.arrived, 5*time.Second, "the leader's fetch")
+
+	const n = 5
+	others := make(chan tokenResult, n)
+	for range n {
+		go func() { tok, err := ts.Token(context.Background()); others <- tokenResult{tok, err} }()
+	}
+	cancelLeader()
+	if r := waitFor(t, leader, 2*time.Second, "the cancelled leader"); !errors.Is(r.err, context.Canceled) {
+		t.Fatalf("leader = %+v, want context.Canceled", r)
+	}
+
+	g.open()
+	for range n {
+		if r := waitFor(t, others, 5*time.Second, "a waiting caller"); r.err != nil || r.tok != "access-1" {
+			t.Fatalf("waiting caller = %+v, want access-1", r)
+		}
+	}
+	if c := g.idp.count(); c != 1 {
+		t.Fatalf("token requests = %d, want 1 shared fetch", c)
+	}
+}

@@ -68,6 +68,15 @@ type clientCredentials struct {
 	mu        sync.Mutex
 	token     string
 	expiresAt time.Time
+	inflight  *tokenFetch // the IdP fetch callers are waiting on, if any
+}
+
+// tokenFetch is one IdP fetch shared by every caller that needs a token while
+// it runs; done closes once tok/err are set.
+type tokenFetch struct {
+	done chan struct{}
+	tok  string
+	err  error
 }
 
 // NewClientCredentials is the AE-only client's TokenSource. An empty token
@@ -86,16 +95,43 @@ func (c *clientCredentials) Token(ctx context.Context) (string, error) {
 		return "", errClientCredentialsMissing
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.token != "" && c.now().Add(tokenExpiryMargin).Before(c.expiresAt) {
-		return c.token, nil
+		tok := c.token
+		c.mu.Unlock()
+		return tok, nil
 	}
+	f := c.inflight
+	if f == nil {
+		// The fetch runs detached from this caller's ctx (bounded by
+		// tokenFetchTimeout), so a caller that goes away does not fail the
+		// others waiting on it; no lock is held while it runs.
+		f = &tokenFetch{done: make(chan struct{})}
+		c.inflight = f
+		go c.run(context.WithoutCancel(ctx), f)
+	}
+	c.mu.Unlock()
+	select {
+	case <-f.done:
+		return f.tok, f.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+// run performs f and publishes its result: a token is cached, and the next
+// Token after f starts a new fetch.
+func (c *clientCredentials) run(ctx context.Context, f *tokenFetch) {
+	ctx, cancel := context.WithTimeout(ctx, tokenFetchTimeout)
+	defer cancel()
 	tok, ttl, err := c.fetch(ctx)
-	if err != nil {
-		return "", err
+	c.mu.Lock()
+	if err == nil {
+		c.token, c.expiresAt = tok, c.now().Add(ttl)
 	}
-	c.token, c.expiresAt = tok, c.now().Add(ttl)
-	return tok, nil
+	c.inflight = nil
+	c.mu.Unlock()
+	f.tok, f.err = tok, err
+	close(f.done)
 }
 
 func (c *clientCredentials) Invalidate() {
@@ -120,9 +156,7 @@ func (c *clientCredentials) fetch(ctx context.Context) (string, time.Duration, e
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return "", 0, ctx.Err()
-		}
+		// ctx is run's own (no caller cancels it): a timeout is the IdP's.
 		return "", 0, fmt.Errorf("%w: token endpoint unreachable: %w", sourcecontrol.ErrAEStudioUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
