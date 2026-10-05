@@ -54,10 +54,18 @@ func (e *SectionError) Error() string { return "body." + e.Section + ": " + e.Me
 // needs the secret store on an installation that has none (503).
 const SecretsDeliveryUnavailableCode = "secrets_delivery_unavailable"
 
+// SecretStoreWriteFailedCode and secretStoreWriteFailedMessage are the 502 a
+// key save answers when the secret store did not accept the key (nothing is
+// saved).
+const (
+	SecretStoreWriteFailedCode    = "secret_store_write_failed"
+	secretStoreWriteFailedMessage = "Key not saved; the secret store did not accept it. Try again."
+)
+
 // sectionErrorFrom classifies a reused-service error into a SectionError with
 // the right status: a section-field validation failure is a 422 pointing at the
-// section, a cross-mode conflict a 409, an upstream 5xx or a key save Agent
-// Manager missed a 502, no secret store a 503. An unclassified
+// section, a cross-mode conflict a 409, an upstream 5xx, a key the secret store
+// refused or a key save Agent Manager missed a 502, no secret store a 503. An unclassified
 // error is returned verbatim (the caller maps it to an opaque 500).
 func sectionErrorFrom(section string, err error) error {
 	var se *SectionError
@@ -80,6 +88,11 @@ func sectionErrorFrom(section string, err error) error {
 	if errors.Is(err, ErrSecretsDeliveryUnavailable) {
 		return &SectionError{Section: section, Status: http.StatusServiceUnavailable, Code: SecretsDeliveryUnavailableCode,
 			Message: "This installation has no secret store configured, so the token cannot be saved. An operator must configure secrets delivery."}
+	}
+	var store *SecretStoreWriteError
+	if errors.As(err, &store) {
+		return &SectionError{Section: section, Status: http.StatusBadGateway, Code: SecretStoreWriteFailedCode,
+			Message: secretStoreWriteFailedMessage}
 	}
 	var ue *UpstreamError
 	if errors.As(err, &ue) {

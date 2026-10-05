@@ -142,7 +142,8 @@ func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.Secret
 
 	name, err := w.vault.CreateSecretRef(ctx, loc, s.RefData(data))
 	if err != nil {
-		return OrgSecretWrite{}, fmt.Errorf("org secret %s: write: %w", s, err)
+		slog.WarnContext(ctx, "orgsecret.write_failed", "org", ocOrgID, "secret", string(s), "reason", storeFailureReason(err))
+		return OrgSecretWrite{}, &SecretStoreWriteError{Secret: s, Err: err}
 	}
 
 	now := w.now()
@@ -161,6 +162,40 @@ func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.Secret
 	}
 	slog.InfoContext(ctx, "orgsecret.written", "secret", string(s), "name", name)
 	return OrgSecretWrite{Name: name, vault: w.vault, repo: w.repo, loc: loc, org: ocOrgID, secret: s, old: oldName}, nil
+}
+
+// SecretStoreWriteError is a write of an org secret the secret store did not
+// accept: nothing was written, and the previous reference is untouched. The
+// writer logs it once, value-free (orgsecret.write_failed).
+type SecretStoreWriteError struct {
+	Secret OrgSecret
+	Err    error
+}
+
+func (e *SecretStoreWriteError) Error() string {
+	return fmt.Sprintf("org secret %s: write: %v", e.Secret, e.Err)
+}
+
+func (e *SecretStoreWriteError) Unwrap() error { return e.Err }
+
+// storeFailureReason classifies a secret store failure for the log: an error
+// class, never the error's text (which a store may fill with what it was
+// given).
+func storeFailureReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, secretmanagersvc.ErrConflict):
+		return "conflict"
+	case errors.Is(err, secretmanagersvc.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, secretmanagersvc.ErrNotSupported):
+		return "not_supported"
+	default:
+		return "rejected"
+	}
 }
 
 // WriteAndRetire is Write followed by Retire under the same lock, for a

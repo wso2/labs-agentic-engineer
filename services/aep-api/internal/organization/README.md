@@ -107,7 +107,9 @@ model-connection / idp services.*
     the copies): a connection key as a new `default-key` reference, a subscription token as a new
     `coding-agent-key` one (`OrgSecretWriter.Write`, lock order card → default-key →
     coding-agent-key), and the rows commit as one transaction inside the last write. A failed vault
-    write saves nothing; a failed transaction undoes the new references. No key is stored in or read
+    write saves nothing, logs `orgsecret.write_failed {org, secret, reason}` (value-free) and answers
+    `502 secret_store_write_failed` on the key's section; a failed transaction undoes the new
+    references. No key is stored in or read
     from Postgres, and no triplet is stamped on the rows. A save that writes a key on an installation
     with no secret store is refused (`503 secrets_delivery_unavailable`).
   - A connection edit (format or base URL) needs the key in the same save (`llm_key_required`):

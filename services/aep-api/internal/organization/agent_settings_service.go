@@ -43,6 +43,7 @@ package organization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -287,14 +288,29 @@ func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string,
 	if eff.writeConn != nil && eff.writeConn.Key != "" {
 		w, ref, err := s.conns.writeKey(ctx, ocOrgID, eff.writeConn.Key, withToken)
 		if err != nil {
-			return err
+			return storeRefusal(err)
 		}
 		key = &keyWrite{value: eff.writeConn.Key, write: w, ref: ref}
 	} else if err := withToken(); err != nil {
-		return err
+		return storeRefusal(err)
 	}
 	saved.key, saved.tokenWrite = key, tokenWrite
 	return s.afterCommit(ctx, ocOrgID, saved)
+}
+
+// storeRefusal answers a key the secret store did not accept as the coded 502
+// on the section the key belongs to (default-key: llm, coding-agent-key:
+// agents); any other error is returned as it is.
+func storeRefusal(err error) error {
+	var store *SecretStoreWriteError
+	if !errors.As(err, &store) {
+		return err
+	}
+	section := "llm"
+	if store.Secret == OrgSecretCodingAgentKey {
+		section = "agents"
+	}
+	return sectionErrorFrom(section, store)
 }
 
 // keyWrite is the connection key a save wrote to vault: the request's value

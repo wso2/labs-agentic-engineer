@@ -26,9 +26,12 @@ package organization
 // anthropic_dbtest_test.go.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -141,6 +144,7 @@ type saveVault struct {
 	secretmanagersvc.SecretManagementClient // anything else is a test bug (nil panic)
 	log                                     *saveLog
 	createErr, deleteErr                    error
+	failEntity                              string // a create of this secret fails with createErr
 	n                                       int
 	live                                    map[string]bool
 	data                                    map[string]string // the last write's data
@@ -148,7 +152,7 @@ type saveVault struct {
 
 func (v *saveVault) CreateSecretRef(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
 	v.log.add("vault:%s", loc.EntityName)
-	if v.createErr != nil {
+	if v.createErr != nil && (v.failEntity == "" || v.failEntity == loc.EntityName) {
 		return "", v.createErr
 	}
 	v.n++
@@ -398,5 +402,67 @@ func TestCardCopies_RollsStudio(t *testing.T) {
 				t.Fatalf("rollsStudio = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// wantStoreRefusal asserts err is the coded 502 a vault refusal answers, on
+// section.
+func wantStoreRefusal(t *testing.T, err error, section string) {
+	t.Helper()
+	var se *SectionError
+	if !errors.As(sectionErrorFrom("llm", err), &se) || se.Status != http.StatusBadGateway ||
+		se.Code != "secret_store_write_failed" || se.Section != section ||
+		se.Message != "Key not saved; the secret store did not accept it. Try again." {
+		t.Fatalf("err = %#v, want 502 secret_store_write_failed on %s", err, section)
+	}
+}
+
+// A vault that refuses the key answers a coded 502 on the section whose key
+// it refused, and logs one value-free orgsecret.write_failed event naming
+// the org, the secret and the reason class. Not parallel: it swaps the
+// global logger.
+func TestApply_AVaultRefusalIsA502AndOneValueFreeLogLine(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	f := newSaveFixture(t)
+	f.vault.createErr = fmt.Errorf("openbao: 403 permission denied for %s", saveKey1)
+	err := f.save(connectPatch(saveKey1))
+	wantStoreRefusal(t, err, "llm")
+
+	logs := buf.String()
+	if n := strings.Count(logs, `"msg":"orgsecret.write_failed"`); n != 1 {
+		t.Fatalf("want one orgsecret.write_failed line, got %d:\n%s", n, logs)
+	}
+	for _, want := range []string{`"org":"acme"`, `"secret":"default-key"`, `"reason":"`} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("the event must carry %s:\n%s", want, logs)
+		}
+	}
+	if strings.Contains(logs, saveKey1) || strings.Contains(logs, "permission denied") {
+		t.Fatalf("the log carries the value or the store's error text:\n%s", logs)
+	}
+}
+
+// The subscription token's write fails after the connection key's succeeded:
+// the outer write is undone (its new reference deleted, the row back on the
+// previous one), nothing is committed, and the 502 names agents.
+func TestApply_ATokenWriteFailureAfterTheKeyWriteSavesNothing(t *testing.T) {
+	f := newSaveFixture(t)
+	f.mustSave(withToken(connectPatch(saveKey1), saveToken))
+	key, token, conn := f.ref(OrgSecretDefaultKey), f.ref(OrgSecretCodingAgentKey), *f.card.conn
+	f.vault.createErr, f.vault.failEntity = errors.New("vault down"), string(OrgSecretCodingAgentKey)
+
+	err := f.save(withToken(connectPatch(saveKey2), saveToken))
+	wantStoreRefusal(t, err, "agents")
+	want := "lock → vault:default-key → vault:coding-agent-key → delete:acme-default-key-0003 → unlock"
+	if f.log.String() != want {
+		t.Fatalf("the failed token write ran\n  %s\nwant\n  %s", f.log, want)
+	}
+	if f.ref(OrgSecretDefaultKey) != key || f.ref(OrgSecretCodingAgentKey) != token || !f.vault.live[key] ||
+		f.vault.live["acme-default-key-0003"] || *f.card.conn != conn {
+		t.Fatalf("something was saved: %s %s (vault %v)", f.ref(OrgSecretDefaultKey), f.ref(OrgSecretCodingAgentKey), f.vault.live)
 	}
 }

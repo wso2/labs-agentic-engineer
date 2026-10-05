@@ -75,8 +75,11 @@ paths:
           description: >-
             `agent_manager_not_updated` (on `body.llm`): the key is saved, but
             pushing it to Agent Manager's provider failed, so governed deploys
-            fail until the key is saved again. Also an upstream failure while
-            probing a section (for example `llm_upstream_error`).
+            fail until the key is saved again. `secret_store_write_failed` (on
+            `body.llm` for the connection key, `body.agents` for the
+            subscription token): the secret store did not accept the key and
+            nothing is saved. Also an upstream failure while probing a section
+            (for example `llm_upstream_error`).
         default:
           content:
             application/json:

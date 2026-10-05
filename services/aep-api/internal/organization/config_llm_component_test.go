@@ -567,8 +567,11 @@ func TestPatchConfig_VaultWriteFailureFailsTheSave(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	c.vault.err = errors.New("vault down")
-	if r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect); r.Code < 400 {
-		t.Fatalf("a first connect whose vault write failed answered %d %s", r.Code, r.Body.String())
+	r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect)
+	if body := r.Body.String(); r.Code != 502 || !strings.Contains(body, `"code":"secret_store_write_failed"`) ||
+		!strings.Contains(body, `"body.llm"`) || !strings.Contains(body, "Key not saved; the secret store did not accept it. Try again.") ||
+		strings.Contains(body, "vault down") {
+		t.Fatalf("a first connect whose vault write failed: %d %s, want 502 secret_store_write_failed on body.llm", r.Code, body)
 	}
 	if n := c.count(t, `SELECT count(*) FROM org_model_connections WHERE oc_org_id = 'acme'`); n != 0 || c.defaultKeyRef(t, "acme") != nil {
 		t.Fatalf("a failed vault write saved the connection (rows=%d)", n)
@@ -583,8 +586,8 @@ func TestPatchConfig_VaultWriteFailureFailsTheSave(t *testing.T) {
 	c.db.Raw(`SELECT updated_at::text FROM org_model_connections WHERE oc_org_id = 'acme'`).Scan(&updatedAt)
 
 	c.vault.err = errors.New("vault down")
-	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"apiKey":"sk-ant-testkey-9876543210","model":"claude-z"}}`)
-	if r.Code < 400 || strings.Contains(r.Body.String(), "vault down") {
+	r = c.h.AsOrg("acme").Patch(configPath, `{"llm":{"apiKey":"sk-ant-testkey-9876543210","model":"claude-z"}}`)
+	if r.Code != 502 || strings.Contains(r.Body.String(), "vault down") {
 		t.Fatalf("a rotation whose vault write failed: %d %s", r.Code, r.Body.String())
 	}
 	after := c.defaultKeyRef(t, "acme")
