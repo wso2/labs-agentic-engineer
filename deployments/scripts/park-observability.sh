@@ -47,6 +47,11 @@
 #     down), and every chart, CR,
 #     ConfigMap patch and HTTPRoute the setup scripts made stays in place.
 #
+# Upgrading from the older script, which parked the logs half too: `up` also
+# restores OpenSearch, the logs adapter and Fluent Bit when it finds them parked
+# (to the replica count remembered at park time, else 1), and `status` lists
+# them. `down` never parks them.
+#
 # What stays running while parked: OpenSearch, the logs adapter, Fluent Bit,
 # observer, controller-manager, the cluster agent, the plane's gateway and
 # amp-observer. They are small, and they are
@@ -98,6 +103,20 @@ PARK_STATEFULSETS=(
     alertmanager-openchoreo-observability
 )
 PARK_DAEMONSETS=()
+
+# The logs half: never parked, but restored by `up` (and shown by `status`)
+# because a cluster parked by the older script still has them at 0 or on the
+# parked nodeSelector. OpenSearch first, so the adapter and the shipper come
+# back to a store that is starting.
+LOGS_STATEFULSETS=(
+    opensearch-master
+)
+LOGS_DEPLOYMENTS=(
+    logs-adapter-opensearch
+)
+LOGS_DAEMONSETS=(
+    fluent-bit
+)
 
 k() { kubectl --context "$CLUSTER_CONTEXT" -n "$NS" "$@"; }
 
@@ -173,34 +192,38 @@ restore_daemonset() {
     echo "   ▶️  daemonset/$name → every node"
 }
 
+status_scalable() {
+    local kind="$1" name="$2" replicas ready state
+    exists "$kind" "$name" || return 0
+    replicas="$(k get "$kind" "$name" -o jsonpath='{.spec.replicas}')"
+    ready="$(k get "$kind" "$name" -o jsonpath='{.status.readyReplicas}')"
+    [ "${replicas:-0}" = "0" ] && state=parked || state=running
+    printf '   %-12s %-40s %-9s %-6s %s\n' "$kind" "$name" "${replicas:-0}" "${ready:-0}" "$state"
+}
+
+status_daemonset() {
+    local name="$1" ready state
+    exists daemonset "$name" || return 0
+    ready="$(k get daemonset "$name" -o jsonpath='{.status.numberReady}')"
+    if [ "$(k get daemonset "$name" -o jsonpath="{.spec.template.spec.nodeSelector.aep\.io/parked}")" = "true" ]; then
+        state=parked
+    else
+        state=running
+    fi
+    printf '   %-12s %-40s %-9s %-6s %s\n' daemonset "$name" - "${ready:-0}" "$state"
+}
+
 status() {
     echo "Observability plane workloads in $NS (parked = spec.replicas 0 / no matching node):"
     printf '   %-12s %-40s %-9s %-6s %s\n' KIND NAME REPLICAS READY STATE
-    local kind name replicas ready state
-    for name in "${PARK_DEPLOYMENTS[@]}"; do
-        exists deployment "$name" || continue
-        replicas="$(k get deployment "$name" -o jsonpath='{.spec.replicas}')"
-        ready="$(k get deployment "$name" -o jsonpath='{.status.readyReplicas}')"
-        [ "${replicas:-0}" = "0" ] && state=parked || state=running
-        printf '   %-12s %-40s %-9s %-6s %s\n' deployment "$name" "${replicas:-0}" "${ready:-0}" "$state"
-    done
-    for name in "${PARK_STATEFULSETS[@]}"; do
-        exists statefulset "$name" || continue
-        replicas="$(k get statefulset "$name" -o jsonpath='{.spec.replicas}')"
-        ready="$(k get statefulset "$name" -o jsonpath='{.status.readyReplicas}')"
-        [ "${replicas:-0}" = "0" ] && state=parked || state=running
-        printf '   %-12s %-40s %-9s %-6s %s\n' statefulset "$name" "${replicas:-0}" "${ready:-0}" "$state"
-    done
-    for name in "${PARK_DAEMONSETS[@]}"; do
-        exists daemonset "$name" || continue
-        ready="$(k get daemonset "$name" -o jsonpath='{.status.numberReady}')"
-        if [ "$(k get daemonset "$name" -o jsonpath="{.spec.template.spec.nodeSelector.aep\.io/parked}")" = "true" ]; then
-            state=parked
-        else
-            state=running
-        fi
-        printf '   %-12s %-40s %-9s %-6s %s\n' daemonset "$name" - "${ready:-0}" "$state"
-    done
+    local name
+    for name in "${PARK_DEPLOYMENTS[@]}"; do status_scalable deployment "$name"; done
+    for name in "${PARK_STATEFULSETS[@]}"; do status_scalable statefulset "$name"; done
+    for name in "${PARK_DAEMONSETS[@]}"; do status_daemonset "$name"; done
+    echo "Logs half (never parked; 'parked' here means an older script parked it, and 'up' restores it):"
+    for name in "${LOGS_STATEFULSETS[@]}"; do status_scalable statefulset "$name"; done
+    for name in "${LOGS_DEPLOYMENTS[@]}"; do status_scalable deployment "$name"; done
+    for name in "${LOGS_DAEMONSETS[@]}"; do status_daemonset "$name"; done
 }
 
 kubectl cluster-info --context "$CLUSTER_CONTEXT" --request-timeout=5s &>/dev/null || {
@@ -222,6 +245,9 @@ case "$ACTION" in
         ;;
     up)
         echo "▶️  Restoring the observability workloads in $NS"
+        for name in "${LOGS_STATEFULSETS[@]}"; do restore_scalable statefulset "$name"; done
+        for name in "${LOGS_DEPLOYMENTS[@]}"; do restore_scalable deployment "$name"; done
+        for name in "${LOGS_DAEMONSETS[@]}"; do restore_daemonset "$name"; done
         for name in "${PARK_DEPLOYMENTS[@]}"; do restore_scalable deployment "$name"; done
         for name in "${PARK_STATEFULSETS[@]}"; do restore_scalable statefulset "$name"; done
         for name in "${PARK_DAEMONSETS[@]}"; do restore_daemonset "$name"; done
