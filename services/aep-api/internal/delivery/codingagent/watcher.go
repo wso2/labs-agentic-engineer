@@ -32,9 +32,10 @@ package codingagent
 //     one thing this watcher takes out of the log itself is the runner's
 //     terminal line: its token usage, and whether its model provider's limit
 //     is what stopped it.
-//  3. It NEVER deletes a Component on a natural terminal. Deletion frees the
-//     billing slot but also destroys the archive, so it belongs to the
-//     retention pass (and to cancel), which decide with the whole picture.
+//  3. It never deletes a Component; it suspends the Job at the first terminal
+//     pod, and the settler deletes once no pod is left. The suspend comes after
+//     the run's usage is captured, so the pod whose log carries the spend is
+//     read before anything is done to its Job.
 //
 // Its state is the cycle rows themselves — the not-found streak is the only
 // in-memory fact, and losing it on restart costs at most two extra ticks.
@@ -80,11 +81,12 @@ const (
 
 // cycleWatchStore is the cycle state this watcher reads and writes. It is a
 // narrow interface rather than the whole repository so the watcher's write
-// surface — exactly one mutator plus usage — is visible at a glance.
+// surface — one verdict, usage, and the suspend stamp — is visible at a glance.
 type cycleWatchStore interface {
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]delivery.RunCycle, error)
 	FinishAgentFailed(ctx context.Context, id, reason string) (*delivery.RunCycle, error)
 	RecordUsage(ctx context.Context, id string, u contracts.CapturedUsage) error
+	MarkJobSuspended(ctx context.Context, id string) error
 }
 
 // JobWatcher reconciles dispatched run cycles against the pods OpenChoreo
@@ -95,6 +97,11 @@ type JobWatcher struct {
 	// targets is the fallback for a cycle with no recorded environment: the
 	// project's write target, resolved on the tick that needs it.
 	targets writeTargetResolver
+
+	// jobs suspends a cycle's Job once its pod is terminal, so the Job
+	// OpenChoreo re-creates after its TTL never runs the runner again. nil →
+	// nothing is suspended (tests).
+	jobs jobSuspender
 
 	// recorder owns each dispatched cycle's feed recording. The watcher is its
 	// DISCOVERY, not its clock: it hands over every cycle it sees on its own 30s
@@ -145,9 +152,9 @@ type JobWatcher struct {
 }
 
 // NewJobWatcher wires the watcher. runtime, cycles and targets are required;
-// asService may be nil (tests).
+// jobs and asService may be nil (tests).
 func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, targets writeTargetResolver,
-	asService func(ctx context.Context) context.Context) *JobWatcher {
+	jobs jobSuspender, asService func(ctx context.Context) context.Context) *JobWatcher {
 	if runtime == nil || cycles == nil || targets == nil {
 		panic("codingagent.JobWatcher: runtime, cycles and targets are required")
 	}
@@ -155,6 +162,7 @@ func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, tar
 		runtime:      runtime,
 		cycles:       cycles,
 		targets:      targets,
+		jobs:         jobs,
 		asService:    asService,
 		pollInterval: defaultPollInterval,
 		startupGrace: defaultStartupGrace,
@@ -290,6 +298,10 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 	if pod.Found {
 		w.seen[cycle.ID] = true
 		delete(w.absent, cycle.ID)
+	} else if cycle.JobSuspendedAt != nil || cycle.EndedAt != nil {
+		// A suspended Job runs no pod, and a closed cycle needs none: "no pod"
+		// is the expected state here, never an absent or startup verdict.
+		return
 	}
 
 	switch ClassifyPod(pod) {
@@ -298,11 +310,13 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		// request's answer, and it reaches the run as a webhook — so nothing is
 		// concluded here beyond banking the run's token spend.
 		w.captureUsage(ctx, cycle, w.readTerminal(ctx, cycle, binding, pod, false))
+		w.suspendAtTerminal(ctx, cycle, "terminal")
 	case OutcomeFailed:
 		// An open cycle still needs its verdict, and the runner's last line is
 		// where a provider limit says it was one.
 		report := w.readTerminal(ctx, cycle, binding, pod, cycle.EndedAt == nil)
 		w.captureUsage(ctx, cycle, report)
+		w.suspendAtTerminal(ctx, cycle, "terminal")
 		if report.providerLimit != nil {
 			w.failOnProviderLimit(ctx, cycle, *report.providerLimit)
 			return
@@ -325,6 +339,45 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		w.checkStartupGrace(ctx, cycle, binding, pod)
 	case OutcomeRunning:
 		// Nothing to decide; the live tail is what the console wants meanwhile.
+	}
+}
+
+// suspendAtTerminal suspends the cycle's Job binding once, the first time its
+// pod is seen terminal. Idempotent through job_suspended_at: a marked cycle is
+// never asked again. Outcomes:
+//   - success: marked, then codingagent.job_suspended is logged — the one event
+//     that says a suspend took effect;
+//   - ErrNotFound: the binding is gone, so there is nothing left to suspend;
+//     marked so it is not re-asked, not announced;
+//   - ErrSuspendUnsupported: a legacy release with no suspend schema; the Job is
+//     left to its TTL and NOT marked, which is how the settler knows suspend
+//     did not apply;
+//   - anything else: not marked, so the next tick retries.
+func (w *JobWatcher) suspendAtTerminal(ctx context.Context, cycle *delivery.RunCycle, cause string) {
+	if w.jobs == nil || cycle.JobSuspendedAt != nil {
+		return
+	}
+	err := w.jobs.SuspendJobBinding(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, cycle.Environment)
+	switch {
+	case err == nil:
+		if err := w.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+			slog.WarnContext(ctx, "codingagent.JobWatcher: mark job suspended failed (retried next tick)",
+				"cycle", cycle.ID, "error", err)
+			return
+		}
+		slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", cause)
+	case errors.Is(err, openchoreo.ErrNotFound):
+		slog.InfoContext(ctx, "codingagent.JobWatcher: component gone, nothing to suspend",
+			"cycle", cycle.ID, "component", cycle.JobRef)
+		if err := w.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+			slog.WarnContext(ctx, "codingagent.JobWatcher: mark job suspended failed (retried next tick)",
+				"cycle", cycle.ID, "error", err)
+		}
+	case errors.Is(err, openchoreo.ErrSuspendUnsupported):
+		slog.WarnContext(ctx, "codingagent.job_suspend_unsupported", "cycle", cycle.ID, "component", cycle.JobRef)
+	default:
+		slog.WarnContext(ctx, "codingagent.JobWatcher: suspend job failed (retried next tick)",
+			"cycle", cycle.ID, "component", cycle.JobRef, "error", err)
 	}
 }
 

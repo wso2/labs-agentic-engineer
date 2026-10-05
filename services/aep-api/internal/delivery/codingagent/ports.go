@@ -81,6 +81,15 @@ type RunFailureRecorder interface {
 	RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) (*delivery.MilestoneRun, error)
 }
 
+// jobSuspender suspends a coding cycle's Job binding in one environment, so the
+// Job OpenChoreo re-creates after its TTL never runs the runner again.
+// Satisfied by openchoreo.ComponentClient: a missing binding is
+// openchoreo.ErrNotFound, and a release that predates the suspend schema is
+// openchoreo.ErrSuspendUnsupported with nothing written.
+type jobSuspender interface {
+	SuspendJobBinding(ctx context.Context, org, project, component, environment string) error
+}
+
 // SecretRef is one org credential's SecretReference as a Job mounts it: the
 // reference's name and the key it reads (C10).
 type SecretRef struct {

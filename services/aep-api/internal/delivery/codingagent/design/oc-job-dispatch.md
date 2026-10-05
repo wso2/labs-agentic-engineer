@@ -158,6 +158,16 @@ answers `ErrSuspendUnsupported`, writing nothing, when its snapshot has no
 `suspend` environmentConfig. A `400` (`ErrBadRequest`) or `422` on the write is
 a malformed request, never a legacy release.
 
+The pod-truth watcher is the caller at a natural end: the first tick that sees
+the cycle's pod Succeeded or Failed captures its usage, THEN suspends, and
+stamps `job_suspended_at` so no later tick asks again. A gone binding
+(`ErrNotFound`) is stamped too, since there is nothing left to suspend.
+`ErrSuspendUnsupported` is logged (`codingagent.job_suspend_unsupported`) and
+NOT stamped, leaving the Job to its TTL; any other error is retried next tick.
+Only a suspend that took effect logs `codingagent.job_suspended` (`cause` =
+`terminal`). Once a cycle is suspended or closed, a snapshot with no pod is the
+expected state, never an absent-pod or startup verdict.
+
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on
 purpose. The cluster's deadline is a backstop: when it passes the pod is killed

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
@@ -82,16 +83,18 @@ func (f *fakeRuntime) PodEvents(context.Context, string, string, string) ([]open
 }
 
 type watchedCycles struct {
-	rows     []delivery.RunCycle
-	finished map[string]string
-	usage    map[string]contracts.CapturedUsage
+	rows      []delivery.RunCycle
+	finished  map[string]string
+	usage     map[string]contracts.CapturedUsage
+	suspended map[string]bool
 }
 
 func newWatchedCycles(rows ...delivery.RunCycle) *watchedCycles {
 	return &watchedCycles{
-		rows:     rows,
-		finished: map[string]string{},
-		usage:    map[string]contracts.CapturedUsage{},
+		rows:      rows,
+		finished:  map[string]string{},
+		usage:     map[string]contracts.CapturedUsage{},
+		suspended: map[string]bool{},
 	}
 }
 
@@ -121,6 +124,28 @@ func (c *watchedCycles) FinishAgentFailed(_ context.Context, id, reason string) 
 func (c *watchedCycles) RecordUsage(_ context.Context, id string, u contracts.CapturedUsage) error {
 	c.usage[id] = u
 	return nil
+}
+
+func (c *watchedCycles) MarkJobSuspended(_ context.Context, id string) error {
+	c.suspended[id] = true
+	return nil
+}
+
+// fakeJobs records each SuspendJobBinding as component@environment. before,
+// when set, runs inside the call so a test can pin what had (or had not)
+// happened by the time the suspend went out.
+type fakeJobs struct {
+	suspends []string
+	err      error
+	before   func()
+}
+
+func (f *fakeJobs) SuspendJobBinding(_ context.Context, _, _, component, env string) error {
+	if f.before != nil {
+		f.before()
+	}
+	f.suspends = append(f.suspends, component+"@"+env)
+	return f.err
 }
 
 // deathNotice is one AgentDied call, recorded whole so a test can assert the
@@ -154,7 +179,54 @@ func newTestWatcher(rt openchoreo.RuntimeClient, cycles cycleWatchStore) *JobWat
 }
 
 func newTestWatcherWith(rt openchoreo.RuntimeClient, cycles cycleWatchStore, targets writeTargetResolver) *JobWatcher {
-	return NewJobWatcher(rt, cycles, targets, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	return NewJobWatcher(rt, cycles, targets, &fakeJobs{}, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+}
+
+// resultLine is the runner's terminal settle line, carrying usage.
+func resultLine(t *testing.T) []openchoreo.PodLogLine {
+	t.Helper()
+	return []openchoreo.PodLogLine{{
+		Timestamp: time.Now().UTC(),
+		Log:       `{"schemaVersion":1,"kind":"result","usage":{"inputTokens":11,"outputTokens":22,"model":"claude-sonnet-5"}}`,
+	}}
+}
+
+// logRecord is one captured slog record: its message and its attributes.
+type logRecord struct {
+	msg   string
+	attrs map[string]string
+}
+
+type recordingHandler struct{ records *[]logRecord }
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	attrs := map[string]string{}
+	r.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value.String(); return true })
+	*h.records = append(*h.records, logRecord{msg: r.Message, attrs: attrs})
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// captureLogs routes the default logger into a slice for the test's duration.
+func captureLogs(t *testing.T) *[]logRecord {
+	t.Helper()
+	var records []logRecord
+	prev := slog.Default()
+	slog.SetDefault(slog.New(recordingHandler{records: &records}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &records
+}
+
+func logsNamed(records []logRecord, msg string) []logRecord {
+	var out []logRecord
+	for _, r := range records {
+		if r.msg == msg {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -710,5 +782,147 @@ func TestTick_ProviderLimitRecordFailureStillClosesTheCycle(t *testing.T) {
 
 	if cycles.finished["c12"] != delivery.CycleReasonModelProviderLimit {
 		t.Fatalf("finished = %+v", cycles.finished)
+	}
+}
+
+// ---- suspend at the first terminal pod --------------------------------------
+
+func TestTick_SucceededPodIsSuspendedAfterUsageIsCaptured(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, logs: resultLine(t)}
+	c := dispatchedCycle("c1", time.Minute)
+	c.Environment = "development"
+	cycles := newWatchedCycles(c)
+	usageFirst := false
+	jobs := &fakeJobs{before: func() { _, usageFirst = cycles.usage["c1"] }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	if !usageFirst {
+		t.Fatal("usage must be captured before the Job is suspended")
+	}
+	if !reflect.DeepEqual(jobs.suspends, []string{c.JobRef + "@development"}) || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	got := logsNamed(*logs, "codingagent.job_suspended")
+	want := map[string]string{"cycle": "c1", "component": c.JobRef, "cause": "terminal"}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].attrs, want) {
+		t.Fatalf("job_suspended events = %+v, want one with %v", got, want)
+	}
+}
+
+func TestTick_FailedPodIsSuspendedAfterUsageIsCaptured(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed"}, logs: resultLine(t)}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	usageFirst := false
+	jobs := &fakeJobs{before: func() { _, usageFirst = cycles.usage["c1"] }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if !usageFirst || !cycles.suspended["c1"] || cycles.finished["c1"] == "" {
+		t.Fatalf("usageFirst %v, marked %v, finished %v", usageFirst, cycles.suspended, cycles.finished)
+	}
+}
+
+func TestTick_ProviderLimitPodIsSuspendedToo(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",` +
+		`"error":"limit","code":"provider_limit","host":"ollama.com","resetAt":"2026-09-26T14:00:00Z",` +
+		`"usage":{"inputTokens":5,"outputTokens":1,"model":"gpt-oss:20b"}}`)
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if cycles.finished["c1"] != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("finished = %v", cycles.finished)
+	}
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+func TestTick_RunningPodIsNotSuspended(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(dispatchedCycle("c1", time.Minute)), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+func TestTick_AlreadySuspendedCycleIsNotSuspendedAgain(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	c := dispatchedCycle("c1", time.Minute)
+	now := time.Now()
+	c.JobSuspendedAt, c.ModelID = &now, "m"
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+func TestTick_SuspendedCycleWithNoPodIsNotAStartupFailure(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	c := dispatchedCycle("c1", time.Hour) // far past the startup grace
+	now := time.Now()
+	c.JobSuspendedAt = &now
+	cycles := newWatchedCycles(c)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), &fakeJobs{}, nil).WithIntervals(time.Millisecond, time.Minute)
+	for i := 0; i < missingTicksToFail+1; i++ {
+		w.Tick(context.Background())
+	}
+	if len(cycles.finished) != 0 {
+		t.Fatalf("a suspended Job's missing pod is expected, got %v", cycles.finished)
+	}
+}
+
+func TestTick_SuspendFailureIsRetriedNextTick(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed"}}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{err: errors.New("oc 500")}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil)
+	w.Tick(context.Background())
+	if cycles.suspended["c1"] || len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatalf("a failed suspend must not be marked or announced: marked %v", cycles.suspended)
+	}
+	jobs.err = nil
+	w.Tick(context.Background())
+	if len(jobs.suspends) != 2 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// A legacy release has no suspend schema: the Job is left to its TTL, nothing
+// is marked (so the settler treats it as "suspend not applicable"), and the
+// warning carries no value beyond the cycle's identity.
+func TestTick_SuspendUnsupportedIsWarnedAndNotMarked(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	c := dispatchedCycle("c1", time.Minute)
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{err: fmt.Errorf("suspend b: %w", openchoreo.ErrSuspendUnsupported)}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if cycles.suspended["c1"] {
+		t.Fatal("an unsupported suspend must not be marked")
+	}
+	if len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatal("job_suspended must be emitted only when the suspend took effect")
+	}
+	warn := logsNamed(*logs, "codingagent.job_suspend_unsupported")
+	want := map[string]string{"cycle": "c1", "component": c.JobRef}
+	if len(warn) != 1 || !reflect.DeepEqual(warn[0].attrs, want) {
+		t.Fatalf("job_suspend_unsupported = %+v, want one with %v", warn, want)
+	}
+}
+
+// A binding that is already gone has nothing left to suspend: marked, so the
+// watcher stops asking, but not announced as a suspend.
+func TestTick_SuspendOfAGoneBindingIsMarkedNotAnnounced(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{err: fmt.Errorf("binding: %w", openchoreo.ErrNotFound)}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if !cycles.suspended["c1"] {
+		t.Fatal("a gone binding must be marked so it is not re-asked")
+	}
+	if len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatal("job_suspended must be emitted only when the suspend took effect")
 	}
 }
