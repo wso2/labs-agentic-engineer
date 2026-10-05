@@ -228,9 +228,17 @@ const suspendEnvironmentConfigKey = "suspend"
 // The write is a raw read-modify-write of the binding as OpenChoreo returned
 // it, so every other spec field and componentTypeEnvironmentConfigs key
 // survives, including any this client's generated schema does not model. A
-// binding already suspended is left alone (no PUT). A 400 wraps ErrBadRequest:
-// OpenChoreo refuses the key on a Component whose release predates the
-// schema, and callers branch on that.
+// binding already suspended is left alone (no PUT).
+//
+// LEGACY RELEASES are detected here, not by the write's status. OpenChoreo
+// renders a binding from its ComponentRelease's frozen ComponentType snapshot,
+// and accepts any componentTypeEnvironmentConfigs key on the binding (200):
+// a release cut before the `suspend` schema simply drops the key at render
+// and its Job stays live. So the bound release is read first, and one whose
+// snapshot has no suspend environmentConfig (or a binding that names no
+// release) answers ErrSuspendUnsupported with nothing written. A 400 or 422
+// on the PUT is a malformed request, never a legacy release; a 400 wraps
+// ErrBadRequest.
 func (c *componentClient) SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error {
 	bindingName := ReleaseBindingName(projectName, componentName, environment)
 	return retryStaleWrite(ctx, "releasebinding/"+bindingName, func(ctx context.Context) error {
@@ -238,7 +246,8 @@ func (c *componentClient) SuspendJobBinding(ctx context.Context, orgName, projec
 	})
 }
 
-// suspendJobBindingOnce is one attempt: re-read the binding, set the key, PUT.
+// suspendJobBindingOnce is one attempt: re-read the binding, check its release
+// can render suspend, set the key, PUT.
 func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bindingName string) error {
 	getResp, err := c.oc.GetReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(bindingName))
 	if err != nil {
@@ -269,6 +278,21 @@ func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bi
 		spec = map[string]any{}
 		binding["spec"] = spec
 	}
+	// Before the already-true shortcut: a true value over a legacy release is
+	// not a suspended Job.
+	releaseName, _ := spec["releaseName"].(string)
+	if releaseName == "" {
+		return fmt.Errorf("suspend %s: binding names no release: %w", bindingName, ErrSuspendUnsupported)
+	}
+	supported, err := c.releaseRendersSuspend(ctx, orgName, releaseName)
+	if err != nil {
+		return fmt.Errorf("suspend %s: %w", bindingName, err)
+	}
+	if !supported {
+		return fmt.Errorf("suspend %s: release %q predates the suspend schema: %w",
+			bindingName, releaseName, ErrSuspendUnsupported)
+	}
+
 	configs, _ := spec["componentTypeEnvironmentConfigs"].(map[string]any)
 	if configs[suspendEnvironmentConfigKey] == true {
 		return nil
@@ -299,6 +323,42 @@ func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bi
 			JSON404: putResp.JSON404,
 			JSON500: putResp.JSON500,
 		}))
+}
+
+// releaseRendersSuspend reports whether a ComponentRelease's frozen
+// ComponentType snapshot (spec.componentType.spec) declares the `suspend`
+// environmentConfig, i.e. whether a binding to it renders Job.spec.suspend.
+//
+// A release that cannot be read is an error, never "unsupported": a caller
+// treats unsupported as licence to settle the Component, and a failed read
+// says nothing about the Job. A 404 is reported without the ErrNotFound
+// sentinel for the same reason: SuspendJobBinding's ErrNotFound means the
+// BINDING (so the Component) is gone, and here it is present.
+func (c *componentClient) releaseRendersSuspend(ctx context.Context, orgName, releaseName string) (bool, error) {
+	resp, err := c.oc.GetComponentReleaseWithResponse(ctx, orgName, ocgen.ComponentReleaseNameParam(releaseName))
+	if err != nil {
+		return false, fmt.Errorf("get release %q: %w", releaseName, err)
+	}
+	switch {
+	case resp.StatusCode() == http.StatusNotFound:
+		return false, fmt.Errorf("bound release %q is missing (status 404)", releaseName)
+	case resp.StatusCode() != http.StatusOK || resp.JSON200 == nil:
+		return false, fmt.Errorf("get release %q: %w", releaseName,
+			handleErrorResponse(resp.StatusCode(), ErrorResponses{
+				JSON401: resp.JSON401,
+				JSON403: resp.JSON403,
+				JSON500: resp.JSON500,
+			}))
+	}
+	if resp.JSON200.Spec == nil {
+		return false, nil
+	}
+	snapshot, _ := resp.JSON200.Spec.ComponentType["spec"].(map[string]any)
+	envConfigs, _ := snapshot["environmentConfigs"].(map[string]any)
+	schema, _ := envConfigs["openAPIV3Schema"].(map[string]any)
+	properties, _ := schema["properties"].(map[string]any)
+	_, ok := properties[suspendEnvironmentConfigKey]
+	return ok, nil
 }
 
 // GetReleaseBindingStatus reads one binding's aggregate Ready condition.

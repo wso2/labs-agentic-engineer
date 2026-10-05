@@ -87,8 +87,10 @@ type ComponentClient interface {
 	// runner again (a Job OpenChoreo re-creates after the TTL is born
 	// suspended). UPDATE-ONLY: a missing binding is ErrNotFound and nothing is
 	// created, unlike ApplyReleaseBinding. Every other field survives; an
-	// already-suspended binding is not rewritten; a 400 (a release that
-	// predates the schema) wraps ErrBadRequest.
+	// already-suspended binding is not rewritten. A binding whose release
+	// predates the suspend schema is ErrSuspendUnsupported with nothing
+	// written (OpenChoreo would accept the key and not render it). A 400 is a
+	// malformed request (ErrBadRequest), never a legacy release.
 	SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
 
 	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or

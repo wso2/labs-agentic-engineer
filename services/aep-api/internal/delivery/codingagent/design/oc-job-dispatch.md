@@ -150,8 +150,13 @@ false), rendered on `Job.spec.suspend`: once a cycle is over its binding gets
 `componentTypeEnvironmentConfigs.suspend = true` through
 `ComponentClient.SuspendJobBinding`, and the re-created Job is born suspended
 and never runs the runner again. That verb is update-only (a missing binding is
-`ErrNotFound`, never re-created, unlike `ApplyReleaseBinding`); a `400`
-(`ErrBadRequest`) means a release that predates the schema.
+`ErrNotFound`, never re-created, unlike `ApplyReleaseBinding`). OpenChoreo
+renders a binding from its release's frozen ComponentType snapshot and accepts
+any key on the binding, so a release cut before the schema would take the write
+and leave the Job live. The verb therefore reads the bound release first and
+answers `ErrSuspendUnsupported`, writing nothing, when its snapshot has no
+`suspend` environmentConfig. A `400` (`ErrBadRequest`) or `422` on the write is
+a malformed request, never a legacy release.
 
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on

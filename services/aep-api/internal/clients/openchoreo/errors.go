@@ -47,6 +47,14 @@ var (
 	ErrInternalServerError = errors.New("internal server error")
 )
 
+// ErrSuspendUnsupported is SuspendJobBinding's answer for a binding whose Job
+// cannot be suspended: its bound ComponentRelease froze a coding-agent
+// ComponentType that predates the `suspend` environmentConfig (or it names no
+// release at all). OpenChoreo would accept the write and drop the key at
+// render, leaving the Job live, so nothing is written. Not an HTTP status: the
+// client detects it by reading the release.
+var ErrSuspendUnsupported = errors.New("suspend unsupported by the bound release")
+
 // ErrorResponses holds the typed error fields a gen response can carry.
 // Callers populate only the fields the underlying endpoint declares —
 // e.g. CreateProject has no JSON404, so leave JSON404 nil. Matches

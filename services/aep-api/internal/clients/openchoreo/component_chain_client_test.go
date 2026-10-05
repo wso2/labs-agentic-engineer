@@ -610,7 +610,60 @@ func (s *ocStub) componentClient() ComponentClient {
 	return NewComponentClient(Config{BaseURL: s.srv.URL})
 }
 
-const suspendTestBindingPath = "/api/v1/namespaces/acme/releasebindings/shop-ca-c1-development"
+const (
+	suspendTestBindingPath = "/api/v1/namespaces/acme/releasebindings/shop-ca-c1-development"
+	suspendTestRelease     = "shop-ca-c1-release"
+	suspendTestReleasePath = "/api/v1/namespaces/acme/componentreleases/" + suspendTestRelease
+)
+
+// codingAgentReleaseFixture is a ComponentRelease as openchoreo-api's GET
+// returns it: the CR converted to the API type, so spec.componentType is the
+// frozen snapshot {kind, name, spec} and spec.componentType.spec is the
+// ComponentType spec at release time. The snapshot is today's coding-agent
+// spec; withSuspend=false removes its environmentConfigs, which is what a
+// release cut before the suspend schema carries.
+func codingAgentReleaseFixture(t *testing.T, withSuspend bool) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(CodingAgentComponentType()["spec"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ctSpec map[string]any
+	if err := json.Unmarshal(raw, &ctSpec); err != nil {
+		t.Fatal(err)
+	}
+	if !withSuspend {
+		delete(ctSpec, "environmentConfigs")
+	}
+	return map[string]any{
+		"apiVersion": "openchoreo.dev/v1alpha1",
+		"kind":       "ComponentRelease",
+		"metadata":   map[string]any{"name": suspendTestRelease, "namespace": "acme"},
+		"spec": map[string]any{
+			"owner": map[string]any{"componentName": "shop-ca-c1", "projectName": "shop"},
+			"componentType": map[string]any{
+				"kind": "ComponentType",
+				"name": CodingAgentComponentTypeRef,
+				"spec": ctSpec,
+			},
+			"componentProfile": map[string]any{"parameters": map[string]any{"runtime": "claude-code"}},
+			"workload":         map[string]any{"container": map[string]any{"image": "img"}},
+		},
+	}
+}
+
+// suspendTestBinding is a coding-agent binding pinned to suspendTestRelease.
+func suspendTestBinding(configs map[string]any) map[string]any {
+	spec := map[string]any{
+		"environment": "development",
+		"releaseName": suspendTestRelease,
+		"owner":       map[string]any{"componentName": "shop-ca-c1", "projectName": "shop"},
+	}
+	if configs != nil {
+		spec["componentTypeEnvironmentConfigs"] = configs
+	}
+	return map[string]any{"metadata": map[string]any{"name": "shop-ca-c1-development"}, "spec": spec}
+}
 
 // A suspend on a Component that is already gone must never resurrect it:
 // ApplyReleaseBinding would POST a missing binding back (and so a Job).
@@ -648,6 +701,7 @@ func TestSuspendJobBinding_KeepsEveryOtherFieldAndIsIdempotent(t *testing.T) {
 			// survive too, so the write is a raw read-modify-write.
 			"futureField": "kept"},
 	})
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, true))
 	srv.onEcho("PUT", suspendTestBindingPath, 200)
 	c := srv.componentClient()
 	if err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
@@ -676,11 +730,7 @@ func TestSuspendJobBinding_KeepsEveryOtherFieldAndIsIdempotent(t *testing.T) {
 	}
 
 	// Already suspended: a read, no write.
-	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
-		"metadata": map[string]any{"name": "shop-ca-c1-development"},
-		"spec": map[string]any{"environment": "development",
-			"componentTypeEnvironmentConfigs": map[string]any{"suspend": true}},
-	})
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(map[string]any{"suspend": true}))
 	if err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
 		t.Fatal(err)
 	}
@@ -692,10 +742,8 @@ func TestSuspendJobBinding_KeepsEveryOtherFieldAndIsIdempotent(t *testing.T) {
 // A binding with no componentTypeEnvironmentConfigs at all gets the map.
 func TestSuspendJobBinding_CreatesTheConfigMapWhenAbsent(t *testing.T) {
 	srv := newOCStub(t)
-	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
-		"metadata": map[string]any{"name": "shop-ca-c1-development"},
-		"spec":     map[string]any{"environment": "development", "releaseName": "r"},
-	})
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(nil))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, true))
 	srv.onEcho("PUT", suspendTestBindingPath, 200)
 	if err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
 		t.Fatal(err)
@@ -706,15 +754,14 @@ func TestSuspendJobBinding_CreatesTheConfigMapWhenAbsent(t *testing.T) {
 	}
 }
 
-// A Component whose release predates the suspend schema is refused by OC with
-// a 400. Callers (watcher, cancel, settler) branch on ErrBadRequest for it.
+// A 400 is a malformed request, not a legacy release (OpenChoreo accepts the
+// key on any binding; see the ErrSuspendUnsupported tests). It wraps
+// ErrBadRequest and is not retried.
 func TestSuspendJobBinding_BadRequestWrapsErrBadRequest(t *testing.T) {
 	srv := newOCStub(t)
-	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
-		"metadata": map[string]any{"name": "shop-ca-c1-development"},
-		"spec":     map[string]any{"environment": "development"},
-	})
-	srv.on("PUT", suspendTestBindingPath, 400, map[string]string{"error": "unknown field suspend"})
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(nil))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, true))
+	srv.on("PUT", suspendTestBindingPath, 400, map[string]string{"error": "malformed body"})
 	err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
 	if !errors.Is(err, ErrBadRequest) {
 		t.Fatalf("err = %v, want ErrBadRequest", err)
@@ -724,14 +771,89 @@ func TestSuspendJobBinding_BadRequestWrapsErrBadRequest(t *testing.T) {
 	}
 }
 
+// OpenChoreo v1.2.5 answers 200 to suspend on a binding whose release predates
+// the schema and then drops the key at render (the release's frozen
+// ComponentType snapshot has no environmentConfigs), so the Job stays live.
+// The client therefore reads the bound release itself and refuses to write.
+func TestSuspendJobBinding_ReleaseWithoutTheSchemaIsUnsupportedAndWritesNothing(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(map[string]any{"other": "x"}))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, false))
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrSuspendUnsupported) {
+		t.Fatalf("err = %v, want ErrSuspendUnsupported", err)
+	}
+	if errors.Is(err, ErrBadRequest) || errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v must not read as a request error or a missing binding", err)
+	}
+	if got := srv.countMethod("PUT"); got != 0 {
+		t.Fatalf("PUTs = %d, want 0: a write the render ignores must not be made", got)
+	}
+	if got := srv.count("GET", suspendTestReleasePath); got != 1 {
+		t.Fatalf("release GETs = %d, want 1", got)
+	}
+}
+
+// A binding that already reads suspend=true over a legacy release is still
+// unsupported: the value is there but nothing renders it.
+func TestSuspendJobBinding_AlreadyTrueOverALegacyReleaseIsUnsupported(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(map[string]any{"suspend": true}))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, false))
+	err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrSuspendUnsupported) {
+		t.Fatalf("err = %v, want ErrSuspendUnsupported", err)
+	}
+	if got := srv.countMethod("PUT"); got != 0 {
+		t.Fatalf("PUTs = %d, want 0", got)
+	}
+}
+
+// The release read failing is an error of its own: no write, and not taken for
+// "unsupported" (which would let a caller settle a Job that may still run).
+func TestSuspendJobBinding_ReleaseReadFailurePropagatesAndWritesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   error
+	}{
+		{"forbidden", http.StatusForbidden, ErrForbidden},
+		{"missing release", http.StatusNotFound, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newOCStub(t)
+			srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(nil))
+			srv.on("GET", suspendTestReleasePath, tc.status, map[string]string{"error": "nope"})
+			srv.onEcho("PUT", suspendTestBindingPath, 200)
+			err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if errors.Is(err, ErrSuspendUnsupported) {
+				t.Fatalf("err = %v: a failed read is not unsupported", err)
+			}
+			// A missing RELEASE under a present binding is not "the binding is
+			// gone": callers read ErrNotFound as the Component being deleted.
+			if errors.Is(err, ErrNotFound) {
+				t.Fatalf("err = %v must not read as a missing binding", err)
+			}
+			if got := srv.countMethod("PUT"); got != 0 {
+				t.Fatalf("PUTs = %d, want 0", got)
+			}
+		})
+	}
+}
+
 // OC reports a lost race with its own controllers as a 500; the write re-reads
 // and retries (retryStaleWrite).
 func TestSuspendJobBinding_StaleWriteRereadsAndRetries(t *testing.T) {
 	srv := newOCStub(t)
-	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
-		"metadata": map[string]any{"name": "shop-ca-c1-development"},
-		"spec":     map[string]any{"environment": "development"},
-	})
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(nil))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, true))
 	var puts int
 	srv.mu.Lock()
 	srv.routes["PUT "+suspendTestBindingPath] = func(w http.ResponseWriter, raw []byte) {
@@ -750,5 +872,22 @@ func TestSuspendJobBinding_StaleWriteRereadsAndRetries(t *testing.T) {
 	}
 	if got := srv.count("GET", suspendTestBindingPath); got != 2 {
 		t.Fatalf("GETs = %d, want 2 (one re-read per attempt)", got)
+	}
+}
+
+// A binding that names no release renders no Job, so there is nothing a
+// suspend could act on; it is unsupported and nothing is written.
+func TestSuspendJobBinding_BindingWithoutAReleaseIsUnsupported(t *testing.T) {
+	srv := newOCStub(t)
+	b := suspendTestBinding(nil)
+	delete(b["spec"].(map[string]any), "releaseName")
+	srv.onJSON("GET", suspendTestBindingPath, 200, b)
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrSuspendUnsupported) {
+		t.Fatalf("err = %v, want ErrSuspendUnsupported", err)
+	}
+	if srv.countMethod("PUT") != 0 || srv.count("GET", suspendTestReleasePath) != 0 {
+		t.Fatal("no release read and no write for a binding without a release")
 	}
 }
