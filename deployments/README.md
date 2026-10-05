@@ -432,8 +432,8 @@ bao_do() { printf '%s' "${OPENBAO_ROOT_TOKEN:-root}" \
 | Static OpenBao token: vault `secret/aep/openbao-token`, ExternalSecret and Secret `aep-openbao-secrets` (`wso2-aep`). Replaced by Kubernetes auth. | `bao_do kv metadata delete secret/aep/openbao-token`; `kubectl -n wso2-aep delete externalsecret aep-openbao-secrets --ignore-not-found`; `kubectl -n wso2-aep delete secret aep-openbao-secrets --ignore-not-found` | SRE request (phase 10) |
 | Task signing key: vault `secret/aep/task-signing-key`, ExternalSecret and Secret `aep-task-signing-key`. Nothing reads it any more. | `bao_do kv metadata delete secret/aep/task-signing-key`; delete ExternalSecret and Secret `aep-task-signing-key` the same way | SRE request (phase 10) |
 | Webhook secret: vault `secret/aep/webhook-secret`, ExternalSecret and Secret `aep-webhook-secrets`. Webhooks are verified per org by the AE Studio relay; the org's own `github-webhook-secret` row is separate and stays. | `bao_do kv metadata delete secret/aep/webhook-secret`; delete ExternalSecret and Secret `aep-webhook-secrets` the same way | SRE request (phase 10) |
-| Per-org OpenChoreo secret `aep-component-build-git-secret`. No code references it. | In each org namespace: `kubectl -n <org-ns> delete secret aep-component-build-git-secret --ignore-not-found` | SRE request (phase 10) |
-| Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<org-ns>/<ref>` | SRE request (phase 10) |
+| Per-org OpenChoreo **GitSecret** `aep-component-build-git-secret` (a `GitSecret` CR in each org's control-plane namespace, created and deleted through OpenChoreo's `gitsecrets` API; not a plain Secret). No code references it. | Delete the GitSecret the way aep-api did: `DELETE /api/v1alpha1/namespaces/<oc-org-ns>/gitsecrets/aep-component-build-git-secret` on the OpenChoreo API, or `kubectl -n <oc-org-ns> delete gitsecret aep-component-build-git-secret --ignore-not-found`. Then confirm nothing of that name is left: `kubectl -n <oc-org-ns> get secretreference,secret aep-component-build-git-secret --ignore-not-found` and `bao_do kv list secret/user-app-secrets/<vault-org-ns>`. Delete a leftover with the matching kubectl delete or `kv metadata delete`. (How OpenChoreo backs a GitSecret is not visible from this repo, so the check is the proof, not the delete.) | SRE request (phase 10) |
+| Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<vault-org-ns>/<ref>` | SRE request (phase 10) |
 
 Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
 `aep-eso-openbao-token` RBAC objects are unrelated and stay.
@@ -441,21 +441,66 @@ Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
 ### Orphaned vault references
 
 Earlier code retired a replaced key's old vault copy; this release only retires
-references it created itself. Two groups are left behind on an upgraded install:
+references it created itself, so some stay behind on an upgraded install:
 
 1. Pre-phase-1 org copies: vault entries of references written before the
    `org_secrets` reference rows existed.
-2. References named only in the dropped profile and credential columns
-   (the `secret_ref_*` columns of the model connection and IDP profile tables),
-   so no `org_secrets` row points at them.
+2. References named only in the dropped columns: the `secret_ref_*` columns of
+   `org_credentials`, `org_anthropic_credentials`, the model connection table and
+   the IDP profile table.
 
-To find them, per org: list the vault entries
-(`bao_do kv list secret/user-app-secrets/<org-ns>`) and the org's SecretReferences
-(`kubectl get secretreferences -n <org-ns>`), then read the live names from
-`SELECT secret_ref_name FROM org_secrets WHERE oc_org_id = '<org>'`. A vault key
-or SecretReference that no `org_secrets` row names is an orphan candidate. Check
-that no workload still references it before deleting. Compare names only; never
-read a value.
+Two namespaces are involved. Do not mix them:
+
+- `<vault-org-ns>` is the vault path segment, `wc-<8 hex>-<8 hex>`, derived from
+  the org's Thunder OU id (`tenant.OrgBaseNamespace`). It is the middle segment of
+  `secret/user-app-secrets/<vault-org-ns>/<ref>`. Read it off any existing path of
+  the org: `bao_do kv list secret/user-app-secrets`.
+- `<oc-org-ns>` is the org's OpenChoreo control-plane namespace, the `ocOrgID`
+  (for the local org: `default`). SecretReference CRs and the `org_secrets` rows
+  (`oc_org_id`) use it.
+
+`secret/user-app-secrets/` also holds other users' application secrets, and
+`ai-agent-model-access` and the AMP model and tracing references are live without
+an `org_secrets` row. A key is an orphan **candidate** only if both hold:
+
+1. Its name has AEP's form `<oc-org-ns>-<entity>-<8 hex>` with `<entity>` one of
+   `github-pat`, `github-webhook-secret`, `default-key`, `coding-agent-key`,
+   `ae-publisher-client`, `ae-studio-client` (a long namespace is trimmed, so
+   match on the tail `-<entity>-<8 hex>`). Anything else is not AEP's: leave it.
+2. Nothing live points at it: no `org_secrets` row names it, and no
+   SecretReference or ExternalSecret has its vault path as a `remoteRef.key`
+   (that covers `ai-agent-model-access`).
+
+Names only, no value is read:
+
+```bash
+VNS=<vault-org-ns>; ONS=<oc-org-ns>
+ENT='github-pat|github-webhook-secret|default-key|coding-agent-key|ae-publisher-client|ae-studio-client'
+
+# Vault keys of AEP's form
+bao_do kv list -format=json "secret/user-app-secrets/$VNS" \
+  | jq -r '.[]' | grep -E "(^|-)($ENT)-[0-9a-f]{8}\$" | sort > /tmp/vault-aep-refs
+
+# 1. Names an org_secrets row still holds
+kubectl -n wso2-aep exec postgres-0 -- sh -c \
+  "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atc \
+   \"SELECT secret_ref_name FROM org_secrets WHERE oc_org_id = '$ONS'\"" | sort > /tmp/live-rows
+
+# 2. Vault paths any SecretReference or ExternalSecret in the cluster points at
+{ kubectl get secretreferences -A -o json \
+    | jq -r '.items[].spec.data[]?.remoteRef.key';
+  kubectl get externalsecrets -A -o json \
+    | jq -r '.items[].spec.data[]? | .remoteRef.key'; } \
+  | sed -n "s#^user-app-secrets/$VNS/##p" | sort -u > /tmp/live-paths
+
+# Candidates: AEP-shaped, in neither list
+comm -23 /tmp/vault-aep-refs <(sort -u /tmp/live-rows /tmp/live-paths)
+```
+
+Review each candidate by hand before running the delete in the table, and delete
+the matching SecretReference too if one exists. The `/tmp` files hold names only.
+Both lists must come back non-empty on a cluster with a connected org; if one is
+empty, fix its query before trusting the candidate list.
 
 Local-only example of a stale path:
 `user-app-secrets/<org-ns>/default-ae-publisher-client-14f4038d`, a leftover

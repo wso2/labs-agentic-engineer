@@ -9,5 +9,5 @@ boundaries without a browser.
 
 - Run against the cluster from `deployments/` (`make dev-env` once, `make
   dev-update` after each source edit) — no mocked infra.
-- Suites share the cluster's database; there is no test-only reset endpoint (`TEST_MODE` is gone), so each suite creates and cleans up its own data.
+- Suites will share the cluster's database and there is no test-only reset endpoint (`TEST_MODE` is gone), so each suite must create and clean up its own data.
 - Assert against the generated contract types from `@aep/contracts`.
