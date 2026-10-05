@@ -35,6 +35,7 @@ package organization_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -233,7 +234,7 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes [
 	svc := organization.NewService(
 		credSvc, disconnectSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
-	).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
+	).WithOrgSecretRefs(organization.NewOrgSecretRepository(db)).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
 		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), runtimes))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
@@ -316,6 +317,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
 		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
 	}
+	seedGitHubPATRef(t, c.db, "acme")
 	seedCustomIDP(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
@@ -386,6 +388,7 @@ func TestConfigComponent_B4_GitHubAppMode(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed app row: %v", err)
 	}
+	seedGitHubPATRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	m := decodeCfg(t, resp.Body.Bytes())
@@ -406,6 +409,7 @@ func TestConfigComponent_B5_GitHubPatMode(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`); r.Code != 200 {
 		t.Fatalf("pat connect: %d %s", r.Code, r.Body.String())
 	}
+	seedGitHubPATRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	m := decodeCfg(t, resp.Body.Bytes())
@@ -575,6 +579,9 @@ func TestConfigComponent_D1_PatConnect(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	c.gh.patHappy()
+	// The row the submit's vault write would leave (no vault here), so the
+	// PATCH response's projection reads connected.
+	seedGitHubPATRef(t, c.db, "acme")
 	resp := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("connect: want 200, got %d body=%s", resp.Code, resp.Body.String())
@@ -937,6 +944,18 @@ func TestConfigComponent_H1b_SkillsRenamed(t *testing.T) {
 }
 
 // --- test helpers -----------------------------------------------------------
+
+// seedGitHubPATRef records the github-pat reference row the gitpat submit's
+// vault write leaves. This harness has no vault (secrets delivery off), so a
+// PAT connect here writes no row; GET /config projects gitProvider only
+// with one.
+func seedGitHubPATRef(t *testing.T, db *gorm.DB, org string) {
+	t.Helper()
+	ref := organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: org + "-github-pat-0000beef"}
+	if err := organization.NewOrgSecretRepository(db).Upsert(context.Background(), org, ref, ""); err != nil {
+		t.Fatalf("seed the github-pat row: %v", err)
+	}
+}
 
 func seedCustomIDP(t *testing.T, db *gorm.DB, org string) {
 	t.Helper()

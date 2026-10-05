@@ -45,6 +45,11 @@ var removedRoutes = []removedRoute{
 	{http.MethodPost, "/internal/v1/mcp/playground-token", http.StatusNotFound},
 	// The validation-context callback moved to runs/{cycleId}/validation-context.
 	{http.MethodGet, "/internal/v1/validation/c/context", http.StatusNotFound},
+	// The GitHub webhook receiver moved to the AE Studio tools pod.
+	{http.MethodPost, "/api/v1/webhooks/github", http.StatusNotFound},
+	// Regression row: the dev group never mounted in this harness; its removal
+	// is proven by TestRouteTable.
+	{http.MethodPost, "/_dev/v1/secret-ref-resync", http.StatusNotFound},
 }
 
 func TestRemovedRoutes(t *testing.T) {
@@ -53,7 +58,7 @@ func TestRemovedRoutes(t *testing.T) {
 			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), &auth.Claims{Subject: "u", OuHandle: "acme"})))
 		})
 	}
-	h := NewHandlerForTest(Deps{}, asUser, nil)
+	h := NewHandlerForTest(Deps{}, asUser)
 	for _, rr := range removedRoutes {
 		t.Run(rr.method+" "+rr.path, func(t *testing.T) {
 			w := httptest.NewRecorder()
@@ -79,14 +84,17 @@ func TestRouteTable(t *testing.T) {
 		"GET /healthz", "GET /readyz",
 		"/api/",
 		"/internal/v1/",
-		"POST /_dev/v1/secret-ref-resync",
 	} {
 		if _, ok := got[p]; !ok {
 			t.Errorf("mount table lacks %q", p)
 		}
 	}
-	if len(got) != 5 {
-		t.Errorf("mount table has %d rows, want 5", len(got))
+	if len(got) != 4 {
+		t.Errorf("mount table has %d rows, want 4", len(got))
+	}
+	// The dev secret resync is gone with the stored values it re-pushed.
+	if _, ok := got["POST /_dev/v1/secret-ref-resync"]; ok {
+		t.Error("mount table still has the dev secret resync")
 	}
 	// The SRE handoff is an internal caller (03 §1): /api/ admits user JWTs only.
 	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {
@@ -101,7 +109,7 @@ func TestRouteTable(t *testing.T) {
 // with the retired PLAYGROUND_TOKEN_ENABLED flag set in the environment.
 func TestRemovedTokenRoutesAre404(t *testing.T) {
 	t.Setenv("PLAYGROUND_TOKEN_ENABLED", "true")
-	h := NewHandlerForTest(Deps{}, nil, nil)
+	h := NewHandlerForTest(Deps{}, nil)
 	for _, rr := range []removedRoute{
 		{http.MethodGet, "/auth/external/jwks.json", http.StatusNotFound},
 		{http.MethodPost, "/internal/v1/mcp/playground-token", http.StatusNotFound},

@@ -22,7 +22,7 @@ import (
 
 // route is one row of aep-api's mount table: a ServeMux pattern, who calls
 // it, and the gate that admits that caller. A nil handler leaves the row
-// unmounted (feature unconfigured or dev tier off), which answers 404.
+// unmounted (feature unconfigured), which answers 404.
 type route struct {
 	pattern string
 	caller  string
@@ -36,7 +36,6 @@ type route struct {
 //	/healthz /readyz                            health.go
 //	/api/                                       public.go (gate: tenant_gate.go)
 //	/internal/v1/...                            internal.go
-//	/_dev/v1                                    dev.go
 //
 // Credential verification lives in internal/platform/auth.
 func routes(p AppParams) []route {
@@ -49,7 +48,6 @@ func routes(p AppParams) []route {
 		// One mount: the inner mux registers full paths (raw MCP routes and the
 		// generated ops), so a path it does not name 404s.
 		{internalV1 + "/", "coding runner (runs/, MCP), AE Studio tools pod (ae-studio/, MCP), aep-mcp-server (SRE handoff)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
-		{"POST /_dev/v1/secret-ref-resync", "local tooling", "dev tier + LOCAL_OPENBAO_REPAIR, on no HTTPRoute", devResyncRoute(p)},
 	}
 }
 

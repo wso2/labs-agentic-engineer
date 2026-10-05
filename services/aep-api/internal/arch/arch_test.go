@@ -251,8 +251,7 @@ func TestTaskmetaIsPure(t *testing.T) {
 // into a rubber stamp.
 var gormImporters = map[string]bool{
 	// Composition + kernel (structurally hold gorm; not feature slices).
-	"internal/edge": true,
-	"internal/app":  true,
+	"internal/app": true,
 	// Public composition seam: Options.ImpersonateOrgResolverBuilder late-binds
 	// on *gorm.DB after Resolve opens infra (no persistence of its own).
 	"app": true,
@@ -263,9 +262,8 @@ var gormImporters = map[string]bool{
 	"internal/platform/database": true,
 	// The ordered migration LIST — names domain-owned steps, so it sits beside
 	// edge rather than in the kernel (§7).
-	"internal/migrate":                true,
-	"internal/platform/dbtest":        true,
-	"internal/platform/componenttest": true,
+	"internal/migrate":         true,
+	"internal/platform/dbtest": true,
 	// No feature packages remain: the migration is complete. Every domain's raw
 	// gorm now lives behind its <domain>/repository*.go and is governed by
 	// TestGormFencedToDomainRepository, not this list. This set is the PERMANENT

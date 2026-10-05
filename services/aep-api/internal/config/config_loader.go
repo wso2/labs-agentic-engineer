@@ -54,10 +54,8 @@ func Load() (Config, error) {
 			// not must say so (see the field's doc).
 			DataPlaneGatewayTLS: r.readOptionalBool("DATA_PLANE_GATEWAY_TLS", true),
 		},
-		DatabaseURL:               r.databaseURL(),
-		TestMode:                  r.readOptionalBool("TEST_MODE", false),
-		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
-		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
+		DatabaseURL:    r.databaseURL(),
+		DeploymentTier: r.readOptionalString("DEPLOYMENT_TIER", "dev"),
 		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),

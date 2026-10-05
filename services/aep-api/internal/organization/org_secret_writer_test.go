@@ -97,7 +97,8 @@ func (v *fakeVault) DeleteSecretRef(_ context.Context, loc secretmanagersvc.Secr
 	return nil
 }
 
-// CreateSecret rewrites the value under loc.RefName (Restore's path).
+// CreateSecret rewrites the value under loc.RefName (the secrets client's
+// in-place write, which mintingSM routes here).
 func (v *fakeVault) CreateSecret(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
 	if v.createErr != nil {
 		return "", v.createErr
@@ -737,42 +738,6 @@ func TestWriter_ConcurrentWriteIfUnsetWritesOnce(t *testing.T) {
 	wg.Wait()
 	if results[0] == results[1] || v.creates != 1 {
 		t.Fatalf("exactly one first write: results=%v creates=%d", results, v.creates)
-	}
-}
-
-func TestWriter_RestoreRewritesUnderTheStoredName(t *testing.T) {
-	v, repo := newFakeVault("default-github-pat-00000001"), newFakeRepo()
-	w := newWriter(v, repo)
-	if wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat); err != nil || wrote {
-		t.Fatalf("unset secret: wrote=%v err=%v", wrote, err)
-	}
-	repo.set("default", organization.OrgSecretGitHubPAT, "default-github-pat-00000001")
-	wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat)
-	if err != nil || !wrote {
-		t.Fatalf("restore: wrote=%v err=%v", wrote, err)
-	}
-	if v.creates != 0 || v.lastLoc.RefName != "default-github-pat-00000001" || v.lastData["password"] != "t" {
-		t.Fatalf("no new reference; the stored one rewritten with both keys: creates=%d loc=%+v", v.creates, v.lastLoc)
-	}
-	if repo.name("default", organization.OrgSecretGitHubPAT) != "default-github-pat-00000001" {
-		t.Fatal("the row is unchanged")
-	}
-}
-
-// managedVault is a provider that manages its references (Cloud).
-type managedVault struct{ *fakeVault }
-
-func (managedVault) ManagesSecretReferences() bool { return true }
-
-func TestWriter_RestoreRefusesAProviderThatManagesReferences(t *testing.T) {
-	v, repo := newFakeVault("default-github-pat-00000001"), newFakeRepo()
-	repo.set("default", organization.OrgSecretGitHubPAT, "default-github-pat-00000001")
-	w := organization.NewOrgSecretWriter(managedVault{v}, repo, newFakeLock(), fixedClock)
-	if wrote, err := w.Restore(ctx, "default", "ou-1", organization.OrgSecretGitHubPAT, pat); err == nil || wrote {
-		t.Fatalf("want a refusal, got wrote=%v err=%v", wrote, err)
-	}
-	if v.lastLoc.RefName != "" {
-		t.Fatal("nothing is written before the refusal")
 	}
 }
 

@@ -85,6 +85,7 @@ type Service struct {
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
 	orgSecrets    *OrgSecretWriter
+	secretRefs    OrgSecretRefReader
 	converger     StudioConverger
 }
 
@@ -119,10 +120,20 @@ func (s *Service) WithAgentSettings(svc *AgentSettingsService) *Service {
 	return s
 }
 
+// WithOrgSecretRefs attaches the org secrets' reference rows, which decide
+// whether a section reads as configured: a secret lives only in vault, and
+// its row is the record that it was written. Unwired, no section that needs
+// a row reads as configured.
+func (s *Service) WithOrgSecretRefs(refs OrgSecretRefReader) *Service {
+	s.secretRefs = refs
+	return s
+}
+
 // --- GET /config ------------------------------------------------------------
 
-// Get assembles the full config projection for org. A missing llm/gitProvider
-// row maps to a null section (not an error); idp is always present, synthesized
+// Get assembles the full config projection for org. A missing llm row, or a
+// gitProvider without its credential and github-pat rows, maps to a null
+// section (not an error); idp is always present, synthesized
 // from the platform defaults when no row exists yet so GET stays side-effect
 // free (no row is created on read).
 func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProjection, error) {
@@ -136,21 +147,11 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 		out.LLM = llm
 	}
 
-	if s.credentialSvc != nil {
-		proj, err := s.credentialSvc.Status(ctx, org)
-		switch {
-		// A disconnected row is retained by the disconnect cascade (audit trail,
-		// app re-adoption) but the config contract says null = not connected —
-		// projecting it would keep the console's onboarding gate (ADR-0009) and
-		// settings card treating the org as connected.
-		case err == nil && proj.Status != "disconnected":
-			out.GitProvider = gitProviderProjectionFrom(proj)
-		case err == nil || isNotFound(err):
-			out.GitProvider = nil
-		default:
-			return nil, fmt.Errorf("orgconfig get gitProvider: %w", err)
-		}
+	gitProvider, err := s.gitProviderSection(ctx, org)
+	if err != nil {
+		return nil, err
 	}
+	out.GitProvider = gitProvider
 
 	// Always present, even with no service wired: every org has an effective
 	// runtime, and the default IS the answer for one that has never chosen.
@@ -177,6 +178,37 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 
 	out.IDP = s.idpProjection(ctx, org)
 	return out, nil
+}
+
+// gitProviderSection is the gitProvider section, or nil when the org is not
+// connected. Connected takes both a live credential row and the github-pat
+// reference row: the PAT lives only in vault, so an org whose row predates
+// the reference rows has no usable token and gets the onboarding wizard to
+// enter it again. A disconnected row is retained by the disconnect cascade
+// (audit trail) but projecting it would keep the console's onboarding gate
+// (ADR-0009) and settings card treating the org as connected.
+func (s *Service) gitProviderSection(ctx context.Context, org string) (*orgconfig.GitProviderProjection, error) {
+	if s.credentialSvc == nil {
+		return nil, nil
+	}
+	proj, err := s.credentialSvc.Status(ctx, org)
+	if isNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("orgconfig get gitProvider: %w", err)
+	}
+	if proj.Status == "disconnected" || s.secretRefs == nil {
+		return nil, nil
+	}
+	ref, err := s.secretRefs.Get(ctx, org, OrgSecretGitHubPAT)
+	if err != nil {
+		return nil, fmt.Errorf("orgconfig get gitProvider: read the github-pat row: %w", err)
+	}
+	if ref == nil {
+		return nil, nil
+	}
+	return gitProviderProjectionFrom(proj), nil
 }
 
 // idpProjection returns the org's persisted IDP profile, or the platform

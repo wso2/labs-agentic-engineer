@@ -33,19 +33,6 @@ type Config struct {
 	PlatformAPI PlatformAPIConfig
 	DatabaseURL string
 
-	// Test mode — registration gate for the dev/test surface (/_dev/v1/*).
-	// Defaults false, so the surface is absent in every real env.
-	TestMode bool
-
-	// LocalOpenBaoRepairEnabled gates POST /_dev/v1/secret-ref-resync — the
-	// in-process SecretRefWriter resync helper (status-only response; no secret
-	// material on the wire). Distinct from TestMode because TestMode is also
-	// true on the shared wso2cloud dev release binding. Splitting the two means
-	// the resync route only mounts where deployments/docker-compose.yml
-	// explicitly opts in; cloud release bindings never set this var so the route
-	// never registers in deployed environments.
-	LocalOpenBaoRepairEnabled bool
-
 	// DeploymentTier guards dev-only destructive migrations and seed paths.
 	// The destructive BFF migrations refuse to run unless tier=dev.
 	DeploymentTier string

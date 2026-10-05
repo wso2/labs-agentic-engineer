@@ -587,33 +587,3 @@ func (s *ModelConnectionService) forgetKey(ctx context.Context, tx AgentsCardTx,
 			"ocOrgId", ocOrgID, "error", err)
 	}
 }
-
-// ResyncSecretRef rewrites the connection key under the default-key
-// reference its row already names (local OpenBao repair). (false, nil) when
-// there is nothing to repair: no connection, no triplet yet, no default-key
-// row, or no bytes. ctx must carry an ouId claim.
-func (s *ModelConnectionService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
-	if !s.secretRefWriter.Enabled() {
-		return false, nil
-	}
-	row, err := s.conns.GetByOrg(ctx, ocOrgID)
-	if err != nil {
-		return false, fmt.Errorf("model connection resync: load row: %w", err)
-	}
-	if row == nil || derefOrEmpty(row.SecretRefKVPath) == "" || derefOrEmpty(row.SecretRefProperty) == "" {
-		return false, nil
-	}
-	key, err := s.store.Get(ctx, ocOrgID, modelKeyStoreKey)
-	if err != nil || len(key) == 0 {
-		return false, nil
-	}
-	wrote, err := s.secretRefWriter.RestoreModelKey(ctx, ocOrgID, string(key))
-	if err != nil {
-		return false, fmt.Errorf("model connection resync: write: %w", err)
-	}
-	if !wrote {
-		slog.InfoContext(ctx, "model connection resync: skipped, no default-key reference row (the next key save writes one)",
-			"ocOrgId", ocOrgID)
-	}
-	return wrote, nil
-}

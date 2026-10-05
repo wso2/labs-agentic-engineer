@@ -38,6 +38,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,15 +149,78 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 		t.Fatalf("webhook_secrets seed: %+v", row.WebhookSecrets)
 	}
 
-	// The PAT is sealed into the credential store under github/pat.
-	got, err := store.Get(ctx, "acme", "github/pat")
-	if err != nil || string(got) != "ghp_live" {
-		t.Fatalf("stored PAT: got %q err %v", string(got), err)
+	// The PAT lives only in vault: Connect writes no github/pat entry.
+	if _, err := store.Get(ctx, "acme", "github/pat"); !errors.Is(err, secrets.ErrSecretNotFound) {
+		t.Fatalf("Connect stored the PAT in Postgres: err %v", err)
 	}
 
 	// The on-wire projection shape matches the harvested golden's key-set.
 	if got, want := projectionKeys(t, proj), goldenKeys(t); !equalStrs(got, want) {
 		t.Fatalf("projection keys drifted from golden:\n got=%v\nwant=%v", got, want)
+	}
+}
+
+// The gitpat lives only in vault: after a PAT connect no table of the schema
+// holds the PAT, and (from Task 6.5) no value-bearing column is left.
+func TestConnectPAT_WritesNoValueToPostgres(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	ctx := context.Background()
+	const pat = "ghp_testvalue_1234567890"
+	gh := patHappyGitHub(t, "gh-org", "GH Org", "gh@example.com")
+	svc, _ := newCredSvcDB(t, db, gh)
+
+	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: pat, GitHubLogin: "gh-org"}); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("no github/pat entry", func(t *testing.T) {
+		var n int64
+		if err := db.Raw(`SELECT count(*) FROM org_secrets WHERE key = 'github/pat'`).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("%d org_secrets rows hold the PAT", n)
+		}
+	})
+	t.Run("value in no table", func(t *testing.T) {
+		assertNoValueInDump(t, db, pat)
+	})
+	t.Run("no value-bearing columns", func(t *testing.T) {
+		t.Skip("columns dropped in Task 6.5")
+		var n int64
+		if err := db.Raw(`SELECT count(*) FROM information_schema.columns WHERE table_name IN ('org_secrets','org_credentials')
+		        AND column_name IN ('value','webhook_secrets','pat_secret_ref','secret_ref_kv_path','secret_ref_property')`).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("%d value-bearing columns still exist", n)
+		}
+	})
+}
+
+// assertNoValueInDump fails if any row of any table in the schema, rendered
+// with row_to_json, contains value.
+func assertNoValueInDump(t *testing.T, db *gorm.DB, value string) {
+	t.Helper()
+	var tables []string
+	if err := db.Raw(`SELECT quote_ident(table_name) FROM information_schema.tables
+	        WHERE table_schema = current_schema() AND table_type = 'BASE TABLE'`).Scan(&tables).Error; err != nil {
+		t.Fatalf("list tables: %v", err)
+	}
+	if len(tables) == 0 {
+		t.Fatal("no tables in the schema")
+	}
+	for _, table := range tables {
+		var rows []string
+		if err := db.Raw(`SELECT row_to_json(t)::text FROM ` + table + ` t`).Scan(&rows).Error; err != nil {
+			t.Fatalf("dump %s: %v", table, err)
+		}
+		for _, row := range rows {
+			if strings.Contains(row, value) {
+				t.Fatalf("table %s holds the value", table)
+			}
+		}
 	}
 }
 
@@ -262,6 +326,11 @@ func TestDisconnect_ClearsRowAndSecrets_DB(t *testing.T) {
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
+	}
+	// A PAT stored before the gitpat moved to vault only: disconnect still
+	// clears it.
+	if err := store.Put(ctx, "acme", "github/pat", []byte("ghp")); err != nil {
+		t.Fatalf("seed legacy PAT: %v", err)
 	}
 	if err := svc.Disconnect(ctx, "acme"); err != nil {
 		t.Fatalf("disconnect: %v", err)
@@ -395,30 +464,6 @@ func TestOrgIsolation_DB(t *testing.T) {
 	}
 	if row := getRow(t, db, "globex"); row.Status != "active" {
 		t.Fatalf("globex must remain active, got %q", row.Status)
-	}
-}
-
-// ============================================================================
-// Secret-ref resync (no writer configured → idempotent no-op)
-// ============================================================================
-
-func TestResyncSecretRef_NoTriplet_DB(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	ctx := context.Background()
-	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, _ := newCredSvcDB(t, db, gh)
-
-	// Absent org → (false, nil).
-	if wrote, err := svc.ResyncSecretRef(ctx, "ghost"); wrote || err != nil {
-		t.Fatalf("absent org: wrote=%v err=%v", wrote, err)
-	}
-	// Connected PAT but no secret-ref triplet stamped (writer disabled) → (false, nil).
-	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	if wrote, err := svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("no-triplet: wrote=%v err=%v", wrote, err)
 	}
 }
 

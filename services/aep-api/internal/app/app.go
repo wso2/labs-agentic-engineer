@@ -857,11 +857,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
-
-		DB:                   db,
-		CredService:          credService,
-		AnthropicCredService: anthropicCredService,
-		ModelConnections:     modelConnections,
 	}
 
 	// The consolidated /config orchestrator (docs/design/org-config-consolidation.md):
@@ -875,7 +870,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
 	).WithAgentSettings(agentSettings).
 		// The gitpat submit writes the org secrets, then converges AE Studio.
-		WithAEStudio(orgSecretWriter, aeStudio)
+		WithAEStudio(orgSecretWriter, aeStudio).
+		// A section reads as configured only when its reference rows exist.
+		WithOrgSecretRefs(orgSecretRepo)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).

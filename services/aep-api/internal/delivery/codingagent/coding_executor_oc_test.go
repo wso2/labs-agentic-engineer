@@ -138,9 +138,6 @@ type fakeGitHubCreds struct {
 func (f fakeGitHubCreds) GetByOrg(context.Context, string) (*organization.OrgCredential, error) {
 	return f.row, nil
 }
-func (f fakeGitHubCreds) GetByInstallationID(context.Context, int64) (*organization.OrgCredential, error) {
-	return nil, nil
-}
 func (f fakeGitHubCreds) UpdateColumns(context.Context, string, map[string]any) error { return nil }
 func (f fakeGitHubCreds) ListActiveRows(context.Context) ([]organization.OrgCredential, error) {
 	return nil, nil

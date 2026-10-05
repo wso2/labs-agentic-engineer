@@ -314,7 +314,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	disconnect := organization.NewOrgDisconnectService(credSvc, nil).
 		WithRepoHooks(studio).WithStudioRemover(studio).WithGitHubSecretsRemover(refWriter.RemoveGitHubSecrets)
 	svc := organization.NewService(credSvc, disconnect, idpSvc, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
-		WithAEStudio(orgSecrets, converger)
+		WithAEStudio(orgSecrets, converger).WithOrgSecretRefs(rows)
 
 	// The submit's log lines, captured to check what they say and that no
 	// secret value is among them.
@@ -559,5 +559,43 @@ func TestSubmit_BuildReferencesTheGitpatUntilDisconnect(t *testing.T) {
 	}
 	if _, err := builds.StageBuildSecret(ctx, "default", "ghorg-greeter", "run-2"); !errors.Is(err, organization.ErrOrgDisconnected) {
 		t.Fatalf("disconnected build: err = %v, want ErrOrgDisconnected", err)
+	}
+}
+
+// GET /config projects gitProvider only when the org's github-pat reference
+// row exists (user Q-1=C): an org connected before the rows existed has a
+// credential row and no reference, so it gets the onboarding wizard and
+// re-enters its token. A submit writes the row and the section reads
+// connected.
+func TestGetConfig_GitProviderNeedsTheGitHubPATRow(t *testing.T) {
+	f := newSubmitFixture(t)
+	ctx := userCtx(submitOU.String())
+	now := time.Now().UTC()
+	if err := f.db.Create(&organization.OrgCredential{
+		OcOrgID: "default", Kind: "user-pat", GitHubLogin: "ghorg",
+		IdentityName: "GH Org", IdentityEmail: "gh@x.io", IdentityLogin: "ghorg",
+		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
+		WebhookSecrets: organization.WebhookSecrets{{Secret: "seed", AddedAt: now}},
+	}).Error; err != nil {
+		t.Fatalf("seed a pre-phase-1 credential row: %v", err)
+	}
+
+	got, err := f.svc.Get(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GitProvider != nil {
+		t.Fatalf("credential row without a github-pat row must project gitProvider null, got %+v", got.GitProvider)
+	}
+
+	if err := f.patch(ctx, "ghorg", "pat-1"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = f.svc.Get(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GitProvider == nil || got.GitProvider.Mode != "pat" || got.GitProvider.GitHubLogin != "ghorg" {
+		t.Fatalf("after a submit gitProvider reads connected, got %+v", got.GitProvider)
 	}
 }

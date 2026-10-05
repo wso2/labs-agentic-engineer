@@ -30,12 +30,9 @@ import (
 
 // OrgSecretVault is the part of secretmanagersvc.SecretManagementClient the
 // writer uses: every write is a new SecretReference, every delete names one.
-// CreateSecret, with location.RefName set, rewrites the value of that
-// existing reference; only Restore (a local repair) uses it.
 type OrgSecretVault interface {
 	CreateSecretRef(ctx context.Context, location secretmanagersvc.SecretLocation, data map[string]string) (string, error)
 	DeleteSecretRef(ctx context.Context, location secretmanagersvc.SecretLocation, name string) error
-	CreateSecret(ctx context.Context, location secretmanagersvc.SecretLocation, data map[string]string) (string, error)
 }
 
 // OrgSecretWriter writes and removes the org secrets. A write never edits a
@@ -203,52 +200,6 @@ func (w *OrgSecretWriter) WriteIfUnset(ctx context.Context, ocOrgID, ouID string
 		return nil
 	})
 	return wrote, err
-}
-
-// errRestoreUnsupported refuses Restore on a provider that manages the
-// references itself: it mints a new reference per write, so the stored
-// name cannot be rewritten in place.
-var errRestoreUnsupported = errors.New("org secret restore: the secrets provider manages its references; resubmit the secret instead")
-
-// managesRefs reports whether the vault is a provider that manages its
-// SecretReferences (Cloud's Secret Manager API).
-func (w *OrgSecretWriter) managesRefs() bool {
-	m, ok := w.vault.(interface{ ManagesSecretReferences() bool })
-	return ok && m.ManagesSecretReferences()
-}
-
-// Restore rewrites data under the reference the row of s already names,
-// for a local repair after the vault lost its values: no new reference, no
-// row change, nothing for a consumer to repoint. It reports false when s is
-// unset. Only the OpenBao-direct install can keep the name on this write; on
-// a provider that manages references it refuses before writing anything.
-func (w *OrgSecretWriter) Restore(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string) (bool, error) {
-	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
-	if err != nil {
-		return false, err
-	}
-	if w.managesRefs() {
-		return false, errRestoreUnsupported
-	}
-	var restored bool
-	err = w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
-		row, err := l.Ref(ctx)
-		if err != nil || row == nil {
-			return err
-		}
-		loc.RefName = row.Name
-		name, err := w.vault.CreateSecret(ctx, loc, s.RefData(data))
-		if err != nil {
-			return fmt.Errorf("org secret %s: restore: %w", s, err)
-		}
-		if name != row.Name {
-			return fmt.Errorf("org secret %s: restore landed under %s, not the stored reference %s", s, name, row.Name)
-		}
-		slog.InfoContext(ctx, "orgsecret.restored", "secret", string(s), "name", row.Name)
-		restored = true
-		return nil
-	})
-	return restored, err
 }
 
 // WithLock runs fn holding the lock of (ocOrgID, s), for a caller whose

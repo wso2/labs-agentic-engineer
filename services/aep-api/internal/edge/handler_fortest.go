@@ -18,8 +18,6 @@ package edge
 
 import (
 	"net/http"
-
-	"gorm.io/gorm"
 )
 
 // NewHandlerForTest assembles the REAL production handler graph for the
@@ -35,14 +33,13 @@ import (
 //     discovery + the /api/ chain + the global middleware stack.
 //
 // deps carries the feature services under test (real services + mocked
-// clients); db may be nil (orgensure then no-ops). This lives in a
-// non-_test.go file on purpose so packages outside api (the componenttest
-// harness) can call it — it adds a seam, no production behavior.
-func NewHandlerForTest(deps Deps, inboundAuth func(http.Handler) http.Handler, db *gorm.DB) http.Handler {
+// clients). This lives in a non-_test.go file on purpose so packages outside
+// api (the componenttest harness) can call it — it adds a seam, no
+// production behavior.
+func NewHandlerForTest(deps Deps, inboundAuth func(http.Handler) http.Handler) http.Handler {
 	return NewHandler(AppParams{
 		Deps:        deps,
 		InboundAuth: inboundAuth,
-		DB:          db,
 		// Config left zero: TenantGateMode "" → tenant.ParseGateMode defaults to
 		// ENFORCE, which is exactly what the component tier wants. Controllers,
 		// OrganizationService, ThunderJWKS all nil (nil-guarded downstream).

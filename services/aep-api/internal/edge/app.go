@@ -22,8 +22,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/projects"
 
-	"gorm.io/gorm"
-
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/organization"
@@ -76,15 +74,6 @@ type AppParams struct {
 	// (and may be nil). It only substitutes the verifier — orgensure and the
 	// deny-by-default tenant gate chain are untouched.
 	InboundAuth func(http.Handler) http.Handler
-
-	// Runner-facing and agents-facing route groups. Callers use the gitrepo +
-	// artifacts packages in-process. CredService + AnthropicCredService +
-	// ModelConnections + DB also back the local-dev in-process secret resync
-	// helper (devResyncHandler).
-	DB                   *gorm.DB
-	CredService          *organization.CredentialService
-	AnthropicCredService *organization.AnthropicCredentialService
-	ModelConnections     *organization.ModelConnectionService
 
 	// MCP discovery ports (dependencies feature). The composition root wires
 	// them concretely (external-resource repository / org endpoint catalog /

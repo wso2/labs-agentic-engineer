@@ -42,8 +42,6 @@ import (
 	"strings"
 	"testing"
 
-	"gorm.io/gorm"
-
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
@@ -54,16 +52,11 @@ type Options struct {
 	// (internal/api/gen, generated from packages/contracts/api/v1) — the REAL
 	// service under test, with its out-of-process clients mocked. Fields left
 	// zero register nothing for that feature (its routes 404/nil-guard).
+	//
+	// orgensure is a no-op in the harness: NewHandlerForTest never sets
+	// AppParams.OrganizationService. The Component+DB flavor is the CALLER
+	// building its feature service against dbtest.New and putting it in Deps.
 	Deps edge.Deps
-
-	// DB is optional and passed through to AppParams.DB. Note orgensure is a
-	// no-op in the harness REGARDLESS of DB: NewHandlerForTest never sets
-	// AppParams.OrganizationService, and orgensure.Middleware(nil) is an
-	// unconditional passthrough. So the Component+DB flavor is achieved by the
-	// CALLER building its feature service against dbtest.New and putting it in
-	// Deps — not by this field, which today only feeds the dev SM-API resync
-	// path (itself unreachable here without CredService/AnthropicCredService).
-	DB *gorm.DB
 }
 
 // Harness is the assembled real handler plus request builders.
@@ -79,7 +72,7 @@ type Harness struct {
 func New(t testing.TB, opt Options) *Harness {
 	t.Helper()
 	return &Harness{
-		Handler: edge.NewHandlerForTest(opt.Deps, fakeInboundAuth, opt.DB),
+		Handler: edge.NewHandlerForTest(opt.Deps, fakeInboundAuth),
 		t:       t,
 	}
 }

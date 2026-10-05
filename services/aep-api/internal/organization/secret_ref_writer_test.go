@@ -690,7 +690,10 @@ func claimsCtx(ouID string) context.Context {
 	return jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: ouID})
 }
 
-func TestSecretRefWriter_WriteGitHubPAT_StampsSecretRef(t *testing.T) {
+// The github-pat row (here the fake repository) is the only record of the
+// new reference: the org_credentials triplet is no longer stamped (it keeps naming the
+// pre-phase-1 reference, which is retired by that stored name).
+func TestSecretRefWriter_WriteGitHubPAT_RecordsOnlyTheRow(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	// A pre-phase-1 triplet: its deterministic reference is the one retired.
@@ -710,20 +713,13 @@ func TestSecretRefWriter_WriteGitHubPAT_StampsSecretRef(t *testing.T) {
 	if err := db.Where("oc_org_id = ?", "acme").First(&got).Error; err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got.SecretRefName == nil || *got.SecretRefName != "acme-github-pat-secrets" {
-		t.Fatalf("secret_ref_name: %v", got.SecretRefName)
-	}
-	if got.SecretRefKVPath == nil || !strings.Contains(*got.SecretRefKVPath, "acme-github-pat-secrets") {
-		t.Fatalf("secret_ref_kv_path: %v", got.SecretRefKVPath)
-	}
-	if got.SecretRefWrittenAt == nil {
-		t.Fatalf("secret_ref_written_at: %v", got.SecretRefWrittenAt)
-	}
-	if got.SecretRefProperty == nil || *got.SecretRefProperty != "token" {
-		t.Fatalf("secret_ref_property: %v, want token", got.SecretRefProperty)
+	if got.SecretRefName == nil || *got.SecretRefName != "github-pat-secrets" ||
+		got.SecretRefKVPath == nil || *got.SecretRefKVPath != "user-app-secrets/ns/github-pat-secrets" ||
+		got.SecretRefProperty == nil || *got.SecretRefProperty != "api-key" {
+		t.Fatalf("the triplet must not be stamped: %v %v %v", got.SecretRefName, got.SecretRefKVPath, got.SecretRefProperty)
 	}
 	if len(fake.deleteCalls) != 1 || fake.deleteCalls[0].secretRefName != "github-pat-secrets" {
-		t.Fatalf("the legacy reference is deleted by its stored name after the stamp: %+v", fake.deleteCalls)
+		t.Fatalf("the legacy reference is deleted by its stored name: %+v", fake.deleteCalls)
 	}
 }
 

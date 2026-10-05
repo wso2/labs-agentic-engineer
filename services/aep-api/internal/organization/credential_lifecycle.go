@@ -44,7 +44,7 @@ func (s *CredentialService) Status(ctx context.Context, ocOrgID string) (*Projec
 
 // Disconnect runs Phase D of the disconnect cascade (phase2.md §6.7):
 // org-scoped advisory lock, status flip to 'disconnected', best-effort
-// OpenBao GC of secret/aep/{ocOrgId}/{github,git}/*. Phases A/B/C live
+// delete of a PAT stored before it lived only in vault. Phases A/B/C live
 // in the BFF (they need to enumerate ComponentTask rows that this service
 // doesn't own).
 //
@@ -81,8 +81,8 @@ func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) erro
 		return nil
 	}
 
-	// Best-effort GC of credential-store keys. Failure is logged, not surfaced —
-	// the periodic GC sweep catches anything missed.
+	// Best-effort GC of a PAT stored before the gitpat lived only in vault
+	// (Connect no longer writes one). Failure is logged, not surfaced.
 	if row.Kind == "user-pat" {
 		if err := s.store.Delete(ctx, ocOrgID, "github/pat"); err != nil {
 			slog.WarnContext(ctx, "disconnect: cred-store delete failed", "ocOrgId", ocOrgID, "key", "github/pat", "error", err)

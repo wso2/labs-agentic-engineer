@@ -27,22 +27,18 @@ import (
 
 // OrgCredentialRepository persists the per-org GitHub credential record
 // (`org_credentials`, one row per OC org). Every accessor is keyed by the
-// org handle (`oc_org_id`) or the bound `installation_id` — never a
-// broadenable predicate — so a dropped filter is a missing method, not a
-// cross-org write.
+// org handle (`oc_org_id`) — never a broadenable predicate — so a dropped
+// filter is a missing method, not a cross-org write.
 //
 // The advisory-lock-guarded connect/replace/disconnect/rotation flows run
 // inside Tx: it begins the transaction, holds a Postgres advisory xact lock
-// across GitHub validation + credential-store writes + the row write, and
-// commits (fn returns nil) or rolls back (fn returns an error). Post-commit
-// external work (SM-API mirror, projection re-fetch) runs after Tx returns.
+// across GitHub validation + the row write, and commits (fn returns nil) or
+// rolls back (fn returns an error). Post-commit work (projection re-fetch)
+// runs after Tx returns.
 type OrgCredentialRepository interface {
 	// GetByOrg returns the row for ocOrgID, or nil when absent (not an
 	// error) — callers distinguish "no row yet" from a failure.
 	GetByOrg(ctx context.Context, ocOrgID string) (*OrgCredential, error)
-	// GetByInstallationID returns the row bound to installationID, or nil
-	// when absent (not an error).
-	GetByInstallationID(ctx context.Context, installationID int64) (*OrgCredential, error)
 	// UpdateColumns writes the given columns onto the row scoped to
 	// oc_org_id (a map so empty/nil values are written, not skipped).
 	UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error
@@ -95,21 +91,6 @@ func (r *orgCredentialRepository) openRow(row *OrgCredential) error {
 func (r *orgCredentialRepository) GetByOrg(ctx context.Context, ocOrgID string) (*OrgCredential, error) {
 	var row OrgCredential
 	err := r.db.WithContext(ctx).Where("oc_org_id = ?", ocOrgID).First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if err := r.openRow(&row); err != nil {
-		return nil, err
-	}
-	return &row, nil
-}
-
-func (r *orgCredentialRepository) GetByInstallationID(ctx context.Context, installationID int64) (*OrgCredential, error) {
-	var row OrgCredential
-	err := r.db.WithContext(ctx).Where("installation_id = ?", installationID).First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

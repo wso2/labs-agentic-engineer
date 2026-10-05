@@ -466,55 +466,6 @@ func derefOrEmpty(p *string) string {
 // helpers
 // ----------------------------------------------------------------------------
 
-// ResyncSecretRef rewrites the org's Claude subscription under the
-// coding-agent-key reference its row already names (local OpenBao repair); the connection key's
-// repair is ModelConnectionService.ResyncSecretRef, and the repair route runs
-// both, so a subscription org never dispatches against a vault path that no
-// longer resolves. Returns (true, nil) when the token was pushed, (false, nil)
-// when there was nothing to push. ctx must carry an ouId claim (repair
-// injects thunder_org_uuid).
-func (s *AnthropicCredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
-	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return false, nil
-	}
-	return s.resyncRole(ctx, ocOrgID, AnthropicRoleCoding)
-}
-
-// resyncRole re-pushes one role's key. A role with no row, an inactive row, no
-// triplet, or missing bytes is simply nothing to repair — (false, nil), not an
-// error, because the common case is an org with no subscription.
-func (s *AnthropicCredentialService) resyncRole(ctx context.Context, ocOrgID string, role AnthropicRole) (bool, error) {
-	row, err := fetchAnthropicRow(ctx, s.repo, ocOrgID, role)
-	if err != nil {
-		var nf *NotFoundError
-		if errors.As(err, &nf) {
-			return false, nil
-		}
-		return false, fmt.Errorf("anthropic resync %s: load row: %w", role, err)
-	}
-	if row.Status != "active" {
-		return false, nil
-	}
-	kvPath := row.SecretRefKVPath
-	prop := row.SecretRefProperty
-	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
-		return false, nil
-	}
-	key, err := s.store.Get(ctx, ocOrgID, role.SecretStoreKey())
-	if err != nil || len(key) == 0 {
-		return false, nil
-	}
-	wrote, err := s.secretRefWriter.RestoreAnthropic(ctx, ocOrgID, role, string(key))
-	if err != nil {
-		return false, fmt.Errorf("anthropic resync %s: write: %w", role, err)
-	}
-	if !wrote {
-		slog.InfoContext(ctx, "anthropic resync: skipped, no reference row (the next token save writes one)",
-			"ocOrgId", ocOrgID, "role", role)
-	}
-	return wrote, nil
-}
-
 // fetchAnthropicRow loads (ocOrgID, role)'s row, answering NotFoundError when
 // there is none.
 func fetchAnthropicRow(ctx context.Context, repo OrgAnthropicRepository, ocOrgID string, role AnthropicRole) (*OrgAnthropicCredential, error) {

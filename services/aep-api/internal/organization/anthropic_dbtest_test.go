@@ -281,23 +281,6 @@ func TestModelConnectionOrgIsolation_DB(t *testing.T) {
 	}
 }
 
-func TestModelConnectionResyncSecretRef_NoopCases_DB(t *testing.T) {
-	t.Parallel()
-	c := newCardDB(t, http.StatusOK)
-	ctx := context.Background()
-
-	if wrote, err := c.conns.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("absent org: want (false,nil), got (%v,%v)", wrote, err)
-	}
-	c.connect(t, "acme", anthropicUnitKey)
-	if wrote, err := c.conns.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("no writer wired: want (false,nil), got (%v,%v)", wrote, err)
-	}
-	if wrote, err := c.svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("no subscription: want (false,nil), got (%v,%v)", wrote, err)
-	}
-}
-
 // --- the key's SM-API copy ------------------------------------------------------
 
 // The copies follow the commit under the card's lock: each saved key and

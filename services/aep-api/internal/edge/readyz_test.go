@@ -21,15 +21,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/config"
 )
 
 // TestReadyz_OKWithoutWorkspace: aep-api holds no git mirror, so readiness
 // has no disk to gate on: /readyz answers 200 {"status":"ok"} once the server
 // is up.
 func TestReadyz_OKWithoutWorkspace(t *testing.T) {
-	handler := NewHandler(AppParams{Config: config.Config{TestMode: false}})
+	handler := NewHandler(AppParams{})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

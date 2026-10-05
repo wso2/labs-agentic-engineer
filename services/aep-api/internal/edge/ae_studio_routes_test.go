@@ -52,7 +52,7 @@ func aeStudioHandler(t *testing.T, claims *auth.Claims) http.Handler {
 			next.ServeHTTP(w, r.WithContext(auth.WithClaims(r.Context(), claims)))
 		})
 	}
-	return NewHandlerForTest(Deps{Organization: orgs}, inject, nil)
+	return NewHandlerForTest(Deps{Organization: orgs}, inject)
 }
 
 func getAEStudio(h http.Handler, target string) *httptest.ResponseRecorder {

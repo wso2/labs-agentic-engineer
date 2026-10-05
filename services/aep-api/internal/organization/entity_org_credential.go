@@ -42,7 +42,6 @@ type OrgCredential struct {
 	IdentityLogin     string         `gorm:"type:text;not null;column:identity_login" json:"identityLogin"`
 	InstallationID    *int64         `gorm:"column:installation_id" json:"installationId,omitempty"`
 	SelectedRepos     JSONStringList `gorm:"type:jsonb;column:selected_repos" json:"selectedRepos,omitempty"`
-	PATSecretRef      *string        `gorm:"type:text;column:pat_secret_ref" json:"-"`
 	WebhookSecrets    WebhookSecrets `gorm:"type:jsonb;column:webhook_secrets" json:"-"`
 	Status            string         `gorm:"type:text;not null;default:active;column:status" json:"status"`
 	ConnectedAt       time.Time      `gorm:"column:connected_at;not null;default:now()" json:"connectedAt"`
@@ -50,8 +49,10 @@ type OrgCredential struct {
 	IdentityChangedAt *time.Time     `gorm:"column:identity_changed_at" json:"identityChangedAt,omitempty"`
 	PrevIdentityLogin *string        `gorm:"type:text;column:prev_identity_login" json:"prevIdentityLogin,omitempty"`
 
-	// Secret-ref triplet + write timestamp. See OrgAnthropicCredential for
-	// lifecycle.
+	// The pre-phase-1 secret-ref triplet + write timestamp, read-only: nothing
+	// writes them any more (the github-pat org_secrets row records the PAT's
+	// reference). Read by WriteGitHubPAT (the legacy reference it retires) and
+	// the coding dispatch's no-row fallback; the columns go in phase 6.
 	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
 	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
 	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`

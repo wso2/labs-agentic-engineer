@@ -15,8 +15,9 @@
 // under the License.
 
 // credential_connect.go — the Connect/replace flow: kind dispatch, the PAT
-// path (validate + seal + seed webhook secret), and the PAT's reference write
-// the submit runs after it.
+// path (validate + record the connection row + seed webhook secret), and the
+// PAT's reference write the submit runs after it. The PAT itself lives only
+// in vault, behind its github-pat reference.
 
 package organization
 
@@ -78,10 +79,9 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 }
 
 // connectPAT runs inside Connect's transaction (the org advisory lock is held).
-// It does GitHub validation + the credential-store write + the row write, then
-// returns the finalize closure Connect calls AFTER the commit: the post-commit
-// projection re-fetch (REPLACE) and the success log. The PAT's vault reference
-// is not written here: the caller writes it once per submit (WritePATRef).
+// It does GitHub validation + the row write, then returns the finalize closure Connect calls AFTER the commit: the post-commit
+// projection re-fetch (REPLACE) and the success log. The PAT is not stored
+// here: the caller writes it to vault once per submit (WritePATRef).
 func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, ocOrgID string, hadRow bool, existing *OrgCredential, req ConnectRequest) (func() (*Projection, error), error) {
 	identity, err := s.validatePAT(ctx, req.PAT, req.GitHubLogin)
 	if err != nil {
@@ -89,12 +89,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 	}
 
 	now := time.Now().UTC()
-
-	// Persist the PAT to the credential store first; if the DB row insert
-	// fails below the credential entry is harmless (no referencing row yet).
-	if err := s.store.Put(ctx, ocOrgID, "github/pat", []byte(req.PAT)); err != nil {
-		return nil, fmt.Errorf("connect: write PAT: %w", err)
-	}
 
 	if !hadRow {
 		// CREATE — seed webhook_secrets with a random value. Nothing verifies
@@ -212,13 +206,13 @@ func (s *CredentialService) ValidatePAT(ctx context.Context, pat, githubLogin st
 	return err
 }
 
-// WritePATRef stores the org's PAT as a new github-pat reference and stamps
-// its triplet (SecretRefWriter.WriteGitHubPAT). The gitpat submit calls it
-// once, after Connect committed and released the org lock, so the org-secret
-// lock is never taken inside the org lock's transaction. An error fails the
-// submit: AE Studio and the build read the token only from that reference.
-// With secrets delivery off (no SecretsProvider) there is no reference to
-// write and it does nothing.
+// WritePATRef stores the org's PAT as a new github-pat reference
+// (SecretRefWriter.WriteGitHubPAT), the only place it is kept. The gitpat
+// submit calls it once, after Connect committed and released the org lock,
+// so the org-secret lock is never taken inside the org lock's transaction.
+// An error fails the submit: AE Studio and the build read the token only
+// from that reference. With secrets delivery off (no SecretsProvider) there
+// is no reference to write and it does nothing.
 func (s *CredentialService) WritePATRef(ctx context.Context, ocOrgID, pat string) error {
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
 		return nil
@@ -227,33 +221,4 @@ func (s *CredentialService) WritePATRef(ctx context.Context, ocOrgID, pat string
 		return fmt.Errorf("credentials: write PAT reference: %w", err)
 	}
 	return nil
-}
-
-// ResyncSecretRef re-pushes the org's GitHub PAT under the github-pat
-// reference its row already names (local OpenBao repair): no new reference,
-// nothing repointed. Returns (false, nil) when there is nothing to push (no
-// active PAT row, no github-pat row, missing cred-store value, or writer
-// disabled). ctx must carry an ouId claim (repair injects thunder_org_uuid).
-//
-// Replaces the old PrepareSMAPISeed path that returned plaintext over HTTP.
-func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
-	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return false, nil
-	}
-	row, err := s.repo.GetByOrg(ctx, ocOrgID)
-	if err != nil {
-		return false, fmt.Errorf("credentials resync: load row: %w", err)
-	}
-	if row == nil || row.Kind != "user-pat" || row.Status != "active" {
-		return false, nil
-	}
-	pat, err := s.store.Get(ctx, ocOrgID, "github/pat")
-	if err != nil || len(pat) == 0 {
-		return false, nil
-	}
-	wrote, err := s.secretRefWriter.RestoreGitHubPAT(ctx, ocOrgID, string(pat))
-	if err != nil {
-		return false, fmt.Errorf("credentials resync: write: %w", err)
-	}
-	return wrote, nil
 }

@@ -195,40 +195,6 @@ func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s Org
 	return written, nil
 }
 
-// RestoreModelKey rewrites the connection key under the default-key
-// reference its row already names (local repair after the vault lost its
-// values): no new reference, nothing repointed. It reports false when the
-// secret has no row. ctx must carry an ouId claim.
-func (w *SecretRefWriter) RestoreModelKey(ctx context.Context, ocOrgID, apiKey string) (bool, error) {
-	return w.restore(ctx, ocOrgID, OrgSecretDefaultKey, map[string]string{apiKeyProperty: apiKey})
-}
-
-// RestoreAnthropic is RestoreModelKey for one role's subscription token.
-func (w *SecretRefWriter) RestoreAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, token string) (bool, error) {
-	s, err := role.orgSecret()
-	if err != nil {
-		return false, err
-	}
-	return w.restore(ctx, ocOrgID, s, map[string]string{apiKeyProperty: token})
-}
-
-// restore rewrites data under the reference the row of s names; see
-// OrgSecretWriter.Restore.
-func (w *SecretRefWriter) restore(ctx context.Context, ocOrgID string, s OrgSecret, data map[string]string) (bool, error) {
-	if !w.Enabled() {
-		return false, nil
-	}
-	orgSecrets, err := w.orgSecretWriter()
-	if err != nil {
-		return false, err
-	}
-	ouID, err := orgUUIDForSecretLocation(ctx)
-	if err != nil {
-		return false, fmt.Errorf("secret-ref writer: %s restore: %w", s, err)
-	}
-	return orgSecrets.Restore(ctx, ocOrgID, ouID, s, data)
-}
-
 // ForgetModelKey removes the copies of a deleted connection key, under the
 // default-key lock. connected says the org has a connection again (saved
 // since the delete) and live names the reference its row now carries ("" for
@@ -465,11 +431,11 @@ func ampModelKeyEntity(component, environment string) string {
 const githubPATProperty = "token"
 
 // WriteGitHubPAT stores the org's GitHub PAT as a new github-pat reference
-// (keys token and password, one value) and records it in the secret's row.
-// The triplet on org_credentials is stamped with the new name while the
-// secret's lock is held (the repoint), and only then is the previous
-// reference deleted: the row's, else the pre-phase-1 one the triplet names.
-// Errors are returned; ctx must carry the user's ouId claim (the vault path).
+// (keys token and password, one value) and records it in the secret's row,
+// the only record of where the PAT lives. Then the previous reference is
+// deleted: the row's, else the pre-phase-1 one the org_credentials triplet
+// still names. Errors are returned; ctx must carry the user's ouId claim
+// (the vault path).
 func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pat string) (string, error) {
 	if !w.Enabled() {
 		return "", nil
@@ -494,10 +460,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	} else if row != nil {
 		legacy = derefOrEmpty(row.SecretRefName)
 	}
-	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, legacy, func(name string) error {
-		cols := stampSecretRefTripletWithWrittenAt(name, vaultKeyFor(ouID, name), githubPATProperty, time.Now().UTC())
-		return w.orgCredRepo.UpdateColumns(ctx, ocOrgID, cols)
-	})
+	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, legacy, nil)
 	if err != nil {
 		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
 	}
@@ -507,8 +470,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 
 // RemoveGitHubSecrets removes the org's github-pat and github-webhook-secret
 // (06 §9 gitpat disconnect): each one's row, then its reference by the stored
-// name, under the secret's lock; the PAT's reference columns on the
-// credential row are cleared in between. An unset secret is a no-op, so a
+// name, under the secret's lock. An unset secret is a no-op, so a
 // re-run finishes what a failed one left, and a reconnect writes both anew
 // (the PAT on the submit, the webhook secret once more as a first submit).
 // ctx must carry the user's ouId claim (the vault path).
@@ -520,24 +482,13 @@ func (w *SecretRefWriter) RemoveGitHubSecrets(ctx context.Context, ocOrgID strin
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: remove github secrets: %w", err)
 	}
-	clearPATColumns := func() error {
-		return w.orgCredRepo.UpdateColumns(ctx, ocOrgID, clearSecretRefTripletWithWrittenAt())
-	}
-	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, clearPATColumns); err != nil {
+	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, nil); err != nil {
 		return fmt.Errorf("secret-ref writer: remove github-pat: %w", err)
 	}
 	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretGitHubWebhookSecret, nil); err != nil {
 		return fmt.Errorf("secret-ref writer: remove github-webhook-secret: %w", err)
 	}
 	return nil
-}
-
-// RestoreGitHubPAT rewrites the org's GitHub PAT under the github-pat
-// reference its row already names (local repair after the vault lost its
-// values): no new reference, nothing repointed. It reports false when the
-// secret has no row. ctx must carry an ouId claim.
-func (w *SecretRefWriter) RestoreGitHubPAT(ctx context.Context, ocOrgID, pat string) (bool, error) {
-	return w.restore(ctx, ocOrgID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat})
 }
 
 // WriteExternalResourceSecret uploads the secret fields of an external
