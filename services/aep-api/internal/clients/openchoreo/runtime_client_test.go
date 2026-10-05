@@ -125,6 +125,11 @@ func TestPodSnapshot_FindsTheJobsPod(t *testing.T) {
 	if !pod.Found || pod.Name != "ca-abc-9x2" || pod.Phase != "Running" {
 		t.Fatalf("unexpected pod: %+v", pod)
 	}
+	// The node's createdAt is what tells a re-dispatched cycle's watcher that
+	// the pod predates the current attempt.
+	if want := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC); !pod.CreatedAt.Equal(want) {
+		t.Fatalf("pod.CreatedAt = %v, want %v", pod.CreatedAt, want)
+	}
 	if gotPath != "/api/v1/namespaces/acme/releasebindings/rb-dev/k8sresources/tree" {
 		t.Fatalf("unexpected path %q", gotPath)
 	}

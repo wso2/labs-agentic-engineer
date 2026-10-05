@@ -927,47 +927,104 @@ func TestTick_SuspendOfAGoneBindingIsMarkedNotAnnounced(t *testing.T) {
 	}
 }
 
-// The suspend stamp belongs to the ATTEMPT, not the cycle: a landing-timeout
-// re-dispatch launches a new Job on the same open cycle, and NoteDispatch
-// clears job_suspended_at with it. The watcher then treats attempt 2 like any
-// fresh Job: a missing pod past the grace is a startup failure again, and its
-// terminal pod is suspended again.
+// redispatched returns c as the repository leaves it after a second
+// NoteDispatch: attempt 2, dispatched `ago`, settle stamps cleared.
+func redispatched(c delivery.RunCycle, ago time.Duration) delivery.RunCycle {
+	at := time.Now().UTC().Add(-ago)
+	c.Attempts, c.DispatchedAt, c.UpdatedAt = 2, &at, at
+	c.JobSuspendedAt, c.PodGoneAt = nil, nil
+	return c
+}
+
+// The suspend stamp belongs to the ATTEMPT, not the cycle. A landing-timeout
+// re-dispatch reuses the cycle's Component, so attempt 1's finished pod can
+// still be in the tree when attempt 2 is dispatched. That pod predates the
+// attempt: it must not re-suspend the binding (attempt 2 would be born
+// suspended), must not count as attempt 2's pod for the startup grace, and
+// attempt 2's own pod is then watched as usual.
 func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
-	c := dispatchedCycle("c1", time.Minute)
+	old := time.Now().UTC().Add(-3 * time.Hour)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old}}
+	c := dispatchedCycle("c1", 3*time.Hour)
+	c.Attempts = 1
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{}
-	watcher := func() *JobWatcher {
-		return NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
-	}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
 
-	// Attempt 1 ends: suspended and stamped.
-	watcher().Tick(context.Background())
+	// Attempt 1 ends: suspended and stamped (and its pod has been seen).
+	w.Tick(context.Background())
 	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
 		t.Fatalf("attempt 1: suspends %v, marked %v", jobs.suspends, cycles.suspended)
 	}
 
-	// Attempt 2 is dispatched: NoteDispatch clears job_suspended_at and
-	// pod_gone_at and restarts the grace (repository_cycle_dbtest_test.go pins
-	// the clear). Its pod never appears.
-	cycles.rows[0].ModelID = "m"
-	cycles.rows[0].JobSuspendedAt, cycles.rows[0].PodGoneAt = nil, nil
-	cycles.rows[0].UpdatedAt = time.Now().UTC().Add(-time.Hour)
+	// Attempt 2 is dispatched past the grace; attempt 1's pod is still there.
+	cycles.rows[0] = redispatched(cycles.rows[0], time.Hour)
 	delete(cycles.suspended, "c1")
-	rt.pod = openchoreo.RuntimePod{Found: false}
-	w := watcher()
 	for i := 0; i < missingTicksToFail; i++ {
 		w.Tick(context.Background())
 	}
-	if cycles.finished["c1"] == "" {
-		t.Fatal("attempt 2's missing pod past the grace must be a startup failure again")
+	if len(jobs.suspends) != 1 || cycles.suspended["c1"] {
+		t.Fatalf("a pod from before the attempt must not suspend it: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	if cycles.finished["c1"] != StartupFailureReason(openchoreo.RuntimePod{}, nil) {
+		t.Fatalf("finished = %v: attempt 2 never started, and attempt 1's pod must not hide it", cycles.finished)
 	}
 
-	// And when attempt 2's pod does end, it is suspended again.
+	// Attempt 2's own pod appears and ends: the normal path, suspended again.
 	delete(cycles.finished, "c1")
-	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded"}
-	watcher().Tick(context.Background())
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded", CreatedAt: time.Now().UTC()}
+	w.Tick(context.Background())
 	if len(jobs.suspends) != 2 || !cycles.suspended["c1"] {
 		t.Fatalf("attempt 2: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// A leftover terminal pod is not this attempt's: no suspend, no stamp, no
+// usage banked as this attempt's, no verdict inside the grace.
+func TestTick_LeftoverPodFromThePreviousAttemptIsIgnored(t *testing.T) {
+	rt := &fakeRuntime{
+		pod:  openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed", CreatedAt: time.Now().UTC().Add(-3 * time.Hour)},
+		logs: resultLine(t),
+	}
+	cycles := newWatchedCycles(redispatched(dispatchedCycle("c1", time.Minute), time.Minute))
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	if len(jobs.suspends) != 0 || cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	if _, ok := cycles.usage["c1"]; ok || rt.logCalls != 0 {
+		t.Fatalf("a leftover pod's log is not this attempt's usage (reads %d)", rt.logCalls)
+	}
+	if len(cycles.finished) != 0 {
+		t.Fatalf("finished = %v", cycles.finished)
+	}
+}
+
+// A first dispatch writes its dispatch time AFTER the launch, so its own pod
+// can predate it by seconds: the leftover rule only applies from attempt 2,
+// when the binding is reused.
+func TestTick_FirstAttemptsPodIsNeverALeftover(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: time.Now().UTC().Add(-time.Hour)}}
+	c := dispatchedCycle("c1", time.Minute)
+	at := time.Now().UTC()
+	c.Attempts, c.DispatchedAt = 1, &at
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// Clock skew between the cluster and aep-api must not turn attempt 2's own pod
+// into a leftover.
+func TestTick_PodWithinTheClockSkewIsTheCurrentAttempts(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", time.Minute), 0)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded",
+		CreatedAt: c.DispatchedAt.Add(-podClockSkew / 2)}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
 	}
 }

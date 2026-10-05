@@ -45,6 +45,13 @@ type stubCycles struct {
 	hosts    map[string]string // cycle id → model host, from NoteLaunch
 	envs     map[string]string // cycle id → environment, from NoteLaunch
 	hostErr  error
+
+	// dispatched is the row NoteDispatch returns (nil = the cycle was closed,
+	// so the fenced write changed nothing).
+	dispatched     *delivery.RunCycle
+	dispatchErr    error
+	noteDispatches int
+	order          *[]string
 }
 
 func (s *stubCycles) Append(_ context.Context, cycle *delivery.RunCycle) (string, error) {
@@ -52,7 +59,18 @@ func (s *stubCycles) Append(_ context.Context, cycle *delivery.RunCycle) (string
 	return "cycle-1", nil
 }
 
-func (s *stubCycles) NoteDispatch(context.Context, string, string) error { return nil }
+func (s *stubCycles) NoteDispatch(_ context.Context, cycleID, jobRef string) (*delivery.RunCycle, error) {
+	s.noteDispatches++
+	if s.order != nil {
+		*s.order = append(*s.order, "note-dispatch")
+	}
+	if s.dispatched == nil {
+		return nil, s.dispatchErr
+	}
+	row := *s.dispatched
+	row.ID, row.JobRef = cycleID, jobRef
+	return &row, s.dispatchErr
+}
 
 func (s *stubCycles) NoteLaunch(_ context.Context, cycleID, host, environment, _ string) error {
 	if s.hostErr != nil {
@@ -229,4 +247,73 @@ func TestDispatchAgent_HostWriteFailureDoesNotFailTheLaunch(t *testing.T) {
 	jobRef, err := acts.DispatchAgent(context.Background(), delivery.MilestoneDispatch{CycleID: "cycle-1"})
 	require.NoError(t, err)
 	require.Equal(t, "ca-job-1", jobRef)
+}
+
+// stubResumer records each un-suspend of a re-dispatched cycle's Job binding.
+type stubResumer struct {
+	calls []string // org/project/component@environment
+	err   error
+	order *[]string
+}
+
+func (r *stubResumer) ResumeJobBinding(_ context.Context, org, project, component, environment string) error {
+	r.calls = append(r.calls, org+"/"+project+"/"+component+"@"+environment)
+	if r.order != nil {
+		*r.order = append(*r.order, "resume")
+	}
+	return r.err
+}
+
+// A re-dispatch reuses the cycle's Component, whose binding may still carry the
+// suspend the watcher set at the previous attempt's terminal pod. The un-suspend
+// runs only AFTER the fenced NoteDispatch moved an OPEN row, in the environment
+// the launch recorded.
+func TestNoteCycleDispatch_ResumesTheOpenCyclesJobAfterTheFencedWrite(t *testing.T) {
+	var order []string
+	cycles := &stubCycles{order: &order, dispatched: &delivery.RunCycle{
+		OrgID: "acme", ProjectID: "shop", Environment: "development",
+	}}
+	jobs := &stubResumer{order: &order}
+	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Equal(t, []string{"acme/shop/ca-c1@development"}, jobs.calls)
+	require.Equal(t, []string{"note-dispatch", "resume"}, order)
+}
+
+// A cycle closed (or cancelled) between the launch and the fenced write: the
+// write changes nothing, and nothing is un-suspended, so a closed cycle's Job
+// stays inert.
+func TestNoteCycleDispatch_ClosedCycleIsNeverResumed(t *testing.T) {
+	cycles := &stubCycles{}
+	jobs := &stubResumer{}
+	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Empty(t, jobs.calls)
+}
+
+// A failed un-suspend fails the LAUNCH, not the activity: returning it would
+// retry NoteDispatch (a second attempt counted for one launch). The Job stays
+// suspended and runs no pod, and the watcher's startup grace reports the
+// attempt as it would any pod that never appeared.
+func TestNoteCycleDispatch_ResumeFailureIsNotRetried(t *testing.T) {
+	cycles := &stubCycles{dispatched: &delivery.RunCycle{OrgID: "acme", ProjectID: "shop", Environment: "development"}}
+	jobs := &stubResumer{err: errors.New("oc 500")}
+	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Len(t, jobs.calls, 1)
+	require.Equal(t, 1, cycles.noteDispatches)
+}
+
+// The fenced write failing is the activity's error (retried), and nothing is
+// resumed on its strength.
+func TestNoteCycleDispatch_WriteFailureResumesNothing(t *testing.T) {
+	cycles := &stubCycles{dispatchErr: errors.New("db down")}
+	jobs := &stubResumer{}
+	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
+
+	require.Error(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Empty(t, jobs.calls)
 }

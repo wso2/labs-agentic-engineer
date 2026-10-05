@@ -820,7 +820,7 @@ func TestRunCycleRepository_ModelHostPricesTheCapture(t *testing.T) {
 // job_suspended_at and pod_gone_at in the same write that moves job_ref.
 // Otherwise the watcher would hide attempt 2's startup failure behind attempt
 // 1's suspend, and never suspend attempt 2's Job.
-func TestRunCycleRepository_NoteDispatchClearsTheAttemptsSettleStamps(t *testing.T) {
+func TestRunCycleRepository_NoteDispatchStartsAFreshAttempt(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	runs := delivery.NewMilestoneRunRepository(db)
@@ -844,9 +844,15 @@ func TestRunCycleRepository_NoteDispatchClearsTheAttemptsSettleStamps(t *testing
 		t.Fatalf("NotePodGone: %v", err)
 	}
 
+	before := time.Now().Add(-time.Second)
 	row, err := cycles.NoteDispatch(ctx, cycle.ID, "ca-attempt")
 	if err != nil || row == nil {
 		t.Fatalf("NoteDispatch(2) = (%+v, %v), want the updated row", row, err)
+	}
+	// dispatched_at is the attempt's own clock: the watcher tells a pod left
+	// over from attempt 1 on the reused binding by it.
+	if row.DispatchedAt == nil || row.DispatchedAt.Before(before) {
+		t.Fatalf("dispatched_at = %v, want this dispatch's time", row.DispatchedAt)
 	}
 	if row.JobSuspendedAt != nil || row.PodGoneAt != nil {
 		t.Fatalf("re-dispatched row = (job_suspended_at %v, pod_gone_at %v), want both cleared",

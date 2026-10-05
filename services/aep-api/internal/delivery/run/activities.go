@@ -46,6 +46,7 @@ type Activities struct {
 	builds     BuildReader
 	validation ValidationCoordinator
 	dispatcher delivery.MilestoneDispatcher
+	jobs       JobResumer
 	deployer   Deployer
 	deployRead DeploymentReader
 	deployMint DeployIssueMinter
@@ -67,6 +68,7 @@ type Deps struct {
 	Builds       BuildReader
 	Validation   ValidationCoordinator
 	Dispatcher   delivery.MilestoneDispatcher
+	Jobs         JobResumer
 	Deploy       Deployer
 	Deployments  DeploymentReader
 	DeployIssues DeployIssueMinter
@@ -88,6 +90,7 @@ func NewActivities(d Deps) *Activities {
 		builds:     d.Builds,
 		validation: d.Validation,
 		dispatcher: d.Dispatcher,
+		jobs:       d.Jobs,
 		deployer:   d.Deploy,
 		deployRead: d.Deployments,
 		deployMint: d.DeployIssues,
@@ -240,12 +243,35 @@ type NoteCycleDispatchInput struct {
 }
 
 // NoteCycleDispatch increments the cycle's attempt count and re-points it at
-// the newly launched Job.
+// the newly launched Job, then un-suspends that Job's binding.
+//
+// The un-suspend is HERE, after the fenced write, and not in the launch: only a
+// row the write actually moved is an open cycle. One closed (or cancelled)
+// between the launch and this write is left alone, so its suspended Job stays
+// inert instead of re-running the runner after its TTL.
+//
+// A failed un-suspend is logged, not returned. Returning it would retry the
+// activity and count a second attempt for one launch; the Job instead stays
+// suspended, runs no pod, and the cycle watcher's startup grace reports the
+// attempt as it reports any pod that never appeared.
 func (a *Activities) NoteCycleDispatch(ctx context.Context, in NoteCycleDispatchInput) error {
 	if a.cycles == nil {
 		return errNotConfigured
 	}
-	return a.cycles.NoteDispatch(ctx, in.CycleID, in.JobRef)
+	row, err := a.cycles.NoteDispatch(ctx, in.CycleID, in.JobRef)
+	if err != nil || row == nil || a.jobs == nil {
+		return err
+	}
+	if row.Environment == "" {
+		slog.WarnContext(ctx, "run: re-dispatched cycle has no recorded environment; its Job binding was not un-suspended",
+			"cycle", in.CycleID, "job", in.JobRef)
+		return nil
+	}
+	if err := a.jobs.ResumeJobBinding(ctx, row.OrgID, row.ProjectID, in.JobRef, row.Environment); err != nil {
+		slog.WarnContext(ctx, "run: un-suspend of the cycle's Job binding failed; the watcher's startup grace reports the attempt",
+			"cycle", in.CycleID, "job", in.JobRef, "error", err)
+	}
+	return nil
 }
 
 // FinishCycleInput closes a cycle record.

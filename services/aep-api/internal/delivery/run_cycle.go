@@ -227,6 +227,12 @@ type RunCycle struct {
 	JobSuspendedAt     *time.Time `gorm:"column:job_suspended_at" json:"-"`
 	PodGoneAt          *time.Time `gorm:"column:pod_gone_at" json:"-"`
 	ComponentDeletedAt *time.Time `gorm:"column:component_deleted_at" json:"-"`
+	// DispatchedAt is when the CURRENT attempt was dispatched (NoteDispatch).
+	// A re-dispatch reuses the cycle's Component, so the previous attempt's
+	// finished pod can still be in its tree; the watcher ignores a pod created
+	// before this. Nil on a cycle not yet dispatched or one that predates the
+	// column.
+	DispatchedAt *time.Time `gorm:"column:dispatched_at" json:"-"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`

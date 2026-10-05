@@ -170,13 +170,22 @@ expected state, never an absent-pod or startup verdict.
 
 The stamp belongs to the attempt, not the cycle. A landing-timeout re-dispatch
 reuses the cycle's Component (its name is stable per cycle and the 409 is
-coalesced), so `NoteDispatch` clears `job_suspended_at` and `pod_gone_at` in
-the write that moves `job_ref`, and every dispatch calls
-`ComponentClient.ResumeJobBinding` after binding: the update-only inverse of
-the suspend, which sets `suspend` back to false when attempt 1 left it true (a
-binding that is not suspended is one read and no write). A legacy release
-(`ErrSuspendUnsupported`) has nothing to undo; any other failure fails the
-launch, because the Job would be born suspended.
+coalesced), so `NoteDispatch` stamps `dispatched_at` and clears
+`job_suspended_at` and `pod_gone_at` in the write that moves `job_ref`. Only
+after that fenced write has moved an OPEN row does the supervisor's
+`NoteCycleDispatch` call `ComponentClient.ResumeJobBinding`: the update-only
+inverse of the suspend, which sets `suspend` back to false when attempt 1 left
+it true (a binding that is not suspended is one read and no write). A cycle
+closed or cancelled in between is never un-suspended. A legacy release
+(`ErrSuspendUnsupported`) has nothing to undo. Any other failure is logged, not
+retried (a retry would count a second attempt): the Job stays suspended and
+the watcher's startup grace reports the attempt.
+
+Attempt 1's finished pod stays in the reused binding's tree until its Job's
+TTL. From attempt 2 on, the watcher ignores a pod created more than
+`podClockSkew` (30 s) before `dispatched_at`: it is neither the attempt's
+terminal pod (no suspend, no usage) nor its pod for the startup grace, and the
+in-memory absent/seen facts are kept per attempt.
 
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on

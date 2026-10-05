@@ -44,8 +44,6 @@ type fakeOCSurface struct {
 	ensureTypeErr          error
 	simulateCreateConflict bool // mirrors ComponentClient 409 → GetComponent
 	componentUID           string
-	resumeErr              error
-	resumed                [2]string // component, environment
 }
 
 func (f *fakeOCSurface) note(op string) {
@@ -104,15 +102,6 @@ func (f *fakeOCSurface) EnsureReleaseBinding(_ context.Context, _, _, _, environ
 	return nil
 }
 
-func (f *fakeOCSurface) ResumeJobBinding(_ context.Context, _, _, component, environment string) error {
-	f.note("resume-binding")
-	f.mu.Lock()
-	f.resumed = [2]string{component, environment}
-	err := f.resumeErr
-	f.mu.Unlock()
-	return err
-}
-
 func ocDispatchInputs() OCDispatchInputs {
 	return OCDispatchInputs{
 		OrgID:           "acme",
@@ -144,7 +133,7 @@ func TestOCDispatcher_HappyCreateChain(t *testing.T) {
 	if got.RunName != "ca-11111111-2608061200" {
 		t.Errorf("Dispatch returned %q, want RunName", got.RunName)
 	}
-	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding", "resume-binding"}
+	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding"}
 	if fmt.Sprint(fake.calls) != fmt.Sprint(want) {
 		t.Errorf("chain = %v, want %v", fake.calls, want)
 	}
@@ -253,7 +242,7 @@ func TestOCDispatcher_ConflictIsSuccess(t *testing.T) {
 	}
 	want := []string{
 		"ensure-type", "create-component", "create-conflict-refetch",
-		"ensure-workload", "ensure-release", "ensure-binding", "resume-binding",
+		"ensure-workload", "ensure-release", "ensure-binding",
 	}
 	if fmt.Sprint(fake.calls) != fmt.Sprint(want) {
 		t.Errorf("chain = %v, want conflict-refetch path then downstream ensures", fake.calls)
@@ -304,7 +293,7 @@ func TestOCDispatcher_RetentionErrorContinuesCreate(t *testing.T) {
 	if got.RunName != "ca-11111111-2608061200" {
 		t.Errorf("got %q, want RunName", got.RunName)
 	}
-	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding", "resume-binding"}
+	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding"}
 	if fmt.Sprint(fake.calls) != fmt.Sprint(want) {
 		t.Errorf("chain = %v, want full create path after retention error", want)
 	}
@@ -377,39 +366,5 @@ func TestDispatch_ReportsTheComponentUID(t *testing.T) {
 				t.Errorf("ComponentUID = %q, want uid-9", got.ComponentUID)
 			}
 		})
-	}
-}
-
-// A re-dispatch reuses the cycle's Component (its name is stable per cycle, and
-// CreateComponent coalesces the 409). Its binding may still carry the suspend
-// the watcher set at attempt 1's terminal pod, which would leave the new Job
-// born suspended; so every dispatch un-suspends the binding it bound into.
-func TestOCDispatcher_ReusedComponentsBindingIsUnsuspended(t *testing.T) {
-	fake := &fakeOCSurface{simulateCreateConflict: true}
-	in := ocDispatchInputs()
-	if _, err := NewOCDispatcher(fake, testWriteTargets()).Dispatch(context.Background(), in); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	if fake.resumed != [2]string{in.RunName, "development"} {
-		t.Fatalf("resumed = %v, want the run's binding in the write target", fake.resumed)
-	}
-}
-
-// A legacy release renders no suspend, so there is nothing to undo: the
-// dispatch goes ahead.
-func TestOCDispatcher_ResumeUnsupportedIsNotADispatchFailure(t *testing.T) {
-	fake := &fakeOCSurface{simulateCreateConflict: true,
-		resumeErr: fmt.Errorf("resume b: %w", openchoreo.ErrSuspendUnsupported)}
-	if _, err := NewOCDispatcher(fake, testWriteTargets()).Dispatch(context.Background(), ocDispatchInputs()); err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-}
-
-// Any other un-suspend failure fails the launch: a Job left suspended would
-// never run, and only a failed dispatch spends the attempt honestly.
-func TestOCDispatcher_ResumeFailureFailsTheDispatch(t *testing.T) {
-	fake := &fakeOCSurface{simulateCreateConflict: true, resumeErr: errors.New("oc 500")}
-	if _, err := NewOCDispatcher(fake, testWriteTargets()).Dispatch(context.Background(), ocDispatchInputs()); err == nil {
-		t.Fatal("want the dispatch to fail when the binding could not be un-suspended")
 	}
 }

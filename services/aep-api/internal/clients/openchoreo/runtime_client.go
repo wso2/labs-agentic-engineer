@@ -125,6 +125,7 @@ func (c *runtimeClient) PodSnapshot(ctx context.Context, orgName, releaseBinding
 				continue
 			}
 			newest, newestAt = PodFromNodeObject(node.Object, node.Name), at
+			newest.CreatedAt = at
 		}
 	}
 	return newest, nil

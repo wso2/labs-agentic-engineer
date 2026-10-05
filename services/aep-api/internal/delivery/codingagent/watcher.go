@@ -45,6 +45,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -77,6 +78,11 @@ const (
 	// missingTicksToFail is B9's "sustained 404": one missing read is a race
 	// with a render or a delete, three consecutive ones are a fact.
 	missingTicksToFail = 3
+	// podClockSkew is how far a pod's creation time (the cluster's clock) may
+	// sit before the cycle's dispatch stamp (aep-api's clock) and still be the
+	// current attempt's pod. Beyond it, on a re-dispatched cycle, the pod is the
+	// previous attempt's leftover on the reused binding.
+	podClockSkew = 30 * time.Second
 )
 
 // cycleWatchStore is the cycle state this watcher reads and writes. It is a
@@ -134,7 +140,8 @@ type JobWatcher struct {
 	missing map[string]int
 
 	// absent counts CONSECUTIVE snapshots that returned no pod at all, per cycle
-	// id, and seen records that a snapshot once returned the cycle's pod. Both
+	// ATTEMPT (attemptKey), and seen records that a snapshot once returned that
+	// attempt's pod — a pod seen on attempt 1 says nothing about attempt 2. Both
 	// exist because an empty snapshot is not the same fact as "no pod was ever
 	// scheduled": the resource tree is read through the OpenChoreo API and the
 	// cluster agent, and under load either answers 200 with nothing in it.
@@ -231,13 +238,14 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 		slog.ErrorContext(ctx, "codingagent.JobWatcher: list recent run cycles failed", "error", err)
 		return
 	}
-	live := make(map[string]bool, len(rows))
+	live := make(map[string]bool, 2*len(rows))
 	for i := range rows {
 		cycle := &rows[i]
 		if !isCodingAgentRun(cycle.JobRef) {
 			continue
 		}
 		live[cycle.ID] = true
+		live[attemptKey(cycle)] = true
 		// Everything below reads the cycle in the environment its Job was bound
 		// into. The row copy carries it for this pass (the recorder's session
 		// keeps its own copy); nothing writes it back. A cycle whose fallback
@@ -295,9 +303,16 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		return
 	}
 	delete(w.missing, cycle.ID)
+	if isLeftoverPod(cycle, pod) {
+		// The previous attempt's pod on the reused binding: not this attempt's
+		// terminal pod (no suspend, no usage), and not its pod for the startup
+		// grace either. This attempt has no pod yet.
+		pod = openchoreo.RuntimePod{}
+	}
+	attempt := attemptKey(cycle)
 	if pod.Found {
-		w.seen[cycle.ID] = true
-		delete(w.absent, cycle.ID)
+		w.seen[attempt] = true
+		delete(w.absent, attempt)
 	} else if cycle.JobSuspendedAt != nil || cycle.EndedAt != nil {
 		// A suspended Job runs no pod, and a closed cycle needs none: "no pod"
 		// is the expected state here, never an absent or startup verdict.
@@ -326,13 +341,13 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		if !pod.Found {
 			// See the absent/seen fields: an empty snapshot is evidence only
 			// when sustained, and never about a pod that has been seen.
-			if w.seen[cycle.ID] {
+			if w.seen[attempt] {
 				slog.WarnContext(ctx, "codingagent.JobWatcher: snapshot returned no pod for a cycle whose pod was seen (transient; no verdict)",
 					"cycle", cycle.ID, "run", cycle.JobRef)
 				return
 			}
-			w.absent[cycle.ID]++
-			if w.absent[cycle.ID] < missingTicksToFail {
+			w.absent[attempt]++
+			if w.absent[attempt] < missingTicksToFail {
 				return
 			}
 		}
@@ -340,6 +355,22 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 	case OutcomeRunning:
 		// Nothing to decide; the live tail is what the console wants meanwhile.
 	}
+}
+
+// attemptKey names one dispatch attempt of a cycle: the in-memory pod facts
+// (absent, seen) are per attempt, because a re-dispatch reuses the binding.
+func attemptKey(cycle *delivery.RunCycle) string {
+	return cycle.ID + "#" + strconv.Itoa(cycle.Attempts)
+}
+
+// isLeftoverPod reports whether the snapshot's pod predates the cycle's
+// current attempt: a re-dispatch reuses the cycle's Component, so attempt 1's
+// finished pod stays in the tree until its Job's TTL. Only from attempt 2 — a
+// first dispatch stamps its time after the launch, so its own pod may be
+// older — and only when both times are known.
+func isLeftoverPod(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
+	return pod.Found && cycle.Attempts > 1 && cycle.DispatchedAt != nil && !pod.CreatedAt.IsZero() &&
+		pod.CreatedAt.Before(cycle.DispatchedAt.Add(-podClockSkew))
 }
 
 // suspendAtTerminal suspends the cycle's Job binding once, the first time its

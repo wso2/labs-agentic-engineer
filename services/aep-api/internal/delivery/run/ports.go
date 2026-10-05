@@ -117,7 +117,9 @@ type RunStore interface {
 // loop never trusts a merge signal's payload on its own.
 type CycleStore interface {
 	Append(ctx context.Context, cycle *delivery.RunCycle) (cycleID string, err error)
-	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
+	// NoteDispatch returns the updated row, or nil when the cycle was already
+	// closed (the write is fenced on an open cycle and changed nothing).
+	NoteDispatch(ctx context.Context, cycleID, jobRef string) (*delivery.RunCycle, error)
 	NoteLaunch(ctx context.Context, cycleID, host, environment, componentUID string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
@@ -347,6 +349,17 @@ type DeployGate interface {
 // deployPollInterval until the answer settles.
 type DeploymentReader interface {
 	DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error)
+}
+
+// JobResumer un-suspends a re-dispatched cycle's Job binding. A re-dispatch
+// reuses the cycle's Component, whose binding may still carry the suspend the
+// cycle watcher set at the previous attempt's terminal pod; left there, the new
+// attempt's Job is born suspended and never runs. Update-only: it never
+// creates a binding. nil when there is nothing to undo, including a legacy
+// release that renders no suspend. Satisfied at the composition root by the
+// OpenChoreo component client. nil → nothing is resumed.
+type JobResumer interface {
+	ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error
 }
 
 // WorkHalter marks the working-set issues a FAILED run could not finish, so the

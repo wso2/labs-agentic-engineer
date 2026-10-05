@@ -1545,6 +1545,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.
 			Dispatcher: codingExecutor,
+			// A re-dispatch reuses the cycle's Component; its binding is
+			// un-suspended after the fenced dispatch write, so only an open
+			// cycle's Job ever runs again.
+			Jobs: runJobResumer{oc: componentClient},
 			// The deploy stage. The supervisor promotes each cycle's components
 			// itself and waits for them to serve, which is what puts validation
 			// after a running version rather than after a green build.

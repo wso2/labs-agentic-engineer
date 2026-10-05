@@ -45,6 +45,11 @@ type RuntimePod struct {
 	TerminatedReason string
 	// Message is the human sentence attached to whichever reason was taken.
 	Message string
+	// CreatedAt is the pod node's creation time from the resource tree (zero
+	// when the tree did not carry one). A re-dispatched cycle reuses its
+	// Component, so this is how the watcher tells the previous attempt's pod
+	// from the current one's.
+	CreatedAt time.Time
 }
 
 // PodLogLine is one line of pod stdout with the timestamp the platform recorded.
