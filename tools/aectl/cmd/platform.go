@@ -961,8 +961,9 @@ func (s *openBaoSession) putCreateOnly(ctx context.Context, path, value string) 
 
 // reconcileReusedOpenBaoSecrets backs --reuse-secrets: it requires every
 // non-generated secret path to exist in OpenBao (a previous install seeded
-// them) and tops up the generated Thunder client secrets, which is the only
-// thing it writes.
+// them) and tops up, create-only, the generated secrets a store from an older
+// install may lack: the Thunder client secrets and, with the relay on, the
+// webhook relay seed. Those are the only things it writes.
 func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 	s, err := openOpenBaoSession(ctx)
 	if err != nil {
@@ -978,8 +979,12 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
 	}
 
-	_, err = s.seedMissingThunderClientSecrets(ctx)
-	return err
+	if _, err := s.seedMissingThunderClientSecrets(ctx); err != nil {
+		return err
+	}
+	return topUpWebhookRelaySeed(
+		func(path string) (bool, error) { return s.pathExists(ctx, path) },
+		func(path, value string) error { return s.putCreateOnly(ctx, path, value) })
 }
 
 // requiredOpenBaoPaths are the secrets an install seeds that aectl does not

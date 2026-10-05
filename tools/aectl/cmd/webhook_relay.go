@@ -93,9 +93,19 @@ func ensureWebhookRelaySeed(ctx context.Context) error {
 		return fmt.Errorf("connect to OpenBao: %w", err)
 	}
 	defer s.stop()
-	created, err := seedWebhookRelaySeedIfMissing(
+	return topUpWebhookRelaySeed(
 		func(path string) (bool, error) { return s.pathExists(ctx, path) },
 		func(path, value string) error { return s.putCreateOnly(ctx, path, value) })
+}
+
+// topUpWebhookRelaySeed seeds aep/webhook-relay-seed create-only when the
+// relay is enabled, and says so only when it wrote one (never the value).
+// With the relay off it does not touch the store.
+func topUpWebhookRelaySeed(exists func(path string) (bool, error), put func(path, value string) error) error {
+	if !webhookRelayEnabled() {
+		return nil
+	}
+	created, err := seedWebhookRelaySeedIfMissing(exists, put)
 	if err != nil {
 		return err
 	}

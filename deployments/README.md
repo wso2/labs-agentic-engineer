@@ -138,8 +138,8 @@ install-wide smee client, which the upgrade removes. The switch is
 `ae_studio.webhook_relay.enabled` in the aectl config; while it is absent,
 aectl reads the legacy `webhook.local_smee.enabled` in its place and warns once,
 so an install that forwarded through smee keeps a relay. Set the new key to
-silence the warning. With the relay on, `aectl platform update` also creates the
-relay seed `aep/webhook-relay-seed` in OpenBao when it is missing (create-only:
+silence the warning. With the relay on, `aectl platform update` (and
+`aectl platform install --reuse-secrets`) also creates the relay seed `aep/webhook-relay-seed` in OpenBao when it is missing (create-only:
 an existing seed is never rewritten, and the value is never printed); every
 org's channel URL is derived from it. GitHub hooks of projects created before
 the upgrade keep the URL they were created with, which no longer receives

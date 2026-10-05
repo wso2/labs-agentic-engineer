@@ -356,3 +356,37 @@ func TestWebhookRelaySeed_GeneratedNotRequired(t *testing.T) {
 		t.Error("seed must be random")
 	}
 }
+
+// An install with --reuse-secrets tops up aep/webhook-relay-seed create-only
+// when the relay is on (a store from before the relay has none), leaves an
+// existing seed alone, and does not touch the store with the relay off.
+func TestReuseSecrets_TopsUpTheRelaySeed(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		enabled   bool
+		present   bool
+		wantWrite bool
+	}{
+		{"relay on, seed absent: written", true, false, true},
+		{"relay on, seed present: kept", true, true, false},
+		{"relay off: untouched", false, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Cleanup(viper.Reset)
+			viper.Set("ae_studio.webhook_relay.enabled", tc.enabled)
+			var checked, wrote []string
+			err := topUpWebhookRelaySeed(
+				func(p string) (bool, error) { checked = append(checked, p); return tc.present, nil },
+				func(p, v string) error { wrote = append(wrote, p); return nil })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(wrote) == 1 && wrote[0] == webhookRelaySeedPath; got != tc.wantWrite || len(wrote) > 1 {
+				t.Fatalf("wrote %v, want a write of the seed: %t", wrote, tc.wantWrite)
+			}
+			if !tc.enabled && len(checked) != 0 {
+				t.Fatalf("relay off read the store: %v", checked)
+			}
+		})
+	}
+}
