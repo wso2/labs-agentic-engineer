@@ -89,7 +89,7 @@ type cycleWatchStore interface {
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]delivery.RunCycle, error)
 	FinishAgentFailed(ctx context.Context, id, reason string) (*delivery.RunCycle, error)
 	RecordUsage(ctx context.Context, id string, u contracts.CapturedUsage) error
-	MarkJobSuspended(ctx context.Context, id string) error
+	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
 }
 
 // JobWatcher reconciles dispatched run cycles against the pods OpenChoreo
@@ -376,16 +376,19 @@ func (w *JobWatcher) suspendAtTerminal(ctx context.Context, cycle *delivery.RunC
 	err := w.jobs.SuspendJobBinding(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, cycle.Environment)
 	switch {
 	case err == nil:
-		if err := w.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		stamped, err := w.cycles.MarkJobSuspended(ctx, cycle.ID)
+		if err != nil {
 			slog.WarnContext(ctx, "codingagent.JobWatcher: mark job suspended failed (retried next tick)",
 				"cycle", cycle.ID, "error", err)
 			return
 		}
-		slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", cause)
+		if stamped {
+			slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", cause)
+		}
 	case errors.Is(err, openchoreo.ErrNotFound):
 		slog.InfoContext(ctx, "codingagent.JobWatcher: component gone, nothing to suspend",
 			"cycle", cycle.ID, "component", cycle.JobRef)
-		if err := w.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		if _, err := w.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
 			slog.WarnContext(ctx, "codingagent.JobWatcher: mark job suspended failed (retried next tick)",
 				"cycle", cycle.ID, "error", err)
 		}

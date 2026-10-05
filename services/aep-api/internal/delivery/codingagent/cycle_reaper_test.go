@@ -37,16 +37,19 @@ type cancelCycles struct {
 	marked    bool
 	cancelled bool
 	order     *[]string
+	// stampedElsewhere: another caller stamped job_suspended_at first, so this
+	// mark changes nothing.
+	stampedElsewhere bool
 }
 
 func (c *cancelCycles) Latest(context.Context, string, string) (*delivery.RunCycle, error) {
 	return c.latest, c.latestErr
 }
 
-func (c *cancelCycles) MarkJobSuspended(context.Context, string) error {
+func (c *cancelCycles) MarkJobSuspended(context.Context, string) (bool, error) {
 	c.marked = true
 	c.note("mark")
-	return nil
+	return !c.stampedElsewhere, nil
 }
 
 func (c *cancelCycles) FinishCancelled(_ context.Context, id string) (*delivery.RunCycle, error) {
@@ -230,5 +233,17 @@ func TestReap_FallsBackToTheWriteTarget(t *testing.T) {
 	}
 	if !reflect.DeepEqual(jobs.suspends, []string{"ca-c1-x@staging"}) {
 		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// R3-M1: a suspend another caller already stamped is not announced again.
+func TestReap_DoesNotAnnounceASuspendStampedElsewhere(t *testing.T) {
+	logs := captureLogs(t)
+	store := &cancelCycles{latest: &delivery.RunCycle{ID: "c1", JobRef: "ca-c1-x", Environment: "development"}, stampedElsewhere: true}
+	if err := NewCycleReaper(&fakeJobs{}, store, testWriteTargets()).ReapRunCycle(context.Background(), "acme", "shop", "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := logsNamed(*logs, "codingagent.job_suspended"); len(got) != 0 {
+		t.Fatalf("job_suspended logs = %+v, want none", got)
 	}
 }

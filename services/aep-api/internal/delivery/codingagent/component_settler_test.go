@@ -107,16 +107,17 @@ func (c *settleCycles) NoteSettleChecked(_ context.Context, id string, at time.T
 	return nil
 }
 
-func (c *settleCycles) MarkJobSuspended(_ context.Context, id string) error {
+func (c *settleCycles) MarkJobSuspended(_ context.Context, id string) (bool, error) {
 	c.marked[id] = true
-	if _, ok := c.suspendedAt[id]; !ok {
-		at := time.Now()
-		if c.clock != nil {
-			at = *c.clock
-		}
-		c.suspendedAt[id] = at
+	if _, ok := c.suspendedAt[id]; ok {
+		return false, nil
 	}
-	return nil
+	at := time.Now()
+	if c.clock != nil {
+		at = *c.clock
+	}
+	c.suspendedAt[id] = at
+	return true, nil
 }
 
 func (c *settleCycles) NotePodGone(_ context.Context, id string, at time.Time) error {
@@ -761,5 +762,24 @@ func TestSettler_BackstopIgnoresAStaleNoteWhileTheClearFails(t *testing.T) {
 	s.Tick(ctx)
 	if len(jobs.suspends) != 1 {
 		t.Fatalf("suspends %v, want one on the fresh sequence's second empty read", jobs.suspends)
+	}
+}
+
+// R3-M1: the watcher stamped the suspend between this pass's read and the
+// backstop's mark; the backstop's mark changed nothing and announces nothing.
+func TestSettler_BackstopDoesNotAnnounceASuspendStampedElsewhere(t *testing.T) {
+	records := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p", Phase: "Running"}}
+	c := settled("c1", false)
+	ended := time.Now().Add(-(3*time.Hour + 11*time.Minute))
+	c.EndedAt = &ended
+	cycles := newSettleCycles(c)
+	jobs := &fakeJobs{before: func() { cycles.suspendedAt["c1"] = time.Now() }}
+	NewComponentSettler(rt, jobs, &fakeDeleter{}, cycles, testWriteTargets(), nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends %v", jobs.suspends)
+	}
+	if got := logsNamed(*records, "codingagent.job_suspended"); len(got) != 0 {
+		t.Fatalf("job_suspended logs = %+v, want none for a stamp another caller made", got)
 	}
 }

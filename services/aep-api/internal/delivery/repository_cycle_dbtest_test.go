@@ -837,7 +837,7 @@ func TestRunCycleRepository_NoteDispatchStartsAFreshAttempt(t *testing.T) {
 	if _, err := cycles.NoteDispatch(ctx, cycle.ID, "ca-attempt"); err != nil {
 		t.Fatalf("NoteDispatch(1): %v", err)
 	}
-	if err := cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+	if _, err := cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
 		t.Fatalf("MarkJobSuspended: %v", err)
 	}
 	if err := cycles.NotePodGone(ctx, cycle.ID, time.Now()); err != nil {

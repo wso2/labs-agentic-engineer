@@ -78,7 +78,7 @@ const (
 type settleStore interface {
 	ListSettling(ctx context.Context, limit int) ([]delivery.RunCycle, error)
 	NoteSettleChecked(ctx context.Context, id string, at time.Time) error
-	MarkJobSuspended(ctx context.Context, id string) error
+	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
 	NotePodGone(ctx context.Context, id string, at time.Time) error
 	ClearPodGone(ctx context.Context, id string) error
 	MarkComponentDeleted(ctx context.Context, id string) error
@@ -314,17 +314,20 @@ func (s *ComponentSettler) jobHeld(ctx context.Context, cycle *delivery.RunCycle
 	err := s.jobs.SuspendJobBinding(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, cycle.Environment)
 	switch {
 	case err == nil:
-		if err := s.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		stamped, err := s.cycles.MarkJobSuspended(ctx, cycle.ID)
+		if err != nil {
 			slog.WarnContext(ctx, "codingagent.ComponentSettler: mark job suspended failed (retried next pass)",
 				"cycle", cycle.ID, "error", err)
 			return false
 		}
 		cycle.JobSuspendedAt = &now
-		slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", "backstop")
+		if stamped {
+			slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", "backstop")
+		}
 		return true
 	case errors.Is(err, openchoreo.ErrNotFound):
 		// The binding went between the reads: nothing is left to suspend.
-		if err := s.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		if _, err := s.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
 			slog.WarnContext(ctx, "codingagent.ComponentSettler: mark job suspended failed (retried next pass)",
 				"cycle", cycle.ID, "error", err)
 			return false

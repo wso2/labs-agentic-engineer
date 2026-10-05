@@ -30,7 +30,7 @@ import (
 // delivery.RunCycleRepository.
 type cancelStore interface {
 	Latest(ctx context.Context, orgID, runID string) (*delivery.RunCycle, error)
-	MarkJobSuspended(ctx context.Context, id string) error
+	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
 	FinishCancelled(ctx context.Context, id string) (*delivery.RunCycle, error)
 }
 
@@ -107,12 +107,15 @@ func (r *CycleReaper) ReapRunCycle(ctx context.Context, orgID, projectID, runID 
 	err = r.jobs.SuspendJobBinding(ctx, orgID, projectID, cycle.JobRef, env)
 	switch {
 	case err == nil:
-		if err := r.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		stamped, err := r.cycles.MarkJobSuspended(ctx, cycle.ID)
+		if err != nil {
 			return fmt.Errorf("reap run cycle %s: mark job suspended: %w", runID, err)
 		}
-		slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", "cancel")
+		if stamped {
+			slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", "cancel")
+		}
 	case errors.Is(err, openchoreo.ErrNotFound):
-		if err := r.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		if _, err := r.cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
 			return fmt.Errorf("reap run cycle %s: mark job suspended: %w", runID, err)
 		}
 	case errors.Is(err, openchoreo.ErrSuspendUnsupported):

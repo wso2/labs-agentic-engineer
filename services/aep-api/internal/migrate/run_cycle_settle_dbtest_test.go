@@ -66,16 +66,16 @@ func TestRunCycle_SettleColumnsRoundTrip(t *testing.T) {
 	if _, err := cycles.NoteLaunch(ctx, c.ID, "api.anthropic.com", "development", "uid-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cycles.MarkJobSuspended(ctx, c.ID); err != nil {
-		t.Fatal(err)
+	if stamped, err := cycles.MarkJobSuspended(ctx, c.ID); err != nil || !stamped {
+		t.Fatalf("first MarkJobSuspended = (%v, %v), want (true, nil)", stamped, err)
 	}
 	first := getCycle(t, cycles, c.ID).JobSuspendedAt
 	if first == nil {
 		t.Fatal("job_suspended_at not set")
 	}
 	time.Sleep(10 * time.Millisecond)
-	if err := cycles.MarkJobSuspended(ctx, c.ID); err != nil {
-		t.Fatal(err)
+	if stamped, err := cycles.MarkJobSuspended(ctx, c.ID); err != nil || stamped {
+		t.Fatalf("second MarkJobSuspended = (%v, %v), want (false, nil): the first stamp stands", stamped, err)
 	}
 	if got := getCycle(t, cycles, c.ID); got.ComponentUID != "uid-1" || !got.JobSuspendedAt.Equal(*first) {
 		t.Fatalf("uid %q, suspended %v → %v (must be write-once)", got.ComponentUID, first, got.JobSuspendedAt)

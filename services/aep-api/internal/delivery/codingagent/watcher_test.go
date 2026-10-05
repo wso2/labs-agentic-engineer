@@ -130,9 +130,12 @@ func (c *watchedCycles) RecordUsage(_ context.Context, id string, u contracts.Ca
 	return nil
 }
 
-func (c *watchedCycles) MarkJobSuspended(_ context.Context, id string) error {
+func (c *watchedCycles) MarkJobSuspended(_ context.Context, id string) (bool, error) {
+	if c.suspended[id] {
+		return false, nil
+	}
 	c.suspended[id] = true
-	return nil
+	return true, nil
 }
 
 // fakeJobs records each SuspendJobBinding as component@environment. before,
@@ -1090,5 +1093,21 @@ func TestTick_SkipsACycleWhoseComponentIsDeleted(t *testing.T) {
 
 	if rt.bindingCalls != 0 {
 		t.Fatalf("read the binding of a deleted Component %d times", rt.bindingCalls)
+	}
+}
+
+// R3-M1: the settler's backstop stamped the suspend between this tick's read
+// and its own mark. The watcher's mark changed nothing, so it announces
+// nothing: one job_suspended event per suspend that took effect.
+func TestTick_SuspendStampedByAnotherCallerIsNotAnnouncedAgain(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, logs: resultLine(t)}
+	c := dispatchedCycle("c1", time.Minute)
+	c.Environment = "development"
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{before: func() { cycles.suspended["c1"] = true }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	if got := logsNamed(*logs, "codingagent.job_suspended"); len(got) != 0 {
+		t.Fatalf("job_suspended events = %+v, want none for a stamp another caller made", got)
 	}
 }

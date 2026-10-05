@@ -66,12 +66,13 @@ func (s raceCancelStore) Latest(context.Context, string, string) (*delivery.RunC
 	return &row, nil
 }
 
-func (s raceCancelStore) MarkJobSuspended(context.Context, string) error {
-	if s.w.cycle.JobSuspendedAt == nil {
-		now := time.Now()
-		s.w.cycle.JobSuspendedAt = &now
+func (s raceCancelStore) MarkJobSuspended(context.Context, string) (bool, error) {
+	if s.w.cycle.JobSuspendedAt != nil {
+		return false, nil
 	}
-	return nil
+	now := time.Now()
+	s.w.cycle.JobSuspendedAt = &now
+	return true, nil
 }
 
 func (s raceCancelStore) FinishCancelled(context.Context, string) (*delivery.RunCycle, error) {

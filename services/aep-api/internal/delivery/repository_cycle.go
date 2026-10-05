@@ -62,9 +62,10 @@ type RunCycleRepository interface {
 	NoteLaunch(ctx context.Context, id, host, environment, componentUID string) (*RunCycle, error)
 
 	// MarkJobSuspended stamps job_suspended_at once (WHERE it IS NULL); a later
-	// call keeps the first stamp. Not fenced on the cycle being open: a Job is
-	// suspended after its cycle closes.
-	MarkJobSuspended(ctx context.Context, id string) error
+	// call keeps the first stamp. stamped reports whether THIS call wrote it, so
+	// only the caller whose suspend took effect announces it. Not fenced on the
+	// cycle being open: a Job is suspended after its cycle closes.
+	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
 
 	// NotePodGone records when the cycle's pod was first seen gone, once
 	// (WHERE pod_gone_at IS NULL).
@@ -269,8 +270,11 @@ func (r *runCycleRepository) NoteLaunch(ctx context.Context, id, host, environme
 	})
 }
 
-func (r *runCycleRepository) MarkJobSuspended(ctx context.Context, id string) error {
-	return r.stampOnce(ctx, id, "job_suspended_at", time.Now().UTC())
+func (r *runCycleRepository) MarkJobSuspended(ctx context.Context, id string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND job_suspended_at IS NULL", id).
+		Update("job_suspended_at", time.Now().UTC())
+	return res.RowsAffected > 0, res.Error
 }
 
 func (r *runCycleRepository) NotePodGone(ctx context.Context, id string, at time.Time) error {
