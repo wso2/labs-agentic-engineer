@@ -160,6 +160,12 @@ observability plane). On a StorageClass with
 hand (`kubectl delete pv <name>`) once you no longer need the data. Remove any
 `workspaces:` block from your own values files; Helm ignores it.
 
+Runs from before the upgrade lose their history. Their cycles never stored a
+Component UID, so the observer cannot filter their logs and a closed one reads
+`recording: expired`; the settler deletes their Components once their pods are
+gone, as for any closed cycle. Only runs dispatched after the upgrade keep
+their logs (until `OBSERVER_LOG_RETENTION`).
+
 `make dev-update` also runs `aectl platform sync-clients` after the upgrade,
 since an update never runs the install's Thunder setup. On an install that
 predates a Thunder client (the AE-only `ae-studio-internal-client`) it seeds
@@ -168,6 +174,14 @@ rotated, and no database or Thunder admin secret is touched), nudges the
 ExternalSecrets that sync them, and registers the Thunder clients (idempotent).
 A client whose Secret is still unavailable is skipped with a warning; the
 others register.
+
+Registering `openchoreo-observer-resource-reader-client` (install and
+sync-clients alike) also writes to the observability plane, which OpenChoreo
+owns: when its `observer-secret` ExternalSecret in
+`openchoreo-observability-plane` does not already read
+`aep/thunder-clients/oc-observer-reader`, aectl rewrites it to do so, waits for
+ESO to sync it and restarts `deploy/observer`, so expect a short observer
+outage on that run. A plane already pointed there, or no plane, is left alone.
 
 Coding-agent runs as an ephemeral OpenChoreo Job Component in the project's
 dataplane (image from `AGENT_RUNNER_IMAGE`); builds use the `dockerfile-builder`

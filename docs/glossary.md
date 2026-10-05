@@ -396,12 +396,15 @@ earlier phases.
 A cycle is also the **unit the coding agent runs as**: each one dispatches
 exactly one ephemeral `coding-agent` job Component into the milestone's project,
 never reused across cycles. While its pod lives, progress is the pod's own log
-read through the OC API; once the pod is gone, the cycle's log is an observer
-query, which is answerable only while the Component exists. Every closed
-cycle's Component is **deleted at settle**: its Job is suspended, and once no pod
-is left (two no-pod reads a grace apart) the Component goes, which frees the
-org's entitlement slot. A cycle whose Component has been deleted reports its log
-as unavailable — the platform keeps no second copy.
+read through the OC API. Once the pod is gone, the cycle's log is an observer
+query filtered on the Component UID the cycle stored at dispatch: by component
+scope while the Component exists, by project scope once it is deleted. Every
+closed cycle's Component is **deleted at settle**: its Job is suspended, and
+once no pod is left (two no-pod reads a grace apart) the Component goes, which
+frees the org's entitlement slot. The cycle's log stays readable
+(`recording: kept`) until `OBSERVER_LOG_RETENTION` after it ended, then reads
+`expired`; `unavailable` means only that a recent read failed. The platform
+keeps no second copy beyond the observability plane.
 
 The console calls one of these a **build session** — the same object, under a
 name that reads as a unit of work rather than as loop machinery. The rename is
