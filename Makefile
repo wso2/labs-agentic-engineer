@@ -215,8 +215,8 @@ workflow-skill:
 #   WITH_OBSERVABILITY=0  skips the observability plane, and with it the SRE
 #                         agent (the agent has nothing to read alerts from)
 #   WITH_SRE=0            keeps the plane but skips the SRE agent, and parks
-#                         the plane's heavy half last (park-observability.sh)
-#                         since nothing then reads it
+#                         tracing, metrics and RCA last (park-observability.sh)
+#                         since nothing then reads them; the logs plane stays up
 #
 # An SRE-only profile that saves the most memory:
 #   WITH_AGENT_MANAGER=0 make dev-env
@@ -351,11 +351,11 @@ dev-images:
 		bash deployments/scripts/lib/pin-image.sh "$$ref" || exit 1; \
 	done
 
-# The observability plane's heavy half (OpenSearch, Prometheus, collectors,
-# adapters): `make dev-env` installs it running and parks it last, unless the
-# SRE agent runs (the default), which needs OpenSearch, Fluent Bit and the logs
-# adapter up to evaluate alerts. Unpark to read traces, metrics or archived
-# logs, between builds on an 8 GiB VM.
+# The observability plane's tracing, metrics and RCA workloads (Prometheus,
+# collectors, tracing adapter): `make dev-env` installs them running and parks
+# them last, unless the SRE agent runs (the default). The logs plane
+# (OpenSearch, Fluent Bit, the logs adapter) is never parked: run history reads
+# it. Unpark to read traces or metrics, between builds on an 8 GiB VM.
 obs-park:
 	bash deployments/scripts/park-observability.sh down
 obs-unpark:

@@ -33,19 +33,23 @@
 # the heavy half here as its last step; `up` brings it back when a log archive,
 # a trace view or the alert→RCA pipeline is wanted. Unpark between builds: on
 # an 8 GiB VM the plane plus a coding Job overloads the node.
+# The LOGS half is never parked: OpenSearch, the logs adapter and Fluent Bit
+# (about 1.4 CPU and 1.3 GiB) stay running, because run history (the archived
+# logs of finished coding runs) is read from them. Tracing, metrics and the RCA
+# agent are what get parked.
 # WITH_OBSERVABILITY=0 skips the plane altogether, and with it Agent Manager.
 #
 # What "parked" costs, stated plainly:
-#   - The AEP console's log ARCHIVE for finished cycles (observer → OpenSearch)
-#     reads as "logs unavailable". Live pod tails are unaffected: they go
-#     through the OpenChoreo API, not this plane.
-#   - Agent Manager's traces, metrics and logs views are empty.
+#   - Agent Manager's traces and metrics views are empty. Run history (the
+#     archived logs of finished runs) is unaffected: the logs plane stays up.
 #   - No alert is evaluated, so the alert → RCA → coding-agent handoff is off.
-#   - Nothing is lost on `up`: OpenSearch keeps its PVC, and every chart, CR,
+#   - Nothing is lost on `up`: OpenSearch keeps its PVC (it is never scaled
+#     down), and every chart, CR,
 #     ConfigMap patch and HTTPRoute the setup scripts made stays in place.
 #
-# What stays running while parked: observer, controller-manager, the cluster
-# agent, the plane's gateway and amp-observer. They are small, and they are
+# What stays running while parked: OpenSearch, the logs adapter, Fluent Bit,
+# observer, controller-manager, the cluster agent, the plane's gateway and
+# amp-observer. They are small, and they are
 # what the two consoles actually call — with the stores parked they answer "no
 # data" instead of refusing the connection.
 #
@@ -56,10 +60,13 @@
 #   - The Prometheus operator is parked FIRST on the way down and restored
 #     FIRST on the way up: it owns the Prometheus/Alertmanager StatefulSets and
 #     would otherwise scale them straight back to their CR's replica count.
-#   - Fluent Bit is a DaemonSet, which has no replica count. It is parked with a
-#     nodeSelector no node carries and restored by removing that selector.
-#   - Absent objects are skipped and named, so the same script serves a cluster
-#     where Agent Manager has been torn down (no metrics or tracing modules).
+#   - A DaemonSet has no replica count. It would be parked with a nodeSelector
+#     no node carries and restored by removing that selector; PARK_DAEMONSETS
+#     is empty now that Fluent Bit stays up, and the helpers remain for it.
+#   - Absent objects are skipped and named (every park and restore checks
+#     existence first), so the same script serves a cluster where only the logs
+#     half is installed or Agent Manager has been torn down (no metrics or
+#     tracing modules).
 #
 # Idempotent: `down` on a parked plane and `up` on a running one are no-ops.
 # A later `helm upgrade` of one of these charts (a setup re-run) resets the
@@ -82,19 +89,15 @@ PARK_DEPLOYMENTS=(
     prometheus-operator
     kube-state-metrics
     metrics-adapter-prometheus
-    logs-adapter-opensearch
     tracing-adapter-opensearch
     opentelemetry-collector
     "$RCA_DEPLOYMENT"
 )
 PARK_STATEFULSETS=(
-    opensearch-master
     prometheus-openchoreo-observability
     alertmanager-openchoreo-observability
 )
-PARK_DAEMONSETS=(
-    fluent-bit
-)
+PARK_DAEMONSETS=()
 
 k() { kubectl --context "$CLUSTER_CONTEXT" -n "$NS" "$@"; }
 
@@ -222,7 +225,7 @@ case "$ACTION" in
         for name in "${PARK_DEPLOYMENTS[@]}"; do restore_scalable deployment "$name"; done
         for name in "${PARK_STATEFULSETS[@]}"; do restore_scalable statefulset "$name"; done
         for name in "${PARK_DAEMONSETS[@]}"; do restore_daemonset "$name"; done
-        echo "⏳ OpenSearch takes a few minutes to become ready; the adapters recover on their own once it does."
+        echo "⏳ Prometheus and the tracing adapter take a few minutes to become ready; they recover on their own."
         ;;
     status)
         status

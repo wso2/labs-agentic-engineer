@@ -99,6 +99,10 @@ spec:
             - name: OBSERVER_URL
               value: {{ .Values.observer.baseURL | quote }}
             {{- end }}
+            {{- if .Values.observer.logRetention }}
+            - name: OBSERVER_LOG_RETENTION
+              value: {{ .Values.observer.logRetention | quote }}
+            {{- end }}
             # Without this, aep-api's own default assumes the data-plane
             # gateway terminates TLS and holds every component with an
             # external URL at "converging" forever waiting on a certificate

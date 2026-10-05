@@ -86,10 +86,11 @@ to read, say — and then the break surfaces far from its cause. ADR-0039's
 and the symptom was a wrong-audience 401 in `aep-api`'s log.
 
 The observability plane is installed running, because Agent Manager's charts
-install against it, and `make dev-env` parks its heavy half (OpenSearch,
-Prometheus, collectors, adapters) as its last step. Parked, Agent Manager's
-trace and metric views and the console's archived cycle logs are empty; live
-logs and everything else work. `make obs-unpark` brings it back and
+install against it, and `make dev-env` parks its tracing, metrics and RCA
+workloads (Prometheus, collectors, tracing adapter) as its last step. The logs
+plane (OpenSearch, Fluent Bit, the logs adapter) stays running for run history.
+Parked, Agent Manager's trace and metric views are empty; logs and everything
+else work. `make obs-unpark` brings it back and
 `make obs-park` parks it again: unpark between builds on an 8 GiB VM, where
 the plane and a coding Job together overload the node. `WITH_OBSERVABILITY=0
 make dev-env` skips the plane, and with it Agent Manager.
