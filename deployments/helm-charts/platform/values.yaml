@@ -202,7 +202,6 @@ localOrgProvisioning:
   orgNamespace: "default"
 
 observer:
-  clientId: "openchoreo-observer-resource-reader-client"
   # In-cluster URL of the OpenChoreo Observer. aectl init passes this from
   # oc.observability_api_url in ~/.aectl/config.yaml. Empty disables build-log
   # reading and coding-cycle log archiving (both degrade gracefully — see

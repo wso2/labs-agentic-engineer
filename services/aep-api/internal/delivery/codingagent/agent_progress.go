@@ -412,6 +412,7 @@ func (r *AgentProgressReader) readArchive(ctx context.Context, cycle *delivery.R
 		OrgName:       cycle.OrgID,
 		ProjectName:   cycle.ProjectID,
 		ComponentName: cycle.JobRef,
+		ComponentUID:  cycle.ComponentUID,
 		Environment:   env,
 		From:          from,
 		To:            to,

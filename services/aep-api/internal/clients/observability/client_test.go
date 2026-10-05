@@ -17,12 +17,18 @@
 package observability
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 type capturedQuery struct {
@@ -162,80 +168,324 @@ func TestGetBuildLogs_NonOKIsAnError(t *testing.T) {
 	}
 }
 
-func TestQueryComponentLogs_UsesTheComponentScope(t *testing.T) {
-	var got capturedQuery
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = decodeQuery(t, r)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"logs": []interface{}{
-				map[string]interface{}{"timestamp": "2026-08-06T10:00:01Z", "log": "agent up"},
-			},
-			"total": 1,
-		})
-	}))
-	defer srv.Close()
+const (
+	cycleComponent = "shop-ca-abc"
+	cycleUID       = "11111111-2222-3333-4444-555555555555"
+)
 
-	from := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
-	lines, err := NewClient(srv.URL).QueryComponentLogs(context.Background(), ComponentLogQuery{
-		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "default",
-		From: from, To: from.Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("QueryComponentLogs: %v", err)
+var t0 = time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
+
+// at is second `sec` after t0, `ms` milliseconds in. ms starts at 1: a line
+// stamped exactly on a whole second is invisible to a window that starts on
+// that second (`gt`), which is the observer's rule, not the client's.
+func at(sec, ms int) time.Time {
+	return t0.Add(time.Duration(sec)*time.Second + time.Duration(ms)*time.Millisecond)
+}
+
+// inSecond returns n of the cycle's lines spread over second `sec`, labelled
+// from `first`.
+func inSecond(sec, n, first int) []fakeLine {
+	out := make([]fakeLine, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, fakeLine{
+			At:            at(sec, 1+i*998/max(n, 1)),
+			Log:           fmt.Sprintf(`{"v":2,"seq":%d}`, first+i),
+			ComponentName: cycleComponent,
+			ComponentUID:  cycleUID,
+			PodName:       "shop-ca-abc-pod-1",
+		})
 	}
-	if got.SearchScope.Component != "shop-ca-abc" || got.SearchScope.Environment != "default" {
-		t.Fatalf("unexpected scope: %+v", got.SearchScope)
+	return out
+}
+
+func concat(parts ...[]fakeLine) []fakeLine {
+	var out []fakeLine
+	for _, p := range parts {
+		out = append(out, p...)
 	}
-	if got.SearchScope.WorkflowRunName != "" {
-		t.Fatalf("a component scope must not carry workflowRunName: %+v", got.SearchScope)
-	}
-	if len(lines) != 1 || lines[0].Log != "agent up" {
-		t.Fatalf("unexpected lines: %+v", lines)
+	return out
+}
+
+func componentQuery() CycleLogQuery {
+	return CycleLogQuery{
+		Namespace: "acme", Project: "shop", Environment: "development",
+		Component: cycleComponent, ComponentUID: cycleUID,
+		From: t0, To: t0.Add(time.Hour),
 	}
 }
 
-// The observer has no cursor and no offset, so a full page means "there is
-// more" and the only way forward is to move the window past the last entry.
-func TestQueryComponentLogs_PagesByAdvancingTheWindow(t *testing.T) {
-	var starts []string
-	page := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		q := decodeQuery(t, r)
-		starts = append(starts, q.StartTime)
-		page++
-		logs := make([]interface{}, 0, queryPageLimit)
-		if page == 1 {
-			for i := 0; i < queryPageLimit; i++ {
-				logs = append(logs, map[string]interface{}{
-					"timestamp": time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Second).Format(time.RFC3339),
-					"log":       "line",
-				})
-			}
-		} else {
-			logs = append(logs, map[string]interface{}{"timestamp": "2026-08-06T11:00:00Z", "log": "last"})
+// assertExactly checks the read returned every indexed line once, in order.
+func assertExactly(t *testing.T, got []LogLine, want []fakeLine) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("lines = %d, want %d", len(got), len(want))
+	}
+	seen := make(map[string]bool, len(got))
+	for i := range got {
+		if seen[got[i].Log] {
+			t.Fatalf("line %q returned twice", got[i].Log)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"logs": logs, "total": len(logs)})
-	}))
-	defer srv.Close()
+		seen[got[i].Log] = true
+		if got[i].Log != want[i].Log {
+			t.Fatalf("line %d = %q, want %q (order must follow the index)", i, got[i].Log, want[i].Log)
+		}
+	}
+}
 
-	from := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC)
-	lines, err := NewClient(srv.URL).QueryComponentLogs(context.Background(), ComponentLogQuery{
-		Namespace: "acme", Project: "shop", Component: "shop-ca-abc", Environment: "default",
-		From: from, To: from.Add(2 * time.Hour),
+// The observer has no cursor and stamps every line to the second, so a page
+// that ends inside second S cannot say where in S it stopped. The read drops
+// S, re-asks from S-1s, and keeps only S onwards: S arrives whole, once.
+func TestQueryCycleLogs_BoundarySecondIsReadWhole(t *testing.T) {
+	t.Run("page ends five lines into second 11", func(t *testing.T) {
+		// The brief's shape: a 1000-line page that is all second 10 but for its
+		// last 5 lines (second 11), then 7 more lines in second 11.
+		lines := concat(inSecond(10, 995, 0), inSecond(11, 12, 995))
+		obs, srv := newFakeObserver(t, lines)
+
+		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		if err != nil {
+			t.Fatalf("QueryCycleLogs: %v", err)
+		}
+		assertExactly(t, got, lines)
+		if n := len(obs.requestLog()); n > 4 {
+			t.Fatalf("requests = %d: the read must make progress, not re-ask the same window", n)
+		}
 	})
+	t.Run("page holds second 10 alone", func(t *testing.T) {
+		// 1000 lines in second 10, then 12 in second 11: 1012 lines.
+		lines := concat(inSecond(10, 1000, 0), inSecond(11, 12, 1000))
+		_, srv := newFakeObserver(t, lines)
+
+		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		if err != nil {
+			t.Fatalf("QueryCycleLogs: %v", err)
+		}
+		assertExactly(t, got, lines)
+	})
+	t.Run("previous second is light", func(t *testing.T) {
+		// The common case: the re-read of S-1s..S is small, so one extra page.
+		lines := concat(inSecond(9, 600, 0), inSecond(10, 395, 600), inSecond(11, 12, 995))
+		obs, srv := newFakeObserver(t, lines)
+
+		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		if err != nil {
+			t.Fatalf("QueryCycleLogs: %v", err)
+		}
+		assertExactly(t, got, lines)
+		reqs := obs.requestLog()
+		if len(reqs) != 2 {
+			t.Fatalf("requests = %d, want 2", len(reqs))
+		}
+		if got, want := reqs[1]["startTime"], at(10, 0).Format(time.RFC3339); got != want {
+			t.Fatalf("second page startTime = %v, want %v (the boundary second minus one)", got, want)
+		}
+	})
+}
+
+// A second with more lines than a page cannot be paged forward through at all.
+// It is read once from each end; up to two pages' worth it is exact.
+func TestQueryCycleLogs_SaturatedSecondIsReadFromBothEnds(t *testing.T) {
+	lines := concat(inSecond(9, 3, 0), inSecond(10, 1500, 3), inSecond(11, 4, 1503))
+	_, srv := newFakeObserver(t, lines)
+
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 	if err != nil {
-		t.Fatalf("QueryComponentLogs: %v", err)
+		t.Fatalf("QueryCycleLogs: %v", err)
 	}
-	if page != 2 {
-		t.Fatalf("pages = %d, want 2", page)
+	assertExactly(t, got, lines)
+}
+
+// Beyond two pages in one second the middle is unreadable on this API. The read
+// returns both ends without duplicates and moves on rather than looping.
+func TestQueryCycleLogs_OverSaturatedSecondMovesOn(t *testing.T) {
+	lines := concat(inSecond(10, 2500, 0), inSecond(11, 4, 2500))
+	obs, srv := newFakeObserver(t, lines)
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
 	}
-	if len(lines) != queryPageLimit+1 {
-		t.Fatalf("lines = %d, want %d", len(lines), queryPageLimit+1)
+	if len(got) != 2*queryPageLimit+4 {
+		t.Fatalf("lines = %d, want %d (both ends of second 10, then second 11)", len(got), 2*queryPageLimit+4)
 	}
-	if len(starts) != 2 || starts[1] == starts[0] {
-		t.Fatalf("the second window must start later: %+v", starts)
+	seen := map[string]bool{}
+	for _, l := range got {
+		if seen[l.Log] {
+			t.Fatalf("line %q returned twice", l.Log)
+		}
+		seen[l.Log] = true
 	}
-	if lines[len(lines)-1].Log != "last" {
-		t.Fatalf("pages must be concatenated in order, got %q last", lines[len(lines)-1].Log)
+	if got[len(got)-1].Log != lines[len(lines)-1].Log {
+		t.Fatalf("last line = %q, want %q", got[len(got)-1].Log, lines[len(lines)-1].Log)
+	}
+	if n := len(obs.requestLog()); n > 4 {
+		t.Fatalf("requests = %d, want the read to move past the saturated second", n)
+	}
+	if !strings.Contains(logged.String(), `"msg":"observer.read_incomplete"`) || !strings.Contains(logged.String(), `"missing":500`) {
+		t.Fatalf("the unreadable middle must be logged, got %s", logged.String())
+	}
+}
+
+// `total` is the match count of the request's window: a full page that holds
+// all of it is the last page, without an empty follow-up request.
+func TestQueryCycleLogs_StopsWhenThePageHoldsTheTotal(t *testing.T) {
+	lines := concat(inSecond(10, 500, 0), inSecond(11, 500, 500))
+	obs, srv := newFakeObserver(t, lines)
+
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	assertExactly(t, got, lines)
+	if n := len(obs.requestLog()); n != 1 {
+		t.Fatalf("requests = %d, want 1", n)
+	}
+}
+
+func TestQueryCycleLogs_ComponentScopeRequestShape(t *testing.T) {
+	obs, srv := newFakeObserver(t, inSecond(10, 2, 0))
+
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	if len(got) != 2 || got[0].ComponentUID != cycleUID || got[0].PodName != "shop-ca-abc-pod-1" {
+		t.Fatalf("unexpected lines: %+v", got)
+	}
+	if !got[0].Timestamp.Equal(at(10, 0)) {
+		t.Fatalf("timestamp = %v, want %v (the observer's second)", got[0].Timestamp, at(10, 0))
+	}
+	req := obs.requestLog()[0]
+	scope := req["searchScope"].(map[string]any)
+	if scope["namespace"] != "acme" || scope["project"] != "shop" || scope["environment"] != "development" || scope["component"] != cycleComponent {
+		t.Fatalf("unexpected scope: %+v", scope)
+	}
+	if _, ok := scope["workflowRunName"]; ok {
+		t.Fatalf("a component scope must not carry workflowRunName: %+v", scope)
+	}
+	if _, ok := req["searchPhrase"]; ok {
+		t.Fatalf("a component-scope read is already one Component's lines; got searchPhrase %v", req["searchPhrase"])
+	}
+	if req["sortOrder"] != "asc" || req["limit"] != float64(queryPageLimit) {
+		t.Fatalf("unexpected paging: sortOrder=%v limit=%v", req["sortOrder"], req["limit"])
+	}
+}
+
+// After the Component is deleted its name no longer resolves, so the read asks
+// for the whole project and keeps only the lines its stored UID produced —
+// including against a recreated Component of the same name, which has a new UID.
+func TestQueryCycleLogs_ProjectScopeFiltersOnUIDAndSendsSearchPhrase(t *testing.T) {
+	mine := inSecond(10, 3, 0)
+	sameNameNewUID := fakeLine{At: at(10, 500), Log: `{"v":2,"seq":1}`, ComponentName: cycleComponent, ComponentUID: "99999999-0000-0000-0000-000000000000", PodName: "shop-ca-abc-pod-9"}
+	otherComponent := fakeLine{At: at(10, 600), Log: `{"v":2,"seq":7}`, ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"}
+	notRunner := fakeLine{At: at(10, 700), Log: "GET /health 200", ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"}
+	obs, srv := newFakeObserver(t, concat(mine, []fakeLine{sameNameNewUID, otherComponent, notRunner}))
+
+	q := componentQuery()
+	q.Component = ""
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	assertExactly(t, got, mine)
+	req := obs.requestLog()[0]
+	scope := req["searchScope"].(map[string]any)
+	if _, ok := scope["component"]; ok {
+		t.Fatalf("a project-scope read must not name a component: %+v", scope)
+	}
+	if scope["project"] != "shop" || scope["environment"] != "development" {
+		t.Fatalf("unexpected scope: %+v", scope)
+	}
+	if req["searchPhrase"] != `"v":2` {
+		t.Fatalf("searchPhrase = %v, want %q", req["searchPhrase"], `"v":2`)
+	}
+}
+
+// Paging and the UID filter are separate: a page full of OTHER Components'
+// lines still means "there is more", even though none of it is kept.
+func TestQueryCycleLogs_ProjectScopePagesPastOtherComponents(t *testing.T) {
+	var other []fakeLine
+	for i := 0; i < 1200; i++ {
+		other = append(other, fakeLine{At: at(i/100, 1+i%100), Log: fmt.Sprintf(`{"v":2,"seq":%d,"other":1}`, i), ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"})
+	}
+	mine := inSecond(20, 2, 0)
+	_, srv := newFakeObserver(t, concat(other, mine))
+
+	q := componentQuery()
+	q.Component = ""
+	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	assertExactly(t, got, mine)
+}
+
+func TestQueryCycleLogs_ForwardsTheCallerBearerOnly(t *testing.T) {
+	obs, srv := newFakeObserver(t, inSecond(10, 1, 0))
+	c := NewClient(srv.URL)
+
+	if _, err := c.QueryCycleLogs(auth.WithAuthToken(context.Background(), "user-jwt"), componentQuery()); err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	if _, err := c.QueryCycleLogs(context.Background(), componentQuery()); err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	got := obs.authHeaders()
+	if len(got) != 2 || got[0] != "Bearer user-jwt" || got[1] != "" {
+		t.Fatalf("Authorization headers = %q, want [\"Bearer user-jwt\" \"\"]", got)
+	}
+}
+
+// The window is the cycle's, chosen by the caller. The old read fell back to a
+// 30-day lookback; a cycle read never asks for more than it ran.
+func TestQueryCycleLogs_WindowIsTheCallersNotThirtyDays(t *testing.T) {
+	obs, srv := newFakeObserver(t, nil)
+	q := componentQuery()
+	q.From, q.To = at(-1, 0), at(3600+60, 0)
+
+	if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	req := obs.requestLog()[0]
+	if req["startTime"] != q.From.Format(time.RFC3339) || req["endTime"] != q.To.Format(time.RFC3339) {
+		t.Fatalf("window = %v..%v, want %s..%s", req["startTime"], req["endTime"], q.From.Format(time.RFC3339), q.To.Format(time.RFC3339))
+	}
+}
+
+func TestQueryCycleLogs_RejectsAnIncompleteQueryWithoutCalling(t *testing.T) {
+	obs, srv := newFakeObserver(t, nil)
+	cases := map[string]func(*CycleLogQuery){
+		"no component UID": func(q *CycleLogQuery) { q.ComponentUID = "" },
+		"no window start":  func(q *CycleLogQuery) { q.From = time.Time{} },
+		"no window end":    func(q *CycleLogQuery) { q.To = time.Time{} },
+		"no namespace":     func(q *CycleLogQuery) { q.Namespace = "" },
+		"no project":       func(q *CycleLogQuery) { q.Project = "" },
+		"no environment":   func(q *CycleLogQuery) { q.Environment = "" },
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			q := componentQuery()
+			mutate(&q)
+			if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
+				t.Fatal("want an error")
+			}
+		})
+	}
+	if n := len(obs.requestLog()); n != 0 {
+		t.Fatalf("requests = %d, want none", n)
+	}
+}
+
+func TestQueryCycleLogs_NonOKIsAnError(t *testing.T) {
+	_, srv := newFakeObserver(t, nil)
+	q := componentQuery()
+	q.To = q.From.Add(31 * 24 * time.Hour) // the observer refuses > 30 days with a 400
+
+	if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
+		t.Fatal("a 400 must surface as an error")
 	}
 }

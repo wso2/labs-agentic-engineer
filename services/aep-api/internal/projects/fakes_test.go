@@ -50,8 +50,8 @@ func (s *stubObservClient) GetBuildLogs(ctx context.Context, orgName, projectNam
 	return s.GetBuildLogsFunc(ctx, orgName, projectName, componentName, buildName, since)
 }
 
-func (s *stubObservClient) QueryComponentLogs(context.Context, observability.ComponentLogQuery) ([]observability.LogLine, error) {
-	panic("stubObservClient: QueryComponentLogs not expected")
+func (s *stubObservClient) QueryCycleLogs(context.Context, observability.CycleLogQuery) ([]observability.LogLine, error) {
+	panic("stubObservClient: QueryCycleLogs not expected")
 }
 
 // --- sourcecontrol.RepoService (only GetRepo is consulted by TriggerBuild) ----------

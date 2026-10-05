@@ -615,6 +615,7 @@ func TestRecorder_ReadsInTheCyclesEnvironment(t *testing.T) {
 		v1LogLine(4, at.Add(3*time.Second), `"kind":"log","summary":"four"`),
 	)
 	f.cycle.Environment = "dev-b"
+	f.cycle.ComponentUID = "uid-dev-b"
 	archive := &spyArchive{}
 	f.rec.WithArchive(archive)
 
@@ -630,8 +631,8 @@ func TestRecorder_ReadsInTheCyclesEnvironment(t *testing.T) {
 	}
 	archive.mu.Lock()
 	defer archive.mu.Unlock()
-	if len(archive.scopes) == 0 || archive.scopes[0].Environment != "dev-b" {
-		t.Fatalf("archive scopes = %+v, want the gap repair asked in dev-b", archive.scopes)
+	if len(archive.scopes) == 0 || archive.scopes[0].Environment != "dev-b" || archive.scopes[0].ComponentUID != "uid-dev-b" {
+		t.Fatalf("archive scopes = %+v, want the gap repair asked in dev-b for the cycle's Component UID", archive.scopes)
 	}
 }
 

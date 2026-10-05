@@ -75,13 +75,14 @@ func (a *ObserverArchive) CycleArchive(ctx context.Context, scope ArchiveScope) 
 			return "", fmt.Errorf("%w: %s", ErrComponentGone, scope.ComponentName)
 		}
 	}
-	lines, err := a.obs.QueryComponentLogs(ctx, observability.ComponentLogQuery{
-		Namespace:   scope.OrgName,
-		Project:     scope.ProjectName,
-		Component:   openchoreo.ScopedComponentName(scope.ProjectName, scope.ComponentName),
-		Environment: scope.Environment,
-		From:        scope.From,
-		To:          scope.To,
+	lines, err := a.obs.QueryCycleLogs(ctx, observability.CycleLogQuery{
+		Namespace:    scope.OrgName,
+		Project:      scope.ProjectName,
+		Component:    openchoreo.ScopedComponentName(scope.ProjectName, scope.ComponentName),
+		ComponentUID: scope.ComponentUID,
+		Environment:  scope.Environment,
+		From:         scope.From,
+		To:           scope.To,
 	})
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", ErrArchiveUnavailable, err)

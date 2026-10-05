@@ -706,6 +706,7 @@ func (s *recordingSession) repairFromArchive(ctx context.Context, out []repaired
 		OrgName:       s.cycle.OrgID,
 		ProjectName:   s.cycle.ProjectID,
 		ComponentName: s.cycle.JobRef,
+		ComponentUID:  s.cycle.ComponentUID,
 		Environment:   s.cycle.Environment,
 		From:          s.cycle.CreatedAt.UTC().Add(-5 * time.Minute),
 		To:            s.rec.now().UTC(),

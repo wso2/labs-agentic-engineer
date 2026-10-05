@@ -32,7 +32,7 @@ import (
 type fakeObserver struct {
 	lines []observability.LogLine
 	err   error
-	got   observability.ComponentLogQuery
+	got   observability.CycleLogQuery
 	calls int
 }
 
@@ -40,7 +40,7 @@ func (f *fakeObserver) GetBuildLogs(context.Context, string, string, string, str
 	panic("fakeObserver: GetBuildLogs not expected")
 }
 
-func (f *fakeObserver) QueryComponentLogs(_ context.Context, q observability.ComponentLogQuery) ([]observability.LogLine, error) {
+func (f *fakeObserver) QueryCycleLogs(_ context.Context, q observability.CycleLogQuery) ([]observability.LogLine, error) {
 	f.calls++
 	f.got = q
 	return f.lines, f.err
@@ -55,7 +55,7 @@ func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testi
 
 	from := time.Date(2026, 8, 6, 9, 55, 0, 0, time.UTC)
 	text, err := NewObserverArchive(obs, rt).CycleArchive(context.Background(), ArchiveScope{
-		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", Environment: "dev-b",
+		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", ComponentUID: "uid-abc", Environment: "dev-b",
 		From: from, To: from.Add(time.Hour),
 	})
 	if err != nil {
@@ -63,6 +63,12 @@ func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testi
 	}
 	if obs.got.Component != openchoreo.ScopedComponentName("shop", "ca-abc") {
 		t.Fatalf("component = %q, want the scoped name", obs.got.Component)
+	}
+	if obs.got.ComponentUID != "uid-abc" {
+		t.Fatalf("componentUid = %q, want the cycle's recorded UID", obs.got.ComponentUID)
+	}
+	if !obs.got.From.Equal(from) || !obs.got.To.Equal(from.Add(time.Hour)) {
+		t.Fatalf("window = %v..%v, want the scope's", obs.got.From, obs.got.To)
 	}
 	if obs.got.Namespace != "acme" || obs.got.Environment != "dev-b" {
 		t.Fatalf("unexpected scope: %+v", obs.got)

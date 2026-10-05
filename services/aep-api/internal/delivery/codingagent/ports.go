@@ -254,9 +254,12 @@ type ArchiveScope struct {
 	OrgName       string
 	ProjectName   string
 	ComponentName string
-	Environment   string
-	From          time.Time
-	To            time.Time
+	// ComponentUID is the cycle's recorded Component UID: the archive keeps
+	// only the lines that Component wrote. A cycle without one cannot be read.
+	ComponentUID string
+	Environment  string
+	From         time.Time
+	To           time.Time
 }
 
 // ArchiveLogSource is a finished cycle's log, read from the observability plane

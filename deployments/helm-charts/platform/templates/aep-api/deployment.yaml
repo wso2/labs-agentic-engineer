@@ -101,10 +101,6 @@ spec:
             - name: TRY_IT_CALLBACK_URL
               value: "{{ .Values.tryIt.publicURL | trimSuffix "/" }}/callback"
             {{- end }}
-            - name: OBSERVER_OAUTH_CLIENT_ID
-              value: {{ .Values.observer.clientId | quote }}
-            - name: OBSERVER_OAUTH_HOST_HEADER
-              value: ""
             {{- if .Values.observer.baseURL }}
             - name: OBSERVER_URL
               value: {{ .Values.observer.baseURL | quote }}

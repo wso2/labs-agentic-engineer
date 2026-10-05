@@ -47,8 +47,8 @@ func (s *extObservClient) GetBuildLogs(ctx context.Context, orgName, projectName
 	return s.GetBuildLogsFunc(ctx, orgName, projectName, componentName, buildName, since)
 }
 
-func (s *extObservClient) QueryComponentLogs(context.Context, observability.ComponentLogQuery) ([]observability.LogLine, error) {
-	panic("extObservClient: QueryComponentLogs not expected")
+func (s *extObservClient) QueryCycleLogs(context.Context, observability.CycleLogQuery) ([]observability.LogLine, error) {
+	panic("extObservClient: QueryCycleLogs not expected")
 }
 
 // --- projects.ConfigRepository --------------------------------------------

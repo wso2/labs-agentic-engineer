@@ -414,19 +414,11 @@ type WorkspaceConfig struct {
 
 // ObservabilityConfig holds connection settings for the OpenChoreo Observer
 // service. BaseURL is optional; if empty, the BFF returns 503
-// progress_unavailable on the /progress/* endpoints. Auth fields drive the
-// Thunder client_credentials flow used to read workflow-run logs.
+// progress_unavailable on the /progress/* endpoints. There are no credentials:
+// every observer read forwards the calling user's bearer, so the observer
+// authorizes the person who asked.
 type ObservabilityConfig struct {
 	BaseURL string
-
-	// OAuth client_credentials settings — wired to the platform-default
-	// reader app `openchoreo-observer-resource-reader-client`. Promoting to
-	// multi-tenant cloud should swap this for a per-app registration (see
-	// task-execution-progress.md §5.4).
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	HostHeader   string
 }
 
 // AgentManagerConfig holds the machine credentials AEP calls Agent Manager

@@ -598,6 +598,7 @@ func TestCycleProgress_ReadsTheCyclesRecordedEnvironment(t *testing.T) {
 	targets := &fakeWriteTargets{env: "moved-on"}
 	cycle := liveCycle("c1")
 	cycle.Environment = "dev-b"
+	cycle.ComponentUID = "uid-c1"
 
 	if _, err := NewAgentProgressReader(live, targets, nil).WithArchive(archive).
 		CycleProgress(context.Background(), cycle, 0); err != nil {
@@ -606,8 +607,8 @@ func TestCycleProgress_ReadsTheCyclesRecordedEnvironment(t *testing.T) {
 	if len(live.envs) != 1 || live.envs[0] != "dev-b" {
 		t.Fatalf("live tail read in %v, want [dev-b]", live.envs)
 	}
-	if len(archive.scopes) != 1 || archive.scopes[0].Environment != "dev-b" {
-		t.Fatalf("archive scopes = %+v, want one in dev-b", archive.scopes)
+	if len(archive.scopes) != 1 || archive.scopes[0].Environment != "dev-b" || archive.scopes[0].ComponentUID != "uid-c1" {
+		t.Fatalf("archive scopes = %+v, want one in dev-b for the cycle's Component UID", archive.scopes)
 	}
 	if n := targets.resolves(); n != 0 {
 		t.Fatalf("resolved the write target %d times, want never for a cycle that recorded one", n)

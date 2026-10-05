@@ -46,8 +46,8 @@ type Config struct {
 	// (http://k3d-openchoreo-serverlb:8080), and kgateway routes it by Host —
 	// so a request without one matches no vhost and answers 404, which reads
 	// like a wrong path and is not one. The service's other OAuth clients carry
-	// the same field for the same reason (SERVICE_AUTH_HOST_HEADER,
-	// OBSERVER_OAUTH_HOST_HEADER). Empty when the URL's own host already routes.
+	// the same field for the same reason (SERVICE_AUTH_HOST_HEADER). Empty when
+	// the URL's own host already routes.
 	HostHeader string
 }
 
