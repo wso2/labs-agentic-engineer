@@ -25,16 +25,13 @@ import (
 // Fake returns a zero-I/O Infra for assembly tests. The DB is a non-nil but
 // UNCONNECTED *gorm.DB: the graph's constructors only store it (and some assert
 // it is non-nil, e.g. JobWatcher) — nothing queries it at assembly time, so no
-// connection is opened. The
-// credential store (cipher-only over the nil DB) is pure to construct. app.Assemble(cfg, Fake(), Seam{}) thus builds the same real
-// handler + watchers as production without touching the network, clock, or disk.
+// connection is opened. The column cipher is pure to construct.
+// app.Assemble(cfg, Fake(), Seam{}) thus builds the same real handler +
+// watchers as production without touching the network, clock, or disk.
 func Fake() Infra {
-	key := make([]byte, 32)
-	credStore, _ := secrets.NewDBStore(nil, key) // AES cipher only, nil DB
-	columnCipher, _ := secrets.NewColumnCipher(key)
+	columnCipher, _ := secrets.NewColumnCipher(make([]byte, 32))
 	return Infra{
-		DB:              &gorm.DB{},
-		CredentialStore: credStore,
-		ColumnCipher:    columnCipher,
+		DB:           &gorm.DB{},
+		ColumnCipher: columnCipher,
 	}
 }

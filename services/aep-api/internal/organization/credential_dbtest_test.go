@@ -16,10 +16,9 @@
 
 package organization_test
 
-// DBTEST tier ("store"; skips under -short, runs on
-// `make test-db`): the REAL CredentialService over a pristine per-test Postgres
-// (dbtest.New) with the REAL AES-GCM credential store (secrets.NewDBStore)
-// and a fake GitHub. This is where the SQL-shaped behavior lives — the Connect
+// DBTEST tier (skips under -short, runs on `make test-db`): the REAL
+// CredentialService over a pristine per-test Postgres (dbtest.New) and a fake
+// GitHub. The PAT lives only in vault, so no value is stored here. This is where the SQL-shaped behavior lives — the Connect
 // transaction + CHECK constraints, webhook-secret rotation, the webhook routing
 // lookups, installation status flips, identity-drift bookkeeping, and org
 // isolation. The stateless probes are unit-pinned (credential_service_test.go);
@@ -46,29 +45,13 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// credAESKey is a fixed 32-byte AES-256 key for the test credential store.
-const credAESKey = "0123456789abcdef0123456789abcdef"
-
-// newCredentialStore builds the real DB-backed, AES-GCM credential store.
-func newCredentialStore(t testing.TB, db *gorm.DB) secrets.CredentialStore {
-	t.Helper()
-	store, err := secrets.NewDBStore(db, []byte(credAESKey))
-	if err != nil {
-		t.Fatalf("NewDBStore: %v", err)
-	}
-	return store
-}
-
 // newCredSvcDB wires the real CredentialService over the dbtest DB with a fake
-// GitHub. Returns the store too so tests can inspect the sealed PAT.
-func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.CredentialService, secrets.CredentialStore) {
+// GitHub.
+func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) *organization.CredentialService {
 	t.Helper()
-	store := newCredentialStore(t, db)
-	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store).WithGitHubAPIBase(gh.URL)
-	return svc, store
+	return organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil)).WithGitHubAPIBase(gh.URL)
 }
 
 // patHappyGitHub serves the responses a valid PAT connect needs: GET /user
@@ -126,7 +109,7 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada Lovelace", "ada@example.com")
-	svc, store := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	proj, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp_live", GitHubLogin: "ada"})
 	if err != nil {
@@ -150,8 +133,9 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 	}
 
 	// The PAT lives only in vault: Connect writes no github/pat entry.
-	if _, err := store.Get(ctx, "acme", "github/pat"); !errors.Is(err, secrets.ErrSecretNotFound) {
-		t.Fatalf("Connect stored the PAT in Postgres: err %v", err)
+	var pats int64
+	if err := db.Raw(`SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'github/pat'`).Scan(&pats).Error; err != nil || pats != 0 {
+		t.Fatalf("Connect stored the PAT in Postgres: rows %d (%v)", pats, err)
 	}
 
 	// The on-wire projection shape matches the harvested golden's key-set.
@@ -168,7 +152,7 @@ func TestConnectPAT_WritesNoValueToPostgres(t *testing.T) {
 	ctx := context.Background()
 	const pat = "ghp_testvalue_1234567890"
 	gh := patHappyGitHub(t, "gh-org", "GH Org", "gh@example.com")
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: pat, GitHubLogin: "gh-org"}); err != nil {
 		t.Fatal(err)
@@ -230,7 +214,7 @@ func TestConnectPAT_InvalidPAT_DB(t *testing.T) {
 	ctx := context.Background()
 	gh := newStubGitHub(t)
 	gh.on("GET", "/user", 401, `{"message":"Bad credentials"}`)
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "bad", GitHubLogin: "ada"})
 	assertValidationCode(t, err, "pat_invalid")
@@ -247,7 +231,7 @@ func TestConnectPAT_MissingFields_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
+	svc := newCredSvcDB(t, db, newStubGitHub(t))
 
 	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "", GitHubLogin: "ada"})
 	assertValidationCode(t, err, "pat_missing")
@@ -260,7 +244,7 @@ func TestConnect_UnknownKind_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
+	svc := newCredSvcDB(t, db, newStubGitHub(t))
 	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "wat"})
 	assertValidationCode(t, err, "kind_invalid")
 }
@@ -270,7 +254,7 @@ func TestConnectPAT_ReplaceRecordsDrift_DB(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada Lovelace", "ada@example.com")
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "p1", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("first connect: %v", err)
@@ -305,7 +289,7 @@ func TestConnectPAT_ReplaceRecordsDrift_DB(t *testing.T) {
 func TestStatus_NotFound_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
+	svc := newCredSvcDB(t, db, newStubGitHub(t))
 	_, err := svc.Status(context.Background(), "ghost")
 	var nfe *organization.NotFoundError
 	if !errors.As(err, &nfe) {
@@ -317,20 +301,15 @@ func TestStatus_NotFound_DB(t *testing.T) {
 // Disconnect
 // ============================================================================
 
-func TestDisconnect_ClearsRowAndSecrets_DB(t *testing.T) {
+func TestDisconnect_FlipsTheRowToDisconnected_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, store := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
-	}
-	// A PAT stored before the gitpat moved to vault only: disconnect still
-	// clears it.
-	if err := store.Put(ctx, "acme", "github/pat", []byte("ghp")); err != nil {
-		t.Fatalf("seed legacy PAT: %v", err)
 	}
 	if err := svc.Disconnect(ctx, "acme"); err != nil {
 		t.Fatalf("disconnect: %v", err)
@@ -339,9 +318,6 @@ func TestDisconnect_ClearsRowAndSecrets_DB(t *testing.T) {
 	if row := getRow(t, db, "acme"); row.Status != "disconnected" {
 		t.Fatalf("status after disconnect: %q", row.Status)
 	}
-	if _, err := store.Get(ctx, "acme", "github/pat"); !errors.Is(err, secrets.ErrSecretNotFound) {
-		t.Fatalf("PAT must be GC'd from the store, got err %v", err)
-	}
 }
 
 func TestDisconnect_Idempotent_DB(t *testing.T) {
@@ -349,7 +325,7 @@ func TestDisconnect_Idempotent_DB(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	// Absent row → no-op nil.
 	if err := svc.Disconnect(ctx, "ghost"); err != nil {
@@ -379,7 +355,7 @@ func TestRecordIdentityFromGitHub_Drift_DB(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -408,7 +384,7 @@ func TestListActiveRows_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
+	svc := newCredSvcDB(t, db, newStubGitHub(t))
 	insertAppRow(t, db, "acme", 1, "active", nil)
 	insertAppRow(t, db, "globex", 2, "suspended", nil)
 	insertAppRow(t, db, "initech", 3, "disconnected", nil)
@@ -438,7 +414,7 @@ func TestOrgIsolation_DB(t *testing.T) {
 	gh := newStubGitHub(t)
 	gh.on("GET", "/user", 200, `{"login":"ada","name":"Ada","email":"ada@x.io"}`)
 	gh.on("GET", "/orgs/ada/repos", 200, `[]`)
-	svc, _ := newCredSvcDB(t, db, gh)
+	svc := newCredSvcDB(t, db, gh)
 
 	if _, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "pa", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect acme: %v", err)
@@ -521,7 +497,7 @@ func TestConnect_RefusesTheRetiredAppKind_DB(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
 	ctx := context.Background()
-	svc, _ := newCredSvcDB(t, db, newStubGitHub(t))
+	svc := newCredSvcDB(t, db, newStubGitHub(t))
 
 	_, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "app-installation"})
 	assertValidationCode(t, err, "kind_invalid")

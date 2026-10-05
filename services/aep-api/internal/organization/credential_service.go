@@ -36,8 +36,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
@@ -51,7 +49,6 @@ import (
 // connect time — it just reads whatever this service has persisted.
 type CredentialService struct {
 	repo      OrgCredentialRepository
-	store     secrets.CredentialStore
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
 
 	// secretRefWriter mirrors the PAT into SM-API on Connect and clears it on
@@ -62,15 +59,10 @@ type CredentialService struct {
 	httpClient *http.Client
 }
 
-// NewCredentialService constructs the service. repo and store must be
-// non-nil. githubAPI may be empty (defaults to api.github.com).
-func NewCredentialService(
-	repo OrgCredentialRepository,
-	store secrets.CredentialStore,
-) *CredentialService {
+// NewCredentialService constructs the service over the credential rows.
+func NewCredentialService(repo OrgCredentialRepository) *CredentialService {
 	return &CredentialService{
 		repo:       repo,
-		store:      store,
 		githubAPI:  "https://api.github.com",
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}

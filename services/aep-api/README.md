@@ -84,7 +84,7 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
   package's tests run against.
 - **supporting:** `app` (public composition **seam** — `Run(Options)`), `config`,
   `migrate` (ordered schema steps), `gen`/`igen` (generated contract types),
-  `arch` (the executable rules), `seed`.
+  `arch` (the executable rules).
 
 ## Composition seam (`app.Run(Options)`)
 

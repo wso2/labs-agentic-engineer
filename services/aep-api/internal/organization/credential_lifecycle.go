@@ -81,14 +81,6 @@ func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) erro
 		return nil
 	}
 
-	// Best-effort GC of a PAT stored before the gitpat lived only in vault
-	// (Connect no longer writes one). Failure is logged, not surfaced.
-	if row.Kind == "user-pat" {
-		if err := s.store.Delete(ctx, ocOrgID, "github/pat"); err != nil {
-			slog.WarnContext(ctx, "disconnect: cred-store delete failed", "ocOrgId", ocOrgID, "key", "github/pat", "error", err)
-		}
-	}
-
 	slog.InfoContext(ctx, "credentials.disconnected", "ocOrgId", ocOrgID, "kind", row.Kind)
 	return nil
 }

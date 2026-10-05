@@ -182,9 +182,7 @@ type Config struct {
 	OpenBaoAddr  string
 	OpenBaoToken string
 
-	GitHubAppID             string
-	GitHubAppSlug           string // App's URL slug; names the platform bot sender (githubBotLogin)
-	GitHubAppPrivateKeyPath string
+	GitHubAppSlug string // App's URL slug; names the platform bot sender (githubBotLogin)
 
 	// CredentialValidatorInterval is the periodic credential-validator
 	// sweep interval. Default 24h.

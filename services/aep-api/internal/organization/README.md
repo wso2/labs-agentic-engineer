@@ -18,7 +18,7 @@ flowchart LR
     CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
   end
   CORE -->|IdentityOps · IssueService| SC[[sourcecontrol]]
-  CORE -->|CredentialStore| SEC[[platform/secrets]]
+  CORE -->|org secrets: SecretReference + vault write| SM[[clients/secretmanagersvc]]
   CORE -->|publisher app · OU| THUNDER(["Thunder"])
   CORE -->|model probe, netguard, no redirects| MODEL(["the org's model endpoint"])
 ```
@@ -41,7 +41,6 @@ model-connection / idp services.*
 |---|---|---|
 | `IdentityOps` · `IssueService` | needs | `sourcecontrol` — the validator's PAT probe (the gitpat's GitHub user, read through the org's pod), disconnect issue cascade |
 | `OwnerLookup` | offers | `sourcecontrol` — `CredentialService.GitHubOwner`, the connected login new repositories are created under |
-| `CredentialStore` | needs | `platform/secrets` — sealed git-token / model-key / subscription store |
 | `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) · the edge (dev secret-ref resync) |
 | `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the governor's and AE Studio's keyless `Connection`) · `projects` (ai-agent model access: `KeyPathRef`) · `delivery` (the coding credential and the connection's model; the evaluation key's reference) |

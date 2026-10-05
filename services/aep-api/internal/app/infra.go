@@ -20,8 +20,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -30,7 +28,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/database"
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/seed"
 )
 
 // Infra is every external dependency Assemble needs already resolved — the
@@ -39,9 +36,8 @@ import (
 // Assemble reads it and does no I/O of its own, so the whole service graph
 // assembles deterministically in milliseconds.
 type Infra struct {
-	DB              *gorm.DB
-	CredentialStore secrets.TxCredentialStore
-	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
+	DB           *gorm.DB
+	ColumnCipher *secrets.ColumnCipher // seals the remaining sealed column values
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +
 	// execution repositories; nil ⇒ no stamping (cost_usd stays null).
@@ -50,12 +46,12 @@ type Infra struct {
 
 // Resolve performs every boot side effect and returns the resolved Infra: it
 // opens the database and runs first-boot migrations (Bootstrap), builds the
-// credential store, runs the dev-only app-platform seed (fatal). This is the ONLY place in the graph that
+// column cipher. This is the ONLY place in the graph that
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	// Credential encryption key — needed for migrations (encrypt-in-place) and
-	// the CredentialStore / column cipher. Decoded once here.
+	// the column cipher. Decoded once here.
 	credKey, err := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
 	if err != nil || len(credKey) != 32 {
 		// config.Validate guarantees this decodes to 32 bytes; kept as defense.
@@ -82,31 +78,14 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	}
 	rateStamper := modelcost.NewStamper(rateRows)
 
-	// Credential store (AES-256-GCM over Postgres) + column cipher (same key).
-	credStore, err := secrets.NewDBStore(db, credKey)
-	if err != nil {
-		return Infra{}, fmt.Errorf("credential store init: %w", err)
-	}
+	// Column cipher (AES-256-GCM) for the remaining sealed columns.
 	columnCipher, err := secrets.NewColumnCipher(credKey)
 	if err != nil {
 		return Infra{}, fmt.Errorf("column cipher init: %w", err)
 	}
-	slog.Info("credential store: postgres (aes-256-gcm)")
-
-	// Dev-only app-platform seed (App private key + client_secret + webhook HMAC).
-	// No-op outside DEPLOYMENT_TIER=dev.
-	{
-		c, cancel := context.WithTimeout(ctx, 30*time.Second)
-		if err := seed.AppPlatformFromEnv(c, credStore, cfg); err != nil {
-			cancel()
-			return Infra{}, fmt.Errorf("app platform seed: %w", err)
-		}
-		cancel()
-	}
 	return Infra{
-		DB:              db,
-		CredentialStore: credStore,
-		ColumnCipher:    columnCipher,
-		RateStamper:     rateStamper,
+		DB:           db,
+		ColumnCipher: columnCipher,
+		RateStamper:  rateStamper,
 	}, nil
 }

@@ -57,12 +57,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 const (
 	configPath   = "/api/v1/config"
-	configAESKey = "0123456789abcdef0123456789abcdef"
 	goodAnthKey  = "sk-ant-api03-CONFIGtestKeyABCDEFGHIJKLmnop"
 	goodAnthKey2 = "sk-ant-api03-SECONDkeyZYXWVUTSRQPonmlk9999"
 	platformIss  = "http://platform.test/issuer"
@@ -251,11 +249,6 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 	gh := newCfgFakeGH(t)
 	anth := newAnthropicFake(t)
 
-	store, err := secrets.NewDBStore(db, []byte(configAESKey))
-	if err != nil {
-		t.Fatalf("NewDBStore: %v", err)
-	}
-
 	model := newModelEndpoint(t, http.StatusOK)
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
 	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo).WithAnthropicAPIBase(anth.URL)
@@ -264,7 +257,7 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 		conns.WithProbeClient(model.client())
 	}
 	credRepo := organization.NewOrgCredentialRepository(db, nil)
-	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL)
+	credSvc := organization.NewCredentialService(credRepo).WithGitHubAPIBase(gh.URL)
 	var vault *submitVault
 	if o.secretsDelivery {
 		vault = &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}

@@ -24,7 +24,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/migrate"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // secretRows is org_secrets as (org/key → sealed value, xmin), for comparing
@@ -63,10 +62,7 @@ func TestPhase20ModelKeyRename_CopiesEveryKeyAndReRunsAsANoOp(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	bootMigrate(t, db)
-	store, err := secrets.NewDBStore(db, []byte(phase19AESKey))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := legacySecrets{db: db}
 	keys := map[string]string{"acme": "sk-ant-api03-acme-key-bytes-0001", "globex": "sk-ant-api03-globex-key-bytes-0002"}
 	for org, key := range keys {
 		seedConnection(t, db, org)
@@ -123,10 +119,7 @@ func TestPhase20ModelKeyRename_TheNewerKeyWins(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	bootMigrate(t, db)
-	store, err := secrets.NewDBStore(db, []byte(phase19AESKey))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := legacySecrets{db: db}
 	put := func(org, key, value string) {
 		t.Helper()
 		if err := store.Put(ctx, org, key, []byte(value)); err != nil {

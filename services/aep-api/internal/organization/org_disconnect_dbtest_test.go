@@ -51,7 +51,7 @@ func TestOrgDisconnect_SeversCredential_LeavesExecutions_DB(t *testing.T) {
 	ctx := context.Background()
 
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	credSvc, _ := newCredSvcDB(t, db, gh)
+	credSvc := newCredSvcDB(t, db, gh)
 	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestOrgDisconnect_UnknownOrg_ReturnsNotFound_DB(t *testing.T) {
 	ctx := context.Background()
 
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	credSvc, _ := newCredSvcDB(t, db, gh)
+	credSvc := newCredSvcDB(t, db, gh)
 	svc := organization.NewOrgDisconnectService(credSvc, nil)
 
 	// Phase A existence check: no credential row → organization.ErrOrgNotFound (the controller
@@ -111,7 +111,7 @@ func TestOrgDisconnect_AlreadyDisconnected_NoOp_DB(t *testing.T) {
 	ctx := context.Background()
 
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	credSvc, _ := newCredSvcDB(t, db, gh)
+	credSvc := newCredSvcDB(t, db, gh)
 	if _, err := credSvc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
@@ -164,7 +164,7 @@ func connectedAcme(t *testing.T) (*gorm.DB, *organization.CredentialService) {
 	t.Helper()
 	db := dbtest.New(t)
 	gh := patHappyGitHub(t, "ada", "Ada", "ada@x.io")
-	credSvc, _ := newCredSvcDB(t, db, gh)
+	credSvc := newCredSvcDB(t, db, gh)
 	if _, err := credSvc.Connect(context.Background(), "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "ghp", GitHubLogin: "ada"}); err != nil {
 		t.Fatalf("connect: %v", err)
 	}

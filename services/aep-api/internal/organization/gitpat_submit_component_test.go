@@ -48,7 +48,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/patch"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -286,11 +285,6 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 		t.Fatalf("seed org OU: %v", err)
 	}
 
-	store, err := secrets.NewDBStore(db, []byte(configAESKey))
-	if err != nil {
-		t.Fatalf("NewDBStore: %v", err)
-	}
-
 	vault := &submitVault{log: log, err: o.vaultErr, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 	rows := organization.NewOrgSecretRepository(db)
 	orgSecrets := organization.NewOrgSecretWriter(vault, rows, organization.NewOrgSecretLock(db), time.Now)
@@ -299,7 +293,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	refWriter := organization.NewSecretRefWriter(vault, credRepo, idpRepo).
 		WithOrgSecretWriter(orgSecrets)
 
-	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)
+	credSvc := organization.NewCredentialService(credRepo).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)
 	thunder := &submitThunder{log: log, apps: map[string]bool{}, secrets: map[string]string{}, arrived: make(chan struct{})}
 	idpSvc := organization.NewIDPService(idpRepo, orgRepo, thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
 		WithSecretRefWriter(refWriter)

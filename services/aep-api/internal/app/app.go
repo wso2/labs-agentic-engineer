@@ -140,7 +140,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the gate and auto-RCA disagree.
 	sreHandoff := authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg)
 	db := in.DB
-	credStore := in.CredentialStore
 
 	// Skills are repo-backed now (one private org-skills repo per org —
 	// docs/design/skills-repo-storage.md). The store needs the org pods' Git
@@ -269,9 +268,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		secretRefWriter.WithOrgSecretWriter(orgSecretWriter)
 	}
 
-	// Credentials services and controllers. The credential store is resolved in
-	// Resolve and arrives via Infra — Assemble does no OpenBao/network I/O.
-	credService := organization.NewCredentialService(orgCredRepo, credStore)
+	// Credentials services and controllers. The PAT lives only in vault
+	// (written through secretRefWriter); Assemble does no OpenBao/network I/O.
+	credService := organization.NewCredentialService(orgCredRepo)
 	// Builds clone with the org's github-pat SecretReference, read from its
 	// org_secrets row: aep-api passes the reference name, never the value.
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)

@@ -29,10 +29,26 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-const phase19AESKey = "0123456789abcdef0123456789abcdef"
+// legacySecrets writes and reads org_secrets value rows the way the earlier
+// releases' sealed store did (one row per (org, key), the value as stored):
+// the steps under test copy or delete those rows and never read a value, so
+// the tests seed opaque text and compare it as stored.
+type legacySecrets struct{ db *gorm.DB }
+
+func (s legacySecrets) Put(ctx context.Context, org, key string, value []byte) error {
+	return s.db.WithContext(ctx).Exec(`
+		INSERT INTO org_secrets (oc_org_id, key, value, updated_at) VALUES (?, ?, ?, now())
+		ON CONFLICT (oc_org_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+		org, key, "sealed:"+string(value)).Error
+}
+
+func (s legacySecrets) Get(ctx context.Context, org, key string) ([]byte, error) {
+	var value string
+	err := s.db.WithContext(ctx).Raw(`SELECT value FROM org_secrets WHERE oc_org_id = ? AND key = ?`, org, key).Row().Scan(&value)
+	return []byte(strings.TrimPrefix(value, "sealed:")), err
+}
 
 // preModelConnectionShape rebuilds the schema phase19 starts from on a
 // migrated test database: org_anthropic_credentials may hold a default row,
@@ -57,7 +73,7 @@ type phase19Fixture struct {
 	disconnectedAt time.Time
 }
 
-func seedPhase19(t *testing.T, db *gorm.DB, store secrets.CredentialStore) phase19Fixture {
+func seedPhase19(t *testing.T, db *gorm.DB, store legacySecrets) phase19Fixture {
 	t.Helper()
 	ctx := context.Background()
 	disconnectedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -116,10 +132,7 @@ func seedPhase19(t *testing.T, db *gorm.DB, store secrets.CredentialStore) phase
 func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
-	store, err := secrets.NewDBStore(db, []byte(phase19AESKey))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := legacySecrets{db: db}
 	preModelConnectionShape(t, db)
 	fx := seedPhase19(t, db, store)
 

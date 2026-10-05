@@ -116,9 +116,7 @@ func Load() (Config, error) {
 		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),
-		GitHubAppID:                 r.readOptionalString("GITHUB_APP_ID", ""),
 		GitHubAppSlug:               r.readOptionalString("GITHUB_APP_SLUG", "aep-platform"),
-		GitHubAppPrivateKeyPath:     r.readOptionalString("GITHUB_APP_PRIVATE_KEY_PATH", ""),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 
 		// Temporal (devflow workflows). Enabled iff TEMPORAL_HOSTPORT is set.
