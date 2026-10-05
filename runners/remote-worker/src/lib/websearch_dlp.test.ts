@@ -90,7 +90,6 @@ test("stagedSecretValues: excludes allowlisted structural env vars (AEP_* plumbi
   const values = stagedSecretValues({
     AEP_TASK_ID: "11111111-1111-1111-1111-111111111111",
     AEP_REPO_URL: "https://github.com/example/example-repo",
-    AEP_GIT_SERVICE_URL: "https://git-service.internal.example.com",
     AEP_PLATFORM_URL: "https://platform.internal.example.com",
     // The org's GitHub account: public, and exactly what a search may name.
     AEP_GITHUB_OWNER: "example-org-account",

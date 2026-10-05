@@ -18,7 +18,7 @@ flowchart LR
     CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]
   end
   CORE -->|IdentityOps · IssueService| SC[[sourcecontrol]]
-  CORE -->|CredentialStore · Resolver| SEC[[platform/secrets]]
+  CORE -->|CredentialStore| SEC[[platform/secrets]]
   CORE -->|publisher app · OU| THUNDER(["Thunder"])
   CORE -->|model probe, netguard, no redirects| MODEL(["the org's model endpoint"])
 ```
@@ -42,7 +42,7 @@ S2S credentials-refresh.*
 |---|---|---|
 | `IdentityOps` · `IssueService` | needs | `sourcecontrol` — the validator's PAT probe (the gitpat's GitHub user, read through the org's pod), disconnect issue cascade |
 | `OwnerLookup` | offers | `sourcecontrol` — `CredentialService.GitHubOwner`, the connected login new repositories are created under |
-| `CredentialStore` · `Resolver` · `AppTokenMinter` | needs | `platform/secrets` — sealed git-token / model-key / subscription store, credential resolution |
+| `CredentialStore` | needs | `platform/secrets` — sealed git-token / model-key / subscription store |
 | `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) · the edge (dev secret-ref resync) |
 | `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the spec agents' and task planning's connection + key per turn; Agent Manager's provider key) · `projects` (ai-agent model access) · `delivery` (the coding credential and the connection's model; the evaluation key) |

@@ -269,7 +269,6 @@ function layoutFor(workspace: string): WorkspaceLayout {
     ghConfigDir: path.join(workspace, ".gh"),
     bearerFile: path.join(workspace, ".bearer"),
     aepDir: path.join(workspace, ".aep"),
-    helperBin: path.join(workspace, ".aep", "credhelper"),
     ghWrapper: path.join(workspace, ".aep", "gh"),
   };
 }
@@ -313,7 +312,6 @@ function dispatch(over: Partial<DispatchRequest> = {}): DispatchRequest {
     repoUrl: "https://github.com/acme/todo.git",
     bearer: "",
     identity: { name: "AEP", email: "aep@example.com" },
-    gitServiceUrl: "https://git.example.com",
     prompt: "Work the issues in this project.",
     taskKind: "implementation",
     ...over,

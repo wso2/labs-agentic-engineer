@@ -41,12 +41,6 @@ func TestInternalContract(t *testing.T) {
 	yaml := string(out)
 
 	for _, want := range []string{
-		"runner-refresh-credentials",
-		// Token refresh is every runner's, not validation's, so it keeps its path.
-		// The id it names is the dispatched CYCLE — the parameter's spelling is the
-		// same wire-compat debt AEP_TASK_ID carries. The version root lives in
-		// `servers`, so the path is server-relative.
-		"/executions/{executionId}/credentials/refresh",
 		// The validation runner callback, grouped under the feature that owns it
 		// and keyed by the cycle id the runner actually carries. It used to sit
 		// under /executions/{executionId}, resolved against a table the milestone
@@ -67,6 +61,8 @@ func TestInternalContract(t *testing.T) {
 	// reappear in the internal route group.
 	for _, gone := range []string{
 		"runner-skills",
+		"runner-refresh-credentials",
+		"credentials/refresh",
 		"/internal/v1/executions/{executionId}/skills",
 	} {
 		if strings.Contains(yaml, gone) {

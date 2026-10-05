@@ -290,10 +290,6 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	if err != nil {
 		t.Fatalf("NewDBStore: %v", err)
 	}
-	minter, err := secrets.NewAppTokenMinter(nil)
-	if err != nil {
-		t.Fatalf("NewAppTokenMinter: %v", err)
-	}
 
 	vault := &submitVault{log: log, err: o.vaultErr, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 	rows := organization.NewOrgSecretRepository(db)
@@ -303,7 +299,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	refWriter := organization.NewSecretRefWriter(vault, credRepo, organization.NewOrgAnthropicRepository(db), idpRepo, organization.NewOrgModelConnectionRepository(db)).
 		WithOrgSecretWriter(orgSecrets)
 
-	credSvc := organization.NewCredentialService(credRepo, store, minter).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)
+	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)
 	thunder := &submitThunder{log: log, apps: map[string]bool{}, secrets: map[string]string{}, arrived: make(chan struct{})}
 	idpSvc := organization.NewIDPService(idpRepo, orgRepo, thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS}).
 		WithSecretRefWriter(refWriter)

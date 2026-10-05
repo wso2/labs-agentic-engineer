@@ -316,7 +316,6 @@ export async function startCodingRun(
     AEP_BEARER_FILE: layout.bearerFile,
     AEP_TASK_ID: req.taskId,
     AEP_PLATFORM_URL: process.env.AEP_PLATFORM_URL ?? "",
-    AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
     // A runtime's own default is typically 120s, which is under what this
     // platform's longest legitimate command takes: driving a scenario is a

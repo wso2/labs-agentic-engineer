@@ -19,7 +19,6 @@ dataplane. Domains import only the ports here — never the vault SDK.
 | Port | Consumers | Contract |
 |---|---|---|
 | `CredentialStore` | `organization` | `Get` / `Put` / `Delete` scoped by `ocOrgID` |
-| `Resolver` · `AppTokenMinter` | `organization`, `dependencies` | resolve credential refs; mint app tokens |
 | `secretmanagersvc.Provider` | `edge` composition | KV writes + `SecretReference` authoring for ESO |
 
 ## Invariants

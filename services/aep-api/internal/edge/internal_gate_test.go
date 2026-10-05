@@ -39,7 +39,6 @@ import (
 func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 	runnerOps := []struct{ name, method, prefix, suffix string }{
 		{"validation context", http.MethodGet, "/internal/v1/validation/", "/context"},
-		{"credentials refresh", http.MethodPost, "/internal/v1/executions/", "/credentials/refresh"},
 	}
 
 	// (a) An escape that decodes to another org's cycle is fenced as that cycle.
@@ -53,8 +52,8 @@ func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 			if rec.Code != http.StatusForbidden {
 				t.Fatalf("want 403, got %d body=%s (fenced %q)", rec.Code, rec.Body.String(), *s.fenced)
 			}
-			if s.context.gotCycle != "" || s.refresh.gotExecution != "" {
-				t.Fatalf("service reached: cycle=%q execution=%q", s.context.gotCycle, s.refresh.gotExecution)
+			if s.context.gotCycle != "" {
+				t.Fatalf("service reached: cycle=%q", s.context.gotCycle)
 			}
 		})
 	}
@@ -74,7 +73,7 @@ func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 				if rec.Code != http.StatusOK {
 					t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
 				}
-				served := s.context.gotCycle + s.refresh.gotExecution // exactly one op ran
+				served := s.context.gotCycle
 				if !slices.Equal(*s.fenced, []string{tc.decoded}) || served != tc.decoded {
 					t.Fatalf("gate fenced %q, service served %q; want both %q", *s.fenced, served, tc.decoded)
 				}
@@ -117,7 +116,6 @@ func TestInternalGate_InvalidEscapeFailsClosed(t *testing.T) {
 
 	for _, tc := range []struct{ op, param string }{
 		{"runner-validation-context", "cycleId"},
-		{"runner-refresh-credentials", "executionId"},
 	} {
 		t.Run("gate backstop: "+tc.op, func(t *testing.T) {
 			s := newInternalStack(t)

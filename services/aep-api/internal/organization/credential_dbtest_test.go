@@ -62,16 +62,11 @@ func newCredentialStore(t testing.TB, db *gorm.DB) secrets.CredentialStore {
 }
 
 // newCredSvcDB wires the real CredentialService over the dbtest DB with a fake
-// GitHub. minter is no-app mode (nil material), which is correct for the
-// PAT paths. Returns the store too so tests can inspect the sealed PAT.
+// GitHub. Returns the store too so tests can inspect the sealed PAT.
 func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) (*organization.CredentialService, secrets.CredentialStore) {
 	t.Helper()
 	store := newCredentialStore(t, db)
-	minter, err := secrets.NewAppTokenMinter(nil)
-	if err != nil {
-		t.Fatalf("NewAppTokenMinter: %v", err)
-	}
-	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter).WithGitHubAPIBase(gh.URL)
+	svc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store).WithGitHubAPIBase(gh.URL)
 	return svc, store
 }
 

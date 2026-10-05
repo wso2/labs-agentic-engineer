@@ -16,16 +16,13 @@
  * under the License.
  */
 
-// Local-dev credential stub. Stands in for the platform's
-// credentials/refresh endpoint so the runner can be exercised without
-// the BFF/git-service:
-//
-//   POST /internal/v1/tasks/{taskId}/credentials/refresh
-//     -> { "token": $GITHUB_PAT, "taskId": <echoed from path> }
-//
-// For a validation run it also plays the validation-context endpoint, which the
-// runner PREFLIGHTS before starting the agent (deployed endpoints are never in
-// the issue). Without it the local validation run exits before the agent starts:
+// Local-dev platform stub. Stands in for the platform so the runner can be
+// exercised without aep-api: it plays the publisher token endpoint
+// (POST /oauth2/token) and, for a validation run, the validation-context
+// endpoint, which the runner PREFLIGHTS before starting the agent (deployed
+// endpoints are never in the issue). Without it the local validation run exits
+// before the agent starts. Git needs no stub: the runner authenticates with the
+// GITHUB_TOKEN run-local.sh passes through, as a dispatched Job does.
 //
 //   GET /internal/v1/validation/{cycleId}/context
 //     -> { endpoints:[{component,url}] }
@@ -36,24 +33,14 @@
 // are not here: the skill reads them off the roles gate ticket, as in a
 // dispatched run.
 //
-// The taskId echo satisfies credhelper.sh's anti-misroute tripwire.
-// Identity fields are deliberately omitted so the runner keeps the
-// AEP_IDENTITY_* values it was launched with (no drift rewrite).
-//
-// SECURITY: every response carries a real GitHub PAT. Keep the bind
-// address on loopback (the default) and never expose this beyond your
-// machine. When STUB_BEARER is set (run-local.sh always sets it to the
-// per-run AEP_BEARER), callers must present that exact
+// SECURITY: keep the bind address on loopback (the default) and never expose
+// this beyond your machine. When STUB_BEARER is set (run-local.sh always sets it
+// to the per-run AEP_BEARER), callers must present that exact
 // `Authorization: Bearer` value — the runner already sends it on every
-// refresh call, so this costs nothing and de-fangs a non-loopback bind.
+// validation-context call, so this costs nothing and de-fangs a non-loopback bind.
 
 import http from "node:http";
 
-const pat = process.env.GITHUB_PAT ?? "";
-if (pat === "") {
-  console.error("[token-stub] GITHUB_PAT is not set");
-  process.exit(1);
-}
 const port = Number(process.env.STUB_PORT || 8377);
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
   console.error(`[token-stub] STUB_PORT is not a valid port: ${process.env.STUB_PORT}`);
@@ -64,10 +51,6 @@ const expectedBearer = process.env.STUB_BEARER ?? "";
 const stubClientId = process.env.STUB_CLIENT_ID ?? "local-publisher";
 const stubClientSecret = process.env.STUB_CLIENT_SECRET ?? "local-publisher-secret";
 
-// Both scopings: the runner uses tasks/{id} when AEP_PLATFORM_URL is unset
-// (git-service fallback) and executions/{id} when it is set (the current
-// execution-keyed model). Match either so the stub serves both run shapes.
-const REFRESH_RE = /^\/internal\/v1\/(?:tasks|executions)\/([^/]+)\/credentials\/refresh$/;
 // Validation callbacks live under the feature that owns them and are keyed by the
 // CYCLE id the runner carries (AEP_TASK_ID).
 const VALIDATION_CONTEXT_RE = /^\/internal\/v1\/validation\/([^/]+)\/context$/;
@@ -104,16 +87,15 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ access_token: accessToken, token_type: "bearer", expires_in: 3600 }));
     return;
   }
-  // Runner callbacks that require the per-run bearer: credentials/refresh
-  // (POST) and validation-context (GET). Everything else 404s.
+  // The one runner callback that requires the per-run bearer: validation-context
+  // (GET). Everything else 404s.
   //
   // There is no validation-report callback: the report is COMMITTED to the repo
   // and the platform reads it at the validation cycle's merge commit. The stub
   // used to ack a POST the real API never implemented, which taught the runner
   // that reporting was best-effort — it is now required.
-  const refreshM = req.method === "POST" ? REFRESH_RE.exec(url.pathname) : null;
   const contextM = req.method === "GET" ? VALIDATION_CONTEXT_RE.exec(url.pathname) : null;
-  if (!refreshM && !contextM) {
+  if (!contextM) {
     console.error(`[token-stub] 404 ${req.method} ${url.pathname}`);
     res.writeHead(404, JSON_HEADERS).end('{"error":"not found"}');
     return;
@@ -123,23 +105,8 @@ const server = http.createServer((req, res) => {
     res.writeHead(401, JSON_HEADERS).end('{"error":"unauthorized"}');
     return;
   }
-  if (contextM) {
-    console.error(`[token-stub] 200 validation-context for cycle ${contextM[1]}`);
-    res.writeHead(200, JSON_HEADERS).end(JSON.stringify(validationContext));
-    return;
-  }
-  const m = refreshM;
-  let taskId;
-  try {
-    taskId = decodeURIComponent(m[1]);
-  } catch {
-    console.error(`[token-stub] 400 malformed task id segment`);
-    res.writeHead(400, JSON_HEADERS).end('{"error":"malformed task id"}');
-    return;
-  }
-  console.error(`[token-stub] 200 refresh for task ${taskId}`);
-  res.writeHead(200, JSON_HEADERS);
-  res.end(JSON.stringify({ token: pat, taskId }));
+  console.error(`[token-stub] 200 validation-context for cycle ${contextM[1]}`);
+  res.writeHead(200, JSON_HEADERS).end(JSON.stringify(validationContext));
 });
 
 server.on("error", (err) => {

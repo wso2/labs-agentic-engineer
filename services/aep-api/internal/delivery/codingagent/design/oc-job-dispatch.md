@@ -69,12 +69,11 @@ sequenceDiagram
   Dispatch->>Job: mount PUBLISHER_*
   Job->>Thunder: client_credentials
   Thunder-->>Job: access token
-  Job->>API: credentials/refresh
   Job->>API: POST /internal/v1/mcp
 ```
 
 The runner mints at callback time and presents the same token for
-**both** `credentials/refresh` and `POST /internal/v1/mcp`. A loopback MCP
+`POST /internal/v1/mcp` (git uses the org gitpat the Job mounts as `GITHUB_TOKEN`; there is no credentials/refresh). A loopback MCP
 proxy attaches a live bearer (SDK headers are static): `getToken()` uses the
 5-minute CC renewal buffer, an HTTP 401 remints once, and a second 401 or a
 remint failure exits the Job.

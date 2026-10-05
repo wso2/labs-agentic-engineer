@@ -26,18 +26,15 @@ import (
 // UNCONNECTED *gorm.DB: the graph's constructors only store it (and some assert
 // it is non-nil, e.g. JobWatcher) — nothing queries it at assembly time, so no
 // connection is opened. The
-// minter (no-app mode) and credential store (cipher-only over the nil DB) are
-// both pure to construct. app.Assemble(cfg, Fake(), Seam{}) thus builds the same real
+// credential store (cipher-only over the nil DB) is pure to construct. app.Assemble(cfg, Fake(), Seam{}) thus builds the same real
 // handler + watchers as production without touching the network, clock, or disk.
 func Fake() Infra {
 	key := make([]byte, 32)
-	minter, _ := secrets.NewAppTokenMinter(nil)  // no-app mode, no I/O
 	credStore, _ := secrets.NewDBStore(nil, key) // AES cipher only, nil DB
 	columnCipher, _ := secrets.NewColumnCipher(key)
 	return Infra{
 		DB:              &gorm.DB{},
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
-		Minter:          minter,
 	}
 }

@@ -71,7 +71,6 @@ const SAFE_ENV_KEYS: ReadonlySet<string> = new Set<string>([
   "AEP_COMPONENT_NAME",
   "AEP_REPO_URL",
   "AEP_PROMPT",
-  "AEP_GIT_SERVICE_URL",
   "AEP_PLATFORM_URL",
   "AEP_MCP_URL",
   "AEP_IDENTITY_NAME",

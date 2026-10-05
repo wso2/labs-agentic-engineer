@@ -369,11 +369,10 @@ Four further gaps, all verified rather than assumed:
     characters everywhere they appear in ordinary text. Failing a run whose
     credential is too short to enroll: that is a misconfiguration, not a
     disclosure, and ending a cycle over a placeholder in a local run is the worse
-    trade — so it is reported by NAME and the run warns. KNOWN GAP: the credhelper
-    git path mints its token inside bash, so nothing can enroll it; its at-rest
-    copy in `.gh-config/hosts.yml` is covered by an `oauth_token:` shape pattern
-    on both sides and nothing more. Closing it means giving the helper a way to
-    hand the runner what it minted.
+    trade — so it is reported by NAME and the run warns. The AEP credhelper path that once minted a token inside
+    bash (an unenrollable copy) is gone: the only git credential is the mounted
+    gitpat, enrolled as a literal. The `oauth_token:` shape pattern remains for a
+    copy `gh` itself writes.
 
 8. **`console.*` is converted, not merely scrubbed.** It shares the fd with the
    feed, so a bare line makes the stream unparseable — and a watchdog cannot

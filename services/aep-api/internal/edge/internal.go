@@ -28,7 +28,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
 	"github.com/wso2/aep/aep-api/internal/ops"
-	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
@@ -49,15 +48,9 @@ import (
 // is reachable through the console's /aep-api-service/ route, so nothing on it
 // parses a body for an anonymous caller.
 //
-// RUNNER LOCKSTEP: the credentials-refresh response body is projected from the
-// organization domain's RefreshResponse onto igen.RefreshResponse (toIgenRefresh)
-// — the schema pins the wire shape, so the bytes cannot drift from what the
-// runner expects (igen stays a leaf; it cannot import the domain — §7).
-
 // InternalDeps carries the services + authorizer the internal S2S operations
 // need. main.go (internal/app) fills it with real instances.
 type InternalDeps struct {
-	CredsRefresh organization.CredentialsRefreshService
 	// RunnerAuth verifies runner publisher-cc bearers against the
 	// path execution id. nil fails closed: every runner op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
@@ -245,7 +238,6 @@ type internalOpGate struct {
 // internalOpGates is the gate table, keyed by embedded-spec operation id.
 // TestInternalGate_CoversEverySpecOperation pins it to the spec both ways.
 var internalOpGates = map[string]internalOpGate{
-	"runner-refresh-credentials":       {credential: runnerCredential, cycleParam: "executionId"},
 	"runner-validation-context":        {credential: runnerCredential, cycleParam: "cycleId"},
 	"sre-list-issues":                  {credential: sreHandoffCredential},
 	"sre-create-issue":                 {credential: sreHandoffCredential},
@@ -262,7 +254,7 @@ var internalOpGates = map[string]internalOpGate{
 // before the validator, so an unauthenticated caller gets 401 and never a
 // schema-detail 400 or a body parse:
 //
-//	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
+//	validation/                coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
 //	mcp                        runner, pod     route miss here: own gate (auth.PublisherMCPGate), publisher token only, binds its org
@@ -280,9 +272,6 @@ var internalOpGates = map[string]internalOpGate{
 // credential first. The cycle fence checks the decoded path value, the one
 // the handler is served. requireInternalGate denies any generated op that reaches
 // the strict wrapper without this gate's verdict.
-//
-// The refresh operation still spells its parameter `executionId` on the wire; the
-// value is the dispatched cycle id, the same naming debt AEP_TASK_ID carries.
 func internalGate(deps InternalDeps, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := internalRouteFrom(r.Context())
@@ -388,38 +377,6 @@ func mapRunnerAuthError(err error) error {
 		}
 	}
 	return errUnauthorized("invalid bearer")
-}
-
-func (s *internalServer) RunnerRefreshCredentials(ctx context.Context, request igen.RunnerRefreshCredentialsRequestObject) (igen.RunnerRefreshCredentialsResponseObject, error) {
-	if s.deps.CredsRefresh == nil {
-		return nil, errServiceUnavailable("credentials refresh not configured")
-	}
-	org := tenant.BoundOrgFromContext(ctx)
-	resp, err := s.deps.CredsRefresh.Refresh(ctx, request.ExecutionID, org)
-	if err != nil {
-		return nil, errInternal("failed to refresh credentials")
-	}
-	return igen.RunnerRefreshCredentials200JSONResponse(toIgenRefresh(*resp)), nil
-}
-
-// toIgenRefresh projects the org domain's RefreshResponse onto the S2S wire
-// shape. igen must stay a leaf, so it cannot import the domain that owns the
-// value type — hence a mapping here rather
-// than the former x-go-type alias. The wire keys are byte-identical (the
-// Identity sub-object marshals capitalized either way); only Go field ORDER
-// differs between the two Identity structs, which forbids a whole-struct
-// conversion, so the three fields are copied by name.
-func toIgenRefresh(r organization.RefreshResponse) igen.RefreshResponse {
-	return igen.RefreshResponse{
-		Token:     r.Token,
-		ExpiresAt: r.ExpiresAt,
-		Identity: igen.Identity{
-			Name:  r.Identity.Name,
-			Email: r.Identity.Email,
-			Login: r.Identity.Login,
-		},
-		TaskID: r.TaskID,
-	}
 }
 
 func (s *internalServer) RunnerValidationContext(ctx context.Context, request igen.RunnerValidationContextRequestObject) (igen.RunnerValidationContextResponseObject, error) {

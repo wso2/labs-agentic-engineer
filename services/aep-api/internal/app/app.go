@@ -141,7 +141,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	sreHandoff := authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg)
 	db := in.DB
 	credStore := in.CredentialStore
-	minter := in.Minter
 
 	// Skills are repo-backed now (one private org-skills repo per org —
 	// docs/design/skills-repo-storage.md). The store needs the org pods' Git
@@ -269,14 +268,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		secretRefWriter.WithOrgSecretWriter(orgSecretWriter)
 	}
 
-	// Credentials + git-service services and controllers. The credential store,
-	// the App-token minter (post OpenBao key-load / dev seed / bot-identity load),
-	// and the App OAuth client_secret are all resolved in Resolve and arrive via
-	// Infra — Assemble does no OpenBao/network I/O.
-	credResolver := secrets.NewOrgResolver(db, credStore, minter)
-
-	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
-	credService := organization.NewCredentialService(orgCredRepo, credStore, minter)
+	// Credentials services and controllers. The credential store is resolved in
+	// Resolve and arrives via Infra — Assemble does no OpenBao/network I/O.
+	credService := organization.NewCredentialService(orgCredRepo, credStore)
 	// Builds clone with the org's github-pat SecretReference, read from its
 	// org_secrets row: aep-api passes the reference name, never the value.
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)
@@ -687,7 +681,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	codingExecutor := codingagent.NewCodingExecutor(
 		componentClient, repoService, identities{cred: credService},
 		executionRepo,
-		cfg.AgentPlatformURL, cfg.AgentPlatformURL,
+		cfg.AgentPlatformURL,
 		orgRepo, modelConnections, orgCredRepo, idpRepo).
 		// The GitHub PAT reference a run mounts is the github-pat row's (R7).
 		WithOrgSecrets(orgSecretRepo).
@@ -881,7 +875,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// only the webhook controller remains a raw handler.
 		// Every other feature is served by the strict handlers via params.Deps.
 		InternalDeps: edge.InternalDeps{
-			CredsRefresh:      credRefreshService,
 			RunnerAuth:        runnerAuth,
 			ValidationContext: validationContextSvc,
 			// The one verifier built above; auto-RCA reads the same instance.

@@ -24,10 +24,11 @@
 // module doc.
 //
 // The credential is supplied by the same credential helper that authenticates
-// every later git operation (lib/credhelper.ts), wired in for this one command
-// with `git -c credential.<origin>.helper=…`. No token is passed to git at all:
-// not in the URL, not in argv, not in the environment. The helper mints one
-// itself and hands it to git over its stdout pipe.
+// every later git operation (`gh auth git-credential`, lib/gh_git_auth.ts),
+// wired in for this one command with `git -c credential.<origin>.helper=…`. No
+// token is passed to git at all: not in the URL, not in argv. The helper reads
+// GITHUB_TOKEN/GH_TOKEN from the inherited env and hands it to git over its
+// stdout pipe.
 //
 // Why not embed the token in the clone URL — the constraint that shapes all of
 // this. `https://x-access-token:TOKEN@github.com/o/r` puts the credential in
@@ -41,18 +42,16 @@
 //     the credential would sit at rest in the work tree for the whole run;
 //   - any later `git remote -v` the agent happens to run.
 //
-// An earlier version of this module avoided that with a GIT_ASKPASS shim and the
-// token in the clone child's env. That worked, but it meant the clone
-// authenticated through a *different* mechanism than the agent's own operations
-// — and when the shared script's protocol dispatch was wrong, the clone kept
-// working and masked the fact that nothing else could authenticate at all.
-// Putting the helper on the clone collapses the two paths into one and makes a
-// credential break fail provisioning, loudly, before the agent starts.
+// An earlier version of this module avoided that with a GIT_ASKPASS shim. That
+// meant the clone authenticated through a *different* mechanism than the
+// agent's own operations, and a break in the shared helper could go unnoticed
+// because the clone kept working. Putting the helper on the clone collapses the
+// two paths into one and makes a credential break fail provisioning, loudly,
+// before the agent starts.
 //
 // `git -c <key>=<value>` (before the subcommand) applies to this command only
 // and is NOT written into the cloned repo's config — unlike `git clone -c`,
-// which persists. workspace.ts installs the durable helper itself, pointed at
-// the helper's final path.
+// which persists. workspace.ts installs the durable helper itself.
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
@@ -69,19 +68,12 @@ const CLONE_MAX_BUFFER = 16 * 1024 * 1024;
  * (file:// in tests), which configures no helper at all so a genuinely missing
  * credential surfaces as git's own error rather than an empty password.
  *
- * `helperPath` is either:
- *   - an absolute path to the AEP credhelper script (reads AEP_BEARER_FILE), or
- *   - a git `!` shell helper, e.g. `!/usr/bin/gh auth git-credential` when a
- *     GITHUB_TOKEN/GH_TOKEN is mounted (see gh_git_auth.ts).
+ * `helperPath` is a git `!` shell helper, e.g. `!/usr/bin/gh auth git-credential`
+ * (GITHUB_TOKEN/GH_TOKEN comes from the inherited env; see gh_git_auth.ts).
  */
 export interface CloneAuth {
   /** Credential helper value for `credential.<scope>.helper`. */
   helperPath: string;
-  /**
-   * Absolute path to the platform bearer the AEP helper exchanges for a token.
-   * Empty when using the gh shell helper (token comes from GITHUB_TOKEN/GH_TOKEN).
-   */
-  bearerFile: string;
 }
 
 export interface CloneOptions extends CloneAuth {
@@ -145,14 +137,6 @@ export function buildCloneInvocation(
     ...(opts.baseEnv ?? process.env),
     GIT_TERMINAL_PROMPT: "0",
   };
-  // AEP credhelper reads the bearer from this path. It is a PATH, not a secret,
-  // and it is set on a per-child env object rather than process.env: runner.ts
-  // spreads process.env into the agent's child env, and provisioning's staged
-  // bearer is gone by the time the agent starts. The gh shell helper does not
-  // use it — GITHUB_TOKEN/GH_TOKEN is already in the inherited env.
-  if (authed && opts.bearerFile !== "" && !opts.helperPath.startsWith("!")) {
-    env.AEP_BEARER_FILE = opts.bearerFile;
-  }
   return { cmd, env };
 }
 

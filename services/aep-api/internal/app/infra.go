@@ -42,7 +42,6 @@ type Infra struct {
 	DB              *gorm.DB
 	CredentialStore secrets.TxCredentialStore
 	ColumnCipher    *secrets.ColumnCipher // same key as CredentialStore; seals column values
-	Minter          *secrets.AppTokenMinter
 	// RateStamper prices captured agent usage at write time (#291), loaded once
 	// from model_rates after migration. Assemble threads it into the turn +
 	// execution repositories; nil ⇒ no stamping (cost_usd stays null).
@@ -51,9 +50,7 @@ type Infra struct {
 
 // Resolve performs every boot side effect and returns the resolved Infra: it
 // opens the database and runs first-boot migrations (Bootstrap), builds the
-// credential store, best-effort loads the GitHub App key / bot identity / OAuth
-// client_secret from OpenBao (each with its own short timeout), runs the dev-only
-// app-platform seed (fatal). This is the ONLY place in the graph that
+// credential store, runs the dev-only app-platform seed (fatal). This is the ONLY place in the graph that
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
@@ -96,22 +93,6 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	}
 	slog.Info("credential store: postgres (aes-256-gcm)")
 
-	// App-token minter — best-effort App-key load. With no App key the minter
-	// answers in no-app mode; the connect surface lights up the App path lazily on
-	// first use.
-	loadCtx, cancelLoad := context.WithTimeout(ctx, 10*time.Second)
-	appKey, err := secrets.LoadAppKey(loadCtx, credStore)
-	cancelLoad()
-	if err != nil {
-		slog.Warn("app key load failed; App-mode credentials will return ErrAppNotConfigured", "error", err)
-		appKey = nil
-	}
-	minter, err := secrets.NewAppTokenMinter(appKey)
-	if err != nil {
-		return Infra{}, fmt.Errorf("app token minter init: %w", err)
-	}
-	minter.WithCredentialStore(credStore)
-
 	// Dev-only app-platform seed (App private key + client_secret + webhook HMAC).
 	// No-op outside DEPLOYMENT_TIER=dev.
 	{
@@ -122,33 +103,10 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 		}
 		cancel()
 	}
-	if appKey == nil {
-		retryCtx, cancelRetry := context.WithTimeout(ctx, 10*time.Second)
-		if reloaded, rerr := secrets.LoadAppKey(retryCtx, credStore); rerr == nil && reloaded != nil {
-			cancelRetry()
-			minter, err = secrets.NewAppTokenMinter(reloaded)
-			if err != nil {
-				return Infra{}, fmt.Errorf("app token minter re-init: %w", err)
-			}
-			minter.WithCredentialStore(credStore)
-			slog.Info("github app loaded post-seed", "appId", reloaded.AppID)
-		} else {
-			cancelRetry()
-		}
-	}
-	if minter.AppID() != 0 {
-		idCtx, cancelID := context.WithTimeout(ctx, 10*time.Second)
-		if err := minter.LoadAppBotIdentity(idCtx, "https://api.github.com"); err != nil {
-			slog.Warn("app bot identity load failed; will retry on first connect", "error", err)
-		}
-		cancelID()
-	}
-
 	return Infra{
 		DB:              db,
 		CredentialStore: credStore,
 		ColumnCipher:    columnCipher,
-		Minter:          minter,
 		RateStamper:     rateStamper,
 	}, nil
 }

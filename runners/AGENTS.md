@@ -22,17 +22,15 @@ into the runner pod at `/app/skills` for live skill edits (see
   messages (which the BFF forwards to the console build log), into `ps`, and into
   `.git/config`. Rationale inline in `git_clone.ts`; the BFF keeps a shape-based
   second line of defense in `delivery/codingagent/redact.go`.
-- **Git credentials — two modes, one helper value in `.git/config`.**
-  When `GITHUB_TOKEN` / `GH_TOKEN` is set (cloud Jobs mount the org PAT),
+- **Git credentials — one path, one helper value in `.git/config`.**
+  The coding Job mounts the org's gitpat as `GITHUB_TOKEN` (or `GH_TOKEN`);
   `workspace.ts` installs `gh auth git-credential` (the same helper
   `gh auth setup-git` uses), pinned to the **real** `gh` absolute path so the
-  `.aep/gh` wrapper cannot intercept. Clone and push share that path; they do
-  **not** call `credentials/refresh`. When those env vars are absent, every
-  authenticated git op goes through `lib/credhelper.ts` → refresh (clone via
-  `git -c`, then the same script installed durably). No GIT_ASKPASS, no token
-  in argv or URL. Don't add a third path. Changes to the generated refresh
-  scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
-  `.aep/` (the publisher bearer, the credential helper, the `gh` wrapper) and
+  `.aep/gh` wrapper cannot intercept. Clone and push share that path. Without
+  either variable `provisionWorkspace` throws before any network call and
+  `oneshot.ts` exits 2; there is no `credentials/refresh` and no fallback.
+  No GIT_ASKPASS, no token in argv or URL. Don't add a second path.
+  `.aep/` (the publisher bearer, the `gh` wrapper) and
   `.gh-config/`, which `provisionWorkspace` drops inside the clone, are in the
   clone's `.git/info/exclude`: one `git add -A` would otherwise push the bearer
   into the customer's repository.
@@ -47,8 +45,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   enrolling from `lib/credential_env.ts` — which MIRRORS the Go dispatch
   constants with nothing mechanical between them, so a credential added there
   is added here too. One the scrubber cannot enroll is reported by name rather
-  than dropped in silence. Rationale, and the credhelper path this cannot
-  reach: ADR-0002 decision 19.
+  than dropped in silence. Rationale: ADR-0002 decision 19.
 - **The progress contract is RUN EVENTS v2, and it is GENERATED, not written
   here.** `RunEvent` lives in `packages/contracts/api/v1/openapi.yaml` and
   reaches this package through `openapi-typescript` (see the generated-types

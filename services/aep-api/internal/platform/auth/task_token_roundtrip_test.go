@@ -75,7 +75,7 @@ func TestTaskTokenRoundtrip(t *testing.T) {
 		t.Fatalf("IssueServiceToken: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/internal/v1/executions/task-abc/credentials/refresh", nil)
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/task-abc/context", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

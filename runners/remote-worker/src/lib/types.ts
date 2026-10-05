@@ -35,17 +35,9 @@ export interface DispatchRequest {
   repoUrl: string;
   bearer: string;
   identity: DispatchIdentity;
-  gitServiceUrl: string;
   prompt: string;
-  /** Optional correlation ID for distributed tracing. Forwarded to git-service via credhelper. */
+  /** Optional correlation ID for distributed tracing. Carried into the agent's environment. */
   correlationId?: string;
-  /**
-   * WS2.6 — full URL for the credentials/refresh endpoint used during
-   * workspace bootstrap. oneshot.ts sets it to the path-scoped
-   * `${platformUrl}/internal/v1/executions/{executionId}/credentials/refresh`
-   * (taskId carries the execution id, §9.2). Accepts the publisher CC token.
-   */
-  refreshUrl?: string;
   /**
    * Endpoint Spec Discovery (B1/B2) — the BFF's in-process MCP endpoint
    * (`<platform>/internal/v1/mcp`), stamped unconditionally by the BFF's

@@ -218,10 +218,6 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes [
 	if err != nil {
 		t.Fatalf("NewDBStore: %v", err)
 	}
-	minter, err := secrets.NewAppTokenMinter(nil)
-	if err != nil {
-		t.Fatalf("NewAppTokenMinter: %v", err)
-	}
 
 	model := newModelEndpoint(t, http.StatusOK)
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
@@ -230,7 +226,7 @@ func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes [
 	if !guarded {
 		conns.WithProbeClient(model.client())
 	}
-	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter).WithGitHubAPIBase(gh.URL)
+	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store).WithGitHubAPIBase(gh.URL)
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
 	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 

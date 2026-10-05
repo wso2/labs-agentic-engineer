@@ -45,12 +45,11 @@ import (
 // writes no secret material — the ComponentType's template renders the cycle's
 // ExternalSecrets from the org's secret store.
 type CodingExecutor struct {
-	oc            openchoreo.ComponentClient
-	repos         ProjectRepos
-	identities    Identities
-	execRows      delivery.ExecutionRepository
-	gitServiceURL string
-	platformURL   string
+	oc          openchoreo.ComponentClient
+	repos       ProjectRepos
+	identities  Identities
+	execRows    delivery.ExecutionRepository
+	platformURL string
 
 	// ocJobs is the OpenChoreo Component dispatch path — one Component per run
 	// cycle in the milestone's own project.
@@ -113,7 +112,7 @@ func NewCodingExecutor(
 	repos ProjectRepos,
 	identities Identities,
 	execRows delivery.ExecutionRepository,
-	gitServiceURL, platformURL string,
+	platformURL string,
 	orgs organization.OrganizationRepository,
 	anthropicKey CodingKeyResolver,
 	githubCreds organization.OrgCredentialRepository,
@@ -121,7 +120,7 @@ func NewCodingExecutor(
 ) *CodingExecutor {
 	return &CodingExecutor{
 		oc: oc, repos: repos, identities: identities,
-		execRows: execRows, gitServiceURL: gitServiceURL, platformURL: platformURL,
+		execRows: execRows, platformURL: platformURL,
 		orgs: orgs, anthropicKey: anthropicKey, githubCreds: githubCreds, idpProfiles: idpProfiles,
 	}
 }
@@ -298,18 +297,17 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 	disp := in.shape
 	platform := strings.TrimRight(e.platformURL, "/")
 	env := map[string]string{
-		"AEP_TASK_ID":         in.correlationID,
-		"AEP_ORG_ID":          in.orgID,
-		"AEP_PROJECT_ID":      in.projectID,
-		"AEP_COMPONENT_NAME":  disp.componentName,
-		"AEP_REPO_URL":        repo.RepoURL,
-		"AEP_PROMPT":          disp.prompt,
-		"AEP_GIT_SERVICE_URL": e.gitServiceURL,
-		"AEP_PLATFORM_URL":    e.platformURL,
-		"AEP_MCP_URL":         platform + "/internal/v1/mcp",
-		"AEP_IDENTITY_NAME":   name,
-		"AEP_IDENTITY_EMAIL":  email,
-		"AEP_IDENTITY_LOGIN":  login,
+		"AEP_TASK_ID":        in.correlationID,
+		"AEP_ORG_ID":         in.orgID,
+		"AEP_PROJECT_ID":     in.projectID,
+		"AEP_COMPONENT_NAME": disp.componentName,
+		"AEP_REPO_URL":       repo.RepoURL,
+		"AEP_PROMPT":         disp.prompt,
+		"AEP_PLATFORM_URL":   e.platformURL,
+		"AEP_MCP_URL":        platform + "/internal/v1/mcp",
+		"AEP_IDENTITY_NAME":  name,
+		"AEP_IDENTITY_EMAIL": email,
+		"AEP_IDENTITY_LOGIN": login,
 		// The owner-must-match-org guard's reference for the runner's
 		// in-process remote-git tools — the org's GitHub account, the same
 		// value its AE Studio pod is given as AE_GITHUB_OWNER.

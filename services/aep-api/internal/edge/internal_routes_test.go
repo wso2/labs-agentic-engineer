@@ -15,11 +15,8 @@
 // under the License.
 
 // Component-tier coverage for the contract-first internal S2S route group: the
-// runner credentials-refresh exchange through the REAL handler graph
-// (mountRoutes → internalGate → strict handler), with a Thunder
-// publisher-cc token. Pins the RUNNER-LOCKSTEP wire shape: exact top-level
-// body keys and the capitalized Identity keys — the runner must work unchanged
-// against this route group.
+// runner callbacks through the REAL handler graph (mountRoutes → internalGate →
+// strict handler), with a Thunder publisher-cc token.
 
 package edge
 
@@ -29,11 +26,9 @@ import (
 	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
-	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -41,25 +36,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
-	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
-
-type fakeCredsRefresh struct {
-	gotExecution, gotOrg string
-}
-
-func (f *fakeCredsRefresh) Refresh(_ context.Context, executionID, orgHandle string) (*organization.RefreshResponse, error) {
-	f.gotExecution, f.gotOrg = executionID, orgHandle
-	return &organization.RefreshResponse{
-		Token:     "ghs_fresh",
-		ExpiresAt: time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC),
-		Identity:  secrets.Identity{Name: "AEP Bot", Email: "bot@aep.dev", Login: "aep-bot"},
-		TaskID:    executionID,
-	}, nil
-}
 
 // fakeValidationContext records the cycle id and org the route group hands it, which
 // is what proves the path parameter reaches the service intact.
@@ -87,17 +66,16 @@ type internalStack struct {
 	// sign signs any claims with the Thunder test key, for tokens that are not
 	// a well-formed publisher token (user JWTs, other clients' tokens).
 	sign    func(claims jwt.Claims) string
-	refresh *fakeCredsRefresh
 	context *fakeValidationContext
 	// fenced records every cycle id the runner authorizer looked up, which
 	// is the id internalGate fenced the request on.
 	fenced *[]string
 }
 
-func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string, *fakeCredsRefresh) {
+func newInternalTestStack(t *testing.T) (http.Handler, func(org string) string) {
 	t.Helper()
 	s := newInternalStack(t)
-	return s.handler, s.mint, s.refresh
+	return s.handler, s.mint
 }
 
 const pubIssuer, pubAudPrefix = "platform-idp", "aep-publisher-"
@@ -181,52 +159,16 @@ func newInternalStack(t *testing.T) internalStack {
 		mint:       mint,
 		mintStudio: mintStudio,
 		sign:       sign,
-		refresh:    &fakeCredsRefresh{},
 		context:    &fakeValidationContext{},
 		fenced:     fenced,
 	}
 	stack.deps = InternalDeps{
-		CredsRefresh:      stack.refresh,
 		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
 		ValidationContext: stack.context,
 		StudioClients:     studioClients,
 	}
 	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack
-}
-
-func TestInternalRoutes_RunnerRefresh_Lockstep(t *testing.T) {
-	t.Parallel()
-	h, mint, svc := newInternalTestStack(t)
-
-	tok := mint("org-acme")
-	req := httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != 200 {
-		t.Fatalf("refresh: want 200, got %d body=%s", rec.Code, rec.Body.String())
-	}
-	if svc.gotExecution != "exec-42" || svc.gotOrg != "org-acme" {
-		t.Fatalf("service saw execution=%q org=%q — org must come from the verified token", svc.gotExecution, svc.gotOrg)
-	}
-
-	// RUNNER LOCKSTEP: exact field sets, including the capitalized Identity keys.
-	var body map[string]json.RawMessage
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("body: %v\n%s", err, rec.Body.String())
-	}
-	if got, want := slices.Sorted(maps.Keys(body)), []string{"expiresAt", "identity", "taskId", "token"}; !slices.Equal(got, want) {
-		t.Fatalf("top-level keys drifted: got %v want %v", got, want)
-	}
-	var identity map[string]json.RawMessage
-	if err := json.Unmarshal(body["identity"], &identity); err != nil {
-		t.Fatalf("identity: %v", err)
-	}
-	if got, want := slices.Sorted(maps.Keys(identity)), []string{"Email", "Login", "Name"}; !slices.Equal(got, want) {
-		t.Fatalf("identity keys drifted (capitalized, runner lockstep): got %v want %v", got, want)
-	}
 }
 
 // The validation callback lives under its own prefix, so the edge must MOUNT
@@ -277,10 +219,10 @@ func TestInternalRoutes_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 
 func TestInternalRoutes_AuthPosture(t *testing.T) {
 	t.Parallel()
-	h, mint, _ := newInternalTestStack(t)
+	h, mint := newInternalTestStack(t)
 
 	// No bearer → 401 envelope.
-	req := httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/cyc-42/context", strings.NewReader(""))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 401 || !strings.Contains(rec.Body.String(), `"code"`) {
@@ -289,11 +231,28 @@ func TestInternalRoutes_AuthPosture(t *testing.T) {
 
 	// Publisher token for another org → 403 (org fence).
 	tok := mint("org-other")
-	req = httptest.NewRequest(http.MethodPost, "/internal/v1/executions/exec-42/credentials/refresh", strings.NewReader(""))
+	req = httptest.NewRequest(http.MethodGet, "/internal/v1/validation/cyc-42/context", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 403 {
 		t.Fatalf("other org: want 403, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// credentials/refresh is gone: the coding Job mounts the org's gitpat, so there
+// is nothing for a runner to exchange. The route must not exist for the
+// publisher token that used to open it.
+func TestInternal_CredentialsRefreshIs404(t *testing.T) {
+	t.Parallel()
+	h, mint := newInternalTestStack(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/executions/x/credentials/refresh", strings.NewReader(""))
+	req.Header.Set("Authorization", "Bearer "+mint("org-acme"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("refresh: want 404, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }

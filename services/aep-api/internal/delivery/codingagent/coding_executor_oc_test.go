@@ -172,7 +172,6 @@ func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.Org
 		fakeRepos{repo: &sourcecontrol.GitRepository{RepoURL: "https://github.com/acme/widgets", RepoSlug: "acme-widgets"}},
 		fakeIdentities{},
 		newFakeExecRepo(),
-		"http://git",
 		"http://platform",
 		fakeOrgRepo{org: &organization.Organization{Name: "acme", UUID: orgUUID}},
 		anthropic,

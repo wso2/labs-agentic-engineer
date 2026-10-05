@@ -17,7 +17,7 @@
  */
 
 // Local-mode entrypoint — oneshot.ts's sibling for the AEP playground: the
-// workspace IS a plain local project dir (no clone, no credhelper, no PAT),
+// workspace IS a plain local project dir (no clone, no PAT),
 // and the workflow skill is the SAME `aep` skill production loads, with
 // `overlays/local.md` applied for `mode: "local"` (edit-in-place, no PR). See
 // workflow_skill.ts: both modes read one authored SKILL.md, so the project
@@ -129,7 +129,6 @@ function localDirWorkspace(run: LocalRun): WorkspaceLayout {
     ghConfigDir,
     bearerFile,
     aepDir,
-    helperBin: path.join(aepDir, "credhelper"), // never provisioned in local mode
     ghWrapper: path.join(aepDir, "gh"), // never provisioned in local mode
   };
 }
@@ -222,7 +221,6 @@ async function main(): Promise<number> {
     repoUrl: "",
     bearer: "",
     identity: { name: "AEP Playground", email: "playground@localhost" },
-    gitServiceUrl: "",
     // Same shape as prod's dispatch prompt: the run's subject, then a pointer at
     // the skill for the procedure. The pointer clause is duplicated in the BFF's
     // Go `buildPrompt` (delivery/codingagent/coding_executor.go) because the two

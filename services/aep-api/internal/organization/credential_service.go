@@ -52,7 +52,6 @@ import (
 type CredentialService struct {
 	repo      OrgCredentialRepository
 	store     secrets.CredentialStore
-	minter    *secrets.AppTokenMinter
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
 
 	// secretRefWriter mirrors the PAT into SM-API on Connect and clears it on
@@ -63,17 +62,15 @@ type CredentialService struct {
 	httpClient *http.Client
 }
 
-// NewCredentialService constructs the service. db, store, minter must be
+// NewCredentialService constructs the service. repo and store must be
 // non-nil. githubAPI may be empty (defaults to api.github.com).
 func NewCredentialService(
 	repo OrgCredentialRepository,
 	store secrets.CredentialStore,
-	minter *secrets.AppTokenMinter,
 ) *CredentialService {
 	return &CredentialService{
 		repo:       repo,
 		store:      store,
-		minter:     minter,
 		githubAPI:  "https://api.github.com",
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}

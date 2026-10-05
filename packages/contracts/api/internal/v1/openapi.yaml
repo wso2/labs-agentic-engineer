@@ -14,43 +14,10 @@ info:
 
     Requests are validated against this spec and body-capped per operation
     (1 MiB by default) before any handler runs.
-
-    RUNNER LOCKSTEP: the credentials-refresh exchange is consumed by the
-    coding runner — its request/response bytes must not change without a
-    coordinated runner release.
   version: 1.0.0
 servers:
 - url: /internal/v1
 paths:
-  /executions/{executionId}/credentials/refresh:
-    post:
-      operationId: runner-refresh-credentials
-      summary: Refresh an execution's git credentials (runner callback)
-      tags:
-      - Runner
-      security:
-      - taskJWT: []
-      - publisherCC: []
-      parameters:
-      - description: Execution id the runner callback is scoped to
-        in: path
-        name: executionId
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshResponse'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
   /validation/{cycleId}/context:
     get:
       operationId: runner-validation-context
@@ -439,54 +406,11 @@ paths:
                 $ref: '#/components/schemas/Error'
 components:
   schemas:
-    RefreshResponse:
-      description: Fresh GitHub token + commit identity for the execution.
-      type: object
-      additionalProperties: false
-      properties:
-        token:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
-        identity:
-          $ref: '#/components/schemas/Identity'
-        taskId:
-          type: string
-      required:
-      - token
-      - expiresAt
-      - identity
-      - taskId
-      # Generated as igen.RefreshResponse (no x-go-type). The org domain owns the
-      # RefreshResponse value type and projects onto this wire shape at the edge —
-      # igen must stay a leaf, so it cannot import the domain that owns the type.
-      # This schema IS the runner-lockstep wire contract; keep it field-aligned
-      # with the domain's mapping.
-    Identity:
-      description: 'Git commit identity. Field names are CAPITALIZED on the
-        wire (historical lockstep — changing them needs a coordinated runner
-        release). KNOWN GAP: the runner''s credhelper currently reads
-        lowercase keys, so its identity-drift rewrite never fires; fix belongs
-        runner-side (case-tolerant parse), not here.'
-      type: object
-      additionalProperties: false
-      properties:
-        Name:
-          type: string
-        Email:
-          type: string
-        Login:
-          type: string
-      required:
-      - Name
-      - Email
-      - Login
     ValidationContextResponse:
       description: The deployed endpoints a validation run drives. Generated as
         igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf,
         so the edge's internal handler projects the delivery domain's own struct
-        onto this wire shape (the same decoupling as RefreshResponse).
+        onto this wire shape (the same decoupling as every wire projection here).
 
         It carries no oracle path; the runner already knows where the oracle is.
       type: object

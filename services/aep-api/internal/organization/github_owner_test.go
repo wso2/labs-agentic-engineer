@@ -38,7 +38,7 @@ func (r ownerRows) GetByOrg(_ context.Context, org string) (*organization.OrgCre
 
 func TestGitHubOwner_IsTheConnectedLogin(t *testing.T) {
 	rows := ownerRows{rows: map[string]*organization.OrgCredential{"acme": {OcOrgID: "acme", GitHubLogin: "acme-gh"}}}
-	svc := organization.NewCredentialService(rows, nil, nil)
+	svc := organization.NewCredentialService(rows, nil)
 	if owner, err := svc.GitHubOwner(context.Background(), "acme"); err != nil || owner != "acme-gh" {
 		t.Fatalf("owner=%q err=%v", owner, err)
 	}
@@ -46,7 +46,7 @@ func TestGitHubOwner_IsTheConnectedLogin(t *testing.T) {
 		t.Fatalf("no row: err = %v, want ErrAEStudioAbsent", err)
 	}
 	boom := errors.New("db down")
-	failing := organization.NewCredentialService(ownerRows{err: boom}, nil, nil)
+	failing := organization.NewCredentialService(ownerRows{err: boom}, nil)
 	if _, err := failing.GitHubOwner(context.Background(), "acme"); !errors.Is(err, boom) || errors.Is(err, sourcecontrol.ErrAEStudioAbsent) {
 		t.Fatalf("read failure: err = %v", err)
 	}
