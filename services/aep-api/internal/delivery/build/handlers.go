@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
@@ -41,17 +42,17 @@ import (
 type Handler struct {
 	svc       *Service
 	preflight *PreflightService
-	publisher PublisherProvisioner
+	publisher PublisherGate
 }
 
-// PublisherProvisioner ensures the org's Thunder publisher client_credentials
-// SecretReference exists before a coding-agent build starts. Wired on Handler
-// (never on Service) because POST /projects/{name}/build is the sole request
-// path that still carries the console JWT ProvisionPublisherForBuild needs —
-// Temporal dispatch and the StartProjectBuild auto-kick trigger run with no
-// such JWT and must stay read-only with respect to publisher credentials.
-type PublisherProvisioner interface {
-	ProvisionPublisherForBuild(ctx context.Context, orgID string) error
+// PublisherGate refuses a build whose org has no publisher credentials (its
+// ae-publisher-client reference) before the tag is cut. It only reads: the
+// gitpat submit is the one writer of those credentials (06 §3), so a missing
+// row is delivery.ErrPublisherCredentialsMissing, which sends the user to
+// reconnect GitHub. Wired on Handler (never on Service): the StartProjectBuild
+// auto-kick trigger reaches dispatch, which refuses on its own.
+type PublisherGate interface {
+	RequirePublisherForBuild(ctx context.Context, orgID string) error
 }
 
 // NewHandler returns the slice's handler.
@@ -59,18 +60,26 @@ func NewHandler(svc *Service, preflight *PreflightService) *Handler {
 	return &Handler{svc: svc, preflight: preflight}
 }
 
-// WithPublisherProvisioner wires the publisher provisioner. Optional: nil
-// skips provisioning (tests that do not care).
-func (h *Handler) WithPublisherProvisioner(p PublisherProvisioner) *Handler {
+// WithPublisherGate wires the publisher gate. Optional: nil skips it (tests
+// that do not care).
+func (h *Handler) WithPublisherGate(p PublisherGate) *Handler {
 	h.publisher = p
 	return h
 }
 
+// codePublisherCredentialsMissing is the error code of a build refused for
+// want of the org's publisher credentials.
+const codePublisherCredentialsMissing = "publisher_credentials_missing"
+
 func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequestObject) (gen.BuildProjectResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	if h.publisher != nil {
-		if err := h.publisher.ProvisionPublisherForBuild(ctx, org); err != nil {
-			slog.ErrorContext(ctx, "publisher provision for build failed", "error", err)
+		if err := h.publisher.RequirePublisherForBuild(ctx, org); err != nil {
+			if errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+				slog.InfoContext(ctx, "build refused: no publisher credentials", "org", org)
+				return nil, apierr.New(http.StatusConflict, codePublisherCredentialsMissing, delivery.PublisherReconnectMessage, nil)
+			}
+			slog.ErrorContext(ctx, "publisher gate for build failed", "org", org, "error", err)
 			return nil, apierr.ServiceUnavailable("publisher credentials unavailable")
 		}
 	}

@@ -55,20 +55,17 @@ type CodingExecutor struct {
 	// cycle in the milestone's own project.
 	ocJobs *OCDispatcher
 
-	// Org-scoped reads, always wired at the composition root: the per-org
-	// GitHub SM-API triplet + IDP publisher profile the Workload's secret-env
-	// refs are built from, and the org lookup for the data-plane UUID. The
-	// Anthropic side goes through a resolver rather than a repository because
-	// WHICH of the org's two possible keys a run bills is a domain decision,
-	// not a row lookup.
+	// Org-scoped reads, always wired at the composition root: the org lookup
+	// for the data-plane UUID and the org secret rows the Workload's
+	// secret-env refs are built from. The model key goes through a resolver
+	// rather than a repository because WHICH of the org's two possible keys a
+	// run bills is a domain decision, not a row lookup.
 	orgs         organization.OrganizationRepository
 	anthropicKey CodingKeyResolver
-	githubCreds  organization.OrgCredentialRepository
-	idpProfiles  organization.IDPRepository
 
 	// orgSecrets reads the github-pat row, the reference every run mounts
-	// (R7). Nil: every org resolves from its org_credentials triplet, as one
-	// connected before phase 1 does.
+	// (R7). Required: the PAT lives only in vault, and the row is the only
+	// record of its reference.
 	orgSecrets organization.OrgSecretRefReader
 
 	// githubOwners answers the GitHub account the org's repositories live
@@ -107,6 +104,8 @@ type CodingExecutor struct {
 
 // NewCodingExecutor wires the coding executor. Every dispatch goes through the
 // OpenChoreo component path; there is no alternative path to enable.
+// orgSecrets must be non-nil: there is no reading the GitHub PAT's reference
+// without its row.
 func NewCodingExecutor(
 	oc openchoreo.ComponentClient,
 	repos ProjectRepos,
@@ -115,13 +114,15 @@ func NewCodingExecutor(
 	platformURL string,
 	orgs organization.OrganizationRepository,
 	anthropicKey CodingKeyResolver,
-	githubCreds organization.OrgCredentialRepository,
-	idpProfiles organization.IDPRepository,
+	orgSecrets organization.OrgSecretRefReader,
 ) *CodingExecutor {
+	if orgSecrets == nil {
+		panic("codingagent: NewCodingExecutor needs the org secret rows")
+	}
 	return &CodingExecutor{
 		oc: oc, repos: repos, identities: identities,
 		execRows: execRows, platformURL: platformURL,
-		orgs: orgs, anthropicKey: anthropicKey, githubCreds: githubCreds, idpProfiles: idpProfiles,
+		orgs: orgs, anthropicKey: anthropicKey, orgSecrets: orgSecrets,
 	}
 }
 
@@ -129,13 +130,6 @@ func NewCodingExecutor(
 // Returns the receiver for chained construction.
 func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
 	e.ocJobs = d
-	return e
-}
-
-// WithOrgSecrets attaches the org secret rows dispatch takes the GitHub
-// PAT's reference name from. Returns the receiver for chained construction.
-func (e *CodingExecutor) WithOrgSecrets(r organization.OrgSecretRefReader) *CodingExecutor {
-	e.orgSecrets = r
 	return e
 }
 
@@ -265,7 +259,7 @@ func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (deliv
 // dispatchViaOC launches one cycle through the OpenChoreo Component chain.
 //
 // The executor's job here is credential and identity resolution — the org's
-// refs-only secret triplets and the publisher SecretReference — and the
+// secret references (names the org_secrets rows record) — and the
 // dispatcher's job is the OC chain. The run name is derived from the CYCLE id,
 // deterministically within a dispatch attempt, so a crashed dispatch resumes
 // over the same Component instead of orphaning it.
@@ -495,33 +489,17 @@ func (e *CodingExecutor) githubOwner(ctx context.Context, orgID string) (string,
 // row records, with the token key (R7), so a rotation never leaves a Job
 // mounting the reference the write already deleted. The Job carries only
 // SecretKeyRef{Name, Key}; OpenChoreo resolves the reference itself (C10).
-//
-// No row: a pre-phase-1 org, resolved from its org_credentials triplet alone,
-// name and key from that one source (its key is api-key there). Removed in
-// phase 6.
+// No row: the org has no PAT reference (the PAT lives only in vault), and the
+// dispatch fails.
 func (e *CodingExecutor) githubSecretRef(ctx context.Context, orgID string) (SecretRef, error) {
 	name, ok, err := organization.RecordedOrgSecretRef(ctx, e.orgSecrets, orgID, organization.OrgSecretGitHubPAT)
 	if err != nil {
 		return SecretRef{}, fmt.Errorf("github secret reference for org %q: %w", orgID, err)
 	}
-	if ok {
-		return SecretRef{SecretRefName: name, Property: organization.OrgSecretGitHubPAT.ValueKey()}, nil
+	if !ok {
+		return SecretRef{}, fmt.Errorf("github secret reference missing for org %q: no %s row (reconnect GitHub)", orgID, organization.OrgSecretGitHubPAT)
 	}
-	githubRow, err := e.githubCreds.GetByOrg(ctx, orgID)
-	if err != nil {
-		return SecretRef{}, fmt.Errorf("github credentials for org %q: %w", orgID, err)
-	}
-	if githubRow == nil {
-		return SecretRef{}, fmt.Errorf("github secret reference missing for org %q: org_credentials row not found", orgID)
-	}
-	githubSR := SecretRef{
-		SecretRefName: derefStr(githubRow.SecretRefName),
-		Property:      derefStr(githubRow.SecretRefProperty),
-	}
-	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
-		return SecretRef{}, err
-	}
-	return githubSR, nil
+	return SecretRef{SecretRefName: name, Property: organization.OrgSecretGitHubPAT.ValueKey()}, nil
 }
 
 // evaluationKeyRef resolves the org's connection key as the build's
@@ -579,18 +557,6 @@ func (e *CodingExecutor) codingAgentEnv(ctx context.Context, orgID string) (orgc
 	return proj, nil
 }
 
-// validateSecretRefTriplet requires what a mounted reference needs: its name
-// and its key (C10).
-func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
-	if ref.SecretRefName == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_name not populated", credential, orgID)
-	}
-	if ref.Property == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_property not populated", credential, orgID)
-	}
-	return nil
-}
-
 // codingAgentRunPrefix marks a run name as a coding-agent cycle run (owned by
 // the cycle watcher) rather than an OpenChoreo build WorkflowRun. It is the ONE
 // discriminator both watchers key on so they never poll each other's runs.
@@ -611,13 +577,6 @@ func isCodingAgentRun(runName string) bool {
 // hit the same name — a wall-clock suffix would mint a second billed Component.
 func codingAgentRunNameFor(projectID, cycleID string) string {
 	return openchoreo.NewCodingAgentRunName(projectID, cycleID)
-}
-
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
 }
 
 // buildPrompt is the coding-agent directive (§9): a MILESTONE REFERENCE and

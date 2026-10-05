@@ -156,27 +156,6 @@ paths:
       summary: Disconnect the git provider (cascade) for the org
       tags:
       - Org Config
-  /config/idp/client-secret:
-    post:
-      operationId: rotate-idp-client-secret
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClientSecretOutputBody'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-      security:
-      - userJWT: []
-      summary: Rotate the IDP publisher client secret (returned once)
-      tags:
-      - Org Config
   /config/idp/discovery:
     get:
       operationId: discover-idp
@@ -3450,14 +3429,6 @@ components:
       - status
       - startedAt
       type: object
-    ClientSecretOutputBody:
-      additionalProperties: false
-      properties:
-        clientSecret:
-          type: string
-      required:
-      - clientSecret
-      type: object
     Component:
       additionalProperties: false
       properties:
@@ -4787,6 +4758,7 @@ components:
       additionalProperties: false
       properties:
         hasClientSecret:
+          description: Whether the org's publisher client secret is recorded (its ae-publisher-client reference exists). The secret itself lives only in vault.
           type: boolean
         issuer:
           type: string

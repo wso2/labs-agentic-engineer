@@ -55,43 +55,29 @@ func (e *CodingExecutor) WithPublisherCredentials(r PublisherCredentialResolver,
 }
 
 type idpPublisherResolver struct {
-	profiles   organization.IDPRepository
 	orgSecrets organization.OrgSecretRefReader
 }
 
-func NewIDPPublisherResolver(profiles organization.IDPRepository, orgSecrets organization.OrgSecretRefReader) PublisherCredentialResolver {
-	return &idpPublisherResolver{profiles: profiles, orgSecrets: orgSecrets}
+// NewIDPPublisherResolver resolves the publisher's reference from the org's
+// ae-publisher-client row. orgSecrets must be non-nil: the row is the only
+// record of the reference.
+func NewIDPPublisherResolver(orgSecrets organization.OrgSecretRefReader) PublisherCredentialResolver {
+	if orgSecrets == nil {
+		panic("codingagent: NewIDPPublisherResolver needs the org secret rows")
+	}
+	return &idpPublisherResolver{orgSecrets: orgSecrets}
 }
 
 // SecretRefName is the name the org's ae-publisher-client row records (R7),
 // so a rotation never leaves a Job mounting the reference the write already
-// deleted. No row: a pre-phase-1 org, resolved from its IDP profile's
-// triplet. Removed in phase 6.
+// deleted. No row answers "": the dispatch then refuses with
+// delivery.ErrPublisherCredentialsMissing (publisherSecretEnv).
 func (r *idpPublisherResolver) SecretRefName(ctx context.Context, orgID string) (string, error) {
-	if r == nil {
-		return "", fmt.Errorf("publisher resolver not wired")
-	}
-	name, ok, err := organization.RecordedOrgSecretRef(ctx, r.orgSecrets, orgID, organization.OrgSecretPublisherClient)
+	name, _, err := organization.RecordedOrgSecretRef(ctx, r.orgSecrets, orgID, organization.OrgSecretPublisherClient)
 	if err != nil {
 		return "", fmt.Errorf("publisher secret reference: %w", err)
 	}
-	if ok {
-		return name, nil
-	}
-	if r.profiles == nil {
-		return "", fmt.Errorf("publisher resolver not wired")
-	}
-	row, err := r.profiles.GetProfileByOrgID(ctx, orgID)
-	if err != nil {
-		return "", fmt.Errorf("load publisher profile: %w", err)
-	}
-	if row == nil {
-		return "", fmt.Errorf("publisher profile missing")
-	}
-	if !organization.HasPublisherSecretRef(row) {
-		return "", nil
-	}
-	return strings.TrimSpace(*row.SecretRefName), nil
+	return name, nil
 }
 
 func (e *CodingExecutor) publisherSecretEnv(ctx context.Context, orgID string) ([]SecretEnvRef, string, error) {
@@ -108,7 +94,7 @@ func (e *CodingExecutor) publisherSecretEnv(ctx context.Context, orgID string) (
 	}
 	refName = strings.TrimSpace(refName)
 	if refName == "" {
-		return nil, "", fmt.Errorf("%w: coding-agent publisher SecretReference is not stamped", delivery.ErrPublisherCredentialsMissing)
+		return nil, "", fmt.Errorf("%w: coding-agent publisher SecretReference is not stamped (no %s row)", delivery.ErrPublisherCredentialsMissing, organization.OrgSecretPublisherClient)
 	}
 	return []SecretEnvRef{
 		{Key: envPublisherClientID, SecretName: refName, SecretKey: organization.PublisherSecretFieldClientID},

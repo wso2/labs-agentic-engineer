@@ -110,11 +110,8 @@ func clientSecretOf(kind ClientKind) (OrgSecret, error) {
 	}
 }
 
-func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind ClientKind) error {
-	return s.ensureClient(ctx, orgID, kind, ClientEnsureActor)
-}
-
-// ensureClient is EnsureClient with the audit actor of the publisher ensure.
+// EnsureClient is the only writer of the org clients and their secrets; the
+// gitpat submit runs it, with the user's ouId claim on ctx (the vault path).
 //
 // The whole ensure (the Thunder ensure, the row check, the write and on heal
 // the Thunder PUT) holds the client secret's lock. Otherwise a found-app
@@ -122,7 +119,7 @@ func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind Client
 // write of the created secret, leaving the reference on a secret Thunder no
 // longer holds while the row looks present. Thunder calls and profile
 // updates take no advisory lock, so the lock order holds.
-func (s *idpService) ensureClient(ctx context.Context, orgID string, kind ClientKind, actor string) error {
+func (s *idpService) EnsureClient(ctx context.Context, orgID string, kind ClientKind) error {
 	if orgID == "" {
 		return fmt.Errorf("orgID required")
 	}
@@ -151,7 +148,7 @@ func (s *idpService) ensureClient(ctx context.Context, orgID string, kind Client
 		var client orgClient
 		var err error
 		if kind == ClientPublisher {
-			client, err = s.publisherClient(ctx, l, orgID, actor, thunderOU, vaultOU)
+			client, err = s.publisherClient(ctx, l, orgID, thunderOU, vaultOU)
 		} else {
 			client, err = s.studioClient(ctx, l, orgID, thunderOU, vaultOU)
 		}
@@ -197,21 +194,19 @@ func (s *idpService) storeClientSecret(ctx context.Context, l *OrgSecretLocked, 
 
 // publisherClient ensures aep-publisher-<org> under thunderOU (the default
 // OU when the org row has none, as on every publisher path), recording its
-// ids (and, on create, the sealed secret) on the profile. Its write also
-// keeps the dual path: the sealed publisher_client_secret column and the
-// profile triplet.
-func (s *idpService) publisherClient(ctx context.Context, l *OrgSecretLocked, orgID, actor, thunderOU, vaultOU string) (orgClient, error) {
-	app, err := s.ensurePublisherApp(ctx, orgID, actor, thunderOU)
+// ids on the profile. The secret lives only in the reference: no column
+// holds it.
+func (s *idpService) publisherClient(ctx context.Context, l *OrgSecretLocked, orgID, thunderOU, vaultOU string) (orgClient, error) {
+	app, err := s.ensurePublisherApp(ctx, orgID, ClientEnsureActor, thunderOU)
 	if err != nil {
 		return orgClient{}, err
 	}
 	return orgClient{
 		app: app,
 		write: func(clientSecret string, beforeStamp func() error) error {
-			_, err := s.secretRefWriter.writePublisherClient(ctx, l, orgID, vaultOU, app.ClientID, clientSecret, beforeStamp, map[string]any{
+			_, err := s.secretRefWriter.writeOrgClient(ctx, l, orgID, vaultOU, ClientPublisher, app.ClientID, clientSecret, beforeStamp, map[string]any{
 				"publisher_client_id":      app.ClientID,
 				"publisher_thunder_app_id": app.EntityID,
-				"publisher_client_secret":  clientSecret,
 				"updated_at":               time.Now().UTC(),
 			})
 			return err
@@ -250,7 +245,7 @@ func (s *idpService) studioClient(ctx context.Context, l *OrgSecretLocked, orgID
 	return orgClient{
 		app: app,
 		write: func(clientSecret string, beforeStamp func() error) error {
-			_, err := s.secretRefWriter.writeStudioClient(ctx, l, orgID, vaultOU, app.ClientID, clientSecret, beforeStamp, ids)
+			_, err := s.secretRefWriter.writeOrgClient(ctx, l, orgID, vaultOU, ClientStudio, app.ClientID, clientSecret, beforeStamp, ids)
 			return err
 		},
 	}, nil

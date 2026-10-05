@@ -132,7 +132,6 @@ var opOwner = map[string]string{
 	"RequestOrgServiceAccess":       embedDependencies,
 	"RevealTestUserPassword":        embedIdentity,
 	"RotateTestUserPassword":        embedIdentity,
-	"RotateIdpClientSecret":         embedOrganization,
 	"SetSkillEnabled":               embedSpec,
 	"StreamBuildProgress":           embedDelivery,
 	"StreamRunProgress":             embedDelivery,

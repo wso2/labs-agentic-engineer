@@ -165,7 +165,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// connection, subscription and agent-settings rows (the keys live only in
 	// vault).
 	agentsCardRepo := organization.NewAgentsCardRepository(db)
-	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
+	idpRepo := organization.NewIDPRepository(db)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
 
 	// Temporal runtime for the milestone run supervisor. Constructed always, but
@@ -253,7 +253,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Secret-ref mirror writer. Constructed ahead of the credential / IDP service
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
-	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, idpRepo).
+	secretRefWriter := organization.NewSecretRefWriter(smClient, idpRepo).
 		// Every Default key save is a new vault path: the deployed direct
 		// ai-agent components' ai-agent-model-access reference moves with it
 		// before the previous path is retired.
@@ -511,13 +511,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService.SetWriteTargets(writeTargets)
 
 	// Thunder admin client + IDP service. Reads
-	// aep-system-client credentials from env (THUNDER_*) and exposes
-	// EnsureOrgPublisher / RevokeOrgPublisher / RegenerateClientSecret
-	// for per-org publisher OAuth app lifecycle. Optional — when the
-	// Thunder base URL is empty the IDP service still runs and serves
-	// GetProfile / GetOrCreateProfile, but mutating calls fail with
-	// ErrIDPThunderUnavailable (non-fatal — protected components keep
-	// deploying, just without per-org publishers).
+	// aep-system-client credentials from env (THUNDER_*); the IDP service's
+	// EnsureClient (the gitpat submit) is the per-org publisher / studio
+	// client lifecycle. Optional — when the Thunder base URL is empty the IDP
+	// service still runs and serves GetProfile / GetOrCreateProfile, but the
+	// client ensure fails with ErrIDPThunderUnavailable.
 	var thunderAdminClient thundersvc.Client
 	thunderBase := cfg.ThunderAdmin.BaseURL
 	if thunderBase == "" {
@@ -618,17 +616,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organizationService.SetOUValidator(thunderAdminClient)
 		slog.Info("org OU validation wired — JWT ouId is validated against Thunder before the org→OU mapping is (over)written")
 	}
-	// WithSecretRefWriter mirrors per-org publisher client_secret to SM-API on
-	// EnsureOrgPublisher / RegenerateClientSecret and on
-	// ProvisionPublisherForBuild (POST /build, actor build-provision).
-	// Coding dispatch reads secret_ref_name only and mounts PUBLISHER_CLIENT_ID
-	// and PUBLISHER_CLIENT_SECRET from that SecretReference.
+	// WithSecretRefWriter is where the gitpat submit's EnsureClient stores the
+	// org clients' credentials (only in vault, the org's ae-publisher-client
+	// and ae-studio-client references). WithOrgSecretRefs is what POST /build's
+	// RequirePublisherForBuild reads. Coding dispatch mounts
+	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
+	// ae-publisher-client row names.
 	idpService := organization.NewIDPService(idpRepo, orgRepo, thunderAdminClient, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
-	}).WithSecretRefWriter(secretRefWriter)
-	// Make idpService available to the deployment projection so a
-	// first-protected-deploy provisions the org publisher app lazily.
+	}).WithSecretRefWriter(secretRefWriter).WithOrgSecretRefs(orgSecretRepo)
+	// The deployment projection reads the org's IDP profile (the issuer a
+	// protected API is pinned to); it never creates the publisher app.
 	deploymentService.SetIDPService(idpService)
 
 	// asServiceIdentity marks OC API calls made from inside dispatch, webhook
@@ -651,20 +650,18 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		componentClient, repoService, identities{cred: credService},
 		executionRepo,
 		cfg.AgentPlatformURL,
-		orgRepo, modelConnections, orgCredRepo, idpRepo).
 		// The GitHub PAT reference a run mounts is the github-pat row's (R7).
-		WithOrgSecrets(orgSecretRepo).
+		orgRepo, modelConnections, orgSecretRepo).
 		// The org's GitHub account, stamped as AEP_GITHUB_OWNER: the owner
 		// guard's reference for the runner's in-process remote-git tools.
 		WithGitHubOwners(credService)
-	// Dispatch reads secret_ref_name only — it does not call
-	// EnsureOrgPublisher. POST /build provisions the SecretReference while the
-	// console JWT is still on ctx.
+	// Dispatch only reads the ae-publisher-client row's reference name; the
+	// gitpat submit is the one writer of it.
 	// Which runtime and model this org's cycles run on. The values are copied
 	// onto each Job's env, so a change applies from the next cycle.
 	codingExecutor.WithCodingAgentSettings(agentSettings)
 	codingExecutor.WithPublisherCredentials(
-		codingagent.NewIDPPublisherResolver(idpRepo, orgSecretRepo),
+		codingagent.NewIDPPublisherResolver(orgSecretRepo),
 		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
 	)
 	// The OpenChoreo Component dispatch path (phase 08): one Component per run
@@ -1202,10 +1199,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		RunCycleBuilds: runCycleBuilds,
 		RunValidation:  validationReads,
 	}
-	// WritePublisher stamps secret_ref_name onto the org's IDP profile;
-	// without a SecretsProvider, ProvisionPublisherForBuild fails closed and
-	// every POST /build 503s until a SecretsProvider is injected.
-	deliveryDeps.PublisherProvisioner = idpService
+	// POST /build is refused (409 publisher_credentials_missing, "Reconnect
+	// GitHub ...") while the org has no ae-publisher-client row.
+	deliveryDeps.PublisherGate = idpService
 	deliveryHandlers, err := deliveryhttpapi.New(deliveryDeps)
 	if err != nil {
 		return nil, fmt.Errorf("assemble delivery domain: %w", err)

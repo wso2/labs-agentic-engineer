@@ -19,49 +19,23 @@ package organization
 import (
 	"context"
 	"fmt"
-	"log/slog"
-)
-
-// orgSecretRefSource names where a consumer's SecretReference name came
-// from. It is logged, never a value.
-type orgSecretRefSource string
-
-const (
-	// orgSecretRefFromRow: the org_secrets row, which every write since
-	// phase 1 records before it repoints and retires the previous reference.
-	orgSecretRefFromRow orgSecretRefSource = "org_secrets"
-	// orgSecretRefFromLegacyTriplet: the triplet columns of an org
-	// connected before phase 1, which has no row yet. Removed in phase 6.
-	orgSecretRefFromLegacyTriplet orgSecretRefSource = "legacy_triplet"
 )
 
 // RecordedOrgSecretRef returns the SecretReference name the row of s
 // records, so a rotation never leaves a consumer mounting a reference the
-// write already deleted (R7). ok is false when s has no row, or refs is nil:
-// the caller then falls back to its own triplet columns, taking the name and
-// the key from that one source. It logs, value-free, which source the
-// caller uses.
+// write already deleted (R7). ok is false when s has no row: the secret
+// lives only in vault and the row is the record that it was written, so the
+// caller has no reference to mount. A nil refs is a wiring error.
 func RecordedOrgSecretRef(ctx context.Context, refs OrgSecretRefReader, ocOrgID string, s OrgSecret) (name string, ok bool, err error) {
-	if refs != nil {
-		row, err := refs.Get(ctx, ocOrgID, s)
-		if err != nil {
-			return "", false, fmt.Errorf("read the %s row: %w", s, err)
-		}
-		if row != nil && row.Name != "" {
-			logOrgSecretRefSource(ctx, ocOrgID, s, orgSecretRefFromRow)
-			return row.Name, true, nil
-		}
+	if refs == nil {
+		return "", false, fmt.Errorf("read the %s row: org secret rows not configured", s)
 	}
-	logOrgSecretRefSource(ctx, ocOrgID, s, orgSecretRefFromLegacyTriplet)
-	return "", false, nil
-}
-
-// logOrgSecretRefSource logs the source: a row at Debug (the steady state), a
-// legacy fallback at Info (an org phase 6 must migrate).
-func logOrgSecretRefSource(ctx context.Context, ocOrgID string, s OrgSecret, source orgSecretRefSource) {
-	level := slog.LevelDebug
-	if source == orgSecretRefFromLegacyTriplet {
-		level = slog.LevelInfo
+	row, err := refs.Get(ctx, ocOrgID, s)
+	if err != nil {
+		return "", false, fmt.Errorf("read the %s row: %w", s, err)
 	}
-	slog.Log(ctx, level, "org secret reference resolved", "ocOrgId", ocOrgID, "secret", string(s), "source", string(source))
+	if row == nil || row.Name == "" {
+		return "", false, nil
+	}
+	return row.Name, true, nil
 }

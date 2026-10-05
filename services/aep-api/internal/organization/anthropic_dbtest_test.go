@@ -86,7 +86,7 @@ func newCardDB(t *testing.T, apiStatus int, existing ...string) *cardDB {
 	vault := newFakeVault(existing...)
 	sm := mintingSM{fakeSMClient: &fakeSMClient{}, vault: vault}
 	consumers := &pathConsumers{}
-	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(db, nil), organization.NewIDPRepository(db, nil)).
+	writer := organization.NewSecretRefWriter(sm, organization.NewIDPRepository(db)).
 		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, refs, organization.NewOrgSecretLock(db), fixedClock)).
 		WithModelKeyConsumers(consumers)
 	svc := organization.NewAnthropicCredentialService(repo).WithAnthropicAPIBase(subsBase).WithSecretRefWriter(writer)

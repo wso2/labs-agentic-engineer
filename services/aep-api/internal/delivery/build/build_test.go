@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -267,25 +268,25 @@ func mustDelivery(h *deliveryhttpapi.Handlers, err error) *deliveryhttpapi.Handl
 	return h
 }
 
-type provisionSpy struct {
+type publisherGateSpy struct {
 	orgs []string
 	err  error
 	seq  *[]string
 }
 
-func (p *provisionSpy) ProvisionPublisherForBuild(_ context.Context, orgID string) error {
+func (p *publisherGateSpy) RequirePublisherForBuild(_ context.Context, orgID string) error {
 	if p.seq != nil {
-		*p.seq = append(*p.seq, "provision")
+		*p.seq = append(*p.seq, "require")
 	}
 	p.orgs = append(p.orgs, orgID)
 	return p.err
 }
 
-func newHarnessWithPublisher(t *testing.T, svc *build.Service, p build.PublisherProvisioner) *componenttest.Harness {
+func newHarnessWithPublisher(t *testing.T, svc *build.Service, p build.PublisherGate) *componenttest.Harness {
 	t.Helper()
 	return componenttest.New(t, componenttest.Options{Deps: edge.Deps{
 		Delivery: mustDelivery(deliveryhttpapi.New(deliveryhttpapi.Deps{
-			BuildSvc: svc, PublisherProvisioner: p,
+			BuildSvc: svc, PublisherGate: p,
 		})),
 	}})
 }
@@ -599,46 +600,70 @@ func TestBuild_NoClaims401(t *testing.T) {
 	}
 }
 
-// ----- POST /build publisher provisioning ------------------------------------
+// ----- POST /build publisher gate ---------------------------------------------
 
-// The publisher provisioner runs before Run cuts the tag — the
-// handler, not the service, calls it, since only the handler still has the
-// console JWT that ProvisionPublisherForBuild needs.
-func TestBuild_PublisherProvisionerRunsBeforeTag(t *testing.T) {
+// The publisher gate runs before Run cuts the tag: a build whose org has no
+// ae-publisher-client reference never starts.
+func TestBuild_PublisherGateRunsBeforeTag(t *testing.T) {
 	var seq []string
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}, seq: &seq}
 	svc := newSvc(fakeRepos{}, tagger)
-	spy := &provisionSpy{seq: &seq}
+	spy := &publisherGateSpy{seq: &seq}
 	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
 	if resp.Code != 200 {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	if len(spy.orgs) != 1 || spy.orgs[0] != "acme" {
-		t.Fatalf("provisioner orgs=%v", spy.orgs)
+		t.Fatalf("gate orgs=%v", spy.orgs)
 	}
 	if tagger.called != 1 {
-		t.Fatalf("Run must still tag after provision, called=%d", tagger.called)
+		t.Fatalf("Run must still tag after the gate, called=%d", tagger.called)
 	}
-	if len(seq) != 2 || seq[0] != "provision" || seq[1] != "tag" {
-		t.Fatalf("order=%v want provision then tag", seq)
+	if len(seq) != 2 || seq[0] != "require" || seq[1] != "tag" {
+		t.Fatalf("order=%v want require then tag", seq)
 	}
 }
 
-// A provision failure (e.g. no JWT on ctx, SM-API down) answers 503 and never
-// reaches Run — no tag is cut on unprovisioned publisher credentials.
-func TestBuild_PublisherProvisionErrorDoesNotTag(t *testing.T) {
+// No ae-publisher-client row: 409 publisher_credentials_missing with the
+// "Reconnect GitHub" sentence, and no tag is cut (06 §3).
+func TestBuild_PublisherCredentialsMissingIs409ReconnectGitHub(t *testing.T) {
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
 	svc := newSvc(fakeRepos{}, tagger)
-	spy := &provisionSpy{err: errors.New("sm-api: no JWT in context")}
+	spy := &publisherGateSpy{err: fmt.Errorf("%w: %s", delivery.ErrPublisherCredentialsMissing, delivery.PublisherReconnectMessage)}
+	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
+	if resp.Code != 409 {
+		t.Fatalf("status=%d want 409 body=%s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v body=%s", err, resp.Body.String())
+	}
+	if body.Code != "publisher_credentials_missing" || body.Message != "Reconnect GitHub to set up this organization's build credentials" {
+		t.Fatalf("body = %+v", body)
+	}
+	if tagger.called != 0 {
+		t.Fatalf("a missing publisher row must not cut a tag, called=%d", tagger.called)
+	}
+}
+
+// Any other gate failure (the row could not be read) answers 503 and never
+// reaches Run; the body does not echo the cause.
+func TestBuild_PublisherGateErrorDoesNotTag(t *testing.T) {
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
+	svc := newSvc(fakeRepos{}, tagger)
+	spy := &publisherGateSpy{err: errors.New("read the ae-publisher-client row: db down")}
 	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
 	if resp.Code != 503 {
 		t.Fatalf("status=%d want 503 body=%s", resp.Code, resp.Body.String())
 	}
 	if tagger.called != 0 {
-		t.Fatalf("failed provision must not cut a tag, called=%d", tagger.called)
+		t.Fatalf("a failed gate must not cut a tag, called=%d", tagger.called)
 	}
-	if strings.Contains(resp.Body.String(), "sm-api") || strings.Contains(resp.Body.String(), "JWT") {
-		t.Fatalf("client body must not echo the provisioner error, got %s", resp.Body.String())
+	if strings.Contains(resp.Body.String(), "db down") {
+		t.Fatalf("client body must not echo the gate error, got %s", resp.Body.String())
 	}
 }
 
@@ -662,9 +687,9 @@ func TestStartProjectBuild_HappyPath_ClaimsTheVersion(t *testing.T) {
 }
 
 // StartProjectBuild is the non-HTTP auto-kick trigger, which never has a
-// console JWT — it must not see the handler's publisher provisioner, and
+// console JWT — it must not see the handler's publisher gate, and
 // must keep going through Run exactly as before.
-func TestStartProjectBuild_DoesNotUseHandlerProvisioner(t *testing.T) {
+func TestStartProjectBuild_DoesNotUseHandlerPublisherGate(t *testing.T) {
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
 	svc := newSvc(fakeRepos{}, tagger)
 	if err := svc.StartProjectBuild(context.Background(), "acme", "shop"); err != nil {

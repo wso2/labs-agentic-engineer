@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// COMPONENT tier: the /config action routes (disconnect,
-// client-secret rotation, discovery) plus the migration assertions (H1 — the
+// COMPONENT tier: the /config action routes (disconnect, discovery; the
+// client-secret rotation route is gone) plus the migration assertions (H1 — the
 // legacy /org/* routes are retired, not aliased). The action routes are path
 // relocations over the reused orgcreds/idp services; these rows re-point the
 // coverage that used to live in the deleted orgcreds/idp component tests onto
@@ -35,24 +35,17 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 )
 
-// fakeThunder is the component tier's Thunder admin stub — only Regenerate is
-// exercised by the client-secret rotation route; the rest panic if reached.
+// fakeThunder is the component tier's Thunder admin stub: no action route
+// reaches Thunder, so every call panics.
 type fakeThunder struct {
 	// The directory half of thundersvc.Client (groups + users) is the identity
 	// domain's, not this surface's. Embedding satisfies the interface without a
 	// wall of stubs; an accidental call panics on the nil rather than passing.
 	thundersvc.Client
-
-	regenSecret string
-	regenCalls  []string
 }
 
 var _ thundersvc.Client = (*fakeThunder)(nil)
 
-func (f *fakeThunder) RegenerateClientSecret(_ context.Context, org, _ string) (string, error) {
-	f.regenCalls = append(f.regenCalls, org)
-	return f.regenSecret, nil
-}
 func (f *fakeThunder) EnsurePublisherApp(context.Context, string, string, string) (thundersvc.OrgApp, error) {
 	panic("fakeThunder: EnsurePublisherApp unexpected")
 }
@@ -100,39 +93,24 @@ func TestConfigComponent_Disconnect_NeverConnected(t *testing.T) {
 	}
 }
 
-// --- IDP client-secret rotation ---------------------------------------------
+// --- IDP client-secret rotation (removed) ----------------------------------
 
-func TestConfigComponent_RotateClientSecret_Happy(t *testing.T) {
+// There is no user rotation of the publisher secret (06 §5): it lives only in
+// vault, and the gitpat submit's client ensure is its one writer. The route is
+// gone, even for an org with a publisher app, and nothing reaches Thunder.
+func TestConfigComponent_RotateClientSecret_RouteRemoved(t *testing.T) {
 	t.Parallel()
-	th := &fakeThunder{regenSecret: "rotated-secret-123"}
-	c := newConfigHarnessWithThunder(t, th)
-	// Seed a profile that already has a publisher client, so Regenerate has
-	// something to rotate.
+	c := newConfigHarnessWithThunder(t, &fakeThunder{})
 	now := time.Now().UTC()
 	if err := c.db.Create(&organization.OrganizationIDPProfile{
 		OrgID: "acme", Kind: "platform", Issuer: platformIss, JWKSURL: platformJWKS,
-		PublisherClientID: "pub-x", PublisherClientSecret: "old", CreatedAt: now, UpdatedAt: now,
+		PublisherClientID: "pub-x", CreatedAt: now, UpdatedAt: now,
 	}).Error; err != nil {
 		t.Fatalf("seed profile: %v", err)
 	}
 	resp := c.h.AsOrg("acme").Post(configPath+"/idp/client-secret", "")
-	if resp.Code != 200 {
-		t.Fatalf("rotate: want 200, got %d body=%s", resp.Code, resp.Body.String())
-	}
-	if m := decodeCfg(t, resp.Body.Bytes()); m["clientSecret"] != "rotated-secret-123" {
-		t.Fatalf("rotate body drifted: %v", m)
-	}
-	if len(th.regenCalls) != 1 || th.regenCalls[0] != "acme" {
-		t.Fatalf("rotate must call Thunder once for the token org: %v", th.regenCalls)
-	}
-}
-
-func TestConfigComponent_RotateClientSecret_503WhenThunderUnset(t *testing.T) {
-	t.Parallel()
-	c := newConfigHarness(t) // nil Thunder
-	resp := c.h.AsOrg("acme").Post(configPath+"/idp/client-secret", "")
-	if resp.Code != 503 {
-		t.Fatalf("rotate (no thunder): want 503, got %d body=%s", resp.Code, resp.Body.String())
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("rotate: want 404, got %d body=%s", resp.Code, resp.Body.String())
 	}
 }
 

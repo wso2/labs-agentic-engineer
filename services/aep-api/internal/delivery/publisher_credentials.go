@@ -18,18 +18,25 @@ package delivery
 
 import "errors"
 
-// ErrPublisherCredentialsMissing is the dispatch refusal when the org has no
-// publisher SecretReference to mount. Retrying the Job create cannot stamp
-// the ref — Temporal must not spend the re-dispatch budget on it.
+// ErrPublisherCredentialsMissing is the refusal when the org has no
+// ae-publisher-client reference: POST /build answers it before a tag is cut,
+// and dispatch refuses the Job. Only the gitpat submit writes the reference,
+// so retrying cannot create it — Temporal must not spend the re-dispatch
+// budget on it.
 var ErrPublisherCredentialsMissing = errors.New("publisher credentials missing")
+
+// PublisherReconnectMessage is what a user is told when the org has no
+// publisher credentials: reconnecting GitHub (the gitpat submit) is the one
+// path that writes them (06 §3).
+const PublisherReconnectMessage = "Reconnect GitHub to set up this organization's build credentials"
 
 // ErrTypePublisherCredentialsMissing is the Temporal ApplicationError TYPE the
 // dispatch activity stamps. The workflow branches on the type because a
 // sentinel does not survive the activity boundary.
 const ErrTypePublisherCredentialsMissing = "PublisherCredentialsMissing"
 
-// PublisherCredentialsMissingMessage is what the console shows. A project
-// build is the path that stamps the SecretReference, but auto-kick and
-// webhook adoption can reach dispatch without a successful stamp — so the
-// text names the missing credential, not a single HTTP verb.
-const PublisherCredentialsMissingMessage = "This run cannot start because the organization's publisher credentials are not available to the coding agent. Start a project build (secrets delivery must be on), then retry."
+// PublisherCredentialsMissingMessage is what the console shows for a run
+// dispatch refused for the same reason: auto-kick and webhook adoption reach
+// dispatch without the POST /build gate, so the text names the missing
+// credential and the one way to create it.
+const PublisherCredentialsMissingMessage = "This run cannot start because the organization's publisher credentials are not available to the coding agent. " + PublisherReconnectMessage + ", then retry."

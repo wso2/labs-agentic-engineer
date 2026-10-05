@@ -1,0 +1,144 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package projects
+
+// The deploy-time issuer read is read-only (06 §3, O-3): deploying a protected
+// API never creates or heals the org's publisher app. The real
+// organization IDP service is wired, over a Thunder admin client that counts
+// every call, so a write slipping back into resolveIssuers shows as a call.
+
+import (
+	"context"
+	"sync/atomic"
+	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
+	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/spec"
+)
+
+// countingThunder counts every Thunder admin call the deploy could make on the
+// publisher's behalf; any other method is a test bug (nil panic).
+type countingThunder struct {
+	thundersvc.Client
+	calls atomic.Int32
+}
+
+func (c *countingThunder) EnsurePublisherApp(context.Context, string, string, string) (thundersvc.OrgApp, error) {
+	c.calls.Add(1)
+	return thundersvc.OrgApp{}, nil
+}
+
+func (c *countingThunder) EnsureOrgApp(context.Context, thundersvc.OrgAppSpec) (thundersvc.OrgApp, error) {
+	c.calls.Add(1)
+	return thundersvc.OrgApp{}, nil
+}
+
+func (c *countingThunder) SetAppSecret(context.Context, string, string) error {
+	c.calls.Add(1)
+	return nil
+}
+
+func (c *countingThunder) DeletePublisherApp(context.Context, string, string) (bool, error) {
+	c.calls.Add(1)
+	return false, nil
+}
+
+// profileRows is an IDPRepository holding at most one profile; writes are
+// counted, never applied.
+type profileRows struct {
+	profile *organization.OrganizationIDPProfile
+	writes  atomic.Int32
+}
+
+func (r *profileRows) GetProfileByOrgID(context.Context, string) (*organization.OrganizationIDPProfile, error) {
+	return r.profile, nil
+}
+
+func (r *profileRows) CreateProfile(context.Context, *organization.OrganizationIDPProfile) error {
+	r.writes.Add(1)
+	return nil
+}
+
+func (r *profileRows) UpdateProfileColumns(context.Context, *organization.OrganizationIDPProfile, string, map[string]interface{}) error {
+	r.writes.Add(1)
+	return nil
+}
+
+func (r *profileRows) CreateAuditEvent(context.Context, *organization.IDPAuditEvent) error {
+	r.writes.Add(1)
+	return nil
+}
+
+func TestDeploy_ProtectedAPIWithoutPublisherAppMakesNoThunderCalls(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		profile *organization.OrganizationIDPProfile
+	}{
+		{"no profile", nil},
+		{"platform profile, no publisher app", &organization.OrganizationIDPProfile{OrgID: "acme", Kind: "platform"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				spec.DesignRootFile:          traitRootMd(),
+				"components/api/design.json": endUserServiceMd("api"),
+			}
+			oc := ocDeployments(map[string]string{})
+			svc := newTestDeploymentService(oc, traitStoreWith(files))
+			thunder := &countingThunder{}
+			rows := &profileRows{profile: tc.profile}
+			svc.SetIDPService(organization.NewIDPService(rows, nil, thunder, organization.PlatformIDPConfig{}))
+
+			if _, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api")); err != nil {
+				t.Fatalf("Deploy: %v", err)
+			}
+			if n := thunder.calls.Load(); n != 0 {
+				t.Fatalf("deploy made %d Thunder calls; the issuer read is read-only", n)
+			}
+			if n := rows.writes.Load(); n != 0 {
+				t.Fatalf("deploy wrote the IDP profile %d times; the issuer read is read-only", n)
+			}
+			if len(oc.ApplyReleaseBindingCalls()) != 1 {
+				t.Fatalf("the protected API still deploys: %d binding writes", len(oc.ApplyReleaseBindingCalls()))
+			}
+		})
+	}
+}
+
+// A BYO org's issuer still pins the protected API's JWT validation.
+func TestResolveIssuers_ReadsTheProfileIssuer(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		spec.DesignRootFile:          traitRootMd(),
+		"components/api/design.json": endUserServiceMd("api"),
+	}
+	design := traitReadDesign(t, files)
+	svc := newTestDeploymentService(ocDeployments(nil), traitStoreWith(files))
+	thunder := &countingThunder{}
+	rows := &profileRows{profile: &organization.OrganizationIDPProfile{OrgID: "acme", Kind: "custom", Issuer: "https://idp.byo.example"}}
+	svc.SetIDPService(organization.NewIDPService(rows, nil, thunder, organization.PlatformIDPConfig{}))
+
+	got := svc.resolveIssuers(context.Background(), "acme", design)
+	if len(got) != 1 || got[0] != "https://idp.byo.example" {
+		t.Fatalf("issuers = %v, want the profile's issuer", got)
+	}
+	if thunder.calls.Load() != 0 || rows.writes.Load() != 0 {
+		t.Fatalf("thunder calls %d, profile writes %d; want none", thunder.calls.Load(), rows.writes.Load())
+	}
+}

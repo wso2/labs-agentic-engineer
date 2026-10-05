@@ -18,12 +18,12 @@ package organization
 
 // UNIT tier: the REAL idpService logic that is
 // reachable with NO database and NO Thunder — the pure helpers
-// (coalesceActor, profileSummary, secretRefPath) and the entry-guard /
+// (coalesceActor, profileSummary) and the entry-guard /
 // error-classification branches that fire BEFORE any I/O. Every mutating
-// method rejects a missing orgID before touching anything, and the three
-// Thunder-backed mutations (Ensure/Revoke/Regenerate) short-circuit with
-// ErrIDPThunderUnavailable when the admin client is nil — so a nil db + nil
-// thunder is enough to prove the ordering (reaching either would panic).
+// method rejects a missing orgID before touching anything, and the
+// Thunder-backed mutations (EnsureClient, RevokeOrgPublisher) short-circuit
+// with ErrIDPThunderUnavailable when the admin client is nil — so a nil db +
+// nil thunder is enough to prove the ordering (reaching either would panic).
 // The SQL-shaped behavior lives in idp_dbtest_test.go; the HTTP contract in
 // idp_component_test.go.
 
@@ -50,8 +50,8 @@ func sortedKeys(m map[string]any) []string {
 
 // --- shared fake Thunder admin client ---------------------------------------
 //
-// idpService only ever calls three of thundersvc.Client's methods
-// (EnsurePublisherApp, DeletePublisherApp, RegenerateClientSecret); OUExists is
+// idpService's publisher path calls EnsurePublisherApp, DeletePublisherApp and
+// SetAppSecret of thundersvc.Client; OUExists is
 // irrelevant to this feature, so a call to it is a test bug — it panics
 // (moq-style). Each fake is built per-test and driven by a single synchronous
 // httptest request, so no mutex is needed for the capture slices.
@@ -64,13 +64,11 @@ type fakeThunder struct {
 
 	ensureFn func(ctx context.Context, orgHandle, orgOUID string) (string, string, bool, error)
 	deleteFn func(ctx context.Context, orgHandle string) (bool, error)
-	regenFn  func(ctx context.Context, orgHandle string) (string, error)
 
 	ensureCalls    []ensureCall
 	deleteCalls    []string
-	regenCalls     []string
 	setSecretCalls []string // entity ids SetAppSecret was given a secret for
-	// storedIDs is the stored Thunder entity id each Delete/Regenerate got.
+	// storedIDs is the stored Thunder entity id each Delete got.
 	storedIDs []string
 }
 
@@ -101,15 +99,6 @@ func (f *fakeThunder) DeletePublisherApp(ctx context.Context, orgHandle, storedI
 	return f.deleteFn(ctx, orgHandle)
 }
 
-func (f *fakeThunder) RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error) {
-	f.regenCalls = append(f.regenCalls, orgHandle)
-	f.storedIDs = append(f.storedIDs, storedID)
-	if f.regenFn == nil {
-		return "rotated-" + orgHandle, nil
-	}
-	return f.regenFn(ctx, orgHandle)
-}
-
 // SetAppSecret is the heal's PUT: recorded by entity id, always succeeds.
 func (f *fakeThunder) SetAppSecret(_ context.Context, entityID, _ string) error {
 	f.setSecretCalls = append(f.setSecretCalls, entityID)
@@ -132,17 +121,6 @@ func TestCoalesceActor(t *testing.T) {
 	}
 }
 
-// --- secretRefPath ----------------------------------------------------------
-
-func TestSecretRefPath(t *testing.T) {
-	t.Parallel()
-	// The logical OpenBao path is persisted on the profile row; the golden
-	// (testdata/harvest/golden/get_org_idp.json) shows exactly this shape.
-	if got := secretRefPath("acme"); got != "secret/aep/acme/idp/publisher" {
-		t.Fatalf("secretRefPath drifted: %q", got)
-	}
-}
-
 // --- profileSummary ---------------------------------------------------------
 
 func TestProfileSummary_NilIsZero(t *testing.T) {
@@ -153,14 +131,14 @@ func TestProfileSummary_NilIsZero(t *testing.T) {
 	}
 }
 
-func TestProfileSummary_ProjectsAuditFieldsAndNeverLeaksSecret(t *testing.T) {
+func TestProfileSummary_ProjectsAuditFields(t *testing.T) {
 	t.Parallel()
 	p := &OrganizationIDPProfile{
 		Kind:                  "platform",
 		Issuer:                "https://idp.test",
 		JWKSURL:               "https://idp.test/jwks",
 		PublisherClientID:     "aep-publisher-acme",
-		PublisherClientSecret: "super-secret-value",
+		PublisherThunderAppID: "app-acme",
 	}
 	got := profileSummary(p)
 	if got.Kind != "platform" || got.Issuer != "https://idp.test" || got.JWKSURL != "https://idp.test/jwks" {
@@ -169,37 +147,21 @@ func TestProfileSummary_ProjectsAuditFieldsAndNeverLeaksSecret(t *testing.T) {
 	if got.PublisherClientID != "aep-publisher-acme" {
 		t.Fatalf("summary must carry the client id: %+v", got)
 	}
-	// The secret is projected to a bool — the raw value must NEVER reach the
-	// audit trail (the whole point of profileSummary).
-	if !got.HasClientSecret {
-		t.Fatalf("hasClientSecret must be true when a secret is present")
-	}
 
 	raw, err := json.Marshal(got)
 	if err != nil {
 		t.Fatalf("marshal summary: %v", err)
 	}
-	if strings.Contains(string(raw), "super-secret-value") {
-		t.Fatalf("audit summary leaked the raw secret: %s", raw)
-	}
-
 	// The marshaled field set is exactly the audit projection — timestamps,
-	// db id and the SM-API triplet are intentionally dropped.
+	// db id and the Thunder entity id are intentionally dropped, and the
+	// profile holds no secret to summarise.
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		t.Fatalf("unmarshal summary: %v", err)
 	}
-	want := []string{"hasClientSecret", "issuer", "jwksUrl", "kind", "publisherClientId"}
+	want := []string{"issuer", "jwksUrl", "kind", "publisherClientId"}
 	if got := sortedKeys(m); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("summary field set drifted:\n got %v\nwant %v", got, want)
-	}
-}
-
-func TestProfileSummary_HasClientSecretFalseWhenEmpty(t *testing.T) {
-	t.Parallel()
-	got := profileSummary(&OrganizationIDPProfile{Kind: "platform"})
-	if got.HasClientSecret {
-		t.Fatalf("hasClientSecret must be false when no secret is stored")
 	}
 }
 
@@ -224,14 +186,14 @@ func TestMethods_RejectEmptyOrgIDBeforeIO(t *testing.T) {
 	_, err = svc.GetOrCreateProfile(ctx, "")
 	assertOrgIDRequired("GetOrCreateProfile", err)
 
-	_, _, _, err = svc.EnsureOrgPublisher(ctx, "", "actor")
-	assertOrgIDRequired("EnsureOrgPublisher", err)
+	err = svc.EnsureClient(ctx, "", ClientPublisher)
+	assertOrgIDRequired("EnsureClient", err)
+
+	err = svc.RequirePublisherForBuild(ctx, "")
+	assertOrgIDRequired("RequirePublisherForBuild", err)
 
 	_, err = svc.RevokeOrgPublisher(ctx, "", "actor")
 	assertOrgIDRequired("RevokeOrgPublisher", err)
-
-	_, err = svc.RegenerateClientSecret(ctx, "", "actor")
-	assertOrgIDRequired("RegenerateClientSecret", err)
 
 	_, err = svc.UpdateProfile(ctx, "", "actor", UpdateProfileRequest{})
 	assertOrgIDRequired("UpdateProfile", err)
@@ -246,14 +208,11 @@ func TestMutations_ThunderNilYieldsSentinel(t *testing.T) {
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
 	ctx := context.Background()
 
-	if _, _, _, err := svc.EnsureOrgPublisher(ctx, "acme", "actor"); !errors.Is(err, ErrIDPThunderUnavailable) {
-		t.Fatalf("EnsureOrgPublisher: want ErrIDPThunderUnavailable, got %v", err)
+	if err := svc.EnsureClient(ctx, "acme", ClientPublisher); !errors.Is(err, ErrIDPThunderUnavailable) {
+		t.Fatalf("EnsureClient: want ErrIDPThunderUnavailable, got %v", err)
 	}
 	if _, err := svc.RevokeOrgPublisher(ctx, "acme", "actor"); !errors.Is(err, ErrIDPThunderUnavailable) {
 		t.Fatalf("RevokeOrgPublisher: want ErrIDPThunderUnavailable, got %v", err)
-	}
-	if _, err := svc.RegenerateClientSecret(ctx, "acme", "actor"); !errors.Is(err, ErrIDPThunderUnavailable) {
-		t.Fatalf("RegenerateClientSecret: want ErrIDPThunderUnavailable, got %v", err)
 	}
 }
 
@@ -262,7 +221,7 @@ func TestEnsure_EmptyOrgIDBeatsThunderNilCheck(t *testing.T) {
 	// Ordering pin: orgID is validated before the thunder-nil check, so an
 	// empty org yields "orgID required", NOT the thunder sentinel.
 	svc := NewIDPService(nil, nil, nil, PlatformIDPConfig{})
-	_, _, _, err := svc.EnsureOrgPublisher(context.Background(), "", "actor")
+	err := svc.EnsureClient(context.Background(), "", ClientPublisher)
 	if err == nil || errors.Is(err, ErrIDPThunderUnavailable) || !strings.Contains(err.Error(), "orgID required") {
 		t.Fatalf("empty orgID must beat the thunder-nil check, got %v", err)
 	}

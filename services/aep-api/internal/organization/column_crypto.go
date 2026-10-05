@@ -22,29 +22,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// sealPublisherSecret encrypts a publisher client secret for at-rest storage.
-// Empty values stay empty (clearing the column).
-func sealPublisherSecret(cipher *secrets.ColumnCipher, plain string) (string, error) {
-	if plain == "" || cipher == nil {
-		return plain, nil
-	}
-	return cipher.Seal([]byte(plain))
-}
-
-// openPublisherSecret decrypts a stored publisher secret. Plaintext is
-// tolerated only during the migration window (OpenTolerant); sealPublisherSecret
-// always seals on write.
-func openPublisherSecret(cipher *secrets.ColumnCipher, stored string) (string, error) {
-	if stored == "" {
-		return "", nil
-	}
-	pt, err := cipher.OpenTolerant(stored)
-	if err != nil {
-		return "", err
-	}
-	return string(pt), nil
-}
-
 // sealWebhookSecrets encrypts each entry's Secret field. Nil/empty lists
 // pass through unchanged (App-mode rows store NULL).
 func sealWebhookSecrets(cipher *secrets.ColumnCipher, list WebhookSecrets) (WebhookSecrets, error) {

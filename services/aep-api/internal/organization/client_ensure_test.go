@@ -226,7 +226,7 @@ func newEnsureFixture(t *testing.T, appExists, rowSet bool) *ensureFixture {
 		f.vault.refs["old-ref"] = true
 	}
 	ou := ensureOU
-	writer := NewSecretRefWriter(f.vault, nil, f.idp).
+	writer := NewSecretRefWriter(f.vault, f.idp).
 		WithOrgSecretWriter(NewOrgSecretWriter(f.vault, f.rows, memOrgSecretLock{}, time.Now))
 	f.svc = NewIDPService(f.idp, ouOrgRepo{ou: &ou}, f.thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)
 	return f
@@ -321,7 +321,9 @@ func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
 	if p.StudioClientID != "ae-studio-default" || p.StudioThunderAppID != "app-new" {
 		t.Fatalf("studio ids: %q %q", p.StudioClientID, p.StudioThunderAppID)
 	}
-	if p.PublisherClientSecret != "" || p.SecretRefName != nil {
+	// No column holds the secret: memIDPRepo refuses any column the profile
+	// does not have, so a secret write would have failed the ensure.
+	if w := f.vault.writes[0]; w.data["client_secret"] != "thunder-once" {
 		t.Fatal("the studio secret lives only in its reference")
 	}
 	spec := f.thunder.specs[0]
@@ -330,18 +332,21 @@ func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
 	}
 }
 
-func TestEnsureClient_PublisherKeepsTheDualPath(t *testing.T) {
+// The publisher's secret lives only in its reference (06 §2): the profile
+// records the app's ids, and no secret or secret-reference column is written
+// (memIDPRepo refuses any column the profile does not have).
+func TestEnsureClient_PublisherSecretLivesOnlyInItsReference(t *testing.T) {
 	f := newEnsureFixture(t, true, false)
 	if err := f.svc.EnsureClient(ensureCtx(), "default", ClientPublisher); err != nil {
 		t.Fatal(err)
 	}
+	if f.row(OrgSecretPublisherClient) == "" || !f.vault.refs[f.row(OrgSecretPublisherClient)] {
+		t.Fatalf("the ae-publisher-client row names the live reference: %q %v", f.row(OrgSecretPublisherClient), f.vault.refs)
+	}
+	if w := f.vault.writes[0]; w.data["client_secret"] != f.thunder.putSecret {
+		t.Fatal("the reference holds the healed secret")
+	}
 	p := f.profile(t)
-	if p.PublisherClientSecret != f.thunder.putSecret {
-		t.Fatal("dual: the sealed publisher_client_secret holds the healed secret")
-	}
-	if p.SecretRefName == nil || *p.SecretRefName != f.row(OrgSecretPublisherClient) {
-		t.Fatalf("triplet names the row's reference: %v vs %q", p.SecretRefName, f.row(OrgSecretPublisherClient))
-	}
 	if p.PublisherThunderAppID != "app-1" || p.PublisherClientID != "aep-publisher-default" {
 		t.Fatalf("publisher ids: %q %q", p.PublisherClientID, p.PublisherThunderAppID)
 	}

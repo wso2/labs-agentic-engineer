@@ -41,7 +41,6 @@ package thundersvc
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -67,7 +66,8 @@ type Client interface {
 	// The returned OrgApp carries the entity id for the caller to store; its
 	// Secret is set only when Created — Thunder doesn't expose the secret on
 	// later reads, so callers MUST persist it on that branch. When the secret
-	// was lost (e.g. OpenBao was wiped), use RegenerateClientSecret.
+	// was lost (e.g. OpenBao was wiped), the caller heals it with
+	// SetAppSecret.
 	//
 	// orgOUID is the org's Thunder OU id (the JWT `ouId`). The app is
 	// registered under that OU so its client_credentials token carries
@@ -102,12 +102,6 @@ type Client interface {
 	// and was deleted, false when it didn't exist (idempotent — both states
 	// are success).
 	DeletePublisherApp(ctx context.Context, orgHandle, storedID string) (bool, error)
-
-	// RegenerateClientSecret issues a fresh client_secret for the
-	// existing publisher app, found by storedID before one list scan.
-	// Returns the new secret. The caller MUST rotate it into OpenBao +
-	// redeploy any consumer pods that mounted the old value.
-	RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error)
 
 	// -- directory (groups + users) --------------------------------------
 	//
@@ -801,7 +795,7 @@ func (c *client) EnsurePublisherApp(ctx context.Context, orgHandle, orgOUID, sto
 // carry publisherTokenAttributes, adding the token config with a PUT when they
 // do not. Read-check-write: an app that already declares both attributes is
 // left alone (no PUT, no churn). The PUT sends the app as read, minus its id,
-// with the client config set — the same shape regenerateSecret uses — and
+// with the client config set — the same shape putAppSecret uses — and
 // ThunderID keeps the existing client secret when the payload carries none.
 func (c *client) ensurePublisherTokenClaims(ctx context.Context, token, appID string) error {
 	app, err := c.getAppByID(ctx, token, appID)
@@ -915,25 +909,6 @@ func (c *client) DeletePublisherApp(ctx context.Context, orgHandle, storedID str
 	return c.deleteApp(ctx, token, internalID)
 }
 
-func (c *client) RegenerateClientSecret(ctx context.Context, orgHandle, storedID string) (string, error) {
-	if orgHandle == "" {
-		return "", fmt.Errorf("orgHandle required")
-	}
-	token, err := c.getSystemToken(ctx)
-	if err != nil {
-		return "", fmt.Errorf("getSystemToken: %w", err)
-	}
-	appName := PublisherAppName(orgHandle)
-	internalID, err := c.findOrgApp(ctx, token, OrgAppSpec{Name: appName, StoredID: storedID})
-	if err != nil {
-		return "", err
-	}
-	if internalID == "" {
-		return "", fmt.Errorf("thunder app %s not found, cannot regenerate secret", appName)
-	}
-	return c.regenerateSecret(ctx, token, internalID)
-}
-
 // getAppByID reads an application that must exist (a 404 is an error).
 func (c *client) getAppByID(ctx context.Context, token, appID string) (map[string]any, error) {
 	app, found, err := c.getApp(ctx, token, appID)
@@ -1000,24 +975,6 @@ func publisherTokenClientConfig() map[string]any {
 	}
 }
 
-// regenerateSecret gives the app a fresh generated secret and returns the
-// one Thunder now holds.
-func (c *client) regenerateSecret(ctx context.Context, token, appID string) (string, error) {
-	newSecret, err := generateRandomSecret()
-	if err != nil {
-		return "", fmt.Errorf("generate client secret: %w", err)
-	}
-	kept, err := c.putAppSecret(ctx, token, appID, newSecret)
-	if err != nil {
-		return "", err
-	}
-	if kept == "" {
-		return "", fmt.Errorf("thunder put app response missing clientSecret")
-	}
-	slog.Info("Thunder client secret regenerated", "appID", appID)
-	return kept, nil
-}
-
 func setInboundClientSecret(app map[string]any, secret string) error {
 	inbound, ok := app["inboundAuthConfig"].([]any)
 	if !ok || len(inbound) == 0 {
@@ -1033,12 +990,4 @@ func setInboundClientSecret(app map[string]any, secret string) error {
 	}
 	cfg["clientSecret"] = secret
 	return nil
-}
-
-func generateRandomSecret() (string, error) {
-	b := make([]byte, 48)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b), nil
 }

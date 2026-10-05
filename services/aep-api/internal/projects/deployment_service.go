@@ -50,7 +50,7 @@ type DeploymentService struct {
 	// idp resolves the org's JWT issuer pinning. Optional: nil composes the
 	// trait with no issuer filter, which trusts any cluster-configured
 	// keymanager.
-	idp OrgPublisher
+	idp OrgIDPProfiles
 	// envVars reads the user's component config — the canonical record for
 	// `workloadOverrides.container.env`. Optional: nil leaves that field
 	// unmanaged rather than writing an empty list over the user's values.
@@ -154,7 +154,7 @@ func NewDeploymentService(components openchoreo.ComponentClient, store *spec.Art
 }
 
 // SetIDPService wires per-org JWT issuer pinning.
-func (s *DeploymentService) SetIDPService(idp OrgPublisher) {
+func (s *DeploymentService) SetIDPService(idp OrgIDPProfiles) {
 	if s != nil {
 		s.idp = idp
 	}
@@ -720,18 +720,17 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 	return nil
 }
 
-// resolveIssuers ensures the org's publisher app exists and returns the issuer
-// list a protected component's JWT validation is pinned to.
+// resolveIssuers returns the issuer list a protected component's JWT
+// validation is pinned to: a BYO org's profile issuer, else none (the
+// platform IDP). It only reads the profile (06 §3): the publisher app is the
+// gitpat submit's to create, and a deploy never creates or heals it.
 //
-// Best-effort by contract: the API stays reachable without a publisher
-// identity, so a failure here logs and composes an unpinned trait rather than
-// failing the deployment of a whole version.
+// Best-effort by contract: the API stays reachable without a pinned issuer,
+// so a failed read composes an unpinned trait rather than failing the
+// deployment of a whole version.
 func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID string, design *spec.DesignFile) []string {
 	if s.idp == nil || !designHasProtectedAPI(design) {
 		return nil
-	}
-	if _, _, _, err := s.idp.EnsureOrgPublisher(ctx, orgID, "deployment"); err != nil {
-		slog.WarnContext(ctx, "deployment: EnsureOrgPublisher failed; continuing", "orgID", orgID, "error", err)
 	}
 	profile, err := s.idp.GetProfile(ctx, orgID)
 	if err != nil || profile == nil {

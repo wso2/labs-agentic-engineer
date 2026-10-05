@@ -29,7 +29,7 @@ flowchart LR
 | `getconfig` `patchconfig` | read / atomic multi-section write of the org config | `GET`+`PATCH .../config` |
 | `testllm` | probe a model connection without saving it (rationed: 10 per org per minute) | `POST .../config/llm/test` |
 | `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
-| `rotateidp` `discoveridp` | rotate the publisher client secret / OIDC discovery | `POST .../config:rotate-idp-secret` etc. |
+| `discoveridp` | OIDC discovery for a BYO IDP | `GET .../config/idp/discovery` |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
 | `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
 
@@ -143,28 +143,35 @@ model-connection / idp services.*
   `coding-agent-key` name, coding dispatch the `github-pat` (key `token`) and `ae-publisher-client`
   names, a component build (`StageBuildSecret`) the `github-pat` name as `repository.secretRef`
   (the checkout reads key `password`; no value passes through aep-api, no row is
-  `ErrOrgDisconnected` with no triplet fallback), so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
+  `ErrOrgDisconnected`), so a rotation never hands out a deleted reference. No consumer has a
+  triplet fallback: an org with no row has no reference, and coding dispatch refuses. A mount needs
   only the name and the key (C10), so `KeyRef` carries no vault path. The ai-agent model access,
   which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
   `default-key` row's name with the vault path that SecretReference's `spec.data` reads (names and
   paths, never a value), failing closed when either is missing. The model keys have no triplet
   fallback: an org with no `default-key` / `coding-agent-key` row (saved before the rows existed)
   resolves no key until it saves it again.
-- **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
-  `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
-  `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns
-  an error (Build 503) and does not touch Thunder. `EnsureOrgPublisher` on the deployment path still
-  swallows SM-API errors. Coding dispatch reads the reference name only (the `ae-publisher-client`
-  row's, else `secret_ref_name`).
+- **The publisher client secret lives only in vault; builds and deploys only read** (06 §2-3, §5).
+  The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher app and its
+  `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
+  `publisher_thunder_app_id`, never the secret or a reference to it. `POST /build` runs
+  `RequirePublisherForBuild`: a read of the `ae-publisher-client` row (no Thunder call, no heal); no
+  row is `delivery.ErrPublisherCredentialsMissing`, answered `409 publisher_credentials_missing`
+  "Reconnect GitHub to set up this organization's build credentials". The deploy reads only the
+  profile's issuer (`projects.OrgIDPProfiles`). There is no user rotation: a lost reference is healed
+  by the next gitpat submit. Coding dispatch mounts the reference the row names, and refuses
+  without one.
 - **Thunder org apps are read by their stored entity id.** Thunder has no lookup by clientId, so the
   profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
-  ensure, rotate and delete passes it to `thundersvc`, which falls back to one full list scan only on a
-  miss. A revoke or IDP-kind switch clears it with the rest of the publisher columns.
+  ensure and delete passes it to `thundersvc`, which falls back to one full list scan only on a
+  miss. A revoke or IDP-kind switch clears it with `publisher_client_id`, and removes the
+  `ae-publisher-client` reference once the Thunder app is deleted, so the build gate stops passing on
+  a deleted app's credentials.
 - **The org secrets are written as a new reference per write** (`OrgSecretWriter`): new
   reference → row (compare-and-swap) → repoint → delete the previous one by its stored name, under
   a per-(org, secret) advisory lock taken after any caller lock and never inside a repoint. The
-  GitHub PAT (`github-pat`, keys `token` + `password`) and the publisher client go through it, with
-  their legacy triplet stamped inside the repoint.
+  GitHub PAT (`github-pat`, keys `token` + `password`) and the two org clients go through it; no
+  triplet or secret column is stamped.
   - Retire timing (ruled in phase 1): the previous reference is retired right after the row and
     stamp commit, not after the AE Studio pod has moved off it. The pod's converge is only
     triggered, so its ExternalSecrets (`es-tools`, `es-agent`) still name the retired vault path
@@ -222,10 +229,8 @@ model-connection / idp services.*
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the
   reference back); a found app with its row is left alone. An `ae-studio-<org>` app under another OU
   fails the ensure and is never touched. The whole ensure (Thunder ensure, row check, write, `PUT`)
-  holds the client secret's lock (`OrgSecretWriter.WithLock`), as do the deployment path's
-  `EnsureOrgPublisher` create-and-write and `RegenerateClientSecret`; `ProvisionPublisherForBuild` is
-  `EnsureClient(publisher)`. Thunder calls and profile updates take no advisory lock, so the lock
-  order holds.
+  holds the client secret's lock (`OrgSecretWriter.WithLock`). Thunder calls and profile updates take
+  no advisory lock, so the lock order holds.
 - **`OrgCatalogVaultKey` reconstructs a Registered External's org-catalog vault path from the
   request JWT `ouId`** — a read, not a second write. Used after aep-api restart when the
   process-local value plane is empty (ADR-0021). A missing `ouId` cannot invent a path.

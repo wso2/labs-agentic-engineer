@@ -48,15 +48,6 @@ type OrgCredential struct {
 	LastValidatedAt   *time.Time     `gorm:"column:last_validated_at" json:"lastValidatedAt,omitempty"`
 	IdentityChangedAt *time.Time     `gorm:"column:identity_changed_at" json:"identityChangedAt,omitempty"`
 	PrevIdentityLogin *string        `gorm:"type:text;column:prev_identity_login" json:"prevIdentityLogin,omitempty"`
-
-	// The pre-phase-1 secret-ref triplet + write timestamp, read-only: nothing
-	// writes them any more (the github-pat org_secrets row records the PAT's
-	// reference). Read by WriteGitHubPAT (the legacy reference it retires) and
-	// the coding dispatch's no-row fallback; the columns go in phase 6.
-	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
-	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
-	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`
-	SecretRefWrittenAt *time.Time `gorm:"column:secret_ref_written_at" json:"-"`
 }
 
 // TableName pins the underlying table to org_credentials. Without this

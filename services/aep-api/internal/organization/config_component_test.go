@@ -184,7 +184,7 @@ func newConfigHarness(t *testing.T) *configHarness {
 }
 
 // newConfigHarnessWithThunder is newConfigHarness with the knob the action-route
-// tests need: a fake Thunder admin client (for IDP client-secret rotation).
+// tests need: a fake Thunder admin client (the action routes never reach it).
 func newConfigHarnessWithThunder(t *testing.T, thunder thundersvc.Client) *configHarness {
 	t.Helper()
 	return newConfigHarnessOn(t, thunder, orgconfig.AgentRuntimes)
@@ -262,8 +262,7 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 	if o.secretsDelivery {
 		vault = &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 		orgSecrets := organization.NewOrgSecretWriter(vault, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
-		refWriter := organization.NewSecretRefWriter(vault, credRepo,
-			organization.NewIDPRepository(db, nil)).WithOrgSecretWriter(orgSecrets)
+		refWriter := organization.NewSecretRefWriter(vault, organization.NewIDPRepository(db)).WithOrgSecretWriter(orgSecrets)
 		credSvc.WithSecretRefWriter(refWriter)
 		conns.WithSecretRefWriter(refWriter)
 		anthropicSvc.WithSecretRefWriter(refWriter)
@@ -272,7 +271,7 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 		}
 	}
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
-	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), o.thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
+	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), o.thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
 		credSvc, disconnectSvc, idpSvc,
@@ -353,7 +352,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	c.gh.patHappy()
 
 	// Connect llm + gitProvider through the real PATCH path, and seed a custom
-	// idp with a stored secret.
+	// idp whose publisher secret is recorded.
 	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
 		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
 	}
@@ -361,6 +360,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
 	}
 	seedCustomIDP(t, c.db, "acme")
+	seedPublisherClientRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	if resp.Code != 200 {
@@ -382,7 +382,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	}
 	// No secret material anywhere in the body: no apiKey, PAT or client
 	// secret, and no character of a key (TestProjection_HasNoPreviewCharacters).
-	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
+	for _, secret := range []string{goodAnthKey, "ghp_live"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
 		}
@@ -477,11 +477,15 @@ func TestConfigComponent_B6_CustomIDP(t *testing.T) {
 	if idpSec["kind"] != "custom" || idpSec["issuer"] != "https://byo.example" || idpSec["jwksUrl"] != "https://byo.example/jwks" {
 		t.Fatalf("custom idp drifted: %v", idpSec)
 	}
-	if idpSec["hasClientSecret"] != true {
-		t.Fatalf("hasClientSecret must reflect the stored secret: %v", idpSec)
+	// The profile alone says nothing about the secret: it lives only in vault.
+	if idpSec["hasClientSecret"] != false {
+		t.Fatalf("hasClientSecret without an ae-publisher-client row: %v", idpSec)
 	}
-	if strings.Contains(resp.Body.String(), "the-stored-secret") {
-		t.Fatalf("idp leaked the stored secret: %s", resp.Body.String())
+
+	seedPublisherClientRef(t, c.db, "acme")
+	resp = c.h.AsOrg("acme").Get(configPath)
+	if idpSec := decodeCfg(t, resp.Body.Bytes())["idp"].(map[string]any); idpSec["hasClientSecret"] != true {
+		t.Fatalf("hasClientSecret must be the ae-publisher-client row's presence: %v", idpSec)
 	}
 }
 
@@ -1032,16 +1036,26 @@ func seedCustomIDP(t *testing.T, db *gorm.DB, org string) {
 	t.Helper()
 	now := time.Now().UTC()
 	if err := db.Create(&organization.OrganizationIDPProfile{
-		OrgID:                 org,
-		Kind:                  "custom",
-		Issuer:                "https://byo.example",
-		JWKSURL:               "https://byo.example/jwks",
-		PublisherClientID:     "pub-client",
-		PublisherClientSecret: "the-stored-secret",
-		CreatedAt:             now,
-		UpdatedAt:             now,
+		OrgID:             org,
+		Kind:              "custom",
+		Issuer:            "https://byo.example",
+		JWKSURL:           "https://byo.example/jwks",
+		PublisherClientID: "pub-client",
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}).Error; err != nil {
 		t.Fatalf("seed custom idp: %v", err)
+	}
+}
+
+// seedPublisherClientRef records the ae-publisher-client reference row the
+// gitpat submit's client ensure leaves: the only record that the publisher's
+// secret was written (it lives only in vault).
+func seedPublisherClientRef(t *testing.T, db *gorm.DB, org string) {
+	t.Helper()
+	ref := organization.OrgSecretRef{Secret: organization.OrgSecretPublisherClient, Name: org + "-ae-publisher-client-1a2b"}
+	if err := organization.NewOrgSecretRepository(db).Upsert(context.Background(), org, ref, ""); err != nil {
+		t.Fatalf("seed the ae-publisher-client row: %v", err)
 	}
 }
 

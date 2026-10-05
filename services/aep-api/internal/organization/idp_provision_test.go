@@ -16,31 +16,30 @@
 
 package organization
 
-// ProvisionPublisherForBuild + the fail-closed RegenerateClientSecret
-// SM-API write. package organization (not organization_test) because these
-// tests reuse the unexported fakeThunder from idp_service_test.go. The
-// in-memory IDPRepository below lets WritePublisher's real stamp path
-// (SecretRefWriter -> IDPRepository.UpdateProfileColumns) run end to end
-// without a database.
+// RequirePublisherForBuild: the POST /build gate is a read of the org's
+// ae-publisher-client row and nothing else (06 §3). package organization (not
+// organization_test) because these tests and client_ensure_test.go share the
+// unexported in-memory fixtures below and fakeThunder from idp_service_test.go.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
-	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
-	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // --- in-memory IDPRepository -------------------------------------------------
 
 // memIDPRepo is a minimal IDPRepository fake: one profile per org, held in a
-// map, with UpdateProfileColumns applying exactly the columns real callers
-// stamp (see secret_ref_columns.go / idp_service.go). No DB, no encryption.
+// map. UpdateProfileColumns applies the profile's columns and refuses any
+// other name, so a write of a column the entity no longer has (a secret, a
+// secret reference) fails here as it would against the migrated schema.
 type memIDPRepo struct {
 	profiles map[string]*OrganizationIDPProfile
 	audits   []IDPAuditEvent
@@ -68,9 +67,7 @@ func (r *memIDPRepo) CreateProfile(_ context.Context, profile *OrganizationIDPPr
 }
 
 // UpdateProfileColumns applies updates onto the stored row keyed by orgID
-// (mirrors the real repository's Where("org_id = ?", orgID) — the passed-in
-// profile pointer is only ever used by GORM to resolve the model's table,
-// which SecretRefWriter.WritePublisher doesn't even bother populating).
+// (mirrors the real repository's Where("org_id = ?", orgID)).
 func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPProfile, orgID string, updates map[string]interface{}) error {
 	row, ok := r.profiles[orgID]
 	if !ok {
@@ -78,20 +75,14 @@ func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPP
 	}
 	for k, v := range updates {
 		switch k {
-		case "secret_ref_name":
-			row.SecretRefName = memColStrPtr(v)
-		case "secret_ref_kv_path":
-			row.SecretRefKVPath = memColStrPtr(v)
-		case "secret_ref_property":
-			row.SecretRefProperty = memColStrPtr(v)
-		case "secret_ref_written_at":
-			row.SecretRefWrittenAt = memColTimePtr(v)
+		case "kind":
+			row.Kind = memColStr(v)
+		case "issuer":
+			row.Issuer = memColStr(v)
+		case "jwks_url":
+			row.JWKSURL = memColStr(v)
 		case "publisher_client_id":
 			row.PublisherClientID = memColStr(v)
-		case "publisher_client_secret":
-			row.PublisherClientSecret = memColStr(v)
-		case "publisher_secret_ref":
-			row.PublisherSecretRef = memColStr(v)
 		case "publisher_thunder_app_id":
 			row.PublisherThunderAppID = memColStr(v)
 		case "studio_client_id":
@@ -102,6 +93,8 @@ func (r *memIDPRepo) UpdateProfileColumns(_ context.Context, _ *OrganizationIDPP
 			if t, ok := v.(time.Time); ok {
 				row.UpdatedAt = t
 			}
+		default:
+			return fmt.Errorf("memIDPRepo: organization_idp_profiles has no column %q", k)
 		}
 	}
 	return nil
@@ -112,23 +105,8 @@ func (r *memIDPRepo) CreateAuditEvent(_ context.Context, event *IDPAuditEvent) e
 	return nil
 }
 
-// memColStrPtr / memColStr normalise a map[string]interface{} column value
-// that may arrive as nil, string, or *string — every shape a real UpdateColumns
-// caller in this package uses.
-func memColStrPtr(v interface{}) *string {
-	switch t := v.(type) {
-	case nil:
-		return nil
-	case string:
-		s := t
-		return &s
-	case *string:
-		return t
-	default:
-		return nil
-	}
-}
-
+// memColStr normalises a map[string]interface{} column value that may arrive
+// as nil, string, or *string.
 func memColStr(v interface{}) string {
 	switch t := v.(type) {
 	case nil:
@@ -145,26 +123,10 @@ func memColStr(v interface{}) string {
 	}
 }
 
-func memColTimePtr(v interface{}) *time.Time {
-	switch t := v.(type) {
-	case nil:
-		return nil
-	case time.Time:
-		tt := t
-		return &tt
-	case *time.Time:
-		return t
-	default:
-		return nil
-	}
-}
-
 // --- stub OrganizationRepository ---------------------------------------------
 
-// stubOrgRepo is an OrganizationRepository that never has an org row — the
-// OU lookup EnsureOrgPublisher does (lookupOrgOUID) falls back to the
-// default OU, which is fine for this feature (the publisher app registration
-// OU is orthogonal to the SM-API write path under test).
+// stubOrgRepo is an OrganizationRepository that never has an org row, so the
+// publisher's OU lookup (lookupOrgOUID) falls back to the default OU.
 type stubOrgRepo struct{}
 
 var _ OrganizationRepository = stubOrgRepo{}
@@ -174,352 +136,95 @@ func (stubOrgRepo) GetByName(context.Context, string) (*Organization, error)    
 func (stubOrgRepo) Create(context.Context, *Organization) error                   { return nil }
 func (stubOrgRepo) SetThunderOrgUUID(context.Context, string, uuid.UUID) error    { return nil }
 
-// --- fake secretmanagersvc.SecretManagementClient ----------------------------
+// --- RequirePublisherForBuild ------------------------------------------------
 
-// provFakeSM hand-fakes secretmanagersvc.SecretManagementClient for the
-// provisioner tests. WritePublisher writes a new reference (CreateSecretRef)
-// and retires the previous one (DeleteSecretRef); DeleteSecret/PatchSecret/
-// GetSecret/GetSecretWithValue are not part of the provision feature — a
-// call to one is a test bug and panics.
-type provFakeSM struct {
-	ref string // secretRefName returned by CreateSecretRef on success; defaults to "ref-name"
-	err error
+// failingOrgSecretRows fails every row read.
+type failingOrgSecretRows struct{}
 
-	createCalls []provSMCreateCall
-	deleted     []string
+func (failingOrgSecretRows) Get(context.Context, string, OrgSecret) (*OrgSecretRef, error) {
+	return nil, errors.New("db down")
 }
 
-// provWriter is the SecretRefWriter production wires: sm behind both the
-// writer and its org secret writer, the rows and lock in memory.
-func provWriter(sm *provFakeSM, repo *memIDPRepo) *SecretRefWriter {
-	return provWriterOver(sm, repo, newMemOrgSecretRepo())
-}
-
-// provWriterOver is provWriter over the given org secret rows.
-func provWriterOver(sm *provFakeSM, repo *memIDPRepo, rows *memOrgSecretRepo) *SecretRefWriter {
-	return NewSecretRefWriter(sm, nil, repo).
-		WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
-}
-
-type provSMCreateCall struct {
-	loc  secretmanagersvc.SecretLocation
-	data map[string]string
-}
-
-var _ secretmanagersvc.SecretManagementClient = (*provFakeSM)(nil)
-
-func (f *provFakeSM) CreateSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string) (string, error) {
-	panic("provFakeSM: CreateSecret is not part of the provision feature")
-}
-
-func (f *provFakeSM) DeleteSecret(context.Context, secretmanagersvc.SecretLocation, string) error {
-	panic("provFakeSM: DeleteSecret is not part of the provision feature")
-}
-
-func (f *provFakeSM) CreateSecretRef(_ context.Context, loc secretmanagersvc.SecretLocation, data map[string]string) (string, error) {
-	f.createCalls = append(f.createCalls, provSMCreateCall{loc: loc, data: data})
-	if f.err != nil {
-		return "", f.err
+// assertNoThunderCalls fails the test when the gate reached Thunder.
+func assertNoThunderCalls(t *testing.T, th *fakeThunder) {
+	t.Helper()
+	if n := len(th.ensureCalls) + len(th.deleteCalls) + len(th.setSecretCalls); n != 0 {
+		t.Fatalf("the build gate made %d Thunder calls; it only reads the row", n)
 	}
-	if f.ref != "" {
-		return f.ref, nil
-	}
-	return "ref-name", nil
 }
 
-func (f *provFakeSM) DeleteSecretRef(_ context.Context, _ secretmanagersvc.SecretLocation, name string) error {
-	f.deleted = append(f.deleted, name)
-	return nil
-}
-
-func (f *provFakeSM) PatchSecret(context.Context, secretmanagersvc.SecretLocation, map[string]string, []string) (string, error) {
-	panic("provFakeSM: PatchSecret is not part of the provision feature")
-}
-
-func (f *provFakeSM) GetSecret(context.Context, string) (*secretmanagersvc.SecretInfo, error) {
-	panic("provFakeSM: GetSecret is not part of the provision feature")
-}
-
-func (f *provFakeSM) GetSecretWithValue(context.Context, string) (map[string]string, error) {
-	panic("provFakeSM: GetSecretWithValue is not part of the provision feature")
-}
-
-// --- ProvisionPublisherForBuild -----------------------------------------
-
-func TestProvisionPublisherForBuild_FreshCreateWritesSecretRef(t *testing.T) {
+func TestRequirePublisherForBuild_NoRowFailsClosedWithoutThunder(t *testing.T) {
 	t.Parallel()
-	repo := newMemIDPRepo()
-	sm := &provFakeSM{ref: "cred-publisher-acme"}
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "secret-once", true, nil
-	}}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
-		t.Fatalf("provision: %v", err)
+	th := &fakeThunder{}
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).
+		WithOrgSecretRefs(newMemOrgSecretRepo()) // no ae-publisher-client row
+
+	err := svc.RequirePublisherForBuild(context.Background(), "acme")
+	if !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+		t.Fatalf("err = %v, want ErrPublisherCredentialsMissing", err)
 	}
-	row, _ := svc.GetProfile(ctx, "acme")
-	if row == nil || row.SecretRefName == nil || *row.SecretRefName != "cred-publisher-acme" {
-		t.Fatalf("secret_ref_name not stamped: %+v", row)
+	if !strings.Contains(err.Error(), "Reconnect GitHub to set up this organization's build credentials") {
+		t.Fatalf("err = %v: the message must send the user to reconnect GitHub", err)
 	}
-	if len(thunder.regenCalls) != 0 {
-		t.Fatalf("fresh create must not rotate, regenCalls=%v", thunder.regenCalls)
-	}
-	if len(sm.createCalls) != 1 {
-		t.Fatalf("WritePublisher once, got %d", len(sm.createCalls))
-	}
+	assertNoThunderCalls(t, th)
 }
 
-func TestProvisionPublisherForBuild_ExistingRefDoesNotRotate(t *testing.T) {
+func TestRequirePublisherForBuild_RowPresentPassesWithoutThunder(t *testing.T) {
 	t.Parallel()
-	name := "already-there"
-	repo := newMemIDPRepo()
-	_ = repo.CreateProfile(context.Background(), &OrganizationIDPProfile{
-		OrgID: "acme", PublisherClientID: "aep-publisher-acme", SecretRefName: &name,
-	})
+	th := &fakeThunder{}
 	rows := newMemOrgSecretRepo()
-	rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: name}
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "", false, nil
-	}}
-	sm := &provFakeSM{ref: "should-not-write"}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriterOver(sm, repo, rows))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
-		t.Fatalf("provision: %v", err)
+	rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: "acme-ae-publisher-client-1a2b"}
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
+
+	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); err != nil {
+		t.Fatalf("a recorded ae-publisher-client row passes the gate: %v", err)
 	}
-	if len(thunder.regenCalls) != 0 || len(thunder.setSecretCalls) != 0 {
-		t.Fatalf("must not rotate when the reference is recorded")
-	}
-	if len(sm.createCalls) != 0 {
-		t.Fatalf("must not WritePublisher when the reference is recorded")
-	}
+	assertNoThunderCalls(t, th)
 }
 
-// An app with no recorded reference (a pre-phase-1 org, or a lost write) is
-// healed once: a new secret stored, then given to Thunder.
-func TestProvisionPublisherForBuild_FoundAppWithoutReferenceHealsOnce(t *testing.T) {
+// Another org's row does not open this org's build.
+func TestRequirePublisherForBuild_AnotherOrgsRowDoesNotCount(t *testing.T) {
 	t.Parallel()
-	repo := newMemIDPRepo()
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "", false, nil
-	}}
-	sm := &provFakeSM{ref: "cred-after-heal"}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	if err := svc.ProvisionPublisherForBuild(ctx, "acme"); err != nil {
-		t.Fatalf("provision: %v", err)
-	}
-	if len(thunder.setSecretCalls) != 1 || len(sm.createCalls) != 1 {
-		t.Fatalf("heal once: puts=%d writes=%d", len(thunder.setSecretCalls), len(sm.createCalls))
-	}
-	row, _ := svc.GetProfile(ctx, "acme")
-	if row.SecretRefName == nil || *row.SecretRefName != "cred-after-heal" {
-		t.Fatalf("triplet after heal: %+v", row)
+	rows := newMemOrgSecretRepo()
+	rows.rows[memOrgSecretKey("other", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: "other-ae-publisher-client-1a2b"}
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{}).WithOrgSecretRefs(rows)
+
+	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+		t.Fatalf("err = %v, want ErrPublisherCredentialsMissing", err)
 	}
 }
 
-func TestProvisionPublisherForBuild_WritePublisherErrorFails(t *testing.T) {
+// A failed read is not a missing row: it is returned as is, so the build
+// answers a server error rather than telling the user to reconnect GitHub.
+func TestRequirePublisherForBuild_ReadErrorIsNotMissing(t *testing.T) {
 	t.Parallel()
-	repo := newMemIDPRepo()
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "secret-once", true, nil
-	}}
-	sm := &provFakeSM{err: errors.New("sm-api: no JWT in context")}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	err := svc.ProvisionPublisherForBuild(ctx, "acme")
-	if err == nil {
-		t.Fatal("SM-API write must fail the provisioner")
+	th := &fakeThunder{}
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{}).WithOrgSecretRefs(failingOrgSecretRows{})
+
+	err := svc.RequirePublisherForBuild(context.Background(), "acme")
+	if err == nil || errors.Is(err, delivery.ErrPublisherCredentialsMissing) || !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("err = %v, want the read failure, not a missing row", err)
 	}
-	if !strings.Contains(err.Error(), "sm-api") && !strings.Contains(err.Error(), "JWT") && !strings.Contains(err.Error(), "publisher") {
-		t.Fatalf("error must name SM-API/JWT/publisher, got %v", err)
-	}
+	assertNoThunderCalls(t, th)
 }
 
-func TestProvisionPublisherForBuild_DisabledWriterFailsClosed(t *testing.T) {
+// No row reader wired fails closed: there is no other source to fall back to.
+func TestRequirePublisherForBuild_NoReaderFailsClosed(t *testing.T) {
 	t.Parallel()
-	repo := newMemIDPRepo()
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "secret-once", true, nil
-	}}
-	// No WithSecretRefWriter call: secretRefWriter stays nil, matching a
-	// process with no SecretsProvider wired.
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{})
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	err := svc.ProvisionPublisherForBuild(ctx, "acme")
-	if err == nil {
-		t.Fatal("expected error when SecretRefWriter is disabled")
+	th := &fakeThunder{}
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, th, PlatformIDPConfig{})
+
+	if err := svc.RequirePublisherForBuild(context.Background(), "acme"); err == nil {
+		t.Fatal("an unwired row reader must fail the build")
 	}
-	if !strings.Contains(err.Error(), "SecretsProvider") && !strings.Contains(err.Error(), "secrets delivery") {
-		t.Fatalf("error must mention SecretsProvider/secrets delivery, got %v", err)
-	}
-	if len(thunder.ensureCalls) != 0 {
-		t.Fatalf("disabled writer must not touch Thunder (Ensure), got %d calls", len(thunder.ensureCalls))
-	}
-	if len(thunder.regenCalls) != 0 {
-		t.Fatalf("disabled writer must not rotate, regenCalls=%v", thunder.regenCalls)
-	}
+	assertNoThunderCalls(t, th)
 }
 
-func TestProvisionPublisherForBuild_DisabledWriterViaNewSecretRefWriter(t *testing.T) {
+func TestRequirePublisherForBuild_EmptyOrgID(t *testing.T) {
 	t.Parallel()
-	repo := newMemIDPRepo()
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "aep-publisher-acme", "secret-once", true, nil
-	}}
-	// NewSecretRefWriter(nil, nil, repo) is Enabled()==false (no
-	// SecretManagementClient) — same fail-closed contract as a nil writer.
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(nil, nil, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	err := svc.ProvisionPublisherForBuild(ctx, "acme")
-	if err == nil {
-		t.Fatal("expected error when SecretRefWriter is disabled")
-	}
-	if !strings.Contains(err.Error(), "SecretsProvider") && !strings.Contains(err.Error(), "secrets delivery") {
-		t.Fatalf("error must mention SecretsProvider/secrets delivery, got %v", err)
-	}
-	if len(thunder.regenCalls) != 0 {
-		t.Fatalf("disabled writer must not rotate, regenCalls=%v", thunder.regenCalls)
-	}
-}
-
-func TestProvisionPublisherForBuild_EnsureErrorPropagates(t *testing.T) {
-	t.Parallel()
-	repo := newMemIDPRepo()
-	ensureErr := errors.New("thunder: connection refused")
-	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
-		return "", "", false, ensureErr
-	}}
-	sm := &provFakeSM{}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	err := svc.ProvisionPublisherForBuild(ctx, "acme")
-	if err == nil {
-		t.Fatal("expected EnsureOrgPublisher error to propagate")
-	}
-	if !strings.Contains(err.Error(), "thunder: connection refused") {
-		t.Fatalf("error must propagate the Thunder failure untouched, got %v", err)
-	}
-	if len(sm.createCalls) != 0 {
-		t.Fatalf("must not write to SM-API when Ensure fails, got %d calls", len(sm.createCalls))
-	}
-}
-
-func TestProvisionPublisherForBuild_EmptyOrgID(t *testing.T) {
-	t.Parallel()
-	repo := newMemIDPRepo()
-	thunder := &fakeThunder{}
-	sm := &provFakeSM{}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	err := svc.ProvisionPublisherForBuild(context.Background(), "")
-	if err == nil {
-		t.Fatal("expected error for empty orgID")
-	}
-	if !strings.Contains(err.Error(), "orgID") {
-		t.Fatalf("error must name orgID, got %v", err)
-	}
-	if len(thunder.ensureCalls) != 0 {
-		t.Fatalf("empty orgID must short-circuit before touching Thunder, got %d calls", len(thunder.ensureCalls))
-	}
-}
-
-// --- RegenerateClientSecret fail-closed SM-API write -------------------------
-
-func TestRegenerateClientSecret_WritePublisherErrorReturned(t *testing.T) {
-	t.Parallel()
-	repo := newMemIDPRepo()
-	stale := "acme-publisher-secrets"
-	_ = repo.CreateProfile(context.Background(), &OrganizationIDPProfile{
-		OrgID: "acme", PublisherClientID: "aep-publisher-acme", SecretRefName: &stale,
-	})
-	thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
-	sm := &provFakeSM{err: errors.New("sm-api down")}
-	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(provWriter(sm, repo))
-	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-	_, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io")
-	if err == nil {
-		t.Fatal("RegenerateClientSecret must return WritePublisher errors")
-	}
-	row, _ := repo.GetProfileByOrgID(context.Background(), "acme")
-	if HasPublisherSecretRef(row) {
-		t.Fatalf("failed rewrite must clear secret_ref_name, got %+v", row.SecretRefName)
-	}
-}
-
-// failingIDPRepo fails the triplet clear (an update setting
-// secret_ref_name) when failClear is set.
-type failingIDPRepo struct {
-	*memIDPRepo
-	failClear bool
-}
-
-func (r failingIDPRepo) UpdateProfileColumns(ctx context.Context, p *OrganizationIDPProfile, orgID string, updates map[string]interface{}) error {
-	if v, ok := updates["secret_ref_name"]; ok && v == nil && r.failClear {
-		return errors.New("clear failed")
-	}
-	return r.memIDPRepo.UpdateProfileColumns(ctx, p, orgID, updates)
-}
-
-// failingDeleteRows fails every row delete when failDelete is set.
-type failingDeleteRows struct {
-	*memOrgSecretRepo
-	failDelete bool
-}
-
-func (r failingDeleteRows) Delete(ctx context.Context, org string, s OrgSecret, name string) error {
-	if r.failDelete {
-		return errors.New("row delete failed")
-	}
-	return r.memOrgSecretRepo.Delete(ctx, org, s, name)
-}
-
-// A rotation whose vault write failed unsets the publisher's row with the
-// triplet clear as its repoint: whatever step fails, the row and the triplet
-// end up both present or both gone, never a row with a NULL secret_ref_name.
-func TestRegenerateClientSecret_FailedWriteNeverLeavesARowWithoutATriplet(t *testing.T) {
-	for _, tc := range []struct {
-		name                  string
-		failClear, failDelete bool
-		wantGone              bool
-	}{
-		{"both steps succeed", false, false, true},
-		{"the triplet clear fails", true, false, false},
-		{"the row delete fails", false, true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mem := newMemIDPRepo()
-			prev := "acme-ae-publisher-client-previous"
-			_ = mem.CreateProfile(context.Background(), &OrganizationIDPProfile{
-				OrgID: "acme", PublisherClientID: "aep-publisher-acme", SecretRefName: &prev,
-			})
-			repo := failingIDPRepo{memIDPRepo: mem, failClear: tc.failClear}
-			rows := failingDeleteRows{memOrgSecretRepo: newMemOrgSecretRepo(), failDelete: tc.failDelete}
-			rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: prev}
-			sm := &provFakeSM{err: errors.New("sm-api down")}
-			writer := NewSecretRefWriter(sm, nil, repo).
-				WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
-			thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
-			svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)
-			ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
-
-			if _, err := svc.RegenerateClientSecret(ctx, "acme", "ada@x.io"); err == nil {
-				t.Fatal("the failed vault write is returned")
-			}
-			row, _ := rows.Get(context.Background(), "acme", OrgSecretPublisherClient)
-			profile, _ := mem.GetProfileByOrgID(context.Background(), "acme")
-			rowGone, tripletGone := row == nil, !HasPublisherSecretRef(profile)
-			if rowGone != tripletGone || rowGone != tc.wantGone {
-				t.Fatalf("row gone=%v, triplet gone=%v; want both %v", rowGone, tripletGone, tc.wantGone)
-			}
-		})
+	svc := NewIDPService(newMemIDPRepo(), stubOrgRepo{}, &fakeThunder{}, PlatformIDPConfig{}).
+		WithOrgSecretRefs(newMemOrgSecretRepo())
+	if err := svc.RequirePublisherForBuild(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "orgID") {
+		t.Fatalf("err = %v, want an orgID error", err)
 	}
 }

@@ -204,7 +204,7 @@ func newSaveFixture(t *testing.T) *saveFixture {
 	card := newMemCard(log)
 	refs := newMemOrgSecretRepo()
 	vault := &saveVault{log: log, live: map[string]bool{}}
-	writer := NewSecretRefWriter(vault, nil, nil).
+	writer := NewSecretRefWriter(vault, nil).
 		WithOrgSecretWriter(NewOrgSecretWriter(vault, refs, memOrgSecretLock{}, time.Now))
 	creds := NewAnthropicCredentialService(card.subRepo()).WithSecretRefWriter(writer).
 		WithModelProvider(&loggingProvider{log: log})

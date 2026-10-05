@@ -39,14 +39,14 @@ cloud use this path. The Job's only platform credential is publisher CC
 (`PUBLISHER_*`). Runner callbacks accept publisher `client_credentials`
 tokens only.
 
-`POST /projects/{projectName}/build` provisions the Thunder app and stamps
-the SecretReference (`ProvisionPublisherForBuild`, actor `build-provision`)
-while the console user JWT is still on ctx — Temporal dispatch has no user
-JWT, so it cannot write SM-API. Rotate once if the Thunder app already
-exists without `secret_ref_name`. Fail closed (503) if the secret write
-fails or secrets delivery is off. Coding dispatch then reads
-`secret_ref_name` only and mounts `PUBLISHER_CLIENT_ID` /
-`PUBLISHER_CLIENT_SECRET`. An empty name does not create the OpenChoreo
+The publisher's credentials live only in vault, in the org's
+`ae-publisher-client` reference, which the gitpat submit's client ensure
+writes (the only writer). `POST /projects/{projectName}/build` only reads:
+no `ae-publisher-client` row answers `409 publisher_credentials_missing`
+("Reconnect GitHub to set up this organization's build credentials") before
+a tag is cut, and nothing reaches Thunder. Coding dispatch reads the name
+the row records and mounts `PUBLISHER_CLIENT_ID` /
+`PUBLISHER_CLIENT_SECRET` from it. No row does not create the OpenChoreo
 Component; the run settles blocked (`publisher-credentials-missing`) instead
 of spending the re-dispatch budget. `PUBLISHER_TOKEN_URL` is plain env, derived from
 `PLATFORM_IDP_JWKS_URL` (`/oauth2/jwks` → `/oauth2/token`).
@@ -54,18 +54,21 @@ of spending the re-dispatch budget. `PUBLISHER_TOKEN_URL` is plain env, derived 
 ```mermaid
 sequenceDiagram
   actor User
-  participant Build as POST /projects/{name}/build
+  participant Submit as gitpat submit
   participant Thunder
   participant Store as Secret store
+  participant Build as POST /projects/{name}/build
   participant Dispatch as Coding dispatch
   participant Job as coding-agent Job
   participant API as aep-api /internal/v1
 
+  User->>Submit: console JWT
+  Submit->>Thunder: ensure publisher app
+  Submit->>Store: write ae-publisher-client reference + row
   User->>Build: console JWT
-  Build->>Thunder: ensure publisher app
-  Build->>Store: stamp SecretReference
+  Build->>Build: read the ae-publisher-client row (409 if none)
   Note over Dispatch: later, no user JWT on ctx
-  Dispatch->>Dispatch: read secret_ref_name only
+  Dispatch->>Dispatch: read the row's reference name
   Dispatch->>Job: mount PUBLISHER_*
   Job->>Thunder: client_credentials
   Thunder-->>Job: access token
@@ -108,10 +111,9 @@ flowchart TB
   end
 ```
 
-`EnsureOrgPublisher` on first protected deploy (`actor "deployment"`) still
-swallows SM-API write errors: that path must not fail a deploy. Admin
-**Rotate IDP client secret** is fail-closed: Thunder has already rotated, so
-a failed mirror is an error.
+A protected deploy only reads the org's IDP profile (its issuer); it never
+creates or heals the publisher app. There is no user rotation of the
+publisher secret.
 
 ## The type is per-org, and it is the billing key
 

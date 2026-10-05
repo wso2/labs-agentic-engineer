@@ -21,9 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -46,14 +44,12 @@ const vaultPathPrefix = "user-app-secrets"
 // org clients) as a new reference per write (OrgSecretWriter), and the
 // platform-issued per-agent values (WriteAMPModelKey and friends). The vault
 // write is the write: a failure is returned, and no value is kept anywhere
-// else. The rows it reads or stamps (org_credentials for the GitHub PAT's
-// pre-phase-1 reference, organization_idp_profiles for the publisher) are
-// reached through their owning repositories, so the writer holds no ORM/DB
-// handle of its own.
+// else. The one row it stamps besides the org secret rows (the org clients'
+// ids on organization_idp_profiles) is reached through its owning
+// repository, so the writer holds no ORM/DB handle of its own.
 type SecretRefWriter struct {
-	client      secretmanagersvc.SecretManagementClient
-	orgCredRepo OrgCredentialRepository
-	idpRepo     IDPRepository
+	client  secretmanagersvc.SecretManagementClient
+	idpRepo IDPRepository
 	// orgSecrets writes the org secrets (the GitHub PAT, the two org
 	// clients) as a new reference per write; see OrgSecretWriter.
 	orgSecrets *OrgSecretWriter
@@ -91,16 +87,8 @@ func (w *SecretRefWriter) repointModelKeyConsumers(ctx context.Context, ocOrgID 
 
 // NewSecretRefWriter returns a no-op writer when client is nil (matches the
 // composition-root behavior when SecretsProvider is nil).
-func NewSecretRefWriter(
-	client secretmanagersvc.SecretManagementClient,
-	orgCredRepo OrgCredentialRepository,
-	idpRepo IDPRepository,
-) *SecretRefWriter {
-	return &SecretRefWriter{
-		client:      client,
-		orgCredRepo: orgCredRepo,
-		idpRepo:     idpRepo,
-	}
+func NewSecretRefWriter(client secretmanagersvc.SecretManagementClient, idpRepo IDPRepository) *SecretRefWriter {
+	return &SecretRefWriter{client: client, idpRepo: idpRepo}
 }
 
 // WithOrgSecretWriter attaches the writer the org secrets go through. It is
@@ -386,10 +374,9 @@ const githubPATProperty = "token"
 
 // WriteGitHubPAT stores the org's GitHub PAT as a new github-pat reference
 // (keys token and password, one value) and records it in the secret's row,
-// the only record of where the PAT lives. Then the previous reference is
-// deleted: the row's, else the pre-phase-1 one the org_credentials triplet
-// still names. Errors are returned; ctx must carry the user's ouId claim
-// (the vault path).
+// the only record of where the PAT lives. Then the row's previous reference
+// is deleted. Errors are returned; ctx must carry the user's ouId claim (the
+// vault path).
 func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pat string) (string, error) {
 	if !w.Enabled() {
 		return "", nil
@@ -408,13 +395,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	if err != nil {
 		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
 	}
-	legacy := ""
-	if row, err := w.orgCredRepo.GetByOrg(ctx, ocOrgID); err != nil {
-		return "", fmt.Errorf("secret-ref writer: load github row: %w", err)
-	} else if row != nil {
-		legacy = derefOrEmpty(row.SecretRefName)
-	}
-	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, legacy, nil)
+	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, "", nil)
 	if err != nil {
 		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
 	}
@@ -448,8 +429,8 @@ func (w *SecretRefWriter) RemoveGitHubSecrets(ctx context.Context, ocOrgID strin
 // WriteExternalResourceSecret uploads the secret fields of an external
 // resource's per-(project, env) value bundle to SM-API and returns the Vault
 // KV path the rendered ExternalSecret reads (the secretStorePath) plus the
-// secretRefName. Unlike WriteAnthropic/WriteGitHubPAT there is NO DB triplet
-// to stamp — the vault path is carried on the per-env OC
+// secretRefName. Unlike WriteAnthropic/WriteGitHubPAT there is NO org_secrets
+// row to record — the vault path is carried on the per-env OC
 // ResourceReleaseBinding instead (pinned by the external-resource
 // provisioner). Same semantics otherwise: errors are returned, ctx must carry
 // the user JWT (resolveVaultKey reads the ouId claim).
@@ -600,11 +581,6 @@ const (
 	PublisherSecretFieldClientSecret = "client_secret"
 )
 
-// publisherTripletProperty is what the publisher triplet records as its
-// property: the reference carries two (client_id and client_secret) and
-// dispatch mounts both by name, so it is a label, not a key.
-const publisherTripletProperty = "publisher"
-
 // withOrgClientLock runs fn holding the lock of an org client secret, so a
 // caller can decide what to write from Thunder's state and write it with no
 // other write of that secret in between (see OrgSecretWriter.WithLock).
@@ -617,50 +593,24 @@ func (w *SecretRefWriter) withOrgClientLock(ctx context.Context, ocOrgID string,
 	return w.orgSecrets.WithLock(ctx, ocOrgID, s, fn)
 }
 
-// writePublisherClient stores the org's Thunder publisher cc credentials as
-// a new ae-publisher-client reference (client_id, client_secret) under the
-// held lock l, vault path under ouID. Inside the repoint it first runs
-// beforeStamp (nil = nothing), then writes the triplet together with cols
-// (extra profile columns) in one update, before the previous reference is
-// deleted (the row's, else the pre-phase-1 one the triplet names). Coding
-// dispatch reads secret_ref_name to mount the two Workload secretEnv entries
-// that hand the runner pod its cc credentials.
-func (w *SecretRefWriter) writePublisherClient(ctx context.Context, l *OrgSecretLocked, ocOrgID, ouID, clientID, clientSecret string, beforeStamp func() error, cols map[string]any) (string, error) {
+// writeOrgClient stores one org client's credentials (client_id,
+// client_secret) as a new reference of its secret (ae-publisher-client or
+// ae-studio-client) under the held lock l, vault path under ouID. Inside the
+// repoint it runs beforeStamp (nil = nothing), then writes cols (the client's
+// ids) onto the profile, before the previous reference is deleted. The
+// secret lives only in the reference: no column holds it. Coding dispatch
+// mounts the publisher's two keys by the name its row records.
+func (w *SecretRefWriter) writeOrgClient(ctx context.Context, l *OrgSecretLocked, ocOrgID, ouID string, kind ClientKind, clientID, clientSecret string, beforeStamp func() error, cols map[string]any) (string, error) {
 	if err := requireOrgClient(ocOrgID, clientID, clientSecret); err != nil {
 		return "", err
 	}
-	legacy := ""
-	if row, err := w.idpRepo.GetProfileByOrgID(ctx, ocOrgID); err != nil {
-		return "", fmt.Errorf("secret-ref writer: load idp profile row: %w", err)
-	} else if row != nil {
-		legacy = derefOrEmpty(row.SecretRefName)
+	if l == nil {
+		return "", errors.New("secret-ref writer: org secret writer not configured")
 	}
-	name, err := writeOrgClient(ctx, l, ouID, clientID, clientSecret, legacy, func(name string) error {
-		if beforeStamp != nil {
-			if err := beforeStamp(); err != nil {
-				return err
-			}
-		}
-		updates := stampSecretRefTripletWithWrittenAt(name, vaultKeyFor(ouID, name), publisherTripletProperty, time.Now().UTC())
-		maps.Copy(updates, cols)
-		return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, updates)
-	})
-	if err != nil {
-		return "", fmt.Errorf("secret-ref writer: publisher upload: %w", err)
-	}
-	slog.InfoContext(ctx, "secret-ref writer: publisher creds uploaded", "ocOrgId", ocOrgID, "secretRefName", name)
-	return name, nil
-}
-
-// writeStudioClient stores the org's AE Studio client credentials as a new
-// ae-studio-client reference under the held lock l. Inside the repoint it
-// runs beforeStamp (nil = nothing), then writes cols onto the profile. The
-// secret lives only in the reference: no column holds it.
-func (w *SecretRefWriter) writeStudioClient(ctx context.Context, l *OrgSecretLocked, ocOrgID, ouID, clientID, clientSecret string, beforeStamp func() error, cols map[string]any) (string, error) {
-	if err := requireOrgClient(ocOrgID, clientID, clientSecret); err != nil {
-		return "", err
-	}
-	name, err := writeOrgClient(ctx, l, ouID, clientID, clientSecret, "", func(string) error {
+	name, err := l.WriteAndRetire(ctx, ouID, map[string]string{
+		PublisherSecretFieldClientID:     clientID,
+		PublisherSecretFieldClientSecret: clientSecret,
+	}, "", func(string) error {
 		if beforeStamp != nil {
 			if err := beforeStamp(); err != nil {
 				return err
@@ -669,21 +619,10 @@ func (w *SecretRefWriter) writeStudioClient(ctx context.Context, l *OrgSecretLoc
 		return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, cols)
 	})
 	if err != nil {
-		return "", fmt.Errorf("secret-ref writer: studio client upload: %w", err)
+		return "", fmt.Errorf("secret-ref writer: %s client upload: %w", kind, err)
 	}
-	slog.InfoContext(ctx, "secret-ref writer: studio client uploaded", "ocOrgId", ocOrgID, "secretRefName", name)
+	slog.InfoContext(ctx, "secret-ref writer: org client uploaded", "ocOrgId", ocOrgID, "kind", string(kind), "secretRefName", name)
 	return name, nil
-}
-
-// writeOrgClient writes one org client's credentials through the held lock.
-func writeOrgClient(ctx context.Context, l *OrgSecretLocked, ouID, clientID, clientSecret, legacy string, repoint func(name string) error) (string, error) {
-	if l == nil {
-		return "", errors.New("secret-ref writer: org secret writer not configured")
-	}
-	return l.WriteAndRetire(ctx, ouID, map[string]string{
-		PublisherSecretFieldClientID:     clientID,
-		PublisherSecretFieldClientSecret: clientSecret,
-	}, legacy, repoint)
 }
 
 // requireOrgClient rejects an org client write missing any of its parts.
@@ -698,50 +637,21 @@ func requireOrgClient(ocOrgID, clientID, clientSecret string) error {
 	return nil
 }
 
-// DeletePublisher best-effort removes the SM-API publisher secret + clears
-// the triplet on `organization_idp_profiles`. Called by
-// idp_service.RevokeOrgPublisher. Under the secret's lock, a reference the
-// org secret writer recorded is removed through it (row, triplet, then the
-// reference by its stored name); a pre-phase-1 one by the triplet's name.
+// DeletePublisher removes the org's ae-publisher-client reference: its row,
+// then the reference by its stored name, under the secret's lock. Unset is a
+// no-op. Called when the publisher's Thunder app is deleted
+// (idp_service.forgetPublisherSecret). ctx must carry the user's ouId claim
+// (the vault path).
 func (w *SecretRefWriter) DeletePublisher(ctx context.Context, ocOrgID string) error {
-	if !w.Enabled() {
+	if !w.Enabled() || w.orgSecrets == nil {
 		return nil
 	}
-	row, err := w.idpRepo.GetProfileByOrgID(ctx, ocOrgID)
-	if err != nil {
-		return fmt.Errorf("secret-ref writer: load idp profile row: %w", err)
-	}
-	if row == nil {
-		return nil
-	}
-	orgUUID, err := orgUUIDForSecretLocation(ctx)
+	ouID, err := orgUUIDForSecretLocation(ctx)
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
 	}
-	clearTriplet := func() error {
-		return w.idpRepo.UpdateProfileColumns(ctx, &OrganizationIDPProfile{}, ocOrgID, clearSecretRefTripletWithWrittenAt())
+	if err := w.orgSecrets.Remove(ctx, ocOrgID, ouID, OrgSecretPublisherClient, nil); err != nil {
+		return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
 	}
-	return w.withOrgClientLock(ctx, ocOrgID, OrgSecretPublisherClient, func(l *OrgSecretLocked) error {
-		if l != nil {
-			ref, err := l.Ref(ctx)
-			if err != nil {
-				return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
-			}
-			if ref != nil {
-				if err := l.Remove(ctx, orgUUID, clearTriplet); err != nil {
-					return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
-				}
-				return nil
-			}
-		}
-		loc := secretmanagersvc.SecretLocation{
-			OrgName:               orgUUID,
-			ControlPlaneNamespace: ocOrgID,
-			EntityName:            "publisher",
-		}
-		if err := w.client.DeleteSecret(ctx, loc, derefOrEmpty(row.SecretRefName)); err != nil {
-			return fmt.Errorf("secret-ref writer: delete publisher secret: %w", err)
-		}
-		return clearTriplet()
-	})
+	return nil
 }

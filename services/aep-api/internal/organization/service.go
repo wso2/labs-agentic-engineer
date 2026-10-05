@@ -241,20 +241,41 @@ func (s *Service) gitProviderSection(ctx context.Context, org string) (*orgconfi
 // idpProjection returns the org's persisted IDP profile, or the platform
 // default (kind=platform + cluster issuer/jwks) when none exists yet. Read-only
 // — unlike UpdateProfile's GetOrCreateProfile, it never persists on GET.
+// hasClientSecret is whether the org's ae-publisher-client row exists: the
+// publisher's secret lives only in vault, and the row is the record that it
+// was written.
 func (s *Service) idpProjection(ctx context.Context, org string) orgconfig.IDPProjection {
+	out := orgconfig.IDPProjection{
+		Kind:    "platform",
+		Issuer:  s.platformIDP.Issuer,
+		JWKSURL: s.platformIDP.JWKSURL,
+	}
 	if s.idpSvc != nil {
 		if profile, err := s.idpSvc.GetProfile(ctx, org); err == nil && profile != nil {
-			return idpProjectionFrom(profile)
+			out = idpProjectionFrom(profile)
 		} else if err != nil {
 			slog.WarnContext(ctx, "orgconfig: idp GetProfile failed; falling back to platform default",
 				"org", org, "error", err)
 		}
 	}
-	return orgconfig.IDPProjection{
-		Kind:    "platform",
-		Issuer:  s.platformIDP.Issuer,
-		JWKSURL: s.platformIDP.JWKSURL,
+	out.HasClientSecret = s.publisherSecretRecorded(ctx, org)
+	return out
+}
+
+// publisherSecretRecorded reports whether the org's ae-publisher-client row
+// exists. A failed read projects false and is logged: GET /config does not
+// fail on it.
+func (s *Service) publisherSecretRecorded(ctx context.Context, org string) bool {
+	if s.secretRefs == nil {
+		return false
 	}
+	ref, err := s.secretRefs.Get(ctx, org, OrgSecretPublisherClient)
+	if err != nil {
+		slog.WarnContext(ctx, "orgconfig: read the ae-publisher-client row failed; hasClientSecret projects false",
+			"org", org, "error", err)
+		return false
+	}
+	return ref != nil && ref.Name != ""
 }
 
 // --- PATCH /config ----------------------------------------------------------
@@ -410,11 +431,6 @@ func (s *Service) DisconnectGitProvider(ctx context.Context, org string) (bool, 
 	return true, nil
 }
 
-// RotateIDPClientSecret mints a fresh publisher client secret (returned once).
-func (s *Service) RotateIDPClientSecret(ctx context.Context, org, actor string) (string, error) {
-	return s.idpSvc.RegenerateClientSecret(ctx, org, actor)
-}
-
 // DiscoverIDP resolves an OIDC issuer's discovery document.
 func (s *Service) DiscoverIDP(ctx context.Context, issuer string) (issuerOut, jwksURL string, err error) {
 	md, err := oidc.DiscoverFromIssuer(ctx, issuer)
@@ -466,7 +482,6 @@ func idpProjectionFrom(p *OrganizationIDPProfile) orgconfig.IDPProjection {
 		Issuer:            p.Issuer,
 		JWKSURL:           p.JWKSURL,
 		PublisherClientID: p.PublisherClientID,
-		HasClientSecret:   p.PublisherClientSecret != "",
 	}
 }
 

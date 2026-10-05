@@ -44,9 +44,9 @@ type Deps struct {
 	// attempts, and one attempt's evidence.
 	RunValidation *runread.ValidationReads
 
-	// PublisherProvisioner is nil in tests that do not care. Wired on
-	// Handler via WithPublisherProvisioner so StartProjectBuild cannot see it.
-	PublisherProvisioner build.PublisherProvisioner
+	// PublisherGate is nil in tests that do not care. Wired on Handler via
+	// WithPublisherGate: only POST /build is gated, never StartProjectBuild.
+	PublisherGate build.PublisherGate
 }
 
 // Every slice names its type Handler, so embedding them directly would be
@@ -72,8 +72,8 @@ type Handlers struct {
 // unwired one (each slice's nil guard), matching the pre-migration edge.
 func New(d Deps) (*Handlers, error) {
 	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc)
-	if d.PublisherProvisioner != nil {
-		bh = bh.WithPublisherProvisioner(d.PublisherProvisioner)
+	if d.PublisherGate != nil {
+		bh = bh.WithPublisherGate(d.PublisherGate)
 	}
 	return &Handlers{
 		buildHandler:     bh,

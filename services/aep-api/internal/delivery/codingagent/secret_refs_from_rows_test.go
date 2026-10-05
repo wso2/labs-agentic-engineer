@@ -17,17 +17,20 @@
 package codingagent
 
 // Coding dispatch takes the GitHub PAT's and the publisher client's
-// SecretReference names from their org_secrets rows (R7), so a rotation whose
-// triplet stamp lags never leaves a Job mounting the reference the write
-// already deleted. An org with no row yet (connected before phase 1) still
-// resolves from its triplet columns, name and key from that one source. Either
-// way dispatch needs only the name and the key (C10): the Job carries
-// SecretKeyRef{Name, Key} and OpenChoreo resolves the reference itself.
+// SecretReference names from their org_secrets rows (R7), and only from them:
+// an org with no row has no usable reference (the secret lives only in vault,
+// and the row is the record that it was written), so dispatch refuses rather
+// than reading any other column. Dispatch needs only the name and the key
+// (C10): the Job carries SecretKeyRef{Name, Key} and OpenChoreo resolves the
+// reference itself.
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
@@ -43,18 +46,10 @@ func (f fakeOrgSecrets) Get(_ context.Context, ocOrgID string, s organization.Or
 	return &organization.OrgSecretRef{Secret: s, Name: name}, nil
 }
 
-// githubTriplet is an org_credentials row whose triplet names name.
-func githubTriplet(name, kvPath, property string) *organization.OrgCredential {
-	return &organization.OrgCredential{SecretRefName: strPtr(name), SecretRefKVPath: strPtr(kvPath), SecretRefProperty: strPtr(property)}
-}
-
-func TestResolveRunnerSecretRefs_ReadsOrgSecretNamesNotStaleTriplets(t *testing.T) {
+func TestResolveRunnerSecretRefs_ReadsTheGitHubPATRow(t *testing.T) {
 	t.Parallel()
 	anthropic, _ := fullSecretRefs()
-	// the triplet columns still hold the pre-rotation name (the stamp lags)
-	stale := githubTriplet("acme-github-pat-00000001", "user-app-secrets/wc-acme/acme-github-pat-00000001", "token")
-	e := newCodingDispatchExecutor(anthropic, stale).
-		WithOrgSecrets(fakeOrgSecrets{"acme/github-pat": "acme-github-pat-0000beef"})
+	e := newCodingDispatchExecutor(anthropic, fakeOrgSecrets{"acme/github-pat": "acme-github-pat-0000beef"})
 
 	creds, err := e.resolveRunnerSecretRefs(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
 	if err != nil {
@@ -65,45 +60,73 @@ func TestResolveRunnerSecretRefs_ReadsOrgSecretNamesNotStaleTriplets(t *testing.
 	}
 }
 
-func TestResolveRunnerSecretRefs_RowNeedsNoCredentialTriplet(t *testing.T) {
+// No github-pat row: the dispatch fails and names the missing reference; there
+// is no other column to read it from.
+func TestResolveRunnerSecretRefs_NoGitHubPATRowFails(t *testing.T) {
 	t.Parallel()
 	anthropic, _ := fullSecretRefs()
-	e := newCodingDispatchExecutor(anthropic, nil).
-		WithOrgSecrets(fakeOrgSecrets{"acme/github-pat": "acme-github-pat-0000beef"})
+	e := newCodingDispatchExecutor(anthropic, fakeOrgSecrets{})
 
-	creds, err := e.resolveRunnerSecretRefs(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
-	if err != nil || creds.github.SecretRefName != "acme-github-pat-0000beef" {
-		t.Fatalf("%+v %v: a row alone resolves the PAT", creds.github, err)
+	_, err := e.resolveRunnerSecretRefs(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err == nil || !strings.Contains(err.Error(), "github-pat") {
+		t.Fatalf("err = %v, want a missing github-pat reference", err)
 	}
 }
 
-func TestResolveRunnerSecretRefs_FallsBackToTheTripletWithoutARow(t *testing.T) {
+func TestNewCodingExecutor_RequiresTheOrgSecretRows(t *testing.T) {
 	t.Parallel()
-	anthropic, _ := fullSecretRefs()
-	// A pre-phase-1 triplet: its own key (api-key), and no vault path is needed (C10).
-	e := newCodingDispatchExecutor(anthropic, githubTriplet("github-pat-secrets", "", "api-key")).
-		WithOrgSecrets(fakeOrgSecrets{})
-
-	creds, err := e.resolveRunnerSecretRefs(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
-	if err != nil || creds.github.SecretRefName != "github-pat-secrets" || creds.github.Property != "api-key" {
-		t.Fatalf("legacy org: %+v %v (name and key from the same triplet, C10)", creds.github, err)
-	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewCodingExecutor without an org secret reader must panic at assembly")
+		}
+	}()
+	NewCodingExecutor(nil, nil, nil, nil, "", nil, nil, nil)
 }
 
-func TestPublisherResolver_ReadsTheAePublisherClientRow(t *testing.T) {
+// TestPublisherSecretEnv_FromOrgSecretsRow: the runner's publisher token
+// (Q-1=A) is mounted from the reference the ae-publisher-client row names.
+func TestPublisherSecretEnv_FromOrgSecretsRow(t *testing.T) {
 	t.Parallel()
-	stale := "acme-ae-publisher-client-00000001"
-	r := NewIDPPublisherResolver(fakeIDPRepo{profile: &organization.OrganizationIDPProfile{SecretRefName: &stale}},
-		fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})
-	if name, err := r.SecretRefName(context.Background(), "acme"); err != nil || name != "acme-ae-publisher-client-1a2b" {
-		t.Fatalf("%q %v: dispatch must read the ae-publisher-client row (R7)", name, err)
-	}
-}
-
-func TestPublisherResolver_RowNeedsNoProfile(t *testing.T) {
-	t.Parallel()
-	r := NewIDPPublisherResolver(nil, fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})
-	if name, err := r.SecretRefName(context.Background(), "acme"); err != nil || name != "acme-ae-publisher-client-1a2b" {
+	r := NewIDPPublisherResolver(fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})
+	name, err := r.SecretRefName(context.Background(), "acme")
+	if err != nil || name != "acme-ae-publisher-client-1a2b" {
 		t.Fatalf("%q %v", name, err)
 	}
+
+	anthropic, rows := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, rows).
+		WithPublisherCredentials(r, "https://idp.example/oauth2/token")
+	env, tokenURL, err := e.publisherSecretEnv(context.Background(), "acme")
+	if err != nil || tokenURL != "https://idp.example/oauth2/token" {
+		t.Fatalf("publisherSecretEnv: %q %v", tokenURL, err)
+	}
+	want := []SecretEnvRef{
+		{Key: envPublisherClientID, SecretName: "acme-ae-publisher-client-1a2b", SecretKey: "client_id"},
+		{Key: envPublisherClientSecret, SecretName: "acme-ae-publisher-client-1a2b", SecretKey: "client_secret"},
+	}
+	if len(env) != len(want) || env[0] != want[0] || env[1] != want[1] {
+		t.Fatalf("publisher env = %+v, want %+v", env, want)
+	}
+}
+
+// No ae-publisher-client row: the resolver answers no name and the dispatch
+// refuses with ErrPublisherCredentialsMissing (no profile column is read).
+func TestPublisherSecretEnv_NoRowIsCredentialsMissing(t *testing.T) {
+	t.Parallel()
+	anthropic, rows := fullSecretRefs()
+	e := newCodingDispatchExecutor(anthropic, rows).
+		WithPublisherCredentials(NewIDPPublisherResolver(fakeOrgSecrets{}), "https://idp.example/oauth2/token")
+	if _, _, err := e.publisherSecretEnv(context.Background(), "acme"); !errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+		t.Fatalf("err = %v, want ErrPublisherCredentialsMissing", err)
+	}
+}
+
+func TestNewIDPPublisherResolver_RequiresTheOrgSecretRows(t *testing.T) {
+	t.Parallel()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("NewIDPPublisherResolver without an org secret reader must panic at assembly")
+		}
+	}()
+	NewIDPPublisherResolver(nil)
 }

@@ -50,6 +50,9 @@ var removedRoutes = []removedRoute{
 	// Regression row: the dev group never mounted in this harness; its removal
 	// is proven by TestRouteTable.
 	{http.MethodPost, "/_dev/v1/secret-ref-resync", http.StatusNotFound},
+	// No user rotation of the publisher client secret: it lives only in
+	// vault, written by the gitpat submit's client ensure (06 §5).
+	{http.MethodPost, "/api/v1/config/idp/client-secret", http.StatusNotFound},
 }
 
 func TestRemovedRoutes(t *testing.T) {

@@ -364,13 +364,6 @@ func (s *AnthropicCredentialService) Holds(ctx context.Context, ocOrgID string, 
 	return row != nil, err
 }
 
-func derefOrEmpty(p *string) string {
-	if p == nil {
-		return ""
-	}
-	return *p
-}
-
 // ----------------------------------------------------------------------------
 // helpers
 // ----------------------------------------------------------------------------

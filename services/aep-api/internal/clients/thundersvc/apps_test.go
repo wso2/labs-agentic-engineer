@@ -391,14 +391,11 @@ func TestEnsurePublisherApp_CreateReturnsEntityID(t *testing.T) {
 	}
 }
 
-func TestDeleteAndRegenerate_UseStoredID(t *testing.T) {
+func TestDelete_UsesStoredID(t *testing.T) {
 	ctx := context.Background()
 	th := newFakeThunder(t)
 	th.app("pub-1", "aep-publisher-default", "ou-1")
 	c := newFakeClient(t, th)
-	if _, err := c.RegenerateClientSecret(ctx, "default", "pub-1"); err != nil {
-		t.Fatal(err)
-	}
 	if deleted, err := c.DeletePublisherApp(ctx, "default", "pub-1"); err != nil || !deleted {
 		t.Fatalf("delete: %v %v", deleted, err)
 	}

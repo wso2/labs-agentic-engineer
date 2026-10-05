@@ -39,8 +39,6 @@ type chainRecorder = fakeOCSurface
 
 func (r *chainRecorder) client() OCJobSurface { return r }
 
-func strPtr(s string) *string { return &s }
-
 type fakeOrgRepo struct {
 	org *organization.Organization
 }
@@ -131,22 +129,7 @@ func ollamaConnection() modelconn.Connection {
 	}
 }
 
-type fakeGitHubCreds struct {
-	row *organization.OrgCredential
-}
-
-func (f fakeGitHubCreds) GetByOrg(context.Context, string) (*organization.OrgCredential, error) {
-	return f.row, nil
-}
-func (f fakeGitHubCreds) UpdateColumns(context.Context, string, map[string]any) error { return nil }
-func (f fakeGitHubCreds) ListActiveRows(context.Context) ([]organization.OrgCredential, error) {
-	return nil, nil
-}
-func (f fakeGitHubCreds) Tx(context.Context, func(organization.OrgCredentialTx) error) error {
-	return nil
-}
-
-func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
+func fullSecretRefs() (fakeCodingKey, fakeOrgSecrets) {
 	// No subscription — the org bills its API key — is the common case, so both
 	// answers name the same row here. Tests that care about the difference set
 	// defaultRef themselves.
@@ -155,14 +138,12 @@ func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
 		KVPath:   "user-app-secrets/wc-acme/acme-anthropic-secrets",
 		Property: "api-key",
 	}
-	return fakeCodingKey{ref: defaultRef, defaultRef: defaultRef}, &organization.OrgCredential{
-		SecretRefName:     strPtr("acme-github-pat-secrets"),
-		SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-		SecretRefProperty: strPtr("token"),
+	return fakeCodingKey{ref: defaultRef, defaultRef: defaultRef}, fakeOrgSecrets{
+		"acme/github-pat": "acme-github-pat-secrets",
 	}
 }
 
-func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.OrgCredential) *CodingExecutor {
+func newCodingDispatchExecutor(anthropic fakeCodingKey, orgSecrets fakeOrgSecrets) *CodingExecutor {
 	orgUUID := uuid.MustParse("d3adbeef-1234-4321-abcd-c0ffee123456")
 	return NewCodingExecutor(
 		nil,
@@ -172,8 +153,7 @@ func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.Org
 		"http://platform",
 		fakeOrgRepo{org: &organization.Organization{Name: "acme", UUID: orgUUID}},
 		anthropic,
-		fakeGitHubCreds{row: github},
-		nil,
+		orgSecrets,
 	).WithGitHubOwners(fakeOwners{owner: "acme-gh"})
 }
 
@@ -420,7 +400,7 @@ func podEnv(rec *chainRecorder, key string) string {
 func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
-	github.SecretRefName = nil
+	delete(github, "acme/github-pat")
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).WithImage("runner:1"))
 
@@ -953,7 +933,7 @@ func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
 
 const openCodeRunnerImage = "aep-runner-opencode:dev"
 
-func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github *organization.OrgCredential, opencodeImage string) *CodingExecutor {
+func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github fakeOrgSecrets, opencodeImage string) *CodingExecutor {
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).
