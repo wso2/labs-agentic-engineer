@@ -425,10 +425,11 @@ export function ProjectCreate() {
 }
 
 /**
- * A create the platform refused. Two refusals are states rather than failures
+ * A create the platform refused. Three refusals are states rather than failures
  * and say what to do (10 §7): GitHub not connected goes to Settings →
- * Credentials, and AE Studio restarting offers Try again (the platform took
- * the half-made project away, so a retry is a clean create). Anything else is
+ * Credentials, AE Studio restarting offers Try again (the platform took the
+ * half-made project away, so a retry is a clean create), and AE Studio
+ * misconfigured names the administrator (no retry fixes it). Anything else is
  * read out in the server's words.
  */
 function CreateFailure({
@@ -466,6 +467,9 @@ function CreateFailure({
         AE Studio is restarting — try again
       </Alert>
     );
+  }
+  if (code === "ae_studio_misconfigured") {
+    return <Alert severity="error">AE Studio is misconfigured — contact your administrator</Alert>;
   }
   return (
     <Alert severity="error">

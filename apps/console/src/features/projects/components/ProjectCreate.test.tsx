@@ -367,6 +367,20 @@ describe("ProjectCreate copy (#561)", () => {
     expect(createProject.mutate).toHaveBeenCalledTimes(1);
   });
 
+  it("names the operator, not the server, when AE Studio is misconfigured", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "ae_studio_misconfigured", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "AE Studio is misconfigured — contact your administrator",
+    );
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("still shows an Alert for a failure the user cannot fix in the form", () => {
     createProject.isError = true;
     createProject.error = new ApiRequestError(

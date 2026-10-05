@@ -1605,6 +1605,7 @@ container.
 | The Spec view, while the poll cannot read the spec | inline beside the title, muted, by cause — never a full-page hold: AE Studio restarting, **AE Studio is restarting — retrying…**; GitHub not connected, **Connect GitHub to continue** (a link to Settings → Credentials); AE Studio misconfigured, **AE Studio is misconfigured — contact your administrator**. Only the restart is retried on the fast cadence |
 | Create project, GitHub not connected (`github_not_connected`) | a warning: **Connect GitHub to continue**, with **Connect GitHub** → Settings → Credentials |
 | Create project, AE Studio restarting (`ae_studio_unavailable`) | **AE Studio is restarting — try again**, with **Try again** |
+| Create project, AE Studio misconfigured (`ae_studio_misconfigured`) | an error: **AE Studio is misconfigured — contact your administrator**, no retry |
 
 ## Resources
 
