@@ -30,11 +30,12 @@ package codingagent
 //     this sweep's backstop), so a Job re-created meanwhile is born suspended —
 //     unless the release predates the suspend schema (ErrSuspendUnsupported),
 //     where suspend does not apply and conditions 1, 2 and 4 alone decide;
-//  4. a "no pod" read noted on an earlier pass (pod_gone_at) at least the grace
-//     ago; any pass that sees a pod clears it. A resource tree read under load
-//     can answer 200 and empty (see the watcher), so one empty read is never
-//     evidence. The grace also covers the observer's indexing lag and the
-//     runner's SIGTERM grace many times over.
+//  4. a "no pod" read noted on an earlier pass (pod_gone_at), and the grace
+//     elapsed since the LATER of that note and the suspend; any pass that sees
+//     a pod clears the note. A resource tree read under load can answer 200
+//     and empty (see the watcher), so one empty read is never evidence. The
+//     grace also covers the observer's indexing lag and the runner's SIGTERM
+//     grace many times over.
 //
 // Usage capture is done by construction: the watcher captures from the pod's
 // log while the pod exists, and "no pod" is the moment no more capture is
@@ -43,7 +44,9 @@ package codingagent
 // The BACKSTOP suspends a closed cycle whose Job nobody suspended. A cycle can
 // close on the merge webhook before its pod exits, so a Running or Pending pod
 // is left to the watcher (which suspends at terminal, after the usage line)
-// until backstopCeiling past the close. A cancelled cycle has no line to
+// until backstopCeiling past the close, and "no pod" counts only once an
+// earlier pass noted it too: one empty tree read must not kill a Running pod.
+// A terminal pod is suspended on sight. A cancelled cycle has no line to
 // protect: its failed cancel-time suspend is retried at once.
 
 import (
@@ -109,6 +112,12 @@ type ComponentSettler struct {
 	// once). In memory: a restart re-learns it with one call per cycle.
 	unsupported map[string]bool
 
+	// staleGone records the cycles whose pod_gone_at outlived a pod seen since:
+	// the ClearPodGone write failed. Until a clear lands, that stamp is no
+	// evidence of anything, so nothing is decided on it. In memory: a restart
+	// in that window forgets it (the clear is retried on every pod-seen pass).
+	staleGone map[string]bool
+
 	once sync.Once
 }
 
@@ -129,6 +138,7 @@ func NewComponentSettler(runtime openchoreo.RuntimeClient, jobs jobSuspender, co
 		grace:       defaultSettleGrace,
 		now:         time.Now,
 		unsupported: map[string]bool{},
+		staleGone:   map[string]bool{},
 	}
 }
 
@@ -219,27 +229,29 @@ func (s *ComponentSettler) settle(ctx context.Context, cycle *delivery.RunCycle)
 		return
 	}
 
+	// A pod_gone_at that outlived a seen pod is cleared before anything reads
+	// it; while the clear keeps failing, this row decides nothing.
+	if cycle.PodGoneAt != nil && (pod.Found || s.staleGone[cycle.ID]) {
+		if !s.clearPodGone(ctx, cycle) {
+			return
+		}
+	}
 	held := s.jobHeld(ctx, cycle, pod, now)
 	if pod.Found {
-		if cycle.PodGoneAt != nil {
-			if err := s.cycles.ClearPodGone(ctx, cycle.ID); err != nil {
-				slog.WarnContext(ctx, "codingagent.ComponentSettler: clear pod gone failed",
-					"cycle", cycle.ID, "error", err)
-			}
-		}
-		return
-	}
-	if !held {
 		return
 	}
 	if cycle.PodGoneAt == nil {
+		// The first no-pod read, held or not: evidence only for a later pass.
 		if err := s.cycles.NotePodGone(ctx, cycle.ID, now); err != nil {
 			slog.WarnContext(ctx, "codingagent.ComponentSettler: note pod gone failed",
 				"cycle", cycle.ID, "error", err)
 		}
 		return
 	}
-	if now.Sub(*cycle.PodGoneAt) < s.grace {
+	if !held {
+		return
+	}
+	if now.Sub(graceStart(cycle)) < s.grace {
 		return
 	}
 	// By NAME: a pre-UID row has no UID, and a cycle's Component name is its own.
@@ -252,6 +264,32 @@ func (s *ComponentSettler) settle(ctx context.Context, cycle *delivery.RunCycle)
 		slog.InfoContext(ctx, "codingagent.component_deleted",
 			"cycle", cycle.ID, "component", cycle.JobRef, "componentUid", cycle.ComponentUID)
 	}
+}
+
+// clearPodGone forgets the cycle's pod_gone_at because a pod was seen since.
+// A failed write is remembered (staleGone), so the stale stamp cannot count as
+// a no-pod read on a later pass. False when the write failed.
+func (s *ComponentSettler) clearPodGone(ctx context.Context, cycle *delivery.RunCycle) bool {
+	if err := s.cycles.ClearPodGone(ctx, cycle.ID); err != nil {
+		s.staleGone[cycle.ID] = true
+		slog.WarnContext(ctx, "codingagent.ComponentSettler: clear pod gone failed (row skipped until it lands)",
+			"cycle", cycle.ID, "error", err)
+		return false
+	}
+	delete(s.staleGone, cycle.ID)
+	cycle.PodGoneAt = nil
+	return true
+}
+
+// graceStart is when the delete grace began: the later of the first no-pod
+// note and the suspend, so a Job suspended after its pod was noted gone still
+// gets the whole grace with the Job held.
+func graceStart(cycle *delivery.RunCycle) time.Time {
+	start := *cycle.PodGoneAt
+	if cycle.JobSuspendedAt != nil && cycle.JobSuspendedAt.After(start) {
+		start = *cycle.JobSuspendedAt
+	}
+	return start
 }
 
 // jobHeld reports whether a re-created Job cannot run the runner again: the
@@ -273,6 +311,7 @@ func (s *ComponentSettler) jobHeld(ctx context.Context, cycle *delivery.RunCycle
 				"cycle", cycle.ID, "error", err)
 			return false
 		}
+		cycle.JobSuspendedAt = &now
 		slog.InfoContext(ctx, "codingagent.job_suspended", "cycle", cycle.ID, "component", cycle.JobRef, "cause", "backstop")
 		return true
 	case errors.Is(err, openchoreo.ErrNotFound):
@@ -282,6 +321,7 @@ func (s *ComponentSettler) jobHeld(ctx context.Context, cycle *delivery.RunCycle
 				"cycle", cycle.ID, "error", err)
 			return false
 		}
+		cycle.JobSuspendedAt = &now
 		return true
 	case errors.Is(err, openchoreo.ErrSuspendUnsupported):
 		s.unsupported[cycle.ID] = true
@@ -296,16 +336,21 @@ func (s *ComponentSettler) jobHeld(ctx context.Context, cycle *delivery.RunCycle
 	}
 }
 
-// backstopDue reports whether the backstop may suspend the cycle's Job now: no
-// pod or a terminal one; a cancelled cycle at once; a Running or Pending pod
-// only past backstopCeiling after the close.
+// backstopDue reports whether the backstop may suspend the cycle's Job now: a
+// cancelled cycle at once; a terminal pod on sight; no pod only when an
+// earlier pass saw none either (pod_gone_at), because one empty tree read can
+// hide a Running pod; a Running or Pending pod only past backstopCeiling after
+// the close.
 func backstopDue(cycle *delivery.RunCycle, pod openchoreo.RuntimePod, now time.Time) bool {
+	if cycle.AgentReason == delivery.CycleReasonCancelled {
+		return true
+	}
 	switch ClassifyPod(pod) {
 	case OutcomeSucceeded, OutcomeFailed:
 		return true
 	}
-	if !pod.Found || cycle.AgentReason == delivery.CycleReasonCancelled {
-		return true
+	if !pod.Found {
+		return cycle.PodGoneAt != nil
 	}
 	return cycle.EndedAt != nil && now.Sub(*cycle.EndedAt) > backstopCeiling
 }
@@ -319,5 +364,6 @@ func (s *ComponentSettler) markDeleted(ctx context.Context, cycle *delivery.RunC
 		return false
 	}
 	delete(s.unsupported, cycle.ID)
+	delete(s.staleGone, cycle.ID)
 	return true
 }

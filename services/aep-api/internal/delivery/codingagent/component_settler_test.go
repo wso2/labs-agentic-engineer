@@ -42,6 +42,10 @@ type settleCycles struct {
 	deleted     map[string]bool
 	marked      map[string]bool
 	cleared     map[string]int
+	// clock, when set, is the time MarkJobSuspended stamps (the repository
+	// stamps its own now); clearErr fails ClearPodGone.
+	clock    *time.Time
+	clearErr error
 }
 
 func newSettleCycles(rows ...delivery.RunCycle) *settleCycles {
@@ -106,7 +110,11 @@ func (c *settleCycles) NoteSettleChecked(_ context.Context, id string, at time.T
 func (c *settleCycles) MarkJobSuspended(_ context.Context, id string) error {
 	c.marked[id] = true
 	if _, ok := c.suspendedAt[id]; !ok {
-		c.suspendedAt[id] = time.Now()
+		at := time.Now()
+		if c.clock != nil {
+			at = *c.clock
+		}
+		c.suspendedAt[id] = at
 	}
 	return nil
 }
@@ -119,6 +127,9 @@ func (c *settleCycles) NotePodGone(_ context.Context, id string, at time.Time) e
 }
 
 func (c *settleCycles) ClearPodGone(_ context.Context, id string) error {
+	if c.clearErr != nil {
+		return c.clearErr
+	}
 	delete(c.goneAt, id)
 	c.cleared[id]++
 	return nil
@@ -245,8 +256,9 @@ func TestSettler_NeverDeletesAnUnsuspendedJob(t *testing.T) {
 	if len(del.names) != 0 || cycles.marked["c1"] {
 		t.Fatalf("deleted %v, marked %v", del.names, cycles.marked)
 	}
-	if len(jobs.suspends) != 3 {
-		t.Fatalf("the backstop must retry every pass, got %d suspends", len(jobs.suspends))
+	// The first pass only notes the empty tree; every later one retries.
+	if len(jobs.suspends) != 2 {
+		t.Fatalf("the backstop must retry every pass after the first, got %d suspends", len(jobs.suspends))
 	}
 }
 
@@ -297,16 +309,129 @@ func TestSettler_BackstopSuspendsATerminalPod(t *testing.T) {
 	}
 }
 
-func TestSettler_BackstopSuspendsWhenNoPodIsLeft(t *testing.T) {
+// One empty tree read on a merge-closed cycle is no evidence: it may hide a
+// Running pod writing its usage line (Review Focus 2). It only notes pod_gone.
+func TestSettler_BackstopIgnoresASingleEmptyRead(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
 	jobs := &fakeJobs{}
-	cycles := newSettleCycles(settled("c1", false))
+	c := settled("c1", false)
+	recent := time.Now().Add(-time.Minute)
+	c.EndedAt = &recent
+	cycles := newSettleCycles(c)
 	NewComponentSettler(rt, jobs, &fakeDeleter{}, cycles, testWriteTargets(), nil).Tick(context.Background())
+	if len(jobs.suspends) != 0 || cycles.marked["c1"] {
+		t.Fatalf("suspended on one empty read: %v", jobs.suspends)
+	}
+	if _, noted := cycles.goneAt["c1"]; !noted {
+		t.Fatal("the empty read must be noted for the next pass")
+	}
+}
+
+// The pod is back on the next pass: the note is cleared and nothing is
+// suspended (a Running pod inside the ceiling).
+func TestSettler_BackstopPodSeenNextPassClearsAndDoesNotSuspend(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	jobs := &fakeJobs{}
+	c := settled("c1", false)
+	recent := clock.Add(-time.Minute)
+	c.EndedAt = &recent
+	cycles := newSettleCycles(c)
+	s := settlerAt(rt, jobs, &fakeDeleter{}, cycles, &clock)
+	s.Tick(ctx)
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p", Phase: "Running"}
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx)
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspended %v a Running pod inside the ceiling", jobs.suspends)
+	}
+	if _, noted := cycles.goneAt["c1"]; noted || cycles.cleared["c1"] != 1 {
+		t.Fatalf("pod_gone_at must be cleared (gone %v, cleared %d)", cycles.goneAt, cycles.cleared["c1"])
+	}
+}
+
+// Two consecutive empty reads are evidence: the second pass suspends.
+func TestSettler_BackstopSuspendsOnTheSecondEmptyRead(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	jobs := &fakeJobs{}
+	c := settled("c1", false)
+	recent := clock.Add(-time.Minute)
+	c.EndedAt = &recent
+	cycles := newSettleCycles(c)
+	s := settlerAt(rt, jobs, &fakeDeleter{}, cycles, &clock)
+	s.Tick(ctx)
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx)
 	if !reflect.DeepEqual(jobs.suspends, []string{"ca-c1@development"}) || !cycles.marked["c1"] {
 		t.Fatalf("suspends %v marked %v", jobs.suspends, cycles.marked)
 	}
-	if _, noted := cycles.goneAt["c1"]; !noted {
-		t.Fatal("once suspended in this pass, the no-pod read counts as the first one")
+}
+
+// The delete grace runs from the LATER of the no-pod note and the suspend, so
+// the Job is held for the whole grace before the Component goes.
+func TestSettler_GraceStartsFromTheSuspend(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	del := &fakeDeleter{}
+	cycles := newSettleCycles(settled("c1", false))
+	cycles.clock = &clock
+	s := settlerAt(rt, &fakeJobs{}, del, cycles, &clock)
+	s.Tick(ctx) // notes pod_gone at t0
+	clock = clock.Add(4 * time.Minute)
+	s.Tick(ctx) // suspends at t0+4m
+	if !cycles.marked["c1"] {
+		t.Fatal("second empty read suspends")
+	}
+	clock = clock.Add(2 * time.Minute) // 6m after the note, 2m after the suspend
+	s.Tick(ctx)
+	if len(del.names) != 0 {
+		t.Fatalf("deleted %v 2m after the suspend", del.names)
+	}
+	clock = clock.Add(4 * time.Minute) // 6m after the suspend
+	s.Tick(ctx)
+	if !reflect.DeepEqual(del.names, []string{"ca-c1"}) {
+		t.Fatalf("deleted %v, want ca-c1 once the grace from the suspend passed", del.names)
+	}
+}
+
+// A failed ClearPodGone leaves a stale pod_gone_at behind a seen pod. Nothing
+// may delete on it: the row decides nothing until a clear lands, and then the
+// no-pod sequence starts afresh.
+func TestSettler_FailedClearBlocksTheDeleteUntilAFreshSequence(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	del := &fakeDeleter{}
+	cycles := newSettleCycles(settled("c1", true))
+	s := settlerAt(rt, &fakeJobs{}, del, cycles, &clock)
+	s.Tick(ctx) // note at t0
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p", Phase: "Succeeded"}
+	cycles.clearErr = errors.New("db down")
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx) // pod seen, clear fails
+	rt.pod = openchoreo.RuntimePod{Found: false}
+	clock = clock.Add(10 * time.Minute)
+	s.Tick(ctx) // stale note 11m old: clear still failing, nothing decided
+	if len(del.names) != 0 {
+		t.Fatalf("deleted %v on a stale pod_gone_at", del.names)
+	}
+	cycles.clearErr = nil
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx) // clear lands; this read starts a fresh sequence
+	if len(del.names) != 0 {
+		t.Fatalf("deleted %v on the first read of a fresh sequence", del.names)
+	}
+	if at, ok := cycles.goneAt["c1"]; !ok || !at.Equal(clock) {
+		t.Fatalf("pod_gone_at = %v, want a fresh note at %v", at, clock)
+	}
+	clock = clock.Add(6 * time.Minute)
+	s.Tick(ctx)
+	if !reflect.DeepEqual(del.names, []string{"ca-c1"}) {
+		t.Fatalf("deleted %v after the fresh sequence's grace", del.names)
 	}
 }
 
@@ -375,6 +500,7 @@ func TestSettler_BackstopOnAGoneBindingMarksSuspended(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
 	jobs := &fakeJobs{err: fmt.Errorf("x: %w", openchoreo.ErrNotFound)}
 	cycles := newSettleCycles(settled("c1", false))
+	cycles.goneAt["c1"] = time.Now().Add(-time.Minute) // an earlier pass saw no pod
 	NewComponentSettler(rt, jobs, &fakeDeleter{}, cycles, testWriteTargets(), nil).Tick(context.Background())
 	if !cycles.marked["c1"] {
 		t.Fatal("a gone binding has nothing to suspend")

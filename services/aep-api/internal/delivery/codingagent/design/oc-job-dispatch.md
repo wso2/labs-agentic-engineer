@@ -301,10 +301,11 @@ delete waits for all of:
    or the settler's backstop), so a Job re-created meanwhile is born suspended.
    A legacy release (`ErrSuspendUnsupported`) cannot suspend: it is deleted on
    1, 2 and 4 alone, so it is still never deleted while a pod exists;
-4. a "no pod" read noted on an earlier pass (`pod_gone_at`) at least
-   `CODING_AGENT_SETTLE_GRACE` (5m) ago; any pass that sees a pod clears it.
-   The resource tree can answer 200 and empty under load, so one empty read is
-   never evidence.
+4. a "no pod" read noted on an earlier pass (`pod_gone_at`), and
+   `CODING_AGENT_SETTLE_GRACE` (5m) elapsed since the LATER of that note and
+   `job_suspended_at`; any pass that sees a pod clears the note (a failed
+   clear stops the row deciding anything until it lands). The resource tree
+   can answer 200 and empty under load, so one empty read is never evidence.
 
 Then `DeleteComponent` by name (404 is success; a pre-UID row has no UID) and
 `codingagent.component_deleted {cycle, component, componentUid}`. A finished
@@ -313,9 +314,10 @@ cancelled run's about grace + 30 s after the cancel. Usage capture is done by
 construction: the watcher reads the pod's log while the pod exists.
 
 **The backstop** suspends a closed cycle's Job nobody suspended
-(`codingagent.job_suspended`, `cause` = `backstop`): at once when the pod is
-absent or terminal, or when the cycle was cancelled (its cancel-time suspend
-failed). A merge-closed cycle's `Running`/`Pending` pod is left to the watcher
+(`codingagent.job_suspended`, `cause` = `backstop`): on sight for a terminal
+pod, at once for a cancelled cycle (its cancel-time suspend failed), and for
+no pod only when an earlier pass also saw none (one empty read can hide a
+Running pod). A merge-closed cycle's `Running`/`Pending` pod is left to the watcher
 until `ended_at` + 3h10m (the deadline ceiling + 10 min), so its last line and
 usage are kept. A suspend that keeps failing (for example a binding naming a
 missing release) leaves the row settling and never deleted.
