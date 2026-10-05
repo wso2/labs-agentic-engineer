@@ -761,3 +761,34 @@ test("crew: an undeclared child never blocks its parent, so it cannot mute the s
   assert.equal(memberOf(lifted, R.webapp).agent.background, undefined);
   assert.equal(lifted.lead.waitingOnId, R.webapp);
 });
+
+// --- a run that ended without its cycle saying so ---------------------------
+
+test("crew: a run that ended without a run_settled settles on the outcome it ended with", () => {
+  // A cancelled cycle's own run_settled is minted by the platform only once the
+  // pod is gone and the log index has caught up; the run's stream has already
+  // closed by then. The run's ending is the last word the viewer will get.
+  const events: RunEventView[] = [
+    { kind: "agent_progress", agentId: LEAD_AGENT_ID, phrase: "working", ts: "2026-10-01T10:00:00Z" },
+    { kind: "tool_use", agentId: LEAD_AGENT_ID, tool: "Bash", summary: "make", ts: "2026-10-01T10:00:05Z" },
+  ];
+  const now = Date.parse("2026-10-01T10:05:00Z");
+  assert.equal(buildCrew(events, now).running, 1);
+
+  const crew = buildCrew(events, now, "cancelled");
+  assert.equal(crew.outcome, "cancelled");
+  assert.equal(crew.running, 0);
+  assert.equal(crew.lead.agent.status, "stopped");
+});
+
+test("crew: the cycle's own run_settled outranks the outcome the run ended with", () => {
+  const crew = buildCrew(
+    [
+      { kind: "tool_use", agentId: LEAD_AGENT_ID, tool: "Bash", summary: "make", ts: "2026-10-01T10:00:05Z" },
+      { kind: "run_settled", agentId: LEAD_AGENT_ID, outcome: "success", ts: "2026-10-01T10:00:09Z" },
+    ],
+    Date.parse("2026-10-01T10:05:00Z"),
+    "cancelled",
+  );
+  assert.equal(crew.outcome, "success");
+});

@@ -406,6 +406,25 @@ export function runCancelledEvents(startSeq: number): RunEvent[] {
   ];
 }
 
+/**
+ * What aep-api sends for a cycle whose log it cannot serve: one platform notice
+ * at the fixed seq -20, `code: gap` (codingagent logsUnavailableRunEvent). The
+ * cycle frame's `recording` says why; this is the row the feed carries anyway.
+ */
+export function runLogUnavailableEvent(recording: "expired" | "unavailable"): RunEvent {
+  const reason = recording === "expired" ? " (it is older than the platform keeps agent logs)" : "";
+  return {
+    v: 2,
+    seq: -20,
+    ts: new Date().toISOString(),
+    agentId: LEAD,
+    kind: "notice",
+    level: "warn",
+    code: "gap",
+    detail: `This cycle's log is not available.${reason}`,
+  };
+}
+
 /** A heartbeat for a live run's newest cycle — the silence, explained. */
 export function runHeartbeatEvent(seq: number, tick: number): RunEvent {
   return {

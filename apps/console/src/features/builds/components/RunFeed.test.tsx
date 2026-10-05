@@ -105,7 +105,27 @@ afterEach(() => {
 
 describe("RunFeed", () => {
   describe("run log states", () => {
+    // What the server sends for a log it cannot serve: the cycle frame AND one
+    // platform notice (seq -20, `code: gap`), never an empty feed.
+    const logsUnavailable = (cycleId: string, reason?: string): StampedRunEvent =>
+      ev(cycleId, -20, {
+        kind: "notice",
+        agentId: "lead",
+        level: "warn",
+        code: "gap",
+        detail: `This cycle's log is not available.${reason ? ` (${reason})` : ""}`,
+      });
     const withRecording = (recording: "live" | "kept" | "expired" | "unavailable") => {
+      if (recording === "expired" || recording === "unavailable") {
+        const c = cycleOf("c1", "coding", [
+          logsUnavailable(
+            "c1",
+            recording === "expired" ? "it is older than the platform keeps agent logs" : undefined,
+          ),
+        ]);
+        c.cycle.recording = recording;
+        return c;
+      }
       const c = section("c1", "coding", ["lead"]);
       c.cycle.recording = recording;
       return c;
@@ -126,6 +146,39 @@ describe("RunFeed", () => {
       expect(screen.getByText("Couldn't load this run's log right now")).toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "Try again" }));
       expect(reconnect).toHaveBeenCalledOnce();
+    });
+
+    // The reason is on screen, so no crew is drawn under it: built from the
+    // server's notice alone, its lead would read "running" forever beside an
+    // alert that says the log is gone.
+    it.each(["expired", "unavailable"] as const)(
+      "draws no crew under an %s log, though the server sent its notice",
+      (recording) => {
+        mockCycles = [withRecording(recording)];
+        render(<RunFeed projectName="acme" runId="run-1" />);
+        expect(screen.queryByText(/\d+ agents? ·/)).toBeNull();
+        expect(screen.queryByText(/running/)).toBeNull();
+      },
+    );
+
+    it("keeps the crew, with its inline gap notice, for a kept log with a hole", () => {
+      const c = cycleOf("c1", "coding", [
+        ev("c1", 1, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "lead step 1" }),
+        ev("c1", -1_000_002, {
+          kind: "notice",
+          agentId: "lead",
+          level: "warn",
+          code: "gap",
+          detail: "… 2 event(s) of this run are missing from its log",
+        }),
+        ev("c1", 4, { kind: "tool_use", agentId: "lead", tool: "Bash", summary: "lead step 4" }),
+      ]);
+      c.cycle.recording = "kept";
+      mockCycles = [c];
+      render(<RunFeed projectName="acme" runId="run-1" />);
+      expect(screen.getByText(/1 agent ·/)).toBeInTheDocument();
+      expect(screen.queryByText(/no longer kept/)).toBeNull();
+      expect(screen.queryByText(/Couldn't load/)).toBeNull();
     });
 
     it.each(["live", "kept"] as const)("shows no notice for a %s log", (recording) => {
@@ -365,6 +418,27 @@ describe("RunFeed", () => {
     render(<RunFeed projectName="acme" runId="run-1" />);
     expect(screen.queryByText(/Run finished/)).not.toBeInTheDocument();
     expect(screen.queryByText(/settled/)).not.toBeInTheDocument();
+  });
+
+  // R4-I2: a cancelled cycle's own `run_settled` is minted only once its pod
+  // is gone and the index has caught up, long after the stream closed. The
+  // stream's `done{cancelled}` is what settles the crew for a viewer who
+  // watched the cancel.
+  it("settles a cycle's crew when the run ends cancelled without its run_settled", () => {
+    const c = section("c1", "coding", ["lead"]);
+    c.cycle.recording = "live";
+    mockCycles = [c];
+    mockPhase = "ended";
+    mockSettled = "cancelled";
+    render(<RunFeed projectName="acme" runId="run-1" />);
+    expect(screen.getByText(/all settled/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 running/)).toBeNull();
+  });
+
+  it("leaves a cycle running while the run has not ended", () => {
+    mockCycles = [section("c1", "coding", ["lead"])];
+    render(<RunFeed projectName="acme" runId="run-1" />);
+    expect(screen.getByText(/1 running/)).toBeInTheDocument();
   });
 
   it("says it is reattaching after a dropped connection", () => {

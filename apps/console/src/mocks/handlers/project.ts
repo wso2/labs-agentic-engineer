@@ -46,6 +46,7 @@ import {
   runCycleEvents,
   runCycleLines,
   runHeartbeatEvent,
+  runLogUnavailableEvent,
 } from "../fixtures/run-progress";
 import {
   ACCEPTANCE_PATHS,
@@ -428,9 +429,20 @@ export const projectHandlers = [
           for (const cycle of run?.cycles ?? []) {
             if (request.signal.aborted) return controller.close();
             send(JSON.stringify({ type: "cycle", cycle }));
-            // A log that has expired or could not be loaded carries no events —
-            // the cycle frame alone says why.
-            if (cycle.recording === "expired" || cycle.recording === "unavailable") continue;
+            // A log that has expired or could not be loaded carries what the
+            // server sends for it: the cycle frame says why, and the feed holds
+            // the one logs-unavailable notice.
+            if (cycle.recording === "expired" || cycle.recording === "unavailable") {
+              send(
+                JSON.stringify({
+                  type: "event",
+                  cycleId: cycle.id,
+                  attempt: cycle.attempts,
+                  event: runLogUnavailableEvent(cycle.recording),
+                }),
+              );
+              continue;
+            }
             for (const event of runCycleEvents(cycle, seq, mockRuntime())) {
               if (request.signal.aborted) return controller.close();
               send(

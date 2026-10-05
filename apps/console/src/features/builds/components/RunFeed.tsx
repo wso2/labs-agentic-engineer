@@ -60,6 +60,7 @@ function CycleSection({
   expanded,
   onToggle,
   onRetry,
+  endedWith,
 }: {
   section: RunProgressCycle;
   /** The heading — ONE string for it and for the pull request's accessible name.
@@ -74,6 +75,9 @@ function CycleSection({
   onToggle: (open: boolean) => void;
   /** Re-attach the feed — "Try again" on a log that could not be loaded. */
   onRetry: () => void;
+  /** The outcome the run ended with, for a cycle that never said (see
+   *  `cycleOutcomeOfRun`). */
+  endedWith: string | undefined;
 }) {
   const { cycle, events } = section;
   return (
@@ -139,14 +143,30 @@ function CycleSection({
         {/* Why the log is missing, above the crew: the cycle's outcome and failure
             explanation live elsewhere on the page and are unaffected. */}
         <CycleLogState recording={cycle.recording} onRetry={onRetry} />
-        {/* With the reason on screen, an empty crew ("No output from this cycle
-            yet") would contradict it. */}
-        {(events.length > 0 || cycle.recording === "live" || cycle.recording === "kept" || !cycle.recording) && (
-          <RunCrew events={events} />
+        {/* With the reason on screen there is no crew to draw. The server still
+            sends its "log is not available" notice for such a cycle, and a crew
+            built from that notice alone has a lead reading "running" forever
+            beside an alert that says the log is gone. So the RECORDING decides,
+            never the event count. */}
+        {cycle.recording !== "expired" && cycle.recording !== "unavailable" && (
+          <RunCrew events={events} endedWith={endedWith} />
         )}
       </AccordionDetails>
     </Accordion>
   );
+}
+
+/**
+ * The outcome a cycle settles on when the run's stream has ended and the cycle
+ * never carried its own `run_settled`.
+ *
+ * Only a cancel: the platform mints a cancelled cycle's `run_settled` once its
+ * pod is gone and the log index has caught up, which is after the stream has
+ * already closed with `done{cancelled}`. Every other ending is narrated by the
+ * cycle's own runner, so nothing is inferred for it.
+ */
+function cycleOutcomeOfRun(settledState: string | undefined): string | undefined {
+  return settledState === "cancelled" ? "cancelled" : undefined;
 }
 
 /**
@@ -258,6 +278,7 @@ export function RunFeed({
               setChosen(open ? section.cycle.id : null);
             }}
             onRetry={all.reconnect}
+            endedWith={cycleOutcomeOfRun(all.settledState)}
           />
         ))
       )}

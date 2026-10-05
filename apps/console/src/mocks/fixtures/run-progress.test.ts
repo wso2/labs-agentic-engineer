@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "@aep/progress-view";
 import type { components } from "../../generated/aep-api";
-import { runCycleEvents } from "./run-progress";
+import { runCycleEvents, runLogUnavailableEvent } from "./run-progress";
 
 type RunCycleView = components["schemas"]["RunCycleView"];
 
@@ -73,5 +73,30 @@ describe("runCycleEvents on OpenCode", () => {
 
   it("defaults to the Claude Code feed", () => {
     expect(runCycleEvents(merged, 0)[0]).toMatchObject({ runtime: "claude-code" });
+  });
+});
+
+/**
+ * Mock = server: a cycle whose log is expired or could not be loaded is not an
+ * empty feed on the wire. aep-api sends one platform notice (seq -20, `code:
+ * gap`) for it, and the console must be exercised against that.
+ */
+describe("runLogUnavailableEvent", () => {
+  it("is the server's logs-unavailable notice for a failed read", () => {
+    expect(runLogUnavailableEvent("unavailable")).toMatchObject({
+      v: 2,
+      seq: -20,
+      agentId: "lead",
+      kind: "notice",
+      level: "warn",
+      code: "gap",
+      detail: "This cycle's log is not available.",
+    });
+  });
+
+  it("says why for an expired log", () => {
+    expect(runLogUnavailableEvent("expired").detail).toBe(
+      "This cycle's log is not available. (it is older than the platform keeps agent logs)",
+    );
   });
 });

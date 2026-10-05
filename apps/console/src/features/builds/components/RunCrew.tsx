@@ -81,7 +81,15 @@ function CrewHint({
  * and an age frozen at whatever it read on first paint is the precise lie this
  * view exists to stop telling.
  */
-export function RunCrew({ events }: { events: StampedRunEvent[] }) {
+export function RunCrew({
+  events,
+  endedWith,
+}: {
+  events: StampedRunEvent[];
+  /** The outcome the RUN ended with, from the stream's `done` frame: the last
+   *  word for a cycle whose own `run_settled` has not arrived. */
+  endedWith?: string | undefined;
+}) {
   const [view, setView] = useRunView();
   const [chosenId, setChosenId] = useState<string>();
 
@@ -89,7 +97,7 @@ export function RunCrew({ events }: { events: StampedRunEvent[] }) {
   // keyed on the events would return a crew whose ages stopped moving — which is
   // exactly the bug. The model is a fold over one cycle's events; the 761-event
   // log folds in well under a millisecond.
-  const crew = buildCrew(events, Date.now());
+  const crew = buildCrew(events, Date.now(), endedWith);
   // Only while somebody is still working. A settled cycle's rows do not move, so
   // a timer on one is a re-render a second for no reader.
   useTicker(crew.running > 0);
