@@ -147,6 +147,17 @@ anything (no hook is migrated): re-create such a project, or disconnect and
 reconnect the org's GitHub in Settings, which forgets the org's hook ids so the
 sweep's hook repair installs every project's hook on the relay URL.
 
+**Upgrading an install that mounted `/workspaces` on aep-api.** aep-api no
+longer has a workspace volume: the chart drops PVC `aep-workspaces`, the mount,
+the `workspaces.*` values and the `AEP_WORKSPACE_*` env. The PVC carries no
+`helm.sh/resource-policy: keep`, so `helm upgrade` deletes it, and with it
+everything on the volume: the run recordings under `runs/` and the pre-phase-4
+`repos/`, `trash/` and `tmp/` trees. Nothing is migrated; a cycle's feed is now
+read from its pod log, then the observability plane. On a StorageClass with
+`reclaimPolicy: Retain` the PersistentVolume is left `Released`; delete it by
+hand (`kubectl delete pv <name>`) once you no longer need the data. Remove any
+`workspaces:` block from your own values files; Helm ignores it.
+
 `make dev-update` also runs `aectl platform sync-clients` after the upgrade,
 since an update never runs the install's Thunder setup. On an install that
 predates a Thunder client (the AE-only `ae-studio-internal-client`) it seeds

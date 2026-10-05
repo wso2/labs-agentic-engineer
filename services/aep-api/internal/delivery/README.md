@@ -706,28 +706,17 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   `done { reason: "no_live_run" }` + `[DONE]` when none is — `reason`, never `state`, which is
   contract-defined as one RUN's terminal state. The console reopens it from the run-list poll it already
   makes every 5s. A milestone whose runs are purged mid-stream needs no second ending: no row is live.
-- **A cycle's feed is RECORDED once, server-side, and viewers read the recording.** The pod's log used to
-  be tailed per viewer — each SSE connection on its own 2s cursor, keeping the newest 64KiB, writing
-  nothing — which lost output five measured ways. `codingagent.CycleRecorder` now reads each dispatched
-  cycle once (1s while its pod is Running, the cycle watcher's 30s otherwise, plus one FINAL FULL READ on
-  a terminal pod) and appends v2 `RunEvent` NDJSON to
-  `<workspaceRoot>/runs/<org>/<cycleId>/events.<attempt>.ndjson`. One file per attempt, because a
-  re-dispatch is a new pod whose seqs restart at 1. `CycleEvents` serves the run stream from that file by
-  byte offset — so a reload mid-run replays from the first event and a reload after the pod is reaped shows
-  the whole cycle. **The 200-event post-mortem window is gone**; the observability archive is called only to
-  backfill a detected `seq` gap.
-  The recording is **observability, not ledger**
-  ([ADR-0027](../../../../docs/decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)):
-  `run_cycles` stays the system of record, and `RunCycleView.recording`
-  (`none | recording | complete | gaps | lost`) tells a console what can actually be served — `none` and
-  `lost` are never collapsed, because they paint the same empty screen and are very different bugs.
+- **A cycle's feed is READ, never recorded.** aep-api keeps no `/workspaces` volume and writes no run
+  recording. `CycleEvents` builds the v2 `RunEvent` feed per request from the cycle's pod log while the pod
+  exists, then from the observability plane (see `cycle_feed.go`), and keeps the producer's `seq` through
+  both sources so a viewer sees no duplicate and no hole across the switch. `run_cycles` stays the system
+  of record, and `RunCycleView.recording` (`live | kept | expired | unavailable`) tells a console what can
+  actually be served. (The recorder design is superseded; see the fold-in ADR in phase 7.)
   The v1 VERSION build-progress stream still derives per viewer from the pod, then the archive, then a
   synthetic "logs unavailable" marker (`CycleProgress`, resolved once by `resolveCycleLog`), and keeps its
   200-event page cap. Every platform-minted marker that is re-derived per poll — the dark zone, a
   truncation, a lost log — is a `notice` on a stable NEGATIVE seq with no timestamp, which is what makes it
-  dedup to one row; a notice the RECORDER writes at a point in the run (a gap, the size cap) takes the next
-  free POSITIVE seq and stays where it happened. `CycleLogReader` serves both streams and `RecordingReader`
-  answers `recording`; `codingagent` owns both and writes no log text to Postgres. The one thing taken from
+  dedup to one row. `CycleLogReader` serves both streams; `codingagent` owns it and writes no log text to Postgres. The one thing taken from
   a terminal pod's log by the WATCHER is the runner's token-usage line — v2 `run_settled` or v1 `result`,
   always the LAST one, because the runtime reports usage cumulatively — stamped onto the cycle row:
   accounting, not logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never

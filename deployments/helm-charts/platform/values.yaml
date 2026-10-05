@@ -245,15 +245,6 @@ openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
 
-# The aep-api workspace volume (RWO PVC): coding-agent run recordings under
-# runs/ and their retention. aep-api is the sole user.
-workspaces:
-  storage: "10Gi"
-  storageClassName: ""
-  accessMode: "ReadWriteOnce"
-  orgQuotaBytes: "2147483648"
-  reapInterval: "5m"
-
 postgres:
   version: "16"
   database: aep

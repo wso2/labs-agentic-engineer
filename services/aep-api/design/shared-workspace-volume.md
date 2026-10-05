@@ -16,6 +16,8 @@ specific language governing permissions and limitations
 under the License.
 -->
 
+> Superseded: aep-api no longer mounts `/workspaces`; see the fold-in ADR (phase 7).
+
 # Shared workspace volume — shipped end state
 
 How aep-api and agents share `/workspaces`: one RWO PVC, co-located pods,

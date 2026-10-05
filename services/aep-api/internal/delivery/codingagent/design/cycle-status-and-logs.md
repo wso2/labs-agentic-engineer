@@ -33,6 +33,8 @@ completes the run.
 
 ## The platform RECORDS a cycle's feed, and serves viewers from the recording
 
+> Superseded: the recorder and the `/workspaces` volume are gone; see the fold-in ADR (phase 7).
+
 A cycle's feed used to be derived per viewer: every SSE connection tailed the
 pod on its own two-second cursor, kept the newest 64 KiB and wrote nothing. That
 lost output five measured ways. The recorder closes all five, and the shape of

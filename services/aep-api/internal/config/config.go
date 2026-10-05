@@ -157,7 +157,6 @@ type Config struct {
 	Observability ObservabilityConfig
 	ServiceAuth   ServiceAuthConfig
 	AgentManager  AgentManagerConfig
-	Workspace     WorkspaceConfig
 
 	// SkillsDir is the on-disk platform skill library the BFF seeds + reconciles
 	// into each org's skills repo (SKILLS_DIR). It is COPY'd into the image from
@@ -392,29 +391,6 @@ type ServiceAuthConfig struct {
 	ClientID     string
 	ClientSecret string
 	HostHeader   string // Thunder Host header for k3d routing
-}
-
-// WorkspaceConfig holds the /workspaces mount settings: the coding-agent run
-// recordings and their retention. aep-api is the mount's only user.
-type WorkspaceConfig struct {
-	// Root is the workspace mount root (AEP_WORKSPACE_ROOT). Layout under it:
-	// runs/<orgId>/<cycleId>.
-	Root string
-	// ReapInterval is the recording retention sweep cadence.
-	ReapInterval time.Duration
-	// RecordingMaxAge — runs/<orgId>/<cycleId> coding-agent feed recordings
-	// older than this are removed by the retention sweep. Days, not hours: a
-	// recording cannot be rebuilt, so the window is how long a run stays
-	// inspectable (ADR-0027).
-	RecordingMaxAge time.Duration
-	// RecordingMaxBytes caps ONE cycle's recording. Zero — the default — is no
-	// cap: a 55-minute run wrote about 300KB, so this is a safety valve for a
-	// pathological producer, not an operating limit. A run that trips it records
-	// a notice saying so and keeps running without recording.
-	RecordingMaxBytes int64
-	// OrgQuotaBytes is the per-org recordings quota before the oldest are
-	// evicted.
-	OrgQuotaBytes int64
 }
 
 // ObservabilityConfig holds connection settings for the OpenChoreo Observer

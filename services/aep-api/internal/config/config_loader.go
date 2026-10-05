@@ -92,16 +92,6 @@ func Load() (Config, error) {
 		Observability: ObservabilityConfig{
 			BaseURL: r.readOptionalString("OBSERVER_URL", r.readOptionalString("OBSERVABILITY_SERVICE_BASE_URL", "")),
 		},
-		Workspace: WorkspaceConfig{
-			Root:         r.readOptionalString("AEP_WORKSPACE_ROOT", "/workspaces"),
-			ReapInterval: r.readOptionalDuration("AEP_WORKSPACE_REAP_INTERVAL", 5*time.Minute),
-			// 30 days. A recording is the only thing on this mount nothing can
-			// rebuild, so its window is set by how long a run is worth looking at,
-			// not by cache pressure.
-			RecordingMaxAge:   r.readOptionalDuration("AEP_WORKSPACE_RECORDING_MAX_AGE", 720*time.Hour),
-			RecordingMaxBytes: r.readOptionalInt64("AEP_WORKSPACE_RECORDING_MAX_BYTES", 0),
-			OrgQuotaBytes:     r.readOptionalInt64("AEP_WORKSPACE_ORG_QUOTA_BYTES", 2147483648), // 2 GiB
-		},
 		AgentPlatformURL: r.readOptionalString("AGENT_PLATFORM_URL", ""),
 		ServiceAuth: ServiceAuthConfig{
 			TokenURL:     r.readOptionalString("SERVICE_AUTH_TOKEN_URL", ""),
