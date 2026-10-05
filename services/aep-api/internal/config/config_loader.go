@@ -133,8 +133,6 @@ func Load() (Config, error) {
 		// Git-service config. Uses the same env-var names git-service used so
 		// existing local .env files / release-bindings keep working.
 		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
-		GitHubCommitterName:         r.readOptionalString("GIT_COMMITTER_NAME", "AEP Bot"),
-		GitHubCommitterEmail:        r.readOptionalString("GIT_COMMITTER_EMAIL", "bot@aep.dev"),
 		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
 		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
 		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),

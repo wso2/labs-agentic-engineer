@@ -204,8 +204,6 @@ type Config struct {
 	// Git-service config fields.
 
 	GitHubRepoVisibility string
-	GitHubCommitterName  string
-	GitHubCommitterEmail string
 
 	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
 	// used to encrypt per-org credentials at rest in org_secrets.

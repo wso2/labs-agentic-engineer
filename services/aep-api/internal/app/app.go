@@ -974,10 +974,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
 	// The AE Studio tools pod has its saves' dependency stubs completed here,
 	// over the registry and the guarded fetch (04 §4).
-	// The request carries the org's publisher token, not a user JWT, so the
-	// registry's OpenChoreo reads run as the BFF's own service identity
-	// (X-Impersonate-Org from the namespace), as the runner's validation
-	// context and the MCP tool calls do.
+	// The request carries the org's AE Studio client token (ae-studio-<org>),
+	// not a user JWT, so the registry's OpenChoreo reads run as the BFF's own
+	// service identity (X-Impersonate-Org from the namespace), as the runner's
+	// validation context and the MCP tool calls do.
 	params.InternalDeps.DependencyCompleter = func(ctx context.Context, org string, writes []spec.WriteOp) (map[string]spec.CompletedFile, []spec.Warning) {
 		return spec.CompleteDependencies(authn.WithServiceIdentity(ctx), registryReader, spec.FetchSpecFromURL, org, writes)
 	}
