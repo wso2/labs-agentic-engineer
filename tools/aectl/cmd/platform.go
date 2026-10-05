@@ -197,7 +197,7 @@ func aeStudioOverrides(platformNamespace string) []string {
 	}
 	// Always set, so update (which reuses the previous release's values)
 	// follows the config both ways. The relay image is the chart's own default.
-	args = append(args, "--set", fmt.Sprintf("aeStudio.webhookRelay.enabled=%t", viper.GetBool("ae_studio.webhook_relay.enabled")))
+	args = append(args, "--set", fmt.Sprintf("aeStudio.webhookRelay.enabled=%t", webhookRelayEnabled()))
 	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress(platformNamespace))
 }
 
@@ -930,27 +930,33 @@ func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([
 		return s.pathExists(ctx, path)
 	}
 	put := func(path, value string) error {
-		result, status, err := openbao.Req(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
-			"options": map[string]interface{}{"cas": 0},
-			"data":    map[string]interface{}{"value": value},
-		})
-		if err != nil {
-			return err
-		}
-		// A cas-0 conflict means another writer created the key between our
-		// existence check and this write. We keep theirs and do NOT wait for it
-		// to reach the cluster Secret: it was not seeded by us, so the caller
-		// has no value to verify against.
-		if status == 400 && strings.Contains(fmt.Sprint(result), "check-and-set") {
-			return errSecretExists
-		}
-		if status >= 300 {
-			// Status and the store's error field only; never the request body.
-			return fmt.Errorf("OpenBao PUT %s returned %d: %v", path, status, result["errors"])
-		}
-		return nil
+		return s.putCreateOnly(ctx, path, value)
 	}
 	return seedMissingGeneratedSecrets(exists, put)
+}
+
+// putCreateOnly writes value at path as a KV v2 create-only (cas 0): the store
+// refuses to overwrite an existing key, which comes back as errSecretExists.
+func (s *openBaoSession) putCreateOnly(ctx context.Context, path, value string) error {
+	result, status, err := openbao.Req(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
+		"options": map[string]interface{}{"cas": 0},
+		"data":    map[string]interface{}{"value": value},
+	})
+	if err != nil {
+		return err
+	}
+	// A cas-0 conflict means another writer created the key between our
+	// existence check and this write. We keep theirs and do NOT wait for it
+	// to reach the cluster Secret: it was not seeded by us, so the caller
+	// has no value to verify against.
+	if status == 400 && strings.Contains(fmt.Sprint(result), "check-and-set") {
+		return errSecretExists
+	}
+	if status >= 300 {
+		// Status and the store's error field only; never the request body.
+		return fmt.Errorf("OpenBao PUT %s returned %d: %v", path, status, result["errors"])
+	}
+	return nil
 }
 
 // reconcileReusedOpenBaoSecrets backs --reuse-secrets: it requires every
@@ -975,16 +981,6 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 	_, err = s.seedMissingThunderClientSecrets(ctx)
 	return err
 }
-
-// webhookRelaySeedPath keys every org's AE Studio relay channel (aep-api's
-// AE_STUDIO_WEBHOOK_RELAY_SEED). Seeded with the install's secrets but not in
-// requiredOpenBaoPaths: an install that predates the relay imports it
-// (`platform secret import`), it is not a wiped store.
-const webhookRelaySeedPath = "aep/webhook-relay-seed"
-
-// webhookRelaySeed is 32 random bytes as hex text: `platform secret import`
-// trims values, so the seed is stored and used (as the HMAC key) as text.
-func webhookRelaySeed() (string, error) { return bootstrap.GenerateHex(32) }
 
 // requiredOpenBaoPaths are the secrets an install seeds that aectl does not
 // generate on top-up. Missing any of them means the store was wiped (or never

@@ -55,7 +55,9 @@ only flags you explicitly pass change a value you set, while a default the new
 chart adds or changes takes effect. Use --reset-values to drop the previous
 release's values and start from chart defaults instead. The aeStudio.* values aectl derives from
 its config (gateway host, IdP URLs, console origins, egress) are always
-re-applied, so installs that predate them pick them up; no secret is touched.
+re-applied, so installs that predate them pick them up. The only secret it
+writes is the webhook relay seed (aep/webhook-relay-seed), create-only, when
+the relay is enabled and the seed is missing (an install that predates it).
 
 Per-service image flags accept "repository:tag". To pin a locally built
 image, load it into the node runtime first, then set --pull-policy:
@@ -104,6 +106,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	helmArgs, err := buildUpdateArgs()
 	if err != nil {
 		return err
+	}
+
+	// Before the upgrade renders the relay's ExternalSecret, so it syncs the
+	// seed on its first reconcile.
+	if webhookRelayEnabled() {
+		if err := ensureWebhookRelaySeed(ctx); err != nil {
+			return fmt.Errorf("webhook relay seed: %w", err)
+		}
 	}
 
 	ui.Step(fmt.Sprintf("Upgrading platform chart %q", updatePlatformRelease))

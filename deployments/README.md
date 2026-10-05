@@ -127,9 +127,25 @@ its Deployment belongs to OpenChoreo.
 the `aeStudio.*` values aectl derives from its config (gateway host, IdP
 issuer/JWKS/token URLs, console origins, egress). An install made before AE
 Studio existed therefore picks them up on its next `make dev-update` or
-`aectl platform update`; no secret is read or regenerated. Never run
+`aectl platform update`; no existing secret is read or regenerated (the one
+secret it may write, create-only, is the relay seed below). Never run
 `aectl platform install` on an existing install to get them: it regenerates
 vault secrets (unless run with `--reuse-secrets`).
+
+**Upgrading an install that used the install-wide smee client.** The per-org
+webhook relay (a `gosmee` container in each org's `ae-studio` pod) replaces the
+install-wide smee client, which the upgrade removes. The switch is
+`ae_studio.webhook_relay.enabled` in the aectl config; while it is absent,
+aectl reads the legacy `webhook.local_smee.enabled` in its place and warns once,
+so an install that forwarded through smee keeps a relay. Set the new key to
+silence the warning. With the relay on, `aectl platform update` also creates the
+relay seed `aep/webhook-relay-seed` in OpenBao when it is missing (create-only:
+an existing seed is never rewritten, and the value is never printed); every
+org's channel URL is derived from it. GitHub hooks of projects created before
+the upgrade keep the URL they were created with, which no longer receives
+anything (no hook is migrated): re-create such a project, or disconnect and
+reconnect the org's GitHub in Settings, which forgets the org's hook ids so the
+sweep's hook repair installs every project's hook on the relay URL.
 
 `make dev-update` also runs `aectl platform sync-clients` after the upgrade,
 since an update never runs the install's Thunder setup. On an install that
@@ -303,6 +319,7 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    | `aep/task-signing-key` | `aep-task-signing-key` | `task-signing.pem` |
    | `aep/thunder-clients/<name>` | `aep-thunder-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/aep-mcp-token` | `aep-sre-handoff-secrets` | `SRE_HANDOFF_TOKEN` |
+   | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
 
    `aep/anthropic-api-key`, `aep/opensearch-username` and `aep/opensearch-password`
    have no ESO target Secret; re-enter them from where you hold them (the
