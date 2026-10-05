@@ -265,15 +265,14 @@ func (g RemoteGit) get(ctx context.Context, u, label string) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+g.Token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	hc := g.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: remoteGitTimeout}
-	}
-	resp, err := hc.Do(req)
+	resp, err := g.client().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("github %s request: %w", label, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("github %s redirected (status %d); redirects are not followed", label, resp.StatusCode)
+	}
 	// Base64 inflates ~4/3, plus the JSON envelope: twice the content cap
 	// keeps well-formed answers whole and refuses an unbounded body.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, g.maxContent()*2+(1<<16)))
@@ -284,6 +283,19 @@ func (g RemoteGit) get(ctx context.Context, u, label string) ([]byte, error) {
 		return nil, fmt.Errorf("github %s failed (status %d): %s", label, resp.StatusCode, truncate(string(body), maxErrorBodyChars))
 	}
 	return body, nil
+}
+
+// client is the caller's HTTP client (or a default one) that never follows a
+// redirect: GitHub answers a renamed or transferred repo with a 301 to
+// /repositories/{id}/…, and following it with the bearer would read whatever
+// account holds that repo now, past the owner guard.
+func (g RemoteGit) client() *http.Client {
+	hc := http.Client{Timeout: remoteGitTimeout}
+	if g.HTTP != nil {
+		hc = *g.HTTP
+	}
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &hc
 }
 
 func (g RemoteGit) apiBase() string {

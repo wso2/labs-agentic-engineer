@@ -284,3 +284,35 @@ func decodeToolResult(t *testing.T, raw json.RawMessage) decodedToolResult {
 	}
 	return r
 }
+
+// A renamed or transferred repo answers 301 to /repositories/{id}/…; following
+// it with the bearer would serve another account's repo past the owner guard.
+// A 3xx is a tool error, whichever client the caller supplied.
+func TestRemoteGit_RedirectIsNotFollowed(t *testing.T) {
+	var followed atomic.Int32
+	srv, calls := githubStub(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repositories/") {
+			followed.Add(1)
+			_, _ = fmt.Fprint(w, `{"type":"file","sha":"x","content":"","encoding":"base64"}`)
+			return
+		}
+		http.Redirect(w, r, "/repositories/42"+r.URL.Path, http.StatusMovedPermanently)
+	})
+	for name, rg := range map[string]RemoteGit{
+		"default client":  newRemote(srv.URL),
+		"supplied client": {Owner: "acme", Token: "t0k3n", APIBase: srv.URL, HTTP: srv.Client()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			before := calls.Load()
+			if _, err := rg.GetFileContents(context.Background(), "acme", "old-name", "a", ""); err == nil || !strings.Contains(err.Error(), "redirect") {
+				t.Fatalf("contents err = %v, want a redirect error", err)
+			}
+			if _, err := rg.SearchCode(context.Background(), "acme", "old-name", "openapi"); err == nil || !strings.Contains(err.Error(), "redirect") {
+				t.Fatalf("search err = %v, want a redirect error", err)
+			}
+			if followed.Load() != 0 || calls.Load()-before != 2 {
+				t.Fatalf("followed %d, calls %d: want 0 followed, 2 calls", followed.Load(), calls.Load()-before)
+			}
+		})
+	}
+}

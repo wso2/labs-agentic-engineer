@@ -251,3 +251,24 @@ test("ordinary names with dots, dashes and underscores still read", async () => 
   assert.equal(res?.isError, undefined);
   assert.equal(f.calls[0], "https://api.github.com/repos/acme/my.svc_v-2/contents/specs/.well-known/a..b.yaml");
 });
+
+// A renamed or transferred repo answers 301 to /repositories/{id}/…; following
+// it with the bearer would serve another account's repo past the owner guard.
+test("a redirect is not followed: it is a tool error, and fetch is told not to follow", async () => {
+  const seen: RequestInit[] = [];
+  const impl = (async (_input: string | URL, init?: RequestInit) => {
+    seen.push(init ?? {});
+    return new Response(null, { status: 301, headers: { Location: "https://api.github.com/repositories/42/contents/a" } });
+  }) as typeof fetch;
+  const tools = createRemoteGitTools({ token: "t", owner: "acme", fetchImpl: impl });
+  for (const [name, args] of [
+    ["get_remote_git_file_contents", { owner: "acme", repo: "old-name", path: "a" }],
+    ["search_remote_git_code", { owner: "acme", repo: "old-name", query: "openapi" }],
+  ] as const) {
+    const res = await tools.call(name, args);
+    assert.equal(res?.isError, true, name);
+    assert.match(res!.content[0].text, /redirect/i, name);
+  }
+  assert.equal(seen.length, 2);
+  for (const init of seen) assert.equal(init.redirect, "manual");
+});

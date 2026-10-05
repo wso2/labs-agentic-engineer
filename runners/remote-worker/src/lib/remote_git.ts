@@ -43,7 +43,7 @@
 // The names, descriptions and input schemas are the contract aep-api's
 // `mcpdiscovery` served before this moved into the runner, and the AE Studio
 // pod's `internal/mcp/tools.go` still serves: two runtimes, one contract —
-// keep the three copies byte-identical.
+// keep the two copies byte-identical.
 
 import type { LocalMcpTools, McpToolDescriptor, McpToolResult } from "./mcp_local_tools.js";
 
@@ -160,10 +160,18 @@ export function createRemoteGitTools(opts: RemoteGitToolsOpts): LocalMcpTools {
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
         },
+        // Never follow: GitHub answers a renamed or transferred repo with a 301
+        // to /repositories/{id}/…, and following it with the bearer would read
+        // whatever account holds that repo now, past the owner guard.
+        redirect: "manual",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
       throw new Error(`github ${label} request: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (res.status >= 300 && res.status < 400) {
+      await res.body?.cancel();
+      throw new Error(`github ${label} redirected (status ${res.status}); redirects are not followed`);
     }
     const body = await readCapped(res, MAX_BODY_BYTES);
     if (res.status !== 200) {
