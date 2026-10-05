@@ -50,6 +50,10 @@ type RuntimePod struct {
 	// Component, so this is how the watcher tells the previous attempt's pod
 	// from the current one's.
 	CreatedAt time.Time
+	// FinishedAt is the latest terminated container's finishedAt (zero while
+	// any container still runs, or when the tree did not carry one). It tells a
+	// pod that ended before a re-dispatch from one still running at it.
+	FinishedAt time.Time
 }
 
 // PodLogLine is one line of pod stdout with the timestamp the platform recorded.
@@ -99,10 +103,17 @@ func PodFromNodeObject(obj map[string]interface{}, name string) RuntimePod {
 				pod.Message = msg
 			}
 		}
-		if term, _ := state["terminated"].(map[string]interface{}); term != nil && pod.TerminatedReason == "" {
-			pod.TerminatedReason, _ = term["reason"].(string)
-			if msg, _ := term["message"].(string); msg != "" && pod.Message == "" {
-				pod.Message = msg
+		if term, _ := state["terminated"].(map[string]interface{}); term != nil {
+			if raw, _ := term["finishedAt"].(string); raw != "" {
+				if at, err := time.Parse(time.RFC3339, raw); err == nil && at.After(pod.FinishedAt) {
+					pod.FinishedAt = at.UTC()
+				}
+			}
+			if pod.TerminatedReason == "" {
+				pod.TerminatedReason, _ = term["reason"].(string)
+				if msg, _ := term["message"].(string); msg != "" && pod.Message == "" {
+					pod.Message = msg
+				}
 			}
 		}
 	}

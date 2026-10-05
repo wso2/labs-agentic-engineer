@@ -983,7 +983,8 @@ func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
 // usage banked as this attempt's, no verdict inside the grace.
 func TestTick_LeftoverPodFromThePreviousAttemptIsIgnored(t *testing.T) {
 	rt := &fakeRuntime{
-		pod:  openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed", CreatedAt: time.Now().UTC().Add(-3 * time.Hour)},
+		pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed",
+			CreatedAt: time.Now().UTC().Add(-3 * time.Hour), FinishedAt: time.Now().UTC().Add(-2 * time.Hour)},
 		logs: resultLine(t),
 	}
 	cycles := newWatchedCycles(redispatched(dispatchedCycle("c1", time.Minute), time.Minute))
@@ -1022,6 +1023,49 @@ func TestTick_PodWithinTheClockSkewIsTheCurrentAttempts(t *testing.T) {
 	c := redispatched(dispatchedCycle("c1", time.Minute), 0)
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded",
 		CreatedAt: c.DispatchedAt.Add(-podClockSkew / 2)}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// Re-dispatched at the landing timeout while attempt 1's agent is still
+// running (its deadline is longer): the same Job cannot start a second pod, so
+// that Running pod IS the in-flight attempt. It counts as present (no startup
+// verdict), and when it ends it is captured and suspended like any other.
+func TestTick_RunningPodAtRedispatchIsTheCurrentAttempt(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", 3*time.Hour), time.Hour) // past the grace
+	created := time.Now().UTC().Add(-2 * time.Hour)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running", CreatedAt: created}}
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	for i := 0; i < missingTicksToFail+1; i++ {
+		w.Tick(context.Background())
+	}
+	if len(cycles.finished) != 0 || len(jobs.suspends) != 0 {
+		t.Fatalf("a running pod is present: finished %v, suspends %v", cycles.finished, jobs.suspends)
+	}
+
+	// It finishes after the dispatch: this attempt's terminal pod.
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: created, FinishedAt: time.Now().UTC()}
+	rt.logs = resultLine(t)
+	w.Tick(context.Background())
+	if _, ok := cycles.usage["c1"]; !ok {
+		t.Fatal("the in-flight pod's usage must be captured")
+	}
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// The same holds for a watcher that restarted (or never saw the pod running):
+// a pre-dispatch pod that FINISHED after the dispatch was in flight at it.
+func TestTick_PodFinishedAfterTheRedispatchIsTheCurrentAttempts(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", 3*time.Hour), time.Hour)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour), FinishedAt: time.Now().UTC().Add(-time.Minute)}}
 	jobs := &fakeJobs{}
 	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
 	if len(jobs.suspends) != 1 {

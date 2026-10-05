@@ -182,10 +182,15 @@ retried (a retry would count a second attempt): the Job stays suspended and
 the watcher's startup grace reports the attempt.
 
 Attempt 1's finished pod stays in the reused binding's tree until its Job's
-TTL. From attempt 2 on, the watcher ignores a pod created more than
-`podClockSkew` (30 s) before `dispatched_at`: it is neither the attempt's
-terminal pod (no suspend, no usage) nor its pod for the startup grace, and the
-in-memory absent/seen facts are kept per attempt.
+TTL. From attempt 2 on, the watcher ignores a TERMINAL pod that was created and
+finished more than `podClockSkew` (30 s) before `dispatched_at`: it is neither
+the attempt's terminal pod (no suspend, no usage) nor its pod for the startup
+grace, and the in-memory absent/seen facts are kept per attempt. A Running or
+Pending pod from before the dispatch (attempt 1's agent outliving the 2 h
+landing timeout under its 3 h deadline) is the same Job still in flight, which
+cannot start a second pod, so it is watched as the current attempt's: present
+for the grace, captured and suspended when it ends (its finish time is after
+the dispatch).
 
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on

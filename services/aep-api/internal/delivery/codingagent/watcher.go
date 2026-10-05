@@ -363,14 +363,28 @@ func attemptKey(cycle *delivery.RunCycle) string {
 	return cycle.ID + "#" + strconv.Itoa(cycle.Attempts)
 }
 
-// isLeftoverPod reports whether the snapshot's pod predates the cycle's
-// current attempt: a re-dispatch reuses the cycle's Component, so attempt 1's
-// finished pod stays in the tree until its Job's TTL. Only from attempt 2 — a
-// first dispatch stamps its time after the launch, so its own pod may be
-// older — and only when both times are known.
+// isLeftoverPod reports whether the snapshot's pod is the previous attempt's
+// finished pod on the reused binding (a re-dispatch reuses the cycle's
+// Component, and attempt 1's pod stays in the tree until its Job's TTL).
+//
+// Only a TERMINAL pod can be a leftover, and only one that both started and
+// ended before this attempt was dispatched (less podClockSkew). A Running or
+// Pending pod from before the dispatch is the Job still in flight — the same
+// Job cannot start a second pod — so it is watched as this attempt's: present
+// for the grace, captured and suspended at its terminal. A finish time the
+// tree did not carry counts as before the dispatch.
+//
+// Only from attempt 2: a first dispatch stamps its time after the launch, so
+// its own pod may be older.
 func isLeftoverPod(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
-	return pod.Found && cycle.Attempts > 1 && cycle.DispatchedAt != nil && !pod.CreatedAt.IsZero() &&
-		pod.CreatedAt.Before(cycle.DispatchedAt.Add(-podClockSkew))
+	if !pod.Found || cycle.Attempts <= 1 || cycle.DispatchedAt == nil || pod.CreatedAt.IsZero() {
+		return false
+	}
+	if outcome := ClassifyPod(pod); outcome != OutcomeSucceeded && outcome != OutcomeFailed {
+		return false
+	}
+	cutoff := cycle.DispatchedAt.Add(-podClockSkew)
+	return pod.CreatedAt.Before(cutoff) && (pod.FinishedAt.IsZero() || pod.FinishedAt.Before(cutoff))
 }
 
 // suspendAtTerminal suspends the cycle's Job binding once, the first time its

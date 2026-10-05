@@ -293,10 +293,10 @@ func TestNoteCycleDispatch_ClosedCycleIsNeverResumed(t *testing.T) {
 	require.Empty(t, jobs.calls)
 }
 
-// A failed un-suspend fails the LAUNCH, not the activity: returning it would
-// retry NoteDispatch (a second attempt counted for one launch). The Job stays
-// suspended and runs no pod, and the watcher's startup grace reports the
-// attempt as it would any pod that never appeared.
+// A failed un-suspend is logged and NOT returned: returning it would retry
+// NoteDispatch (a second attempt counted for one launch). Nothing fails here;
+// the Job stays suspended and runs no pod, and the watcher's startup grace
+// later fails the cycle as it would any attempt whose pod never appeared.
 func TestNoteCycleDispatch_ResumeFailureIsNotRetried(t *testing.T) {
 	cycles := &stubCycles{dispatched: &delivery.RunCycle{OrgID: "acme", ProjectID: "shop", Environment: "development"}}
 	jobs := &stubResumer{err: errors.New("oc 500")}
