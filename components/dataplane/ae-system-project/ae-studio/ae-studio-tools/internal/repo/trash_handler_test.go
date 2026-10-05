@@ -116,3 +116,27 @@ func TestTrashRepo_RefusesABadName(t *testing.T) {
 	}
 	wantProblem(t, resp.VisitTrashRepoResponse, http.StatusBadRequest, "validation_failed")
 }
+
+// trashFailingWorkspace fails the local trash move (a rename or lock the
+// studio's own disk refused).
+type trashFailingWorkspace struct {
+	repo.Workspace
+	err error
+}
+
+func (f trashFailingWorkspace) TrashRepo(context.Context, repo.RepoRef) error { return f.err }
+
+// TestTrashRepo_LocalFailureIsTrashFailed: trash never touches GitHub, so a
+// failed local move is the studio's own 500 trash_failed, never github_error.
+func TestTrashRepo_LocalFailureIsTrashFailed(t *testing.T) {
+	ws := trashFailingWorkspace{err: &os.LinkError{Op: "rename", Old: "/w/repos/acme/x", New: "/w/trash/1", Err: os.ErrPermission}}
+	h := repo.NewHandler(ws, nil, repo.GitHubCloneURL, repo.WithOwner("acme"))
+	resp, err := h.TrashRepo(context.Background(), gen.TrashRepoRequestObject{Body: &gen.TrashRepoRequest{Owner: "acme", Repo: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := wantProblem(t, resp.VisitTrashRepoResponse, http.StatusInternalServerError, "trash_failed")
+	if _, ok := body["githubStatus"]; ok {
+		t.Fatalf("a local failure carries githubStatus: %v", body)
+	}
+}

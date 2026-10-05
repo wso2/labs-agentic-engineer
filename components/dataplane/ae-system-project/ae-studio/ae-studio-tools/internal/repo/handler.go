@@ -201,9 +201,14 @@ func bundleFilter(paths []string, prefix string, ext []string) (func(string) boo
 }
 
 // ListTags lists the tags whose name starts with prefix (local: the
-// mirror's, no fetch).
+// mirror's, no fetch). The prefix is matched literally, so one carrying a
+// character outside the ref-name charset (a glob character would widen the
+// for-each-ref pattern) is refused.
 func (h Handler) ListTags(ctx context.Context, req gen.ListTagsRequestObject) (gen.ListTagsResponseObject, error) {
 	ref, err := h.ref(req.Owner, req.Repo, "")
+	if err == nil && !validTagPrefix(req.Params.Prefix) {
+		err = fmt.Errorf("%w: tag prefix outside the ref-name charset", errBadRequest)
+	}
 	if err == nil {
 		var tags []TagInfo
 		if req.Params.Local {
@@ -549,3 +554,17 @@ func (p problemReply) VisitCreateTagResponse(w http.ResponseWriter) error { retu
 
 // VisitCreateCommitResponse implements gen.CreateCommitResponseObject.
 func (p problemReply) VisitCreateCommitResponse(w http.ResponseWriter) error { return p.write(w) }
+
+// validTagPrefix is the contract's TagPrefix: letters, digits and . _ / -
+// only, so no glob character (* ? [ \) reaches a for-each-ref pattern.
+func validTagPrefix(prefix string) bool {
+	for _, r := range prefix {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '/', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}

@@ -747,6 +747,9 @@ type Prefix = string
 // Repo defines model for Repo.
 type Repo = string
 
+// TagPrefix defines model for TagPrefix.
+type TagPrefix = string
+
 // GitHubAPIError defines model for GitHubAPIError.
 type GitHubAPIError = Problem
 
@@ -1043,8 +1046,8 @@ type MirrorSkillsParams struct {
 
 // ListTagsParams defines parameters for ListTags.
 type ListTagsParams struct {
-	// Prefix Only paths (tag names, for list-tags) starting with this.
-	Prefix *Prefix `form:"prefix,omitempty" json:"prefix,omitempty"`
+	// Prefix Only tags whose name starts with this. Matched literally, so it is limited to the ref-name characters (no glob character).
+	Prefix TagPrefix `form:"prefix,omitempty" json:"prefix,omitempty,omitzero"`
 
 	// Local List the tags the studio's mirror already holds, without fetching from GitHub (every tag the studio cuts is there).
 	Local *bool `form:"local,omitempty" json:"local,omitempty"`
@@ -4677,16 +4680,12 @@ func NewListTagsRequest(server string, owner Owner, repo Repo, params *ListTagsP
 		// per the OpenAPI spec (e.g. "color=blue,black,brown").
 		var rawQueryFragments []string
 
-		if params.Prefix != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "prefix", params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
 			}
-
 		}
 
 		if params.Local != nil {
@@ -6661,6 +6660,7 @@ type TrashRepoResponse struct {
 	ApplicationProblemJSON400 *Problem
 	ApplicationProblemJSON401 *Problem
 	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON500 *Problem
 	ApplicationProblemJSON503 *Problem
 }
 
@@ -9828,6 +9828,13 @@ func ParseTrashRepoResponse(rsp *http.Response) (*TrashRepoResponse, error) {
 			return nil, err
 		}
 		response.ApplicationProblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON500 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem

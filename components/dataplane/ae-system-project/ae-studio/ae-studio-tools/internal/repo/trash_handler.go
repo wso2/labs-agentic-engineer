@@ -18,6 +18,8 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -43,10 +45,16 @@ func (h Handler) TrashRepo(ctx context.Context, req gen.TrashRepoRequestObject) 
 	if err == nil {
 		err = h.ws.TrashReferences(ctx, OwnerRepo{Owner: owner, Repo: name})
 	}
-	if err == nil {
+	switch {
+	case err == nil:
 		return gen.TrashRepo204Response{}, nil
+	case ctx.Err() != nil, errors.Is(err, errBadPath), errors.Is(err, errBadRequest), errors.Is(err, ErrDiskFull):
+		return h.problem(ctx, "trash-repo", owner, name, err)
 	}
-	return h.problem(ctx, "trash-repo", owner, name, err)
+	// Trash never touches GitHub: any other failure is the studio's own disk
+	// (a rename or lock refused), not github_error.
+	slog.WarnContext(ctx, "repo.trash_failed", "repo", strings.ToLower(owner+"/"+name))
+	return newProblemReply(http.StatusInternalServerError, "trash_failed", "the studio could not move the repository into its trash"), nil
 }
 
 // VisitTrashRepoResponse implements gen.TrashRepoResponseObject.

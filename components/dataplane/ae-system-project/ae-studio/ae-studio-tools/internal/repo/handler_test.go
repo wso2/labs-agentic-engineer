@@ -485,6 +485,17 @@ func TestTags_CreateListAndRefusals(t *testing.T) {
 	if none := list(gen.ListTagsParams{Prefix: "x"}); none == nil || len(none) != 0 {
 		t.Fatalf("no match = %#v, want an empty list", none)
 	}
+	// The prefix is a literal start of a tag name: a glob character would
+	// widen the for-each-ref pattern, so it is refused.
+	for _, bad := range []string{"*", "v?", "v[12]", `v\1`, "v 1"} {
+		for _, local := range []bool{true, false} {
+			resp, err := h.ListTags(ctx, gen.ListTagsRequestObject{Owner: "acme", Repo: "greeter", Params: gen.ListTagsParams{Prefix: bad, Local: local}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantProblem(t, resp.VisitListTagsResponse, http.StatusBadRequest, "validation_failed")
+		}
+	}
 }
 
 // failingWorkspace answers every engine call with err.

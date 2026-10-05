@@ -166,7 +166,7 @@ func (a *Adapter) ListTags(ctx context.Context, ref RepoRef, prefix string, opts
 	o := sourcecontrol.ReadOptionsOf(opts...)
 	var body gen.TagList
 	err := a.do(ctx, ref.Org, "list-tags", &body, func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
-		return c.ListTags(ctx, ref.Owner, ref.Repo, &gen.ListTagsParams{Prefix: optional(prefix), Local: optional(o.Local), XImpersonateOrg: org}, auth)
+		return c.ListTags(ctx, ref.Owner, ref.Repo, &gen.ListTagsParams{Prefix: prefix, Local: optional(o.Local), XImpersonateOrg: org}, auth)
 	})
 	if err != nil {
 		return nil, err

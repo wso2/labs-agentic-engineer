@@ -371,7 +371,7 @@ paths:
       - $ref: '#/components/parameters/ImpersonateOrg'
       - $ref: '#/components/parameters/Owner'
       - $ref: '#/components/parameters/Repo'
-      - $ref: '#/components/parameters/Prefix'
+      - $ref: '#/components/parameters/TagPrefix'
       - name: local
         in: query
         required: false
@@ -1515,6 +1515,14 @@ paths:
           $ref: '#/components/responses/Problem'
         '403':
           $ref: '#/components/responses/Problem'
+        '500':
+          description: 'The studio could not move the mirror or the references
+            into its trash, a failure of its own disk; GitHub is not involved
+            (problem code: trash_failed).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '503':
           $ref: '#/components/responses/Problem'
 components:
@@ -1579,6 +1587,15 @@ components:
       schema:
         type: string
         maxLength: 1024
+    TagPrefix:
+      name: prefix
+      in: query
+      required: false
+      description: Only tags whose name starts with this. Matched literally, so
+        it is limited to the ref-name characters (no glob character).
+      schema:
+        type: string
+        pattern: ^[A-Za-z0-9._/-]{0,255}$
     DefaultBranch:
       name: defaultBranch
       in: query

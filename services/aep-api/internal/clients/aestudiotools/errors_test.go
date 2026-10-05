@@ -178,6 +178,17 @@ func TestErrors_TypedAnswers(t *testing.T) {
 			t.Fatalf("a 5xx StatusError must stay retryable: %v", got)
 		}
 	})
+	// trash-repo's local failure is the pod's own 500 trash_failed: a
+	// retryable StatusError naming it, never a GitHub error.
+	t.Run("trash_failed is the pod's own retryable refusal, not GitHub's", func(t *testing.T) {
+		got := errorFromProblem(answer{op: "trash-repo", status: 500, problem: true, code: "trash_failed"})
+		var se *StatusError
+		var gh *sourcecontrol.HTTPStatusError
+		if !errors.As(got, &se) || se.Code != "trash_failed" || se.Status != 500 || errors.As(got, &gh) ||
+			sourcecontrol.IsPermanent(got) || errors.Is(got, sourcecontrol.ErrAEStudioUnavailable) {
+			t.Fatalf("got %v, want a retryable StatusError trash_failed", got)
+		}
+	})
 	t.Run("any 503 and a gateway answer are unavailable", func(t *testing.T) {
 		for _, a := range []answer{{op: "x", status: 503, problem: true, code: "idp_unavailable"}, {op: "x", status: 502}, {op: "x", status: 404}} {
 			if got := errorFromProblem(a); !errors.Is(got, sourcecontrol.ErrAEStudioUnavailable) {
