@@ -81,9 +81,8 @@ const (
 	OpListMilestoneIssueComments = "list-milestone-issue-comments"
 
 	// Hooks.
-	OpRegisterWebhook     = "register-webhook"
-	OpUpdateWebhookEvents = "update-webhook-events"
-	OpDeleteWebhook       = "delete-webhook"
+	OpRegisterWebhook = "register-webhook"
+	OpDeleteWebhook   = "delete-webhook"
 )
 
 // Call is one port call the Fake saw, failed ones included. Ref is the ref

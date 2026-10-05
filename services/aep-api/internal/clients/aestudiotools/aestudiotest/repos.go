@@ -92,8 +92,8 @@ func (f *Fake) TrashRepo(_ context.Context, ref sourcecontrol.RepoRef) error {
 }
 
 // RegisterWebhook ensures the hook delivering to the pod's URL and answers
-// its id: an existing one is answered as is, its events untouched (as the
-// pod's GitHub "Hook already exists" path does).
+// its id: an existing one is answered with its events replaced by these, as
+// the pod's register-hook ("one call is an ensure") does.
 func (f *Fake) RegisterWebhook(_ context.Context, ref sourcecontrol.RepoRef, events []string) (int64, error) {
 	st, unlock, err := f.issueOp(OpRegisterWebhook, ref)
 	if err != nil {
@@ -101,6 +101,7 @@ func (f *Fake) RegisterWebhook(_ context.Context, ref sourcecontrol.RepoRef, eve
 	}
 	defer unlock()
 	if _, ok := st.hooks[st.podHook]; ok {
+		st.hooks[st.podHook] = slices.Clone(events)
 		return st.podHook, nil
 	}
 	f.nextHookID++
@@ -117,20 +118,6 @@ func (f *Fake) SeedHook(ref sourcecontrol.RepoRef, events []string) int64 {
 	f.nextHookID++
 	f.state(ref).hooks[f.nextHookID] = slices.Clone(events)
 	return f.nextHookID
-}
-
-// UpdateWebhookEvents replaces the hook's events; an unknown hook is 404.
-func (f *Fake) UpdateWebhookEvents(_ context.Context, ref sourcecontrol.RepoRef, hookID int64, events []string) error {
-	st, unlock, err := f.issueOp(OpUpdateWebhookEvents, ref)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if _, ok := st.hooks[hookID]; !ok {
-		return &sourcecontrol.HTTPStatusError{StatusCode: 404, Body: "hook not found"}
-	}
-	st.hooks[hookID] = slices.Clone(events)
-	return nil
 }
 
 // DeleteWebhook removes the hook; one already gone is success.

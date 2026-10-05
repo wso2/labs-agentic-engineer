@@ -66,21 +66,6 @@ func (a *Adapter) RegisterWebhook(ctx context.Context, ref RepoRef, events []str
 	return reply.ID, err
 }
 
-// UpdateWebhookEvents replaces the hook's events; an unknown hook is an
-// HTTPStatusError 404.
-func (a *Adapter) UpdateWebhookEvents(ctx context.Context, ref RepoRef, hookID int64, events []string) error {
-	if err := validRef(ref); err != nil {
-		return err
-	}
-	body, err := hookEvents(events)
-	if err != nil {
-		return err
-	}
-	return a.do(ctx, ref.Org, "update-hook-events", nil, func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
-		return c.UpdateHookEvents(ctx, ref.Owner, ref.Repo, hookID, &gen.UpdateHookEventsParams{XImpersonateOrg: org}, body, auth)
-	})
-}
-
 // DeleteWebhook removes the hook; one already gone is success.
 func (a *Adapter) DeleteWebhook(ctx context.Context, ref RepoRef, hookID int64) error {
 	if err := validRef(ref); err != nil {

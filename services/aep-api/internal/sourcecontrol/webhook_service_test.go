@@ -73,17 +73,31 @@ func TestWebhookRegister_HappyPathRegistersTheEventsAndPersistsID(t *testing.T) 
 	}
 }
 
-// RegisterWebhook answers an existing hook as is, without touching its events,
-// so every register reconciles the event list (§9.2 cutover).
-func TestWebhookRegister_ReconcilesTheEventsOnTheHook(t *testing.T) {
+// The pod's register-hook is an ensure: an existing hook to its URL has its
+// events replaced in the same call, so Register is that one call and a hook
+// created before "issues" joined the subscription gets it (§9.2 cutover).
+func TestWebhookRegister_OneEnsureCallReplacesTheEvents(t *testing.T) {
 	t.Parallel()
 	wh, _, f := newWebhookSvcOnFake(t)
-
-	if _, err := wh.Register(testContext(), "org1", "proj1"); err != nil {
-		t.Fatalf("Register: %v", err)
+	old, err := f.RegisterWebhook(testContext(), widgets, []string{"push"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if want := []string{aestudiotest.OpRegisterWebhook, aestudiotest.OpUpdateWebhookEvents}; !slices.Equal(ops(f), want) {
-		t.Fatalf("ops = %v, want %v", ops(f), want)
+	seen := len(f.Calls())
+
+	hookID, err := wh.Register(testContext(), "org1", "proj1")
+	if err != nil || hookID == nil || *hookID != old {
+		t.Fatalf("Register = (%v, %v), want the existing hook %d", hookID, err, old)
+	}
+	var got []string
+	for _, c := range f.Calls()[seen:] {
+		got = append(got, c.Op)
+	}
+	if want := []string{aestudiotest.OpRegisterWebhook}; !slices.Equal(got, want) {
+		t.Fatalf("ops = %v, want %v", got, want)
+	}
+	if ev := f.HookEvents(widgets)[old]; !slices.Equal(ev, []string{"pull_request", "push", "issue_comment", "issues"}) {
+		t.Fatalf("events = %v, want the full subscription", ev)
 	}
 }
 
@@ -105,21 +119,6 @@ func TestWebhookRegister_IsIdempotent(t *testing.T) {
 	}
 	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != *first {
 		t.Fatalf("persisted WebhookID = %v, want %d", got, *first)
-	}
-}
-
-// A failed reconcile does not undo a registration that succeeded.
-func TestWebhookRegister_ReconcileFailureIsNotFatal(t *testing.T) {
-	t.Parallel()
-	wh, repo, f := newWebhookSvcOnFake(t)
-	f.FailOp(aestudiotest.OpUpdateWebhookEvents, sourcecontrol.ErrAEStudioUnavailable)
-
-	hookID, err := wh.Register(testContext(), "org1", "proj1")
-	if err != nil || hookID == nil {
-		t.Fatalf("Register = (%v, %v), want the hook", hookID, err)
-	}
-	if got := storedWebhookID(t, repo, "org1", "proj1"); got == nil || *got != *hookID {
-		t.Fatalf("persisted WebhookID = %v, want %d", got, *hookID)
 	}
 }
 

@@ -54,13 +54,6 @@ func TestRepoAndHookOps_RequestAndReply(t *testing.T) {
 			},
 		},
 		{
-			name: "update hook events", method: "PATCH", path: "/repos/acme/greeter/hooks/42", status: 204,
-			body: `{"events":["pull_request","push","issue_comment","issues"]}`,
-			call: func(ctx context.Context, a *Adapter) (any, error) {
-				return none(a.UpdateWebhookEvents(ctx, trunkRef, 42, platformHookEvents))
-			},
-		},
-		{
 			name: "delete hook", method: "DELETE", path: "/repos/acme/greeter/hooks/42", status: 204,
 			call: func(ctx context.Context, a *Adapter) (any, error) { return none(a.DeleteWebhook(ctx, trunkRef, 42)) },
 		},
@@ -93,7 +86,7 @@ func TestHookOps_RefuseAnUnknownEventWithoutACall(t *testing.T) {
 	if _, err := a.RegisterWebhook(context.Background(), trunkRef, []string{"push", "release"}); err == nil {
 		t.Fatal("want a refusal of release")
 	}
-	if err := a.UpdateWebhookEvents(context.Background(), trunkRef, 42, []string{"*"}); err == nil {
+	if _, err := a.RegisterWebhook(context.Background(), trunkRef, []string{"*"}); err == nil {
 		t.Fatal("want a refusal of *")
 	}
 	if len(p.requests()) != 0 {

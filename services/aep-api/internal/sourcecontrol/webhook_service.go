@@ -29,7 +29,8 @@ import (
 // ID on the repo row.
 type WebhookService interface {
 	// Register installs the webhook on the project's repo and persists its
-	// hook ID. Idempotent: the pod answers an existing hook to its URL.
+	// hook ID. Idempotent: the pod answers an existing hook to its URL, with
+	// its events replaced by the current subscription.
 	Register(ctx context.Context, orgID, projectID string) (hookID *int64, err error)
 
 	// Unregister removes the hook Register installed, addressed by the hook ID
@@ -83,19 +84,12 @@ func (s *webhookService) Register(ctx context.Context, orgID, projectID string) 
 		return nil, ErrRepoNotFound
 	}
 
+	// One ensure: an existing hook to the pod's URL has its events (and
+	// signing config) replaced in the same call, so a hook created before
+	// "issues" joined the subscription gets it (§9.2 cutover).
 	hookID, err := s.github.RegisterWebhook(ctx, ref, subscribedEvents())
 	if err != nil {
 		return nil, fmt.Errorf("register webhook: %w", err)
-	}
-
-	// Reconcile the event list on the hook. RegisterWebhook's already-exists
-	// path returns a pre-existing hook WITHOUT updating its events, so a hook
-	// created before "issues" joined the subscription would never receive
-	// issue deliveries. PATCHing the events every register makes cutover
-	// idempotent (§9.2). Best-effort: a reconcile failure must not block a
-	// successful registration.
-	if patchErr := s.github.UpdateWebhookEvents(ctx, ref, hookID, subscribedEvents()); patchErr != nil {
-		slog.WarnContext(ctx, "reconcile webhook events failed", "project", projectID, "hookId", hookID, "error", patchErr)
 	}
 
 	if err := s.repoSvc.SetWebhookID(ctx, orgID, projectID, hookID); err != nil {

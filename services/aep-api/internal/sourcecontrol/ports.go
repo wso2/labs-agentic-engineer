@@ -176,16 +176,11 @@ type IssueOps interface {
 
 // WebhookOps is the repo-webhook surface. Consumed by webhookService.
 type WebhookOps interface {
-	// RegisterWebhook installs the repository webhook delivering to the org's
+	// RegisterWebhook ensures the repository webhook delivering to the org's
 	// pod (the pod owns the delivery URL and the signing secret) and returns
-	// its hook ID; an existing hook to that URL is answered as is.
+	// its hook ID. An existing hook to that URL is answered with its events
+	// replaced by these and its signing config re-keyed: one call is an ensure.
 	RegisterWebhook(ctx context.Context, ref RepoRef, events []string) (hookID int64, err error)
-	// UpdateWebhookEvents replaces the subscribed-event list of an existing repo
-	// webhook (PATCH /hooks/{id}). RegisterWebhook's already-exists path returns
-	// a pre-existing hook without touching its events, so a hook created before
-	// "issues" joined the subscription must be PATCHed to add it
-	// (docs/design/tasks-github-native.md §9.2 cutover).
-	UpdateWebhookEvents(ctx context.Context, ref RepoRef, hookID int64, events []string) error
 	// DeleteWebhook removes the hook the platform registered, addressed by the
 	// stored hook ID so no other integration's delivery can be caught by it. A
 	// hook that is already gone (404, or 410 after GitHub reaped a failing one)
