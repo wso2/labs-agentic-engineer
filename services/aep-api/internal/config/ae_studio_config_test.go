@@ -28,7 +28,6 @@ func setMinimalEnv(t *testing.T) {
 	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "http://platform-api.invalid")
 	t.Setenv("DATABASE_URL", "postgres://u:p@localhost:5432/db")
 	t.Setenv("JWKS_URL", "http://idp.invalid/jwks")
-	t.Setenv("BFF_TASK_SIGNING_KEY", "test-placeholder-not-a-key")
 	for _, k := range []string{
 		"AE_STUDIO_IMAGE_DESIGN_AGENT", "AE_STUDIO_IMAGE_COLLAB", "AE_STUDIO_IMAGE_STUDIO_TOOLS",
 		"AE_STUDIO_GATEWAY_HOST", "AE_STUDIO_PUBLIC_SCHEME", "AE_STUDIO_PUBLIC_PORT_SUFFIX",

@@ -50,22 +50,12 @@ type Config struct {
 	// The destructive BFF migrations refuse to run unless tier=dev.
 	DeploymentTier string
 
-	// PlaygroundTokenEnabled gates POST /internal/v1/mcp/playground-token — a
-	// caller-auth-free endpoint that mints a short-lived MCP token so a human
-	// can drive the @aep/playground CLI against a live aep-api
-	// without a caller-auth story (an open decision this endpoint deliberately
-	// does not prejudge). Defaults false, so the route is ABSENT (404, not
-	// 403) everywhere except deployments/docker-compose.yml, which opts in for
-	// local dev. Read from PLAYGROUND_TOKEN_ENABLED.
-	PlaygroundTokenEnabled bool
-
 	// PlatformResourcesEnabled gates discovery of cluster-scoped platform
 	// resource types (ResourceTypeCatalog.List → OC ListClusterResourceTypes).
 	// Defaults TRUE: platform resources are a core capability; deployments that
 	// offer no platform-resource catalog must opt out explicitly
-	// (PLATFORM_RESOURCES_ENABLED=false). Unlike PlaygroundTokenEnabled /
-	// AutoMergeCodingPRs (opt-in extras that default false), this is an
-	// opt-out. Read from PLATFORM_RESOURCES_ENABLED.
+	// (PLATFORM_RESOURCES_ENABLED=false). Unlike AutoMergeCodingPRs (an opt-in extra that
+	// defaults false), this is an opt-out. Read from PLATFORM_RESOURCES_ENABLED.
 	PlatformResourcesEnabled bool
 
 	// AutoMergeCodingPRs gates auto-merge of coding-agent pull requests: when
@@ -101,15 +91,6 @@ type Config struct {
 	// complete a sign-in there. One fixed URL for the whole platform. Empty
 	// disables the registration.
 	TryItCallbackURL string
-
-	// TaskTokenSigningKey is the PEM-encoded RSA private key used to sign
-	// Task JWTs. The matching public key is published at /auth/external/jwks.json.
-	TaskTokenSigningKey string
-	// TaskTokenIssuer is the iss claim on issued Task JWTs (e.g. "aep-bff").
-	TaskTokenIssuer string
-	// TaskTokenAudience is the aud claim — fixed to "git-service" today, the
-	// only verifier of Task JWTs.
-	TaskTokenAudience string
 
 	// Build watcher git_clone_failed_auth retry budget. Default 3 attempts.
 	// Configurable via BUILD_AUTH_RETRY_BUDGET; tests set to 0 to force
@@ -268,11 +249,6 @@ func (c Config) Validate() error {
 		// Without JWKS the inbound verifier rejects every /api/ request (401);
 		// there is no unsigned-claim fallback.
 		errs = append(errs, "JWKS_URL is required — the inbound JWT verifier cannot start without it")
-	}
-	if c.TaskTokenSigningKey == "" {
-		// Without the RS256 signing key every task dispatch (and the runner
-		// callbacks that verify against the published JWKS) fails.
-		errs = append(errs, "BFF_TASK_SIGNING_KEY (or _PATH) is required — task dispatch cannot start without it")
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))

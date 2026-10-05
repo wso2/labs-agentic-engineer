@@ -390,3 +390,12 @@ func TestReuseSecrets_TopsUpTheRelaySeed(t *testing.T) {
 		})
 	}
 }
+
+// BFF token minting is gone, so an install no longer seeds or requires
+// aep/task-signing-key: a store without it is not "wiped", which keeps an
+// existing install's --reuse-secrets working either way.
+func TestTaskSigningKey_NotRequired(t *testing.T) {
+	if slices.Contains(requiredOpenBaoPaths, "aep/task-signing-key") {
+		t.Error("aep/task-signing-key must not be in requiredOpenBaoPaths")
+	}
+}

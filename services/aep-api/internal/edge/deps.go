@@ -35,8 +35,6 @@ import (
 // services; component tests fill only what the feature under test needs
 // (untouched fields nil-guard or 503 in their handlers).
 type Deps struct {
-	TaskTokens *auth.TaskTokenManager
-
 	// PublisherTokens verifies an org's Thunder publisher client token
 	// (aep-publisher-<org>), the only credential POST /internal/v1/mcp
 	// accepts (auth.PublisherMCPGate). Nil leaves the MCP route unmounted.

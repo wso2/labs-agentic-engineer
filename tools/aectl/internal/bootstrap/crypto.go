@@ -18,12 +18,8 @@ package bootstrap
 
 import (
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/hex"
-	"encoding/pem"
 	"math/big"
-	"strings"
 )
 
 // GeneratePassword returns a cryptographically random alphanumeric string of the given length.
@@ -47,21 +43,4 @@ func GenerateHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
-}
-
-// GenerateRSAPrivateKey returns a fresh 2048-bit RSA private key in PKCS8 PEM format.
-func GenerateRSAPrivateKey() (string, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return "", err
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return "", err
-	}
-	var buf strings.Builder
-	if err := pem.Encode(&buf, &pem.Block{Type: "PRIVATE KEY", Bytes: der}); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
 }

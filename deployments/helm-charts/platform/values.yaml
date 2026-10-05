@@ -196,10 +196,6 @@ localOrgProvisioning:
   # control-plane namespace ("default"), NOT the platform release namespace.
   orgNamespace: "default"
 
-taskSigning:
-  issuer: "aep-bff"
-  audience: "git-service"
-
 observer:
   clientId: "openchoreo-observer-resource-reader-client"
   # In-cluster URL of the OpenChoreo Observer. aectl init passes this from

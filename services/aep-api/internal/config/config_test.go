@@ -29,7 +29,6 @@ func validConfig() Config {
 	return Config{
 		CredentialEncryptionKey: validKey,
 		JWKSURL:                 "https://thunder.example/oauth2/jwks",
-		TaskTokenSigningKey:     "-----BEGIN KEY-----\nx\n-----END KEY-----",
 	}
 }
 
@@ -57,9 +56,9 @@ func TestConfigValidate_CredentialEncryptionKey(t *testing.T) {
 }
 
 // TestConfigValidate_RequiredFields pins the fail-fast contract: an empty JWKSURL
-// or TaskTokenSigningKey is a boot error, not a soft-warn that surfaces later.
+// is a boot error, not a soft-warn that surfaces later.
 func TestConfigValidate_RequiredFields(t *testing.T) {
-	t.Run("both set is valid", func(t *testing.T) {
+	t.Run("all required set is valid", func(t *testing.T) {
 		if err := validConfig().Validate(); err != nil {
 			t.Fatalf("Validate() = %v, want nil", err)
 		}
@@ -71,11 +70,14 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Fatal("Validate() = nil, want error for empty JWKS_URL")
 		}
 	})
-	t.Run("missing task signing key fails", func(t *testing.T) {
-		c := validConfig()
-		c.TaskTokenSigningKey = ""
-		if err := c.Validate(); err == nil {
-			t.Fatal("Validate() = nil, want error for empty TaskTokenSigningKey")
-		}
-	})
+}
+
+// TestValidate_NoSigningKeyRequired: BFF token minting is gone, so a config
+// with every other required field and no BFF_TASK_SIGNING_KEY boots.
+func TestValidate_NoSigningKeyRequired(t *testing.T) {
+	t.Setenv("BFF_TASK_SIGNING_KEY", "")
+	t.Setenv("BFF_TASK_SIGNING_KEY_PATH", "")
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil with no signing key", err)
+	}
 }

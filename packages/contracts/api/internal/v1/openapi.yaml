@@ -7,8 +7,7 @@ info:
     tags name its caller (Runner, AE Studio, SRE), so the spec reads as who
     calls what. Callers authenticate with a Thunder per-org publisher
     client-credentials token (runner ops), the org's ae-studio-<org>
-    client-credentials token (ae-studio/ ops only), a BFF-signed per-task
-    RS256 JWT, or (sre/ ops only) the static per-org SRE handoff bearer; the
+    client-credentials token (ae-studio/ ops only), or (sre/ ops only) the static per-org SRE handoff bearer; the
     acting org is always derived from the verified credential, never from
     request input.
 
@@ -25,7 +24,6 @@ paths:
       tags:
       - Runner
       security:
-      - taskJWT: []
       - publisherCC: []
       parameters:
       - description: Validation cycle id the runner callback is scoped to — the
@@ -384,7 +382,6 @@ paths:
       - AE Studio
       security:
       - publisherCC: []
-      - taskJWT: []
       requestBody:
         required: true
         content:
@@ -927,11 +924,6 @@ components:
       - field
       - message
   securitySchemes:
-    taskJWT:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: BFF-signed per-task RS256 JWT (runner pods)
     publisherCC:
       type: http
       scheme: bearer

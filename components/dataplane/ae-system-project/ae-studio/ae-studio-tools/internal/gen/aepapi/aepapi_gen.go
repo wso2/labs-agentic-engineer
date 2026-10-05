@@ -21,7 +21,6 @@ import (
 const (
 	AeStudioCCScopes  aeStudioCCContextKey  = "aeStudioCC.Scopes"
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
-	TaskJWTScopes     taskJWTContextKey     = "taskJWT.Scopes"
 )
 
 // Defines values for AEStudioTurnRecordKind.
@@ -247,9 +246,6 @@ type publisherCCContextKey string
 
 // sreHandoffContextKey is the context key for sreHandoff security scheme
 type sreHandoffContextKey string
-
-// taskJWTContextKey is the context key for taskJWT security scheme
-type taskJWTContextKey string
 
 // IngestWebhookEventParams defines parameters for IngestWebhookEvent.
 type IngestWebhookEventParams struct {

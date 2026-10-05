@@ -994,7 +994,6 @@ var requiredOpenBaoPaths = []string{
 	"aep/anthropic-api-key",
 	"aep/openbao-token",
 	"aep/postgres-password",
-	"aep/task-signing-key",
 	"aep/opensearch-username",
 	"aep/opensearch-password",
 	"aep/thunder-admin/client-id",
@@ -1119,11 +1118,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate postgres password: %w", err)
 	}
-	signingKey, err := bootstrap.GenerateRSAPrivateKey()
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate signing key: %w", err)
-	}
 	openSearchPassword, err := bootstrap.GeneratePassword(24)
 	if err != nil {
 		sp.Fail("Secret generation failed")
@@ -1149,7 +1143,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		{"aep/anthropic-api-key", anthropicKey},
 		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
-		{"aep/task-signing-key", signingKey},
 		{webhookRelaySeedPath, relaySeed},
 		{"aep/opensearch-username", "admin"},
 		{"aep/opensearch-password", openSearchPassword},

@@ -265,7 +265,7 @@ func TestMCP_PublisherTokenListsNineToolsWithoutRemoteGit(t *testing.T) {
 }
 
 // The mount needs only the publisher verifier: no task-token manager is wired.
-func TestMCP_MountedWithoutTaskTokens(t *testing.T) {
+func TestMCP_MountsOnPublisherVerifierAlone(t *testing.T) {
 	s := newMCPSurface(t)
 	resp := postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if resp.StatusCode != http.StatusOK {

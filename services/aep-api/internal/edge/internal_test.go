@@ -48,7 +48,6 @@ func TestInternalContract(t *testing.T) {
 		// dispatch did not exist.
 		"runner-validation-context",
 		"/validation/{cycleId}/context",
-		"taskJWT",
 		"publisherCC",
 	} {
 		if !strings.Contains(yaml, want) {

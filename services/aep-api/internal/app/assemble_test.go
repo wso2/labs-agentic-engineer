@@ -39,7 +39,7 @@ import (
 // required (non-degradable) fields are set to dummy non-empty values. Everything
 // OPTIONAL is left at its zero value, so the graph assembles in its maximally-
 // degraded mode. Assemble never calls config.Validate, so the required-at-boot
-// fields (JWKSURL, TaskTokenSigningKey) are irrelevant here.
+// field (JWKSURL) is irrelevant here.
 func baseCfg() config.Config {
 	c := config.Config{}
 	c.PlatformAPI.BaseURL = "http://openchoreo.test"

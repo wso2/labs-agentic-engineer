@@ -20,10 +20,8 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"net/http"
@@ -37,27 +35,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// newRunnerTaskManager builds a TaskTokenManager backed by a freshly generated
-// RSA key so tests can mint real BFF-signed identity JWTs.
-func newRunnerTaskManager(t *testing.T) *TaskTokenManager {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	pemKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
-	mgr, err := NewTaskTokenManager(TaskTokenConfig{
-		PrivateKey: string(pemKey),
-		Issuer:     "aep-bff",
-		Audience:   "git-service",
-		TTL:        time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("NewTaskTokenManager: %v", err)
-	}
-	return mgr
-}
-
 // statusOf extracts the HTTP status an *HTTPError carries (0 if it is not
 // one).
 func statusOf(err error) int {
@@ -68,20 +45,27 @@ func statusOf(err error) int {
 	return 0
 }
 
-// Task JWTs are not a runner-callback credential. A still-valid BFF-signed
-// token must 401 the same as garbage — otherwise an old Job silently keeps
-// working after publisher CC became the only path.
-func TestRunnerAuthorizer_TaskJWTRejected(t *testing.T) {
-	mgr := newRunnerTaskManager(t)
+// A JWT signed by a key the IdP does not publish is not a runner-callback
+// credential: it must 401 the same as garbage. BFF-signed Task JWTs are no
+// longer minted, so any still in flight lands here.
+func TestRunnerAuthorizer_ForeignKeyJWTRejected(t *testing.T) {
 	verifier, _ := newPublisherVerifier(t)
 	a := NewRunnerAuthorizer(verifier, func(context.Context, string) (string, error) {
-		t.Fatal("cycle lookup must not run for a Task JWT")
+		t.Fatal("cycle lookup must not run for a foreign-key JWT")
 		return "", nil
 	})
 
-	tok, err := mgr.IssueServiceToken("git-service", "org-a", time.Hour)
+	foreign, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatalf("IssueServiceToken: %v", err)
+		t.Fatalf("generate key: %v", err)
+	}
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
+		Issuer:    "aep-bff",
+		Audience:  jwt.ClaimStrings{"git-service"},
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString(foreign)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
 	}
 	_, err = a.Authorize(context.Background(), "Bearer "+tok, "task-1")
 	if got := statusOf(err); got != 401 {

@@ -58,7 +58,6 @@ func Load() (Config, error) {
 		TestMode:                  r.readOptionalBool("TEST_MODE", false),
 		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
 		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
-		PlaygroundTokenEnabled:    r.readOptionalBool("PLAYGROUND_TOKEN_ENABLED", false),
 		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
@@ -86,9 +85,6 @@ func Load() (Config, error) {
 			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 		},
 		AEStudio:               r.aeStudio(),
-		TaskTokenSigningKey:    r.taskSigningKey(),
-		TaskTokenIssuer:        r.readOptionalString("BFF_TASK_TOKEN_ISSUER", "aep-bff"),
-		TaskTokenAudience:      r.readOptionalString("BFF_TASK_TOKEN_AUDIENCE", "git-service"),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
 		JWTAllowedIssuer:       r.readOptionalString("JWT_ISSUER", ""),
 		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-console-client"),
@@ -205,26 +201,6 @@ func (r *configReader) databaseURL() string {
 		RawQuery: params.Encode(),
 	}
 	return u.String()
-}
-
-// taskSigningKey reads the BFF Task JWT signing PEM. BFF_TASK_SIGNING_KEY
-// takes precedence; BFF_TASK_SIGNING_KEY_PATH is the file-mount fallback
-// docker-compose deployments use (multi-line PEM survives a bind mount
-// cleanly; env-var passing across compose `${VAR}` substitution does not).
-func (r *configReader) taskSigningKey() string {
-	if v := os.Getenv("BFF_TASK_SIGNING_KEY"); v != "" {
-		return v
-	}
-	path := os.Getenv("BFF_TASK_SIGNING_KEY_PATH")
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		r.errors = append(r.errors, fmt.Errorf("read BFF_TASK_SIGNING_KEY_PATH %s: %w", path, err))
-		return ""
-	}
-	return string(b)
 }
 
 const (

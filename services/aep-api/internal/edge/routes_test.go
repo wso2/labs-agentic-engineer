@@ -39,6 +39,10 @@ var removedRoutes = []removedRoute{
 	// before and after; its removal is proven by AppParams losing the controller.
 	{http.MethodGet, "/api/v1/org/credentials/github/connect/callback", http.StatusNotFound},
 	{http.MethodPost, "/api/v1/config/git-provider/connect-sessions", http.StatusNotFound},
+	// Token minting is gone: the JWKS of BFF-signed tokens and the playground
+	// mint. TestRemovedTokenRoutesAre404 repeats them with the old flag set.
+	{http.MethodGet, "/auth/external/jwks.json", http.StatusNotFound},
+	{http.MethodPost, "/internal/v1/mcp/playground-token", http.StatusNotFound},
 }
 
 func TestRemovedRoutes(t *testing.T) {
@@ -70,7 +74,7 @@ func TestRouteTable(t *testing.T) {
 		got[r.pattern] = r
 	}
 	for _, p := range []string{
-		"GET /healthz", "GET /readyz", "GET /auth/external/jwks.json",
+		"GET /healthz", "GET /readyz",
 		"/api/",
 		"/internal/v1/",
 		"POST /_dev/v1/secret-ref-resync",
@@ -79,8 +83,8 @@ func TestRouteTable(t *testing.T) {
 			t.Errorf("mount table lacks %q", p)
 		}
 	}
-	if len(got) != 6 {
-		t.Errorf("mount table has %d rows, want 6", len(got))
+	if len(got) != 5 {
+		t.Errorf("mount table has %d rows, want 5", len(got))
 	}
 	// The SRE handoff is an internal caller (03 §1): /api/ admits user JWTs only.
 	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {
@@ -88,5 +92,22 @@ func TestRouteTable(t *testing.T) {
 	}
 	if c := got["/api/"].caller; strings.Contains(c, "SRE") || strings.Contains(c, "aep-mcp-server") {
 		t.Errorf("/api/ caller %q still names the SRE handoff", c)
+	}
+}
+
+// TestRemovedTokenRoutesAre404: the JWKS and the playground mint stay gone even
+// with the retired PLAYGROUND_TOKEN_ENABLED flag set in the environment.
+func TestRemovedTokenRoutesAre404(t *testing.T) {
+	t.Setenv("PLAYGROUND_TOKEN_ENABLED", "true")
+	h := NewHandlerForTest(Deps{}, nil, nil)
+	for _, rr := range []removedRoute{
+		{http.MethodGet, "/auth/external/jwks.json", http.StatusNotFound},
+		{http.MethodPost, "/internal/v1/mcp/playground-token", http.StatusNotFound},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(rr.method, rr.path, nil))
+		if w.Code != rr.want {
+			t.Errorf("%s %s = %d, want %d", rr.method, rr.path, w.Code, rr.want)
+		}
 	}
 }

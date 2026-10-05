@@ -53,8 +53,8 @@ type AppParams struct {
 
 	// InternalDeps carries the services + authorizers for the internal S2S
 	// route group (runner callbacks, SRE handoff), served contract-first from
-	// packages/contracts/api/internal/v1 behind internalGate. Its MCP and
-	// PlaygroundToken handlers are filled by routes() from the MCP fields below.
+	// packages/contracts/api/internal/v1 behind internalGate. Its MCP
+	// handler is filled by routes() from the MCP fields below.
 	InternalDeps InternalDeps
 
 	ConfigRepo projects.ConfigRepository

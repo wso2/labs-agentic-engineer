@@ -88,12 +88,8 @@ type InternalDeps struct {
 	// agent reads it (ADR-0022).
 	ValidationContext validation.ContextProvider
 	// MCP serves POST /internal/v1/mcp (call-mcp-tool), already wrapped in
-	// auth.PublisherMCPGate, and PlaygroundToken POST
-	// /internal/v1/mcp/playground-token (local-dev flag only, no caller auth);
-	// nil leaves the route unmounted. The playground mint goes with token
-	// minting.
-	MCP             http.Handler
-	PlaygroundToken http.Handler
+	// auth.PublisherMCPGate; nil leaves the route unmounted.
+	MCP http.Handler
 }
 
 // internalServer implements igen.StrictServerInterface.
@@ -125,9 +121,6 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 	mux := http.NewServeMux()
 	if deps.MCP != nil {
 		mux.Handle("POST "+internalV1+"/mcp", deps.MCP)
-	}
-	if deps.PlaygroundToken != nil {
-		mux.Handle("POST "+internalV1+"/mcp/playground-token", deps.PlaygroundToken)
 	}
 	igen.HandlerWithOptions(strict, igen.StdHTTPServerOptions{
 		BaseURL:          internalV1,
@@ -258,7 +251,6 @@ var internalOpGates = map[string]internalOpGate{
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
 //	mcp                        runner, pod     route miss here: own gate (auth.PublisherMCPGate), publisher token only, binds its org
-//	mcp/playground-token       local dev       route miss here: unauthenticated mint, local-dev flag only
 //	any other embedded op      -               denied (401)
 //
 // A route miss passes through untouched: the inner mux answers 404 or 405, or
@@ -411,24 +403,20 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 }
 
 // mcpRoutes returns the internal MCP discovery handler (POST /internal/v1/mcp,
-// raw JSON-RPC) and the local playground-token mint. The MCP server answers
+// raw JSON-RPC). The MCP server answers
 // the coding runner's and the AE Studio tools pod's queries for the org's
 // external resources, endpoints, platform resource types and OpenAPI specs,
 // gated by auth.PublisherMCPGate: an org's aep-publisher-<org> client token
 // only, and the acting org comes from that verified token, never the request.
 // Without the publisher verifier nothing could verify a caller, so mcp is nil
 // and the path 404s instead of 503-ing. routes() hands both to
-// newInternalV1Handler via InternalDeps. The playground mint is local-dev only,
-// mounted solely under PlaygroundTokenEnabled with a task-token manager; no
-// verifier accepts what it mints any more, and it goes with token minting.
-func mcpRoutes(p AppParams) (mcp, playground http.Handler) {
+// newInternalV1Handler via InternalDeps.
+func mcpRoutes(p AppParams) http.Handler {
+	var mcp http.Handler
 	if p.Deps.PublisherTokens != nil {
 		mcp = auth.PublisherMCPGate(p.Deps.PublisherTokens, mcpdiscovery.NewMCPHandler(
 			p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes, p.MCPGroupCatalog,
 			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
 	}
-	if p.Config.PlaygroundTokenEnabled && p.Deps.TaskTokens != nil {
-		playground = mcpdiscovery.NewPlaygroundTokenHandler(p.Deps.TaskTokens)
-	}
-	return mcp, playground
+	return mcp
 }

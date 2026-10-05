@@ -63,7 +63,7 @@ type studioTokenClaims struct {
 // ThunderJWKS and no InboundAuth) and a signer for tokens it trusts.
 func newVerifiedStudioStack(t *testing.T) (http.Handler, func(studioTokenClaims) string) {
 	t.Helper()
-	priv := mustGenerateRSAKey(t)
+	priv := newTestRSAKey(t)
 	jwks := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
 			Kty: "RSA", Kid: studioKID, Use: "sig", Alg: "RS256",

@@ -33,20 +33,18 @@ type route struct {
 // routes is the whole request boundary of aep-api: one row per route group.
 // Where each group lives:
 //
-//	/healthz /readyz /auth/external/jwks.json   health.go
+//	/healthz /readyz                            health.go
 //	/api/                                       public.go (gate: tenant_gate.go)
 //	/internal/v1/...                            internal.go
 //	/_dev/v1                                    dev.go
 //
-// Credential verify/mint lives in internal/platform/auth.
+// Credential verification lives in internal/platform/auth.
 func routes(p AppParams) []route {
 	internalDeps := p.InternalDeps
-	internalDeps.MCP, internalDeps.PlaygroundToken = mcpRoutes(p)
+	internalDeps.MCP = mcpRoutes(p)
 	return []route{
 		{"GET /healthz", "kubelet", "none", healthz()},
 		{"GET /readyz", "kubelet", "none", readyz()},
-		// Goes with task-token minting (phase 5).
-		{"GET /auth/external/jwks.json", "verifiers of BFF-minted tokens", "none", taskTokenJWKS(p.Deps.TaskTokens)},
 		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
 		// One mount: the inner mux registers full paths (raw MCP routes and the
 		// generated ops), so a path it does not name 404s.

@@ -327,27 +327,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// connection) rolls the org's AE Studio.
 		WithStudioConverger(aeStudio)
 
-	// Task JWT manager — RS256. The public key is published on
-	// /auth/external/jwks.json. Used to mint BFF MCP tokens
-	// (IssueServiceToken) for the design agent and playground. Runner
-	// callbacks do not verify Task JWTs.
-	var taskTokens *authn.TaskTokenManager
-	if cfg.TaskTokenSigningKey != "" {
-		mgr, err := authn.NewTaskTokenManager(authn.TaskTokenConfig{
-			PrivateKey: cfg.TaskTokenSigningKey,
-			Issuer:     cfg.TaskTokenIssuer,
-			Audience:   cfg.TaskTokenAudience,
-			TTL:        24 * time.Hour,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("task token manager init: %w", err)
-		}
-		taskTokens = mgr
-		slog.Info("Task token manager", "kid", mgr.KeyID(), "issuer", cfg.TaskTokenIssuer, "audience", cfg.TaskTokenAudience)
-	} else {
-		slog.Warn("BFF_TASK_SIGNING_KEY not set — MCP identity tokens and JWKS will be unavailable")
-	}
-
 	// Secret-ref mirror writer wired into both credential services. nil-safe via
 	// the Enabled() check.
 	credService.WithSecretRefWriter(secretRefWriter)
@@ -658,10 +637,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// first-protected-deploy provisions the org publisher app lazily.
 	deploymentService.SetIDPService(idpService)
 
-	// taskTokens (the RS256 Task-JWT manager) is constructed earlier, before
-	// the agents client — that client uses it to mint per-call outbound
-	// identity tokens, so it must exist by then.
-
 	// asServiceIdentity marks OC API calls made from inside dispatch, webhook
 	// handlers, and the watchers as orchestration / async calls: they
 	// authenticate with the BFF's M2M service identity and impersonate the
@@ -920,7 +895,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
 	params.Deps = edge.Deps{
-		TaskTokens:      taskTokens,
 		PublisherTokens: publisherVerifier,
 		// DesignSvc backs the edge's own GET /projects/{name}/design/dependencies
 		// handler (the one op served directly on the composite, not a domain
@@ -1614,7 +1588,7 @@ type Degradation struct {
 }
 
 // Degradations reports every optional capability the assembled app is running
-// without, and why. Required config (JWKSURL, TaskTokenSigningKey) is not listed:
+// without, and why. Required config (JWKSURL) is not listed:
 // config.Validate boot-fails on it, so it can never be a degradation here.
 func (a *App) Degradations() []Degradation { return a.degradations }
 

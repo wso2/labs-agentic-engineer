@@ -169,7 +169,6 @@ func TestInternalGate_RunsBeforeValidator(t *testing.T) {
 func TestInternalGate_RouteMissPassesThrough(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/internal/v1/mcp"},
-		{http.MethodPost, "/internal/v1/mcp/playground-token"},
 		{http.MethodGet, "/internal/v1/nope"},
 		{http.MethodDelete, "/internal/v1/sre/rca-reports"},
 	} {
