@@ -232,6 +232,33 @@ func assertExactly(t *testing.T, got []LogLine, want []fakeLine) {
 	}
 }
 
+// assertSameLines checks the read returned every indexed line once. Order is
+// checked across seconds only: the observer stamps lines to the second, and a
+// second read from both ends cannot be put back in index order within itself.
+func assertSameLines(t *testing.T, got []LogLine, want []fakeLine) {
+	t.Helper()
+	wantSet := make(map[string]bool, len(want))
+	for _, w := range want {
+		wantSet[w.Log] = true
+	}
+	seen := make(map[string]bool, len(got))
+	for i, g := range got {
+		if seen[g.Log] {
+			t.Fatalf("line %q returned twice", g.Log)
+		}
+		if !wantSet[g.Log] {
+			t.Fatalf("line %q was not indexed", g.Log)
+		}
+		seen[g.Log] = true
+		if i > 0 && g.Timestamp.Before(got[i-1].Timestamp) {
+			t.Fatalf("line %d (%v) is older than line %d (%v)", i, g.Timestamp, i-1, got[i-1].Timestamp)
+		}
+	}
+	if len(seen) != len(wantSet) {
+		t.Fatalf("lines = %d, want %d (some indexed lines were not returned)", len(seen), len(wantSet))
+	}
+}
+
 // The observer has no cursor and stamps every line to the second, so a page
 // that ends inside second S cannot say where in S it stopped. The read drops
 // S, re-asks from S-1s, and keeps only S onwards: S arrives whole, once.
@@ -242,7 +269,7 @@ func TestQueryCycleLogs_BoundarySecondIsReadWhole(t *testing.T) {
 		lines := concat(inSecond(10, 995, 0), inSecond(11, 12, 995))
 		obs, srv := newFakeObserver(t, lines)
 
-		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 		if err != nil {
 			t.Fatalf("QueryCycleLogs: %v", err)
 		}
@@ -256,18 +283,21 @@ func TestQueryCycleLogs_BoundarySecondIsReadWhole(t *testing.T) {
 		lines := concat(inSecond(10, 1000, 0), inSecond(11, 12, 1000))
 		_, srv := newFakeObserver(t, lines)
 
-		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		got, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 		if err != nil {
 			t.Fatalf("QueryCycleLogs: %v", err)
 		}
-		assertExactly(t, got, lines)
+		assertSameLines(t, got, lines)
+		if stats.LinesMissing {
+			t.Fatal("a complete read must not report lines missing")
+		}
 	})
 	t.Run("previous second is light", func(t *testing.T) {
 		// The common case: the re-read of S-1s..S is small, so one extra page.
 		lines := concat(inSecond(9, 600, 0), inSecond(10, 395, 600), inSecond(11, 12, 995))
 		obs, srv := newFakeObserver(t, lines)
 
-		got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+		got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 		if err != nil {
 			t.Fatalf("QueryCycleLogs: %v", err)
 		}
@@ -288,11 +318,83 @@ func TestQueryCycleLogs_SaturatedSecondIsReadFromBothEnds(t *testing.T) {
 	lines := concat(inSecond(9, 3, 0), inSecond(10, 1500, 3), inSecond(11, 4, 1503))
 	_, srv := newFakeObserver(t, lines)
 
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	got, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
-	assertExactly(t, got, lines)
+	assertSameLines(t, got, lines)
+	if stats.LinesMissing {
+		t.Fatal("a second of two pages or fewer is read exactly")
+	}
+}
+
+// OpenSearch breaks timestamp ties by document order ascending in BOTH sort
+// directions, so a same-millisecond group cut by the ascending page is not the
+// mirror image of the same group in the descending read. Joining the two by
+// position duplicates part of such a group and loses the rest.
+func TestQueryCycleLogs_SaturatedSecondTiesStraddlingTheCut(t *testing.T) {
+	// 1500 lines in second 10, three per millisecond: the asc page (1000) ends
+	// one line into a group, and the desc page (1000) ends one line into one.
+	var sec10 []fakeLine
+	for i := 0; i < 1500; i++ {
+		sec10 = append(sec10, fakeLine{
+			At: at(10, 1+i/3), Log: fmt.Sprintf(`{"v":2,"seq":%d}`, i),
+			ComponentName: cycleComponent, ComponentUID: cycleUID, PodName: "shop-ca-abc-pod-1",
+		})
+	}
+	lines := concat(sec10, inSecond(11, 4, 1500))
+	_, srv := newFakeObserver(t, lines)
+
+	got, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	assertSameLines(t, got, lines)
+	if stats.LinesMissing {
+		t.Fatal("every line was returned; none may be reported missing")
+	}
+}
+
+// Identical lines in one second cannot be told apart by anything the observer
+// returns. The join never duplicates them and says what it could not read.
+func TestQueryCycleLogs_IdenticalLinesInASaturatedSecondAreReportedMissing(t *testing.T) {
+	var same []fakeLine
+	for i := 0; i < 1200; i++ {
+		same = append(same, fakeLine{At: at(10, 1+i%999), Log: "retrying", ComponentName: cycleComponent, ComponentUID: cycleUID, PodName: "shop-ca-abc-pod-1"})
+	}
+	_, srv := newFakeObserver(t, same)
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	got, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	if len(got) != queryPageLimit {
+		t.Fatalf("lines = %d, want %d (each read saw %d; more would be a guess)", len(got), queryPageLimit, queryPageLimit)
+	}
+	if !stats.LinesMissing {
+		t.Fatal("200 lines were not returned; the read must say so")
+	}
+	if !strings.Contains(logged.String(), `"msg":"observer.read_incomplete"`) || !strings.Contains(logged.String(), `"missing":"200"`) {
+		t.Fatalf("the missing lines must be logged, got %s", logged.String())
+	}
+}
+
+// The stats carry the request count the caller logs.
+func TestQueryCycleLogs_StatsCountThePages(t *testing.T) {
+	lines := concat(inSecond(9, 600, 0), inSecond(10, 395, 600), inSecond(11, 12, 995))
+	_, srv := newFakeObserver(t, lines)
+
+	_, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	if stats.Pages != 2 || stats.LinesMissing {
+		t.Fatalf("stats = %+v, want 2 pages, nothing missing", stats)
+	}
 }
 
 // Beyond two pages in one second the middle is unreadable on this API. The read
@@ -305,9 +407,12 @@ func TestQueryCycleLogs_OverSaturatedSecondMovesOn(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
 	t.Cleanup(func() { slog.SetDefault(prev) })
 
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	got, stats, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	if !stats.LinesMissing {
+		t.Fatal("500 lines of second 10 were not returned; the read must say so")
 	}
 	if len(got) != 2*queryPageLimit+4 {
 		t.Fatalf("lines = %d, want %d (both ends of second 10, then second 11)", len(got), 2*queryPageLimit+4)
@@ -325,7 +430,7 @@ func TestQueryCycleLogs_OverSaturatedSecondMovesOn(t *testing.T) {
 	if n := len(obs.requestLog()); n > 4 {
 		t.Fatalf("requests = %d, want the read to move past the saturated second", n)
 	}
-	if !strings.Contains(logged.String(), `"msg":"observer.read_incomplete"`) || !strings.Contains(logged.String(), `"missing":500`) {
+	if !strings.Contains(logged.String(), `"msg":"observer.read_incomplete"`) || !strings.Contains(logged.String(), `"missing":"500"`) {
 		t.Fatalf("the unreadable middle must be logged, got %s", logged.String())
 	}
 }
@@ -336,7 +441,7 @@ func TestQueryCycleLogs_StopsWhenThePageHoldsTheTotal(t *testing.T) {
 	lines := concat(inSecond(10, 500, 0), inSecond(11, 500, 500))
 	obs, srv := newFakeObserver(t, lines)
 
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
@@ -349,7 +454,7 @@ func TestQueryCycleLogs_StopsWhenThePageHoldsTheTotal(t *testing.T) {
 func TestQueryCycleLogs_ComponentScopeRequestShape(t *testing.T) {
 	obs, srv := newFakeObserver(t, inSecond(10, 2, 0))
 
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
+	got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), componentQuery())
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
@@ -387,7 +492,7 @@ func TestQueryCycleLogs_ProjectScopeFiltersOnUIDAndSendsSearchPhrase(t *testing.
 
 	q := componentQuery()
 	q.Component = ""
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
+	got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
@@ -417,7 +522,7 @@ func TestQueryCycleLogs_ProjectScopePagesPastOtherComponents(t *testing.T) {
 
 	q := componentQuery()
 	q.Component = ""
-	got, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
+	got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
 	if err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
@@ -428,10 +533,10 @@ func TestQueryCycleLogs_ForwardsTheCallerBearerOnly(t *testing.T) {
 	obs, srv := newFakeObserver(t, inSecond(10, 1, 0))
 	c := NewClient(srv.URL)
 
-	if _, err := c.QueryCycleLogs(auth.WithAuthToken(context.Background(), "user-jwt"), componentQuery()); err != nil {
+	if _, _, err := c.QueryCycleLogs(auth.WithAuthToken(context.Background(), "user-jwt"), componentQuery()); err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
-	if _, err := c.QueryCycleLogs(context.Background(), componentQuery()); err != nil {
+	if _, _, err := c.QueryCycleLogs(context.Background(), componentQuery()); err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
 	got := obs.authHeaders()
@@ -447,7 +552,7 @@ func TestQueryCycleLogs_WindowIsTheCallersNotThirtyDays(t *testing.T) {
 	q := componentQuery()
 	q.From, q.To = at(-1, 0), at(3600+60, 0)
 
-	if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err != nil {
+	if _, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err != nil {
 		t.Fatalf("QueryCycleLogs: %v", err)
 	}
 	req := obs.requestLog()[0]
@@ -470,7 +575,7 @@ func TestQueryCycleLogs_RejectsAnIncompleteQueryWithoutCalling(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			q := componentQuery()
 			mutate(&q)
-			if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
+			if _, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
 				t.Fatal("want an error")
 			}
 		})
@@ -485,7 +590,7 @@ func TestQueryCycleLogs_NonOKIsAnError(t *testing.T) {
 	q := componentQuery()
 	q.To = q.From.Add(31 * 24 * time.Hour) // the observer refuses > 30 days with a 400
 
-	if _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
+	if _, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q); err == nil {
 		t.Fatal("a 400 must surface as an error")
 	}
 }

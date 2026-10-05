@@ -50,7 +50,7 @@ func (s *stubObservClient) GetBuildLogs(ctx context.Context, orgName, projectNam
 	return s.GetBuildLogsFunc(ctx, orgName, projectName, componentName, buildName, since)
 }
 
-func (s *stubObservClient) QueryCycleLogs(context.Context, observability.CycleLogQuery) ([]observability.LogLine, error) {
+func (s *stubObservClient) QueryCycleLogs(context.Context, observability.CycleLogQuery) ([]observability.LogLine, observability.CycleLogStats, error) {
 	panic("stubObservClient: QueryCycleLogs not expected")
 }
 

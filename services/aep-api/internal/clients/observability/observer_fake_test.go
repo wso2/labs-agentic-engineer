@@ -28,7 +28,8 @@ package observability
 //   - query (community-modules observability-logs-opensearch queries.go): the
 //     window is re-formatted to whole seconds and matched `gt start, lt end`
 //     (both exclusive), sorted on the timestamp only, `size: limit`;
-//     searchPhrase is a `*phrase*` wildcard on the log text;
+//     searchPhrase is a `*phrase*` wildcard on the log text; equal timestamps
+//     keep document order ascending whichever way the sort runs (Lucene);
 //   - response (OC service/logs.go): timestamps at SECOND precision, the
 //     metadata block, and `total` = the match count of THAT request's window.
 //
@@ -177,12 +178,15 @@ func (f *fakeObserver) serve(w http.ResponseWriter, r *http.Request) {
 		match = append(match, l)
 	}
 	f.mu.Unlock()
-	sort.SliceStable(match, func(i, j int) bool { return match[i].At.Before(match[j].At) })
-	if order == "desc" {
-		for i, j := 0, len(match)-1; i < j; i, j = i+1, j-1 {
-			match[i], match[j] = match[j], match[i]
+	// Lucene's rule: sort on the timestamp only, ties broken by document
+	// order ASCENDING in both directions — desc is NOT the reverse of asc.
+	// f.lines is in document (insertion) order, so a stable sort is exact.
+	sort.SliceStable(match, func(i, j int) bool {
+		if order == "desc" {
+			return match[i].At.After(match[j].At)
 		}
-	}
+		return match[i].At.Before(match[j].At)
+	})
 	total := len(match)
 	if len(match) > limit {
 		match = match[:limit]

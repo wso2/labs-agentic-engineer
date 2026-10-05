@@ -40,10 +40,10 @@ func (f *fakeObserver) GetBuildLogs(context.Context, string, string, string, str
 	panic("fakeObserver: GetBuildLogs not expected")
 }
 
-func (f *fakeObserver) QueryCycleLogs(_ context.Context, q observability.CycleLogQuery) ([]observability.LogLine, error) {
+func (f *fakeObserver) QueryCycleLogs(_ context.Context, q observability.CycleLogQuery) ([]observability.LogLine, observability.CycleLogStats, error) {
 	f.calls++
 	f.got = q
-	return f.lines, f.err
+	return f.lines, observability.CycleLogStats{Pages: 1}, f.err
 }
 
 func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testing.T) {

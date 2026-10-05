@@ -58,7 +58,18 @@ type Client interface {
 	// window: every line the Component with q.ComponentUID wrote, each once, in
 	// index order. It reads the Component scope while the Component exists
 	// and the project scope after it is deleted (q.Component == "").
-	QueryCycleLogs(ctx context.Context, q CycleLogQuery) ([]LogLine, error)
+	QueryCycleLogs(ctx context.Context, q CycleLogQuery) ([]LogLine, CycleLogStats, error)
+}
+
+// CycleLogStats describes how a cycle read went, for the caller's log and its
+// completeness signal.
+type CycleLogStats struct {
+	// Pages is the number of observer requests the read made.
+	Pages int
+	// LinesMissing reports that the window holds lines the read could not
+	// return: the page cap was hit, or one second held more lines (or more
+	// identical lines) than two pages can tell apart.
+	LinesMissing bool
 }
 
 // CycleLogQuery scopes one cycle's read. Namespace is the OpenChoreo namespace

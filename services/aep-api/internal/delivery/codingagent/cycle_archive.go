@@ -75,7 +75,9 @@ func (a *ObserverArchive) CycleArchive(ctx context.Context, scope ArchiveScope) 
 			return "", fmt.Errorf("%w: %s", ErrComponentGone, scope.ComponentName)
 		}
 	}
-	lines, err := a.obs.QueryCycleLogs(ctx, observability.CycleLogQuery{
+	// The v1 archive renders what came back; the read's stats (pages, lines
+	// missing) are not part of its text answer.
+	lines, _, err := a.obs.QueryCycleLogs(ctx, observability.CycleLogQuery{
 		Namespace:    scope.OrgName,
 		Project:      scope.ProjectName,
 		Component:    openchoreo.ScopedComponentName(scope.ProjectName, scope.ComponentName),
