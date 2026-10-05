@@ -144,7 +144,7 @@ func run() error {
 		return err
 	}
 	// aep-api's MCP endpoint (/internal/v1/mcp) as the org's publisher: it
-	// takes a task JWT or a publisher token, never the ae-studio client.
+	// takes the publisher token only, never the ae-studio client.
 	aepAPIMCP, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
 		TokenURL: cfg.IDPTokenURL, ClientID: cfg.PublisherClientID, ClientSecret: cfg.PublisherClientSecret,
 	})

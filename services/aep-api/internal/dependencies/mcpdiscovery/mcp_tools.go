@@ -24,7 +24,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
@@ -105,31 +104,6 @@ type endpointSpecView struct {
 	Availability  string `json:"availability"`
 	InlineContent string `json:"inlineContent,omitempty"`
 	Path          string `json:"path,omitempty"`
-}
-
-// remoteGitFileView is the JSON shape returned by get_remote_git_file_contents —
-// a file's decoded content + sha, or a directory's entries (folded like
-// github-mcp-server's get_file_contents).
-type remoteGitFileView struct {
-	Content     string               `json:"content,omitempty"`
-	SHA         string               `json:"sha,omitempty"`
-	IsDirectory bool                 `json:"isDirectory"`
-	Entries     []remoteGitEntryView `json:"entries,omitempty"`
-	// Note explains a withheld or shortened Content: binary refusal, or text
-	// truncation. Empty when Content is the whole file.
-	Note string `json:"note,omitempty"`
-}
-
-type remoteGitEntryView struct {
-	Path string `json:"path"`
-	Type string `json:"type"`
-	SHA  string `json:"sha"`
-}
-
-// remoteGitSearchHitView is one item of search_remote_git_code's result.
-type remoteGitSearchHitView struct {
-	Path string `json:"path"`
-	SHA  string `json:"sha"`
 }
 
 // validateSpecView is the JSON shape returned by validate_openapi_spec: parse
@@ -245,45 +219,6 @@ func mcpTools() []mcpTool {
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			Name: "get_remote_git_file_contents",
-			Description: "Read a file (or list a directory) from a repository in THIS organization over the " +
-				"GitHub API — no clone. Use this AFTER list_org_component_endpoints reports a provider whose " +
-				"`spec.availability` is `repo`: pass that row's owner/repo plus the spec path to read the real " +
-				"OpenAPI document. A file returns decoded `content` + `sha`; a directory returns `entries[]` " +
-				"(each with path/type/sha) so you can drill down. `ref` is optional (branch/tag/commit; " +
-				"defaults to the repo's default branch). TEXT ONLY: a binary file (PDF, image, …) answers with " +
-				"its sha and a `note` instead of content — do not retry, it will never return bytes; oversized " +
-				"text is truncated with a note. Read-only, and restricted to your own organization's " +
-				"repos — a request for any other owner is refused.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"owner": map[string]any{"type": "string", "description": "repo owner — MUST be your organization's GitHub account"},
-					"repo":  map[string]any{"type": "string", "description": "repository name"},
-					"path":  map[string]any{"type": "string", "description": "repo-relative file or directory path (empty = repo root)"},
-					"ref":   map[string]any{"type": "string", "description": "optional branch/tag/commit"},
-				},
-				"required": []string{"owner", "repo", "path"},
-			},
-		},
-		{
-			Name: "search_remote_git_code",
-			Description: "Search code in a repository in THIS organization over the GitHub API to LOCATE a " +
-				"file when you do not know its exact path (e.g. find where an `openapi.yaml` lives before " +
-				"reading it with get_remote_git_file_contents). Returns matching `items[]` of {path, sha}. " +
-				"Read-only, and restricted to your own organization's repos — a request for any other owner " +
-				"is refused.",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"owner": map[string]any{"type": "string", "description": "repo owner — MUST be your organization's GitHub account"},
-					"repo":  map[string]any{"type": "string", "description": "repository name"},
-					"query": map[string]any{"type": "string", "description": "code search query (the repo scope is added for you)"},
-				},
-				"required": []string{"owner", "repo", "query"},
-			},
-		},
-		{
 			Name: "validate_openapi_spec",
 			Description: "Validate an OpenAPI 3.x document you already have (pasted, generated, or read via " +
 				"get_remote_git_file_contents) BEFORE proposing it as a dependency's spec. Parses the document " +
@@ -340,11 +275,6 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 		Name      string `json:"name"`
 		Arguments struct {
 			Name       string   `json:"name"`
-			Owner      string   `json:"owner"`
-			Repo       string   `json:"repo"`
-			Path       string   `json:"path"`
-			Ref        string   `json:"ref"`
-			Query      string   `json:"query"`
 			Content    string   `json:"content"`
 			URL        string   `json:"url"`
 			Operations []string `json:"operations"`
@@ -443,45 +373,6 @@ func handleToolCall(w http.ResponseWriter, r *http.Request, h *mcpHandler, orgHa
 			return
 		}
 		writeToolText(w, req.ID, mustJSON(map[string]any{"groups": groups}))
-	case "get_remote_git_file_contents":
-		if h.remoteGit == nil {
-			writeToolError(w, req.ID, "remote git reader not configured")
-			return
-		}
-		if call.Arguments.Owner == "" || call.Arguments.Repo == "" {
-			writeToolError(w, req.ID, "missing required arguments: owner and repo")
-			return
-		}
-		// orgHandle is the verified ocOrgId claim — the reader resolves the org's
-		// credential from it and refuses any owner that is not the org's own
-		// GitHub account. The owner is NEVER trusted to name the org.
-		file, err := h.remoteGit.GetFileContents(r.Context(), orgHandle,
-			call.Arguments.Owner, call.Arguments.Repo, call.Arguments.Path, call.Arguments.Ref)
-		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("get remote git file contents: %v", err))
-			return
-		}
-		writeToolText(w, req.ID, mustJSON(toRemoteGitFileView(file)))
-	case "search_remote_git_code":
-		if h.remoteGit == nil {
-			writeToolError(w, req.ID, "remote git reader not configured")
-			return
-		}
-		if call.Arguments.Owner == "" || call.Arguments.Repo == "" || call.Arguments.Query == "" {
-			writeToolError(w, req.ID, "missing required arguments: owner, repo and query")
-			return
-		}
-		hits, err := h.remoteGit.SearchCode(r.Context(), orgHandle,
-			call.Arguments.Owner, call.Arguments.Repo, call.Arguments.Query)
-		if err != nil {
-			writeToolError(w, req.ID, fmt.Sprintf("search remote git code: %v", err))
-			return
-		}
-		items := make([]remoteGitSearchHitView, 0, len(hits))
-		for _, hit := range hits {
-			items = append(items, remoteGitSearchHitView{Path: hit.Path, SHA: hit.SHA})
-		}
-		writeToolText(w, req.ID, mustJSON(map[string]any{"items": items}))
 	case "validate_openapi_spec":
 		if h.validateSpec == nil || h.normalizeSpec == nil {
 			writeToolError(w, req.ID, "spec validator not configured")
@@ -632,46 +523,6 @@ func toExternalResourceView(er *openchoreo.ExternalResourceDefinition) externalR
 		view.Contract = &contractDTO{Type: er.Contract.Type, Path: er.Contract.Path}
 	}
 	return view
-}
-
-// maxToolFileBytes caps the file content one tool result may carry. A tool
-// result is prompt input: an 868KB PDF fetched through this tool once rode a
-// live turn as ~1.5M junk tokens per model step, then killed the conversation's
-// jsonb persist — Postgres rejects U+0000 anywhere in a jsonb document, and the
-// PDF's bytes carried plenty. 128KB of text is far beyond any OpenAPI document
-// this tool exists to read.
-const maxToolFileBytes = 128 << 10
-
-// toRemoteGitFileView projects a Contents API read to the agent-facing shape,
-// guarding what may ride a prompt: binary content is withheld (its facts —
-// path, sha, size — still answer), oversized text is truncated with a note.
-func toRemoteGitFileView(f *RemoteGitFile) remoteGitFileView {
-	v := remoteGitFileView{
-		Content:     f.Content,
-		SHA:         f.SHA,
-		IsDirectory: f.IsDirectory,
-	}
-	switch {
-	// NUL is checked separately: it IS valid UTF-8, but Postgres jsonb refuses
-	// it, and no text document this tool exists to read contains one.
-	case !f.IsDirectory && (!utf8.ValidString(f.Content) || strings.ContainsRune(f.Content, 0)):
-		v.Content = ""
-		v.Note = fmt.Sprintf("binary file (%d bytes) — content withheld; this tool reads text documents", len(f.Content))
-	case !f.IsDirectory && len(f.Content) > maxToolFileBytes:
-		cut := maxToolFileBytes
-		for cut > 0 && !utf8.RuneStart(f.Content[cut]) {
-			cut-- // never split a rune mid-sequence
-		}
-		v.Content = f.Content[:cut]
-		v.Note = fmt.Sprintf("truncated to the first %d of %d bytes", cut, len(f.Content))
-	}
-	if len(f.Entries) > 0 {
-		v.Entries = make([]remoteGitEntryView, 0, len(f.Entries))
-		for _, e := range f.Entries {
-			v.Entries = append(v.Entries, remoteGitEntryView{Path: e.Path, Type: e.Type, SHA: e.SHA})
-		}
-	}
-	return v
 }
 
 // toOrgComponentEndpointView projects a resolved OrgComponentEndpoint to the

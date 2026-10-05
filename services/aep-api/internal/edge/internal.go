@@ -44,8 +44,8 @@ import (
 // path, the INT-6 fence; the SRE handoff bearer for sre/; an org's
 // ae-studio-<org> client token for ae-studio/) and binds the verified org into the context;
 // only an authenticated request is validated against the embedded internal
-// spec (internalValidator). The raw MCP routes carry their
-// own verifier. The spec is non-public, never gateway-advertised, but the path
+// spec (internalValidator). The raw MCP route carries its own gate
+// (publisher token only). The spec is non-public, never gateway-advertised, but the path
 // is reachable through the console's /aep-api-service/ route, so nothing on it
 // parses a body for an anonymous caller.
 //
@@ -94,10 +94,11 @@ type InternalDeps struct {
 	// it is published on the roles gate ticket, which is where the validation
 	// agent reads it (ADR-0022).
 	ValidationContext validation.ContextProvider
-	// MCP serves POST /internal/v1/mcp (call-mcp-tool) and PlaygroundToken
-	// POST /internal/v1/mcp/playground-token. Each is already wrapped in its
-	// own verifier; nil leaves the route unmounted. The playground mint is
-	// local-dev only and goes with token minting (phase 5).
+	// MCP serves POST /internal/v1/mcp (call-mcp-tool), already wrapped in
+	// auth.PublisherMCPGate, and PlaygroundToken POST
+	// /internal/v1/mcp/playground-token (local-dev flag only, no caller auth);
+	// nil leaves the route unmounted. The playground mint goes with token
+	// minting.
 	MCP             http.Handler
 	PlaygroundToken http.Handler
 }
@@ -264,7 +265,8 @@ var internalOpGates = map[string]internalOpGate{
 //	executions/, validation/   coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
-//	mcp, mcp/playground-token  runner, agent   route miss here: passed through to their own verifier
+//	mcp                        runner, pod     route miss here: own gate (auth.PublisherMCPGate), publisher token only, binds its org
+//	mcp/playground-token       local dev       route miss here: unauthenticated mint, local-dev flag only
 //	any other embedded op      -               denied (401)
 //
 // A route miss passes through untouched: the inner mux answers 404 or 405, or
@@ -452,25 +454,23 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 }
 
 // mcpRoutes returns the internal MCP discovery handler (POST /internal/v1/mcp,
-// raw JSON-RPC) and the local playground-token mint. The MCP server answers the
-// design agent's queries for the org's external resources, endpoints and
-// platform resource types, gated by auth.AgentsScopedVerifier (BFF-signed token
-// aud aep-api-mcp, or a Thunder publisher token); the acting org comes from a
-// verified claim, never the request. Without a token manager nothing could
-// verify a caller, so both return nil and the paths 404 instead of 503-ing.
-// routes() hands both to newInternalV1Handler via InternalDeps.
-// The playground mint is local-dev only, mounted solely under
-// PlaygroundTokenEnabled.
+// raw JSON-RPC) and the local playground-token mint. The MCP server answers
+// the coding runner's and the AE Studio tools pod's queries for the org's
+// external resources, endpoints, platform resource types and OpenAPI specs,
+// gated by auth.PublisherMCPGate: an org's aep-publisher-<org> client token
+// only, and the acting org comes from that verified token, never the request.
+// Without the publisher verifier nothing could verify a caller, so mcp is nil
+// and the path 404s instead of 503-ing. routes() hands both to
+// newInternalV1Handler via InternalDeps. The playground mint is local-dev only,
+// mounted solely under PlaygroundTokenEnabled with a task-token manager; no
+// verifier accepts what it mints any more, and it goes with token minting.
 func mcpRoutes(p AppParams) (mcp, playground http.Handler) {
-	if p.Deps.TaskTokens == nil {
-		return nil, nil
+	if p.Deps.PublisherTokens != nil {
+		mcp = auth.PublisherMCPGate(p.Deps.PublisherTokens, mcpdiscovery.NewMCPHandler(
+			p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes, p.MCPGroupCatalog,
+			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
 	}
-	verifier := auth.NewAgentsScopedVerifier(p.Deps.TaskTokens, p.Deps.PublisherTokens)
-	mcp = verifier.Middleware(mcpdiscovery.NewMCPHandler(
-		p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes,
-		p.MCPGroupCatalog, p.MCPRemoteGit,
-		p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
-	if p.Config.PlaygroundTokenEnabled {
+	if p.Config.PlaygroundTokenEnabled && p.Deps.TaskTokens != nil {
 		playground = mcpdiscovery.NewPlaygroundTokenHandler(p.Deps.TaskTokens)
 	}
 	return mcp, playground

@@ -18,11 +18,15 @@ package edge
 
 import (
 	"bytes"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
@@ -32,13 +36,15 @@ import (
 // /internal/v1/mcp/playground-token): the real mounted mux (NewHandler →
 // mountRoutes) over a real TaskTokenManager. Proves the route is entirely
 // ABSENT (404 by omission) unless Config.PlaygroundTokenEnabled is set; when
-// enabled, the minted token actually verifies via the real
-// AgentsScopedVerifier — the same middleware guarding /internal/v1/mcp — with
-// audience aep-api-mcp and the right org, both the "default" default and an
-// explicit orgHandle; and the MCP JSON-RPC mount itself behaves identically
-// regardless of the flag.
+// enabled, the minted token verifies against the mint's key with audience
+// aep-api-mcp and the right org, both the "default" default and an explicit
+// orgHandle; and the MCP JSON-RPC mount itself behaves identically regardless
+// of the flag. /internal/v1/mcp no longer accepts these tokens (publisher
+// client only); the mint goes with token minting (Task 5.4).
 
-func newPlaygroundTokenTestServer(t *testing.T, enabled bool) (*httptest.Server, *auth.TaskTokenManager) {
+// newPlaygroundTokenTestServer returns the server and the public half of the
+// mint's signing key.
+func newPlaygroundTokenTestServer(t *testing.T, enabled bool) (*httptest.Server, *rsa.PublicKey) {
 	t.Helper()
 	priv := mustGenerateRSAKey(t)
 	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
@@ -52,11 +58,11 @@ func newPlaygroundTokenTestServer(t *testing.T, enabled bool) (*httptest.Server,
 	}
 	handler := NewHandler(AppParams{
 		Config: config.Config{PlaygroundTokenEnabled: enabled},
-		Deps:   Deps{TaskTokens: mgr},
+		Deps:   Deps{TaskTokens: mgr, PublisherTokens: newMCPIdP(t).verifier},
 	})
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return srv, mgr
+	return srv, &priv.PublicKey
 }
 
 func postPlaygroundToken(t *testing.T, srv *httptest.Server, body string) *http.Response {
@@ -74,27 +80,21 @@ func postPlaygroundToken(t *testing.T, srv *httptest.Server, body string) *http.
 	return resp
 }
 
-// assertVerifiesAsMCPToken drives token through the REAL AgentsScopedVerifier
-// (the same middleware guarding /internal/v1/mcp) and asserts it resolves to
-// wantOrg — proving the minted token is a genuine aud-aep-api-mcp identity
-// JWT scoped to the right org, not just any signed blob.
-func assertVerifiesAsMCPToken(t *testing.T, mgr *auth.TaskTokenManager, token, wantOrg string) {
+// assertVerifiesAsMCPToken checks token's signature against the mint's key and
+// asserts it is an aud-aep-api-mcp identity JWT scoped to wantOrg, not just
+// any signed blob.
+func assertVerifiesAsMCPToken(t *testing.T, pub *rsa.PublicKey, token, wantOrg string) {
 	t.Helper()
-	verifier := auth.NewAgentsScopedVerifier(mgr, nil)
-	var gotOrg string
-	var ok bool
-	h := verifier.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		gotOrg, ok = auth.MCPOrgFromContext(r.Context())
-	}))
-	req := httptest.NewRequest(http.MethodPost, "/internal/v1/mcp", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
-	if !ok {
-		t.Fatalf("token did not verify via AgentsScopedVerifier (status %d)", w.Code)
+	var claims auth.TaskClaims
+	if _, err := jwt.ParseWithClaims(token, &claims, func(*jwt.Token) (any, error) { return pub, nil },
+		jwt.WithValidMethods([]string{"RS256"}), jwt.WithIssuer("aep-bff")); err != nil {
+		t.Fatalf("token does not verify: %v", err)
 	}
-	if gotOrg != wantOrg {
-		t.Fatalf("verified org = %q, want %q", gotOrg, wantOrg)
+	if !slices.Contains(claims.Audience, auth.AudienceMCP) {
+		t.Fatalf("token audience = %v, want %q", claims.Audience, auth.AudienceMCP)
+	}
+	if claims.OcOrgID != wantOrg {
+		t.Fatalf("token org = %q, want %q", claims.OcOrgID, wantOrg)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestPlaygroundToken_DisabledByDefault404(t *testing.T) {
 // body: 200, a non-empty token that verifies for org "default", and the
 // documented 5-minute (300s) TTL in the response.
 func TestPlaygroundToken_Enabled_DefaultOrg(t *testing.T) {
-	srv, mgr := newPlaygroundTokenTestServer(t, true)
+	srv, pub := newPlaygroundTokenTestServer(t, true)
 	resp := postPlaygroundToken(t, srv, `{}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -131,13 +131,13 @@ func TestPlaygroundToken_Enabled_DefaultOrg(t *testing.T) {
 	if body.ExpiresInSeconds != 300 {
 		t.Errorf("expiresInSeconds = %d, want 300", body.ExpiresInSeconds)
 	}
-	assertVerifiesAsMCPToken(t, mgr, body.Token, "default")
+	assertVerifiesAsMCPToken(t, pub, body.Token, "default")
 }
 
 // TestPlaygroundToken_Enabled_ExplicitOrgHandle proves an explicit orgHandle
 // in the body is what the minted token gets scoped to.
 func TestPlaygroundToken_Enabled_ExplicitOrgHandle(t *testing.T) {
-	srv, mgr := newPlaygroundTokenTestServer(t, true)
+	srv, pub := newPlaygroundTokenTestServer(t, true)
 	resp := postPlaygroundToken(t, srv, `{"orgHandle":"acme"}`)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -148,7 +148,7 @@ func TestPlaygroundToken_Enabled_ExplicitOrgHandle(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	assertVerifiesAsMCPToken(t, mgr, body.Token, "acme")
+	assertVerifiesAsMCPToken(t, pub, body.Token, "acme")
 }
 
 // TestPlaygroundToken_MCPMountUnaffectedByFlag proves the JSON-RPC mount's own

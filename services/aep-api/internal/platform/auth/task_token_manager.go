@@ -41,7 +41,6 @@ type TaskTokenManager struct {
 	keyID      string
 	algorithm  string
 	privateKey *rsa.PrivateKey
-	publicKey  *rsa.PublicKey
 	jwks       JWKSResponse
 
 	issuer string
@@ -107,7 +106,6 @@ func NewTaskTokenManager(cfg TaskTokenConfig) (*TaskTokenManager, error) {
 		keyID:      kid,
 		algorithm:  "RS256",
 		privateKey: priv,
-		publicKey:  pub,
 		jwks: JWKSResponse{
 			Keys: []JWK{{
 				Kty: "RSA",
@@ -124,9 +122,9 @@ func NewTaskTokenManager(cfg TaskTokenConfig) (*TaskTokenManager, error) {
 }
 
 // AudienceMCP is the aud claim on BFF-signed tokens that authenticate a caller
-// to the BFF's internal MCP discovery surface (POST /internal/v1/mcp). The MCP
-// auth middleware (AgentsScopedVerifier) pins it, so a token minted for another
-// service (agents-service, git-service) cannot be replayed against MCP.
+// to the BFF's internal MCP discovery surface. Only the local playground mint
+// issues it, and POST /internal/v1/mcp no longer accepts it (publisher client
+// token only, auth.PublisherMCPGate).
 const AudienceMCP = "aep-api-mcp"
 
 // mcpTokenTTL bounds an MCP identity token's validity. Like the agents-service
@@ -180,46 +178,6 @@ func (m *TaskTokenManager) IssueServiceToken(audience, ocOrgID string, ttl time.
 		return "", fmt.Errorf("sign service token: %w", err)
 	}
 	return signed, nil
-}
-
-// Verify parses + cryptographically validates a BFF-signed identity JWT
-// minted by this manager (or a peer using the same signing key). Returns
-// the claims on success. Issuer must match the manager's configuration.
-// The exp / nbf claims are honored by jwt.ParseWithClaims automatically.
-//
-// Used by AgentsScopedVerifier to accept BFF MCP tokens (aud aep-api-mcp)
-// on POST /internal/v1/mcp. Runner callbacks do not use this verifier.
-func (m *TaskTokenManager) Verify(tokenString string) (*TaskClaims, error) {
-	if tokenString == "" {
-		return nil, fmt.Errorf("empty token")
-	}
-	tok, err := jwt.ParseWithClaims(tokenString, &TaskClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
-		}
-		if kid, _ := t.Header["kid"].(string); kid != "" && kid != m.keyID {
-			return nil, fmt.Errorf("unknown kid %q (expected %q)", kid, m.keyID)
-		}
-		return m.publicKey, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("parse token: %w", err)
-	}
-	if !tok.Valid {
-		return nil, fmt.Errorf("token not valid")
-	}
-	claims, ok := tok.Claims.(*TaskClaims)
-	if !ok {
-		return nil, fmt.Errorf("claims not TaskClaims")
-	}
-	if claims.Issuer != m.issuer {
-		return nil, fmt.Errorf("unexpected issuer %q", claims.Issuer)
-	}
-	// Audience deliberately not enforced — the BFF is the issuer, and the
-	// same token may be presented to git-service (aud=git-service) or
-	// back to the BFF self-callback. Trust comes from issuer +
-	// signature; aud is the verifier's hint, not a BFF self-check.
-	return claims, nil
 }
 
 // JWKSResponse is the JSON shape served at /auth/external/jwks.json.

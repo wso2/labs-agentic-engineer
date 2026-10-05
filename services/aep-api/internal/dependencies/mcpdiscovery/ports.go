@@ -118,18 +118,6 @@ type PlatformResourceConsumerLister interface {
 	PlatformResourceConsumersByType(ctx context.Context, orgID string) (map[string][]dependencies.ExternalResourceConsumer, error)
 }
 
-// RemoteGitReader reads an org's OWN GitHub repos over the REST API (Contents +
-// Code Search, no clone) for endpoint spec discovery — the two MCP tools an
-// agent uses to read a provider's OpenAPI file straight from its repo. Both
-// methods take ocOrgID (the verified MCP claim, never a tool parameter) and
-// MUST refuse (ErrOwnerNotInOrg) any `owner` that is not the org credential's
-// GitHub account, so a caller in one org can never read another org's repos.
-// Satisfied by *RemoteGitClient (remote_git.go).
-type RemoteGitReader interface {
-	GetFileContents(ctx context.Context, ocOrgID, owner, repo, path, ref string) (*RemoteGitFile, error)
-	SearchCode(ctx context.Context, ocOrgID, owner, repo, query string) ([]RemoteGitSearchHit, error)
-}
-
 // SpecValidator parses an OpenAPI 3.x document and returns its operation
 // count (method entries under paths), or an error when the document does not
 // parse or is not a valid OpenAPI 3.x doc. Backs validate_openapi_spec and the

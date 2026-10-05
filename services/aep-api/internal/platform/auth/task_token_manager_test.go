@@ -68,7 +68,7 @@ func TestTaskTokenManager_PKCS1(t *testing.T) {
 
 	// Parse and verify with the manager's public key.
 	parsed, err := jwt.ParseWithClaims(tok, &TaskClaims{}, func(t *jwt.Token) (any, error) {
-		return mgr.publicKey, nil
+		return &mgr.privateKey.PublicKey, nil
 	})
 	if err != nil {
 		t.Fatalf("Parse: %v", err)

@@ -90,16 +90,12 @@ type AppParams struct {
 	// them concretely (external-resource repository / org endpoint catalog /
 	// platform resource-type catalog); the mounted handler nil-guards each —
 	// a nil MCPExternalResources 503s the route group, a nil lister degrades its
-	// one tool to an empty result. The mount itself (routes.go) needs
-	// Deps.TaskTokens and optionally Deps.PublisherTokens (Thunder CC fallback).
+	// one tool to an empty result. The mount itself (mcpRoutes, internal.go)
+	// needs Deps.PublisherTokens, its only caller credential.
 	MCPExternalResources mcpdiscovery.ExternalResourceReader
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
 	MCPResourceTypes     mcpdiscovery.ResourceTypeLister
 	MCPGroupCatalog      mcpdiscovery.GroupCatalogLister
-	// MCPRemoteGit backs the read-only remote-git MCP tools (endpoint spec
-	// discovery). Nil makes get_remote_git_file_contents/search_remote_git_code
-	// return a tool error; it never affects the other tools.
-	MCPRemoteGit mcpdiscovery.RemoteGitReader
 	// MCPSpecValidator/MCPSpecNormalizer/MCPSpecFetcher back the OpenAPI spec
 	// MCP tools (validate_openapi_spec, fetch_openapi_spec). Wired to the
 	// spec package's ValidateOpenAPI/NormalizeOpenAPIYAML/FetchSpecFromURL

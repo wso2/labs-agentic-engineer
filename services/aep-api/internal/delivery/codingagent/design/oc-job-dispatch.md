@@ -93,19 +93,19 @@ flowchart LR
   J -->|local HTTP| API
 ```
 
-A BFF MCP token (`aud=aep-api-mcp`) is a different caller, not a second
-environment: today only the local playground mints one
-(`dependencies/mcpdiscovery`; aep-api's own turn orchestration, which minted
-one per design turn, is gone with phase 3). `AgentsScopedVerifier`
-dual-accepts that token **or** a publisher JWT because those are two actors.
+`POST /internal/v1/mcp` accepts one credential: the org's publisher client
+token (`auth.PublisherMCPGate`), which both the runner and the AE Studio tools
+pod's MCP proxy present. A token aep-api signs itself (`aud=aep-api-mcp`) and
+an `ae-studio-<org>` client token are both refused (401). The two remote-git
+tools are not on aep-api: the runner and the tools pod serve them in-process.
 
 ```mermaid
 flowchart TB
   subgraph job [Coding-agent Job]
     J[runner] -->|publisher JWT| R["/internal/v1 refresh + MCP"]
   end
-  subgraph design [Playground]
-    D[playground CLI] -->|BFF MCP token| C["/internal/v1/mcp"]
+  subgraph studio [AE Studio tools pod]
+    P[MCP proxy] -->|publisher JWT| C["/internal/v1/mcp"]
   end
 ```
 

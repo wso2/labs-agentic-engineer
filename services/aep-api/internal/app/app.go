@@ -53,7 +53,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	dephttpapi "github.com/wso2/aep/aep-api/internal/dependencies/httpapi"
-	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/dependencies/runtimeconfig"
 	"github.com/wso2/aep/aep-api/internal/edge"
@@ -945,7 +944,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// Dependency-management MCP discovery readers (agnostic subset — Phase 4 of
 	// the dependency-management migration). The MCP route group (routes.go) is
-	// mounted behind the AgentsScopedVerifier; wire real backends for its four
+	// mounted behind auth.PublisherMCPGate; wire real backends for its four
 	// read-only tools: the org external-resource catalog (org-namespaced OC
 	// ResourceTypes, Task 3 — no longer the external_resources table) and the
 	// org published endpoints + platform resource types (OC Resource-model
@@ -1097,11 +1096,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.MCPGroupCatalog = groupCatalogOrNil(groupCatalogSvc)
 	// params.Deps.Dependencies (the strict ListPlatformResourceTypes + provisioning
 	// ops) is assembled below, after provisioningSvc exists.
-	// Endpoint spec discovery: the read-only remote-git reader an agent uses to
-	// read a provider's OpenAPI file from its own repo (Contents + Code Search,
-	// no clone). It resolves the org's credential (token + owner) from
-	// credResolver and refuses any owner that is not the org's GitHub account.
-	params.MCPRemoteGit = mcpdiscovery.NewRemoteGitClient(credResolver)
 	// OpenAPI spec MCP tools (validate_openapi_spec, fetch_openapi_spec): wired
 	// straight to the spec package's spec functions. FetchSpecFromURL is
 	// PLATFORM-TOUCHING SSRF hardening reused as-is — the MCP tool layer only

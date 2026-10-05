@@ -26,6 +26,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,11 +41,15 @@ import (
 )
 
 // Component test for the mounted MCP discovery route group: the real outer mux
-// (NewHandler → mountRoutes), the real AgentsScopedVerifier over a real
-// TaskTokenManager, and the real MCP handler over a fake external-resource
-// port. Proves the full caller flow: mint a token with the concrete signer
-// (IssueMCPToken) → initialize → tools/list → tools/call, plus the two edge
-// negatives (no token; org bound from the claim, not the request).
+// (NewHandler → mountRoutes), the real publisher-only gate
+// (auth.PublisherMCPGate) over a real PublisherTokenVerifier backed by a test
+// JWKS, and the real MCP handler over a fake external-resource port. Proves the
+// caller flow with an org's aep-publisher-<org> client token (initialize →
+// tools/list → tools/call) and the negatives: no token, a token minted by
+// aep-api itself (aud aep-api-mcp), an ae-studio-<org> client token signed by
+// the same IdP, and an org planted in the request instead of the claim.
+
+const mcpTestIssuer, mcpTestKid = "platform-idp", "mcp-idp-kid"
 
 // mcpTestReader is dependencies.ExternalResourceReader's real implementation
 // (resources.ExternalResourceCatalog) wired over a ResourceClientMock, so the
@@ -69,37 +74,98 @@ func newMCPTestReader(rts ...openchoreo.ResourceType) *mcpTestReader {
 	return f
 }
 
-// newMCPTestServer builds the full handler with the MCP route group wired and
-// returns the server, the token manager (the concrete signer), and the fake
-// reader.
-func newMCPTestServer(t *testing.T) (*httptest.Server, *auth.TaskTokenManager, *mcpTestReader) {
+// mcpIdP is a test platform IdP: a JWKS server over one RSA key, the
+// publisher verifier aep-api builds over it, and a signer for any claim set.
+type mcpIdP struct {
+	priv     *rsa.PrivateKey
+	verifier *auth.PublisherTokenVerifier
+}
+
+func newMCPIdP(t *testing.T) *mcpIdP {
 	t.Helper()
-	priv := mustGenerateRSAKey(t)
-	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
-		PrivateKey: string(encodePKCS1(t, priv)),
-		Issuer:     "aep-bff",
-		Audience:   "git-service",
-		TTL:        time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("NewTaskTokenManager: %v", err)
+	priv := newTestRSAKey(t)
+	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
+			Kty: "RSA", Kid: mcpTestKid, Use: "sig", Alg: "RS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(jwksSrv.Close)
+	v := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwksSrv.URL), mcpTestIssuer, "aep-publisher-")
+	if v == nil {
+		t.Fatal("NewPublisherTokenVerifier returned nil")
 	}
+	return &mcpIdP{priv: priv, verifier: v}
+}
+
+// clientToken signs a client_credentials token the IdP would issue to the
+// client whose id is aud, for the org ouHandle.
+func (p *mcpIdP) clientToken(t *testing.T, aud, ouHandle string) string {
+	t.Helper()
+	return signTestJWT(t, p.priv, mcpTestKid, jwt.MapClaims{
+		"iss": mcpTestIssuer, "aud": aud, "ouHandle": ouHandle,
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+}
+
+// publisherToken is the org's aep-publisher-<org> client token (the runner's
+// and the AE Studio tools pod's MCP credential).
+func (p *mcpIdP) publisherToken(t *testing.T, org string) string {
+	return p.clientToken(t, "aep-publisher-"+org, org)
+}
+
+// signTestJWT signs claims with RS256 under kid.
+func signTestJWT(t *testing.T, priv *rsa.PrivateKey, kid string, claims jwt.MapClaims) string {
+	t.Helper()
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	signed, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatalf("sign test JWT: %v", err)
+	}
+	return signed
+}
+
+func newTestRSAKey(t *testing.T) *rsa.PrivateKey {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate RSA key: %v", err)
+	}
+	return priv
+}
+
+// mcpSurface is the full handler with the MCP route group mounted on the
+// publisher verifier alone (no task-token manager anywhere).
+type mcpSurface struct {
+	srv    *httptest.Server
+	idp    *mcpIdP
+	reader *mcpTestReader
+}
+
+// newMCPSurface builds the surface; edit tweaks AppParams before NewHandler.
+func newMCPSurface(t *testing.T, edit ...func(*AppParams)) *mcpSurface {
+	t.Helper()
 	salesforceRT, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{Name: "salesforce", Description: "CRM",
 		Keys: []openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}}, Scope: openchoreo.ExternalResourceScopeOrg})
 	if err != nil {
 		t.Fatalf("build salesforce RT fixture: %v", err)
 	}
-	reader := newMCPTestReader(*salesforceRT)
-	handler := NewHandler(AppParams{
+	s := &mcpSurface{idp: newMCPIdP(t), reader: newMCPTestReader(*salesforceRT)}
+	p := AppParams{
 		Config:               config.Config{},
-		Deps:                 Deps{TaskTokens: mgr},
-		MCPExternalResources: reader,
+		Deps:                 Deps{PublisherTokens: s.idp.verifier},
+		MCPExternalResources: s.reader,
 		// MCPOrgEndpoints / MCPResourceTypes deliberately nil — those tools
 		// degrade to empty results; the round-trip below uses the resource tools.
-	})
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return srv, mgr, reader
+	}
+	for _, e := range edit {
+		e(&p)
+	}
+	s.srv = httptest.NewServer(NewHandler(p))
+	t.Cleanup(s.srv.Close)
+	return s
 }
 
 // postMCP POSTs a JSON-RPC body to the mounted path with the given bearer.
@@ -140,49 +206,40 @@ func rpcResult(t *testing.T, resp *http.Response) map[string]any {
 	return envelope.Result
 }
 
-// TestMCPRoutes_FullRoundTrip drives the complete caller flow through the
-// mounted mux with a token minted by the concrete signer.
-func TestMCPRoutes_FullRoundTrip(t *testing.T) {
-	srv, mgr, reader := newMCPTestServer(t)
-
-	tok, err := mgr.IssueMCPToken("org-round-trip")
-	if err != nil {
-		t.Fatalf("IssueMCPToken: %v", err)
+// toolNames returns the tool names of a tools/list response, in order.
+func toolNames(t *testing.T, resp *http.Response) []string {
+	t.Helper()
+	tools, _ := rpcResult(t, resp)["tools"].([]any)
+	names := make([]string, 0, len(tools))
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		name, _ := tool["name"].(string)
+		names = append(names, name)
 	}
+	return names
+}
+
+// TestMCPRoutes_FullRoundTrip drives the complete caller flow through the
+// mounted mux with an org's publisher client token.
+func TestMCPRoutes_FullRoundTrip(t *testing.T) {
+	s := newMCPSurface(t)
+	tok := s.idp.publisherToken(t, "org-round-trip")
 
 	// initialize
-	result := rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
+	result := rpcResult(t, postMCP(t, s.srv, tok, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
 	if result["protocolVersion"] != "2024-11-05" {
 		t.Fatalf("protocolVersion = %v, want 2024-11-05", result["protocolVersion"])
 	}
 
 	// notifications/initialized → 202 (per Streamable-HTTP)
-	notif := postMCP(t, srv, tok, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	notif := postMCP(t, s.srv, tok, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if notif.StatusCode != http.StatusAccepted {
 		t.Fatalf("notification status = %d, want 202", notif.StatusCode)
 	}
 
-	// tools/list
-	result = rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
-	tools, _ := result["tools"].([]any)
-	names := map[string]bool{}
-	for _, raw := range tools {
-		tool, _ := raw.(map[string]any)
-		name, _ := tool["name"].(string)
-		names[name] = true
-	}
-	for _, want := range []string{
-		"list_external_resources", "get_external_resource_schema",
-		"list_org_endpoints", "list_platform_resource_types",
-	} {
-		if !names[want] {
-			t.Errorf("tools/list missing %q (got %v)", want, names)
-		}
-	}
-
 	// tools/call — the fake reader must be queried with the org from the CLAIM.
 	body := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_external_resources","arguments":{}}}`
-	result = rpcResult(t, postMCP(t, srv, tok, body))
+	result = rpcResult(t, postMCP(t, s.srv, tok, body))
 	content, _ := result["content"].([]any)
 	if len(content) == 0 {
 		t.Fatalf("tools/call returned no content: %+v", result)
@@ -191,30 +248,65 @@ func TestMCPRoutes_FullRoundTrip(t *testing.T) {
 	if !strings.Contains(text, `"salesforce"`) || !strings.Contains(text, `"SALESFORCE_TOKEN"`) {
 		t.Errorf("tool payload = %q, want the registered resource + key", text)
 	}
-	if reader.lastOrg != "org-round-trip" {
-		t.Errorf("port org = %q, want org-round-trip (from the token claim)", reader.lastOrg)
+	if s.reader.lastOrg != "org-round-trip" {
+		t.Errorf("port org = %q, want org-round-trip (from the token claim)", s.reader.lastOrg)
+	}
+}
+
+// The publisher token lists the nine tools aep-api still serves; the two
+// remote-git tools moved to the runner and the AE Studio tools pod, which
+// serve them in-process (Task 5.1, phase 3).
+func TestMCP_PublisherTokenListsNineToolsWithoutRemoteGit(t *testing.T) {
+	s := newMCPSurface(t)
+	names := toolNames(t, postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if len(names) != 9 || slices.Contains(names, "get_remote_git_file_contents") || slices.Contains(names, "search_remote_git_code") {
+		t.Fatalf("tools/list = %v, want the 9 non-remote-git tools", names)
+	}
+}
+
+// The mount needs only the publisher verifier: no task-token manager is wired.
+func TestMCP_MountedWithoutTaskTokens(t *testing.T) {
+	s := newMCPSurface(t)
+	resp := postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("MCP must mount on the publisher verifier alone, got %d", resp.StatusCode)
+	}
+}
+
+// A token aep-api used to mint for MCP (aud aep-api-mcp, ocOrgId claim) opens
+// nothing: on its own key (no verifier trusts it) or even on the IdP's key.
+func TestMCP_MintedAepApiMcpTokenIs401(t *testing.T) {
+	s := newMCPSurface(t)
+	minted := jwt.MapClaims{
+		"iss": "aep-bff", "aud": "aep-api-mcp", "ocOrgId": "acme",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	}
+	for name, tok := range map[string]string{
+		"own key": signTestJWT(t, newTestRSAKey(t), "aep-bff-kid", minted),
+		"idp key": signTestJWT(t, s.idp.priv, mcpTestKid, minted),
+	} {
+		resp := postMCP(t, s.srv, tok, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("minted MCP token (%s): got %d, want 401", name, resp.StatusCode)
+		}
+	}
+}
+
+// An org's ae-studio-<org> client token opens ae-studio/ only (user Q-1=A):
+// signed by the same IdP for the same org, it is still refused on MCP.
+func TestMCP_StudioClientTokenIs401(t *testing.T) {
+	s := newMCPSurface(t)
+	resp := postMCP(t, s.srv, s.idp.clientToken(t, "ae-studio-acme", "acme"), `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("ae-studio client token on /internal/v1/mcp: got %d, want 401", resp.StatusCode)
 	}
 }
 
 // TestMCPRoutes_NoToken401 proves the mount is behind the verifier: an
 // unauthenticated POST never reaches the JSON-RPC handler.
 func TestMCPRoutes_NoToken401(t *testing.T) {
-	srv, _, _ := newMCPTestServer(t)
-	resp := postMCP(t, srv, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
-	}
-}
-
-// TestMCPRoutes_WrongAudience401 proves a validly-signed BFF token for another
-// service cannot be replayed against the MCP mount.
-func TestMCPRoutes_WrongAudience401(t *testing.T) {
-	srv, mgr, _ := newMCPTestServer(t)
-	tok, err := mgr.IssueServiceToken("agents-service", "org-x", 5*time.Minute)
-	if err != nil {
-		t.Fatalf("IssueServiceToken: %v", err)
-	}
-	resp := postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
+	s := newMCPSurface(t)
+	resp := postMCP(t, s.srv, "", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -223,15 +315,12 @@ func TestMCPRoutes_WrongAudience401(t *testing.T) {
 // TestMCPRoutes_OrgFromClaimNotRequest plants a different org in every
 // request-controlled slot; the port must still be scoped by the claim org.
 func TestMCPRoutes_OrgFromClaimNotRequest(t *testing.T) {
-	srv, mgr, reader := newMCPTestServer(t)
-	tok, err := mgr.IssueMCPToken("claim-org")
-	if err != nil {
-		t.Fatalf("IssueMCPToken: %v", err)
-	}
+	s := newMCPSurface(t)
+	tok := s.idp.publisherToken(t, "claim-org")
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_external_resources","arguments":{"orgHandle":"attacker-org"}}}`
 	req, err := http.NewRequest(http.MethodPost,
-		srv.URL+"/internal/v1/mcp?orgHandle=attacker-org", bytes.NewReader([]byte(body)))
+		s.srv.URL+"/internal/v1/mcp?orgHandle=attacker-org", bytes.NewReader([]byte(body)))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -246,14 +335,15 @@ func TestMCPRoutes_OrgFromClaimNotRequest(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if reader.lastOrg != "claim-org" {
-		t.Fatalf("port org = %q, want claim-org (the signed claim must win over every request-supplied org)", reader.lastOrg)
+	if s.reader.lastOrg != "claim-org" {
+		t.Fatalf("port org = %q, want claim-org (the signed claim must win over every request-supplied org)", s.reader.lastOrg)
 	}
 }
 
-// TestMCPRoutes_NoTokenManager404 proves the conditional mount: without a
-// token manager nothing can verify a caller, so the path is not mounted at all.
-func TestMCPRoutes_NoTokenManager404(t *testing.T) {
+// TestMCPRoutes_NoPublisherVerifier404 proves the conditional mount: without
+// the publisher verifier nothing can verify a caller, so the path is not
+// mounted at all.
+func TestMCPRoutes_NoPublisherVerifier404(t *testing.T) {
 	handler := NewHandler(AppParams{Config: config.Config{}})
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
@@ -265,92 +355,7 @@ func TestMCPRoutes_NoTokenManager404(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (route unmounted without a token manager)", resp.StatusCode)
-	}
-}
-
-func newMCPPublisherPair(t *testing.T) (*auth.PublisherTokenVerifier, func(org, ouHandle string) string) {
-	t.Helper()
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	const kid = "mcp-pub-kid"
-	const issuer = "platform-idp"
-	const audPrefix = "aep-publisher-"
-	jwksSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
-			Kty: "RSA", Kid: kid, Use: "sig", Alg: "RS256",
-			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
-			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
-		}}})
-	}))
-	t.Cleanup(jwksSrv.Close)
-	v := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwksSrv.URL), issuer, audPrefix)
-	if v == nil {
-		t.Fatal("NewPublisherTokenVerifier returned nil")
-	}
-	mint := func(org, ouHandle string) string {
-		claims := auth.PublisherClaims{
-			RegisteredClaims: jwt.RegisteredClaims{
-				Issuer:    issuer,
-				Audience:  jwt.ClaimStrings{audPrefix + org},
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-			},
-			OuHandle: ouHandle,
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = kid
-		signed, err := tok.SignedString(priv)
-		if err != nil {
-			t.Fatalf("sign publisher token: %v", err)
-		}
-		return signed
-	}
-	return v, mint
-}
-
-func TestMCPRoutes_PublisherCCFullRoundTrip(t *testing.T) {
-	priv := mustGenerateRSAKey(t)
-	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
-		PrivateKey: string(encodePKCS1(t, priv)),
-		Issuer:     "aep-bff",
-		Audience:   "git-service",
-		TTL:        time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("NewTaskTokenManager: %v", err)
-	}
-	salesforceRT, err := openchoreo.BuildExternalResourceType(openchoreo.ExternalResourceTypeSpec{Name: "salesforce", Description: "CRM",
-		Keys: []openchoreo.ExternalResourceConfigKey{{Key: "SALESFORCE_TOKEN", Secret: true}}, Scope: openchoreo.ExternalResourceScopeOrg})
-	if err != nil {
-		t.Fatalf("build salesforce RT fixture: %v", err)
-	}
-	reader := newMCPTestReader(*salesforceRT)
-	pub, mint := newMCPPublisherPair(t)
-	handler := NewHandler(AppParams{
-		Config:               config.Config{},
-		Deps:                 Deps{TaskTokens: mgr, PublisherTokens: pub},
-		MCPExternalResources: reader,
-	})
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	tok := mint("org-round-trip", "org-round-trip")
-
-	result := rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":1,"method":"initialize"}`))
-	if result["protocolVersion"] != "2024-11-05" {
-		t.Fatalf("protocolVersion = %v, want 2024-11-05", result["protocolVersion"])
-	}
-	result = rpcResult(t, postMCP(t, srv, tok, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`))
-	tools, _ := result["tools"].([]any)
-	if len(tools) == 0 {
-		t.Fatal("tools/list returned no tools")
-	}
-	callBody := `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_external_resources","arguments":{}}}`
-	_ = rpcResult(t, postMCP(t, srv, tok, callBody))
-	if reader.lastOrg != "org-round-trip" {
-		t.Fatalf("port org = %q, want org-round-trip", reader.lastOrg)
+		t.Fatalf("status = %d, want 404 (route unmounted without a publisher verifier)", resp.StatusCode)
 	}
 }
 
@@ -359,32 +364,15 @@ func TestMCPRoutes_PublisherCCFullRoundTrip(t *testing.T) {
 // fake validator records how many bytes of document reached it.
 func newMCPSpecToolServer(t *testing.T) (*httptest.Server, string, *int) {
 	t.Helper()
-	priv := mustGenerateRSAKey(t)
-	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
-		PrivateKey: string(encodePKCS1(t, priv)),
-		Issuer:     "aep-bff",
-		Audience:   "git-service",
-		TTL:        time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("NewTaskTokenManager: %v", err)
-	}
 	seen := new(int)
-	srv := httptest.NewServer(NewHandler(AppParams{
-		Deps:                 Deps{TaskTokens: mgr},
-		MCPExternalResources: newMCPTestReader(), // the surface's core catalog; nil answers 503
-		MCPSpecValidator: func(raw []byte) (int, error) {
+	s := newMCPSurface(t, func(p *AppParams) {
+		p.MCPSpecValidator = func(raw []byte) (int, error) {
 			*seen = len(raw)
 			return 1, nil
-		},
-		MCPSpecNormalizer: func(content string) (string, error) { return "normalized", nil },
-	}))
-	t.Cleanup(srv.Close)
-	tok, err := mgr.IssueMCPToken("org-spec")
-	if err != nil {
-		t.Fatalf("IssueMCPToken: %v", err)
-	}
-	return srv, tok, seen
+		}
+		p.MCPSpecNormalizer = func(content string) (string, error) { return "normalized", nil }
+	})
+	return s.srv, s.idp.publisherToken(t, "org-spec"), seen
 }
 
 // validateSpecCall is a validate_openapi_spec tools/call whose whole JSON-RPC

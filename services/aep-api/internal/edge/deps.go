@@ -37,8 +37,9 @@ import (
 type Deps struct {
 	TaskTokens *auth.TaskTokenManager
 
-	// PublisherTokens verifies Thunder publisher CC JWTs on the MCP mount
-	// (AgentsScopedVerifier fallback). Nil keeps MCP BFF-only (local/tests).
+	// PublisherTokens verifies an org's Thunder publisher client token
+	// (aep-publisher-<org>), the only credential POST /internal/v1/mcp
+	// accepts (auth.PublisherMCPGate). Nil leaves the MCP route unmounted.
 	PublisherTokens *auth.PublisherTokenVerifier
 
 	// DesignSvc is the narrow design-dependency reader backing the edge's own
