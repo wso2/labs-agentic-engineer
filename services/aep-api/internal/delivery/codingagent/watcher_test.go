@@ -37,6 +37,7 @@ type fakeRuntime struct {
 	pod        openchoreo.RuntimePod
 	podErr     error
 	logs       []openchoreo.PodLogLine
+	logErr     error
 	events     []openchoreo.RuntimeEvent
 
 	// delay runs before every call that precedes a log read. A test sets it to
@@ -75,6 +76,9 @@ func (f *fakeRuntime) PodSnapshot(context.Context, string, string) (openchoreo.R
 func (f *fakeRuntime) PodLogs(_ context.Context, _, _, _ string, sinceSeconds int64) ([]openchoreo.PodLogLine, error) {
 	f.logCalls++
 	f.logSince = sinceSeconds
+	if f.logErr != nil {
+		return nil, f.logErr
+	}
 	return f.logs, nil
 }
 

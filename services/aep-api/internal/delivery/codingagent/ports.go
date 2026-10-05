@@ -200,6 +200,10 @@ type BuildSecretStager interface {
 type LiveTail struct {
 	Text string
 	Pod  openchoreo.RuntimePod
+	// LogMissing: the pod is listed but its log is not (a container not
+	// started yet, or one being reaped). Empty Text is then no answer about
+	// what the agent wrote, and the caller reads the archive.
+	LogMissing bool
 }
 
 // LiveLogSource is the running agent's log, read while its Component still

@@ -137,3 +137,19 @@ func TestOCLogSource_TailStillAsksForTheWholeLog(t *testing.T) {
 		t.Errorf("sinceSeconds = %d, want 0 (the whole log)", rt.logSince)
 	}
 }
+
+// A listed pod whose log 404s (being reaped) is not the agent's silence: the
+// tail says the log is missing so the caller reads the archive.
+func TestOCLogSource_AListedPodWithNoLogIsLogMissing(t *testing.T) {
+	rt := &fakeRuntime{
+		pod:    openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"},
+		logErr: fmt.Errorf("x: %w", openchoreo.ErrNotFound),
+	}
+	got, err := NewOCLogSource(rt).Tail(context.Background(), "acme", "shop", "ca-abc", "development", logPageBytes)
+	if err != nil {
+		t.Fatalf("Tail: %v", err)
+	}
+	if !got.Pod.Found || !got.LogMissing || got.Text != "" {
+		t.Fatalf("tail %+v, want the listed pod with LogMissing", got)
+	}
+}

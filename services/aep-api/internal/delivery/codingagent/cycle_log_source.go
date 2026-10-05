@@ -107,8 +107,9 @@ func (s *OCLogSource) read(ctx context.Context, orgName, releaseBindingName stri
 	if err != nil {
 		if errors.Is(err, openchoreo.ErrNotFound) {
 			// The binding is there but the pod's log is not — a container that
-			// has not started, or one already reaped. Not gone; just silent.
-			return LiveTail{Pod: pod}, nil
+			// has not started, or one being reaped. Not gone, and not the
+			// agent's silence either: the caller asks the archive.
+			return LiveTail{Pod: pod, LogMissing: true}, nil
 		}
 		return LiveTail{}, fmt.Errorf("codingagent: read pod log for %s: %w", pod.Name, err)
 	}

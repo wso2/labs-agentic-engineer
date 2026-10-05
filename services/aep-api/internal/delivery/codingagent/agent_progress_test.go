@@ -783,6 +783,30 @@ func TestCycleProgress_AnExistingPodIsTheSourceWhateverItsPhase(t *testing.T) {
 	}
 }
 
+// Fix round 1 (I-1): a closed cycle whose pod is listed but whose log 404s
+// (the pod is being reaped) reads the archive, as the v2 feed does — never a
+// final "no output".
+func TestCycleProgress_AListedPodWithAMissingLogReadsTheArchive(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, LogMissing: true}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived while the pod is reaped\n"}
+	cycle := liveCycle("reaped")
+	cycle.ComponentUID = "uid-reaped"
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, testWriteTargets(), nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived while the pod is reaped" || !resp.Final {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(archive.scopes) != 1 || archive.scopes[0].ComponentUID != "uid-reaped" {
+		t.Fatalf("archive scopes %+v, want one read by the cycle's UID", archive.scopes)
+	}
+}
+
 // The archive window covers the cycle's lifetime and reaches past the suspend.
 func TestCycleProgress_ArchiveWindowCoversTheCycle(t *testing.T) {
 	live := &stubLive{err: fmt.Errorf("%w: ca-w", ErrComponentGone)}

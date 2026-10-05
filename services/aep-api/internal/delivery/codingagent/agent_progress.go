@@ -324,7 +324,7 @@ func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delive
 	if r.live != nil {
 		tail, err := r.live.Tail(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, env, logPageBytes)
 		switch {
-		case err == nil && tail.Pod.Found:
+		case err == nil && tail.Pod.Found && !tail.LogMissing:
 			// The pod is the source. Empty text is its real answer: a closed
 			// cycle's agent that wrote nothing, or one still booting.
 			if strings.TrimSpace(tail.Text) == "" && closed {
@@ -332,6 +332,8 @@ func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delive
 			}
 			return cycleLog{text: tail.Text, live: !closed && !terminalPod(tail.Pod), final: closed, pod: tail.Pod}, nil
 		case err == nil:
+			// No pod yet, or a listed pod whose log is gone (being reaped):
+			// whatever it wrote is the archive's, as on the v2 feed.
 			pod = tail.Pod
 		case errors.Is(err, ErrComponentGone):
 			componentGone = true
@@ -352,7 +354,7 @@ func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delive
 		if err == nil && strings.TrimSpace(text) != "" {
 			return cycleLog{text: text}, nil
 		}
-		return cycleLog{live: true, pod: pod}, nil
+		return cycleLog{live: !terminalPod(pod), pod: pod}, nil
 	}
 	if err != nil {
 		// A CLOSED cycle will never gain a new source, so its unavailability is
