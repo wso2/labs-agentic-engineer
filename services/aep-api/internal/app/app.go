@@ -1212,12 +1212,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		TaskStream:   taskStreamSvc,
 		RunReads:     runReads,
 		RunProgress:  runProgress,
-		// Cancel signals the supervisor AND deletes the cycle's agent
-		// Component, which is what actually stops the pod and frees the org's
-		// billing concurrency slot. Revalidate is the event plane's.
+		// Cancel signals the supervisor AND closes the cycle as cancelled and
+		// suspends its Job binding, which is what actually stops the pod. The
+		// Component (and the org's billing slot) goes at settle. Revalidate is
+		// the event plane's.
 		RunCommands: runread.NewCommands(milestoneRunRepo, milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}).
-			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo).
-				WithRecorder(runRecorder)),
+			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo, writeTargets)),
 		RunCycleBuilds: runCycleBuilds,
 		RunValidation:  validationReads,
 	}
@@ -1547,8 +1547,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			Dispatcher: codingExecutor,
 			// A re-dispatch reuses the cycle's Component; its binding is
 			// un-suspended after the fenced dispatch write, so only an open
-			// cycle's Job ever runs again.
-			Jobs: runJobResumer{oc: componentClient},
+			// cycle's Job ever runs again, and suspended again when a cancel
+			// raced the dispatch.
+			Jobs: runJobBindings{oc: componentClient},
 			// The deploy stage. The supervisor promotes each cycle's components
 			// itself and waits for them to serve, which is what puts validation
 			// after a running version rather than after a green build.

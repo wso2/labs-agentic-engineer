@@ -583,7 +583,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   way.
 - **Cancel is DURABLE first and a signal second.** `runread.Commands.Cancel` writes the request to the
   run row (`cancel_requested_at`, first request wins), THEN signals the supervisor, THEN best-effort
-  reaps the cycle's OpenChoreo Component via `CycleReaper` (immediate `DeleteComponent`, no retention).
+  reaps the cycle via `CycleReaper`: it closes the cycle as cancelled and suspends its Job binding (the
+  Component is deleted at settle). A re-dispatch in flight re-reads the cancel stamp after resuming its
+  Job and suspends it again, so the cancel cannot be undone by it.
   The order is the design: signal delivery is deliberately best-effort — the supervisor swallows a failed
   `SignalWorkflow` so a dead engine cannot wedge the console — and the reap kills the agent's pod, which
   from inside the workflow is indistinguishable from the agent dying on its own. A cancel that lived only

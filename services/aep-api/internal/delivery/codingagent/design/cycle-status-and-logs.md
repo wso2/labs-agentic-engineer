@@ -44,7 +44,7 @@ viewer then reads.
 | a burst larger than one page between two polls | the read kept the last 64 KiB (`logPageBytes`) | reads with a time cursor and **no byte cut**; dedupes by `seq` |
 | a finished run's history was its newest 200 events | the archive read, capped at `legacyProgressLimit` | viewers read the recording, never the pod or the archive — **the window is gone** |
 | the pod exited between two polls | nothing read after the last tick | a terminal pod phase triggers **one final full read** |
-| cancel deletes the Component, so its log is unreadable from that instant | nothing | the recording closes with a runner-less `run_settled {outcome: cancelled}`, state `gaps` |
+| cancel used to delete the Component, so its log was unreadable from that instant | nothing | cancel now suspends the Job and the Component stays until settle, so the recording ends as any other attempt's does; cancel writes nothing onto it |
 | a re-dispatch is a new pod whose `seq` restarts at 1 | seqs collided in one stream | **one file per attempt**; frames carry `attempt` |
 
 ### Lifecycle
@@ -126,7 +126,7 @@ from). The state machine:
       │  │
       │  └─────── a seq gap / a dropped event ──▶ gaps   (sticky, does NOT close)
       │                                              │
-      │  cancel, or the Component vanishing ─────────┘ (closed)
+      │  the Component vanishing ────────────────────┘ (closed)
       ▼
    lost   ← the directory is there and the events are not
 ```

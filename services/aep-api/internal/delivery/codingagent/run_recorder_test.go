@@ -690,61 +690,6 @@ func TestRecorder_ArchiveFillsTheBottomOfAGapTheLivePodOnlyTopsUp(t *testing.T) 
 	}
 }
 
-// TestRecorder_CancelClosesWithRunSettledCancelledAndGaps covers the fourth
-// loss: cancel deletes the Component immediately, so the pod's log is
-// unreadable from that instant and the last poll interval is genuinely gone.
-// The recording therefore says so — `gaps` — and carries a runner-less settle
-// so a reader can see the run ENDED rather than merely stopped talking.
-func TestRecorder_CancelClosesWithRunSettledCancelledAndGaps(t *testing.T) {
-	t.Parallel()
-
-	at := time.Date(2026, 9, 4, 9, 25, 39, 0, time.UTC)
-	f := newRecorderFixture(t, at, v1LogLine(1, at, `"kind":"log","summary":"working"`))
-
-	s := f.session(t, 1)
-	if done, _ := s.poll(context.Background()); done {
-		t.Fatal("a Running pod ended the session")
-	}
-
-	f.rec.CloseCancelled(context.Background(), f.cycle)
-
-	if got := f.store.State("acme", "c1"); got != gen.RunCycleViewRecordingGaps {
-		t.Fatalf("state = %q, want gaps — the tail between the last poll and the delete is lost", got)
-	}
-	if !f.store.Finished("acme", "c1", 1) {
-		t.Error("a cancelled recording was left open")
-	}
-	events := f.recorded(t, 1)
-	last := events[len(events)-1]
-	if last.Kind != gen.RunEventKindRunSettled {
-		t.Fatalf("last recorded event = %+v, want run_settled", last)
-	}
-	// `cancelled` is deliberately not `failure`: the work was taken away, and
-	// nothing went wrong.
-	if last.Outcome != gen.RunEventOutcomeCancelled {
-		t.Errorf("outcome = %q, want cancelled", last.Outcome)
-	}
-	if last.Error != "" {
-		t.Errorf("a cancelled settle invented an error: %q", last.Error)
-	}
-	if last.Seq <= events[0].Seq {
-		t.Errorf("the settle sits at seq %d, at or before the feed it closes (%d)", last.Seq, events[0].Seq)
-	}
-}
-
-// TestRecorder_CancelOnAnUnrecordedCycleWritesNothing pins that cancel does not
-// mint a recording for a cycle the platform never recorded: that would turn
-// `none` into a one-event feed and hide the fact that nothing was captured.
-func TestRecorder_CancelOnAnUnrecordedCycleWritesNothing(t *testing.T) {
-	t.Parallel()
-
-	f := newRecorderFixture(t, time.Date(2026, 9, 4, 9, 25, 39, 0, time.UTC))
-	f.rec.CloseCancelled(context.Background(), f.cycle)
-	if got := f.store.State("acme", "c1"); got != gen.RunCycleViewRecordingNone {
-		t.Fatalf("state = %q, want none", got)
-	}
-}
-
 // TestRecorder_ReDispatchWritesASecondAttemptFileAndLeavesTheFirst covers the
 // fifth loss. A re-dispatch is a new pod whose seqs restart at 1: one file per
 // attempt is what keeps two events numbered `1` from colliding in a consumer
@@ -1001,7 +946,6 @@ func TestRecorder_NilRecorderIsANoOp(t *testing.T) {
 	}
 	var rec *CycleRecorder
 	rec.Ensure(context.Background(), liveCycle("c1"))
-	rec.CloseCancelled(context.Background(), liveCycle("c1"))
 	rec.retain(map[string]bool{})
 }
 

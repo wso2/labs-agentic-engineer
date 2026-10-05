@@ -297,14 +297,29 @@ slots, so the cap is a billing decision as much as a storage one, and an org
 whose plan limit is below the retention cap sees dispatches blocked until older
 cycles are pruned.
 
-**Cancel deletes at once.** A cancel signal settles the run row on the existing
-path; deleting the Component is what stops the pod mid-air and frees the slot,
-so it does not wait for retention. **User-facing consequence:** a cancelled
-cycle's agent log is gone with the Component (no archive, no live tail) — that
-is intentional, not a capture bug. A cancelled cycle is quiet by design for the
-watcher too: it recognises the deliberate deletion and never reports it as a
-missing job. Cancel writes no `ExecCanceled` and mints no execution row — agent
-work has none.
+**Cancel suspends, then settles.** `CycleReaper.ReapRunCycle` (reached from
+`runread.Commands.Cancel` after the run's cancel stamp and the signal) closes
+the cycle as cancelled (`FinishCancelled`, `agent_reason = cancelled`, no pull
+request fence), THEN suspends its Job binding, THEN stamps `job_suspended_at`
+and logs `codingagent.job_suspended` (`cause` = `cancel`). Suspending the Job
+terminates its pod after the runner's 30 s SIGTERM grace, and the Job OC
+re-creates after its TTL is born suspended. Cancel deletes nothing: the
+Component, and the billing slot it holds, goes at settle. A gone binding
+(`ErrNotFound`) is stamped and not announced; a legacy release
+(`ErrSuspendUnsupported`) still closes cancelled but is NOT stamped, so the
+settler knows the suspend did not apply; any other suspend failure is logged by
+the cancel and left to the settler's backstop. A cycle another path already
+closed is still suspended.
+
+The close comes first because it is the fence a re-dispatch already in flight
+reads: `NoteDispatch` moves only an open row, and `NoteCycleDispatch` resumes a
+binding only after that write moved one. A dispatch whose write landed before
+the close can still resume after the cancel's suspend, so `NoteCycleDispatch`
+re-reads the run's cancel stamp AFTER its resume and, when it is set, suspends
+the binding again. The cancel stamps the run before it suspends, so the last
+write to the binding is always a suspend. The same read stops a first attempt
+whose dispatch the reap could not see (the cycle had no `job_ref` yet). Cancel
+writes no `ExecCanceled` and mints no execution row — agent work has none.
 
 Every delete goes through the OC API. An out-of-band `kubectl` delete emits no
 billing decrement, which is why no code path may hold a Kubernetes client, and

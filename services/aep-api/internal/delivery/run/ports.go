@@ -351,15 +351,22 @@ type DeploymentReader interface {
 	DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error)
 }
 
-// JobResumer un-suspends a re-dispatched cycle's Job binding. A re-dispatch
-// reuses the cycle's Component, whose binding may still carry the suspend the
-// cycle watcher set at the previous attempt's terminal pod; left there, the new
-// attempt's Job is born suspended and never runs. Update-only: it never
-// creates a binding. nil when there is nothing to undo, including a legacy
-// release that renders no suspend. Satisfied at the composition root by the
-// OpenChoreo component client. nil → nothing is resumed.
-type JobResumer interface {
+// JobBindings writes a re-dispatched cycle's Job binding `suspend` flag.
+//
+// A re-dispatch reuses the cycle's Component, whose binding may still carry the
+// suspend the cycle watcher set at the previous attempt's terminal pod; left
+// there, the new attempt's Job is born suspended and never runs, so the
+// re-dispatch resumes it. A cancel that raced the re-dispatch is the one reason
+// to suspend it again (see Activities.NoteCycleDispatch).
+//
+// Both writes are update-only: neither creates a binding. Each answers nil when
+// there is nothing to write, including a legacy release that renders no
+// suspend and, for the suspend, a binding that is gone. Satisfied at the
+// composition root by the OpenChoreo component client. nil → nothing is
+// written.
+type JobBindings interface {
 	ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error
+	SuspendJobBinding(ctx context.Context, orgID, projectID, component, environment string) error
 }
 
 // WorkHalter marks the working-set issues a FAILED run could not finish, so the

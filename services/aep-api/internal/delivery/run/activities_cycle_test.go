@@ -249,19 +249,45 @@ func TestDispatchAgent_HostWriteFailureDoesNotFailTheLaunch(t *testing.T) {
 	require.Equal(t, "ca-job-1", jobRef)
 }
 
-// stubResumer records each un-suspend of a re-dispatched cycle's Job binding.
-type stubResumer struct {
-	calls []string // org/project/component@environment
-	err   error
-	order *[]string
+// stubJobs records each un-suspend and suspend of a re-dispatched cycle's Job
+// binding.
+type stubJobs struct {
+	calls    []string // org/project/component@environment, one per resume
+	suspends []string // org/project/component@environment, one per suspend
+	err      error
+	order    *[]string
 }
 
-func (r *stubResumer) ResumeJobBinding(_ context.Context, org, project, component, environment string) error {
+func (r *stubJobs) ResumeJobBinding(_ context.Context, org, project, component, environment string) error {
 	r.calls = append(r.calls, org+"/"+project+"/"+component+"@"+environment)
 	if r.order != nil {
 		*r.order = append(*r.order, "resume")
 	}
 	return r.err
+}
+
+func (r *stubJobs) SuspendJobBinding(_ context.Context, org, project, component, environment string) error {
+	r.suspends = append(r.suspends, org+"/"+project+"/"+component+"@"+environment)
+	if r.order != nil {
+		*r.order = append(*r.order, "suspend")
+	}
+	return nil
+}
+
+// stubCancelStamp is the run row's cancel stamp as the dispatch activity
+// re-reads it. The embedded nil port panics on any other RunStore call.
+type stubCancelStamp struct {
+	RunStore
+	requested bool
+	err       error
+	order     *[]string
+}
+
+func (s *stubCancelStamp) CancelRequested(context.Context, string, string) (bool, error) {
+	if s.order != nil {
+		*s.order = append(*s.order, "cancel-read")
+	}
+	return s.requested, s.err
 }
 
 // A re-dispatch reuses the cycle's Component, whose binding may still carry the
@@ -273,7 +299,7 @@ func TestNoteCycleDispatch_ResumesTheOpenCyclesJobAfterTheFencedWrite(t *testing
 	cycles := &stubCycles{order: &order, dispatched: &delivery.RunCycle{
 		OrgID: "acme", ProjectID: "shop", Environment: "development",
 	}}
-	jobs := &stubResumer{order: &order}
+	jobs := &stubJobs{order: &order}
 	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
 
 	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
@@ -286,7 +312,7 @@ func TestNoteCycleDispatch_ResumesTheOpenCyclesJobAfterTheFencedWrite(t *testing
 // stays inert.
 func TestNoteCycleDispatch_ClosedCycleIsNeverResumed(t *testing.T) {
 	cycles := &stubCycles{}
-	jobs := &stubResumer{}
+	jobs := &stubJobs{}
 	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
 
 	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
@@ -299,7 +325,7 @@ func TestNoteCycleDispatch_ClosedCycleIsNeverResumed(t *testing.T) {
 // later fails the cycle as it would any attempt whose pod never appeared.
 func TestNoteCycleDispatch_ResumeFailureIsNotRetried(t *testing.T) {
 	cycles := &stubCycles{dispatched: &delivery.RunCycle{OrgID: "acme", ProjectID: "shop", Environment: "development"}}
-	jobs := &stubResumer{err: errors.New("oc 500")}
+	jobs := &stubJobs{err: errors.New("oc 500")}
 	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
 
 	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
@@ -311,9 +337,51 @@ func TestNoteCycleDispatch_ResumeFailureIsNotRetried(t *testing.T) {
 // resumed on its strength.
 func TestNoteCycleDispatch_WriteFailureResumesNothing(t *testing.T) {
 	cycles := &stubCycles{dispatchErr: errors.New("db down")}
-	jobs := &stubResumer{}
+	jobs := &stubJobs{}
 	acts := NewActivities(Deps{Cycles: cycles, Jobs: jobs})
 
 	require.Error(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
 	require.Empty(t, jobs.calls)
+}
+
+// A cancel can land after the fenced write moved the still-open row, and its
+// suspend can land before this activity's un-suspend. The cancel stamps the run
+// before it suspends, so the stamp read AFTER the un-suspend sees it, and the
+// binding is suspended again: the last write to it is always a suspend.
+func TestNoteCycleDispatch_ACancelThatRacedTheResumeSuspendsAgain(t *testing.T) {
+	var order []string
+	cycles := &stubCycles{order: &order, dispatched: &delivery.RunCycle{
+		OrgID: "acme", ProjectID: "shop", RunID: "run-1", Environment: "development",
+	}}
+	jobs := &stubJobs{order: &order}
+	runs := &stubCancelStamp{requested: true, order: &order}
+	acts := NewActivities(Deps{Runs: runs, Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Equal(t, []string{"note-dispatch", "resume", "cancel-read", "suspend"}, order)
+	require.Equal(t, []string{"acme/shop/ca-c1@development"}, jobs.suspends)
+}
+
+// No cancel: the re-dispatched Job stays resumed.
+func TestNoteCycleDispatch_NoCancelLeavesTheJobResumed(t *testing.T) {
+	cycles := &stubCycles{dispatched: &delivery.RunCycle{OrgID: "acme", ProjectID: "shop", RunID: "run-1", Environment: "development"}}
+	jobs := &stubJobs{}
+	acts := NewActivities(Deps{Runs: &stubCancelStamp{}, Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Len(t, jobs.calls, 1)
+	require.Empty(t, jobs.suspends)
+}
+
+// A failed stamp read is logged, not returned, for the same reason a failed
+// un-suspend is: a retry would count a second attempt. The loop still reads
+// the cancel at its next wake-up.
+func TestNoteCycleDispatch_CancelReadFailureIsNotRetried(t *testing.T) {
+	cycles := &stubCycles{dispatched: &delivery.RunCycle{OrgID: "acme", ProjectID: "shop", RunID: "run-1", Environment: "development"}}
+	jobs := &stubJobs{}
+	acts := NewActivities(Deps{Runs: &stubCancelStamp{err: errors.New("db down")}, Cycles: cycles, Jobs: jobs})
+
+	require.NoError(t, acts.NoteCycleDispatch(context.Background(), NoteCycleDispatchInput{CycleID: "c1", JobRef: "ca-c1"}))
+	require.Empty(t, jobs.suspends)
+	require.Equal(t, 1, cycles.noteDispatches)
 }

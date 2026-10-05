@@ -46,7 +46,7 @@ type Activities struct {
 	builds     BuildReader
 	validation ValidationCoordinator
 	dispatcher delivery.MilestoneDispatcher
-	jobs       JobResumer
+	jobs       JobBindings
 	deployer   Deployer
 	deployRead DeploymentReader
 	deployMint DeployIssueMinter
@@ -68,7 +68,7 @@ type Deps struct {
 	Builds       BuildReader
 	Validation   ValidationCoordinator
 	Dispatcher   delivery.MilestoneDispatcher
-	Jobs         JobResumer
+	Jobs         JobBindings
 	Deploy       Deployer
 	Deployments  DeploymentReader
 	DeployIssues DeployIssueMinter
@@ -250,10 +250,20 @@ type NoteCycleDispatchInput struct {
 // between the launch and this write is left alone, so its suspended Job stays
 // inert instead of re-running the runner after its TTL.
 //
-// A failed un-suspend is logged, not returned. Returning it would retry the
-// activity and count a second attempt for one launch; the Job instead stays
-// suspended, runs no pod, and the cycle watcher's startup grace reports the
-// attempt as it reports any pod that never appeared.
+// The fence alone does not order the un-suspend against a cancel: the cancel
+// can close and suspend the cycle after the write moved the row but before the
+// un-suspend lands. The run's cancel stamp is therefore re-read AFTER the
+// un-suspend, and a requested cancel suspends the binding again. The cancel
+// stamps the run before it suspends, so whichever write lands last on the
+// binding is a suspend. The same read stops the first attempt's Job when the
+// cancel's reap ran before this cycle had a Job to name.
+//
+// A failed un-suspend, stamp read or re-suspend is logged, not returned.
+// Returning it would retry the activity and count a second attempt for one
+// launch. A Job left suspended runs no pod, and the cycle watcher's startup
+// grace reports the attempt as it reports any pod that never appeared; a
+// cancel missed here is still read by the loop at its next wake-up, and the
+// settler's backstop suspends the closed cycle.
 func (a *Activities) NoteCycleDispatch(ctx context.Context, in NoteCycleDispatchInput) error {
 	if a.cycles == nil {
 		return errNotConfigured
@@ -271,7 +281,32 @@ func (a *Activities) NoteCycleDispatch(ctx context.Context, in NoteCycleDispatch
 		slog.WarnContext(ctx, "run: un-suspend of the cycle's Job binding failed; the watcher's startup grace reports the attempt",
 			"cycle", in.CycleID, "job", in.JobRef, "error", err)
 	}
+	a.suspendIfCancelled(ctx, row, in.JobRef)
 	return nil
+}
+
+// suspendIfCancelled suspends the dispatched Job's binding again when the run's
+// cancel stamp is set. See NoteCycleDispatch for why it follows the un-suspend.
+func (a *Activities) suspendIfCancelled(ctx context.Context, row *delivery.RunCycle, jobRef string) {
+	if a.runs == nil {
+		return
+	}
+	cancelled, err := a.runs.CancelRequested(ctx, row.OrgID, row.RunID)
+	if err != nil {
+		slog.WarnContext(ctx, "run: could not re-read the cancel stamp after a dispatch; the loop reads it at its next wake-up",
+			"cycle", row.ID, "job", jobRef, "error", err)
+		return
+	}
+	if !cancelled {
+		return
+	}
+	if err := a.jobs.SuspendJobBinding(ctx, row.OrgID, row.ProjectID, jobRef, row.Environment); err != nil {
+		slog.WarnContext(ctx, "run: a cancel raced the dispatch and the Job binding could not be suspended again; the settler's backstop suspends it",
+			"cycle", row.ID, "job", jobRef, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "run: a cancel raced the dispatch; the cycle's Job binding is suspended again",
+		"cycle", row.ID, "job", jobRef)
 }
 
 // FinishCycleInput closes a cycle record.

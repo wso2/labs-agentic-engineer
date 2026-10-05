@@ -264,53 +264,6 @@ func (r *CycleRecorder) forget(cycleID string, s *recordingSession) {
 	r.mu.Unlock()
 }
 
-// CloseCancelled ends a cancelled cycle's recording.
-//
-// Cancel deletes the Component immediately — that is what actually stops the
-// pod and frees the org's billing concurrency slot — and from that instant the
-// pod's log is unreadable, so whatever fell between the last poll and the
-// delete is gone for good. The recording therefore closes with what it has,
-// plus a runner-less `run_settled {outcome: cancelled}` so a reader can see the
-// run ended rather than merely stopped talking, and its state is `gaps`: the
-// platform KNOWS the tail is missing and says so instead of presenting a
-// truncated feed as the whole of it.
-//
-// `cancelled` is deliberately not `failure`. The work was taken away; nothing
-// went wrong.
-func (r *CycleRecorder) CloseCancelled(ctx context.Context, cycle *delivery.RunCycle) {
-	if r == nil || cycle == nil || cycle.JobRef == "" || cycle.Attempts <= 0 {
-		return
-	}
-	r.mu.Lock()
-	s := r.sessions[cycle.ID]
-	delete(r.sessions, cycle.ID)
-	r.mu.Unlock()
-	if s != nil {
-		s.stop()
-	}
-	if !r.store.HasRecording(cycle.OrgID, cycle.ID) {
-		return
-	}
-	cur := r.store.Cursor(cycle.OrgID, cycle.ID)
-	cur.LastSeq++
-	settled := gen.RunEvent{
-		V:       gen.RunEventVTwo,
-		Seq:     cur.LastSeq,
-		TS:      r.now().UTC(),
-		Kind:    gen.RunEventKindRunSettled,
-		AgentID: leadAgentID,
-		Outcome: gen.RunEventOutcomeCancelled,
-	}
-	if _, _, err := r.store.Append(cycle.OrgID, cycle.ID, cycle.Attempts, []gen.RunEvent{settled}, cur); err != nil {
-		slog.WarnContext(ctx, "codingagent.CycleRecorder: could not close a cancelled recording",
-			"cycle", cycle.ID, "error", err)
-	}
-	if err := r.store.Close(cycle.OrgID, cycle.ID, gen.RunCycleViewRecordingGaps); err != nil {
-		slog.WarnContext(ctx, "codingagent.CycleRecorder: could not mark a cancelled recording",
-			"cycle", cycle.ID, "error", err)
-	}
-}
-
 // recordingSession is ONE attempt's recording: the cursor into the producer's
 // stream, the lifter that turns its lines into v2 events, and the loop that
 // paces the reads.

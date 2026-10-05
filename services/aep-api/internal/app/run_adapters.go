@@ -144,14 +144,23 @@ func (a runCycles) NoteDispatch(ctx context.Context, cycleID, jobRef string) (*d
 	return a.cycles.NoteDispatch(ctx, cycleID, jobRef)
 }
 
-// runJobResumer projects the OpenChoreo component client onto the supervisor's
-// JobResumer. A legacy release renders no suspend, so there is nothing to undo
-// there: that answer is nil, the port's "nothing to do".
-type runJobResumer struct{ oc openchoreo.ComponentClient }
+// runJobBindings projects the OpenChoreo component client onto the
+// supervisor's JobBindings. A legacy release renders no suspend, so there is
+// nothing to write there: that answer is nil, the port's "nothing to do". So is
+// a suspend of a binding that is gone.
+type runJobBindings struct{ oc openchoreo.ComponentClient }
 
-func (a runJobResumer) ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error {
+func (a runJobBindings) ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error {
 	err := a.oc.ResumeJobBinding(ctx, orgID, projectID, component, environment)
 	if errors.Is(err, openchoreo.ErrSuspendUnsupported) {
+		return nil
+	}
+	return err
+}
+
+func (a runJobBindings) SuspendJobBinding(ctx context.Context, orgID, projectID, component, environment string) error {
+	err := a.oc.SuspendJobBinding(ctx, orgID, projectID, component, environment)
+	if errors.Is(err, openchoreo.ErrSuspendUnsupported) || errors.Is(err, openchoreo.ErrNotFound) {
 		return nil
 	}
 	return err

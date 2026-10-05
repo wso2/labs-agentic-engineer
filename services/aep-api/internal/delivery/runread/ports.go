@@ -204,13 +204,14 @@ type CancelRequester interface {
 	RequestCancel(ctx context.Context, runID string) (*delivery.MilestoneRun, error)
 }
 
-// CycleReaper deletes the cancelled run's in-flight agent Component. Satisfied
-// by codingagent.CycleReaper, reached as a port because dispatch and its
-// cleanup belong to that slice.
+// CycleReaper stops the cancelled run's in-flight agent: it closes the cycle as
+// cancelled and suspends its Job binding (the Component is deleted later, at
+// settle). Satisfied by codingagent.CycleReaper, reached as a port because
+// dispatch and its cleanup belong to that slice.
 //
 // Optional: a boot without the OpenChoreo client cancels without reaping (the
-// run still settles; the leaked component is swept). Cancel never fails on a
-// reap error — see Commands.Cancel.
+// run still settles; the settler's backstop suspends the closed cycle). Cancel
+// never fails on a reap error — see Commands.Cancel.
 type CycleReaper interface {
 	ReapRunCycle(ctx context.Context, orgID, projectID, runID string) error
 }
