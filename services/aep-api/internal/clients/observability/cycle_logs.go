@@ -62,10 +62,21 @@ import (
 // turning one read into an unbounded loop.
 const maxCycleLogPages = 20
 
-// runnerLinePhrase narrows a project-scope read to the coding runner's NDJSON
-// event lines, every one of which carries the event-schema version. The other
-// Components of the project then mostly stop sharing its pages.
-const runnerLinePhrase = `"v":2`
+// runnerLinePhrase narrows a project-scope read to the coding runner's v2
+// event lines, so the other Components of the project mostly stop sharing its
+// pages. The runner's emitter stamps `agentId` on every v2 line (default
+// "lead"; runners/remote-worker/src/lib/progress/emitter.ts emit) and the
+// contract requires it; a v1 line names its author `emitterId` and a raw line
+// (bootstrap output) is not JSON.
+//
+// The phrase must hold no double quote. The observer's OpenSearch adapter
+// (community-modules observability-logs-opensearch, sanitizeWildcardValue)
+// rewrites every `"` to `\"` before it builds the `*phrase*` wildcard on the
+// wildcard-typed `log` field, and that pattern matches no line: the obvious
+// `"v":2` returned 0 of a cycle's 68 lines live. It also stays clear of the
+// wildcard's own syntax (`*`, `?`, `\`). Another Component's line that says
+// agentId still comes back; the Component-UID filter below drops it.
+const runnerLinePhrase = "agentId"
 
 // pageLine is one returned line with its parsed second.
 type pageLine struct {

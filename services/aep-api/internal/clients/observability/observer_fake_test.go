@@ -28,8 +28,13 @@ package observability
 //   - query (community-modules observability-logs-opensearch queries.go): the
 //     window is re-formatted to whole seconds and matched `gt start, lt end`
 //     (both exclusive), sorted on the timestamp only, `size: limit`;
-//     searchPhrase is a `*phrase*` wildcard on the log text; equal timestamps
-//     keep document order ascending whichever way the sort runs (Lucene);
+//     searchPhrase is a `*phrase*` wildcard on the log text AFTER the
+//     adapter's sanitizeWildcardValue has rewritten every `"` to `\"` — on
+//     the wildcard-typed `log` field that pattern never matches a plain `"`,
+//     so a phrase with a double quote matches nothing (live probe
+//     2026-10-05: `*"v":2*` → 68 lines, `*\"v\":2*` → 0);
+//     equal timestamps keep document order ascending whichever way the sort
+//     runs (Lucene);
 //   - response (OC service/logs.go): timestamps at SECOND precision, the
 //     metadata block, and `total` = the match count of THAT request's window.
 //
@@ -172,7 +177,7 @@ func (f *fakeObserver) serve(w http.ResponseWriter, r *http.Request) {
 		if c := str(scope, "component"); c != "" && c != l.ComponentName {
 			continue
 		}
-		if p := str(raw, "searchPhrase"); p != "" && !strings.Contains(l.Log, p) {
+		if p := str(raw, "searchPhrase"); p != "" && !strings.Contains(l.Log, adapterWildcardValue(p)) {
 			continue
 		}
 		match = append(match, l)
@@ -213,6 +218,13 @@ func (f *fakeObserver) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"logs": logs, "total": total, "tookMs": 1})
+}
+
+// adapterWildcardValue is the phrase as the adapter puts it inside `*…*`: each
+// `"` escaped to `\"`. The fake matches the result literally, which is what the
+// live index did (an escaped quote matched no line holding a plain quote).
+func adapterWildcardValue(phrase string) string {
+	return strings.ReplaceAll(phrase, `"`, `\"`)
 }
 
 func (f *fakeObserver) requestLog() []map[string]any {

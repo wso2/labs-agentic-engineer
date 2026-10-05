@@ -189,13 +189,20 @@ func inSecond(sec, n, first int) []fakeLine {
 	for i := 0; i < n; i++ {
 		out = append(out, fakeLine{
 			At:            at(sec, 1+i*998/max(n, 1)),
-			Log:           fmt.Sprintf(`{"v":2,"seq":%d}`, first+i),
+			Log:           runnerLine(first + i),
 			ComponentName: cycleComponent,
 			ComponentUID:  cycleUID,
 			PodName:       "shop-ca-abc-pod-1",
 		})
 	}
 	return out
+}
+
+// runnerLine is a coding runner v2 event line as its emitter writes it: the
+// envelope it stamps on every line (runners/remote-worker/src/lib/progress/
+// emitter.ts emit) before the event's own fields.
+func runnerLine(seq int) string {
+	return fmt.Sprintf(`{"v":2,"ts":"2026-10-05T11:24:02.896Z","seq":%d,"agentId":"lead","kind":"agent_progress","phrase":"working"}`, seq)
 }
 
 func concat(parts ...[]fakeLine) []fakeLine {
@@ -338,7 +345,7 @@ func TestQueryCycleLogs_SaturatedSecondTiesStraddlingTheCut(t *testing.T) {
 	var sec10 []fakeLine
 	for i := 0; i < 1500; i++ {
 		sec10 = append(sec10, fakeLine{
-			At: at(10, 1+i/3), Log: fmt.Sprintf(`{"v":2,"seq":%d}`, i),
+			At: at(10, 1+i/3), Log: runnerLine(i),
 			ComponentName: cycleComponent, ComponentUID: cycleUID, PodName: "shop-ca-abc-pod-1",
 		})
 	}
@@ -483,12 +490,16 @@ func TestQueryCycleLogs_ComponentScopeRequestShape(t *testing.T) {
 // After the Component is deleted its name no longer resolves, so the read asks
 // for the whole project and keeps only the lines its stored UID produced —
 // including against a recreated Component of the same name, which has a new UID.
+// The phrase narrows the project to v2 runner lines: the cycle's own v1 and
+// bootstrap lines do not come back by project scope.
 func TestQueryCycleLogs_ProjectScopeFiltersOnUIDAndSendsSearchPhrase(t *testing.T) {
 	mine := inSecond(10, 3, 0)
-	sameNameNewUID := fakeLine{At: at(10, 500), Log: `{"v":2,"seq":1}`, ComponentName: cycleComponent, ComponentUID: "99999999-0000-0000-0000-000000000000", PodName: "shop-ca-abc-pod-9"}
-	otherComponent := fakeLine{At: at(10, 600), Log: `{"v":2,"seq":7}`, ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"}
+	myV1 := fakeLine{At: at(10, 100), Log: `{"schemaVersion":1,"seq":4,"emitterId":"main","kind":"progress"}`, ComponentName: cycleComponent, ComponentUID: cycleUID, PodName: "shop-ca-abc-pod-1"}
+	myBootstrap := fakeLine{At: at(10, 200), Log: "Cloning into '/workspace'...", ComponentName: cycleComponent, ComponentUID: cycleUID, PodName: "shop-ca-abc-pod-1"}
+	sameNameNewUID := fakeLine{At: at(10, 500), Log: runnerLine(1), ComponentName: cycleComponent, ComponentUID: "99999999-0000-0000-0000-000000000000", PodName: "shop-ca-abc-pod-9"}
+	otherComponent := fakeLine{At: at(10, 600), Log: runnerLine(7), ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"}
 	notRunner := fakeLine{At: at(10, 700), Log: "GET /health 200", ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"}
-	obs, srv := newFakeObserver(t, concat(mine, []fakeLine{sameNameNewUID, otherComponent, notRunner}))
+	obs, srv := newFakeObserver(t, concat([]fakeLine{myV1, myBootstrap}, mine, []fakeLine{sameNameNewUID, otherComponent, notRunner}))
 
 	q := componentQuery()
 	q.Component = ""
@@ -505,8 +516,33 @@ func TestQueryCycleLogs_ProjectScopeFiltersOnUIDAndSendsSearchPhrase(t *testing.
 	if scope["project"] != "shop" || scope["environment"] != "development" {
 		t.Fatalf("unexpected scope: %+v", scope)
 	}
-	if req["searchPhrase"] != `"v":2` {
-		t.Fatalf("searchPhrase = %v, want %q", req["searchPhrase"], `"v":2`)
+	if req["searchPhrase"] != "agentId" {
+		t.Fatalf("searchPhrase = %v, want %q", req["searchPhrase"], "agentId")
+	}
+}
+
+// The observer's OpenSearch adapter escapes every `"` in the phrase before it
+// builds the `*phrase*` wildcard, and the escaped pattern matches no line: a
+// quoted phrase turns every project-scope read into an empty one. The phrase
+// also stays clear of the wildcard's own syntax (`*`, `?`, `\`).
+func TestQueryCycleLogs_ProjectScopePhraseHasNoDoubleQuote(t *testing.T) {
+	obs, srv := newFakeObserver(t, inSecond(10, 2, 0))
+	q := componentQuery()
+	q.Component = ""
+
+	got, _, err := NewClient(srv.URL).QueryCycleLogs(context.Background(), q)
+	if err != nil {
+		t.Fatalf("QueryCycleLogs: %v", err)
+	}
+	phrase, _ := obs.requestLog()[0]["searchPhrase"].(string)
+	if phrase == "" {
+		t.Fatal("a project-scope read must narrow the project with a phrase")
+	}
+	if strings.ContainsAny(phrase, `"*?\`) {
+		t.Fatalf("searchPhrase %q holds a character the adapter rewrites", phrase)
+	}
+	if len(got) != 2 {
+		t.Fatalf("lines = %d, want 2: the phrase must match the runner's v2 lines through the adapter", len(got))
 	}
 }
 
@@ -515,7 +551,7 @@ func TestQueryCycleLogs_ProjectScopeFiltersOnUIDAndSendsSearchPhrase(t *testing.
 func TestQueryCycleLogs_ProjectScopePagesPastOtherComponents(t *testing.T) {
 	var other []fakeLine
 	for i := 0; i < 1200; i++ {
-		other = append(other, fakeLine{At: at(i/100, 1+i%100), Log: fmt.Sprintf(`{"v":2,"seq":%d,"other":1}`, i), ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"})
+		other = append(other, fakeLine{At: at(i/100, 1+i%100), Log: runnerLine(i), ComponentName: "shop-web", ComponentUID: "77777777-0000-0000-0000-000000000000", PodName: "shop-web-1"})
 	}
 	mine := inSecond(20, 2, 0)
 	_, srv := newFakeObserver(t, concat(other, mine))

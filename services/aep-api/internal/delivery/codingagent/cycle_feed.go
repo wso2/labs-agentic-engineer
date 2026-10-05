@@ -37,8 +37,9 @@ package codingagent
 // a v1 line's seq s becomes 2s, with its synthesised `agent_started` at 2s-1.
 // Lines with no producer seq (container bootstrap output, a stray library
 // write) are not in the v2 feed at all — the observer's project scope cannot
-// return them (it reads only `"v":2` lines), so serving them from the pod would
-// make the two sources disagree. They stay in the v1 CycleProgress surface.
+// return them (its phrase admits only lines that carry `agentId`, which every
+// v2 runner line does), so serving them from the pod would make the two
+// sources disagree. They stay in the v1 CycleProgress surface.
 // Lines are sorted by seq (the observer orders only to the second) and deduped
 // on it, so a line the index returned twice is served once.
 //
