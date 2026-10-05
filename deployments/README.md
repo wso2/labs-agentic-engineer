@@ -378,3 +378,93 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
 6. **Sync.** Force-sync the ExternalSecrets
    (`kubectl annotate externalsecret <name> -n wso2-aep force-sync=$(date +%s) --overwrite`)
    and run `aectl platform sync-clients`.
+
+## Upgrading to secrets write-only (phase 6)
+
+From this release aep-api only writes secrets: no org secret value lives in
+Postgres, and aep-api reads none back. It logs in to OpenBao by Kubernetes auth
+(role `aep-api`, policy `aep-api-writer`, see
+`deployments/scripts/openbao-aep-api-auth.sh`) instead of a static token. The
+chart no longer renders the objects below, and the upgrade does not delete
+them. Remove them by hand. Every command is value-free: a root token is piped on
+stdin, never put on argv, and no command prints or compares a value.
+
+**Cloud: SRE request (phase 10).** Each item's Cloud step is a request to SRE,
+not something done from this repo.
+
+### Rollout
+
+Do not run old and new aep-api replicas side by side. Migration step
+`phase26_secrets_refs_only` drops `org_secrets.value` and the other value and
+triplet columns that the old code still reads. The chart sets no update
+strategy, so Kubernetes does a rolling update. Scale to zero first, then
+upgrade:
+
+```bash
+kubectl -n wso2-aep scale deploy/aep-api --replicas=0
+# helm upgrade (or make dev-update), which brings aep-api back at the chart's replica count
+```
+
+### Environment variables
+
+Drop from any overlay or `.env`; they are no longer read:
+`OPENBAO_TOKEN`, `TEST_MODE`, `LOCAL_OPENBAO_REPAIR`, `GITHUB_APP_ID`,
+`GITHUB_APP_PRIVATE_KEY_PATH`.
+
+Added (all optional, with defaults): `OPENBAO_AUTH_ROLE` (default `aep-api`),
+`OPENBAO_AUTH_MOUNT` (default `kubernetes`), `OPENBAO_AUTH_TOKEN_PATH` (default
+`/var/run/secrets/kubernetes.io/serviceaccount/token`). Cloud needs the
+OpenBao `aep-api` role and `aep-api-writer` policy created by SRE before the
+rollout.
+
+### Legacy objects to delete
+
+Set `bao` up once (root token for the local dev OpenBao is its public dev value,
+override with `OPENBAO_ROOT_TOKEN`):
+
+```bash
+bao_do() { printf '%s' "${OPENBAO_ROOT_TOKEN:-root}" \
+  | kubectl -n openbao exec -i openbao-0 -- sh -c 'IFS= read -r BAO_TOKEN; export BAO_TOKEN; exec bao "$@"' sh "$@"; }
+```
+
+| What | Local delete | Cloud |
+|---|---|---|
+| Static OpenBao token: vault `secret/aep/openbao-token`, ExternalSecret and Secret `aep-openbao-secrets` (`wso2-aep`). Replaced by Kubernetes auth. | `bao_do kv metadata delete secret/aep/openbao-token`; `kubectl -n wso2-aep delete externalsecret aep-openbao-secrets --ignore-not-found`; `kubectl -n wso2-aep delete secret aep-openbao-secrets --ignore-not-found` | SRE request (phase 10) |
+| Task signing key: vault `secret/aep/task-signing-key`, ExternalSecret and Secret `aep-task-signing-key`. Nothing reads it any more. | `bao_do kv metadata delete secret/aep/task-signing-key`; delete ExternalSecret and Secret `aep-task-signing-key` the same way | SRE request (phase 10) |
+| Webhook secret: vault `secret/aep/webhook-secret`, ExternalSecret and Secret `aep-webhook-secrets`. Webhooks are verified per org by the AE Studio relay; the org's own `github-webhook-secret` row is separate and stays. | `bao_do kv metadata delete secret/aep/webhook-secret`; delete ExternalSecret and Secret `aep-webhook-secrets` the same way | SRE request (phase 10) |
+| Per-org OpenChoreo secret `aep-component-build-git-secret`. No code references it. | In each org namespace: `kubectl -n <org-ns> delete secret aep-component-build-git-secret --ignore-not-found` | SRE request (phase 10) |
+| Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<org-ns>/<ref>` | SRE request (phase 10) |
+
+Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
+`aep-eso-openbao-token` RBAC objects are unrelated and stay.
+
+### Orphaned vault references
+
+Earlier code retired a replaced key's old vault copy; this release only retires
+references it created itself. Two groups are left behind on an upgraded install:
+
+1. Pre-phase-1 org copies: vault entries of references written before the
+   `org_secrets` reference rows existed.
+2. References named only in the dropped profile and credential columns
+   (the `secret_ref_*` columns of the model connection and IDP profile tables),
+   so no `org_secrets` row points at them.
+
+To find them, per org: list the vault entries
+(`bao_do kv list secret/user-app-secrets/<org-ns>`) and the org's SecretReferences
+(`kubectl get secretreferences -n <org-ns>`), then read the live names from
+`SELECT secret_ref_name FROM org_secrets WHERE oc_org_id = '<org>'`. A vault key
+or SecretReference that no `org_secrets` row names is an orphan candidate. Check
+that no workload still references it before deleting. Compare names only; never
+read a value.
+
+Local-only example of a stale path:
+`user-app-secrets/<org-ns>/default-ae-publisher-client-14f4038d`, a leftover
+publisher client copy from a local incident. It is not a Cloud item.
+
+### Orgs connected before phase 1
+
+There is no backfill. After the upgrade such an org sees the setup wizard on its
+next login and re-enters the GitHub token and the model key. Until then Settings
+shows GitHub and the model as not configured, builds answer 409
+`publisher_credentials_missing`, and the coding-agent token reads `Not set` until
+it is entered again.

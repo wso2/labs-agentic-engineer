@@ -48,7 +48,7 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
 | `aestudiotools.Turns` · `aestudiotools.References` | needs | `clients/aestudiotools` — the org pod's `/internal/v1` turns (kickoff) and reference store (the references upload, a pass-through) |
 | `TurnRepository.Newest` · `NewestCompletedFlow` · `SumUsageByProject` | offers | `projects` — the status poll's `spec.agent` (has the project run a turn, and did the newest fail), the build gate's design baseline, Settings → Usage |
 | `TurnRepository.RecordFinished` | offers | `edge` — `record-turn-usage`, the pod's finished turns |
-| `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
+| Turn and tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
 ## Owns
 - git spec content (`prd.md`, `specs/design/**`), the annotated version tag (the version store),

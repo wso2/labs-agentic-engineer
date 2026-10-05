@@ -50,10 +50,10 @@ func TestRedactSecrets(t *testing.T) {
 			secret: leakedPAT,
 		},
 		{
-			// gh writes the token at rest in the agent's own workspace as
-			// `oauth_token: <token>` on the credhelper path, and that token is
-			// minted inside bash so the runner cannot enroll its literal — shape
-			// here is the only layer that sees it.
+			// gh itself can write a token at rest in the agent's own workspace
+			// as `oauth_token: <token>`. That copy is not the mounted gitpat the
+			// runner enrolls as a literal, so shape here is the only layer that
+			// sees it.
 			name:   "gh hosts.yml oauth_token",
 			in:     "    oauth_token: aQ7fL2mZ9xR4tY6uP1sD3gH5jK8nB0vC",
 			want:   "    oauth_token: [REDACTED]",

@@ -43,8 +43,10 @@ import (
 // disconnect Phase D, webhook-secret rotation, lookup helpers used by the
 // BFF's webhook routing.
 //
-// The Resolver (used at runtime by every git operation) doesn't change at
-// connect time — it just reads whatever this service has persisted.
+// The PAT itself is never read back here: it lives only in the vault, behind
+// the org's github-pat reference (org_secrets), and a run or git operation
+// takes it from its mounted Secret. This service persists the connection
+// state and writes the reference.
 type CredentialService struct {
 	repo      OrgCredentialRepository
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
