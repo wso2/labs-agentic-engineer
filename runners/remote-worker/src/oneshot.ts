@@ -88,6 +88,9 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
   const identityName = requireEnv("AEP_IDENTITY_NAME");
   const identityEmail = requireEnv("AEP_IDENTITY_EMAIL");
   const identityLogin = process.env.AEP_IDENTITY_LOGIN || "";
+  // The org's GitHub account: the owner guard's reference for the in-process
+  // remote-git tools. Required — a run that cannot guard them must not start.
+  const githubOwner = requireEnv("AEP_GITHUB_OWNER");
   const correlationId = process.env.AEP_CORRELATION_ID || randomUUID();
   // Endpoint Spec Discovery (B1/B2) — BFF MCP server coordinates. The BFF
   // stamps AEP_MCP_URL; the runner presents the publisher CC token (minted
@@ -128,6 +131,7 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
       repoUrl,
       bearer: "",
       identity: { name: identityName, email: identityEmail, login: identityLogin || undefined },
+      githubOwner,
       gitServiceUrl,
       prompt,
       correlationId,

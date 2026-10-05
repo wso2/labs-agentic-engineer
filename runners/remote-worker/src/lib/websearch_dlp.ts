@@ -77,6 +77,8 @@ const SAFE_ENV_KEYS: ReadonlySet<string> = new Set<string>([
   "AEP_IDENTITY_NAME",
   "AEP_IDENTITY_EMAIL",
   "AEP_IDENTITY_LOGIN",
+  // The org's GitHub account (the remote-git owner guard's reference): public.
+  "AEP_GITHUB_OWNER",
   "AEP_CORRELATION_ID",
   "AEP_TASK_KIND",
   "AEP_SKILLS_REPO_URL",

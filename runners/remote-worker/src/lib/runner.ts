@@ -52,6 +52,7 @@ import { createRunWatchdog } from "./progress/watchdog.js";
 import { stagedSecretValues, WEBSEARCH_DENIAL_MESSAGE, webSearchDenial } from "./websearch_dlp.js";
 import { allowsWriteOutsideProject } from "./workspace_guard.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
+import { createRemoteGitTools } from "./remote_git.js";
 import { webFetchDenial } from "./webfetch_guard.js";
 import { readModelConnection } from "./model_connection.js";
 import { mountAepWeb } from "./aep_web.js";
@@ -100,8 +101,10 @@ const TERMINATE_FLUSH_MS = 50;
  *
  * BARE names: how a runtime namespaces an MCP tool is its own convention (Claude
  * Code renders `mcp__<server>__<tool>`), so the platform states what the server
- * has and the adapter states what to call it. Source of truth:
- * `services/aep-api/internal/feature/dependencies/mcp_tools.go`.
+ * has and the adapter states what to call it. `list_org_component_endpoints` is
+ * served by aep-api (`services/aep-api/internal/dependencies/mcpdiscovery/
+ * mcp_tools.go`); the two remote-git reads are answered in-process
+ * (`lib/remote_git.ts`, see buildMcpPolicy).
  */
 const MCP_TOOL_NAMES = [
   "list_org_component_endpoints",
@@ -517,10 +520,20 @@ export function buildMcpPolicy(
   const source = mcpAuth?.source ?? staticTokenSource(req.mcpToken);
   const canRefresh = mcpAuth?.canRefresh ?? false;
   let lastBearer = req.mcpToken;
+  // The remote-git reads are answered in-process with the Job's mounted PAT,
+  // held to the org's own GitHub account. They ride the MCP clause on purpose:
+  // they are MCP tools, offered exactly when the platform's MCP server is (the
+  // early return above), so a dispatch without it gets none of them. No owner
+  // or no token: no guard reference or nothing to read with, so this run
+  // answers none of them itself.
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+  const local =
+    req.githubOwner && githubToken ? createRemoteGitTools({ token: githubToken, owner: req.githubOwner }) : undefined;
   return {
     mcp: {
       url: req.mcpUrl,
       tools: MCP_TOOL_NAMES,
+      ...(local ? { local } : {}),
       token: () => source.getToken(),
       // Present only when this run can actually remint — see McpPolicy.
       ...(canRefresh ? { invalidate: () => source.invalidate() } : {}),

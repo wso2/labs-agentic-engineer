@@ -72,6 +72,12 @@ type CodingExecutor struct {
 	// connected before phase 1 does.
 	orgSecrets organization.OrgSecretRefReader
 
+	// githubOwners answers the GitHub account the org's repositories live
+	// under: the reference the runner's in-process remote-git tools hold every
+	// requested owner against (AEP_GITHUB_OWNER). Nil, or an org it cannot
+	// answer for, fails the dispatch: a runner without it cannot guard them.
+	githubOwners sourcecontrol.OwnerLookup
+
 	// codingAgent answers which runtime and model this org's runs use. Nil is
 	// the platform defaults, which is exactly what every dispatch carried before
 	// the setting existed — so an unwired resolver changes nothing rather than
@@ -131,6 +137,13 @@ func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
 // PAT's reference name from. Returns the receiver for chained construction.
 func (e *CodingExecutor) WithOrgSecrets(r organization.OrgSecretRefReader) *CodingExecutor {
 	e.orgSecrets = r
+	return e
+}
+
+// WithGitHubOwners attaches the org GitHub-owner lookup every dispatch stamps
+// as AEP_GITHUB_OWNER. Returns the receiver for chained construction.
+func (e *CodingExecutor) WithGitHubOwners(o sourcecontrol.OwnerLookup) *CodingExecutor {
+	e.githubOwners = o
 	return e
 }
 
@@ -297,6 +310,10 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 		"AEP_IDENTITY_NAME":   name,
 		"AEP_IDENTITY_EMAIL":  email,
 		"AEP_IDENTITY_LOGIN":  login,
+		// The owner-must-match-org guard's reference for the runner's
+		// in-process remote-git tools — the org's GitHub account, the same
+		// value its AE Studio pod is given as AE_GITHUB_OWNER.
+		"AEP_GITHUB_OWNER":    creds.githubOwner,
 		"AEP_CORRELATION_ID":  in.correlationID,
 		"AEP_TASK_KIND":       taskKindOrDefault(disp.taskKind),
 		"WORKSPACE_BASE_PATH": codingAgentWorkspacePath,
@@ -424,10 +441,12 @@ func (e *CodingExecutor) RetryAuthFailedBuild(ctx context.Context, row *delivery
 }
 
 // runnerCredentials is what every coding run mounts: the model credential,
-// with the connection it is for and its kind, and the org's GitHub credential.
+// with the connection it is for and its kind, and the org's GitHub credential
+// with the account it is for.
 type runnerCredentials struct {
-	model  organization.CodingCredential
-	github SecretRef
+	model       organization.CodingCredential
+	github      SecretRef
+	githubOwner string
 }
 
 // resolveRunnerSecretRefs resolves the two credentials every coding run mounts.
@@ -440,7 +459,8 @@ type runnerCredentials struct {
 // on a configured-but-unusable subscription, so a run never silently bills API
 // credits an org chose to replace with its plan.
 //
-// The GitHub side is the github-pat reference (githubSecretRef).
+// The GitHub side is the github-pat reference (githubSecretRef) and the org's
+// GitHub owner (githubOwner).
 func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID string, runtime orgconfig.AgentRuntime) (runnerCredentials, error) {
 	cred, err := e.anthropicKey.ResolveCodingCredential(ctx, orgID, runtime)
 	if err != nil {
@@ -450,7 +470,27 @@ func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID stri
 	if err != nil {
 		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
-	return runnerCredentials{model: cred, github: githubSR}, nil
+	owner, err := e.githubOwner(ctx, orgID)
+	if err != nil {
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
+	}
+	return runnerCredentials{model: cred, github: githubSR, githubOwner: owner}, nil
+}
+
+// githubOwner is the GitHub account the org's repositories live under, the
+// one the runner's remote-git tools may read. No answer is no dispatch.
+func (e *CodingExecutor) githubOwner(ctx context.Context, orgID string) (string, error) {
+	if e.githubOwners == nil {
+		return "", fmt.Errorf("github owner for org %q: no owner lookup configured", orgID)
+	}
+	owner, err := e.githubOwners.GitHubOwner(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("github owner for org %q: %w", orgID, err)
+	}
+	if owner == "" {
+		return "", fmt.Errorf("github owner for org %q: empty", orgID)
+	}
+	return owner, nil
 }
 
 // githubSecretRef is the org's GitHub PAT reference: the name its github-pat

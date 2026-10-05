@@ -691,7 +691,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		cfg.AgentPlatformURL, cfg.AgentPlatformURL,
 		orgRepo, modelConnections, orgCredRepo, idpRepo).
 		// The GitHub PAT reference a run mounts is the github-pat row's (R7).
-		WithOrgSecrets(orgSecretRepo)
+		WithOrgSecrets(orgSecretRepo).
+		// The org's GitHub account, stamped as AEP_GITHUB_OWNER: the owner
+		// guard's reference for the runner's in-process remote-git tools.
+		WithGitHubOwners(credService)
 	// Dispatch reads secret_ref_name only — it does not call
 	// EnsureOrgPublisher. POST /build provisions the SecretReference while the
 	// console JWT is still on ctx.

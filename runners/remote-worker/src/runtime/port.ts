@@ -52,6 +52,7 @@
 // what `lib/run_loop.ts` measurably needs — see the note there.
 
 import type { components } from "../generated/aep-api";
+import type { LocalMcpTools } from "../lib/mcp_local_tools.js";
 import type { ModelConnection } from "../lib/model_connection.js";
 import type { RunEventInput, RunEventUsage } from "../lib/progress/emitter.js";
 import type { RunEventTranslator, RunStream } from "../lib/run_loop.js";
@@ -208,6 +209,12 @@ export interface McpPolicy {
   invalidate?(): void;
   /** The bare tool names the server exposes. */
   tools: readonly string[];
+  /**
+   * Tools among `tools` the run answers itself, in front of the server, with a
+   * credential only this Job holds (the remote-git reads and the mounted PAT).
+   * The runtime sees one server either way.
+   */
+  local?: LocalMcpTools;
   /** A newly minted token, so the caller can persist and scrub it. */
   onToken?(token: string): Promise<void>;
   /** The token can no longer be renewed — this run cannot continue. */

@@ -30,3 +30,7 @@ test("oneshot requires publisher CC and does not inject a BFF MCP token", () => 
   assert.doesNotMatch(src, /process\.env\.AEP_MCP_TOKEN/);
   assert.doesNotMatch(src, /process\.env\.AEP_BEARER/);
 });
+
+test("oneshot refuses to start without the org's GitHub owner (the remote-git guard's reference)", () => {
+  assert.match(src, /requireEnv\("AEP_GITHUB_OWNER"\)/);
+});

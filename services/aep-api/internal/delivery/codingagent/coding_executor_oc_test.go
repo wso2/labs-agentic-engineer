@@ -178,8 +178,16 @@ func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.Org
 		anthropic,
 		fakeGitHubCreds{row: github},
 		nil,
-	)
+	).WithGitHubOwners(fakeOwners{owner: "acme-gh"})
 }
+
+// fakeOwners answers the org's GitHub owner (sourcecontrol.OwnerLookup).
+type fakeOwners struct {
+	owner string
+	err   error
+}
+
+func (f fakeOwners) GitHubOwner(context.Context, string) (string, error) { return f.owner, f.err }
 
 func codingMilestoneDispatch() delivery.MilestoneDispatch {
 	return delivery.MilestoneDispatch{
@@ -429,6 +437,51 @@ func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	}
 	if len(rec.calls) != 0 {
 		t.Errorf("nothing may be created before the refs resolve, saw %v", rec.calls)
+	}
+}
+
+// TestDispatchViaOC_StampsTheOrgGitHubOwner: the runner's in-process
+// remote-git tools refuse any owner but the org's own GitHub account, so the
+// pod is told which account that is: the github_login the org connected
+// (OwnerLookup), never the commit identity's login.
+func TestDispatchViaOC_StampsTheOrgGitHubOwner(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec).WithGitHubOwners(fakeOwners{owner: "Acme-Org"})
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := podEnv(rec, "AEP_GITHUB_OWNER"); got != "Acme-Org" {
+		t.Errorf("AEP_GITHUB_OWNER = %q, want the org's GitHub owner %q", got, "Acme-Org")
+	}
+	if got := podEnv(rec, "AEP_IDENTITY_LOGIN"); got == "Acme-Org" {
+		t.Fatalf("test is vacuous: the identity login equals the owner")
+	}
+}
+
+// TestDispatchViaOC_NoOwnerFailsTheDispatch: without the owner the guard has
+// no reference, so no Job is created at all.
+func TestDispatchViaOC_NoOwnerFailsTheDispatch(t *testing.T) {
+	for name, owners := range map[string]sourcecontrol.OwnerLookup{
+		"lookup errors":        fakeOwners{err: sourcecontrol.ErrAEStudioAbsent},
+		"lookup not wired":     nil,
+		"lookup answers empty": fakeOwners{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &chainRecorder{}
+			e := newOCDispatchExecutor(rec).WithGitHubOwners(owners)
+
+			_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+			if err == nil {
+				t.Fatal("expected the dispatch to fail without the org's GitHub owner")
+			}
+			if !strings.Contains(err.Error(), "github owner") {
+				t.Errorf("error must name the missing owner, got %v", err)
+			}
+			if len(rec.calls) != 0 {
+				t.Errorf("nothing may be created without the owner, saw %v", rec.calls)
+			}
+		})
 	}
 }
 

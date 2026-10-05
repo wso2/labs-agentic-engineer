@@ -59,6 +59,13 @@ export interface DispatchRequest {
    */
   mcpToken?: string;
   /**
+   * The org's GitHub account (AEP_GITHUB_OWNER, stamped by aep-api from the
+   * github_login the org connected): the only owner the in-process remote-git
+   * tools read (`lib/remote_git.ts`). Absent on a playground run, which builds
+   * its own request and offers no platform MCP.
+   */
+  githubOwner?: string;
+  /**
    * Task kind from AEP_TASK_KIND (default "implementation"). Validation
    * tasks preload the `aep:aep-validation` skill body alongside `aep:aep`
    * so the workflow is in context at startup — description-triggered
