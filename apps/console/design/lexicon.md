@@ -1606,6 +1606,7 @@ container.
 | Create project, GitHub not connected (`github_not_connected`) | a warning: **Connect GitHub to continue**, with **Connect GitHub** → Settings → Credentials |
 | Create project, AE Studio restarting (`ae_studio_unavailable`) | **AE Studio is restarting — try again**, with **Try again** |
 | Create project, AE Studio misconfigured (`ae_studio_misconfigured`) | an error: **AE Studio is misconfigured — contact your administrator**, no retry |
+| Create project, an earlier delete of it still finishing (`project_delete_pending`) | **An earlier delete of this project is still finishing. Try again in a minute.**, no button |
 
 ## Resources
 

@@ -339,6 +339,22 @@ describe("ProjectCreate copy (#561)", () => {
     expect(screen.queryByText("server wording")).not.toBeInTheDocument();
   });
 
+  // Q-13: a create the platform could not clear of an earlier delete is not a
+  // taken name; it says to wait, and leaves the name field alone.
+  it("says an earlier delete is still finishing, not that the name is taken", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "project_delete_pending", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "An earlier delete of this project is still finishing. Try again in a minute.",
+    );
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+  });
+
   // 10 §7: not connected is the user's to fix in Settings, not a failure to
   // read out; the server's wording is replaced by the console's.
   it("sends a create refused for no GitHub connection to Settings → Credentials", () => {

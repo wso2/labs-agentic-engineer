@@ -149,8 +149,9 @@ func TestMapProjectError_ProjectTypeNotFoundIsUnprocessable(t *testing.T) {
 	}
 }
 
-// A create that met the repo row of an unfinished delete is a 409 that tells
-// the user what to do (re-run the delete), not a 500.
+// A create whose leftover delete could not be finished (the create already
+// tried, twice) is a 409 with its own code, so the console does not read it as
+// a taken repository name, and copy the user can act on: wait, then retry.
 func TestMapProjectError_RepoDeletePendingIsConflict(t *testing.T) {
 	t.Parallel()
 	err := MapProjectError(fmt.Errorf("create repo: %w", sourcecontrol.ErrRepoDeletePending))
@@ -158,7 +159,8 @@ func TestMapProjectError_RepoDeletePendingIsConflict(t *testing.T) {
 	if !errors.As(err, &ae) {
 		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
 	}
-	if ae.Status != http.StatusConflict || !strings.Contains(ae.Message, "delete") {
-		t.Fatalf("got status=%d message=%q, want 409 naming the delete", ae.Status, ae.Message)
+	const want = "An earlier delete of this project is still finishing. Try again in a minute."
+	if ae.Status != http.StatusConflict || ae.Code != codeProjectDeletePending || ae.Message != want {
+		t.Fatalf("got status=%d code=%q message=%q, want 409 %s %q", ae.Status, ae.Code, ae.Message, codeProjectDeletePending, want)
 	}
 }

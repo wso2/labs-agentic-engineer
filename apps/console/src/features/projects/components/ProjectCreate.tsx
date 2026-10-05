@@ -429,8 +429,9 @@ export function ProjectCreate() {
  * and say what to do (10 §7): GitHub not connected goes to Settings →
  * Credentials, AE Studio restarting offers Try again (the platform took the
  * half-made project away, so a retry is a clean create), and AE Studio
- * misconfigured names the administrator (no retry fixes it). Anything else is
- * read out in the server's words.
+ * misconfigured names the administrator (no retry fixes it). An earlier delete
+ * of the same project the platform could not finish says to wait. Anything else
+ * is read out in the server's words.
  */
 function CreateFailure({
   error,
@@ -470,6 +471,13 @@ function CreateFailure({
   }
   if (code === "ae_studio_misconfigured") {
     return <Alert severity="error">AE Studio is misconfigured — contact your administrator</Alert>;
+  }
+  if (code === "project_delete_pending") {
+    return (
+      <Alert severity="info">
+        An earlier delete of this project is still finishing. Try again in a minute.
+      </Alert>
+    );
   }
   return (
     <Alert severity="error">

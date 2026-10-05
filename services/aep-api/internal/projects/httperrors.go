@@ -60,6 +60,11 @@ const codeNoWriteTarget = "no_write_target"
 // OpenChoreo cannot find the org's ProjectType for the new project.
 const codeProjectTypeNotFound = "project_type_not_found"
 
+// A create met the repository row of an earlier delete of the same project
+// and could not finish that delete's teardown (CreateProject tries once). Its
+// own code, so the console does not read it as a taken repository name.
+const codeProjectDeletePending = "project_delete_pending"
+
 // MapProjectError translates project + OpenChoreo sentinel errors into the
 // envelope. The feature sentinels (translated from OC by the service's
 // translateHTTPError) carry the fixed user-facing messages; any remaining raw
@@ -76,7 +81,8 @@ func MapProjectError(err error) error {
 	case sourcecontrol.IsRepoNameConflict(err):
 		return apierr.Conflict("a repository with this name already exists — choose another repository name")
 	case errors.Is(err, sourcecontrol.ErrRepoDeletePending):
-		return apierr.Conflict("an earlier delete of this project did not finish — delete the project again, then create it")
+		return apierr.New(http.StatusConflict, codeProjectDeletePending,
+			"An earlier delete of this project is still finishing. Try again in a minute.", nil)
 	case errors.As(err, &nwt):
 		// The project's pipeline names no write target: the caller's
 		// configuration to fix, so the resolver's words go back verbatim.

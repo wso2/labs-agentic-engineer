@@ -202,6 +202,11 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   supervisors, the repo hook, the pod's mirror and reference documents (`DeleteRepo` trashes them
   through the pod before it drops the row that names them), the repo row, the executions and the runs,
   each best-effort. The GitHub repository stays.
+- **A create finishes a leftover delete.** A create whose `CreateRepo` meets the row of a delete that
+  stopped after its OC project went (`ErrRepoDeletePending`) logs `project.create_finishing_teardown`,
+  runs that delete's post-OC half (`finishTeardown`: supervisors, hook, repo row, executions, runs; it
+  never touches OpenChoreo) and asks `CreateRepo` once more. A row still `deleting` after that
+  compensates like any repo failure and maps to 409 `project_delete_pending`.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal

@@ -405,6 +405,17 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	// Provision + clone the platform-owned git repo (async — polling via GetRepoStatus).
 	if s.repoSvc != nil {
 		repoInfo, createErr := s.repoSvc.CreateRepo(ctx, orgName, project.Name, req.Name, req.RepoName)
+		if errors.Is(createErr, sourcecontrol.ErrRepoDeletePending) {
+			// The row belongs to an earlier delete of this project that
+			// stopped after its OC project went. That delete cannot be re-run
+			// from anywhere (its OC project is gone, and this create is making
+			// a new one under the same name), so the create finishes its
+			// teardown and asks once more. A row still `deleting` after that
+			// compensates below like any other repo failure.
+			slog.WarnContext(ctx, "project.create_finishing_teardown", "org", orgName, "project", project.Name)
+			s.finishTeardown(ctx, orgName, project.Name)
+			repoInfo, createErr = s.repoSvc.CreateRepo(ctx, orgName, project.Name, req.Name, req.RepoName)
+		}
 		if createErr != nil {
 			// Any repo failure stops the create and compensates the OC
 			// project away (05 §7): a project without its repository has
@@ -575,6 +586,17 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 		return err
 	}
 
+	s.finishTeardown(ctx, orgName, projectName)
+	return nil
+}
+
+// finishTeardown is the half of a project delete that comes after the OC
+// project is gone: the run supervisors, the webhook, the repository row, the
+// executions and the run ledger. None of it touches OpenChoreo, and every step
+// is idempotent and best-effort, so it is safe to run again. DeleteProject runs
+// it after the OC delete; CreateProject runs it when it meets the repo row of a
+// delete that stopped partway through it.
+func (s *Service) finishTeardown(ctx context.Context, orgName, projectName string) {
 	// The run SUPERVISORS come down before the things they read do — before the
 	// repository they poll and before the rows they write.
 	//
@@ -645,8 +667,6 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 			slog.ErrorContext(ctx, "failed to purge milestone runs for project", "org", orgName, "project", projectName, "error", err)
 		}
 	}
-
-	return nil
 }
 
 func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName string) (*gen.ProjectStatus, error) {

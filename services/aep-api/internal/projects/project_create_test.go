@@ -214,3 +214,84 @@ func TestDeleteProject_MarksTheRowFirstAndUnmarksOnARefusedDelete(t *testing.T) 
 		})
 	}
 }
+
+// A create that meets the repo row of a delete which stopped after the OC
+// project went finishes that delete's teardown (the post-OC half: runs,
+// webhook, repo row, executions, run ledger) and then creates. The old delete
+// cannot be re-run from the console: its OC project is gone and the new one
+// is being created under the same name.
+func TestCreateProject_FinishesALeftoverDeleteThenCreates(t *testing.T) {
+	t.Parallel()
+	trace := &deleteTrace{}
+	oc := &ocSpy{}
+	creates := 0
+	repos := &fakeRepoSvc{
+		CreateRepoFunc: func(context.Context, string, string, string, string) (*sourcecontrol.GitRepository, error) {
+			creates++
+			trace.steps = append(trace.steps, "create-repo")
+			if creates == 1 {
+				return nil, sourcecontrol.ErrRepoDeletePending
+			}
+			return &sourcecontrol.GitRepository{Status: sourcecontrol.RepoStatusReady}, nil
+		},
+		DeleteRepoFunc: func(context.Context, string, string) error {
+			trace.steps = append(trace.steps, "repo")
+			return nil
+		},
+	}
+	webhooks := &fakeWebhookSvc{trace: trace}
+	execs := &fakeExecs{DeleteByProjectFunc: func(context.Context, string, string) error {
+		trace.steps = append(trace.steps, "execs")
+		return nil
+	}}
+	abandoner := &fakeRunAbandoner{trace: trace}
+	svc := NewProjectService(oc.client(), repos, webhooks, nil, execs)
+	svc.SetStageSources(tracingRunRows{trace: trace}, fakeBindingsReader{})
+	svc.SetRunAbandoner(abandoner)
+
+	got, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if got == nil || got.Name != "web" {
+		t.Fatalf("project = %+v, want the new project web", got)
+	}
+	if oc.created != 1 || oc.deleted != 0 {
+		t.Fatalf("oc created=%d deleted=%d, want 1 and no compensation", oc.created, oc.deleted)
+	}
+	if abandoner.args != [2]string{"acme", "web"} || webhooks.unregisterArgs != [2]string{"acme", "web"} ||
+		execs.deleteArgs != [2]string{"acme", "web"} {
+		t.Fatalf("teardown addressed abandon=%v webhook=%v execs=%v, want (acme,web)",
+			abandoner.args, webhooks.unregisterArgs, execs.deleteArgs)
+	}
+	assertTeardownOrder(t, trace,
+		"create-repo", "abandon", "webhook", "repo", "execs", "purge", "create-repo")
+}
+
+// A leftover delete the teardown cannot clear (the row is still `deleting`
+// after it) is not retried again: the create compensates its OC project and
+// returns ErrRepoDeletePending, as it did before the teardown existed.
+func TestCreateProject_LeftoverDeleteThatPersistsCompensates(t *testing.T) {
+	t.Parallel()
+	oc := &ocSpy{}
+	creates := 0
+	repos := &fakeRepoSvc{
+		CreateRepoFunc: func(context.Context, string, string, string, string) (*sourcecontrol.GitRepository, error) {
+			creates++
+			return nil, sourcecontrol.ErrRepoDeletePending
+		},
+		DeleteRepoFunc: func(context.Context, string, string) error { return errors.New("pod refused the trash") },
+	}
+	svc := NewProjectService(oc.client(), repos, &fakeWebhookSvc{}, nil, &fakeExecs{})
+
+	_, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"})
+	if !errors.Is(err, sourcecontrol.ErrRepoDeletePending) {
+		t.Fatalf("err = %v, want ErrRepoDeletePending", err)
+	}
+	if creates != 2 {
+		t.Fatalf("CreateRepo calls = %d, want 2 (one retry after the teardown)", creates)
+	}
+	if oc.deleted != 1 {
+		t.Fatalf("compensations = %d, want 1", oc.deleted)
+	}
+}
