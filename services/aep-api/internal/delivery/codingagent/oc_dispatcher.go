@@ -45,6 +45,7 @@ type OCJobSurface interface {
 	EnsureWorkload(ctx context.Context, orgName, projectName string, in openchoreo.WorkloadInput) error
 	EnsureRelease(ctx context.Context, orgName, projectName, componentName, releaseName string) (string, error)
 	EnsureReleaseBinding(ctx context.Context, orgName, projectName, componentName, environment, releaseName string) error
+	ResumeJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
 }
 
 // OCDispatchInputs is one cycle's launch payload. Secret values never appear —
@@ -275,6 +276,16 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 	if err := d.oc.EnsureReleaseBinding(ctx, in.OrgID, in.ProjectID, in.RunName,
 		environment, releaseName); err != nil {
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: release binding for %q: %w", in.RunName, err)
+	}
+	// A re-dispatch reuses the cycle's Component (RunName is stable per cycle and
+	// CreateComponent coalesces the 409), and EnsureReleaseBinding is
+	// create-only, so the binding may still carry the suspend the watcher set at
+	// the previous attempt's terminal pod. Undo it, or this attempt's Job is born
+	// suspended and never runs. A legacy release renders no suspend: nothing to
+	// undo. Any other failure fails the launch, since the Job may not run.
+	if err := d.oc.ResumeJobBinding(ctx, in.OrgID, in.ProjectID, in.RunName, environment); err != nil &&
+		!errors.Is(err, openchoreo.ErrSuspendUnsupported) {
+		return OCDispatchResult{}, fmt.Errorf("oc dispatch: resume job binding for %q: %w", in.RunName, err)
 	}
 
 	componentUID := ""

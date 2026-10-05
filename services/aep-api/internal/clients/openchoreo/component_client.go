@@ -93,6 +93,14 @@ type ComponentClient interface {
 	// malformed request (ErrBadRequest), never a legacy release.
 	SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
 
+	// ResumeJobBinding sets the binding's `suspend` environmentConfig back to
+	// false, for a re-dispatch that reuses the cycle's Component (whose binding
+	// may still carry the previous attempt's suspend). Same contract as
+	// SuspendJobBinding: update-only, other fields kept, ErrSuspendUnsupported
+	// with nothing written over a legacy release; a binding that is not
+	// suspended is not rewritten.
+	ResumeJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
+
 	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or
 	// (nil, nil) when it does not exist yet. The deploy stage's readiness poll:
 	// the component-scoped read, where ListProjectReleaseBindings is the

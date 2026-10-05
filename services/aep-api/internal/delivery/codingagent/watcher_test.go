@@ -926,3 +926,48 @@ func TestTick_SuspendOfAGoneBindingIsMarkedNotAnnounced(t *testing.T) {
 		t.Fatal("job_suspended must be emitted only when the suspend took effect")
 	}
 }
+
+// The suspend stamp belongs to the ATTEMPT, not the cycle: a landing-timeout
+// re-dispatch launches a new Job on the same open cycle, and NoteDispatch
+// clears job_suspended_at with it. The watcher then treats attempt 2 like any
+// fresh Job: a missing pod past the grace is a startup failure again, and its
+// terminal pod is suspended again.
+func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	c := dispatchedCycle("c1", time.Minute)
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	watcher := func() *JobWatcher {
+		return NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	}
+
+	// Attempt 1 ends: suspended and stamped.
+	watcher().Tick(context.Background())
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("attempt 1: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+
+	// Attempt 2 is dispatched: NoteDispatch clears job_suspended_at and
+	// pod_gone_at and restarts the grace (repository_cycle_dbtest_test.go pins
+	// the clear). Its pod never appears.
+	cycles.rows[0].ModelID = "m"
+	cycles.rows[0].JobSuspendedAt, cycles.rows[0].PodGoneAt = nil, nil
+	cycles.rows[0].UpdatedAt = time.Now().UTC().Add(-time.Hour)
+	delete(cycles.suspended, "c1")
+	rt.pod = openchoreo.RuntimePod{Found: false}
+	w := watcher()
+	for i := 0; i < missingTicksToFail; i++ {
+		w.Tick(context.Background())
+	}
+	if cycles.finished["c1"] == "" {
+		t.Fatal("attempt 2's missing pod past the grace must be a startup failure again")
+	}
+
+	// And when attempt 2's pod does end, it is suspended again.
+	delete(cycles.finished, "c1")
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded"}
+	watcher().Tick(context.Background())
+	if len(jobs.suspends) != 2 || !cycles.suspended["c1"] {
+		t.Fatalf("attempt 2: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}

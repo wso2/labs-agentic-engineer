@@ -814,3 +814,50 @@ func TestRunCycleRepository_ModelHostPricesTheCapture(t *testing.T) {
 		t.Fatalf("NoteLaunch(closed) = (%+v, %v), want (nil, nil)", row, err)
 	}
 }
+
+// The settle stamps describe one ATTEMPT's Job, not the cycle: a re-dispatch
+// launches a new Job on the same open cycle, so NoteDispatch clears
+// job_suspended_at and pod_gone_at in the same write that moves job_ref.
+// Otherwise the watcher would hide attempt 2's startup failure behind attempt
+// 1's suspend, and never suspend attempt 2's Job.
+func TestRunCycleRepository_NoteDispatchClearsTheAttemptsSettleStamps(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	runs := delivery.NewMilestoneRunRepository(db)
+	cycles := delivery.NewRunCycleRepository(db, nil)
+	ctx := context.Background()
+
+	run := admitRun(t, runs, "orgs", "proj", 1, "v1")
+	cycle := &delivery.RunCycle{
+		OrgID: run.OrgID, ProjectID: run.ProjectID, RunID: run.ID, Kind: delivery.CycleKindCoding,
+	}
+	if err := cycles.Append(ctx, cycle); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	if _, err := cycles.NoteDispatch(ctx, cycle.ID, "ca-attempt"); err != nil {
+		t.Fatalf("NoteDispatch(1): %v", err)
+	}
+	if err := cycles.MarkJobSuspended(ctx, cycle.ID); err != nil {
+		t.Fatalf("MarkJobSuspended: %v", err)
+	}
+	if err := cycles.NotePodGone(ctx, cycle.ID, time.Now()); err != nil {
+		t.Fatalf("NotePodGone: %v", err)
+	}
+
+	row, err := cycles.NoteDispatch(ctx, cycle.ID, "ca-attempt")
+	if err != nil || row == nil {
+		t.Fatalf("NoteDispatch(2) = (%+v, %v), want the updated row", row, err)
+	}
+	if row.JobSuspendedAt != nil || row.PodGoneAt != nil {
+		t.Fatalf("re-dispatched row = (job_suspended_at %v, pod_gone_at %v), want both cleared",
+			row.JobSuspendedAt, row.PodGoneAt)
+	}
+	var cleared int64
+	if err := db.Raw(`SELECT count(*) FROM run_cycles WHERE id = ? AND job_suspended_at IS NULL AND pod_gone_at IS NULL`,
+		cycle.ID).Scan(&cleared).Error; err != nil {
+		t.Fatalf("read stamps: %v", err)
+	}
+	if cleared != 1 {
+		t.Fatal("stored stamps not both NULL after the re-dispatch")
+	}
+}

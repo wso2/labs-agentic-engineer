@@ -891,3 +891,80 @@ func TestSuspendJobBinding_BindingWithoutAReleaseIsUnsupported(t *testing.T) {
 		t.Fatal("no release read and no write for a binding without a release")
 	}
 }
+
+// A re-dispatch reuses the cycle's Component and its binding, which may still
+// carry attempt 1's suspend. Resume clears it with the same raw
+// read-modify-write, so every other field survives.
+func TestResumeJobBinding_ClearsSuspendAndKeepsEveryOtherField(t *testing.T) {
+	srv := newOCStub(t)
+	b := suspendTestBinding(map[string]any{"suspend": true, "other": "x"})
+	b["metadata"].(map[string]any)["resourceVersion"] = "7"
+	b["spec"].(map[string]any)["futureField"] = "kept"
+	srv.onJSON("GET", suspendTestBindingPath, 200, b)
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, true))
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	if err := srv.componentClient().ResumeJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+		t.Fatal(err)
+	}
+	put := srv.lastBody("PUT")
+	spec := put["spec"].(map[string]any)
+	ctec := spec["componentTypeEnvironmentConfigs"].(map[string]any)
+	if ctec["suspend"] != false || ctec["other"] != "x" {
+		t.Fatalf("componentTypeEnvironmentConfigs = %v", ctec)
+	}
+	if spec["releaseName"] != suspendTestRelease || spec["futureField"] != "kept" || spec["owner"] == nil {
+		t.Fatalf("spec fields dropped by the PUT: %v", spec)
+	}
+	if put["metadata"].(map[string]any)["resourceVersion"] != "7" {
+		t.Fatal("metadata.resourceVersion must be the read's")
+	}
+	if srv.countMethod("POST") != 0 {
+		t.Fatal("resume must never POST")
+	}
+}
+
+// A binding that is not suspended (every fresh dispatch) costs one read: no
+// release read and no write.
+func TestResumeJobBinding_NotSuspendedWritesNothing(t *testing.T) {
+	for _, configs := range []map[string]any{nil, {"other": "x"}, {"suspend": false}} {
+		srv := newOCStub(t)
+		srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(configs))
+		srv.onEcho("PUT", suspendTestBindingPath, 200)
+		if err := srv.componentClient().ResumeJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+			t.Fatalf("configs %v: %v", configs, err)
+		}
+		if srv.countMethod("PUT") != 0 || srv.count("GET", suspendTestReleasePath) != 0 {
+			t.Fatalf("configs %v: no release read and no write for a binding that is not suspended", configs)
+		}
+	}
+}
+
+// Over a legacy release the key renders nothing, so it is not written:
+// ErrSuspendUnsupported, as for suspend.
+func TestResumeJobBinding_LegacyReleaseIsUnsupportedAndWritesNothing(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, suspendTestBinding(map[string]any{"suspend": true}))
+	srv.onJSON("GET", suspendTestReleasePath, 200, codingAgentReleaseFixture(t, false))
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	err := srv.componentClient().ResumeJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrSuspendUnsupported) {
+		t.Fatalf("err = %v, want ErrSuspendUnsupported", err)
+	}
+	if srv.countMethod("PUT") != 0 {
+		t.Fatal("no write over a legacy release")
+	}
+}
+
+// Update-only, like suspend: a missing binding is ErrNotFound and nothing is
+// created.
+func TestResumeJobBinding_MissingBindingIsNotFoundAndCreatesNothing(t *testing.T) {
+	srv := newOCStub(t)
+	srv.on("GET", suspendTestBindingPath, 404, nil)
+	err := srv.componentClient().ResumeJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if srv.countMethod("POST") != 0 || srv.countMethod("PUT") != 0 {
+		t.Fatal("resume must never create or write a binding that is not there")
+	}
+}

@@ -168,6 +168,16 @@ Only a suspend that took effect logs `codingagent.job_suspended` (`cause` =
 `terminal`). Once a cycle is suspended or closed, a snapshot with no pod is the
 expected state, never an absent-pod or startup verdict.
 
+The stamp belongs to the attempt, not the cycle. A landing-timeout re-dispatch
+reuses the cycle's Component (its name is stable per cycle and the 409 is
+coalesced), so `NoteDispatch` clears `job_suspended_at` and `pod_gone_at` in
+the write that moves `job_ref`, and every dispatch calls
+`ComponentClient.ResumeJobBinding` after binding: the update-only inverse of
+the suspend, which sets `suspend` back to false when attempt 1 left it true (a
+binding that is not suspended is one read and no write). A legacy release
+(`ErrSuspendUnsupported`) has nothing to undo; any other failure fails the
+launch, because the Job would be born suspended.
+
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on
 purpose. The cluster's deadline is a backstop: when it passes the pod is killed

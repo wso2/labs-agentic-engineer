@@ -44,7 +44,8 @@ type RunCycleRepository interface {
 	Append(ctx context.Context, cycle *RunCycle) error
 
 	// NoteDispatch records a dispatch of the cycle: it increments Attempts and
-	// re-points the row at the newly dispatched Job. The supervisor compares the
+	// re-points the row at the newly dispatched Job, clearing the previous
+	// attempt's settle stamps (job_suspended_at, pod_gone_at). The supervisor compares the
 	// returned Attempts against RunMaxRedispatchPerCycle to decide whether the
 	// per-cycle re-dispatch budget is spent. Guarded on the cycle being open.
 	NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error)
@@ -252,9 +253,13 @@ func (r *runCycleRepository) Append(ctx context.Context, cycle *RunCycle) error 
 }
 
 func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error) {
+	// The settle stamps describe one attempt's Job: a new attempt starts with
+	// neither, in the same write that moves job_ref.
 	return r.updateOpen(ctx, id, map[string]any{
-		"attempts": gorm.Expr("attempts + 1"),
-		"job_ref":  jobRef,
+		"attempts":         gorm.Expr("attempts + 1"),
+		"job_ref":          jobRef,
+		"job_suspended_at": nil,
+		"pod_gone_at":      nil,
 	})
 }
 

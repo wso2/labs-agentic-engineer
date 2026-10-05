@@ -240,25 +240,43 @@ const suspendEnvironmentConfigKey = "suspend"
 // on the PUT is a malformed request, never a legacy release; a 400 wraps
 // ErrBadRequest.
 func (c *componentClient) SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error {
+	return c.setJobSuspend(ctx, orgName, projectName, componentName, environment, true)
+}
+
+// ResumeJobBinding is SuspendJobBinding's inverse, for a re-dispatch that
+// reuses the cycle's Component: it sets `suspend` back to false so the Job of
+// the new attempt is not born suspended. Same contract: update-only (a missing
+// binding is ErrNotFound), a raw read-modify-write that keeps every other
+// field, and ErrSuspendUnsupported with nothing written over a legacy release.
+// A binding that is not suspended costs one read and no write.
+func (c *componentClient) ResumeJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error {
+	return c.setJobSuspend(ctx, orgName, projectName, componentName, environment, false)
+}
+
+func (c *componentClient) setJobSuspend(ctx context.Context, orgName, projectName, componentName, environment string, suspend bool) error {
 	bindingName := ReleaseBindingName(projectName, componentName, environment)
 	return retryStaleWrite(ctx, "releasebinding/"+bindingName, func(ctx context.Context) error {
-		return c.suspendJobBindingOnce(ctx, orgName, bindingName)
+		return c.setJobSuspendOnce(ctx, orgName, bindingName, suspend)
 	})
 }
 
-// suspendJobBindingOnce is one attempt: re-read the binding, check its release
-// can render suspend, set the key, PUT.
-func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bindingName string) error {
+// setJobSuspendOnce is one attempt: re-read the binding, check its release can
+// render suspend, set the key, PUT.
+func (c *componentClient) setJobSuspendOnce(ctx context.Context, orgName, bindingName string, suspend bool) error {
+	verb := "suspend"
+	if !suspend {
+		verb = "resume"
+	}
 	getResp, err := c.oc.GetReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(bindingName))
 	if err != nil {
-		return fmt.Errorf("suspend %s: get release binding: %w", bindingName, err)
+		return fmt.Errorf(verb+" %s: get release binding: %w", bindingName, err)
 	}
 	switch getResp.StatusCode() {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return fmt.Errorf("suspend %s: %w", bindingName, ErrNotFound)
+		return fmt.Errorf(verb+" %s: %w", bindingName, ErrNotFound)
 	default:
-		return fmt.Errorf("suspend %s: get release binding: %w", bindingName,
+		return fmt.Errorf(verb+" %s: get release binding: %w", bindingName,
 			handleErrorResponse(getResp.StatusCode(), ErrorResponses{
 				JSON401: getResp.JSON401,
 				JSON403: getResp.JSON403,
@@ -268,54 +286,59 @@ func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bi
 
 	var binding map[string]any
 	if err := json.Unmarshal(getResp.Body, &binding); err != nil {
-		return fmt.Errorf("suspend %s: decode release binding: %w", bindingName, err)
+		return fmt.Errorf(verb+" %s: decode release binding: %w", bindingName, err)
 	}
 	if binding == nil {
-		return fmt.Errorf("suspend %s: release binding read back empty", bindingName)
+		return fmt.Errorf(verb+" %s: release binding read back empty", bindingName)
 	}
 	spec, _ := binding["spec"].(map[string]any)
 	if spec == nil {
 		spec = map[string]any{}
 		binding["spec"] = spec
 	}
+	configs, _ := spec["componentTypeEnvironmentConfigs"].(map[string]any)
+	// Nothing to undo: a binding that is not suspended is left alone, with no
+	// release read (every fresh dispatch takes this path).
+	if !suspend && configs[suspendEnvironmentConfigKey] != true {
+		return nil
+	}
 	// Before the already-true shortcut: a true value over a legacy release is
 	// not a suspended Job.
 	releaseName, _ := spec["releaseName"].(string)
 	if releaseName == "" {
-		return fmt.Errorf("suspend %s: binding names no release: %w", bindingName, ErrSuspendUnsupported)
+		return fmt.Errorf(verb+" %s: binding names no release: %w", bindingName, ErrSuspendUnsupported)
 	}
 	supported, err := c.releaseRendersSuspend(ctx, orgName, releaseName)
 	if err != nil {
-		return fmt.Errorf("suspend %s: %w", bindingName, err)
+		return fmt.Errorf(verb+" %s: %w", bindingName, err)
 	}
 	if !supported {
-		return fmt.Errorf("suspend %s: release %q predates the suspend schema: %w",
+		return fmt.Errorf(verb+" %s: release %q predates the suspend schema: %w",
 			bindingName, releaseName, ErrSuspendUnsupported)
 	}
 
-	configs, _ := spec["componentTypeEnvironmentConfigs"].(map[string]any)
-	if configs[suspendEnvironmentConfigKey] == true {
+	if suspend && configs[suspendEnvironmentConfigKey] == true {
 		return nil
 	}
 	if configs == nil {
 		configs = map[string]any{}
 		spec["componentTypeEnvironmentConfigs"] = configs
 	}
-	configs[suspendEnvironmentConfigKey] = true
+	configs[suspendEnvironmentConfigKey] = suspend
 
 	raw, err := json.Marshal(c.labels.stampedObject(binding))
 	if err != nil {
-		return fmt.Errorf("suspend %s: encode release binding: %w", bindingName, err)
+		return fmt.Errorf(verb+" %s: encode release binding: %w", bindingName, err)
 	}
 	putResp, err := c.oc.UpdateReleaseBindingWithBodyWithResponse(ctx, orgName,
 		ocgen.ReleaseBindingNameParam(bindingName), "application/json", bytes.NewReader(raw))
 	if err != nil {
-		return fmt.Errorf("suspend %s: update release binding: %w", bindingName, err)
+		return fmt.Errorf(verb+" %s: update release binding: %w", bindingName, err)
 	}
 	if putResp.StatusCode() == http.StatusOK || putResp.StatusCode() == http.StatusCreated {
 		return nil
 	}
-	return fmt.Errorf("suspend %s: update release binding: %w", bindingName,
+	return fmt.Errorf(verb+" %s: update release binding: %w", bindingName,
 		handleErrorResponse(putResp.StatusCode(), ErrorResponses{
 			JSON400: putResp.JSON400,
 			JSON401: putResp.JSON401,
