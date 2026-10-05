@@ -34,7 +34,7 @@ flowchart LR
 | `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
-model-connection / idp services and the model key rename watcher (`ModelKeyRename`).*
+model-connection / idp services.*
 
 ## Ports
 | Port | Dir | Peer · contract |
@@ -44,7 +44,7 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
 | `CredentialStore` | needs | `platform/secrets` — sealed git-token / model-key / subscription store |
 | `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) · the edge (dev secret-ref resync) |
-| `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the spec agents' and task planning's connection + key per turn; the governor's keyless `Connection`) · `projects` (ai-agent model access) · `delivery` (the coding credential and the connection's model; the evaluation key) |
+| `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the governor's and AE Studio's keyless `Connection`) · `projects` (ai-agent model access: `KeyPathRef`) · `delivery` (the coding credential and the connection's model; the evaluation key's reference) |
 | `RateCard` | needs | `platform/modelcost` (the boot-time `Stamper`) — whether `(host, model)` is priced, for `llm.priced` |
 | `AgentSettingsService` | offers | `delivery` (the run's runtime) |
 | `StudioConverger` · `AEStudioStatusReader` (+ `AEStudioStatus`) | declared here, implemented by `aestudio` | the gitpat submit and a key or connection save trigger a converge; `GET /ae-studio` reads the state |
@@ -53,12 +53,8 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
 ## Owns
 - `organizations` (+ `thunder_org_uuid`, `llm_disconnected_at`), `org_credentials`,
   `org_model_connections` (one row per org, absent = no connection: format, base URL, host, model, auth
-  scheme, probed limits and image input, key preview; the key's bytes in `org_secrets` `model/key`,
-  and as the org secret `default-key`. `ModelKeyRename` moves a key found under the
-  Anthropic-era names (`anthropic/key`, entity `anthropic`) onto these: `migrate/phase20_model_key_rename`
-  copies a connected org's bytes at boot, the watcher writes the `default-key` reference and switches the row under
-  the card's lock, and retires the old copies on a periodic pass (never at boot) once the org has no
-  open cycle),
+  scheme, probed limits and image input; no character of the key — the key lives only in the vault,
+  as the org secret `default-key`, and `llm` reads as configured only while that reference row exists),
   `org_anthropic_credentials` (the optional `coding` Claude subscription only — CHECK
   `org_anthropic_credentials_subscription_only`), `org_agent_settings` (the runtime; one row per org,
   absent = the platform default), `ai_agent_model_endpoints` (the endpoint the Agent Manager govern stage
@@ -97,7 +93,9 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
     429 is `llm_unexpected_status`; 5xx is `llm_upstream_error` (502). On `ollama.com` it reads
     `/api/show` for the context window and vision. An unlisted model is a warning, not a refusal. The
     apply refuses (409) a connection that changed since it was probed.
-  - A stored connection is usable by construction: there is no status and nothing revalidates.
+  - A stored connection is usable by construction: a save that changes it is refused unless its
+    probe with the request's key passes (a model-only edit is saved unprobed); there is no status
+    and nothing revalidates.
   - `agents` is never null on the wire: the platform default runtime until someone chooses,
     `updatedBy` telling the two apart. `null` on the PATCH resets (row and token deleted).
   - A runtime is never substituted. Only a runtime the installation can run is selectable
@@ -105,21 +103,23 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
     runtimes here run each format.
   - `llm_disconnected_at` is the only trace of a disconnected connection; projected as
     `llmDisconnectedAt` while `llm` is null, cleared by the next connection save.
-  - The copies outside Postgres (the key references, the Agent Manager provider) follow the commit,
-    best-effort except the provider push (below), in a second transaction under the same locks, made from the rows as they stand, so
-    two saves' copies land in save order and a stored key never sits beside another host's row. A
-    saved connection key is a new `default-key` reference and a saved subscription token a new
-    `coding-agent-key` one (`OrgSecretWriter.Write`), each row's triplet stamped inside that
-    transaction; the previous reference is retired only after it commits. A Default key write
-    also repoints the key's path consumers (`ModelKeyConsumers`: the org's `ai-agent-model-access`
-    SecretReference behind direct ai-agent components, implemented in `projects`) under the card's
-    lock; while that fails the previous reference is kept, and the rename keeps the Anthropic-era
-    copies until the consumers read the row's current reference. A save that writes a key
-    clears the row's triplet (a save that keeps the key keeps it), so a failed write fails dispatch
-    closed instead of mounting the previous key. A deleted credential's row and reference are removed
-    unless a credential saved since replaced them (its own write retires the old one); a pre-phase-1
-    copy nothing records is deleted by name, and an orphaned copy is accepted.
-  - A save that changes what the AE Studio pod reads triggers its converge after the copies: a
+  - A key lives only in the vault. A save writes each key it carries from the request, under the
+    card's lock (`AgentsCardRepository.Lock`, held on its own connection from the first read through
+    the copies): a connection key as a new `default-key` reference, a subscription token as a new
+    `coding-agent-key` one (`OrgSecretWriter.Write`, lock order card → default-key →
+    coding-agent-key), and the rows commit as one transaction inside the last write. A failed vault
+    write saves nothing; a failed transaction undoes the new references. No key is stored in or read
+    from Postgres, and no triplet is stamped on the rows. A save that writes a key on an installation
+    with no secret store is refused (`503 secrets_delivery_unavailable`).
+  - A connection edit (format or base URL) needs the key in the same save (`llm_key_required`):
+    Agent Manager's provider is rewritten whole. A model-only edit needs none and is saved unprobed.
+    Test connection always needs the key in its body.
+  - After the commit, still under the card's lock: the key's path consumers (`ModelKeyConsumers`: the
+    org's `ai-agent-model-access` SecretReference behind direct ai-agent components, implemented in
+    `projects`) move onto the new `default-key` reference (while that fails the previous reference
+    is kept), a deleted credential's row and reference are removed (best-effort), Agent Manager's
+    provider gets the request's key, and only then are the replaced references retired.
+  - A save that changes what the AE Studio pod reads triggers its converge after the commit: a
     written Default key, a disconnect (the pod is re-pinned without the key), or a change to the
     connection's non-secret fields (`AE_MODEL_CONNECTION`). A subscription token never rolls the
     pod: the next coding Job reads its row.
@@ -129,14 +129,14 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
     variable name; dispatch (`codingagent/model_env.go`) maps that to the runner's env.
   - Generated agents run on the connection, on every format (`modelconn.CapabilitiesOf` says
     `GeneratedAgents` for all). The Agent Manager provider's copy follows it (`syncModelProvider`):
-    republished after commit on a save that changes the key, URL, format or auth scheme (a failed
+    republished after commit, with the request's key, on every save that carries a key (a failed
     push answers `502 agent_manager_not_updated`, the key staying saved), and cleared once on a
     disconnect (best-effort).
 - **The model connection is read only through `ModelConnectionService`** (`model_connection_service.go`):
-  a `modelconn.Connection` (format, base URL, host, model, auth scheme, limits, image input) beside the
-  key's bytes (`Effective`), its vault reference (`KeyRef`) or the coding credential
-  (`ResolveCodingCredential`), from `org_model_connections`. No consumer outside this domain reads
-  the rows for a key.
+  a `modelconn.Connection` (format, base URL, host, model, auth scheme, limits, image input) alone
+  (`Connection`), beside its key's reference (`KeyRef`, `KeyPathRef`) or as the coding credential
+  (`ResolveCodingCredential`), from `org_model_connections` and the reference rows. Nothing reads the
+  key.
 - **Consumers mount the reference an org secret's row records, not its triplet** (R7,
   `RecordedOrgSecretRef`): `KeyRef` and `ResolveCodingCredential` take the `default-key` /
   `coding-agent-key` name, coding dispatch the `github-pat` (key `token`) and `ae-publisher-client`
@@ -145,12 +145,10 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
   `ErrOrgDisconnected` with no triplet fallback), so a rotation whose triplet stamp lags never hands out a deleted reference. A mount needs
   only the name and the key (C10), so `KeyRef` carries no vault path. The ai-agent model access,
   which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
-  stamped triplet whole, live by construction (a reference a committed stamp names is retired only
-  after its successor's stamp commits). While a key-writing save's copy has not landed the triplet
-  is empty and `KeyPathRef` fails closed until the next key save; the model access also refuses an
-  incomplete legacy triplet. An org with no row yet (connected before phase 1) resolves from its triplet columns,
-  name and key from that one source; phase 6 removes this fallback. Each read logs which source it
-  used (`org secret reference resolved`, value-free).
+  `default-key` row's name with the vault path that SecretReference's `spec.data` reads (names and
+  paths, never a value), failing closed when either is missing. The model keys have no triplet
+  fallback: an org with no `default-key` / `coding-agent-key` row (saved before the rows existed)
+  resolves no key until it saves it again.
 - **Publisher SecretReference for coding Jobs is fail-closed on `POST /build`.**
   `ProvisionPublisherForBuild` (actor `build-provision`) ensures the Thunder publisher app and stamps
   `secret_ref_name` while the console JWT is on ctx. A missing or disabled `SecretRefWriter` returns

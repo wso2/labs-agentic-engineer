@@ -19,28 +19,29 @@
 // the AI agents card's save.
 //
 // ModelConnectionService reads the connection (which format, URL, model and
-// auth scheme the org's agents use, modelconn.Connection), the key's bytes or
-// where they live, and which credential a coding run mounts. It offers two
+// auth scheme the org's agents use, modelconn.Connection), where its key
+// lives, and which credential a coding run mounts. It never reads a key: the
+// key lives only in vault, under the org's default-key reference, written by
+// the card's save from the request (agent_settings_service.go). It offers two
 // ports:
 //
-//   - ConnectionReader — Effective (the connection and its key's bytes, for the
-//     spec agents, task planning and Agent Manager), KeyRef (the connection
-//     and its key's reference as a mount needs it: the default-key row's name
-//     and key) and KeyPathRef (the connection and the stamped triplet whole,
-//     vault path included, for a consumer that points its own SecretReference
-//     at the key's vault entry).
+//   - ConnectionReader — Connection (the connection, no key), KeyRef (the
+//     connection and its key's reference as a mount needs it: the default-key
+//     row's name and key) and KeyPathRef (the same reference with its vault
+//     path, read off the SecretReference, for a consumer that points its own
+//     SecretReference at the key's vault entry).
 //   - CodingCredentialResolver — which credential a coding run on a runtime
 //     mounts: the Claude subscription or the connection's key, stated once
 //     here (ADR-0036).
 //
-// For the card (AgentSettingsService) it probes a draft connection
-// (model_probe.go), writes or deletes the row and the key's bytes inside the
-// card's transaction, writes the key's default-key reference after commit
-// (under the card's lock, from the row as it stands), and projects the
-// connection for GET /config.
+// For the card (AgentSettingsService) it probes a draft connection carrying
+// its key (model_probe.go), writes or deletes the row inside the card's
+// transaction, removes a deleted key's reference, and projects the connection
+// for GET /config.
 //
 // The connection lives in org_model_connections, one row per org; the key's
-// bytes in org_secrets under modelKeyStoreKey.
+// reference in org_secrets under default-key. The connection reads as
+// configured only while that reference row exists.
 package organization
 
 import (
@@ -49,28 +50,26 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// ConnectionReader is the connection for consumers that call the model
-// themselves or hand its key to something that does.
+// ConnectionReader is the connection for consumers that mount its key or
+// point at it; none of them reads the key itself.
 type ConnectionReader interface {
-	// Effective is the connection and its key's bytes; ok is false when the
-	// org has no usable connection, which is "not connected yet", not an
-	// error. There is no platform fallback: orgs bring their own key.
-	Effective(ctx context.Context, ocOrgID string) (conn modelconn.Connection, key string, ok bool, err error)
+	// Connection is the connection without its key; ok is false when the org
+	// has none, which is "not connected yet", not an error.
+	Connection(ctx context.Context, ocOrgID string) (conn modelconn.Connection, ok bool, err error)
 	// KeyRef is the connection and its key's reference (name + key), for a
 	// consumer that mounts the reference rather than forwarding the value. A
 	// NotFoundError means no connection: "not connected yet".
 	KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error)
-	// KeyPathRef is the connection and its key's stamped reference with its
-	// vault path, for a consumer that points its own SecretReference at that
-	// path. A NotFoundError means no connection.
+	// KeyPathRef is the connection and its key's reference with its vault
+	// path, for a consumer that points its own SecretReference at that path.
+	// A NotFoundError means no connection.
 	KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error)
 }
 
@@ -99,10 +98,10 @@ type CodingCredential struct {
 	Kind CodingCredentialKind
 }
 
-// SecretRefTriplet is a resolved SM-API secret reference: its name and the
-// key a consumer mounts, which is all a SecretKeyRef needs (C10), plus its
-// vault path when known, for a consumer that points another SecretReference
-// at the same vault entry. KVPath may be empty.
+// SecretRefTriplet is a resolved secret reference: its name and the key a
+// consumer mounts, which is all a SecretKeyRef needs (C10), plus its vault
+// path when known, for a consumer that points another SecretReference at the
+// same vault entry. KVPath may be empty.
 type SecretRefTriplet struct {
 	Name     string
 	KVPath   string
@@ -117,21 +116,30 @@ type RateCard interface {
 	Priced(host, model string) bool
 }
 
+// SecretReferenceReader reads one SecretReference's spec (names and vault
+// paths, never a value). Satisfied by the OpenChoreo SecretReference client.
+type SecretReferenceReader interface {
+	GetSecretReference(ctx context.Context, cpNS, name string) (*secretmanagersvc.SecretReference, error)
+}
+
 // ModelConnectionService — see file doc.
 type ModelConnectionService struct {
 	conns   OrgModelConnectionRepository
 	subs    OrgAnthropicRepository
-	store   secrets.CredentialStore
 	rates   RateCard
 	probers modelProbers
 
-	// secretRefWriter mirrors a saved key into SM-API. nil-safe.
-	secretRefWriter *SecretRefWriter
-
 	// orgSecrets reads the default-key and coding-agent-key rows, the
-	// references the readers below hand out (R7). nil: every org resolves
-	// from its triplet columns, as one connected before phase 1 does.
+	// references the readers below hand out (R7).
 	orgSecrets OrgSecretRefReader
+
+	// secretRefs reads the default-key SecretReference's vault path
+	// (KeyPathRef). nil: KeyPathRef fails as not configured.
+	secretRefs SecretReferenceReader
+
+	// secretRefWriter writes and removes the key's default-key reference.
+	// nil, or not enabled: there is no secret store, and no key can be saved.
+	secretRefWriter *SecretRefWriter
 }
 
 var (
@@ -140,29 +148,34 @@ var (
 )
 
 // NewModelConnectionService wires the service over the connection rows, the
-// Claude subscription rows (subs), the key's bytes and the rate card. All
-// must be non-nil. The probe calls public endpoints only (netguard).
-func NewModelConnectionService(conns OrgModelConnectionRepository, subs OrgAnthropicRepository, store secrets.CredentialStore, rates RateCard) *ModelConnectionService {
+// Claude subscription rows (subs), the org secret reference rows (refs) and
+// the rate card. All must be non-nil: there is no reading a key's reference
+// without its row. The probe calls public endpoints only (netguard).
+func NewModelConnectionService(conns OrgModelConnectionRepository, subs OrgAnthropicRepository, refs OrgSecretRefReader, rates RateCard) *ModelConnectionService {
+	if conns == nil || subs == nil || refs == nil || rates == nil {
+		panic("organization: NewModelConnectionService needs the connection, subscription and org secret repositories and a rate card")
+	}
 	return &ModelConnectionService{
-		conns:   conns,
-		subs:    subs,
-		store:   store,
-		rates:   rates,
-		probers: newModelProbers(defaultModelProbeClient()),
+		conns:      conns,
+		subs:       subs,
+		orgSecrets: refs,
+		rates:      rates,
+		probers:    newModelProbers(defaultModelProbeClient()),
 	}
 }
 
-// WithSecretRefWriter injects the SM-API writer; chainable. nil disables the
-// mirror — org_secrets remains authoritative.
+// WithSecretRefWriter injects the writer of the key's default-key reference;
+// chainable. nil leaves the installation without a secret store: a key save
+// is refused.
 func (s *ModelConnectionService) WithSecretRefWriter(w *SecretRefWriter) *ModelConnectionService {
 	s.secretRefWriter = w
 	return s
 }
 
-// WithOrgSecrets attaches the org secret rows the key's readers take the
-// reference name from; chainable.
-func (s *ModelConnectionService) WithOrgSecrets(r OrgSecretRefReader) *ModelConnectionService {
-	s.orgSecrets = r
+// WithSecretReferences attaches the SecretReference reader KeyPathRef reads
+// the key's vault path from; chainable.
+func (s *ModelConnectionService) WithSecretReferences(r SecretReferenceReader) *ModelConnectionService {
+	s.secretRefs = r
 	return s
 }
 
@@ -176,30 +189,8 @@ func (s *ModelConnectionService) WithProbeClient(c *http.Client) *ModelConnectio
 
 // --- reads --------------------------------------------------------------------
 
-// Effective returns the connection and its key when the org has a connection
-// and its bytes are present; ok=false otherwise, which the turn surface maps
-// to a pre-202 4xx.
-//
-// Deliberately the connection's key only: the spec agents are AI SDK calls,
-// which cannot present the coding role's subscription token.
-func (s *ModelConnectionService) Effective(ctx context.Context, ocOrgID string) (modelconn.Connection, string, bool, error) {
-	row, err := s.conns.GetByOrg(ctx, ocOrgID)
-	if err != nil {
-		return modelconn.Connection{}, "", false, err
-	}
-	if row == nil {
-		return modelconn.Connection{}, "", false, nil
-	}
-	key, ok := s.storedKey(ctx, ocOrgID)
-	if !ok {
-		return modelconn.Connection{}, "", false, nil
-	}
-	return row.Connection(), key, true, nil
-}
-
 // Connection returns the org's connection without its key; ok=false when
-// the org has none. It never reads the key's bytes, for a caller that only
-// passes the non-secret fields on (the AE Studio pod's AE_MODEL_CONNECTION).
+// the org has none.
 func (s *ModelConnectionService) Connection(ctx context.Context, ocOrgID string) (modelconn.Connection, bool, error) {
 	row, err := s.stored(ctx, ocOrgID)
 	if err != nil || row == nil {
@@ -208,53 +199,54 @@ func (s *ModelConnectionService) Connection(ctx context.Context, ocOrgID string)
 	return row.Connection(), true, nil
 }
 
-// storedKey reads the connection key's bytes. A read error or missing bytes
-// is "none", not an error: the row says connected, so it is logged loudly.
-func (s *ModelConnectionService) storedKey(ctx context.Context, ocOrgID string) (string, bool) {
-	key, err := s.store.Get(ctx, ocOrgID, modelKeyStoreKey)
-	if err == nil && len(key) > 0 {
-		return string(key), true
-	}
-	slog.WarnContext(ctx, "model connection: row exists but its key bytes are missing",
-		"ocOrgId", ocOrgID, "error", err)
-	return "", false
-}
-
 // KeyRef returns the connection and its key's reference as a mount needs it:
-// the default-key row's name and key, no vault path (R7, see recordedRef). It
-// never reads the key's bytes, for a caller that mounts the reference rather
-// than forwarding the value (e.g. the build's evaluation key).
+// the default-key row's name and key, no vault path (R7). It never reads the
+// key, for a caller that mounts the reference (e.g. the build's evaluation
+// key). No default-key row is an error: the key was never saved to vault.
 func (s *ModelConnectionService) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
 	row, err := s.connectionRow(ctx, ocOrgID)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
-	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey, row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
 	return row.Connection(), ref, nil
 }
 
-// KeyPathRef returns the connection and the reference its row's triplet
-// stamps, whole (name, vault path and key together), for a caller that points
-// its own SecretReference at the key's vault entry (the ai-agent model
-// access). The stamped triplet is live by construction: the reference a
-// committed stamp names is retired only after its successor's stamp commits.
-// A key-writing save clears it until its copy lands; meanwhile this fails
-// closed (secret_ref_name is not populated) rather than fall back.
-// The vault path is not required here; a consumer that needs it refuses an
-// incomplete legacy triplet itself.
+// KeyPathRef returns the connection and its key's reference whole (name,
+// vault path and key), for a caller that points its own SecretReference at
+// the key's vault entry (the ai-agent model access). The name is the
+// default-key row's; the path is the one that SecretReference reads its
+// api-key from, so it is the path the write chose, read back by name, never
+// derived. A missing row or SecretReference fails closed.
 func (s *ModelConnectionService) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
 	row, err := s.connectionRow(ctx, ocOrgID)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
-	ref, err := tripletOf(row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey)
 	if err != nil {
 		return modelconn.Connection{}, SecretRefTriplet{}, err
 	}
-	return row.Connection(), ref, nil
+	if s.secretRefs == nil {
+		return modelconn.Connection{}, SecretRefTriplet{}, errors.New("the default-key vault path cannot be read: no SecretReference reader is configured")
+	}
+	sr, err := s.secretRefs.GetSecretReference(ctx, ocOrgID, ref.Name)
+	if err != nil {
+		return modelconn.Connection{}, SecretRefTriplet{}, fmt.Errorf("read the default-key reference %s: %w", ref.Name, err)
+	}
+	for _, d := range sr.Data {
+		if d.SecretKey == ref.Property && d.RemoteKey != "" {
+			ref.KVPath = d.RemoteKey
+			if d.Property != "" {
+				ref.Property = d.Property
+			}
+			return row.Connection(), ref, nil
+		}
+	}
+	return modelconn.Connection{}, SecretRefTriplet{}, fmt.Errorf("the default-key reference %s has no %s vault entry", ref.Name, ref.Property)
 }
 
 // stored is the org's connection row, nil when it has none.
@@ -303,7 +295,7 @@ func (s *ModelConnectionService) ResolveCodingCredential(ctx context.Context, oc
 			return CodingCredential{Conn: row.Connection(), Ref: ref, Kind: CodingCredentialClaudeSubscription}, nil
 		}
 	}
-	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey, row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretDefaultKey)
 	if err != nil {
 		return CodingCredential{}, fmt.Errorf("model connection secret reference for org %q: %w", ocOrgID, err)
 	}
@@ -325,7 +317,7 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 			"the Claude subscription for org %q is %s — replace its token in Settings, "+
 				"or remove the subscription so coding bills the connection's key", ocOrgID, sub.Status)
 	}
-	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretCodingAgentKey, sub.SecretRefName, sub.SecretRefKVPath, sub.SecretRefProperty)
+	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretCodingAgentKey)
 	if err != nil {
 		return SecretRefTriplet{}, false, fmt.Errorf(
 			"the Claude subscription for org %q is configured but %w — save its token again in Settings, "+
@@ -336,43 +328,39 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 
 // recordedRef is the reference of the org secret sec that a mount reads: the
 // name its org_secrets row records with sec's fixed key (R7), so a rotation
-// whose triplet stamp lags never hands out the reference the write already
-// deleted. A mount needs only the name and the key (C10), so no vault path is
-// carried; a consumer of the path reads KeyPathRef.
-//
-// No row: a pre-phase-1 org, resolved from the triplet columns alone, name
-// and key from that one source. Removed in phase 6.
-func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string, sec OrgSecret, name, kvPath, property *string) (SecretRefTriplet, error) {
-	recorded, ok, err := RecordedOrgSecretRef(ctx, s.orgSecrets, ocOrgID, sec)
+// never hands out the reference the write already deleted. A mount needs only
+// the name and the key (C10), so no vault path is carried; a consumer of the
+// path reads KeyPathRef. No row is an error: the secret was never written to
+// vault.
+func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string, sec OrgSecret) (SecretRefTriplet, error) {
+	row, err := s.orgSecrets.Get(ctx, ocOrgID, sec)
 	if err != nil {
-		return SecretRefTriplet{}, err
+		return SecretRefTriplet{}, fmt.Errorf("read the %s row: %w", sec, err)
 	}
-	if !ok {
-		return tripletOf(name, kvPath, property)
+	if row == nil || row.Name == "" {
+		return SecretRefTriplet{}, fmt.Errorf("the %s reference is not recorded", sec)
 	}
-	return SecretRefTriplet{Name: recorded, Property: sec.ValueKey()}, nil
+	return SecretRefTriplet{Name: row.Name, Property: sec.ValueKey()}, nil
 }
 
-// tripletOf reads a row's resolved secret-ref name and property, naming
-// whichever is missing so a half-mirrored row is diagnosable from the error
-// alone. The vault path is carried as stored, not required: a mounted
-// reference needs only its name and key (C10).
-func tripletOf(name, kvPath, property *string) (SecretRefTriplet, error) {
-	ref := SecretRefTriplet{Name: derefOrEmpty(name), KVPath: derefOrEmpty(kvPath), Property: derefOrEmpty(property)}
-	switch {
-	case ref.Name == "":
-		return SecretRefTriplet{}, errors.New("secret_ref_name is not populated")
-	case ref.Property == "":
-		return SecretRefTriplet{}, errors.New("secret_ref_property is not populated")
-	}
-	return ref, nil
+// keySet reports whether the org's default-key reference row exists: the
+// record that the connection's key was written to vault.
+func (s *ModelConnectionService) keySet(ctx context.Context, ocOrgID string) (bool, error) {
+	row, err := s.orgSecrets.Get(ctx, ocOrgID, OrgSecretDefaultKey)
+	return row != nil, err
 }
 
 // Projection is the org's connection as GET /config shows it, nil when it has
-// none.
+// none. A connection whose default-key reference row is missing (saved before
+// the key lived in vault) has no usable key, so it reads as none: the
+// onboarding wizard then asks for the key again.
 func (s *ModelConnectionService) Projection(ctx context.Context, ocOrgID string) (*orgconfig.LLMProjection, error) {
 	row, err := s.conns.GetByOrg(ctx, ocOrgID)
 	if err != nil || row == nil {
+		return nil, err
+	}
+	set, err := s.keySet(ctx, ocOrgID)
+	if err != nil || !set {
 		return nil, err
 	}
 	conn := row.Connection()
@@ -380,7 +368,6 @@ func (s *ModelConnectionService) Projection(ctx context.Context, ocOrgID string)
 		Kind:         row.Format,
 		BaseURL:      row.BaseURL,
 		Model:        row.Model,
-		KeyPreview:   row.KeyPreview,
 		ConnectedAt:  row.ConnectedAt,
 		UpdatedAt:    row.UpdatedAt,
 		UpdatedBy:    row.UpdatedBy,
@@ -391,21 +378,24 @@ func (s *ModelConnectionService) Projection(ctx context.Context, ocOrgID string)
 
 // --- the card's connection half -------------------------------------------------
 
-// probe checks d against its endpoint. A draft with no key reuses the stored
-// key, which draftConnection only allows on the stored connection's origin.
+// probe checks d against its endpoint with the key d carries. A draft with
+// no key is never probed: the stored key is never read back to probe with.
 func (s *ModelConnectionService) probe(ctx context.Context, ocOrgID string, d connectionDraft) (ProbeResult, error) {
-	key := d.Key
-	if key == "" {
-		stored, ok := s.storedKey(ctx, ocOrgID)
-		if !ok {
-			return ProbeResult{}, &ValidationError{Code: "llm_field_required",
-				Message: "the stored key could not be read; send the apiKey again"}
-		}
-		key = stored
+	if d.Key == "" {
+		return ProbeResult{}, errKeyRequired("a probe needs the apiKey; a stored key is never read back")
 	}
 	return s.probers.probe(ctx, probeTarget{
-		Org: ocOrgID, Format: d.Format, BaseURL: d.BaseURL, Host: d.Host, Model: d.Model, Key: key,
+		Org: ocOrgID, Format: d.Format, BaseURL: d.BaseURL, Host: d.Host, Model: d.Model, Key: d.Key,
 	})
+}
+
+// unprobed is what a model-only edit stores in place of a probe's result:
+// the stored auth scheme (the host and its key did not change) and the
+// host's defaults for what the model decides (limits, image input).
+func unprobed(stored *OrgModelConnection, d connectionDraft) ProbeResult {
+	res := ProbeResult{AuthScheme: stored.AuthScheme, ModelListed: modelconn.Unknown}
+	hostDefaults(d.Host, &res)
+	return res
 }
 
 // check is what a probe of d found, as the card reads it.
@@ -426,10 +416,10 @@ func (s *ModelConnectionService) check(d connectionDraft, res ProbeResult) orgco
 	return out
 }
 
-// writeTx stores the probed connection inside the card's transaction: the row,
-// and the key's bytes when the save sent one. stored is the row it replaces
-// (nil on first connect); connected_at survives a save on the same host.
-func (s *ModelConnectionService) writeTx(ctx context.Context, tx AgentsCardTx, ocOrgID, actor string,
+// writeTx stores the connection inside the card's transaction. stored is the
+// row it replaces (nil on first connect); connected_at survives a save on the
+// same host. The key is not here: the save wrote it to vault already.
+func (s *ModelConnectionService) writeTx(tx AgentsCardTx, ocOrgID, actor string,
 	d connectionDraft, res ProbeResult, stored *OrgModelConnection, now time.Time) (*OrgModelConnection, error) {
 	row := &OrgModelConnection{
 		OcOrgID:       ocOrgID,
@@ -448,141 +438,66 @@ func (s *ModelConnectionService) writeTx(ctx context.Context, tx AgentsCardTx, o
 	if stored != nil && stored.Host == d.Host {
 		row.ConnectedAt = stored.ConnectedAt
 	}
-	keyWritten := d.Key != ""
-	if keyWritten {
-		if err := tx.Secrets().Put(ctx, ocOrgID, modelKeyStoreKey, []byte(d.Key)); err != nil {
-			return nil, fmt.Errorf("model connection: store put: %w", err)
-		}
-		row.KeyPreview = keyPreview(d.Key)
-	} else {
-		row.KeyPreview = stored.KeyPreview
-		row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty = stored.SecretRefName, stored.SecretRefKVPath, stored.SecretRefProperty
-	}
-	if err := tx.UpsertConnection(row, keyWritten); err != nil {
+	if err := tx.UpsertConnection(row); err != nil {
 		return nil, fmt.Errorf("model connection: upsert: %w", err)
 	}
 	return row, nil
 }
 
-// deleteTx removes the connection — row and bytes — inside the card's
-// transaction, returning the SM-API secret-ref name the row carried so its
-// copy can be deleted once the transaction commits. The bytes go under both
-// names: an org ModelKeyRename has not finished still holds `anthropic/key`,
-// which would otherwise outlive the connection. Idempotent.
-func (s *ModelConnectionService) deleteTx(ctx context.Context, tx AgentsCardTx, ocOrgID string) (string, error) {
-	row, err := tx.GetConnection(ocOrgID)
-	if err != nil || row == nil {
-		return "", err
-	}
+// deleteTx removes the connection row inside the card's transaction.
+// Idempotent.
+func (s *ModelConnectionService) deleteTx(tx AgentsCardTx, ocOrgID string) error {
 	if err := tx.DeleteConnection(ocOrgID); err != nil {
-		return "", fmt.Errorf("model connection: delete row: %w", err)
+		return fmt.Errorf("model connection: delete row: %w", err)
 	}
-	for _, key := range []string{modelKeyStoreKey, legacyModelKeyStoreKey} {
-		if err := tx.Secrets().Delete(ctx, ocOrgID, key); err != nil {
-			return "", fmt.Errorf("model connection: store delete %s: %w", key, err)
-		}
-	}
-	return derefOrEmpty(row.SecretRefName), nil
+	return nil
 }
 
-// mirrorKey writes the connection key as it stands as a new default-key
-// reference and stamps its triplet on the row, inside the transaction the
-// card's copies run in (under its lock), best-effort in this phase:
-// org_secrets stays the value the agents read. It reads the key rather than
-// taking the one a save wrote, so a save's copy that runs after a later
-// save's leaves the later key. legacy is the reference the row named before
-// the save (a pre-phase-1 copy, retired once no default-key row exists to
-// name the previous one). The returned write's Retire deletes the previous
-// reference and must run only after the copies' transaction commits; a
-// rolled-back transaction leaves the row on the new reference and the
-// triplet off it, with the previous reference still in place. A save that
-// wrote a key cleared the triplet, so a failed write leaves it NULL until the
-// next key save and dispatch fails closed naming why; the pod keeps its
-// previous key. No row: a disconnect landed since, and there is nothing to
-// copy.
-//
-// After the write the key's path consumers (ModelKeyConsumers) are moved
-// onto the new reference, still under the card's lock so a later save's
-// copies always repoint after this one. retire reports whether the caller may
-// retire the previous reference: not when the repoint failed, since a
-// consumer may still read it.
-func (s *ModelConnectionService) mirrorKey(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (written OrgSecretWrite, retire bool) {
-	if !s.secretRefWriter.Enabled() {
-		return OrgSecretWrite{}, false
-	}
-	written, retire, err := s.mirrorKeyTx(ctx, tx, ocOrgID, legacy)
-	if err != nil {
-		slog.WarnContext(ctx, "model connection: reference write failed",
-			"ocOrgId", ocOrgID, "retryable", errors.Is(err, ErrOrgSecretConflict), "error", err)
-		return OrgSecretWrite{}, false
-	}
-	return written, retire
+// canWriteKey reports whether a key can be saved: only to vault, so only
+// with a secret store.
+func (s *ModelConnectionService) canWriteKey() bool {
+	return s.secretRefWriter.Enabled()
 }
 
-// mirrorKeyTx is mirrorKey's write; the bool is whether the previous
-// reference may be retired.
-func (s *ModelConnectionService) mirrorKeyTx(ctx context.Context, tx AgentsCardTx, ocOrgID, legacy string) (OrgSecretWrite, bool, error) {
-	row, err := tx.GetConnection(ocOrgID)
-	if err != nil || row == nil {
-		return OrgSecretWrite{}, false, err
-	}
-	key, err := tx.Secrets().Get(ctx, ocOrgID, modelKeyStoreKey)
+// writeKey writes key as a new default-key reference (OrgSecretWriter.Write);
+// commit runs while the write's lock is held, after the row names the new
+// reference: when it fails the write is undone and the previous reference
+// stays. ref is the new reference with its vault path.
+func (s *ModelConnectionService) writeKey(ctx context.Context, ocOrgID, key string, commit func() error) (OrgSecretWrite, SecretRefTriplet, error) {
+	var ref SecretRefTriplet
+	written, err := s.secretRefWriter.WriteModelKey(ctx, ocOrgID, key, func(r SecretRefTriplet) error {
+		ref = r
+		return commit()
+	})
 	if err != nil {
-		return OrgSecretWrite{}, false, fmt.Errorf("read the key: %w", err)
-	}
-	if name := derefOrEmpty(row.SecretRefName); name != "" {
-		legacy = name
-	}
-	var stamped SecretRefTriplet
-	written, err := s.secretRefWriter.WriteModelKey(ctx, ocOrgID, strings.TrimSpace(string(key)), retirableModelKeyRef(legacy),
-		func(ref SecretRefTriplet) error {
-			if err := tx.StampConnectionSecretRef(ocOrgID, ref); err != nil {
-				return fmt.Errorf("stamp the secret reference: %w", err)
-			}
-			stamped = ref
-			return nil
-		})
-	if err != nil {
-		return OrgSecretWrite{}, false, err
+		return OrgSecretWrite{}, SecretRefTriplet{}, err
 	}
 	slog.InfoContext(ctx, "model connection: key reference written", "ocOrgId", ocOrgID, "secretRefName", written.Name)
-	if err := s.secretRefWriter.repointModelKeyConsumers(ctx, ocOrgID, stamped); err != nil {
+	return written, ref, nil
+}
+
+// repointConsumers moves the key's path consumers (ModelKeyConsumers) onto
+// ref after the save committed, and reports whether the previous reference
+// may be retired: not when the repoint failed, since a consumer may still
+// read it.
+func (s *ModelConnectionService) repointConsumers(ctx context.Context, ocOrgID string, ref SecretRefTriplet) bool {
+	if err := s.secretRefWriter.repointModelKeyConsumers(ctx, ocOrgID, ref); err != nil {
 		slog.WarnContext(ctx, "model connection: ai-agent model access repoint failed; the previous reference is kept",
-			"ocOrgId", ocOrgID, "secretRefName", written.Name, "error", err)
-		return written, false, nil
+			"ocOrgId", ocOrgID, "secretRefName", ref.Name, "error", err)
+		return false
 	}
-	return written, true, nil
+	return true
 }
 
-// retirableModelKeyRef is the pre-phase-1 copy a first default-key write may
-// retire: any but the Anthropic-era copy, which the rename retires once the
-// org's open cycles end (model_key_rename.go).
-func retirableModelKeyRef(name string) string {
-	if name == legacyModelKeyRefName {
-		return ""
-	}
-	return name
-}
-
-// forgetKey removes a deleted connection key's references, best-effort,
-// inside the transaction the card's copies run in: the default-key row and
-// its reference while the org stays disconnected, and secretRefName, the
-// reference the deleted row named, when nothing records it (see
-// SecretRefWriter.ForgetModelKey). A connection saved since keeps its row; its
-// own write retires the previous reference.
-func (s *ModelConnectionService) forgetKey(ctx context.Context, tx AgentsCardTx, ocOrgID, secretRefName string) {
+// forgetKey removes a deleted connection's default-key reference after the
+// save committed, best-effort: its row and then its reference, under the
+// secret's lock. The caller holds the card's lock, so no connection was
+// saved since.
+func (s *ModelConnectionService) forgetKey(ctx context.Context, ocOrgID string) {
 	if !s.secretRefWriter.Enabled() {
 		return
 	}
-	row, err := tx.GetConnection(ocOrgID)
-	if err == nil {
-		live := ""
-		if row != nil {
-			live = derefOrEmpty(row.SecretRefName)
-		}
-		err = s.secretRefWriter.ForgetModelKey(ctx, ocOrgID, secretRefName, live, row != nil)
-	}
-	if err != nil {
+	if err := s.secretRefWriter.ForgetModelKey(ctx, ocOrgID); err != nil {
 		slog.WarnContext(ctx, "model connection: reference removal failed (orphaned copy until the next save)",
 			"ocOrgId", ocOrgID, "error", err)
 	}

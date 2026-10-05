@@ -740,26 +740,3 @@ func TestWriter_ConcurrentWriteIfUnsetWritesOnce(t *testing.T) {
 		t.Fatalf("exactly one first write: results=%v creates=%d", results, v.creates)
 	}
 }
-
-// DeleteUnrecorded deletes a copy no row names, and refuses the recorded
-// reference: that one only goes through Retire or Remove.
-func TestOrgSecretLocked_DeleteUnrecordedNeverDeletesTheRecordedReference(t *testing.T) {
-	vault := newFakeVault("acme-default-key-recorded", "model-connection-secrets")
-	repo := newFakeRepo()
-	if err := repo.Upsert(ctx, "acme", organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "acme-default-key-recorded"}, ""); err != nil {
-		t.Fatal(err)
-	}
-	w := organization.NewOrgSecretWriter(vault, repo, newFakeLock(), fixedClock)
-	err := w.WithLock(ctx, "acme", organization.OrgSecretDefaultKey, func(l *organization.OrgSecretLocked) error {
-		if err := l.DeleteUnrecorded(ctx, "ou-acme", "acme-default-key-recorded"); err == nil {
-			t.Error("the recorded reference must be refused")
-		}
-		return l.DeleteUnrecorded(ctx, "ou-acme", "model-connection-secrets")
-	})
-	if err != nil {
-		t.Fatalf("DeleteUnrecorded: %v", err)
-	}
-	if got := vault.live(); len(got) != 1 || got[0] != "acme-default-key-recorded" {
-		t.Fatalf("vault holds %v, want only the recorded reference", got)
-	}
-}

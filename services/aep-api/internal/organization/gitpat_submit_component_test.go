@@ -296,7 +296,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	orgSecrets := organization.NewOrgSecretWriter(vault, rows, organization.NewOrgSecretLock(db), time.Now)
 	credRepo := submitCredRepo{OrgCredentialRepository: organization.NewOrgCredentialRepository(db, nil), log: log}
 	idpRepo := organization.NewIDPRepository(db, nil)
-	refWriter := organization.NewSecretRefWriter(vault, credRepo, organization.NewOrgAnthropicRepository(db), idpRepo, organization.NewOrgModelConnectionRepository(db)).
+	refWriter := organization.NewSecretRefWriter(vault, credRepo, idpRepo).
 		WithOrgSecretWriter(orgSecrets)
 
 	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL).WithSecretRefWriter(refWriter)

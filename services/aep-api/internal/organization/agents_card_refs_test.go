@@ -19,11 +19,11 @@ package organization_test
 // DBTEST tier (skips under -short; `make test-db` runs it): the AI agents
 // card's key saves as org secret references. Every saved Default key and
 // subscription token is a new SecretReference recorded in its org_secrets row
-// (the real repository and the real advisory lock), the connection's and the
-// subscription's triplets follow the current reference, the previous
-// reference is deleted by its stored name once the copies commit, and a save
-// that changes what the AE Studio pod reads triggers its converge. The vault
-// is faked at the writer's port: it mints names and tracks which exist.
+// (the real repository and the real advisory lock), no triplet is stamped on
+// the connection or subscription rows, the previous reference is deleted by
+// its stored name once the save commits, and a save that changes what the AE
+// Studio pod reads triggers its converge. The vault is faked at the writer's
+// port: it mints names and tracks which exist.
 
 import (
 	"context"
@@ -32,8 +32,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/google/uuid"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/organization"
@@ -113,45 +111,27 @@ type cardFixture struct {
 	t         *testing.T
 	card      *cardDB
 	vault     *fakeVault
-	refs      organization.OrgSecretRepository
 	converger *countingConverger
 	consumers *pathConsumers
-	ctx       context.Context
 }
 
 func newCardFixture(t *testing.T, existing ...string) *cardFixture {
 	t.Helper()
-	c := newCardDB(t, http.StatusOK)
-	vault := newFakeVault(existing...)
-	sm := mintingSM{fakeSMClient: &fakeSMClient{}, vault: vault}
-	refs := organization.NewOrgSecretRepository(c.db)
-	consumers := &pathConsumers{}
-	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(c.db, nil), c.repo,
-		organization.NewIDPRepository(c.db, nil), c.connRepo).
-		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, refs, organization.NewOrgSecretLock(c.db), fixedClock)).
-		WithModelKeyConsumers(consumers)
-	c.conns.WithSecretRefWriter(writer)
-	c.svc.WithSecretRefWriter(writer)
+	c := newCardDB(t, http.StatusOK, existing...)
 	converger := &countingConverger{}
 	c.settings.WithStudioConverger(converger)
-	return &cardFixture{t: t, card: c, vault: vault, refs: refs, converger: converger, consumers: consumers, ctx: claimsCtx(uuid.NewString())}
+	return &cardFixture{t: t, card: c, vault: c.vault, converger: converger, consumers: c.consumers}
 }
 
 func (f *cardFixture) save(p orgconfig.ConfigPatch) {
 	f.t.Helper()
-	if _, err := f.card.config.Patch(f.ctx, "acme", "ada", p); err != nil {
-		f.t.Fatalf("save: %v", err)
-	}
+	f.card.patch(f.t, "acme", p)
 }
 
 // ref is the org secret's row, nil when unset.
 func (f *cardFixture) ref(s organization.OrgSecret) *organization.OrgSecretRef {
 	f.t.Helper()
-	ref, err := f.refs.Get(context.Background(), "acme", s)
-	if err != nil {
-		f.t.Fatalf("org secret %s: %v", s, err)
-	}
-	return ref
+	return f.card.ref(f.t, "acme", s)
 }
 
 func (f *cardFixture) exists(name string) bool { return f.vault.refs[name] }
@@ -176,11 +156,8 @@ func TestCardSave_DefaultKeyNewRefAndRoll(t *testing.T) {
 	if got := f.converger.count(); got != 2 {
 		t.Fatalf("triggers = %d, want one per key save", got)
 	}
-	row := f.card.row(t, "acme")
-	if derefStr(row.SecretRefName) != r2.Name || !strings.HasSuffix(derefStr(row.SecretRefKVPath), "/"+r2.Name) ||
-		derefStr(row.SecretRefProperty) != "api-key" {
-		t.Fatalf("triplet %v %v %v: still follows the current reference (the coding Job reads it)",
-			row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
+	if row := f.card.row(t, "acme"); row.SecretRefName != nil || row.KeyPreview != "" {
+		t.Fatalf("connection row %+v: no triplet and no key character (the default-key row names the reference)", row)
 	}
 }
 
@@ -198,8 +175,8 @@ func TestCardSave_CodingKeyDoesNotRoll(t *testing.T) {
 		t.Fatalf("triggers = %d, want only the key save's: the subscription reaches no pod", got)
 	}
 	sub, err := f.card.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding)
-	if err != nil || sub == nil || derefStr(sub.SecretRefName) != ref.Name {
-		t.Fatalf("subscription row %+v (%v): its triplet follows the reference", sub, err)
+	if err != nil || sub == nil || sub.SecretRefName != nil {
+		t.Fatalf("subscription row %+v (%v): no triplet (the coding-agent-key row names the reference)", sub, err)
 	}
 
 	f.save(subscriptionPatch(anthropicDBOAuthToken))
@@ -258,35 +235,6 @@ func TestCardSave_ConnectionFieldChangeRollsWithoutAReference(t *testing.T) {
 	}
 }
 
-// The first write retires the pre-phase-1 copy the triplet named; the
-// Anthropic-era copy is left to the rename, which waits for open cycles.
-func TestCardSave_FirstWriteRetiresThePrePhase1Copy(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		legacy  string
-		retired bool
-	}{
-		{"model-connection-secrets", true},
-		{"anthropic-secrets", false},
-	} {
-		t.Run(tc.legacy, func(t *testing.T) {
-			t.Parallel()
-			f := newCardFixture(t, tc.legacy)
-			f.save(keyPatch(anthropicUnitKey))
-			if err := f.card.db.Exec(`UPDATE org_model_connections SET secret_ref_name = ? WHERE oc_org_id = 'acme'`, tc.legacy).Error; err != nil {
-				t.Fatalf("seed a pre-phase-1 triplet: %v", err)
-			}
-			if err := f.card.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'default-key'`).Error; err != nil {
-				t.Fatalf("drop the row: %v", err)
-			}
-			f.save(keyPatch(anthropicDBKey2))
-			if got := !f.exists(tc.legacy); got != tc.retired {
-				t.Fatalf("%s retired = %v, want %v (vault %v)", tc.legacy, got, tc.retired, f.vault.live())
-			}
-		})
-	}
-}
-
 func agentsWithoutSubscription() patch.Field[orgconfig.AgentsWrite] {
 	return patch.Field[orgconfig.AgentsWrite]{Sent: true, Value: orgconfig.AgentsWrite{
 		Subscription: patch.Field[orgconfig.SubscriptionWrite]{Sent: true, Null: true},
@@ -305,7 +253,7 @@ func TestCardSave_RepointsTheModelAccessBeforeRetiring(t *testing.T) {
 	f := newCardFixture(t)
 	f.save(keyPatch(anthropicUnitKey))
 	r1 := f.ref(organization.OrgSecretDefaultKey)
-	f.consumers.path = derefStr(f.card.row(t, "acme").SecretRefKVPath)
+	f.consumers.path = "user-app-secrets/ns/" + r1.Name // a direct agent reads r1
 	var atDelete []string
 	f.vault.onDelete = func(name string) {
 		if name == r1.Name {
@@ -315,9 +263,9 @@ func TestCardSave_RepointsTheModelAccessBeforeRetiring(t *testing.T) {
 
 	f.save(keyPatch(anthropicDBKey2))
 	r2 := f.ref(organization.OrgSecretDefaultKey)
-	want := derefStr(f.card.row(t, "acme").SecretRefKVPath)
-	if !strings.HasSuffix(want, "/"+r2.Name) || f.consumers.current() != want {
-		t.Fatalf("model access reads %q, want the new reference's path %q", f.consumers.current(), want)
+	want := f.consumers.current()
+	if !strings.HasSuffix(want, "/"+r2.Name) {
+		t.Fatalf("model access reads %q, want the new reference's path", want)
 	}
 	if f.exists(r1.Name) || len(atDelete) != 1 || atDelete[0] != want {
 		t.Fatalf("r1 deleted while the model access read %v, want it deleted once, after the repoint", atDelete)
@@ -325,7 +273,7 @@ func TestCardSave_RepointsTheModelAccessBeforeRetiring(t *testing.T) {
 }
 
 // A failed repoint keeps the previous reference: the model access may still
-// read it. The save itself stands (row, triplet and pod on the new one).
+// read it. The save itself stands (the row and the pod on the new one).
 func TestCardSave_AFailedModelAccessRepointKeepsThePreviousReference(t *testing.T) {
 	t.Parallel()
 	f := newCardFixture(t)
@@ -338,7 +286,7 @@ func TestCardSave_AFailedModelAccessRepointKeepsThePreviousReference(t *testing.
 	if r2.Name == r1.Name || !f.exists(r1.Name) || !f.exists(r2.Name) {
 		t.Fatalf("r1=%s r2=%s vault %v: the new reference recorded, the previous one kept", r1.Name, r2.Name, f.vault.live())
 	}
-	if derefStr(f.card.row(t, "acme").SecretRefName) != r2.Name || f.converger.count() != 2 {
-		t.Fatal("the save stands: the triplet on the new reference and the pod rolled")
+	if f.converger.count() != 2 {
+		t.Fatal("the save stands: the row on the new reference and the pod rolled")
 	}
 }

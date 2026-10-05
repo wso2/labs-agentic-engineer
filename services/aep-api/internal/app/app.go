@@ -162,9 +162,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
 	orgModelConnRepo := organization.NewOrgModelConnectionRepository(db)
 	orgAgentSettingsRepo := organization.NewOrgAgentSettingsRepository(db)
-	// The AI agents card's unit of work: one transaction over the Anthropic
-	// credential rows, the agent-settings row and the secret bytes.
-	agentsCardRepo := organization.NewAgentsCardRepository(db, credStore)
+	// The AI agents card's lock and unit of work: one transaction over the
+	// connection, subscription and agent-settings rows (the keys live only in
+	// vault).
+	agentsCardRepo := organization.NewAgentsCardRepository(db)
 	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
 
@@ -253,7 +254,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Secret-ref mirror writer. Constructed ahead of the credential / IDP service
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
-	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo, orgModelConnRepo).
+	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, idpRepo).
 		// Every Default key save is a new vault path: the deployed direct
 		// ai-agent components' ai-agent-model-access reference moves with it
 		// before the previous path is retired.
@@ -274,16 +275,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Builds clone with the org's github-pat SecretReference, read from its
 	// org_secrets row: aep-api passes the reference name, never the value.
 	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)
-	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)
+	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo)
 	// The org's model connection as every consumer outside organization reads
-	// it: the spec agents and task planning (the connection and its key), the
-	// ai-agent model access and build evaluation (its key's vault reference),
-	// coding dispatch (which credential a run mounts) and Agent Manager. Its
-	// `priced` reads the same rate card the usage stamps are priced from.
-	// Its key readers take the reference names from the org secret rows (R7).
-	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, credStore, in.RateStamper).
+	// it: the ai-agent model access and build evaluation (its key's vault
+	// reference), coding dispatch (which credential a run mounts), AE Studio
+	// and Agent Manager (the connection, no key). Its `priced` reads the same
+	// rate card the usage stamps are priced from. Its key readers take the
+	// reference names from the org secret rows (R7), and the ai-agent model
+	// access its vault path from that reference's SecretReference.
+	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, orgSecretRepo, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter).
-		WithOrgSecrets(orgSecretRepo)
+		WithSecretReferences(modelAccessSecretRefClient)
 	// Each org's AE Studio (ticket 08): its status reads and its converge go
 	// out as aep-api's own identity wherever the install impersonates orgs
 	// (aeStudioOC).
@@ -1484,11 +1486,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// once per cfg.CredentialValidatorInterval (default 24h), probes GitHub,
 		// flags identity drift on confirmed unauthorised secrets.
 		credValidator,
-		// Moves each org's model connection key off its Anthropic-era storage
-		// names: migrate's phase20 copied the bytes at boot, and this switches
-		// the SM-API mirror at boot; the periodic passes retire the old copies
-		// once none of the org's cycles is open.
-		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
 	}
 	// The pod-truth watcher: it classifies each dispatched cycle from the Pod
 	// OpenChoreo rendered for it, records a terminal agent reason when the agent

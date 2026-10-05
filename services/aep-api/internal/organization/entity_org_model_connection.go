@@ -22,22 +22,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 )
 
-// The connection key's storage names.
-const (
-	// modelKeyStoreKey is the `org_secrets` key holding the connection key's
-	// encrypted bytes.
-	modelKeyStoreKey = "model/key"
-	// modelKeySecretEntity is the entity of the key's pre-phase-1 SM-API copy:
-	// its deterministic reference name (modelKeyRefName) is how a row still
-	// naming that copy is recognized. New copies are default-key references.
-	modelKeySecretEntity = "model-connection"
-)
-
 // OrgModelConnection is the org's model connection: one row per org, absent
-// while it has none. The key's bytes live in org_secrets under
-// modelKeyStoreKey; this row holds only what is safe to read: where the
-// connection points, what the save-time probe learned, and a preview of the
-// key.
+// while it has none. The key lives only in vault, under the org's default-key
+// reference; this row holds only what is safe to read: where the connection
+// points and what the save-time probe learned.
 //
 // There is no status column: a save is refused unless the probe passes and
 // nothing revalidates later, so a stored row is usable by construction.
@@ -55,7 +43,8 @@ type OrgModelConnection struct {
 	ContextWindow *int               `gorm:"column:context_window"`
 	OutputLimit   *int               `gorm:"column:output_limit"`
 	ImageInput    modelconn.Tristate `gorm:"column:image_input;not null"`
-	KeyPreview    string             `gorm:"column:key_preview;not null"`
+	// KeyPreview is written empty: no character of the key is kept.
+	KeyPreview string `gorm:"column:key_preview;not null"`
 	// ConnectedAt is when a key was first saved on this host; a key rotation or
 	// a model change keeps it, a host change resets it.
 	ConnectedAt time.Time `gorm:"column:connected_at;not null"`
@@ -64,8 +53,8 @@ type OrgModelConnection struct {
 	// over from the Anthropic-only card, which recorded no author.
 	UpdatedBy *string `gorm:"column:updated_by"`
 
-	// The key's SM-API reference, stamped after commit by the mirror; NULL
-	// until then, so dispatch fails closed rather than mount a previous key.
+	// The pre-reference-row triplet; nothing writes or reads it (the
+	// default-key row names the reference).
 	SecretRefName     *string `gorm:"column:secret_ref_name"`
 	SecretRefKVPath   *string `gorm:"column:secret_ref_kv_path"`
 	SecretRefProperty *string `gorm:"column:secret_ref_property"`
@@ -85,15 +74,4 @@ func (r *OrgModelConnection) Connection() modelconn.Connection {
 		OutputLimit:   r.OutputLimit,
 		ImageInput:    r.ImageInput,
 	}
-}
-
-// keyPreview is the one masked rendering of a connection key: the last 4
-// characters, prefixed by the first 4 only when the key is at least 24 long.
-// Third-party keys have no fixed prefix, and on a short key a longer preview
-// would be most of the key.
-func keyPreview(key string) string {
-	if len(key) < 24 {
-		return "…" + key[max(0, len(key)-4):]
-	}
-	return key[:4] + "…" + key[len(key)-4:]
 }

@@ -24,17 +24,13 @@ import (
 )
 
 // OrgModelConnectionRepository reads the org's model connection row
-// (`org_model_connections`) and stamps its secret-ref columns. It has no
-// insert or delete: the row is written only by the AI agents card's unit of
-// work (AgentsCardTx), together with the key's bytes and whatever else the
-// same save changes.
+// (`org_model_connections`). It is read-only: the row is written only by the
+// AI agents card's unit of work (AgentsCardTx), together with whatever else
+// the same save changes.
 type OrgModelConnectionRepository interface {
 	// GetByOrg returns the org's connection, or nil when it has none (not an
 	// error).
 	GetByOrg(ctx context.Context, ocOrgID string) (*OrgModelConnection, error)
-	// UpdateColumns writes the given columns onto the org's row (a map so nil
-	// values are written as NULL, not skipped).
-	UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error
 }
 
 type orgModelConnectionRepository struct{ db *gorm.DB }
@@ -46,10 +42,6 @@ func NewOrgModelConnectionRepository(db *gorm.DB) OrgModelConnectionRepository {
 
 func (r *orgModelConnectionRepository) GetByOrg(ctx context.Context, ocOrgID string) (*OrgModelConnection, error) {
 	return getModelConnection(r.db.WithContext(ctx), ocOrgID)
-}
-
-func (r *orgModelConnectionRepository) UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error {
-	return r.db.WithContext(ctx).Model(&OrgModelConnection{}).Where("oc_org_id = ?", ocOrgID).Updates(updates).Error
 }
 
 // getModelConnection is the one read of the row, shared by the pool reader and

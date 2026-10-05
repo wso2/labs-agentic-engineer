@@ -98,11 +98,10 @@ paths:
         on first connect the format's defaults fill `baseURL` and `model`).
 
 
-        `apiKey` may be omitted only when the connection's host equals the
-        saved connection's host; the stored key is then used, server side, and
-        never returned. A new host without a key is refused
-        (`llm_key_required_for_new_host`), so a stored key never follows a
-        host. The probe follows no redirects.
+        `apiKey` is required: the probe runs only with the key the request
+        carries, and a stored key is never read back (it lives only in the
+        vault). A body without one is refused 400 `llm_key_required`. The
+        probe follows no redirects.
 
 
         Refusals use the `llm` section's codes (see ConfigPatch.llm) on
@@ -3049,17 +3048,14 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       description: >-
-        A stored Claude subscription token, masked. It bills the coding agent's
-        runs to a Claude plan instead of the organization's API key, and only
-        Claude Code can present it.
+        A stored Claude subscription token: the section says it is set, and no
+        character of it is projected (it lives only in the vault). It bills the
+        coding agent's runs to a Claude plan instead of the organization's API
+        key, and only Claude Code can present it.
       properties:
         kind:
           enum:
           - claude
-          type: string
-        keyPrefix:
-          type: string
-        keyLast4:
           type: string
         status:
           type: string
@@ -3073,8 +3069,6 @@ components:
           type: string
       required:
       - kind
-      - keyPrefix
-      - keyLast4
       - status
       - connectedAt
       type: object
@@ -3739,17 +3733,22 @@ components:
           - $ref: '#/components/schemas/LLMPatch'
           description: >-
             The organization's model connection, patched field by field: an
-            absent field keeps what is stored. Probed before anything in the
-            patch is written; the probe's result rides the response's
-            `llmCheck`. `null` disconnects: the connection, its key and the
-            Claude subscription go, and `llmDisconnectedAt` is set.
+            absent field keeps what is stored. A patch carrying `apiKey` is
+            probed with it before anything in the patch is written; the probe's
+            result rides the response's `llmCheck`. The key is written only to
+            the vault; a failed vault write fails the save with nothing saved,
+            and an installation with no secret store answers 503
+            `secrets_delivery_unavailable`. `null` disconnects: the connection,
+            its key and the Claude subscription go, and `llmDisconnectedAt` is
+            set.
 
 
             First connect needs `kind` and `apiKey`; `baseURL` and `model`
             default from `llmFormats`, so `{kind: anthropic, apiKey}` connects
-            to Anthropic's API with the default model. A changed host needs a
-            new `apiKey` in the same patch; a format change on the same host
-            keeps the stored key.
+            to Anthropic's API with the default model. A connection edit (a
+            change of `kind` or `baseURL`) needs the `apiKey` in the same patch
+            (`llm_key_required`): no stored key is reused. A patch that changes
+            only `model` needs no key and is saved without a probe.
 
 
             Refusal codes, each on `body.llm` (400 unless noted):
@@ -3757,7 +3756,7 @@ components:
             without `baseURL` on a format with no default),
             `llm_base_url_invalid` (not https, or carries userinfo, a query or a
             fragment), `llm_host_refused` (the host resolves to a non-public
-            address), `llm_key_required_for_new_host`, `llm_key_too_short`
+            address), `llm_key_required`, `llm_key_too_short`
             (under 12 characters), `llm_key_rejected` (the endpoint answered 401
             or 403), `llm_unexpected_status` (any other 4xx, including a 429
             without a rate-limit shape), `llm_unreachable` (network failure,
@@ -5181,9 +5180,12 @@ components:
         path: github.com/wso2/aep/aep-api/internal/platform/orgconfig
       additionalProperties: false
       description: >-
-        The organization's model connection, as every agent uses it. A stored
-        connection is usable by construction: a save is refused unless the
-        probe passes.
+        The organization's model connection, as every agent uses it. Its key is
+        write-only and lives only in the vault: the section's presence says
+        the key is set, and no character of it is projected. The section is
+        null while the key's vault reference is not recorded. A stored
+        connection is usable by construction: a save that changes the
+        connection is refused unless its probe passes.
       properties:
         baseURL:
           type: string
@@ -5192,11 +5194,6 @@ components:
         connectedAt:
           description: When a key was first connected on this connection's host.
           format: date-time
-          type: string
-        keyPreview:
-          description: >-
-            The key's last 4 characters, prefixed by its first 4 and an ellipsis
-            only when the key is at least 24 long.
           type: string
         kind:
           enum:
@@ -5221,7 +5218,6 @@ components:
       - kind
       - baseURL
       - model
-      - keyPreview
       - connectedAt
       - updatedAt
       - updatedBy

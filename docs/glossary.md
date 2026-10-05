@@ -577,7 +577,7 @@ plan is closed and its bugs have left.
 The one endpoint every agent of an organization calls: an API **format**
 (`anthropic` Messages or `openai-compatible`), a **base URL**, a **key** and a
 **model**. One row per org in `org_model_connections` (absent = not connected),
-the key in `org_secrets` `model/key`; the `/config` section `llm`. Anthropic's
+the key only in the vault (the org secret `default-key`); the `/config` section `llm`. Anthropic's
 own API is one connection among others, not a special case. What a connection
 supports (Claude Code, the Claude subscription, web search, native PDFs, image
 input, generated agents) is its **capabilities**, computed only by

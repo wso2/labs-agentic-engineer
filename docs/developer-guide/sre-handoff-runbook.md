@@ -76,9 +76,9 @@ re-reads the same path every minute. The key value must not be placed in the
 image, checked into config, or logged.
 
 An org whose key predates the model connection still has an
-`anthropic-secrets` reference until aep-api's background rename moves it
-(`services/aep-api/internal/organization/model_key_rename.go`). aectl falls
-back to that name, and a re-run after the rename picks up the new one.
+`anthropic-secrets` reference until its key is saved again in Settings →
+Models. aectl falls back to that name, and a re-run after the save picks up
+the new one.
 
 `--org-namespace` picks the org (default: config `oc.default_org_namespace`,
 else `default`).

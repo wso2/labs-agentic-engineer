@@ -172,6 +172,9 @@ type configHarness struct {
 	gh    *cfgFakeGH
 	anth  *anthropicFake // the Claude subscription probe
 	model *modelEndpoint // the model connection's endpoint, for every host
+	// vault is the secrets client every key and PAT write goes to; nil on
+	// an installation with no secrets provider.
+	vault *submitVault
 }
 
 // newConfigHarness assembles the real orgconfig.Service over one shared dbtest
@@ -255,21 +258,23 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 
 	model := newModelEndpoint(t, http.StatusOK)
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
-	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo, store).WithAnthropicAPIBase(anth.URL)
-	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, store, sonnetRates())
+	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo).WithAnthropicAPIBase(anth.URL)
+	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, organization.NewOrgSecretRepository(db), sonnetRates())
 	if !o.guarded {
 		conns.WithProbeClient(model.client())
 	}
 	credRepo := organization.NewOrgCredentialRepository(db, nil)
 	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL)
+	var vault *submitVault
 	if o.secretsDelivery {
-		vault := &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
+		vault = &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 		orgSecrets := organization.NewOrgSecretWriter(vault, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
-		refWriter := organization.NewSecretRefWriter(vault, credRepo, anthropicRepo,
-			organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db)).WithOrgSecretWriter(orgSecrets)
+		refWriter := organization.NewSecretRefWriter(vault, credRepo,
+			organization.NewIDPRepository(db, nil)).WithOrgSecretWriter(orgSecrets)
 		credSvc.WithSecretRefWriter(refWriter)
+		conns.WithSecretRefWriter(refWriter)
+		anthropicSvc.WithSecretRefWriter(refWriter)
 		if o.modelProvider != nil {
-			conns.WithSecretRefWriter(refWriter)
 			anthropicSvc.WithModelProvider(o.modelProvider)
 		}
 	}
@@ -280,12 +285,12 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 		credSvc, disconnectSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
 	).WithOrgSecretRefs(organization.NewOrgSecretRepository(db)).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
-		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), o.runtimes))
+		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db), o.runtimes))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Organization: mustNewOrgHandlers(t, organization.Deps{Config: svc})}})
-	return &configHarness{h: h, db: db, gh: gh, anth: anth, model: model}
+	return &configHarness{h: h, db: db, gh: gh, anth: anth, model: model, vault: vault}
 }
 
 // mustNewOrgHandlers assembles the real organization domain around the given
@@ -382,9 +387,8 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	if idpSec["kind"] != "custom" || idpSec["hasClientSecret"] != true {
 		t.Fatalf("idp projection drifted: %v", idpSec)
 	}
-	// No FULL secret material anywhere in the body. (The keyPreview display
-	// fragment is intentional and safe — only the full apiKey/pat/clientSecret
-	// must never appear.)
+	// No secret material anywhere in the body: no apiKey, PAT or client
+	// secret, and no character of a key (TestProjection_HasNoPreviewCharacters).
 	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
@@ -400,8 +404,12 @@ func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	if err := c.db.Exec(`INSERT INTO org_model_connections
 		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, key_preview, connected_at, updated_at)
 		VALUES ('acme', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-haiku-4-5',
-		        'x-api-key', 'yes', 'sk-a…9999', now(), now())`).Error; err != nil {
+		        'x-api-key', 'yes', '', now(), now())`).Error; err != nil {
 		t.Fatalf("seed a migrated connection: %v", err)
+	}
+	if err := organization.NewOrgSecretRepository(c.db).Upsert(context.Background(), "acme",
+		organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "acme-default-key-0000beef"}, ""); err != nil {
+		t.Fatalf("seed its default-key row: %v", err)
 	}
 
 	m := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())
@@ -409,7 +417,7 @@ func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	if v, present := llm["updatedBy"]; !present || v != nil {
 		t.Fatalf("updatedBy must be present and null on a migrated connection: %v", llm)
 	}
-	if llm["model"] != "claude-haiku-4-5" || llm["keyPreview"] != "sk-a…9999" || llm["priced"] != false {
+	if llm["model"] != "claude-haiku-4-5" || llm["priced"] != false {
 		t.Fatalf("llm projection drifted: %v", llm)
 	}
 }
@@ -512,8 +520,8 @@ func TestConfigComponent_C1_FirstConnect(t *testing.T) {
 	}
 	m := decodeCfg(t, resp.Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["keyPreview"] != goodAnthKey[:4]+"…"+goodAnthKey[len(goodAnthKey)-4:] {
-		t.Fatalf("post-write projection preview drifted: %v", llm)
+	if llm["kind"] != "anthropic" || c.defaultKeyRef(t, "acme") == nil || c.vault.data[c.defaultKeyRef(t, "acme").Name]["api-key"] != goodAnthKey {
+		t.Fatalf("post-write projection %v: want the connection, its key in the vault under the default-key row", llm)
 	}
 	// A following GET is identical, less the save's own probe result.
 	if _, ok := m["llmCheck"]; !ok {
@@ -531,13 +539,14 @@ func TestConfigComponent_C2_ReplaceKey(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
 		t.Fatalf("first connect: %d %s", r.Code, r.Body.String())
 	}
+	first := c.defaultKeyRef(t, "acme").Name
 	resp := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey2))
 	if resp.Code != 200 {
 		t.Fatalf("replace: %d %s", resp.Code, resp.Body.String())
 	}
-	llm := decodeCfg(t, resp.Body.Bytes())["llm"].(map[string]any)
-	if llm["keyPreview"] != goodAnthKey2[:4]+"…"+goodAnthKey2[len(goodAnthKey2)-4:] {
-		t.Fatalf("replace did not swap the key preview: %v", llm)
+	second := c.defaultKeyRef(t, "acme").Name
+	if second == first || c.vault.data[second]["api-key"] != goodAnthKey2 || c.vault.live[first] {
+		t.Fatalf("replace: default-key %s → %s, want a new reference holding the new key and the old one retired", first, second)
 	}
 }
 

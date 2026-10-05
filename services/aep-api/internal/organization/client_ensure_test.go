@@ -226,7 +226,7 @@ func newEnsureFixture(t *testing.T, appExists, rowSet bool) *ensureFixture {
 		f.vault.refs["old-ref"] = true
 	}
 	ou := ensureOU
-	writer := NewSecretRefWriter(f.vault, nil, nil, f.idp, nil).
+	writer := NewSecretRefWriter(f.vault, nil, f.idp).
 		WithOrgSecretWriter(NewOrgSecretWriter(f.vault, f.rows, memOrgSecretLock{}, time.Now))
 	f.svc = NewIDPService(f.idp, ouOrgRepo{ou: &ou}, f.thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)
 	return f

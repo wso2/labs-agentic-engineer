@@ -177,8 +177,8 @@ func TestConfigAgents_OneSaveWritesTheWholeCard(t *testing.T) {
 		t.Fatalf("llm: %v agents: %v", llm, a)
 	}
 	sub, ok := a["subscription"].(map[string]any)
-	if !ok || sub["kind"] != "claude" || sub["keyLast4"] != goodToken[len(goodToken)-4:] {
-		t.Fatalf("subscription must project masked: %v", a["subscription"])
+	if !ok || sub["kind"] != "claude" || sub["status"] != "active" {
+		t.Fatalf("subscription must project as set: %v", a["subscription"])
 	}
 	for _, secret := range []string{goodAnthKey, goodToken} {
 		if strings.Contains(resp.Body.String(), secret) {

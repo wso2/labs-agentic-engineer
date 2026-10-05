@@ -1995,7 +1995,7 @@ type LLMFormatOption = orgconfig.LLMFormatOption
 // LLMPatch A model connection, field by field: an absent field keeps the saved value (or, on first connect, the format's default). Any public https endpoint speaking one of the formats; private, cluster and plain-http hosts are refused.
 type LLMPatch = orgconfig.LLMPatch
 
-// LLMProjection The organization's model connection, as every agent uses it. A stored connection is usable by construction: a save is refused unless the probe passes.
+// LLMProjection The organization's model connection, as every agent uses it. Its key is write-only and lives only in the vault: the section's presence says the key is set, and no character of it is projected. The section is null while the key's vault reference is not recorded. A stored connection is usable by construction: a save that changes the connection is refused unless its probe passes.
 type LLMProjection = orgconfig.LLMProjection
 
 // Lineage defines model for Lineage.
@@ -3044,7 +3044,7 @@ type StatusMsg struct {
 	Status string `json:"status"`
 }
 
-// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+// SubscriptionProjection A stored Claude subscription token: the section says it is set, and no character of it is projected (it lives only in the vault). It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
 type SubscriptionProjection = orgconfig.SubscriptionProjection
 
 // TagList defines model for TagList.

@@ -18,10 +18,9 @@ package organization_test
 
 // DBTEST tier (skips under -short; `make test-db` runs it): the model
 // connection's readers take the SecretReference name from the org_secrets
-// row (R7), with the fixed key, so a rotation whose triplet stamp lags never
-// hands a consumer the reference the write already deleted. An org with no
-// row yet (connected before phase 1) still resolves from its triplet, name
-// and key from that one source, and needs no vault path (C10).
+// row (R7), with the fixed key; the ai-agent model access takes the vault
+// path from that SecretReference's spec (names and paths, never a value).
+// There is no fallback to the pre-reference-row triplet columns.
 
 import (
 	"context"
@@ -30,103 +29,98 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
 
+// vaultSecretRefs answers GetSecretReference for the references the fake
+// vault holds: spec.data maps each key to the vault path the reference was
+// created at (a path the readers must take as given, never derive).
+type vaultSecretRefs struct{ vault *fakeVault }
+
+func (r vaultSecretRefs) GetSecretReference(_ context.Context, cpNS, name string) (*secretmanagersvc.SecretReference, error) {
+	if !r.vault.refs[name] {
+		return nil, secretmanagersvc.ErrNotFound
+	}
+	return &secretmanagersvc.SecretReference{Namespace: cpNS, Name: name, Data: []secretmanagersvc.SecretReferenceData{
+		{SecretKey: "api-key", RemoteKey: "kv/elsewhere/" + name, Property: "api-key"},
+	}}, nil
+}
+
 func TestKeyRef_FollowsARotation(t *testing.T) {
 	t.Parallel()
-	f := newCardFixture(t)
-	f.card.conns.WithOrgSecrets(f.refs)
-	f.save(keyPatch(anthropicUnitKey))
-	first := f.ref(organization.OrgSecretDefaultKey).Name
-	f.save(keyPatch(anthropicDBKey2))
-	row := f.ref(organization.OrgSecretDefaultKey).Name
+	c := newCardDB(t, http.StatusOK)
+	c.connect(t, "acme", anthropicUnitKey)
+	first := c.ref(t, "acme", organization.OrgSecretDefaultKey).Name
+	c.connect(t, "acme", anthropicDBKey2)
+	row := c.ref(t, "acme", organization.OrgSecretDefaultKey).Name
 	if row == first {
 		t.Fatalf("the second save did not rotate the default-key reference (%q)", row)
 	}
-
-	// The triplet stamp lags (still the pre-rotation name): a mount gets the
-	// row's name and key, never a vault path.
-	stampConnectionTriplet(t, f.card.connRepo, "acme", first, "user-app-secrets/wc-acme/"+first, "api-key")
-	_, ref, err := f.card.conns.KeyRef(context.Background(), "acme")
+	_, ref, err := c.conns.KeyRef(context.Background(), "acme")
 	if err != nil || ref != (organization.SecretRefTriplet{Name: row, Property: "api-key"}) {
 		t.Fatalf("KeyRef = %+v, %v; want the row's %q, name + key only (R7, C10)", ref, err, row)
 	}
 }
 
-// The model access reads the stamped triplet whole. A save that writes a key
-// clears the triplet in its own transaction and stamps it in the copy that
-// follows; when that copy does not land (here the vault refuses the new
-// reference), the triplet stays empty and KeyPathRef fails closed with a
-// value-free error until the next key save, which ModelAccessEnvVars surfaces
-// as a failed deploy (TestModelAccessEnvVars_UnreadableConnectionFailsTheDeploy).
-// A committed save then resolves to that save's reference, path included.
-func TestKeyPathRef_FollowsTheCommittedStamp(t *testing.T) {
-	t.Parallel()
-	f := newCardFixture(t)
-	f.card.conns.WithOrgSecrets(f.refs)
-	f.save(keyPatch(anthropicUnitKey))
-
-	f.vault.createErr = errors.New("vault unavailable")
-	f.save(keyPatch(anthropicDBKey2))
-	if row := f.card.row(t, "acme"); row.SecretRefName != nil || row.SecretRefKVPath != nil {
-		t.Fatalf("triplet = %v %v, want cleared by the key-writing save whose copy did not land", row.SecretRefName, row.SecretRefKVPath)
-	}
-	_, ref, err := f.card.conns.KeyPathRef(context.Background(), "acme")
-	if err == nil || !strings.Contains(err.Error(), "secret_ref_name is not populated") ||
-		strings.Contains(err.Error(), anthropicDBKey2) || strings.Contains(err.Error(), anthropicUnitKey) {
-		t.Fatalf("KeyPathRef = %+v, %v; want a value-free fail-closed error", ref, err)
-	}
-
-	f.vault.createErr = nil
-	f.save(keyPatch(anthropicUnitKey))
-	b := f.ref(organization.OrgSecretDefaultKey).Name
-	_, ref, err = f.card.conns.KeyPathRef(context.Background(), "acme")
-	if err != nil || ref.Name != b || !strings.HasSuffix(ref.KVPath, "/"+b) || ref.Property != "api-key" || !f.exists(b) {
-		t.Fatalf("KeyPathRef = %+v, %v; want the committed save's %q with its path", ref, err, b)
-	}
-}
-
-func TestResolveCodingCredential_ReadsTheRecordedReferences_DB(t *testing.T) {
+// K-1: KeyPathRef reads no triplet column. The name is the default-key row's,
+// the vault path is the one that reference's spec.data reads its api-key
+// from. A save whose vault write failed saved nothing, so the path stays the
+// previous save's; a reference that is gone fails closed, value-free.
+func TestKeyPathRef_ResolvesThePathFromTheSecretReference_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	keyAndSubscription(t, c) // triplets acme-anthropic / acme-anthropic-coding: pre-rotation
-	refs := organization.NewOrgSecretRepository(c.db)
-	c.conns.WithOrgSecrets(refs)
-	upsertRef(t, refs, organization.OrgSecretDefaultKey, "acme-default-key-0000beef")
-	upsertRef(t, refs, organization.OrgSecretCodingAgentKey, "acme-coding-agent-key-0000cafe")
+	c.conns.WithSecretReferences(vaultSecretRefs{vault: c.vault})
+	c.connect(t, "acme", anthropicUnitKey)
+	a := c.ref(t, "acme", organization.OrgSecretDefaultKey).Name
 
-	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
-	if err != nil || cred.Kind != organization.CodingCredentialClaudeSubscription ||
-		cred.Ref != (organization.SecretRefTriplet{Name: "acme-coding-agent-key-0000cafe", Property: "api-key"}) {
-		t.Fatalf("Claude Code = %+v, %v; want the coding-agent-key row (R7)", cred, err)
+	row := c.row(t, "acme")
+	if row.SecretRefName != nil || row.SecretRefKVPath != nil || row.SecretRefProperty != nil {
+		t.Fatalf("triplet columns = %v %v %v, want none written", row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
 	}
-	cred, err = c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeOpenCode)
-	if err != nil || cred.Kind != organization.CodingCredentialConnectionKey ||
-		cred.Ref != (organization.SecretRefTriplet{Name: "acme-default-key-0000beef", Property: "api-key"}) {
-		t.Fatalf("OpenCode = %+v, %v; want the default-key row (R7)", cred, err)
+	_, ref, err := c.conns.KeyPathRef(context.Background(), "acme")
+	if err != nil || ref != (organization.SecretRefTriplet{Name: a, KVPath: "kv/elsewhere/" + a, Property: "api-key"}) {
+		t.Fatalf("KeyPathRef = %+v, %v; want %s with the path its SecretReference reads", ref, err, a)
+	}
+
+	c.vault.createErr = errors.New("vault unavailable")
+	if _, err := c.config.Patch(c.ctx, "acme", "ada", keyPatch(anthropicDBKey2)); err == nil {
+		t.Fatal("a failed vault write must fail the save")
+	}
+	if _, ref, err := c.conns.KeyPathRef(context.Background(), "acme"); err != nil || ref.Name != a {
+		t.Fatalf("after a failed save KeyPathRef = %+v, %v; want the previous save's %s", ref, err, a)
+	}
+
+	delete(c.vault.refs, a)
+	_, ref, err = c.conns.KeyPathRef(context.Background(), "acme")
+	if err == nil || strings.Contains(err.Error(), anthropicUnitKey) || strings.Contains(err.Error(), anthropicDBKey2) {
+		t.Fatalf("KeyPathRef on a missing SecretReference = %+v, %v; want a value-free fail-closed error", ref, err)
 	}
 }
 
-func TestResolveCodingCredential_FallsBackToTheTripletWithoutARow_DB(t *testing.T) {
+// No SecretReference reader: KeyPathRef refuses rather than derive a path.
+func TestKeyPathRef_WithoutAReaderFailsClosed_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	keyAndSubscription(t, c)
-	c.conns.WithOrgSecrets(organization.NewOrgSecretRepository(c.db))
-	// A pre-phase-1 triplet with no vault path still mounts: dispatch needs
-	// only the name and the key (C10).
-	stampTriplet(t, c.repo, "acme", "acme-anthropic-coding", "", "token")
-
-	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
-	if err != nil || cred.Ref != (organization.SecretRefTriplet{Name: "acme-anthropic-coding", Property: "token"}) {
-		t.Fatalf("legacy org = %+v, %v; want name and key from its triplet", cred, err)
+	c.connect(t, "acme", anthropicUnitKey)
+	if _, ref, err := c.conns.KeyPathRef(context.Background(), "acme"); err == nil {
+		t.Fatalf("KeyPathRef = %+v, want an error with no SecretReference reader", ref)
 	}
 }
 
-func upsertRef(t *testing.T, refs organization.OrgSecretRepository, s organization.OrgSecret, name string) {
-	t.Helper()
-	if err := refs.Upsert(context.Background(), "acme", organization.OrgSecretRef{Secret: s, Name: name}, ""); err != nil {
-		t.Fatalf("upsert %s row: %v", s, err)
+// K-2: an org whose reference rows are missing (saved before the rows
+// existed) does not resolve from its triplet columns: dispatch fails closed.
+func TestResolveCodingCredential_NoTripletFallbackWithoutARow_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	c.connect(t, "acme", anthropicUnitKey)
+	if err := c.db.Exec(`UPDATE org_model_connections SET secret_ref_name = 'acme-anthropic', secret_ref_property = 'api-key' WHERE oc_org_id = 'acme'`).Error; err != nil {
+		t.Fatalf("seed a pre-phase-1 triplet: %v", err)
+	}
+	dropRow(t, c, organization.OrgSecretDefaultKey)
+
+	if cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeOpenCode); err == nil {
+		t.Fatalf("a triplet without its row resolved: %+v", cred)
 	}
 }

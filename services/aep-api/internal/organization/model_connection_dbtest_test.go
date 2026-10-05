@@ -17,16 +17,16 @@
 package organization_test
 
 // DBTEST tier — ModelConnectionService read back over the rows the AI agents
-// card writes (same real Postgres + AES-GCM store as anthropic_dbtest_test.go).
-// What is pinned here:
+// card writes (same real Postgres and org secret writer as
+// anthropic_dbtest_test.go). What is pinned here:
 //
-//   - Effective — the connection and its key for the spec agents; "none" is
-//     ok=false, never an error; it stays on the API key when a subscription
-//     exists;
-//   - KeyRef — the key's vault triplet, NotFoundError while nothing is
-//     connected;
+//   - Connection — the connection without a key; "none" is ok=false, never an
+//     error;
+//   - KeyRef — the key's reference from its default-key row, NotFoundError
+//     while nothing is connected, an error while the row is missing;
 //   - ResolveCodingCredential — the subscription only on Claude Code, the
-//     connection's key otherwise, failing closed on a broken subscription;
+//     connection's key otherwise, from the coding-agent-key and default-key
+//     rows, failing closed on a broken subscription;
 //   - the connection itself, read from org_model_connections with the model
 //     it was saved with.
 
@@ -59,58 +59,38 @@ func wantAnthropic(t *testing.T, conn modelconn.Connection, model string) {
 	}
 }
 
-// --- Effective ----------------------------------------------------------------
+// --- Connection -----------------------------------------------------------------
 
-func TestModelConnectionEffective_DB(t *testing.T) {
+func TestModelConnectionConnection_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	ctx := context.Background()
 
-	// No row → ok=false, NOT an error (the turn surface maps it).
-	if _, key, ok, err := c.conns.Effective(ctx, "acme"); err != nil || ok || key != "" {
-		t.Fatalf("absent org: ok=%v key=%q err %v, want none", ok, key, err)
+	// No row → ok=false, NOT an error.
+	if _, ok, err := c.conns.Connection(ctx, "acme"); err != nil || ok {
+		t.Fatalf("absent org: ok=%v err %v, want none", ok, err)
 	}
 	c.connect(t, "acme", anthropicUnitKey)
-	conn, key, ok, err := c.conns.Effective(ctx, "acme")
-	if err != nil || !ok || key != anthropicUnitKey {
-		t.Fatalf("connected: ok=%v err %v, want the org key", ok, err)
+	conn, ok, err := c.conns.Connection(ctx, "acme")
+	if err != nil || !ok {
+		t.Fatalf("connected: ok=%v err %v", ok, err)
 	}
 	wantAnthropic(t, conn, modelconn.DefaultAnthropicModel)
-
-	// The row exists but the bytes vanished → degrades to none.
-	if err := c.store.Delete(ctx, "acme", "model/key"); err != nil {
-		t.Fatalf("store delete: %v", err)
-	}
-	if _, key, ok, err := c.conns.Effective(ctx, "acme"); err != nil || ok || key != "" {
-		t.Fatalf("active row without bytes: ok=%v key=%q err %v, want none", ok, key, err)
-	}
 }
 
 // The model is part of the connection: the org's choice, not the default.
-func TestModelConnectionEffective_CarriesTheChosenModel_DB(t *testing.T) {
+func TestModelConnectionConnection_CarriesTheChosenModel_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	ctx := context.Background()
 	c.connect(t, "acme", anthropicUnitKey)
 	c.patch(t, "acme", llmPatch(orgconfig.LLMPatch{Model: "claude-haiku-4-5"}))
 
-	conn, _, ok, err := c.conns.Effective(ctx, "acme")
+	conn, ok, err := c.conns.Connection(context.Background(), "acme")
 	if err != nil || !ok {
-		t.Fatalf("effective: ok=%v err %v", ok, err)
+		t.Fatalf("connection: ok=%v err %v", ok, err)
 	}
+	// A model-only edit is saved unprobed: Anthropic's API keeps its defaults.
 	wantAnthropic(t, conn, "claude-haiku-4-5")
-}
-
-func TestModelConnectionEffective_IsTheKeyNotTheSubscription_DB(t *testing.T) {
-	t.Parallel()
-	c := newCardDB(t, http.StatusOK)
-	c.connect(t, "acme", anthropicUnitKey)
-	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
-
-	_, key, ok, err := c.conns.Effective(context.Background(), "acme")
-	if err != nil || !ok || key != anthropicUnitKey {
-		t.Fatalf("the spec agents must keep billing the API key, got ok=%v (%v)", ok, err)
-	}
 }
 
 // --- KeyRef -------------------------------------------------------------------
@@ -127,19 +107,25 @@ func TestModelConnectionKeyRef_DB(t *testing.T) {
 		t.Fatalf("absent org: got %v, want *organization.NotFoundError", err)
 	}
 
-	// Connected and mirrored → the vault triplet, not the key's bytes. No
-	// SecretRefWriter is wired here, so the mirror's columns are stamped the
-	// way the ResolveCodingCredential tests stamp them.
+	// Connected → the default-key row's reference and its key, never a value.
 	c.connect(t, "acme", anthropicUnitKey)
-	stampConnectionTriplet(t, c.connRepo, "acme", "acme-anthropic", "user-app-secrets/wc-acme/acme-anthropic", "api-key")
-	conn, triplet, err := c.conns.KeyRef(ctx, "acme")
+	conn, ref, err := c.conns.KeyRef(ctx, "acme")
 	if err != nil {
 		t.Fatalf("KeyRef after connect: %v", err)
 	}
-	if triplet.KVPath != "user-app-secrets/wc-acme/acme-anthropic" || triplet.Property != "api-key" {
-		t.Fatalf("KeyRef must return the stamped triplet, got %+v", triplet)
+	if row := c.ref(t, "acme", organization.OrgSecretDefaultKey); ref.Name != row.Name || ref.Property != "api-key" {
+		t.Fatalf("KeyRef = %+v, want the default-key row's reference %s with api-key", ref, row.Name)
 	}
 	wantAnthropic(t, conn, modelconn.DefaultAnthropicModel)
+
+	// A connection row whose default-key row is gone has no key to mount: an
+	// error, never a fallback.
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'default-key'`).Error; err != nil {
+		t.Fatalf("drop the row: %v", err)
+	}
+	if _, _, err := c.conns.KeyRef(ctx, "acme"); err == nil || errors.As(err, &nf) || !strings.Contains(err.Error(), "default-key") {
+		t.Fatalf("KeyRef without its row = %v, want an error naming default-key", err)
+	}
 }
 
 // --- ResolveCodingCredential ----------------------------------------------------
@@ -148,17 +134,23 @@ func TestResolveCodingCredential_NoSubscription_UsesTheKey_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	c.connect(t, "acme", anthropicUnitKey)
-	stampConnectionTriplet(t, c.connRepo, "acme", "acme-anthropic", "user-app-secrets/wc-acme/acme-anthropic", "api-key")
 
 	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if cred.Ref.KVPath != "user-app-secrets/wc-acme/acme-anthropic" ||
+	if cred.Ref.Name != c.ref(t, "acme", organization.OrgSecretDefaultKey).Name || cred.Ref.Property != "api-key" ||
 		cred.Kind != organization.CodingCredentialConnectionKey {
 		t.Fatalf("no subscription must resolve to the API key, got %+v", cred)
 	}
 	wantAnthropic(t, cred.Conn, modelconn.DefaultAnthropicModel)
+}
+
+// keyAndSubscription connects the key and a subscription.
+func keyAndSubscription(t *testing.T, c *cardDB) {
+	t.Helper()
+	c.connect(t, "acme", anthropicUnitKey)
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
 }
 
 // Dispatch reads the row, never the bytes, so the resolved kind is the only
@@ -174,9 +166,18 @@ func TestResolveCodingCredential_SubscriptionOnClaudeCode_DB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if cred.Ref.KVPath != "user-app-secrets/wc-acme/acme-anthropic-coding" ||
+	if cred.Ref.Name != c.ref(t, "acme", organization.OrgSecretCodingAgentKey).Name ||
 		cred.Kind != organization.CodingCredentialClaudeSubscription {
 		t.Fatalf("a Claude Code run must mount the subscription, got %+v", cred)
+	}
+}
+
+// dropRow deletes the org secret's reference row, as an org saved before the
+// rows existed has none.
+func dropRow(t *testing.T, c *cardDB, s organization.OrgSecret) {
+	t.Helper()
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = ?`, string(s)).Error; err != nil {
+		t.Fatalf("drop the %s row: %v", s, err)
 	}
 }
 
@@ -191,14 +192,14 @@ func TestResolveCodingCredential_OpenCodeNeverGetsTheSubscription_DB(t *testing.
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if cred.Ref.KVPath != "user-app-secrets/wc-acme/acme-anthropic" ||
+	if cred.Ref.Name != c.ref(t, "acme", organization.OrgSecretDefaultKey).Name ||
 		cred.Kind != organization.CodingCredentialConnectionKey {
 		t.Fatalf("an OpenCode run must mount the API key, got %+v", cred)
 	}
 
 	// Not consulted means not consulted: a subscription broken enough to fail a
 	// Claude Code run closed still leaves OpenCode on the API key.
-	stampTriplet(t, c.repo, "acme", "", "", "")
+	dropRow(t, c, organization.OrgSecretCodingAgentKey)
 	cred, err = c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeOpenCode)
 	if err != nil || cred.Kind != organization.CodingCredentialConnectionKey {
 		t.Fatalf("a broken subscription reached an OpenCode run: cred=%+v err=%v", cred, err)
@@ -206,18 +207,19 @@ func TestResolveCodingCredential_OpenCodeNeverGetsTheSubscription_DB(t *testing.
 }
 
 // An org that chose to bill its plan must never have a run quietly billed to
-// API credits instead: a subscription whose mirror never landed is an ERROR.
+// API credits instead: a subscription whose reference row is missing is an
+// ERROR.
 func TestResolveCodingCredential_BrokenSubscriptionFailsClosed_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	keyAndSubscription(t, c)
-	stampTriplet(t, c.repo, "acme", "acme-anthropic-coding", "", "")
+	dropRow(t, c, organization.OrgSecretCodingAgentKey)
 
 	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
 	if err == nil {
-		t.Fatalf("a broken subscription triplet must fail closed, got %+v", cred)
+		t.Fatalf("a subscription without its reference must fail closed, got %+v", cred)
 	}
-	if !strings.Contains(err.Error(), "secret_ref_property") {
+	if !strings.Contains(err.Error(), "coding-agent-key") {
 		t.Fatalf("the error must name what is missing, got: %v", err)
 	}
 }

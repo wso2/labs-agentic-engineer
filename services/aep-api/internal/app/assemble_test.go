@@ -86,8 +86,8 @@ func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 	if app.Handler == nil {
 		t.Fatal("assembled app has a nil Handler")
 	}
-	if len(app.Watchers) != 10 {
-		t.Fatalf("minimal watcher count = %d, want 10 (the unconditional watchers; reaper omitted with Fake nil Workspace)", len(app.Watchers))
+	if len(app.Watchers) != 9 {
+		t.Fatalf("minimal watcher count = %d, want 9 (the unconditional watchers; reaper omitted with Fake nil Workspace)", len(app.Watchers))
 	}
 	for i, w := range app.Watchers {
 		if w == nil {
@@ -132,20 +132,20 @@ func TestAssemble_SREHandoffVerifierShared(t *testing.T) {
 }
 
 // TestAssemble_WatcherRegistration pins the one remaining conditional watcher:
-// the run-supervisor worker rides on TEMPORAL_HOSTPORT. The base is 10 — Fake()
+// the run-supervisor worker rides on TEMPORAL_HOSTPORT. The base is 9 — Fake()
 // omits the disk reaper (nil Workspace); the webhook replayer, the event plane's
-// reconcile AND build sweeps, the OpenChoreo pod-truth watcher, the coding
-// Component settler and the model key rename are all unconditional.
+// reconcile AND build sweeps, the OpenChoreo pod-truth watcher and the coding
+// Component settler are all unconditional.
 func TestAssemble_WatcherRegistration(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*config.Config)
 		want   int
 	}{
-		{"base", func(*config.Config) {}, 10},
+		{"base", func(*config.Config) {}, 9},
 		{"+temporal adds the run worker", func(c *config.Config) {
 			c.Temporal.HostPort = "temporal:7233"
-		}, 11},
+		}, 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

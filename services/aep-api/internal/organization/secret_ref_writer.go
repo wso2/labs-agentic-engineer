@@ -41,27 +41,19 @@ import (
 // If SM-API's mount changes, both sides must change together.
 const vaultPathPrefix = "user-app-secrets"
 
-// SecretRefWriter is the small helper Connect flows call after the per-org
-// credential row is upserted. It uploads the secret value through the
-// injected secrets provider and stamps the resulting
-// `{secretRefName, kvPath, property}` onto the row so dispatch can mint
-// per-run ExternalSecrets without a label-lookup.
-//
-// Failures are logged but do not break the Connect transaction — the
-// `org_secrets`-backed path keeps working. The "secret-ref row was upserted
-// but the triplet is missing" state surfaces in the next Connect attempt
-// (overwrites the row cleanly).
-// The triplet columns live on four tables — org_credentials (GitHub PAT),
-// org_model_connections (the model connection's key),
-// org_anthropic_credentials (the Claude subscription), and
-// organization_idp_profiles (Thunder publisher). Each is reached through its
-// owning repository so the writer holds no ORM/DB handle of its own.
+// SecretRefWriter writes the org's secrets to the vault through the injected
+// secrets provider: the org secrets (the GitHub PAT, the model keys, the two
+// org clients) as a new reference per write (OrgSecretWriter), and the
+// platform-issued per-agent values (WriteAMPModelKey and friends). The vault
+// write is the write: a failure is returned, and no value is kept anywhere
+// else. The rows it reads or stamps (org_credentials for the GitHub PAT's
+// pre-phase-1 reference, organization_idp_profiles for the publisher) are
+// reached through their owning repositories, so the writer holds no ORM/DB
+// handle of its own.
 type SecretRefWriter struct {
-	client        secretmanagersvc.SecretManagementClient
-	orgCredRepo   OrgCredentialRepository
-	anthropicRepo OrgAnthropicRepository
-	idpRepo       IDPRepository
-	modelConnRepo OrgModelConnectionRepository
+	client      secretmanagersvc.SecretManagementClient
+	orgCredRepo OrgCredentialRepository
+	idpRepo     IDPRepository
 	// orgSecrets writes the org secrets (the GitHub PAT, the two org
 	// clients) as a new reference per write; see OrgSecretWriter.
 	orgSecrets *OrgSecretWriter
@@ -102,16 +94,12 @@ func (w *SecretRefWriter) repointModelKeyConsumers(ctx context.Context, ocOrgID 
 func NewSecretRefWriter(
 	client secretmanagersvc.SecretManagementClient,
 	orgCredRepo OrgCredentialRepository,
-	anthropicRepo OrgAnthropicRepository,
 	idpRepo IDPRepository,
-	modelConnRepo OrgModelConnectionRepository,
 ) *SecretRefWriter {
 	return &SecretRefWriter{
-		client:        client,
-		orgCredRepo:   orgCredRepo,
-		anthropicRepo: anthropicRepo,
-		idpRepo:       idpRepo,
-		modelConnRepo: modelConnRepo,
+		client:      client,
+		orgCredRepo: orgCredRepo,
+		idpRepo:     idpRepo,
 	}
 }
 
@@ -143,29 +131,28 @@ func (w *SecretRefWriter) Enabled() bool {
 // references store their value under (orgSecretKeys).
 const apiKeyProperty = secretmanagersvc.SecretKeyAPIKey
 
-// WriteModelKey stores the org's model connection key as a new default-key
-// reference and records it in the secret's row; repoint (nil = nothing)
-// receives the new reference's triplet while the secret's lock is held, for
-// the caller to stamp onto the connection row inside its own transaction.
-// The previous reference (the row's, else legacy: a pre-phase-1 copy the
-// triplet named) stays until the caller runs Retire on the returned write,
-// after its transaction commits. ctx must carry the user's ouId claim (the
-// vault path).
-func (w *SecretRefWriter) WriteModelKey(ctx context.Context, ocOrgID, apiKey, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
-	return w.writeAPIKey(ctx, ocOrgID, OrgSecretDefaultKey, apiKey, legacy, repoint)
+// WriteModelKey stores the org's model connection key, taken from the save
+// that carries it, as a new default-key reference and records it in the
+// secret's row; repoint (nil = nothing) receives the new reference's triplet
+// while the secret's lock is held: the caller commits its own transaction
+// there, and a repoint error undoes the write. The previous reference stays
+// until the caller runs Retire on the returned write, after its transaction
+// commits. ctx must carry the user's ouId claim (the vault path).
+func (w *SecretRefWriter) WriteModelKey(ctx context.Context, ocOrgID, apiKey string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+	return w.writeAPIKey(ctx, ocOrgID, OrgSecretDefaultKey, apiKey, repoint)
 }
 
 // WriteAnthropic is WriteModelKey for one role's Claude subscription token,
 // as the role's coding-agent-key reference.
-func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, token, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+func (w *SecretRefWriter) WriteAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, token string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
 	s, err := role.orgSecret()
 	if err != nil {
 		return OrgSecretWrite{}, err
 	}
-	return w.writeAPIKey(ctx, ocOrgID, s, token, legacy, repoint)
+	return w.writeAPIKey(ctx, ocOrgID, s, token, repoint)
 }
 
-func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s OrgSecret, apiKey, legacy string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
+func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s OrgSecret, apiKey string, repoint func(SecretRefTriplet) error) (OrgSecretWrite, error) {
 	if !w.Enabled() {
 		return OrgSecretWrite{}, errors.New("secret-ref writer: not configured")
 	}
@@ -183,7 +170,7 @@ func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s Org
 	if err != nil {
 		return OrgSecretWrite{}, fmt.Errorf("secret-ref writer: %s upload: %w", s, err)
 	}
-	written, err := orgSecrets.Write(ctx, ocOrgID, ouID, s, map[string]string{apiKeyProperty: apiKey}, legacy, func(name string) error {
+	written, err := orgSecrets.Write(ctx, ocOrgID, ouID, s, map[string]string{apiKeyProperty: apiKey}, "", func(name string) error {
 		if repoint == nil {
 			return nil
 		}
@@ -195,28 +182,22 @@ func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s Org
 	return written, nil
 }
 
-// ForgetModelKey removes the copies of a deleted connection key, under the
-// default-key lock. connected says the org has a connection again (saved
-// since the delete) and live names the reference its row now carries ("" for
-// none). A default-key row is removed only while the org stays disconnected:
-// a connection saved since retires it through its own write. captured, the
-// reference the deleted row named, is deleted by name when no row records it
-// and the live row does not name it: a pre-phase-1 copy nothing reads.
-func (w *SecretRefWriter) ForgetModelKey(ctx context.Context, ocOrgID, captured, live string, connected bool) error {
-	return w.forgetAPIKey(ctx, ocOrgID, OrgSecretDefaultKey, captured, live, connected)
+// ForgetModelKey removes a deleted connection key's default-key row and then
+// its reference, under the secret's lock. Unset is a no-op.
+func (w *SecretRefWriter) ForgetModelKey(ctx context.Context, ocOrgID string) error {
+	return w.forgetAPIKey(ctx, ocOrgID, OrgSecretDefaultKey)
 }
 
-// ForgetAnthropic is ForgetModelKey for one role's subscription token; held
-// says the role has a credential again.
-func (w *SecretRefWriter) ForgetAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole, captured, live string, held bool) error {
+// ForgetAnthropic is ForgetModelKey for one role's subscription token.
+func (w *SecretRefWriter) ForgetAnthropic(ctx context.Context, ocOrgID string, role AnthropicRole) error {
 	s, err := role.orgSecret()
 	if err != nil {
 		return err
 	}
-	return w.forgetAPIKey(ctx, ocOrgID, s, captured, live, held)
+	return w.forgetAPIKey(ctx, ocOrgID, s)
 }
 
-func (w *SecretRefWriter) forgetAPIKey(ctx context.Context, ocOrgID string, s OrgSecret, captured, live string, set bool) error {
+func (w *SecretRefWriter) forgetAPIKey(ctx context.Context, ocOrgID string, s OrgSecret) error {
 	if !w.Enabled() {
 		return nil
 	}
@@ -228,37 +209,10 @@ func (w *SecretRefWriter) forgetAPIKey(ctx context.Context, ocOrgID string, s Or
 	if err != nil {
 		return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
 	}
-	return orgSecrets.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
-		row, err := l.Ref(ctx)
-		if err != nil {
-			return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
-		}
-		if row != nil && !set {
-			if err := l.Remove(ctx, ouID, nil); err != nil {
-				return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
-			}
-		}
-		if captured == "" || captured == live || (row != nil && captured == row.Name) {
-			return nil
-		}
-		if err := l.DeleteUnrecorded(ctx, ouID, captured); err != nil {
-			return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
-		}
-		return nil
-	})
-}
-
-// recordedRef is the reference the row of s names, "" when s is unset or
-// the org secrets are not wired.
-func (w *SecretRefWriter) recordedRef(ctx context.Context, ocOrgID string, s OrgSecret) (string, error) {
-	if !w.Enabled() || w.orgSecrets == nil {
-		return "", nil
+	if err := orgSecrets.Remove(ctx, ocOrgID, ouID, s, nil); err != nil {
+		return fmt.Errorf("secret-ref writer: forget %s: %w", s, err)
 	}
-	row, err := w.orgSecrets.repo.Get(ctx, ocOrgID, s)
-	if err != nil || row == nil {
-		return "", err
-	}
-	return row.Name, nil
+	return nil
 }
 
 // orgSecret is the org secret holding role's credential.
@@ -632,36 +586,6 @@ func (w *SecretRefWriter) resolveVaultKey(ctx context.Context, secretRefName str
 // whose Thunder OU is ouID (see resolveVaultKey).
 func vaultKeyFor(ouID, secretRefName string) string {
 	return vaultPathPrefix + "/" + tenant.OrgBaseNamespace(ouID) + "/" + secretRefName
-}
-
-// DeleteModelKey best-effort removes a pre-phase-1 copy of the connection
-// key by its deterministic name (the rename's retire of the Anthropic-era
-// copy, model_key_rename.go); a copy the default-key row records goes
-// through ForgetModelKey. Tolerates "already gone". The entity is read off
-// the reference name, so the Anthropic-era copy's vault path is the one
-// deleted.
-func (w *SecretRefWriter) DeleteModelKey(ctx context.Context, ocOrgID, secretRefName string) error {
-	return w.deleteAPIKey(ctx, ocOrgID, modelKeyEntityOf(secretRefName), secretRefName)
-}
-
-func (w *SecretRefWriter) deleteAPIKey(ctx context.Context, ocOrgID, entity, secretRefName string) error {
-	if !w.Enabled() {
-		return nil
-	}
-	orgUUID, err := orgUUIDForSecretLocation(ctx)
-	if err != nil {
-		return fmt.Errorf("secret-ref writer: delete %s secret: %w", entity, err)
-	}
-	loc := secretmanagersvc.SecretLocation{
-		OrgName:               orgUUID,
-		ControlPlaneNamespace: ocOrgID,
-		EntityName:            entity,
-		SecretKey:             secretmanagersvc.SecretKeyAPIKey,
-	}
-	if err := w.client.DeleteSecret(ctx, loc, secretRefName); err != nil {
-		return fmt.Errorf("secret-ref writer: delete %s secret: %w", entity, err)
-	}
-	return nil
 }
 
 // PublisherSecretFieldClientID and PublisherSecretFieldClientSecret are the

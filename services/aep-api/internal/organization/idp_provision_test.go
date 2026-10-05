@@ -197,7 +197,7 @@ func provWriter(sm *provFakeSM, repo *memIDPRepo) *SecretRefWriter {
 
 // provWriterOver is provWriter over the given org secret rows.
 func provWriterOver(sm *provFakeSM, repo *memIDPRepo, rows *memOrgSecretRepo) *SecretRefWriter {
-	return NewSecretRefWriter(sm, nil, nil, repo, nil).
+	return NewSecretRefWriter(sm, nil, repo).
 		WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
 }
 
@@ -372,10 +372,10 @@ func TestProvisionPublisherForBuild_DisabledWriterViaNewSecretRefWriter(t *testi
 	thunder := &fakeThunder{ensureFn: func(context.Context, string, string) (string, string, bool, error) {
 		return "aep-publisher-acme", "secret-once", true, nil
 	}}
-	// NewSecretRefWriter(nil, nil, nil, repo, nil) is Enabled()==false (no
+	// NewSecretRefWriter(nil, nil, repo) is Enabled()==false (no
 	// SecretManagementClient) — same fail-closed contract as a nil writer.
 	svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).
-		WithSecretRefWriter(NewSecretRefWriter(nil, nil, nil, repo, nil))
+		WithSecretRefWriter(NewSecretRefWriter(nil, nil, repo))
 	ctx := jwtassertion.ContextWithTokenClaims(context.Background(), &jwtassertion.TokenClaims{OuId: "ou-acme-uuid"})
 	err := svc.ProvisionPublisherForBuild(ctx, "acme")
 	if err == nil {
@@ -505,7 +505,7 @@ func TestRegenerateClientSecret_FailedWriteNeverLeavesARowWithoutATriplet(t *tes
 			rows := failingDeleteRows{memOrgSecretRepo: newMemOrgSecretRepo(), failDelete: tc.failDelete}
 			rows.rows[memOrgSecretKey("acme", OrgSecretPublisherClient)] = OrgSecretRef{Secret: OrgSecretPublisherClient, Name: prev}
 			sm := &provFakeSM{err: errors.New("sm-api down")}
-			writer := NewSecretRefWriter(sm, nil, nil, repo, nil).
+			writer := NewSecretRefWriter(sm, nil, repo).
 				WithOrgSecretWriter(NewOrgSecretWriter(sm, rows, memOrgSecretLock{}, time.Now))
 			thunder := &fakeThunder{regenFn: func(context.Context, string) (string, error) { return "rotated", nil }}
 			svc := NewIDPService(repo, stubOrgRepo{}, thunder, PlatformIDPConfig{}).WithSecretRefWriter(writer)

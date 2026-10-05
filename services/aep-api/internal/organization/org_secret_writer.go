@@ -347,32 +347,6 @@ func (l *OrgSecretLocked) Remove(ctx context.Context, ouID string, repoint func(
 	return nil
 }
 
-// DeleteUnrecorded deletes the reference called name, which the secret's
-// row must not name: a copy written before the rows existed (a pre-phase-1
-// reference the caller's own row stopped naming). A name the row records is
-// refused, so a recorded reference only ever goes through Retire or Remove.
-func (l *OrgSecretLocked) DeleteUnrecorded(ctx context.Context, ouID, name string) error {
-	loc, err := orgSecretLocation(l.org, ouID, l.secret)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(name) == "" {
-		return fmt.Errorf("org secret %s: reference name is required", l.secret)
-	}
-	row, err := l.Ref(ctx)
-	if err != nil {
-		return fmt.Errorf("org secret %s: read row: %w", l.secret, err)
-	}
-	if row != nil && row.Name == name {
-		return fmt.Errorf("org secret %s: %s is the recorded reference; remove the secret instead", l.secret, name)
-	}
-	if err := l.w.vault.DeleteSecretRef(ctx, loc, name); err != nil {
-		return fmt.Errorf("org secret %s: delete %s: %w", l.secret, name, err)
-	}
-	slog.InfoContext(ctx, "orgsecret.unrecorded_deleted", "secret", string(l.secret), "name", name)
-	return nil
-}
-
 // orgSecretLocation addresses secret s of the org: the reference lives in
 // the org's OpenChoreo namespace (its name prefix) and the value under the
 // OU's vault path.

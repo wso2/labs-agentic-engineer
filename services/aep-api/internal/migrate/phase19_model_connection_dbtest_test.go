@@ -147,13 +147,9 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("active connection:\n got %+v\nwant %+v", got, want)
 	}
-	// The same key bytes serve it, and every reader sees the connection.
-	reader := organization.NewModelConnectionService(conns, organization.NewOrgAnthropicRepository(db), store, nil)
-	if conn, key, ok, err := reader.Effective(ctx, "active"); err != nil || !ok || key != "sk-ant-api03-AbActiveKeyBytes-1234" || conn.Model != "claude-haiku-4-5" {
-		t.Fatalf("effective after the step: %+v ok=%v err=%v", conn, ok, err)
-	}
-	if _, ref, err := reader.KeyRef(ctx, "active"); err != nil || ref.Name != "active-anthropic" {
-		t.Fatalf("key ref after the step: %+v (%v)", ref, err)
+	// The key's sealed bytes stay (the step never reads a value).
+	if n := count(t, db, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'active' AND key = 'anthropic/key'`); n != 1 {
+		t.Fatalf("active org's key bytes = %d rows, want 1", n)
 	}
 	// An org that never chose a model gets the format's default.
 	if d, err := conns.GetByOrg(ctx, "defaults"); err != nil || d == nil || d.Model != modelconn.DefaultAnthropicModel {

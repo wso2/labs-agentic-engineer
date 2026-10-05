@@ -376,12 +376,7 @@ type hostFacts struct {
 // and "unknown". Enrichment never fails a save: a host that will not say keeps
 // the defaults.
 func (p modelProbers) enrichFromHost(ctx context.Context, t probeTarget, res *ProbeResult) {
-	if t.Host == modelconn.AnthropicHost {
-		res.ImageInput = modelconn.Yes
-		return
-	}
-	window, output := defaultContextWindow, defaultOutputLimit
-	res.ContextWindow, res.OutputLimit, res.ImageInput = &window, &output, modelconn.Unknown
+	hostDefaults(t.Host, res)
 	if t.Host != modelconn.OllamaHost {
 		return
 	}
@@ -392,6 +387,19 @@ func (p modelProbers) enrichFromHost(ctx context.Context, t probeTarget, res *Pr
 		}
 		res.ImageInput = facts.imageInput
 	}
+}
+
+// hostDefaults fills what res stores about the model before any
+// host-specific call: Anthropic's own API keeps NULL limits (the runtimes know
+// Claude) and reads images; every other host gets the default limits and
+// "unknown".
+func hostDefaults(host string, res *ProbeResult) {
+	if host == modelconn.AnthropicHost {
+		res.ContextWindow, res.OutputLimit, res.ImageInput = nil, nil, modelconn.Yes
+		return
+	}
+	window, output := defaultContextWindow, defaultOutputLimit
+	res.ContextWindow, res.OutputLimit, res.ImageInput = &window, &output, modelconn.Unknown
 }
 
 // ollamaShow asks Ollama about the model: POST {origin}/api/show gives its
