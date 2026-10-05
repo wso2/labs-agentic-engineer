@@ -126,14 +126,6 @@ func (h Handler) RegisterHook(ctx context.Context, req gen.RegisterHookRequestOb
 	return gen.RegisterHook200JSONResponse{ID: id}, nil
 }
 
-// UpdateHookEvents replaces a hook's events.
-func (h Handler) UpdateHookEvents(ctx context.Context, req gen.UpdateHookEventsRequestObject) (gen.UpdateHookEventsResponseObject, error) {
-	if err := h.gh.UpdateWebhookEvents(ctx, req.Owner, req.Repo, req.HookID, hookEvents(req.Body.Events)); err != nil {
-		return h.problem(ctx, "update-hook-events", req.Owner, req.Repo, err)
-	}
-	return gen.UpdateHookEvents204Response{}, nil
-}
-
 // hookEvents is the contract's event enum as GitHub's event names.
 func hookEvents(in []gen.HookEventsRequestEvents) []string {
 	out := make([]string, 0, len(in))
@@ -560,9 +552,6 @@ func (p problemReply) VisitCreateRepoResponse(w http.ResponseWriter) error { ret
 
 // VisitRegisterHookResponse implements gen.RegisterHookResponseObject.
 func (p problemReply) VisitRegisterHookResponse(w http.ResponseWriter) error { return p.write(w) }
-
-// VisitUpdateHookEventsResponse implements gen.UpdateHookEventsResponseObject.
-func (p problemReply) VisitUpdateHookEventsResponse(w http.ResponseWriter) error { return p.write(w) }
 
 // VisitDeleteHookResponse implements gen.DeleteHookResponseObject.
 func (p problemReply) VisitDeleteHookResponse(w http.ResponseWriter) error { return p.write(w) }

@@ -160,34 +160,6 @@ func TestSetIssueLabels(t *testing.T) {
 	}
 }
 
-func TestUpdateWebhookEvents(t *testing.T) {
-	c, cap := newFake(t, http.StatusOK, `{"id":99}`)
-	if err := c.UpdateWebhookEvents(context.Background(), "acme", "repo", 99, []string{"pull_request", "push", "issues"}); err != nil {
-		t.Fatalf("UpdateWebhookEvents: %v", err)
-	}
-	if cap.method != http.MethodPatch {
-		t.Errorf("method = %s; want PATCH", cap.method)
-	}
-	if cap.escapedPath != "/repos/acme/repo/hooks/99" {
-		t.Errorf("path = %s", cap.escapedPath)
-	}
-	var got map[string][]string
-	if err := json.Unmarshal([]byte(cap.body), &got); err != nil {
-		t.Fatalf("body not json: %v", err)
-	}
-	found := false
-	for _, e := range got["events"] {
-		if e == "issues" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("events payload missing 'issues': %v", got["events"])
-	}
-}
-
-// fakeIssuePages serves GET /repos/acme/repo/issues through page(n), returning
-// the real client pointed at it and the query of every request received.
 func fakeIssuePages(t *testing.T, page func(n int) string) (*Client, *[]url.Values) {
 	t.Helper()
 	var queries []url.Values

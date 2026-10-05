@@ -371,29 +371,20 @@ func TestRegisterHook_CreatesWithoutAPatch(t *testing.T) {
 	}
 }
 
-// TestHookEvents_UpdateAndDelete: update replaces the events; delete is 204
-// also when GitHub no longer has the hook.
-func TestHookEvents_UpdateAndDelete(t *testing.T) {
+// TestHookEvents_Delete: delete is 204, also when GitHub no longer has the
+// hook.
+func TestHookEvents_Delete(t *testing.T) {
 	gh := githubtest.NewStub(t)
 	gh.SeedRepo("acme", "greeter")
 	h := NewHandler(New(Config{APIBase: gh.URL(), Token: staticToken("t"), HookURL: "https://x/webhooks/github", HookSecret: "s"}), WithOwner("acme"))
 	ctx := context.Background()
 	resp, _ := h.RegisterHook(ctx, gen.RegisterHookRequestObject{Owner: "acme", Repo: "greeter", Body: &gen.RegisterHookJSONRequestBody{Events: events("push")}})
 	id := resp.(gen.RegisterHook200JSONResponse).ID
-	upd, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: events("issues")}})
-	if _, ok := upd.(gen.UpdateHookEvents204Response); !ok || !slices.Equal(gh.HookEvents("acme", "greeter", id), []string{"issues"}) {
-		t.Fatalf("update %#v, events %v", upd, gh.HookEvents("acme", "greeter", id))
-	}
 	for range 2 { // the second finds no hook (GitHub 404): still 204
 		del, _ := h.DeleteHook(ctx, gen.DeleteHookRequestObject{Owner: "acme", Repo: "greeter", HookID: id})
 		if _, ok := del.(gen.DeleteHook204Response); !ok {
 			t.Fatalf("delete %#v", del)
 		}
-	}
-	quietLogs(t)
-	missing, _ := h.UpdateHookEvents(ctx, gen.UpdateHookEventsRequestObject{Owner: "acme", Repo: "greeter", HookID: id, Body: &gen.UpdateHookEventsJSONRequestBody{Events: events("push")}})
-	if p := problemOf(t, missing); p.Status != http.StatusBadGateway || p.GithubStatus != http.StatusNotFound {
-		t.Fatalf("update of a gone hook %#v, want 502 githubStatus 404", missing)
 	}
 }
 

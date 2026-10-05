@@ -70,7 +70,6 @@ func gitHubRequests(h *harness, base string) map[string]func() *httptest.Respons
 		"merge-pull":              send("POST", "/pulls/5/merge", ``),
 		"list-pull-files":         get("/pulls/5/files"),
 		"register-hook":           send("POST", "/hooks", `{"events":["push"]}`),
-		"update-hook-events":      send("PATCH", "/hooks/9", `{"events":["push"]}`),
 		"delete-hook":             send("DELETE", "/hooks/9", ``),
 	}
 }
@@ -110,6 +109,21 @@ func TestInternalGitHub_EveryOpIsRouted(t *testing.T) {
 	rec := h.do("GET", ghRepoPath+"/issues/7", h.m2m(), "ou-1", nil)
 	if rec.Code != http.StatusOK || jsonBody(t, rec.Body.Bytes())["title"] != "Task A" {
 		t.Fatalf("get-issue: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestInternalGitHub_NoHookEventsUpdate: the pod offers no op that rewrites
+// an existing hook's events (aep-api never called it); a PATCH on a hook is
+// refused by the routes and never reaches GitHub.
+func TestInternalGitHub_NoHookEventsUpdate(t *testing.T) {
+	gh := githubtest.NewStub(t)
+	h := newHarness(t, withGitHubAPI(gh))
+	rec := h.doJSON("PATCH", ghRepoPath+"/hooks/9", `{"events":["push"]}`)
+	if rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("PATCH hook: %d %s, want 404 or 405", rec.Code, rec.Body.String())
+	}
+	if n := len(gh.Requests()); n != 0 {
+		t.Fatalf("a PATCH on a hook reached GitHub %d times", n)
 	}
 }
 
@@ -274,7 +288,6 @@ func TestInternalGitHub_NamesAndEventsAreAllowListed(t *testing.T) {
 		"event unknown":   h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["push","release"]}`),
 		"event wildcard":  h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["*"]}`),
 		"event duplicate": h.doJSON("POST", ghRepoPath+"/hooks", `{"events":["push","push"]}`),
-		"update unknown":  h.doJSON("PATCH", ghRepoPath+"/hooks/9", `{"events":["create"]}`),
 	} {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d %s", name, rec.Code, rec.Body.String())

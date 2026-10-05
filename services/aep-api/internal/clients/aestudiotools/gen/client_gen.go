@@ -855,12 +855,6 @@ type DeleteHookParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
-// UpdateHookEventsParams defines parameters for UpdateHookEvents.
-type UpdateHookEventsParams struct {
-	// XImpersonateOrg The org the call acts for; must be the pod's org id.
-	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
-}
-
 // ListIssuesParams defines parameters for ListIssues.
 type ListIssuesParams struct {
 	// Labels Only issues carrying every one of these labels.
@@ -1104,9 +1098,6 @@ type CreateCommitJSONRequestBody = CreateCommitRequest
 // RegisterHookJSONRequestBody defines body for RegisterHook for application/json ContentType.
 type RegisterHookJSONRequestBody = HookEventsRequest
 
-// UpdateHookEventsJSONRequestBody defines body for UpdateHookEvents for application/json ContentType.
-type UpdateHookEventsJSONRequestBody = HookEventsRequest
-
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
 
@@ -1251,11 +1242,6 @@ type ClientInterface interface {
 
 	// DeleteHook request
 	DeleteHook(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *DeleteHookParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateHookEventsWithBody request with any body
-	UpdateHookEventsWithBody(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	UpdateHookEvents(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, body UpdateHookEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListIssues request
 	ListIssues(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1499,30 +1485,6 @@ func (c *Client) RegisterHook(ctx context.Context, owner Owner, repo Repo, param
 
 func (c *Client) DeleteHook(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *DeleteHookParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewDeleteHookRequest(c.Server, owner, repo, hookID, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) UpdateHookEventsWithBody(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateHookEventsRequestWithBody(c.Server, owner, repo, hookID, params, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) UpdateHookEvents(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, body UpdateHookEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateHookEventsRequest(c.Server, owner, repo, hookID, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2705,80 +2667,6 @@ func NewDeleteHookRequest(server string, owner Owner, repo Repo, hookID HookID, 
 	if err != nil {
 		return nil, err
 	}
-
-	if params != nil {
-
-		var headerParam0 string
-
-		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
-		}
-
-		req.Header.Set("X-Impersonate-Org", headerParam0)
-
-	}
-
-	return req, nil
-}
-
-// NewUpdateHookEventsRequest calls the generic UpdateHookEvents builder with application/json body
-func NewUpdateHookEventsRequest(server string, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, body UpdateHookEventsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateHookEventsRequestWithBody(server, owner, repo, hookID, params, "application/json", bodyReader)
-}
-
-// NewUpdateHookEventsRequestWithBody generates requests for UpdateHookEvents with any type of body
-func NewUpdateHookEventsRequestWithBody(server string, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam2 string
-
-	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "hookId", hookID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "integer", Format: "int64"})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/repos/%s/%s/hooks/%s", pathParam0, pathParam1, pathParam2)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	if params != nil {
 
@@ -5131,11 +5019,6 @@ type ClientWithResponsesInterface interface {
 	// DeleteHookWithResponse request
 	DeleteHookWithResponse(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *DeleteHookParams, reqEditors ...RequestEditorFn) (*DeleteHookResponse, error)
 
-	// UpdateHookEventsWithBodyWithResponse request with any body
-	UpdateHookEventsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateHookEventsResponse, error)
-
-	UpdateHookEventsWithResponse(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, body UpdateHookEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateHookEventsResponse, error)
-
 	// ListIssuesWithResponse request
 	ListIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error)
 
@@ -5540,41 +5423,6 @@ func (r DeleteHookResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r DeleteHookResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type UpdateHookEventsResponse struct {
-	Body                      []byte
-	HTTPResponse              *http.Response
-	ApplicationProblemJSON400 *Problem
-	ApplicationProblemJSON401 *Problem
-	ApplicationProblemJSON403 *Problem
-	ApplicationProblemJSON429 *RateLimited
-	ApplicationProblemJSON502 *GitHubAPIError
-	ApplicationProblemJSON503 *Problem
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateHookEventsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateHookEventsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateHookEventsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6784,23 +6632,6 @@ func (c *ClientWithResponses) DeleteHookWithResponse(ctx context.Context, owner 
 	return ParseDeleteHookResponse(rsp)
 }
 
-// UpdateHookEventsWithBodyWithResponse request with arbitrary body returning *UpdateHookEventsResponse
-func (c *ClientWithResponses) UpdateHookEventsWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateHookEventsResponse, error) {
-	rsp, err := c.UpdateHookEventsWithBody(ctx, owner, repo, hookID, params, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateHookEventsResponse(rsp)
-}
-
-func (c *ClientWithResponses) UpdateHookEventsWithResponse(ctx context.Context, owner Owner, repo Repo, hookID HookID, params *UpdateHookEventsParams, body UpdateHookEventsJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateHookEventsResponse, error) {
-	rsp, err := c.UpdateHookEvents(ctx, owner, repo, hookID, params, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateHookEventsResponse(rsp)
-}
-
 // ListIssuesWithResponse request returning *ListIssuesResponse
 func (c *ClientWithResponses) ListIssuesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListIssuesParams, reqEditors ...RequestEditorFn) (*ListIssuesResponse, error) {
 	rsp, err := c.ListIssues(ctx, owner, repo, params, reqEditors...)
@@ -7690,67 +7521,6 @@ func ParseDeleteHookResponse(rsp *http.Response) (*DeleteHookResponse, error) {
 	}
 
 	response := &DeleteHookResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest RateLimited
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON429 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
-		var dest GitHubAPIError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON502 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Problem
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationProblemJSON503 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseUpdateHookEventsResponse parses an HTTP response from a UpdateHookEventsWithResponse call
-func ParseUpdateHookEventsResponse(rsp *http.Response) (*UpdateHookEventsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateHookEventsResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}

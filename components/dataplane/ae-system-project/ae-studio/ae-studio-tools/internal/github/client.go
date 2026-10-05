@@ -615,13 +615,6 @@ func (c *Client) ReconfigureWebhook(ctx context.Context, owner, repo string, hoo
 	return c.doJSON(ctx, http.MethodPatch, url, payload, nil, http.StatusOK)
 }
 
-// UpdateWebhookEvents replaces an existing hook's event list
-// (PATCH /hooks/{id}).
-func (c *Client) UpdateWebhookEvents(ctx context.Context, owner, repo string, hookID int64, events []string) error {
-	url := fmt.Sprintf(c.apiBase+"/repos/%s/%s/hooks/%d", owner, repo, hookID)
-	return c.doJSON(ctx, http.MethodPatch, url, map[string]any{"events": events}, nil, http.StatusOK)
-}
-
 // DeleteWebhook removes the hook with the id the platform stored at
 // registration, never one found by scanning, so no other integration's hook
 // can be caught. 404 and 410 (GitHub reaped a failing hook) are success: the

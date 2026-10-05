@@ -1372,37 +1372,6 @@ paths:
         '503':
           $ref: '#/components/responses/Problem'
   /repos/{owner}/{repo}/hooks/{hookId}:
-    patch:
-      operationId: update-hook-events
-      summary: Replace a hook's events
-      tags:
-      - Hooks
-      parameters:
-      - $ref: '#/components/parameters/ImpersonateOrg'
-      - $ref: '#/components/parameters/Owner'
-      - $ref: '#/components/parameters/Repo'
-      - $ref: '#/components/parameters/HookID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/HookEventsRequest'
-      responses:
-        '204':
-          description: Replaced
-        '400':
-          $ref: '#/components/responses/Problem'
-        '401':
-          $ref: '#/components/responses/Problem'
-        '403':
-          $ref: '#/components/responses/Problem'
-        '429':
-          $ref: '#/components/responses/RateLimited'
-        '502':
-          $ref: '#/components/responses/GitHubAPIError'
-        '503':
-          $ref: '#/components/responses/Problem'
     delete:
       operationId: delete-hook
       summary: Delete a hook (already gone is success)

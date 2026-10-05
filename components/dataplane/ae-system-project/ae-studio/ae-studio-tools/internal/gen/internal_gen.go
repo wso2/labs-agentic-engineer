@@ -863,12 +863,6 @@ type DeleteHookParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
-// UpdateHookEventsParams defines parameters for UpdateHookEvents.
-type UpdateHookEventsParams struct {
-	// XImpersonateOrg The org the call acts for; must be the pod's org id.
-	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
-}
-
 // ListIssuesParams defines parameters for ListIssues.
 type ListIssuesParams struct {
 	// Labels Only issues carrying every one of these labels.
@@ -1112,9 +1106,6 @@ type CreateCommitJSONRequestBody = CreateCommitRequest
 // RegisterHookJSONRequestBody defines body for RegisterHook for application/json ContentType.
 type RegisterHookJSONRequestBody = HookEventsRequest
 
-// UpdateHookEventsJSONRequestBody defines body for UpdateHookEvents for application/json ContentType.
-type UpdateHookEventsJSONRequestBody = HookEventsRequest
-
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
 
@@ -1183,9 +1174,6 @@ type ServerInterface interface {
 	// Delete a hook (already gone is success)
 	// (DELETE /repos/{owner}/{repo}/hooks/{hookId})
 	DeleteHook(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params DeleteHookParams)
-	// Replace a hook's events
-	// (PATCH /repos/{owner}/{repo}/hooks/{hookId})
-	UpdateHookEvents(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params UpdateHookEventsParams)
 	// List the repository's issues, newest first
 	// (GET /repos/{owner}/{repo}/issues)
 	ListIssues(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, params ListIssuesParams)
@@ -1971,84 +1959,6 @@ func (siw *ServerInterfaceWrapper) DeleteHook(w http.ResponseWriter, r *http.Req
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.DeleteHook(w, r, owner, repo, hookID, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// UpdateHookEvents operation middleware
-func (siw *ServerInterfaceWrapper) UpdateHookEvents(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "owner" -------------
-	var owner Owner
-
-	err = runtime.BindStyledParameterWithOptions("simple", "owner", r.PathValue("owner"), &owner, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "owner", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "repo" -------------
-	var repo Repo
-
-	err = runtime.BindStyledParameterWithOptions("simple", "repo", r.PathValue("repo"), &repo, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "repo", Err: err})
-		return
-	}
-
-	// ------------- Path parameter "hookId" -------------
-	var hookID HookID
-
-	err = runtime.BindStyledParameterWithOptions("simple", "hookId", r.PathValue("hookId"), &hookID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "integer", Format: "int64"})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "hookId", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, AeOnlyScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params UpdateHookEventsParams
-
-	headers := r.Header
-
-	// ------------- Required header parameter "X-Impersonate-Org" -------------
-	if valueList, found := headers[http.CanonicalHeaderKey("X-Impersonate-Org")]; found {
-		var XImpersonateOrg ImpersonateOrg
-		n := len(valueList)
-		if n != 1 {
-			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Impersonate-Org", Count: n})
-			return
-		}
-
-		err = runtime.BindStyledParameterWithOptions("simple", "X-Impersonate-Org", valueList[0], &XImpersonateOrg, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
-		if err != nil {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Impersonate-Org", Err: err})
-			return
-		}
-
-		params.XImpersonateOrg = XImpersonateOrg
-
-	} else {
-		err := fmt.Errorf("Header parameter X-Impersonate-Org is required, but not found")
-		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-Impersonate-Org", Err: err})
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.UpdateHookEvents(w, r, owner, repo, hookID, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4669,7 +4579,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/head", wrapper.GetHead)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks", wrapper.RegisterHook)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks/{hookId}", wrapper.DeleteHook)
-	m.HandleFunc(http.MethodPatch+" "+options.BaseURL+"/repos/{owner}/{repo}/hooks/{hookId}", wrapper.UpdateHookEvents)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.ListIssues)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/repos/{owner}/{repo}/issues", wrapper.CreateIssue)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/repos/{owner}/{repo}/issues/{number}", wrapper.GetIssue)
@@ -5666,117 +5575,6 @@ func (response DeleteHook502ApplicationProblemPlusJSONResponse) VisitDeleteHookR
 type DeleteHook503ApplicationProblemPlusJSONResponse Problem
 
 func (response DeleteHook503ApplicationProblemPlusJSONResponse) VisitDeleteHookResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(503)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEventsRequestObject struct {
-	Owner  Owner  `json:"owner"`
-	Repo   Repo   `json:"repo"`
-	HookID HookID `json:"hookId"`
-	Params UpdateHookEventsParams
-	Body   *UpdateHookEventsJSONRequestBody
-}
-
-type UpdateHookEventsResponseObject interface {
-	VisitUpdateHookEventsResponse(w http.ResponseWriter) error
-}
-
-type UpdateHookEvents204Response struct {
-}
-
-func (response UpdateHookEvents204Response) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-	w.WriteHeader(204)
-	return nil
-}
-
-type UpdateHookEvents400ApplicationProblemPlusJSONResponse struct {
-	ProblemApplicationProblemPlusJSONResponse
-}
-
-func (response UpdateHookEvents400ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(400)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEvents401ApplicationProblemPlusJSONResponse Problem
-
-func (response UpdateHookEvents401ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(401)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEvents403ApplicationProblemPlusJSONResponse Problem
-
-func (response UpdateHookEvents403ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(403)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEvents429ApplicationProblemPlusJSONResponse struct {
-	RateLimitedApplicationProblemPlusJSONResponse
-}
-
-func (response UpdateHookEvents429ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("Retry-After", fmt.Sprint(response.Headers.RetryAfter))
-	w.WriteHeader(429)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEvents502ApplicationProblemPlusJSONResponse struct {
-	GitHubAPIErrorApplicationProblemPlusJSONResponse
-}
-
-func (response UpdateHookEvents502ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/problem+json")
-	w.WriteHeader(502)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type UpdateHookEvents503ApplicationProblemPlusJSONResponse Problem
-
-func (response UpdateHookEvents503ApplicationProblemPlusJSONResponse) VisitUpdateHookEventsResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -9435,9 +9233,6 @@ type StrictServerInterface interface {
 	// Delete a hook (already gone is success)
 	// (DELETE /repos/{owner}/{repo}/hooks/{hookId})
 	DeleteHook(ctx context.Context, request DeleteHookRequestObject) (DeleteHookResponseObject, error)
-	// Replace a hook's events
-	// (PATCH /repos/{owner}/{repo}/hooks/{hookId})
-	UpdateHookEvents(ctx context.Context, request UpdateHookEventsRequestObject) (UpdateHookEventsResponseObject, error)
 	// List the repository's issues, newest first
 	// (GET /repos/{owner}/{repo}/issues)
 	ListIssues(ctx context.Context, request ListIssuesRequestObject) (ListIssuesResponseObject, error)
@@ -9798,42 +9593,6 @@ func (sh *strictHandler) DeleteHook(w http.ResponseWriter, r *http.Request, owne
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
 	} else if validResponse, ok := response.(DeleteHookResponseObject); ok {
 		if err := validResponse.VisitDeleteHookResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// UpdateHookEvents operation middleware
-func (sh *strictHandler) UpdateHookEvents(w http.ResponseWriter, r *http.Request, owner Owner, repo Repo, hookID HookID, params UpdateHookEventsParams) {
-	var request UpdateHookEventsRequestObject
-
-	request.Owner = owner
-	request.Repo = repo
-	request.HookID = hookID
-	request.Params = params
-
-	var body UpdateHookEventsJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.UpdateHookEvents(ctx, request.(UpdateHookEventsRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "UpdateHookEvents")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(UpdateHookEventsResponseObject); ok {
-		if err := validResponse.VisitUpdateHookEventsResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -10946,62 +10705,61 @@ var swaggerSpec = []string{
 	"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",
-	"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",
-	"/w==",
+	"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",
+	"saxvn7/9vwAAAP//",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
