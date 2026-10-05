@@ -29,7 +29,8 @@ type RepoService interface {
 	// CreateRepo provisions the project's GitHub repo. repoName == "" derives
 	// the name from projectName (slug); either way the name is used VERBATIM —
 	// a conflict fails with ErrRepoNameConflict (never suffixed away) so the
-	// user can be asked for a different name.
+	// user can be asked for a different name. A ready row of the project is
+	// returned as is; a row still `deleting` is ErrRepoDeletePending.
 	CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*GitRepository, error)
 	// EnsureBareRepo idempotently provisions a private repo with a STABLE name
 	// (no random suffix) and NO local clone — used for the per-org skills repo
@@ -110,6 +111,13 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 		return nil, fmt.Errorf("check existing repo: %w", err)
 	}
 	if existing != nil {
+		// A row left `deleting` belongs to a project delete that stopped
+		// midway: adopting it would write the new project into the old
+		// repository while its teardown is still owed.
+		if existing.Status != RepoStatusReady {
+			slog.WarnContext(ctx, "repo.create_refused_delete_pending", "org", orgID, "project", projectID, "status", existing.Status)
+			return nil, ErrRepoDeletePending
+		}
 		slog.InfoContext(ctx, "repo already provisioned for project; returning existing row",
 			"projectId", projectID, "orgId", orgID)
 		return existing, nil

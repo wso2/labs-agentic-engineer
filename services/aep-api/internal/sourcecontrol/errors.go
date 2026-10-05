@@ -42,6 +42,10 @@ var (
 	ErrRepoNotFound = errors.New("repository not found")
 	// ErrRepoNotReady is a gitrepo-domain error (repo row not in "ready" state).
 	ErrRepoNotReady = errors.New("repository is not ready")
+	// ErrRepoDeletePending refuses a CreateRepo that meets the project's row
+	// still `deleting`: an earlier project delete stopped before it finished,
+	// and only re-running that delete completes its teardown.
+	ErrRepoDeletePending = errors.New("the project's previous delete has not finished")
 	// ErrIssueNotFound is returned by GetIssue when no issue with the given
 	// number exists on the repo (the host answered 404). Callers map it to
 	// their own not-found (e.g. task.ErrTaskNotFound → 404).

@@ -115,6 +115,28 @@ func TestCreateRepo_IsIdempotentOnExistingRow(t *testing.T) {
 	}
 }
 
+// A row a crashed project delete left `deleting` is never adopted by a
+// create of the same project: its teardown (run supervisors, hook, row) has
+// not finished, so the create is refused until the delete is re-run, and the
+// pod is never asked.
+func TestCreateRepo_RefusesARowLeftDeleting(t *testing.T) {
+	t.Parallel()
+	repo := newFakeRepoRepo()
+	repo.preload(&sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/test-org/old", Status: sourcecontrol.RepoStatusDeleting})
+	svc, f := newRepoSvcOnFake(repo)
+
+	got, err := svc.CreateRepo(testContext(), "org1", "proj1", "My Project", "")
+	if !errors.Is(err, sourcecontrol.ErrRepoDeletePending) || got != nil {
+		t.Fatalf("got %+v, err %v; want nil and ErrRepoDeletePending", got, err)
+	}
+	if n := len(f.Calls()); n != 0 {
+		t.Fatalf("the pod was called %d times, want 0", n)
+	}
+	if r, _ := repo.GetByOrgAndProjectID(testContext(), "org1", "proj1"); r == nil || r.Status != sourcecontrol.RepoStatusDeleting {
+		t.Fatalf("the deleting row must be left for the delete re-run, got %+v", r)
+	}
+}
+
 func TestCreateRepo_ErrorPropagatesAndCreatesNoRow(t *testing.T) {
 	t.Parallel()
 	repo := newFakeRepoRepo()

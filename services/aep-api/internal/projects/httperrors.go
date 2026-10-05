@@ -75,6 +75,8 @@ func MapProjectError(err error) error {
 		return apierr.Forbidden("insufficient permissions to perform this action")
 	case sourcecontrol.IsRepoNameConflict(err):
 		return apierr.Conflict("a repository with this name already exists — choose another repository name")
+	case errors.Is(err, sourcecontrol.ErrRepoDeletePending):
+		return apierr.Conflict("an earlier delete of this project did not finish — delete the project again, then create it")
 	case errors.As(err, &nwt):
 		// The project's pipeline names no write target: the caller's
 		// configuration to fix, so the resolver's words go back verbatim.

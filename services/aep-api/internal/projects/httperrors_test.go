@@ -26,6 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // statusOf casts a transport error to its wire status, failing the test if the
@@ -145,5 +146,19 @@ func TestMapProjectError_ProjectTypeNotFoundIsUnprocessable(t *testing.T) {
 	}
 	if ae.Message != cause.Error() {
 		t.Fatalf("message = %q, want %q", ae.Message, cause.Error())
+	}
+}
+
+// A create that met the repo row of an unfinished delete is a 409 that tells
+// the user what to do (re-run the delete), not a 500.
+func TestMapProjectError_RepoDeletePendingIsConflict(t *testing.T) {
+	t.Parallel()
+	err := MapProjectError(fmt.Errorf("create repo: %w", sourcecontrol.ErrRepoDeletePending))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
+	}
+	if ae.Status != http.StatusConflict || !strings.Contains(ae.Message, "delete") {
+		t.Fatalf("got status=%d message=%q, want 409 naming the delete", ae.Status, ae.Message)
 	}
 }
