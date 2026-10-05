@@ -536,6 +536,38 @@ func TestCycleFeed_ObserverErrorIsUnavailableNotEmpty(t *testing.T) {
 	}
 }
 
+// The failure memo answers later State-only callers (the run list) for the
+// hold, but only until a read works: the next successful read is `kept` at
+// once, inside the hold, so a recovered log never reads as lost.
+func TestCycleFeed_SuccessfulReadAfterAFailureIsKept(t *testing.T) {
+	rt := &fakeRuntime{bindingErr: openchoreo.ErrNotFound}
+	obs := &fakeObserver{err: errors.New("observer: 500")}
+	f := newTestFeed(rt, obs)
+	clock := time.Now()
+	f.now = func() time.Time { return clock }
+	c := settledCycle("c1", "uid-1")
+
+	if evs, _, _, _ := f.Events(context.Background(), nil, &c, ""); len(evs) != 1 || evs[0].Seq != seqLogsUnavailable {
+		t.Fatalf("failed read events %+v, want the unavailable notice", evs)
+	}
+	if st := f.State(&c); st != gen.RunCycleViewRecordingUnavailable {
+		t.Fatalf("state %s after a failed read, want unavailable", st)
+	}
+
+	obs.err, obs.lines = nil, toObsLines(v2Lines(t, 1, 2), "uid-1", "ca-c1-p1")
+	clock = clock.Add(feedReadTTL + time.Second) // past the shared read, inside the hold
+	evs, _, _, err := f.Events(context.Background(), nil, &c, "")
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(evs) != 2 || evs[0].Seq != 1 {
+		t.Fatalf("recovered read events %+v, want seqs 1..2", evs)
+	}
+	if st := f.State(&c); st != gen.RunCycleViewRecordingKept {
+		t.Fatalf("state %s after a successful read, want kept", st)
+	}
+}
+
 func TestCycleFeed_NoObserverConfiguredIsUnavailable(t *testing.T) {
 	rt := &fakeRuntime{bindingErr: openchoreo.ErrNotFound}
 	f := newTestFeed(rt, nil)

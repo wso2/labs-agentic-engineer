@@ -168,7 +168,9 @@ type CycleLogReader interface {
 // its own port and why the cycle projection takes the answer as an argument
 // rather than deriving it. The answer comes from the row alone (open, within
 // the log retention, a recent failed read) — no log is read to describe a row,
-// so this stays the free-to-poll read this package is built to be.
+// so this stays the free-to-poll read this package is built to be. The answer
+// remembers the last read, so a stream that does read the feed asks AFTER that
+// read (emitCycles): a frame's state then describes the read behind its feed.
 //
 // nil → every cycle reports `unavailable`: a boot with no feed serves none.
 type RecordingReader interface {

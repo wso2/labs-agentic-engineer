@@ -171,13 +171,13 @@ func (s *ProgressService) version(ctx context.Context, w io.Writer, flush func()
 				continue
 			}
 			run := &buildFrameRun{ID: row.ID, Kind: row.Kind, Index: i + 1}
-			ok := s.emitCycles(ctx, cycles, lastCycleJSON,
-				func(v *gen.RunCycleView) bool {
-					return out.write(&buildFrame{Type: frameTypeCycle, Run: run, Cycle: v})
+			ok := s.emitCycles(ctx, out, cycles, lastCycleJSON,
+				func(v *gen.RunCycleView) any {
+					return &buildFrame{Type: frameTypeCycle, Run: run, Cycle: v}
 				},
-				func(ctx context.Context, c *delivery.RunCycle, index int) bool {
-					return s.emitLines(ctx, c, index, cursor, func(l *runLine) bool {
-						return out.write(&buildFrame{Type: frameTypeLine, Run: run, Line: l})
+				func(ctx context.Context, c *delivery.RunCycle, index int) []any {
+					return s.readLines(ctx, c, index, cursor, func(l *runLine) any {
+						return &buildFrame{Type: frameTypeLine, Run: run, Line: l}
 					})
 				})
 			if !ok {

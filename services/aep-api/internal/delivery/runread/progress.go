@@ -177,9 +177,8 @@ func (s *ProgressService) OpenRunProgressStream(ctx context.Context, orgID, proj
 // client dedups by cycle id and (cycleId, seq).
 func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), orgID string, first *delivery.MilestoneRun) {
 	out := &frameWriter{w: w, flush: flush}
-	writeFrame := func(f *runFrame) bool { return out.write(f) }
 	writeDone := func(state string) {
-		_ = writeFrame(&runFrame{Type: frameTypeDone, State: state})
+		_ = out.write(&runFrame{Type: frameTypeDone, State: state})
 		out.sentinel()
 	}
 
@@ -192,7 +191,7 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 	cursor := map[string]string{}
 
 	// derive re-reads the run row, walks its cycles oldest-first emitting changed
-	// `cycle` frames and new `line` frames, and reports the run's state.
+	// `cycle` frames and new `event` frames, and reports the run's state.
 	//
 	// Three outcomes, and telling them apart is the whole contract:
 	//   - alive=false — the client is gone, so stop writing.
@@ -216,10 +215,10 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 		if err != nil {
 			return row.State, false, true
 		}
-		alive = s.emitCycles(ctx, cycles, lastCycleJSON,
-			func(v *gen.RunCycleView) bool { return writeFrame(&runFrame{Type: frameTypeCycle, Cycle: v}) },
-			func(ctx context.Context, c *delivery.RunCycle, _ int) bool {
-				return s.emitEvents(ctx, row, c, cursor, func(f *runFrame) bool { return writeFrame(f) })
+		alive = s.emitCycles(ctx, out, cycles, lastCycleJSON,
+			func(v *gen.RunCycleView) any { return &runFrame{Type: frameTypeCycle, Cycle: v} },
+			func(ctx context.Context, c *delivery.RunCycle, _ int) []any {
+				return s.readEvents(ctx, row, c, cursor)
 			})
 		return row.State, false, alive
 	}
@@ -280,47 +279,52 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 	}
 }
 
-// emitEvents pulls one cycle's NEW feed events and writes them, each stamped
-// with the cycle and the attempt that produced it. A source hiccup degrades to
-// no new events — it never kills the stream, because a run's cycle timeline is
-// worth more to the reader than its feed.
+// readEvents pulls one cycle's NEW feed events as frames, each stamped with the
+// cycle and the attempt that produced it. A source hiccup degrades to no new
+// events — it never kills the stream, because a run's cycle timeline is worth
+// more to the reader than its feed.
 //
 // The attempt comes from the READER, not from the row. A re-dispatched cycle's
 // row names the attempt in flight, while a replay is still walking the previous
 // attempt's recording — stamping the row's number on those events would file a
 // retry's history under the retry, and a client deduping on (cycleId, attempt,
 // seq) would then drop half of it as duplicates of the other half.
-func (s *ProgressService) emitEvents(ctx context.Context, run *delivery.MilestoneRun, c *delivery.RunCycle, cursor map[string]string, emit func(*runFrame) bool) bool {
+//
+// The cursor moves at the READ, before the frames are written. It is this
+// connection's alone, and a write fails only when the client is gone, which
+// ends the connection and its cursor with it.
+func (s *ProgressService) readEvents(ctx context.Context, run *delivery.MilestoneRun, c *delivery.RunCycle, cursor map[string]string) []any {
 	if s.logs == nil || c.JobRef == "" {
-		return true
+		return nil
 	}
 	events, attempt, next, err := s.logs.CycleEvents(ctx, run, c, cursor[c.ID])
 	if err != nil {
-		return true
+		return nil
 	}
+	frames := make([]any, 0, len(events))
 	for i := range events {
-		if !emit(&runFrame{Type: frameTypeEvent, Event: &events[i], CycleID: c.ID, Attempt: attempt}) {
-			return false
-		}
+		frames = append(frames, &runFrame{Type: frameTypeEvent, Event: &events[i], CycleID: c.ID, Attempt: attempt})
 	}
 	if next != "" {
 		cursor[c.ID] = next
 	}
-	return true
+	return frames
 }
 
-// emitLines pulls one cycle's NEW v1 log lines and writes them, attributed to the
-// cycle and to whichever agent produced them. Only the VERSION stream calls it.
-// A source hiccup degrades to no new lines — it never kills the stream, because
-// a run's cycle timeline is worth more to the reader than its pod tail.
-func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, index int, cursor map[string]int64, emit func(*runLine) bool) bool {
+// readLines pulls one cycle's NEW v1 log lines, attributed to the cycle and to
+// whichever agent produced them, and wraps each in the caller's frame. Only the
+// VERSION stream calls it. A source hiccup degrades to no new lines — it never
+// kills the stream, because a run's cycle timeline is worth more to the reader
+// than its pod tail. The cursor moves at the read, as in readEvents.
+func (s *ProgressService) readLines(ctx context.Context, c *delivery.RunCycle, index int, cursor map[string]int64, wrap func(*runLine) any) []any {
 	if s.logs == nil || c.JobRef == "" {
-		return true
+		return nil
 	}
 	resp, err := s.logs.CycleProgress(ctx, c, cursor[c.ID])
 	if err != nil || resp == nil {
-		return true
+		return nil
 	}
+	frames := make([]any, 0, len(resp.Lines))
 	for i := range resp.Lines {
 		line := &runLine{
 			ProgressEvent: resp.Lines[i],
@@ -331,14 +335,12 @@ func (s *ProgressService) emitLines(ctx context.Context, c *delivery.RunCycle, i
 		}
 		// The attribution is carried on the wrapper, not twice.
 		line.ProgressEvent.Emitter = ""
-		if !emit(line) {
-			return false
-		}
+		frames = append(frames, wrap(line))
 	}
 	if resp.CursorMillis > cursor[c.ID] {
 		cursor[c.ID] = resp.CursorMillis
 	}
-	return true
+	return frames
 }
 
 // emitterOf normalises the runner's optional attribution. An unstamped line is
