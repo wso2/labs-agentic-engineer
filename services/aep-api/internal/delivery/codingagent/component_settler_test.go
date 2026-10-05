@@ -500,8 +500,11 @@ func TestSettler_BackstopOnAGoneBindingMarksSuspended(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
 	jobs := &fakeJobs{err: fmt.Errorf("x: %w", openchoreo.ErrNotFound)}
 	cycles := newSettleCycles(settled("c1", false))
-	cycles.goneAt["c1"] = time.Now().Add(-time.Minute) // an earlier pass saw no pod
-	NewComponentSettler(rt, jobs, &fakeDeleter{}, cycles, testWriteTargets(), nil).Tick(context.Background())
+	clock := time.Now()
+	s := settlerAt(rt, jobs, &fakeDeleter{}, cycles, &clock)
+	s.Tick(context.Background()) // notes the empty tree
+	clock = clock.Add(time.Minute)
+	s.Tick(context.Background()) // the second empty read suspends
 	if !cycles.marked["c1"] {
 		t.Fatal("a gone binding has nothing to suspend")
 	}
@@ -692,4 +695,71 @@ type identityRuntime struct {
 func (f *identityRuntime) ReleaseBindingName(ctx context.Context, _, _, _, _ string) (string, error) {
 	f.sawService = ctx.Value(f.key) == "svc"
 	return "rb", nil
+}
+
+// A restart forgets staleGone, so a pod_gone_at written before this process
+// started is no evidence: it may predate a seen pod whose clear failed. A new
+// settler clears it and the empty read starts a fresh sequence; it neither
+// deletes nor suspends on the old note.
+func TestSettler_RestartTreatsAnEarlierProcessNoteAsStale(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	jobs := &fakeJobs{}
+	del := &fakeDeleter{}
+	suspended := settled("c1", true)
+	open := settled("c2", false)
+	recent := clock.Add(-time.Minute)
+	open.EndedAt = &recent // merge-closed, inside the ceiling
+	cycles := newSettleCycles(suspended, open)
+	old := clock.Add(-time.Hour) // older than startedAt + grace
+	cycles.goneAt["c1"], cycles.goneAt["c2"] = old, old
+
+	settlerAt(rt, jobs, del, cycles, &clock).Tick(ctx) // a fresh process
+
+	if len(del.names) != 0 || len(jobs.suspends) != 0 {
+		t.Fatalf("acted on an earlier process's note: deleted %v, suspended %v", del.names, jobs.suspends)
+	}
+	for _, id := range []string{"c1", "c2"} {
+		if at := cycles.goneAt[id]; !at.Equal(clock) || cycles.cleared[id] != 1 {
+			t.Fatalf("%s: pod_gone_at = %v (cleared %d), want a fresh note at %v", id, at, cycles.cleared[id], clock)
+		}
+	}
+}
+
+// The backstop reads the same guard: after a pod was seen and its clear
+// failed, the stale note is not an "earlier empty pass", so an empty read
+// suspends nothing until the clear lands.
+func TestSettler_BackstopIgnoresAStaleNoteWhileTheClearFails(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now()
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	jobs := &fakeJobs{}
+	c := settled("c1", false)
+	recent := clock.Add(-time.Minute)
+	c.EndedAt = &recent
+	cycles := newSettleCycles(c)
+	s := settlerAt(rt, jobs, &fakeDeleter{}, cycles, &clock)
+	s.Tick(ctx) // empty: note
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p", Phase: "Running"}
+	cycles.clearErr = errors.New("db down")
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx) // pod seen, clear fails
+	rt.pod = openchoreo.RuntimePod{Found: false}
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx) // empty again, clear still failing
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspended %v on a stale note", jobs.suspends)
+	}
+	cycles.clearErr = nil
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx) // clear lands: this read is a fresh first note
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspended %v on the first read of a fresh sequence", jobs.suspends)
+	}
+	clock = clock.Add(time.Minute)
+	s.Tick(ctx)
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends %v, want one on the fresh sequence's second empty read", jobs.suspends)
+	}
 }

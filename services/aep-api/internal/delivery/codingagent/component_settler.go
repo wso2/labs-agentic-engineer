@@ -114,9 +114,13 @@ type ComponentSettler struct {
 
 	// staleGone records the cycles whose pod_gone_at outlived a pod seen since:
 	// the ClearPodGone write failed. Until a clear lands, that stamp is no
-	// evidence of anything, so nothing is decided on it. In memory: a restart
-	// in that window forgets it (the clear is retried on every pod-seen pass).
+	// evidence of anything, so nothing is decided on it.
 	staleGone map[string]bool
+	// startedAt is this process's first pass. A pod_gone_at written before it
+	// is stale too: staleGone does not survive a restart, so a note from an
+	// earlier process may hide a pod seen (and a failed clear) since. Such a
+	// note is cleared and the current read starts a fresh sequence.
+	startedAt time.Time
 
 	once sync.Once
 }
@@ -182,6 +186,9 @@ func (s *ComponentSettler) Tick(ctx context.Context) {
 	if s.asService != nil {
 		ctx = s.asService(ctx)
 	}
+	if s.startedAt.IsZero() {
+		s.startedAt = s.now()
+	}
 	rows, err := s.cycles.ListSettling(ctx, settleBatch)
 	if err != nil {
 		slog.ErrorContext(ctx, "codingagent.ComponentSettler: list settling cycles failed", "error", err)
@@ -229,9 +236,10 @@ func (s *ComponentSettler) settle(ctx context.Context, cycle *delivery.RunCycle)
 		return
 	}
 
-	// A pod_gone_at that outlived a seen pod is cleared before anything reads
-	// it; while the clear keeps failing, this row decides nothing.
-	if cycle.PodGoneAt != nil && (pod.Found || s.staleGone[cycle.ID]) {
+	// A pod_gone_at that outlived a seen pod, or that an earlier process wrote,
+	// is cleared before anything (the delete, the backstop) reads it; while the
+	// clear keeps failing, this row decides nothing.
+	if cycle.PodGoneAt != nil && (pod.Found || s.staleGone[cycle.ID] || cycle.PodGoneAt.Before(s.startedAt)) {
 		if !s.clearPodGone(ctx, cycle) {
 			return
 		}

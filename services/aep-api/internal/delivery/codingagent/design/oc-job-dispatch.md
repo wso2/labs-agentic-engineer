@@ -304,7 +304,9 @@ delete waits for all of:
 4. a "no pod" read noted on an earlier pass (`pod_gone_at`), and
    `CODING_AGENT_SETTLE_GRACE` (5m) elapsed since the LATER of that note and
    `job_suspended_at`; any pass that sees a pod clears the note (a failed
-   clear stops the row deciding anything until it lands). The resource tree
+   clear stops the row deciding anything until it lands, and a note written
+   before this process started is cleared and re-noted, since that memory
+   does not survive a restart). The resource tree
    can answer 200 and empty under load, so one empty read is never evidence.
 
 Then `DeleteComponent` by name (404 is success; a pre-UID row has no UID) and
