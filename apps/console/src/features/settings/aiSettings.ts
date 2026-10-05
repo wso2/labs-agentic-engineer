@@ -513,11 +513,12 @@ export type AiField =
 const LLM_FIELD_BY_CODE: Record<string, AiField> = {
   llm_base_url_invalid: "baseURL",
   llm_host_refused: "baseURL",
-  llm_key_required_for_new_host: "apiKey",
+  llm_key_required: "apiKey",
   llm_key_too_short: "apiKey",
   llm_key_rejected: "apiKey",
   anthropic_key_invalid: "apiKey",
   anthropic_oauth_token_coding_only: "apiKey",
+  secret_store_write_failed: "apiKey",
 };
 
 const AGENTS_FIELD_BY_CODE: Record<string, AiField> = {

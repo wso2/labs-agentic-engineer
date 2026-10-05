@@ -40,7 +40,7 @@ import {
   runtimeAvailable,
 } from "../aiSettings";
 import { useAiSettings } from "../hooks/useAiSettings";
-import { MaskedCredential, SecretField } from "./CredentialField";
+import { CredentialField, SecretField } from "./CredentialField";
 import { ModelConnectionRow } from "./ModelConnectionRow";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
@@ -163,11 +163,9 @@ export function AiAgentsCard({
                 )}
                 {r.value === "claude-code" && selected && (
                   <SubscriptionControl
-                    key={
-                      saved.subscription
-                        ? `${saved.subscription.keyPrefix}${saved.subscription.keyLast4}`
-                        : "none"
-                    }
+                    key={saved.subscription
+                        ? `${saved.subscription.connectedAt}${saved.subscription.lastValidatedAt ?? ""}`
+                        : "none"}
                     ai={ai}
                   />
                 )}
@@ -323,20 +321,28 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
   const tokenError =
     serverError ?? (ai.problem?.field === "subscription" ? ai.problem.message : undefined);
   const showStored = stored !== null && !replacing && !draft.removeToken;
+  const tokenLabel = (
+    <>
+      Claude subscription token{" "}
+      <Typography component="span" variant="body2" color="text.secondary">
+        (optional)
+      </Typography>
+    </>
+  );
 
   return (
     <Box sx={frame}>
-      <Typography variant="body2" fontWeight={500}>
-        Claude subscription token{" "}
-        <Typography component="span" variant="body2" color="text.secondary">
-          (optional)
+      {!showStored && (
+        <Typography variant="body2" fontWeight={500}>
+          {tokenLabel}
         </Typography>
-      </Typography>
+      )}
 
       {showStored && (
         <>
-          <MaskedCredential
-            preview={`${stored.keyPrefix}••••••${stored.keyLast4}`}
+          <CredentialField
+            label={tokenLabel}
+            set
             onReplace={() => setReplacing(true)}
             disabled={busy}
           >
@@ -348,7 +354,7 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
             >
               Remove
             </Button>
-          </MaskedCredential>
+          </CredentialField>
           <Typography variant="body2" color="text.secondary">
             Coding bills your Claude plan. Other agents use the API key.
           </Typography>

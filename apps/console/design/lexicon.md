@@ -1592,6 +1592,8 @@ never reach the copy except as what a connection supports.
 | Section | **Model connection** · *Every agent uses this connection and model: requirements, design, task planning and coding.* |
 | Fields | **API format** (**Anthropic Messages** · **OpenAI-compatible**) · **Base URL** · **API key** · **Model** |
 | Model help | *Default for this format: \<model\> (\<note\>). Use the exact model ID your provider documents.* — the note only where the format has one (OpenAI-compatible: *Ollama's model ID*) |
+| Stored key (API key, Claude subscription token) | exactly **Set ••••••••**; no key: **Not set**. Never a prefix, a last four or any other part of the key — the server returns none. **Replace** swaps in the key input; there is no Rotate. The webhook secret and the platform's own clients are never shown |
+| Key refused by the secret store | the server's message on the key field (`secret_store_write_failed`); a failed Agent Manager push (`agent_manager_not_updated`) shows beside **Test connection**, as the key is saved |
 | Action | **Test connection** — optional; Save (onboarding: **Continue**) probes anyway |
 | Card chip | **ready** · **not connected** — two states only; a saved connection is usable by construction |
 | Probe status | *Connected to \<host\> · \<model\> is available*; unlisted and unlisting endpoints warn, never refuse |

@@ -73,7 +73,6 @@ const anthropic: LLMProjection = {
   kind: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -266,7 +265,7 @@ describe("aiSettingsPatch", () => {
       config({
         agents: {
           ...config().agents,
-          subscription: { kind: "claude", keyPrefix: "sk-ant-oat01-", keyLast4: "9f2c", status: "connected", connectedAt: "" },
+          subscription: { kind: "claude", status: "connected", connectedAt: "" },
         },
       }),
     );
@@ -313,7 +312,9 @@ describe("refusedField", () => {
   it.each([
     ["llm_key_rejected", "apiKey"],
     ["llm_key_too_short", "apiKey"],
-    ["llm_key_required_for_new_host", "apiKey"],
+    ["llm_key_required", "apiKey"],
+    ["secret_store_write_failed", "apiKey"],
+    ["agent_manager_not_updated", "connection"],
     ["llm_host_refused", "baseURL"],
     ["llm_base_url_invalid", "baseURL"],
     ["llm_unreachable", "connection"],
@@ -328,6 +329,7 @@ describe("refusedField", () => {
     ["agents_runtime_unavailable", "runtime"],
     ["agents_subscription_requires_anthropic_host", "subscription"],
     ["agents_subscription_requires_connection", "subscription"],
+    ["secret_store_write_failed", "subscription"],
   ])("puts %s on %s", (code, field) => {
     expect(refusedField(["body.agents"], code)).toBe(field);
   });

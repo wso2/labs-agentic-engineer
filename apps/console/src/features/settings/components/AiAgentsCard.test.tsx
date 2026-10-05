@@ -53,7 +53,6 @@ const anthropic: LLMProjection = {
   kind: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -71,7 +70,6 @@ const ollama: LLMProjection = {
   kind: "openai-compatible",
   baseURL: "https://ollama.com/v1",
   model: "glm-5.3",
-  keyPreview: "3f9a…c2d1",
   connectedAt: "2026-09-25T13:50:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -88,8 +86,6 @@ const ollama: LLMProjection = {
 const subscription: SubscriptionProjection = {
   kind: "claude",
   status: "connected",
-  keyPrefix: "sk-ant-oat01-",
-  keyLast4: "9f2c",
   connectedAt: "2026-09-01T10:00:00Z",
 };
 
@@ -173,7 +169,7 @@ describe("AiAgentsCard on Anthropic's API", () => {
     expect(format("Anthropic Messages")).toHaveAttribute("aria-pressed", "true");
     expect(field("Base URL")).toHaveValue("https://api.anthropic.com/v1");
     expect(field("Model")).toHaveValue("claude-sonnet-5");
-    expect(screen.getByText("sk-a…wxyz")).toBeInTheDocument();
+    expect(screen.getByText("Set ••••••••")).toBeInTheDocument();
     expect(radio(/Claude Code/)).toBeChecked();
   });
 
@@ -213,7 +209,8 @@ describe("AiAgentsCard on Anthropic's API", () => {
 
   it("shows a stored token masked; Remove deletes it on save", () => {
     renderCard(config({ agents: { ...defaultAgents, subscription } }));
-    expect(screen.getByText("sk-ant-oat01-••••••9f2c")).toBeInTheDocument();
+    // The connection key and the stored token each read Set, with no characters.
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(screen.getByText(/Saving deletes the stored token/)).toBeInTheDocument();
     fireEvent.click(saveButton());
@@ -394,6 +391,21 @@ describe("a refused save", () => {
     saveState.error = refused("agents_subscription_requires_anthropic_host", "agents", "a Claude subscription bills only against Anthropic's own API");
     renderCard();
     expect(field("Subscription token")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows a refused key store write on the key field, with the server's message", () => {
+    saveState.isError = true;
+    saveState.error = refused("secret_store_write_failed", "llm", "the secret store did not accept the key; nothing was saved");
+    renderCard(config({ llm: null }));
+    expect(screen.getByText("the secret store did not accept the key; nothing was saved")).toBeInTheDocument();
+    expect(field("API key")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows a failed Agent Manager push beside the connection, not on a field", () => {
+    saveState.isError = true;
+    saveState.error = refused("agent_manager_not_updated", "llm", "the key is saved, but Agent Manager did not take it; save again");
+    renderCard();
+    expect(screen.getByRole("alert")).toHaveTextContent("the key is saved, but Agent Manager did not take it; save again");
   });
 
   it("disables the controls while a save is in flight", () => {

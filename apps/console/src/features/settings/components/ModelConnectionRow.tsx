@@ -43,7 +43,7 @@ import {
   type LLMFormat,
 } from "../aiSettings";
 import type { useAiSettings } from "../hooks/useAiSettings";
-import { MaskedCredential, SecretField } from "./CredentialField";
+import { CredentialField, SecretField } from "./CredentialField";
 
 type AiSettingsState = ReturnType<typeof useAiSettings>;
 
@@ -156,11 +156,9 @@ export function ModelConnectionRow({
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {!askForKey && stored ? (
             <>
-              <Typography variant="body2" fontWeight={500}>
-                API key
-              </Typography>
-              <MaskedCredential
-                preview={stored.keyPreview}
+              <CredentialField
+                label="API key"
+                set
                 onReplace={() => setReplacing(true)}
                 disabled={busy}
               >
@@ -172,7 +170,7 @@ export function ModelConnectionRow({
                 >
                   Disconnect
                 </Button>
-              </MaskedCredential>
+              </CredentialField>
               <Typography variant="body2" color="text.secondary">
                 Connected {new Date(stored.connectedAt).toLocaleString()}
               </Typography>

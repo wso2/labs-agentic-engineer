@@ -21,33 +21,39 @@ import { Box, Button, IconButton, InputAdornment, TextField, Typography } from "
 import { Eye, EyeOff } from "@wso2/oxygen-ui-icons-react";
 
 /**
- * A stored credential, masked, with a Replace button while `onReplace` is set
- * and any further actions (`children`) beside it. `preview` is the masked form
- * the server built (never the secret): the connection's `keyPreview`, or a
- * subscription's prefix and last four.
+ * A stored credential's state, with a Replace button while `onReplace` is set
+ * and any further actions (`children`) beside it. The server never returns any
+ * part of a secret, so the field reads only `Set ••••••••` or `Not set`.
  */
-export function MaskedCredential({
-  preview,
+export function CredentialField({
+  label,
+  set,
   onReplace,
-  disabled,
+  disabled = false,
   children,
 }: {
-  preview: string;
+  label: ReactNode;
+  set: boolean;
   onReplace?: (() => void) | undefined;
-  disabled: boolean;
+  disabled?: boolean;
   children?: ReactNode;
 }) {
   return (
-    <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
-      <Typography variant="body2" fontFamily="monospace">
-        {preview}
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      <Typography variant="body2" fontWeight={500}>
+        {label}
       </Typography>
-      {onReplace && (
-        <Button size="small" onClick={onReplace} disabled={disabled}>
-          Replace
-        </Button>
-      )}
-      {children}
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}>
+        <Typography variant="body2" fontFamily="monospace">
+          {set ? "Set ••••••••" : "Not set"}
+        </Typography>
+        {onReplace && (
+          <Button size="small" onClick={onReplace} disabled={disabled}>
+            Replace
+          </Button>
+        )}
+        {children}
+      </Box>
     </Box>
   );
 }

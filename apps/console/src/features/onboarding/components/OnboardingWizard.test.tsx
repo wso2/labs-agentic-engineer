@@ -186,7 +186,6 @@ describe("OnboardingWizard's Connect a model step", () => {
           kind: "anthropic",
           baseURL: "https://api.anthropic.com/v1",
           model: "claude-sonnet-5",
-          keyPreview: "wxyz",
           connectedAt: "2026-09-26T08:00:00Z",
           updatedAt: "2026-09-26T08:00:00Z",
           updatedBy: "dev@acme.example",

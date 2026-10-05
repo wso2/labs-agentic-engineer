@@ -164,7 +164,6 @@ export const llmConnectedFixture: LLMProjection = {
   kind: "anthropic",
   baseURL: ANTHROPIC_URL,
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -182,7 +181,6 @@ export const llmOllamaFixture: LLMProjection = {
   kind: "openai-compatible",
   baseURL: "https://ollama.com/v1",
   model: "glm-5.3",
-  keyPreview: "3f9a…c2d1",
   connectedAt: "2026-09-25T13:50:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -203,8 +201,6 @@ export const llmDisconnectedAtFixture = "2026-09-20T08:00:00Z";
 export const subscriptionFixture: SubscriptionProjection = {
   kind: "claude",
   status: "connected",
-  keyPrefix: "sk-ant-oat01-",
-  keyLast4: "9f2c",
   connectedAt: "2026-09-01T10:00:00Z",
   lastValidatedAt: "2026-09-01T10:00:00Z",
 };
