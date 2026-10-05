@@ -42,9 +42,6 @@ type StoreConfig = secretsprovider.StoreConfig
 // OpenBaoConfig contains configuration for OpenBao/Vault.
 type OpenBaoConfig = secretsprovider.OpenBaoConfig
 
-// OpenBaoAuth contains authentication configuration for OpenBao.
-type OpenBaoAuth = secretsprovider.OpenBaoAuth
-
 // SecretLocation identifies where a secret lives in the KV hierarchy.
 type SecretLocation = secretsprovider.SecretLocation
 

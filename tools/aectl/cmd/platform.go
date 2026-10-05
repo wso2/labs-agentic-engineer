@@ -432,19 +432,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
 		}
 
-		// The value aep-api authenticates to OpenBao with at runtime (see
-		// aep-openbao-secrets in the chart). Not interactive: aectl's own
-		// write access to OpenBao (below) goes through the cluster's
-		// Kubernetes-auth login (GetSAToken + KubernetesLogin), never this
-		// value, so there is nothing to prompt for here — only aep-api reads
-		// it, later, from the ESO-synced Secret this seeds.
-		openBaoToken := os.Getenv("AEP_OPENBAO_TOKEN")
-		if openBaoToken == "" {
-			openBaoToken = "root"
-		}
-
 		fmt.Println()
-		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret, openBaoToken); err != nil {
+		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret); err != nil {
 			return fmt.Errorf("provision OpenBao: %w", err)
 		}
 	}
@@ -490,9 +479,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.openBaoDirect.enabled=%t", openBaoDirect))
 	if openBaoDirect {
-		// OPENBAO_TOKEN is NOT set here — aep-api reads it from the
-		// ESO-synced aep-openbao-secrets Secret (provisionOpenBao seeds
-		// aep/openbao-token), never a literal Helm value.
+		// No token: aep-api logs in to OpenBao by Kubernetes auth as its own
+		// service account (role aep-api, deployments/scripts/openbao-aep-api-auth.sh).
 		helmArgs = append(helmArgs, "--set", "openbao.addr="+viper.GetString("openbao.addr"))
 	}
 	helmArgs = append(helmArgs, "--set",
@@ -989,7 +977,6 @@ func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
 // installed), not that it predates one Thunder client.
 var requiredOpenBaoPaths = []string{
 	"aep/anthropic-api-key",
-	"aep/openbao-token",
 	"aep/postgres-password",
 	"aep/opensearch-username",
 	"aep/opensearch-password",
@@ -1096,7 +1083,7 @@ func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put fun
 }
 
 // provisionOpenBao seeds all platform secrets into OC's built-in OpenBao instance.
-func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret, openBaoToken string) error {
+func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret string) error {
 	sp := ui.NewSpinner("Connecting to OpenBao")
 	sp.Start()
 
@@ -1138,7 +1125,6 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 
 	secrets := []struct{ path, value string }{
 		{"aep/anthropic-api-key", anthropicKey},
-		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
 		{webhookRelaySeedPath, relaySeed},
 		{"aep/opensearch-username", "admin"},

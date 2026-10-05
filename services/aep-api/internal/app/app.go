@@ -115,6 +115,11 @@ type Seam struct {
 	// Nil = delivery off (no secret writes, no external-secret cleanup).
 	SecretsProvider secretmanagersvc.Provider
 
+	// OpenBaoAuth is the process's one OpenBao session, the same one the
+	// OpenBao-direct SecretsProvider was built with. The environment Thunder
+	// binding reader shares it. Nil (or OPENBAO_ADDR unset) = no reader.
+	OpenBaoAuth secrets.VaultAuth
+
 	// ResourceLabels are stamped on every OpenChoreo resource AEP writes
 	// (openchoreo.Config.ResourceLabels). Nil = none.
 	ResourceLabels map[string]string
@@ -571,7 +576,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// than "does not exist", and its mutations refuse — there is nothing to
 	// write to.
 	var identityTargets identity.TargetResolver
-	if bindingKV, kvErr := environmentThunderCredentials(cfg); kvErr != nil {
+	if bindingKV, kvErr := environmentThunderCredentials(cfg, seam.OpenBaoAuth); kvErr != nil {
 		slog.Warn("roles ensure disabled — the environment Thunder credential store is unreachable",
 			"error", kvErr)
 	} else if bindingKV == nil {
@@ -1627,15 +1632,16 @@ func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID,
 // environmentThunderCredentials opens the secret store the environment-tier
 // Thunder binding's admin credential is read from.
 //
-// (nil, nil) when OPENBAO_ADDR is unset: a stack with no secret store cannot
-// reach any environment's identity provider, and the caller skips the whole
-// feature rather than wiring a resolver that fails every call. It performs no
-// I/O — Assemble stays pure; the first read happens when a build asks.
-func environmentThunderCredentials(cfg config.Config) (bindingCredentialReader, error) {
-	if cfg.OpenBaoAddr == "" {
+// (nil, nil) when OPENBAO_ADDR is unset or there is no OpenBao session: a
+// stack with no secret store cannot reach any environment's identity provider,
+// and the caller skips the whole feature rather than wiring a resolver that
+// fails every call. It performs no I/O — Assemble stays pure; the first read
+// (and, if the session has none yet, the login) happens when a build asks.
+func environmentThunderCredentials(cfg config.Config, auth secrets.VaultAuth) (bindingCredentialReader, error) {
+	if cfg.OpenBaoAddr == "" || auth == nil {
 		return nil, nil
 	}
-	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, cfg.OpenBaoToken, thunderBindingKVMount)
+	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, thunderBindingKVMount, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -1657,7 +1663,6 @@ func deliveryOpenBaoConfigFromAppConfig(cfg config.Config) *secretmanagersvc.Ope
 	return &secretmanagersvc.OpenBaoConfig{
 		Server: cfg.OpenBaoAddr,
 		Path:   "secret",
-		Auth:   &secretmanagersvc.OpenBaoAuth{Token: cfg.OpenBaoToken},
 	}
 }
 

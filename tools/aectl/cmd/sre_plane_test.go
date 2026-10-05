@@ -87,7 +87,7 @@ func TestFindSREAgentDeploymentMissingNamesRCAEnabled(t *testing.T) {
 
 func secretReference(data ...interface{}) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"metadata": map[string]interface{}{"name": orgModelKeySecretRefs[0], "namespace": "default"},
+		"metadata": map[string]interface{}{"name": "default-default-key-0a1b2c3d", "namespace": "default"},
 		"spec":     map[string]interface{}{"data": data},
 	}}
 }
@@ -109,6 +109,54 @@ func TestOrgAnthropicKVRefReadsAPIKeyEntry(t *testing.T) {
 func TestOrgAnthropicKVRefRejectsMissingEntry(t *testing.T) {
 	if _, err := orgAnthropicKVRef(secretReference()); err == nil {
 		t.Fatal("want error for a SecretReference without an api-key entry")
+	}
+}
+
+func namedRef(name string, created time.Time) unstructured.Unstructured {
+	u := unstructured.Unstructured{Object: map[string]interface{}{}}
+	u.SetName(name)
+	u.SetNamespace("default")
+	u.SetCreationTimestamp(metav1.NewTime(created))
+	return u
+}
+
+// The key aep-api points at is the org's default-key reference
+// (<ns>-default-key-<8 hex>); the pre-reference names point at a stale copy
+// and are never read, and another secret's reference is never taken for it.
+func TestCurrentDefaultKeyRefPicksTheMintedReference(t *testing.T) {
+	t0 := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	for name, tc := range map[string]struct {
+		refs []unstructured.Unstructured
+		want string
+	}{
+		"none saved": {refs: []unstructured.Unstructured{
+			namedRef("model-connection-secrets", t0), namedRef("anthropic-secrets", t0),
+			namedRef("default-coding-agent-key-0a1b2c3d", t0), namedRef("default-github-pat-0a1b2c3d", t0),
+		}},
+		"one saved": {refs: []unstructured.Unstructured{
+			namedRef("model-connection-secrets", t0.Add(time.Hour)),
+			namedRef("default-default-key-0a1b2c3d", t0),
+		}, want: "default-default-key-0a1b2c3d"},
+		"replaced, old one not yet retired": {refs: []unstructured.Unstructured{
+			namedRef("default-default-key-ffffffff", t0.Add(time.Minute)),
+			namedRef("default-default-key-00000000", t0),
+		}, want: "default-default-key-ffffffff"},
+		"trimmed long namespace": {refs: []unstructured.Unstructured{
+			namedRef("a-very-long-org-namespace-trimm-default-key-12345678", t0),
+		}, want: "a-very-long-org-namespace-trimm-default-key-12345678"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := currentDefaultKeyRef(tc.refs)
+			if tc.want == "" {
+				if ok {
+					t.Fatalf("picked %q; want none", got.GetName())
+				}
+				return
+			}
+			if !ok || got.GetName() != tc.want {
+				t.Fatalf("picked %v (ok=%t); want %q", got, ok, tc.want)
+			}
+		})
 	}
 }
 

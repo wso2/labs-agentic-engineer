@@ -21,6 +21,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/ocauth"
 	"github.com/wso2/aep/aep-api/secretsprovider"
 )
@@ -60,4 +61,10 @@ type Options struct {
 	// out, and its build workflow will not render without it. Validated at boot
 	// (an invalid key or value fails startup). Nil = none (local, direct OC).
 	ResourceLabels map[string]string
+
+	// openBaoAuth is the process's one OpenBao session (Kubernetes auth),
+	// shared by the OpenBao-direct provider above and the environment Thunder
+	// binding reader Assemble builds. Unexported: only NewOSSOptions sets it,
+	// with the provider it authenticates. Nil = neither exists.
+	openBaoAuth secrets.VaultAuth
 }

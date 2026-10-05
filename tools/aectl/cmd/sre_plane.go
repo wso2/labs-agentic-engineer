@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -99,19 +100,42 @@ func findSREAgentDeployment(ctx context.Context, client kubernetes.Interface, ns
 }
 
 // The org's model connection key, as aep-api publishes it when the key is
-// saved in the Console: a SecretReference named after the credential entity
-// (entity + "-secrets") in the org's OpenChoreo namespace, whose api-key entry
-// points at the key's KV path. Reading the coordinates from that CR, rather
-// than rebuilding the path, keeps aep-api the only place that knows how the
-// path is derived.
+// saved in the Console: a SecretReference in the org's OpenChoreo namespace
+// whose api-key entry points at the key's KV path. Every save mints a new
+// reference named <namespace>-default-key-<8 hex> (the org_secrets entity
+// "default-key"; a long namespace is trimmed, the entity and suffix never are)
+// and retires the previous one once the new one is committed. Reading the
+// coordinates from that CR, rather than rebuilding the path, keeps aep-api the
+// only place that knows how the path is derived.
 //
-// The entity is "model-connection"; before the model connection it was
-// "anthropic", and aep-api moves each org off that name in the background
-// (organization/model_key_rename.go), so an org it has not reached yet still
-// has only the old reference. The current name wins when both exist.
+// The pre-reference names (model-connection-secrets, anthropic-secrets) are
+// not read: an org that has them and no default-key reference has not
+// re-entered its key since, and those references point at a stale copy.
 const orgAnthropicSecretKey = "api-key"
 
-var orgModelKeySecretRefs = []string{"model-connection-secrets", "anthropic-secrets"}
+var orgDefaultKeyRefName = regexp.MustCompile(`(^|-)default-key-[0-9a-f]{8}$`)
+
+// currentDefaultKeyRef picks the org's current default-key SecretReference by
+// name. More than one exists only for the moment between a save's commit and
+// the retirement of the reference it replaced (or when that retirement
+// failed), and in both cases the newest is the one aep-api points at.
+func currentDefaultKeyRef(refs []unstructured.Unstructured) (*unstructured.Unstructured, bool) {
+	var current *unstructured.Unstructured
+	for i := range refs {
+		if !orgDefaultKeyRefName.MatchString(refs[i].GetName()) {
+			continue
+		}
+		if current == nil {
+			current = &refs[i]
+			continue
+		}
+		newest, candidate := current.GetCreationTimestamp(), refs[i].GetCreationTimestamp()
+		if newest.Before(&candidate) {
+			current = &refs[i]
+		}
+	}
+	return current, current != nil
+}
 
 // kvRef is a secret-store remote reference: a KV path and a property in it.
 type kvRef struct {
@@ -147,16 +171,14 @@ func orgAnthropicKVRef(ref *unstructured.Unstructured) (kvRef, error) {
 // resolveOrgAnthropicKVRef finds the org's Console-saved model connection key.
 // found is false until someone saves the key in the Console.
 func resolveOrgAnthropicKVRef(ctx context.Context, applier *k8s.Applier, orgNamespace string) (ref kvRef, found bool, err error) {
-	for _, name := range orgModelKeySecretRefs {
-		obj, err := applier.Get(ctx, "openchoreo.dev/v1alpha1", "SecretReference", orgNamespace, name)
-		if err != nil {
-			return kvRef{}, false, err
-		}
-		if obj == nil {
-			continue
-		}
-		ref, err = orgAnthropicKVRef(obj)
-		return ref, err == nil, err
+	refs, err := applier.List(ctx, "openchoreo.dev/v1alpha1", "SecretReference", orgNamespace)
+	if err != nil {
+		return kvRef{}, false, err
 	}
-	return kvRef{}, false, nil
+	obj, ok := currentDefaultKeyRef(refs)
+	if !ok {
+		return kvRef{}, false, nil
+	}
+	ref, err = orgAnthropicKVRef(obj)
+	return ref, err == nil, err
 }

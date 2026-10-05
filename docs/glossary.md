@@ -93,8 +93,9 @@ addition.
 AEP selects one secrets provider per process (no fallback chain):
 - **Cloud / overlay:** SM-API HTTP client (`ManagesSecretReferences()=true`) —
   the server owns `SecretReference` CR creation.
-- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` (and
-  `OPENBAO_TOKEN`) are set. The provider writes KV only
+- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` is
+  set; it logs in by Kubernetes auth (role `aep-api`, write-only policy
+  `aep-api-writer`, no static token). The provider writes KV only
   (`ManagesSecretReferences()=false`); the high-level client authors
   `SecretReference` CRs via OpenChoreo into the Workload control-plane
   namespace (not the vault `wc-…` segment). See

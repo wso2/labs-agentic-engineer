@@ -23,13 +23,39 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/secretsprovider"
 )
+
+// testAuth is a real Kubernetes-auth session over a temp service-account
+// token; servers built with withLogin answer its login.
+func testAuth(t *testing.T) secrets.VaultAuth {
+	t.Helper()
+	tokenFile := filepath.Join(t.TempDir(), "sa-token")
+	if err := os.WriteFile(tokenFile, []byte("sa-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return secrets.NewKubernetesAuth("aep-api", "kubernetes", tokenFile)
+}
+
+// withLogin answers the Kubernetes-auth login and hands every other request
+// to h.
+func withLogin(h http.HandlerFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/auth/kubernetes/login" {
+			_, _ = w.Write([]byte(`{"auth":{"client_token":"tok","lease_duration":3600}}`))
+			return
+		}
+		h(w, r)
+	})
+}
 
 func TestProvider_CompileAsserts(t *testing.T) {
 	var _ secretsprovider.Provider = (*openbao.Provider)(nil)
@@ -41,8 +67,7 @@ func TestProvider_Capabilities_WriteOnly(t *testing.T) {
 	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 		Server: "http://example.invalid",
 		Path:   "secret",
-		Auth:   &secretsprovider.OpenBaoAuth{Token: "tok"},
-	})
+	}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -55,8 +80,7 @@ func TestProvider_ManagesSecretReferences_False(t *testing.T) {
 	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 		Server: "http://example.invalid",
 		Path:   "secret",
-		Auth:   &secretsprovider.OpenBaoAuth{Token: "tok"},
-	})
+	}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -71,7 +95,7 @@ func TestClient_PushSecret_ReturnsVaultPath(t *testing.T) {
 
 	var gotPath string
 	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(withLogin(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		body, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(body, &gotBody)
@@ -83,8 +107,7 @@ func TestClient_PushSecret_ReturnsVaultPath(t *testing.T) {
 	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 		Server: srv.URL,
 		Path:   "secret",
-		Auth:   &secretsprovider.OpenBaoAuth{Token: "tok"},
-	})
+	}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -122,8 +145,7 @@ func TestClient_GetSecretWithValue_NotSupported(t *testing.T) {
 	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 		Server: "http://example.invalid",
 		Path:   "secret",
-		Auth:   &secretsprovider.OpenBaoAuth{Token: "tok"},
-	})
+	}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -141,7 +163,7 @@ func TestClient_GetSecretWithValue_NotSupported(t *testing.T) {
 
 func TestClient_PushSecret_ErrorOmitsSecretValues(t *testing.T) {
 	const secretValue = "super-secret-value-do-not-leak"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(withLogin(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"errors":["bad"]}`))
 	}))
@@ -150,8 +172,7 @@ func TestClient_PushSecret_ErrorOmitsSecretValues(t *testing.T) {
 	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 		Server: srv.URL,
 		Path:   "secret",
-		Auth:   &secretsprovider.OpenBaoAuth{Token: "tok"},
-	})
+	}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}
@@ -172,12 +193,12 @@ func TestClient_PushSecret_ErrorOmitsSecretValues(t *testing.T) {
 }
 
 func TestClient_SecretPath_IsWherePushSecretWrites(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(withLogin(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"data":{}}`))
 	}))
 	t.Cleanup(srv.Close)
-	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{Server: srv.URL, Path: "secret", Auth: &secretsprovider.OpenBaoAuth{Token: "tok"}})
+	p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{Server: srv.URL, Path: "secret"}, testAuth(t))
 	if err != nil {
 		t.Fatalf("NewProvider: %v", err)
 	}

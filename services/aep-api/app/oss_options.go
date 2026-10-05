@@ -22,6 +22,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/oauth"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/ocauth"
 	"github.com/wso2/aep/aep-api/secretsprovider"
 )
@@ -35,7 +36,8 @@ func NewM2MAuthProvider(tokenURL, clientID, clientSecret, hostHeader string) oca
 // NewOSSOptions loads and validates config, then returns Options for the OSS
 // direct-OC entry: M2M AuthProvider when service-auth env is set,
 // DirectOCStrategy, a nil impersonation resolver, and an OpenBao-direct
-// SecretsProvider when OPENBAO_ADDR is configured (nil = delivery off).
+// SecretsProvider when OPENBAO_ADDR is configured (nil = delivery off), logged
+// in by Kubernetes auth (OPENBAO_AUTH_*; no static token).
 func NewOSSOptions() (Options, error) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -53,12 +55,15 @@ func NewOSSOptions() (Options, error) {
 	}
 
 	var secretsProvider secretsprovider.Provider
+	var openBaoAuth secrets.VaultAuth
 	if cfg.OpenBaoAddr != "" {
+		// One session for the process: the provider here and the binding
+		// reader Assemble builds log in once between them, lazily.
+		openBaoAuth = secrets.NewKubernetesAuth(cfg.OpenBaoAuth.Role, cfg.OpenBaoAuth.Mount, cfg.OpenBaoAuth.TokenPath)
 		p, err := openbao.NewProvider(&secretsprovider.OpenBaoConfig{
 			Server: cfg.OpenBaoAddr,
 			Path:   "secret",
-			Auth:   &secretsprovider.OpenBaoAuth{Token: cfg.OpenBaoToken},
-		})
+		}, openBaoAuth)
 		if err != nil {
 			return Options{}, fmt.Errorf("openbao secrets provider: %w", err)
 		}
@@ -70,5 +75,6 @@ func NewOSSOptions() (Options, error) {
 		RequestAuthStrategy:    DirectOCStrategy{},
 		ImpersonateOrgResolver: nil,
 		SecretsProvider:        secretsProvider,
+		openBaoAuth:            openBaoAuth,
 	}, nil
 }

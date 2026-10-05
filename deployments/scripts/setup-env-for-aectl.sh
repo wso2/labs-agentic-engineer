@@ -403,6 +403,10 @@ spec:
             namespace: "openbao"
 EOF
 
+# aep-api's write-only policy and Kubernetes-auth role (no static token). Its
+# own script because `make dev-update` and the OpenBao wipe recovery re-run it.
+bash "${SCRIPT_DIR}/openbao-aep-api-auth.sh"
+
 echo "   CoreDNS rewrite"
 # The guide's own coredns-custom.yaml, with the suffix taken from AE_DOMAIN.
 # Applied from here rather than fetched because upstream's copy hardcodes

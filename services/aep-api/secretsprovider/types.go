@@ -67,14 +67,8 @@ type OpenBaoConfig struct {
 	// Path is the mount path for the KV secrets engine (e.g., "secret").
 	Path string `json:"path"`
 
-	// Auth contains authentication configuration.
-	Auth *OpenBaoAuth `json:"auth"`
-}
-
-// OpenBaoAuth contains authentication configuration for OpenBao.
-type OpenBaoAuth struct {
-	// Token is a static token for authentication.
-	Token string `json:"token,omitempty"`
+	// There is no static token: the OSS provider logs in by Kubernetes auth
+	// (internal/platform/secrets.NewKubernetesAuth, OPENBAO_AUTH_*).
 }
 
 // SecretLocation identifies where a secret lives in the KV hierarchy.

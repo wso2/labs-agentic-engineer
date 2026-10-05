@@ -167,6 +167,35 @@ func (a *Applier) Get(ctx context.Context, apiVersion, kind, namespace, name str
 	return obj, nil
 }
 
+// List returns every object of apiVersion/kind in namespace (all namespaces
+// for a cluster-scoped kind), and an error when the list fails (e.g. the CRD
+// itself is not installed).
+func (a *Applier) List(ctx context.Context, apiVersion, kind, namespace string) ([]unstructured.Unstructured, error) {
+	gv, err := schema.ParseGroupVersion(apiVersion)
+	if err != nil {
+		return nil, fmt.Errorf("parse apiVersion %q: %w", apiVersion, err)
+	}
+	gvk := gv.WithKind(kind)
+	mapping, err := a.mapper.RESTMapping(gvk.GroupKind(), gvk.Version)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s: %w", gvk.String(), err)
+	}
+	var ri dynamic.ResourceInterface
+	if mapping.Scope.Name() == meta.RESTScopeNameNamespace {
+		if namespace == "" {
+			return nil, fmt.Errorf("namespace is required for namespaced kind %s", gvk.String())
+		}
+		ri = a.dyn.Resource(mapping.Resource).Namespace(namespace)
+	} else {
+		ri = a.dyn.Resource(mapping.Resource)
+	}
+	list, err := ri.List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list %s in %s: %w", kind, namespace, err)
+	}
+	return list.Items, nil
+}
+
 // Delete removes a single object identified by apiVersion/kind/namespace/name,
 // resolving the GVK through discovery. A missing object is not an error (delete
 // is idempotent). namespace is ignored for cluster-scoped kinds.

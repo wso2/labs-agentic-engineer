@@ -244,18 +244,15 @@ spec:
             {{- end }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
-            # absent there. OPENBAO_TOKEN comes from the ESO-synced
-            # aep-openbao-secrets Secret, same as every other credential below
-            # — never a literal Helm value (it would otherwise sit in plaintext
-            # in the release's values/history and this Deployment's own spec).
+            # absent there. No static token: aep-api logs in by Kubernetes
+            # auth as its own service account (the projected token this pod
+            # mounts), and the role binds it to the write-only aep-api-writer
+            # policy (deployments/scripts/openbao-aep-api-auth.sh).
             {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
             - name: OPENBAO_ADDR
               value: {{ .Values.openbao.addr | quote }}
-            - name: OPENBAO_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: aep-openbao-secrets
-                  key: OPENBAO_TOKEN
+            - name: OPENBAO_AUTH_ROLE
+              value: aep-api
             {{- end }}
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
             - name: THUNDER_SYSTEM_CLIENT_SECRET

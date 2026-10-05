@@ -176,11 +176,13 @@ type Config struct {
 	// the column cipher, which seals test_users.password_sealed at rest.
 	CredentialEncryptionKey string
 
-	// OpenBaoAddr / OpenBaoToken — local-only OpenBao connection for the
-	// in-process OpenBao-direct secrets provider (NewOSSOptions). Empty
-	// leaves SecretsProvider nil (delivery off). Never set in cloud.
-	OpenBaoAddr  string
-	OpenBaoToken string
+	// OpenBaoAddr — local-only OpenBao address for the in-process
+	// OpenBao-direct secrets provider (NewOSSOptions). Empty leaves
+	// SecretsProvider nil (delivery off). Never set in cloud.
+	OpenBaoAddr string
+	// OpenBaoAuth is how aep-api logs in to OpenBao: Kubernetes auth with its
+	// service-account token. There is no static token.
+	OpenBaoAuth OpenBaoAuthConfig
 
 	GitHubAppSlug string // App's URL slug; names the platform bot sender (githubBotLogin)
 
@@ -385,6 +387,16 @@ type ServiceAuthConfig struct {
 // authorizes the person who asked.
 type ObservabilityConfig struct {
 	BaseURL string
+}
+
+// OpenBaoAuthConfig is aep-api's Kubernetes-auth login to OpenBao
+// (OPENBAO_AUTH_*). The role binds service account aep-api in wso2-aep to the
+// write-only aep-api-writer policy; deployments/scripts/openbao-aep-api-auth.sh
+// creates both.
+type OpenBaoAuthConfig struct {
+	Role      string // OPENBAO_AUTH_ROLE, default aep-api
+	Mount     string // OPENBAO_AUTH_MOUNT, default kubernetes
+	TokenPath string // OPENBAO_AUTH_TOKEN_PATH, default the pod's projected service-account token
 }
 
 // AgentManagerConfig holds the machine credentials AEP calls Agent Manager

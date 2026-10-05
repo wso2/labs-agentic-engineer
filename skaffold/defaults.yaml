@@ -71,7 +71,7 @@ oc:
 
 codingagent:
   openbao_direct:
-    # Injects OPENBAO_ADDR/TOKEN into aep-api so it can write user secrets
+    # Injects OPENBAO_ADDR into aep-api (Kubernetes auth, no token) so it can write user secrets
     # (e.g. Anthropic API keys) directly into OpenBao. Required for local/OSS
     # installs. Production overlays inject a managed SecretsProvider instead
     # and must leave this false.
@@ -81,7 +81,7 @@ openbao:
   # In-cluster URL of the OpenBao service — used when openbao_direct.enabled=true.
   # Override if OpenBao is deployed under a different namespace or service name.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
-  # token is intentionally absent — prompted interactively during install, or set via AEP_OPENBAO_TOKEN env var
+  # No token: aep-api logs in by Kubernetes auth (deployments/scripts/openbao-aep-api-auth.sh).
 
 gateway:
   # External hostname used for component HTTP endpoints (HTTPRoute hosts).

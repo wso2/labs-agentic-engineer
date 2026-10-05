@@ -47,11 +47,12 @@ spec:
 `
 
 // The SRE agent's Anthropic key: the org's model connection key as saved in the
-// AE Console, read from the KV path aep-api published in the org's
-// model-connection-secrets SecretReference (sre_plane.go). Through the org secret store (OpenChoreo's
+// AE Console, read from the KV path aep-api published in the org's current
+// default-key SecretReference (sre_plane.go). Through the org secret store (OpenChoreo's
 // "default" ClusterSecretStore, which every workload reading that path uses),
-// not the aep/* store above. The short refresh picks up a key re-saved
-// in the Console without a re-run.
+// not the aep/* store above. Every Console save writes a new path and retires
+// the old one, so a re-saved key reaches the agent on the next
+// `aectl sre install`, not by refresh.
 const sreAnthropicSecretTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

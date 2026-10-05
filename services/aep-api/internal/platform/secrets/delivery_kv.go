@@ -32,6 +32,10 @@ import (
 // logical path (e.g. user-app-secrets/{orgNS}/{secretRefName}) and writes
 // under {mount}/data/{path}.
 //
+// It holds no static token: every operation first asks its VaultAuth for a
+// live session token, and a 403 (token revoked or expired) re-logs in once
+// and retries the operation once.
+//
 // Confined to this package by the OpenBao/Vault import fence — callers outside
 // platform/secrets must not import the vault SDK.
 //
@@ -39,16 +43,18 @@ import (
 type DeliveryKV struct {
 	client *vault.Client
 	mount  string
+	auth   VaultAuth
 }
 
-// NewDeliveryKV constructs a DeliveryKV against addr with the given token and
-// KV-v2 mount (defaults to "secret").
-func NewDeliveryKV(addr, token, mount string) (*DeliveryKV, error) {
+// NewDeliveryKV constructs a DeliveryKV against addr on the given KV-v2 mount
+// (defaults to "secret"), authenticated by auth. It performs no I/O; the first
+// operation logs in.
+func NewDeliveryKV(addr, mount string, auth VaultAuth) (*DeliveryKV, error) {
 	if addr == "" {
 		return nil, errors.New("delivery-kv: addr is required")
 	}
-	if token == "" {
-		return nil, errors.New("delivery-kv: token is required")
+	if auth == nil {
+		return nil, errors.New("delivery-kv: an auth source is required")
 	}
 	if mount == "" {
 		mount = "secret"
@@ -62,9 +68,28 @@ func NewDeliveryKV(addr, token, mount string) (*DeliveryKV, error) {
 	if err != nil {
 		return nil, fmt.Errorf("delivery-kv: new client: %w", err)
 	}
-	client.SetToken(token)
+	// vault.NewClient adopts VAULT_TOKEN from the environment; the session is
+	// the only token source.
+	client.ClearToken()
 
-	return &DeliveryKV{client: client, mount: mount}, nil
+	return &DeliveryKV{client: client, mount: mount, auth: auth}, nil
+}
+
+// call runs one OpenBao request under the session: a live token first, and on
+// a 403 one re-login and one retry. Any other result is returned as is.
+func (k *DeliveryKV) call(ctx context.Context, op func() (*vault.Secret, error)) (*vault.Secret, error) {
+	generation, err := k.auth.ensure(ctx, k.client)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := op()
+	if !isVaultStatus(err, httpStatusForbidden) {
+		return secret, err
+	}
+	if err := k.auth.relogin(ctx, k.client, generation); err != nil {
+		return nil, err
+	}
+	return op()
 }
 
 func (k *DeliveryKV) validateSecretPath(secretPath string) error {
@@ -100,8 +125,8 @@ func (k *DeliveryKV) Put(ctx context.Context, secretPath string, data map[string
 	for key, val := range data {
 		payload[key] = val
 	}
-	if _, err := k.client.Logical().WriteWithContext(ctx, p, map[string]interface{}{
-		"data": payload,
+	if _, err := k.call(ctx, func() (*vault.Secret, error) {
+		return k.client.Logical().WriteWithContext(ctx, p, map[string]interface{}{"data": payload})
 	}); err != nil {
 		// Do not wrap vault's raw error body — it may echo request material.
 		// Status-only message keeps values and tokens out of logs/errors.
@@ -117,14 +142,18 @@ func (k *DeliveryKV) Put(ctx context.Context, secretPath string, data map[string
 // It is the ONE read on this helper, and it exists for the environment-tier
 // Thunder binding: the admin credential for an environment's identity provider
 // is written to OpenBao by deployments/scripts/setup-environment-thunder.sh
-// because aep-api runs outside the cluster and can read neither of the binding's
-// two in-cluster copies. Errors never include the value or the token.
+// because aep-api has no Kubernetes access to either of the binding's two
+// in-cluster copies. The aep-api-writer policy grants read on
+// secret/data/aep/thunder/* and nothing else. Errors never include the value or
+// the token.
 func (k *DeliveryKV) Get(ctx context.Context, secretPath string) (map[string]string, error) {
 	p, err := k.dataPath(secretPath)
 	if err != nil {
 		return nil, err
 	}
-	secret, err := k.client.Logical().ReadWithContext(ctx, p)
+	secret, err := k.call(ctx, func() (*vault.Secret, error) {
+		return k.client.Logical().ReadWithContext(ctx, p)
+	})
 	if err != nil {
 		if isVaultNotFound(err) {
 			return nil, nil
@@ -163,7 +192,9 @@ func (k *DeliveryKV) Delete(ctx context.Context, secretPath string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := k.client.Logical().DeleteWithContext(ctx, p); err != nil {
+	if _, err := k.call(ctx, func() (*vault.Secret, error) {
+		return k.client.Logical().DeleteWithContext(ctx, p)
+	}); err != nil {
 		if isVaultNotFound(err) {
 			return nil
 		}
@@ -172,21 +203,28 @@ func (k *DeliveryKV) Delete(ctx context.Context, secretPath string) error {
 	return nil
 }
 
-func isVaultNotFound(err error) bool {
+func isVaultNotFound(err error) bool { return isVaultStatus(err, httpStatusNotFound) }
+
+func isVaultStatus(err error, status int) bool {
 	var respErr *vault.ResponseError
-	if errors.As(err, &respErr) && respErr.StatusCode == httpStatusNotFound {
-		return true
-	}
-	return false
+	return errors.As(err, &respErr) && respErr.StatusCode == status
 }
 
-// httpStatusNotFound avoids importing net/http solely for the constant.
-const httpStatusNotFound = 404
+// The two statuses this helper branches on; constants avoid importing
+// net/http solely for them.
+const (
+	httpStatusForbidden = 403
+	httpStatusNotFound  = 404
+)
 
 func vaultStatus(err error) string {
 	var respErr *vault.ResponseError
 	if errors.As(err, &respErr) {
 		return fmt.Sprintf("status %d", respErr.StatusCode)
+	}
+	var loginErr *loginError
+	if errors.As(err, &loginErr) {
+		return loginErr.Error()
 	}
 	return "request failed"
 }

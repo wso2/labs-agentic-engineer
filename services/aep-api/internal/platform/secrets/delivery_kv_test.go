@@ -25,14 +25,24 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	vault "github.com/hashicorp/vault/api"
 )
 
-func TestNewDeliveryKV_RequiresAddrAndToken(t *testing.T) {
-	if _, err := NewDeliveryKV("", "tok", "secret"); err == nil {
-		t.Fatal("empty addr: want error")
+// fixedSession is a session whose login always yields token with no expiry:
+// these tests are about paths and error discipline, not about logging in
+// (kubernetes_auth_test.go covers that).
+func fixedSession(token string) VaultAuth {
+	return &vaultSession{
+		login: func(context.Context, *vault.Client) (string, time.Duration, error) { return token, 0, nil },
+		now:   time.Now,
 	}
-	if _, err := NewDeliveryKV("http://localhost", "", "secret"); err == nil {
-		t.Fatal("empty token: want error")
+}
+
+func TestNewDeliveryKV_RequiresAddr(t *testing.T) {
+	if _, err := NewDeliveryKV("", "secret", fixedSession("tok")); err == nil {
+		t.Fatal("empty addr: want error")
 	}
 }
 
@@ -49,7 +59,7 @@ func TestDeliveryKV_Put_PathConstruction(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -85,7 +95,7 @@ func TestDeliveryKV_Delete_PathConstruction(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -111,7 +121,7 @@ func TestDeliveryKV_Delete_IdempotentOn404(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -129,7 +139,7 @@ func TestDeliveryKV_Put_ErrorOmitsSecretValues(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -159,7 +169,7 @@ func TestDeliveryKV_Put_RejectsEmptyOrAbsolutePath(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "tok", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("tok"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -176,8 +186,9 @@ func TestDeliveryKV_Put_RejectsEmptyOrAbsolutePath(t *testing.T) {
 }
 
 // Get is the ONE read on this helper, and it exists for the environment-tier
-// Thunder binding: aep-api runs outside the cluster, so the admin credential
-// for an environment's identity provider reaches it only through OpenBao.
+// Thunder binding: aep-api has no Kubernetes access to the binding's copies,
+// so the admin credential for an environment's identity provider reaches it
+// only through OpenBao.
 func TestDeliveryKV_Get_ReadsTheKVv2Fields(t *testing.T) {
 	var gotPath, gotToken string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +199,7 @@ func TestDeliveryKV_Get_ReadsTheKVv2Fields(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -217,7 +228,7 @@ func TestDeliveryKV_Get_AbsentIsNotAnError(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -240,7 +251,7 @@ func TestDeliveryKV_Get_RejectsANonKVv2Shape(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}
@@ -258,7 +269,7 @@ func TestDeliveryKV_Get_ErrorCarriesNoSecretMaterial(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	kv, err := NewDeliveryKV(srv.URL, "test-token", "secret")
+	kv, err := NewDeliveryKV(srv.URL, "secret", fixedSession("test-token"))
 	if err != nil {
 		t.Fatalf("NewDeliveryKV: %v", err)
 	}

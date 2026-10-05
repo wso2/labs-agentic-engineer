@@ -177,9 +177,10 @@ codingAgentRunner:
 # switch left here is the local-dev stub toggle below.
 codingAgentDispatch:
   openBaoDirect:
-    # LOCAL DEV ONLY. Sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets
-    # delivery. NEVER set true in production — prod injects a real
-    # SecretsProvider. `aectl platform install` sets this true for local installs.
+    # LOCAL DEV ONLY. Sets OPENBAO_ADDR and OPENBAO_AUTH_ROLE on aep-api for
+    # in-process secrets delivery (Kubernetes auth, no token). NEVER set true
+    # in production — prod injects a real SecretsProvider. `aectl platform
+    # install` sets this true for local installs.
     enabled: false
 
 # Local stand-in for cloud platform-api ProvisionOrgUnit / the org bootstrap.

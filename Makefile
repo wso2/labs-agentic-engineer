@@ -393,6 +393,11 @@ obs-status:
 # config (gateway host, IdP URLs, console origins, egress): an install that
 # predates them converges here, with no secret touched.
 #
+# deployments/scripts/openbao-aep-api-auth.sh runs before the upgrade: the
+# local OpenBao is in memory, so a restart forgets aep-api's write-only policy
+# and Kubernetes-auth role, and the new aep-api must find its role at its
+# first write. Idempotent (~2 s).
+#
 # `aectl platform sync-clients` runs after the upgrade because an update never
 # runs the install's Thunder setup: on an install that predates a Thunder
 # client it seeds that client's missing vault key (never rotating an existing
@@ -408,6 +413,7 @@ dev-update:
 	$(MAKE) dev-images
 	$(MAKE) ae-studio-refs-check
 	cd tools/aectl && go build -o aectl-skaffold .
+	bash deployments/scripts/openbao-aep-api-auth.sh
 	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
 		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \

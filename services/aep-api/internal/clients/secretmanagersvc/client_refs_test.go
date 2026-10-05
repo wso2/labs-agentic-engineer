@@ -22,6 +22,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
@@ -29,6 +31,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc/providers/openbao"
+	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
@@ -54,6 +57,8 @@ func newFakeKV(t *testing.T) *fakeKV {
 		kv.mu.Lock()
 		defer kv.mu.Unlock()
 		switch {
+		case r.URL.Path == "/v1/auth/kubernetes/login":
+			_, _ = w.Write([]byte(`{"auth":{"client_token":"test-token","lease_duration":3600}}`))
 		case (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.HasPrefix(r.URL.Path, fakeKVDataPrefix):
 			if kv.failWrites {
 				// 403, not 5xx: the vault client retries 5xx with backoff.
@@ -89,11 +94,14 @@ func newFakeKV(t *testing.T) *fakeKV {
 
 func (kv *fakeKV) provider(t *testing.T) Provider {
 	t.Helper()
+	tokenFile := filepath.Join(t.TempDir(), "sa-token")
+	if err := os.WriteFile(tokenFile, []byte("sa-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	p, err := openbao.NewProvider(&OpenBaoConfig{
 		Server: kv.srv.URL,
 		Path:   "secret",
-		Auth:   &OpenBaoAuth{Token: "test-token"},
-	})
+	}, secrets.NewKubernetesAuth("aep-api", "kubernetes", tokenFile))
 	if err != nil {
 		t.Fatalf("openbao.NewProvider: %v", err)
 	}

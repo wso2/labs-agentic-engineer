@@ -341,7 +341,6 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    | Vault path | Secret (namespace `wso2-aep`) | Key |
    |---|---|---|
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
-   | `aep/openbao-token` | `aep-openbao-secrets` | `OPENBAO_TOKEN` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
    | `aep/thunder-clients/<name>` | `aep-thunder-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
    | `aep/aep-mcp-token` | `aep-sre-handoff-secrets` | `SRE_HANDOFF_TOKEN` |
@@ -351,7 +350,7 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    have no ESO target Secret; re-enter them from where you hold them (the
    OpenSearch pair is in the observability plane's own Secret, if installed).
    Restore the `aep/thunder-clients/*` keys too, from their Secrets. Leaving
-   one out does not preserve it. Step 5's `sync-clients` seeds a **new** random
+   one out does not preserve it. Step 6's `sync-clients` seeds a **new** random
    value for each missing key, syncs it into the Secret and updates the Thunder
    client to match. That is a rotation of that client's secret. Every holder of
    the old value then fails until it restarts on the new Secret. Do it only if
@@ -362,10 +361,20 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
 3. **Org publisher secrets.** Restore each org's
    `user-app-secrets/<org>/publisher-secrets` from a surviving runner or pod
    Secret, if one exists.
-4. **Vault-only org secrets.** `github-webhook-secret` and `ae-studio-client`
+4. **aep-api's OpenBao access.** The wipe also took aep-api's write-only
+   policy `aep-api-writer` and its Kubernetes-auth role `aep-api`; until they
+   are back every secret write aep-api makes fails (log event
+   `openbao.login_failed`). Re-apply both (idempotent; `make dev-update` runs
+   the same script before its upgrade):
+
+   ```bash
+   bash deployments/scripts/openbao-aep-api-auth.sh
+   kubectl -n openbao exec openbao-0 -- bao read auth/kubernetes/role/aep-api
+   ```
+5. **Vault-only org secrets.** `github-webhook-secret` and `ae-studio-client`
    have no surviving copy: delete those `org_secrets` rows and re-submit the
    GitHub token in Settings, which regenerates them. Re-save the model key and
    the Claude token in Settings.
-5. **Sync.** Force-sync the ExternalSecrets
+6. **Sync.** Force-sync the ExternalSecrets
    (`kubectl annotate externalsecret <name> -n wso2-aep force-sync=$(date +%s) --overwrite`)
    and run `aectl platform sync-clients`.

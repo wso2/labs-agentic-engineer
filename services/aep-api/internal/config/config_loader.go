@@ -112,10 +112,14 @@ func Load() (Config, error) {
 
 		// Git-service config. Uses the same env-var names git-service used so
 		// existing local .env files / release-bindings keep working.
-		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
-		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
-		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
-		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),
+		GitHubRepoVisibility:    r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
+		CredentialEncryptionKey: r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		OpenBaoAddr:             r.readOptionalString("OPENBAO_ADDR", ""),
+		OpenBaoAuth: OpenBaoAuthConfig{
+			Role:      r.readOptionalString("OPENBAO_AUTH_ROLE", "aep-api"),
+			Mount:     r.readOptionalString("OPENBAO_AUTH_MOUNT", "kubernetes"),
+			TokenPath: r.readOptionalString("OPENBAO_AUTH_TOKEN_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+		},
 		GitHubAppSlug:               r.readOptionalString("GITHUB_APP_SLUG", "aep-platform"),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 

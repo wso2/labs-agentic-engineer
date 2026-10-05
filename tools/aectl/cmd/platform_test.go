@@ -399,3 +399,12 @@ func TestTaskSigningKey_NotRequired(t *testing.T) {
 		t.Error("aep/task-signing-key must not be in requiredOpenBaoPaths")
 	}
 }
+
+// aep-api logs in to OpenBao by Kubernetes auth (role aep-api), so an install
+// no longer seeds or requires a static aep/openbao-token: a store without it
+// is not "wiped", and a store that still has it fails nothing.
+func TestOpenBaoToken_NotRequired(t *testing.T) {
+	if slices.Contains(requiredOpenBaoPaths, "aep/openbao-token") {
+		t.Error("aep/openbao-token must not be in requiredOpenBaoPaths")
+	}
+}
