@@ -46,17 +46,23 @@ type TagList struct {
 
 // ListSpecVersionTags lists the project's spec version tags, newest first by
 // CREATION time (a version's name is the user's and carries no sequence —
-// ADR-0030), with the latest tag and whether specs/ moved since it. One GitHub
-// fetch on the pod (the HEAD tree read; its refspec also freshens all tags),
-// then reads of the pod's mirror: the local tag list and the sha-addressed tag
-// tree.
+// ADR-0030), with the latest tag and whether specs/ moved since it. It is the
+// Spec view's poll, so it makes no GitHub fetch: everything is read from the
+// pod's mirror, which holds every commit and tag the platform writes (a push
+// made elsewhere shows after the next fetching read). The tip is resolved
+// there (Head, Local) and both trees are read at their shas, so a repeat
+// poll on an unchanged tip is served from the adapter's read cache.
 func (s *artifactService) ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error) {
 	_, ref, err := s.readyRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	headEntries, _, err := s.git.List(ctx, ref, "")
+	tip, err := s.git.Head(ctx, ref, "", sourcecontrol.Local())
+	if err != nil {
+		return nil, fmt.Errorf("resolve head: %w", err)
+	}
+	headEntries, _, err := s.git.List(ctx, ref, tip)
 	if err != nil {
 		return nil, fmt.Errorf("list head tree: %w", err)
 	}

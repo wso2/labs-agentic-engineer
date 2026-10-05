@@ -733,9 +733,11 @@ func keysOfStr(m map[string]string) []string {
 }
 
 // TestSkillReads_ManifestAtTheLibrarysSha pins the catalog's one-snapshot
-// rule: the library is read at the skills repo's tip, then the manifest at
-// the exact sha that read answered — never at the tip again, which could pair
-// a manifest with a different tree.
+// rule and its cacheability: the skills repo's tip is resolved on the pod's
+// mirror (Head, Local), then the library and the manifest are both read at
+// that sha — never at the tip again, which could pair a manifest with a
+// different tree, and never at "" (uncacheable: the library is the whole
+// skills/ tree, base64 on the wire).
 func TestSkillReads_ManifestAtTheLibrarysSha(t *testing.T) {
 	t.Parallel()
 	svc, host := newTestStore(t)
@@ -748,19 +750,25 @@ func TestSkillReads_ManifestAtTheLibrarysSha(t *testing.T) {
 	if _, err := svc.List(ctx, "org1"); err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	var reads []aestudiotest.Call
+	var reads, heads []aestudiotest.Call
 	for _, c := range host.pod.Calls()[seen:] {
-		if c.Op == aestudiotest.OpReadBundle {
+		switch c.Op {
+		case aestudiotest.OpReadBundle:
 			reads = append(reads, c)
+		case aestudiotest.OpHead:
+			heads = append(heads, c)
 		}
 	}
 	skillsRef := sourcecontrol.RepoRef{Org: "org1", Owner: "test-org", Repo: SkillsRepoName, DefaultBranch: "main"}
 	tip := host.head("org1")
+	if len(heads) != 1 || heads[0].Ref != skillsRef || heads[0].At != "" || !heads[0].Local {
+		t.Fatalf("head calls = %+v, want one local tip resolve of the skills repo", heads)
+	}
 	if len(reads) != 2 {
 		t.Fatalf("bundle reads = %+v, want 2", reads)
 	}
-	if r := reads[0]; r.Ref != skillsRef || r.At != "" || r.Filter.Prefix != "skills/" || len(r.Filter.Paths) != 0 {
-		t.Fatalf("library read = %+v, want skills/ at the tip", r)
+	if r := reads[0]; r.Ref != skillsRef || r.At != tip || r.Filter.Prefix != "skills/" || len(r.Filter.Paths) != 0 {
+		t.Fatalf("library read = %+v, want skills/ at %s", r, tip)
 	}
 	if r := reads[1]; r.Ref != skillsRef || r.At != tip || len(r.Filter.Paths) != 1 || r.Filter.Paths[0] != skillsManifestPath {
 		t.Fatalf("manifest read = %+v, want %s at %s", r, skillsManifestPath, tip)

@@ -273,11 +273,13 @@ func (s *SkillService) readCatalog(ctx context.Context, orgID string) ([]Skill, 
 	return skills, nil
 }
 
-// loadEntriesAndManifest reads skills/ at the fetched branch tip through the
-// pod (one Git.ReadBundle, kept to the catalog layout, parsed in-memory —
-// with per-entry layout info for the reconciler) plus the
-// skills-manifest.json baseline, read at the commit sha that bundle answered
-// so entries and manifest are a consistent snapshot. Every file comes back
+// loadEntriesAndManifest reads skills/ through the pod (one Git.ReadBundle,
+// kept to the catalog layout, parsed in-memory — with per-entry layout info
+// for the reconciler) plus the skills-manifest.json baseline, both at one
+// commit so entries and manifest are a consistent snapshot. That commit is
+// the branch tip the pod's mirror holds (Head, Local: every skills write goes
+// through the pod, so the mirror has it), and reading at its sha lets the
+// adapter's read cache serve an unchanged library without re-transferring it. Every file comes back
 // byte for byte (the bundle is base64 on the wire), so a binary aux file the
 // reconciler writes back is never mangled. The manifest is tolerant-parsed
 // (absent/corrupt → empty). The
@@ -290,7 +292,11 @@ func (s *SkillService) loadEntriesAndManifest(ctx context.Context, orgID string,
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("resolve skills repository: %w", err)
 	}
-	tree, sha, err := s.git.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: skillsRootDir + "/"})
+	sha, err := s.git.Head(ctx, ref, "", sourcecontrol.Local())
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolve skills head: %w", err)
+	}
+	tree, _, err := s.git.ReadBundle(ctx, ref, sha, sourcecontrol.BundleFilter{Prefix: skillsRootDir + "/"})
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("read skills bundle: %w", err)
 	}
