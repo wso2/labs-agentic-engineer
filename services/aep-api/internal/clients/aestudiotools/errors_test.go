@@ -178,6 +178,23 @@ func TestErrors_TypedAnswers(t *testing.T) {
 			t.Fatalf("a 5xx StatusError must stay retryable: %v", got)
 		}
 	})
+	// The pod's validator refusing a read addressed by `at` (get-head,
+	// list-tree: the ref is the only input it can refuse there) is a refused
+	// ref; the same code on any other op is not.
+	t.Run("validation_failed on a ref read is ErrRefInvalid, still a StatusError", func(t *testing.T) {
+		for _, op := range []string{"get-head", "list-tree"} {
+			got := errorFromProblem(answer{op: op, status: 400, problem: true, code: "validation_failed"})
+			var se *StatusError
+			if !errors.Is(got, sourcecontrol.ErrRefInvalid) || !errors.As(got, &se) || se.Op != op || !sourcecontrol.IsPermanent(got) {
+				t.Fatalf("%s: got %v, want ErrRefInvalid over a permanent StatusError", op, got)
+			}
+		}
+		for _, op := range []string{"create-commit", "read-bundle", "read-file"} {
+			if got := errorFromProblem(answer{op: op, status: 400, problem: true, code: "validation_failed"}); errors.Is(got, sourcecontrol.ErrRefInvalid) {
+				t.Fatalf("%s: a 400 that is not a ref read must not be ErrRefInvalid: %v", op, got)
+			}
+		}
+	})
 	// trash-repo's local failure is the pod's own 500 trash_failed: a
 	// retryable StatusError naming it, never a GitHub error.
 	t.Run("trash_failed is the pod's own retryable refusal, not GitHub's", func(t *testing.T) {

@@ -162,18 +162,13 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 }
 
 // baseCommitRefused is a read of the design baseline that names a commit the
-// pod does not have (ErrRefNotFound) or refuses outright (a permanent pod
-// refusal, e.g. a 400 for an `at` it does not accept). The AE Studio states
-// the status poll degrades on (absent, unavailable, misconfigured) and a
-// missing repository are not refusals of the commit.
+// pod does not have (ErrRefNotFound) or whose ref it refuses outright
+// (ErrRefInvalid: its request validator's 400 on the `at`). Every other
+// failure, permanent ones included (a revoked GitHub token, a missing
+// repository, AE Studio not serving), is not a verdict on the commit and
+// reaches the caller.
 func baseCommitRefused(err error) bool {
-	if errors.Is(err, sourcecontrol.ErrRefNotFound) {
-		return true
-	}
-	if specUnavailableReason(err) != "" || errors.Is(err, sourcecontrol.ErrRepoNotFound) {
-		return false
-	}
-	return sourcecontrol.IsPermanent(err)
+	return errors.Is(err, sourcecontrol.ErrRefNotFound) || errors.Is(err, sourcecontrol.ErrRefInvalid)
 }
 
 // SetStageSources wires the build/deploy stage inputs at the composition

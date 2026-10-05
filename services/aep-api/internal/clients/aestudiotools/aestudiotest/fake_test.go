@@ -571,6 +571,15 @@ func wantPod400(t *testing.T, what string, err error) {
 	}
 }
 
+// wantRefInvalid asserts err is the refused ref the adapter makes of a pod
+// 400 validation_failed on get-head / list-tree.
+func wantRefInvalid(t *testing.T, what string, err error) {
+	t.Helper()
+	if !errors.Is(err, sourcecontrol.ErrRefInvalid) {
+		t.Errorf("%s: err = %v, want ErrRefInvalid", what, err)
+	}
+}
+
 // The Fake refuses what the pod refuses, in the adapter's shape: an `at`
 // outside tags/<name> | 40 lowercase hex, a Local read with an `at`, and a
 // commit or tag with an empty message.
@@ -589,8 +598,10 @@ func TestFake_RefusesWhatThePodRefuses(t *testing.T) {
 	for _, at := range []string{"main", "HEAD", tip[:7], strings.ToUpper(tip), "v1", "tags/", "tags/a b"} {
 		_, err := f.Head(ctx, ref, at)
 		wantPod400(t, "head at "+at, err)
+		wantRefInvalid(t, "head at "+at, err)
 		_, _, err = f.List(ctx, ref, at)
 		wantPod400(t, "list at "+at, err)
+		wantRefInvalid(t, "list at "+at, err)
 		_, _, err = f.ReadFile(ctx, ref, at, "a.md")
 		wantPod400(t, "read-file at "+at, err)
 		_, _, err = f.ReadBundle(ctx, ref, at, sourcecontrol.BundleFilter{Prefix: "a"})

@@ -204,10 +204,23 @@ var codeSentinels = map[string]error{
 	"aep_api_unavailable": sourcecontrol.ErrAEStudioUnavailable,
 }
 
+// refReadOps are the reads whose only input the pod's request validator can
+// refuse, past the owner and repo validRef already checks, is the ref (`at`,
+// with `local`). A 400 validation_failed there is a refused ref; on any other
+// op the same code may be about something else (a bundle filter, a path, a
+// commit body), so it stays a plain StatusError.
+var refReadOps = map[string]bool{"get-head": true, "list-tree": true}
+
 // errorFromProblem maps a non-auth refusal to the error callers branch on:
 // the code first (one code is one error), then the status (any 503, or a
 // gateway's answer, is the pod not serving), else a StatusError.
 func errorFromProblem(a answer) error {
+	if a.status == http.StatusBadRequest && a.code == "validation_failed" && refReadOps[a.op] {
+		// Still the StatusError too, so a caller asking for the pod's answer
+		// (or IsPermanent) reads it as before.
+		return fmt.Errorf("%w: %w", sourcecontrol.ErrRefInvalid,
+			&StatusError{Op: a.op, Status: a.status, Code: a.code, Detail: a.detail})
+	}
 	if sentinel, ok := codeSentinels[a.code]; ok {
 		return fmt.Errorf("%w (ae studio: %s answered %d %s)", sentinel, a.op, a.status, a.code)
 	}

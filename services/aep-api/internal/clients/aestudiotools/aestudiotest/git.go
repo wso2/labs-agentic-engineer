@@ -23,6 +23,7 @@ import (
 	"context"
 	"crypto/sha1" //nolint:gosec // git object ids are sha1 by definition
 	"encoding/hex"
+	"fmt"
 	"maps"
 	"regexp"
 	"slices"
@@ -45,9 +46,15 @@ const maxBundleExts = 20
 var atPattern = regexp.MustCompile(`^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$`)
 
 // podRefusal is the error a pod 400 validation_failed becomes in production
-// (permanent, so sourcecontrol.IsPermanent classifies it alike).
+// (permanent, so sourcecontrol.IsPermanent classifies it alike). On a head or
+// a tree listing it is also ErrRefInvalid, as the adapter makes it: the ref is
+// the only input the pod can refuse there.
 func podRefusal(op, detail string) error {
-	return &aestudiotools.StatusError{Op: op, Status: 400, Code: "validation_failed", Detail: detail}
+	err := &aestudiotools.StatusError{Op: op, Status: 400, Code: "validation_failed", Detail: detail}
+	if op == OpHead || op == OpList {
+		return fmt.Errorf("%w: %w", sourcecontrol.ErrRefInvalid, err)
+	}
+	return err
 }
 
 // validAt refuses an `at` the pod refuses, and an `at` beside local (the pod

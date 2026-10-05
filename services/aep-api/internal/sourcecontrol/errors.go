@@ -65,6 +65,10 @@ var (
 	ErrRefNotFastForward = errors.New("github ref: update is not a fast-forward")
 	// ErrRefNotFound: `at` (branch, tag, or sha) did not resolve to a commit.
 	ErrRefNotFound = errors.New("git ref not found")
+	// ErrRefInvalid: the AE Studio refused the `at` of a read outright (its
+	// request validator, 400 validation_failed): the ref names no commit this
+	// API accepts, and no retry of the same read changes that.
+	ErrRefInvalid = errors.New("the ref names no commit this API accepts")
 	// ErrPathNotFound: the path is not a file in the addressed tree.
 	ErrPathNotFound = errors.New("git path not found")
 	// ErrRepoNameConflict — port contract: CreateOrgRepo returns it when the
@@ -174,7 +178,8 @@ func IsPermanent(err error) bool {
 		errors.Is(err, ErrAEStudioAbsent),
 		errors.Is(err, ErrAEStudioMisconfigured),
 		errors.Is(err, ErrOwnerNotAllowed),
-		errors.Is(err, ErrReferenceRejected):
+		errors.Is(err, ErrReferenceRejected),
+		errors.Is(err, ErrRefInvalid):
 		return true
 	case IsHTTPStatus(err, http.StatusNotFound),
 		IsHTTPStatus(err, http.StatusGone),
