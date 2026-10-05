@@ -164,6 +164,11 @@ codingAgentRunner:
   # it fails each dispatch naming AGENT_RUNNER_IMAGE_OPENCODE. Claude Code orgs
   # are unaffected.
   opencodeImage: ""
+  # How long a finished cycle Job (and its pod) is kept before Kubernetes
+  # deletes it, as a Go duration (CODING_AGENT_JOB_TTL; rendered as the Job's
+  # ttlSecondsAfterFinished). The cycle's binding is suspended once the run is
+  # over, so the Job OpenChoreo re-creates after the TTL never runs again.
+  jobTTL: 600s
 
 # Coding-agent dispatch wiring.
 #

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -322,4 +323,29 @@ func (f *fakeRetention) Enforce(context.Context, string, string) error {
 		*f.orderLog = append(*f.orderLog, "retention")
 	}
 	return f.err
+}
+
+// U1: the configured Job TTL is rendered per Component as the ComponentType's
+// ttlSecondsAfterFinished parameter, in whole seconds.
+func TestDispatch_RendersTheConfiguredJobTTL(t *testing.T) {
+	fake := &fakeOCSurface{}
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img").WithJobTTL(600 * time.Second)
+	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.create.Parameters["ttlSecondsAfterFinished"]; got != 600 {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want 600 (U1)", got)
+	}
+}
+
+// No TTL configured leaves the parameter out, so the schema default applies.
+func TestDispatch_NoJobTTLLeavesTheSchemaDefault(t *testing.T) {
+	fake := &fakeOCSurface{}
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img")
+	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := fake.create.Parameters["ttlSecondsAfterFinished"]; ok {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want unset", got)
+	}
 }

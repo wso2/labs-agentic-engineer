@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -496,5 +498,257 @@ func TestEnsureReleaseBinding_ServerErrorWrapsSentinel(t *testing.T) {
 	}
 	if !errors.Is(err, ErrInternalServerError) {
 		t.Errorf("expected ErrInternalServerError, got %v", err)
+	}
+}
+
+// ---- SuspendJobBinding ------------------------------------------------------
+
+// ocStub is a canned OpenChoreo API: one response per method+path, and a log of
+// every request it saw (with the decoded body) so a test can assert on what was
+// — and was not — written.
+type ocStub struct {
+	t      *testing.T
+	srv    *httptest.Server
+	mu     sync.Mutex
+	routes map[string]func(w http.ResponseWriter, body []byte)
+	seen   []ocStubRequest
+}
+
+type ocStubRequest struct {
+	method, path string
+	body         map[string]any
+}
+
+func newOCStub(t *testing.T) *ocStub {
+	t.Helper()
+	s := &ocStub{t: t, routes: map[string]func(http.ResponseWriter, []byte){}}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		s.mu.Lock()
+		s.seen = append(s.seen, ocStubRequest{method: r.Method, path: r.URL.Path, body: body})
+		route := s.routes[r.Method+" "+r.URL.Path]
+		s.mu.Unlock()
+		if route == nil {
+			writeJSON(t, w, http.StatusNotFound, map[string]string{"error": "no stub route"})
+			return
+		}
+		route(w, raw)
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// on answers method+path with status and a JSON body; nil sends a bare
+// status with no body and no JSON content type.
+func (s *ocStub) on(method, path string, status int, body any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routes[method+" "+path] = func(w http.ResponseWriter, _ []byte) {
+		if body == nil {
+			w.WriteHeader(status)
+			return
+		}
+		writeJSON(s.t, w, status, body)
+	}
+}
+
+func (s *ocStub) onJSON(method, path string, status int, body map[string]any) {
+	s.on(method, path, status, body)
+}
+
+// onEcho answers method+path with the request's own body.
+func (s *ocStub) onEcho(method, path string, status int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.routes[method+" "+path] = func(w http.ResponseWriter, raw []byte) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(raw)
+	}
+}
+
+func (s *ocStub) count(method, path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, r := range s.seen {
+		if r.method == method && r.path == path {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *ocStub) countMethod(method string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, r := range s.seen {
+		if r.method == method {
+			n++
+		}
+	}
+	return n
+}
+
+// lastBody is the decoded body of the last request with that method.
+func (s *ocStub) lastBody(method string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := len(s.seen) - 1; i >= 0; i-- {
+		if s.seen[i].method == method {
+			return s.seen[i].body
+		}
+	}
+	s.t.Fatalf("no %s request was made", method)
+	return nil
+}
+
+func (s *ocStub) componentClient() ComponentClient {
+	return NewComponentClient(Config{BaseURL: s.srv.URL})
+}
+
+const suspendTestBindingPath = "/api/v1/namespaces/acme/releasebindings/shop-ca-c1-development"
+
+// A suspend on a Component that is already gone must never resurrect it:
+// ApplyReleaseBinding would POST a missing binding back (and so a Job).
+func TestSuspendJobBinding_MissingBindingIsNotFoundAndCreatesNothing(t *testing.T) {
+	srv := newOCStub(t)
+	srv.on("GET", suspendTestBindingPath, 404, nil)
+	c := srv.componentClient()
+	err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if srv.count("POST", "/api/v1/namespaces/acme/releasebindings") != 0 || srv.countMethod("PUT") != 0 {
+		t.Fatal("suspend must never create or write a binding that is not there")
+	}
+
+	// OpenChoreo's own 404 carries a JSON error body; same answer.
+	srv.on("GET", suspendTestBindingPath, 404, map[string]string{"error": "release binding not found"})
+	if err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if srv.countMethod("POST") != 0 || srv.countMethod("PUT") != 0 {
+		t.Fatal("suspend must never create or write a binding that is not there")
+	}
+}
+
+func TestSuspendJobBinding_KeepsEveryOtherFieldAndIsIdempotent(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
+		"metadata": map[string]any{"name": "shop-ca-c1-development", "resourceVersion": "42"},
+		"spec": map[string]any{"releaseName": "shop-ca-c1-release", "environment": "development",
+			"owner":                           map[string]any{"componentName": "shop-ca-c1", "projectName": "shop"},
+			"traitEnvironmentConfigs":         map[string]any{"t": map[string]any{"a": 1.0}},
+			"componentTypeEnvironmentConfigs": map[string]any{"other": "x"},
+			// A field this client's generated schema does not know: it must
+			// survive too, so the write is a raw read-modify-write.
+			"futureField": "kept"},
+	})
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	c := srv.componentClient()
+	if err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+		t.Fatal(err)
+	}
+	put := srv.lastBody("PUT")
+	spec := put["spec"].(map[string]any)
+	if spec["releaseName"] != "shop-ca-c1-release" {
+		t.Fatal("the pin must survive the PUT")
+	}
+	ctec := spec["componentTypeEnvironmentConfigs"].(map[string]any)
+	if ctec["suspend"] != true || ctec["other"] != "x" {
+		t.Fatalf("componentTypeEnvironmentConfigs = %v", ctec)
+	}
+	for _, key := range []string{"environment", "owner", "traitEnvironmentConfigs", "futureField"} {
+		if _, ok := spec[key]; !ok {
+			t.Errorf("spec.%s dropped by the PUT: %v", key, spec)
+		}
+	}
+	meta := put["metadata"].(map[string]any)
+	if meta["resourceVersion"] != "42" {
+		t.Errorf("metadata.resourceVersion = %v, want the read's", meta["resourceVersion"])
+	}
+	if srv.countMethod("POST") != 0 {
+		t.Error("suspend must never POST")
+	}
+
+	// Already suspended: a read, no write.
+	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
+		"metadata": map[string]any{"name": "shop-ca-c1-development"},
+		"spec": map[string]any{"environment": "development",
+			"componentTypeEnvironmentConfigs": map[string]any{"suspend": true}},
+	})
+	if err := c.SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.countMethod("PUT"); got != 1 {
+		t.Fatalf("PUTs = %d, want 1: an already-suspended binding is not rewritten", got)
+	}
+}
+
+// A binding with no componentTypeEnvironmentConfigs at all gets the map.
+func TestSuspendJobBinding_CreatesTheConfigMapWhenAbsent(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
+		"metadata": map[string]any{"name": "shop-ca-c1-development"},
+		"spec":     map[string]any{"environment": "development", "releaseName": "r"},
+	})
+	srv.onEcho("PUT", suspendTestBindingPath, 200)
+	if err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+		t.Fatal(err)
+	}
+	ctec, _ := srv.lastBody("PUT")["spec"].(map[string]any)["componentTypeEnvironmentConfigs"].(map[string]any)
+	if ctec["suspend"] != true {
+		t.Fatalf("componentTypeEnvironmentConfigs = %v", ctec)
+	}
+}
+
+// A Component whose release predates the suspend schema is refused by OC with
+// a 400. Callers (watcher, cancel, settler) branch on ErrBadRequest for it.
+func TestSuspendJobBinding_BadRequestWrapsErrBadRequest(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
+		"metadata": map[string]any{"name": "shop-ca-c1-development"},
+		"spec":     map[string]any{"environment": "development"},
+	})
+	srv.on("PUT", suspendTestBindingPath, 400, map[string]string{"error": "unknown field suspend"})
+	err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development")
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("err = %v, want ErrBadRequest", err)
+	}
+	if got := srv.countMethod("PUT"); got != 1 {
+		t.Fatalf("PUTs = %d, want 1: a 400 is not a stale write to retry", got)
+	}
+}
+
+// OC reports a lost race with its own controllers as a 500; the write re-reads
+// and retries (retryStaleWrite).
+func TestSuspendJobBinding_StaleWriteRereadsAndRetries(t *testing.T) {
+	srv := newOCStub(t)
+	srv.onJSON("GET", suspendTestBindingPath, 200, map[string]any{
+		"metadata": map[string]any{"name": "shop-ca-c1-development"},
+		"spec":     map[string]any{"environment": "development"},
+	})
+	var puts int
+	srv.mu.Lock()
+	srv.routes["PUT "+suspendTestBindingPath] = func(w http.ResponseWriter, raw []byte) {
+		puts++
+		if puts == 1 {
+			writeJSON(t, w, http.StatusInternalServerError, map[string]string{"error": "conflict"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(raw)
+	}
+	srv.mu.Unlock()
+	if err := srv.componentClient().SuspendJobBinding(context.Background(), "acme", "shop", "ca-c1", "development"); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.count("GET", suspendTestBindingPath); got != 2 {
+		t.Fatalf("GETs = %d, want 2 (one re-read per attempt)", got)
 	}
 }

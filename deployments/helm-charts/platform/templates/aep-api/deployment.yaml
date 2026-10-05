@@ -166,6 +166,9 @@ spec:
             # The OpenCode runner image, used for orgs whose runtime is OpenCode.
             - name: AGENT_RUNNER_IMAGE_OPENCODE
               value: {{ .Values.codingAgentRunner.opencodeImage | quote }}
+            # How long a finished cycle Job (and its pod) is kept (Go duration).
+            - name: CODING_AGENT_JOB_TTL
+              value: {{ .Values.codingAgentRunner.jobTTL | quote }}
             {{- $ae := default dict .Values.aeStudio }}
             # AE Studio (all optional at boot; see values.yaml aeStudio).
             - name: AE_STUDIO_INTERNAL_CLIENT_ID

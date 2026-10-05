@@ -16,7 +16,10 @@
 
 package openchoreo
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestCodingAgentComponentType_Pins(t *testing.T) {
 	ct := CodingAgentComponentType()
@@ -248,5 +251,24 @@ func TestCodingAgentCarriesTheRuntime(t *testing.T) {
 	wantPod := `${oc_merge(metadata.podSelectors, {"aep.wso2.com/runtime": parameters.runtime})}`
 	if podMeta["labels"] != wantPod {
 		t.Errorf("pod labels = %v, want %s", podMeta["labels"], wantPod)
+	}
+}
+
+// suspend is what makes a Job OpenChoreo re-creates after the TTL inert: it is
+// an environmentConfig (set per binding, after the run), rendered on
+// Job.spec.suspend, and the TTL stays beside it.
+func TestCodingAgentComponentType_SuspendIsAnEnvironmentConfigRenderedOnTheJob(t *testing.T) {
+	ct := CodingAgentComponentType()
+	spec := ct["spec"].(map[string]any)
+	ec := spec["environmentConfigs"].(map[string]any)["openAPIV3Schema"].(map[string]any)["properties"].(map[string]any)
+	if got := ec["suspend"]; !reflect.DeepEqual(got, map[string]any{"type": "boolean", "default": false}) {
+		t.Fatalf("environmentConfigs.suspend = %v", got)
+	}
+	job := spec["resources"].([]any)[0].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	if job["suspend"] != "${environmentConfigs.suspend}" {
+		t.Fatalf("Job.spec.suspend = %v", job["suspend"])
+	}
+	if job["ttlSecondsAfterFinished"] != "${parameters.ttlSecondsAfterFinished}" {
+		t.Fatal("the TTL stays")
 	}
 }

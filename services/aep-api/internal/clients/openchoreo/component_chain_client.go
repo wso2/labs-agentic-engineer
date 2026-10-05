@@ -17,7 +17,9 @@
 package openchoreo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -208,6 +210,95 @@ func (c *componentClient) ApplyReleaseBinding(ctx context.Context, orgName, proj
 	return retryStaleWrite(ctx, "releasebinding/"+bindingName, func(ctx context.Context) error {
 		return c.putReleaseBinding(ctx, orgName, bindingName, in)
 	})
+}
+
+// suspendEnvironmentConfigKey is the coding-agent ComponentType's
+// environmentConfig rendered on Job.spec.suspend.
+const suspendEnvironmentConfigKey = "suspend"
+
+// SuspendJobBinding sets the coding-agent `suspend` environmentConfig to true
+// on the component's binding in one environment, so its Job (and any copy
+// OpenChoreo re-creates after the TTL) never runs the runner again.
+//
+// UPDATE-ONLY, and that is the whole point of a separate verb: a suspend can
+// arrive after the Component is gone, and ApplyReleaseBinding would POST the
+// missing binding back, which renders a fresh Job. A missing binding is
+// ErrNotFound here and nothing is written.
+//
+// The write is a raw read-modify-write of the binding as OpenChoreo returned
+// it, so every other spec field and componentTypeEnvironmentConfigs key
+// survives, including any this client's generated schema does not model. A
+// binding already suspended is left alone (no PUT). A 400 wraps ErrBadRequest:
+// OpenChoreo refuses the key on a Component whose release predates the
+// schema, and callers branch on that.
+func (c *componentClient) SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error {
+	bindingName := ReleaseBindingName(projectName, componentName, environment)
+	return retryStaleWrite(ctx, "releasebinding/"+bindingName, func(ctx context.Context) error {
+		return c.suspendJobBindingOnce(ctx, orgName, bindingName)
+	})
+}
+
+// suspendJobBindingOnce is one attempt: re-read the binding, set the key, PUT.
+func (c *componentClient) suspendJobBindingOnce(ctx context.Context, orgName, bindingName string) error {
+	getResp, err := c.oc.GetReleaseBindingWithResponse(ctx, orgName, ocgen.ReleaseBindingNameParam(bindingName))
+	if err != nil {
+		return fmt.Errorf("suspend %s: get release binding: %w", bindingName, err)
+	}
+	switch getResp.StatusCode() {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return fmt.Errorf("suspend %s: %w", bindingName, ErrNotFound)
+	default:
+		return fmt.Errorf("suspend %s: get release binding: %w", bindingName,
+			handleErrorResponse(getResp.StatusCode(), ErrorResponses{
+				JSON401: getResp.JSON401,
+				JSON403: getResp.JSON403,
+				JSON500: getResp.JSON500,
+			}))
+	}
+
+	var binding map[string]any
+	if err := json.Unmarshal(getResp.Body, &binding); err != nil {
+		return fmt.Errorf("suspend %s: decode release binding: %w", bindingName, err)
+	}
+	if binding == nil {
+		return fmt.Errorf("suspend %s: release binding read back empty", bindingName)
+	}
+	spec, _ := binding["spec"].(map[string]any)
+	if spec == nil {
+		spec = map[string]any{}
+		binding["spec"] = spec
+	}
+	configs, _ := spec["componentTypeEnvironmentConfigs"].(map[string]any)
+	if configs[suspendEnvironmentConfigKey] == true {
+		return nil
+	}
+	if configs == nil {
+		configs = map[string]any{}
+		spec["componentTypeEnvironmentConfigs"] = configs
+	}
+	configs[suspendEnvironmentConfigKey] = true
+
+	raw, err := json.Marshal(c.labels.stampedObject(binding))
+	if err != nil {
+		return fmt.Errorf("suspend %s: encode release binding: %w", bindingName, err)
+	}
+	putResp, err := c.oc.UpdateReleaseBindingWithBodyWithResponse(ctx, orgName,
+		ocgen.ReleaseBindingNameParam(bindingName), "application/json", bytes.NewReader(raw))
+	if err != nil {
+		return fmt.Errorf("suspend %s: update release binding: %w", bindingName, err)
+	}
+	if putResp.StatusCode() == http.StatusOK || putResp.StatusCode() == http.StatusCreated {
+		return nil
+	}
+	return fmt.Errorf("suspend %s: update release binding: %w", bindingName,
+		handleErrorResponse(putResp.StatusCode(), ErrorResponses{
+			JSON400: putResp.JSON400,
+			JSON401: putResp.JSON401,
+			JSON403: putResp.JSON403,
+			JSON404: putResp.JSON404,
+			JSON500: putResp.JSON500,
+		}))
 }
 
 // GetReleaseBindingStatus reads one binding's aggregate Ready condition.

@@ -42,6 +42,13 @@ const CodingAgentComponentTypeRef = "job/coding-agent"
 // dropped; ttlSecondsAfterFinished added; restartPolicy Never (side-effectful
 // runner — never auto-retry). Pod template labels MUST use
 // ${metadata.podSelectors} so the observer query path finds the pod.
+//
+// The TTL and suspend work as a pair. The TTL is the only path that deletes a
+// finished Job's pod with a propagation policy, so it stays. But OpenChoreo
+// re-creates a TTL-deleted Job from the binding it still renders, and that
+// copy would run the runner a second time. The `suspend` environmentConfig,
+// set true on the cycle's binding once the run is over (SuspendJobBinding), is
+// what makes the re-created Job inert: it is born suspended.
 func CodingAgentComponentType() map[string]any {
 	return map[string]any{
 		"apiVersion": "openchoreo.dev/v1alpha1",
@@ -172,6 +179,19 @@ func CodingAgentComponentType() map[string]any {
 					},
 				},
 			},
+			"environmentConfigs": map[string]any{
+				"openAPIV3Schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						// Set true on the cycle's binding at the first terminal pod,
+						// at settle and on cancel. A suspended Job keeps a completed
+						// pod until the TTL and deletes a running one gracefully; a
+						// Job OpenChoreo re-creates after the TTL is born suspended,
+						// so it never runs the runner a second time (research/07 Q1-Q2).
+						"suspend": map[string]any{"type": "boolean", "default": false},
+					},
+				},
+			},
 			"resources": codingAgentComponentTypeResources(),
 		},
 	}
@@ -213,6 +233,7 @@ func codingAgentComponentTypeResources() []any {
 					"backoffLimit":            "${parameters.backoffLimit}",
 					"activeDeadlineSeconds":   "${parameters.activeDeadlineSeconds}",
 					"ttlSecondsAfterFinished": "${parameters.ttlSecondsAfterFinished}",
+					"suspend":                 "${environmentConfigs.suspend}",
 					"template": map[string]any{
 						"metadata": map[string]any{
 							// Observer query footgun: must be podSelectors, not

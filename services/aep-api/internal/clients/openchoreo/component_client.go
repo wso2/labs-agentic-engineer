@@ -82,6 +82,15 @@ type ComponentClient interface {
 	// every cycle, which is what a deploy IS.
 	ApplyReleaseBinding(ctx context.Context, orgName, projectName string, in ReleaseBindingDesired) error
 
+	// SuspendJobBinding sets the coding-agent `suspend` environmentConfig on
+	// the component's binding in one environment, so its Job never runs the
+	// runner again (a Job OpenChoreo re-creates after the TTL is born
+	// suspended). UPDATE-ONLY: a missing binding is ErrNotFound and nothing is
+	// created, unlike ApplyReleaseBinding. Every other field survives; an
+	// already-suspended binding is not rewritten; a 400 (a release that
+	// predates the schema) wraps ErrBadRequest.
+	SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
+
 	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or
 	// (nil, nil) when it does not exist yet. The deploy stage's readiness poll:
 	// the component-scoped read, where ListProjectReleaseBindings is the

@@ -142,6 +142,17 @@ verification wave — and a validation cycle 2h),
 and limits, where the schema enforces the ceiling so an out-of-bounds
 per-dispatch override is rejected instead of silently clamped.
 
+The TTL is rendered per Component from `CODING_AGENT_JOB_TTL` (default `600s`).
+It is the only path that deletes a finished Job's pod with a propagation policy,
+but OpenChoreo re-creates a TTL-deleted Job from the binding it still renders.
+So the type also carries one environmentConfig, `suspend` (boolean, default
+false), rendered on `Job.spec.suspend`: once a cycle is over its binding gets
+`componentTypeEnvironmentConfigs.suspend = true` through
+`ComponentClient.SuspendJobBinding`, and the re-created Job is born suspended
+and never runs the runner again. That verb is update-only (a missing binding is
+`ErrNotFound`, never re-created, unlike `ApplyReleaseBinding`); a `400`
+(`ErrBadRequest`) means a release that predates the schema.
+
 `activeDeadlineSeconds` is also handed to the RUNNER, as
 `AEP_RUN_DEADLINE_SECONDS`, and that is one number with two consumers on
 purpose. The cluster's deadline is a backstop: when it passes the pod is killed

@@ -227,6 +227,13 @@ type Config struct {
 	// eleven cycles; cloud keeps the code default unless explicitly set.
 	CodingAgentComponentRetention int
 
+	// CodingAgentJobTTL is how long a finished coding-agent Job (and its pod)
+	// is kept before Kubernetes deletes it, rendered per Component as the
+	// ComponentType's ttlSecondsAfterFinished. Default 600s (CODING_AGENT_JOB_TTL).
+	// Once a cycle is over its binding is suspended, so the Job OpenChoreo
+	// re-creates after the TTL never runs the runner again.
+	CodingAgentJobTTL time.Duration
+
 	// Temporal holds the workflow-engine connection settings for the devflow
 	// feature. Enabled iff HostPort is set — unset leaves aep-api fully
 	// functional with the workflow endpoints answering 503.

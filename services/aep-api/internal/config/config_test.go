@@ -19,6 +19,7 @@ package config
 import (
 	"encoding/base64"
 	"testing"
+	"time"
 )
 
 var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
@@ -79,5 +80,30 @@ func TestValidate_NoSigningKeyRequired(t *testing.T) {
 	t.Setenv("BFF_TASK_SIGNING_KEY_PATH", "")
 	if err := validConfig().Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want nil with no signing key", err)
+	}
+}
+
+// U1: a finished coding-agent Job is kept 600s unless CODING_AGENT_JOB_TTL says
+// otherwise.
+func TestLoad_CodingAgentJobTTL(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_JOB_TTL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentJobTTL != 600*time.Second {
+		t.Fatalf("default CodingAgentJobTTL = %v, want 600s", cfg.CodingAgentJobTTL)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "15m")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentJobTTL != 15*time.Minute {
+		t.Fatalf("CodingAgentJobTTL = %v, want 15m", cfg.CodingAgentJobTTL)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "ten minutes")
+	if _, err := Load(); err == nil {
+		t.Fatal("an unparseable CODING_AGENT_JOB_TTL must fail Load")
 	}
 }

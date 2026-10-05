@@ -158,6 +158,8 @@ func Load() (Config, error) {
 		// pruned. Default 10 matches codingagent.DefaultCodingAgentComponentRetention;
 		// local compose lowers this (often to 2) to make LRU prune observable.
 		CodingAgentComponentRetention: r.readOptionalInt("CODING_AGENT_COMPONENT_RETENTION", 10),
+		// Finished cycle Jobs are deleted after this; see Config.CodingAgentJobTTL.
+		CodingAgentJobTTL: r.readOptionalDuration("CODING_AGENT_JOB_TTL", 600*time.Second),
 	}
 
 	if len(r.errors) > 0 {

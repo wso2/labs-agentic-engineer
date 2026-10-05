@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -141,6 +142,9 @@ type OCDispatcher struct {
 	// images is the runner image per runtime, used when OCDispatchInputs.Image
 	// is empty. Two tags built from one Dockerfile, sharing every heavy layer.
 	images map[orgconfig.AgentRuntime]runnerImage
+	// jobTTLSeconds is rendered as each Component's ttlSecondsAfterFinished;
+	// 0 leaves the ComponentType's schema default.
+	jobTTLSeconds int
 }
 
 // runnerImage is one runtime's runner image and the deploy setting it comes
@@ -183,6 +187,14 @@ func (d *OCDispatcher) withRunnerImage(runtime orgconfig.AgentRuntime, image str
 	img := d.images[runtime]
 	img.ref = strings.TrimSpace(image)
 	d.images[runtime] = img
+	return d
+}
+
+// WithJobTTL sets how long a finished cycle Job (and its pod) is kept before
+// Kubernetes deletes it, rendered per Component as ttlSecondsAfterFinished in
+// whole seconds. Zero or less leaves the schema default.
+func (d *OCDispatcher) WithJobTTL(ttl time.Duration) *OCDispatcher {
+	d.jobTTLSeconds = max(0, int(ttl/time.Second))
 	return d
 }
 
@@ -234,7 +246,7 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		AutoBuild:   false,
 		AutoDeploy:  false,
 		Labels:      labels,
-		Parameters:  componentParameters(in),
+		Parameters:  componentParameters(in, d.jobTTLSeconds),
 	}
 	if _, err := d.oc.CreateComponent(ctx, in.OrgID, in.ProjectID, req); err != nil {
 		if errors.Is(err, openchoreo.ErrPaymentRequired) {
@@ -342,11 +354,15 @@ func (d *OCDispatcher) markers(in OCDispatchInputs) map[string]string {
 
 // componentParameters are the ComponentType parameters this cycle sets. The
 // runtime is always stamped, so the rendered Job's label states the runtime
-// rather than inheriting the schema's default.
-func componentParameters(in OCDispatchInputs) map[string]any {
+// rather than inheriting the schema's default. The Job TTL is the dispatcher's
+// configuration, the same for every cycle.
+func componentParameters(in OCDispatchInputs, jobTTLSeconds int) map[string]any {
 	params := map[string]any{"runtime": string(runtimeOrDefault(in.Runtime))}
 	if in.ActiveDeadlineSeconds > 0 {
 		params["activeDeadlineSeconds"] = in.ActiveDeadlineSeconds
+	}
+	if jobTTLSeconds > 0 {
+		params["ttlSecondsAfterFinished"] = jobTTLSeconds
 	}
 	return params
 }
