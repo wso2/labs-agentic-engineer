@@ -108,6 +108,15 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 		out.Runtime = row.Runtime
 		out.UpdatedAt, out.UpdatedBy = &updatedAt, &updatedBy
 	}
+	// A row means set: a credential row whose coding-agent-key reference row is
+	// missing (saved before the token lived in vault) has no usable token.
+	set, err := s.conns.CodingKeySet(ctx, ocOrgID)
+	if err != nil {
+		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
+	}
+	if !set {
+		return out, nil
+	}
 	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
 	switch {
 	case err == nil:

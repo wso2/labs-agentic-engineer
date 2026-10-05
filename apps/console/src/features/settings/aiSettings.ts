@@ -182,13 +182,15 @@ export function hostOf(url: string): string {
 }
 
 /**
- * Whether the draft needs a new key: a first connect, or a host change, since
- * the stored key is never sent to another host. A format change on the same
- * host keeps the key (one provider can serve both formats with one key).
+ * Whether the draft needs a typed key: a first connect, or any change to the
+ * format or the base URL. The stored key is never reused for a different
+ * endpoint, and the server refuses such an edit without one. A model change
+ * alone keeps the key.
  */
 export function keyRequired(saved: AiSettings, draft: AiDraft): boolean {
-  if (saved.connection === null) return true;
-  return hostOf(draft.baseURL) !== hostOf(saved.connection.baseURL);
+  const c = saved.connection;
+  if (c === null) return true;
+  return draft.kind !== c.kind || draft.baseURL.trim() !== c.baseURL;
 }
 
 /**
@@ -441,8 +443,8 @@ export function draftProblem(saved: AiSettings, draft: AiDraft, offered: boolean
 
 /**
  * The connection as the draft names it, for `POST /config/llm/test`. The key
- * rides only when typed: the server uses the stored one for the saved host,
- * and refuses a new host without one.
+ * rides only when typed; the server refuses a test without one, so callers ask
+ * for it first.
  */
 export function testBody(draft: AiDraft): LLMPatch {
   const apiKey = draft.apiKey.trim();

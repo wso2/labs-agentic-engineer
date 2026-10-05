@@ -58,6 +58,10 @@ export function useConfig() {
   });
 }
 
+// Refusals that arrive after the save was committed: the server wrote the
+// settings and then failed a follow-up step, so the cached config is stale.
+const COMMITTED_SAVE_CODES = new Set(["agent_manager_not_updated"]);
+
 // The AI agents card's one Save: sends the patch aiSettingsPatch built.
 export function useSaveAiSettings() {
   const queryClient = useQueryClient();
@@ -74,6 +78,12 @@ export function useSaveAiSettings() {
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
       invalidateAeStudio(queryClient);
+    },
+    onError: (error) => {
+      if (error instanceof ApiRequestError && error.code !== undefined && COMMITTED_SAVE_CODES.has(error.code)) {
+        void queryClient.invalidateQueries({ queryKey: configKeys.all });
+        invalidateAeStudio(queryClient);
+      }
     },
   });
 }

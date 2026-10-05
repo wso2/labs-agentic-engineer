@@ -350,6 +350,13 @@ func (s *ModelConnectionService) keySet(ctx context.Context, ocOrgID string) (bo
 	return row != nil, err
 }
 
+// CodingKeySet reports whether the org's coding-agent-key reference row exists:
+// the record that the Claude subscription token was written to vault.
+func (s *ModelConnectionService) CodingKeySet(ctx context.Context, ocOrgID string) (bool, error) {
+	row, err := s.orgSecrets.Get(ctx, ocOrgID, OrgSecretCodingAgentKey)
+	return row != nil, err
+}
+
 // Projection is the org's connection as GET /config shows it, nil when it has
 // none. A connection whose default-key reference row is missing (saved before
 // the key lived in vault) has no usable key, so it reads as none: the

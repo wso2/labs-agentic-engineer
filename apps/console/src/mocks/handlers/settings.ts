@@ -312,11 +312,17 @@ function mergeConnection(patch: LLMPatch, test: boolean): MergedConnection | Ref
       error: sectionError("llm", "llm_host_refused", `Refused: ${host} resolves to a private address. Only public https endpoints are allowed.`),
     };
   }
-  const newHost = llm === null || hostOf(llm.baseURL) !== host;
-  if (newHost && apiKey === "") {
+  // The server reuses no stored key for another format or URL, and tests only
+  // with a key in the request.
+  const newEndpoint = llm === null || llm.kind !== kind || llm.baseURL !== baseURL;
+  if ((newEndpoint || test) && apiKey === "") {
     return {
       status: 400,
-      error: sectionError("llm", llm === null ? "llm_field_required" : "llm_key_required", `a new host needs its own key: paste the API key for ${host}`),
+      error: sectionError(
+        "llm",
+        llm === null ? "llm_field_required" : "llm_key_required",
+        `paste the API key for ${host}`,
+      ),
     };
   }
   if (apiKey !== "" && apiKey.length < 12) {

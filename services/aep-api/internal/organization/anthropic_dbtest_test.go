@@ -506,3 +506,35 @@ func TestModelConnectionSave_DoesNotPublishTheSubscription_DB(t *testing.T) {
 		t.Errorf("publisher called %d time(s); the subscription must not publish", pub.calls)
 	}
 }
+
+// --- a row means set ---------------------------------------------------------
+
+// The subscription is projected only while the org's coding-agent-key
+// reference row exists: a credential row with no reference (saved before the
+// token lived in vault) has no usable token, so it reads as not set.
+func TestAgentSettings_SubscriptionProjectedOnlyWithItsReferenceRow_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+
+	c.patch(t, "acme", keyPatch(anthropicUnitKey))
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil {
+		t.Fatalf("with its reference row: subscription = %+v (%v), want projected", got.Subscription, err)
+	}
+
+	// The legacy shape: the credential row stays, the reference row is gone.
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'coding-agent-key'`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.ref(t, "acme", organization.OrgSecretCodingAgentKey) != nil {
+		t.Fatal("test setup: the coding-agent-key row is still there")
+	}
+	if row, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding); err != nil || row == nil {
+		t.Fatalf("test setup: the credential row must remain: %+v (%v)", row, err)
+	}
+	got, err = c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription != nil {
+		t.Fatalf("without its reference row: subscription = %+v (%v), want null", got.Subscription, err)
+	}
+}

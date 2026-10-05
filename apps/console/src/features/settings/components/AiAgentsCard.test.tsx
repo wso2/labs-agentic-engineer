@@ -187,6 +187,18 @@ describe("AiAgentsCard on Anthropic's API", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   });
 
+  it("reads Not set beside the token input when there is no subscription token", () => {
+    renderCard();
+    expect(screen.getByText("Not set")).toBeInTheDocument();
+    expect(field("Subscription token")).toHaveValue("");
+  });
+
+  it("asks for the key when only the format changes on the same host", () => {
+    renderCard();
+    fireEvent.click(format("OpenAI-compatible"));
+    expect(field("API key")).toHaveValue("");
+  });
+
   it("says who last changed the card", () => {
     renderCard();
     expect(screen.getByText(/^Changed .* by dev@acme.example$/)).toBeInTheDocument();
@@ -262,7 +274,7 @@ describe("switching the format", () => {
     fireEvent.click(format("OpenAI-compatible"));
     type("Base URL", "https://ollama.com/v1");
 
-    expect(screen.getByText("A new host needs its own key: the saved key is never sent to ollama.com.")).toBeInTheDocument();
+    expect(screen.getByText("A different format or URL needs its own key: the saved key is never sent to ollama.com.")).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
     type("API key", "ollama-key-0123456789");
     fireEvent.click(saveButton());
@@ -304,8 +316,22 @@ describe("Test connection", () => {
     expect(info().getByText(/Chat does not accept images/)).toBeInTheDocument();
   });
 
+  it("asks for the key instead of probing without one", () => {
+    renderCard();
+    expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();
+    fireEvent.click(testButton());
+    expect(testMutate).not.toHaveBeenCalled();
+    expect(field("New API key")).toHaveValue("");
+    expect(testButton()).toBeDisabled();
+    type("New API key", "sk-ant-api03-typed-key-0123456789");
+    fireEvent.click(testButton());
+    expect(testMutate.mock.calls[0]?.[0]).toMatchObject({ apiKey: "sk-ant-api03-typed-key-0123456789" });
+  });
+
   it("warns on a model the endpoint does not list", () => {
     renderCard();
+    fireEvent.click(testButton());
+    type("New API key", "sk-ant-api03-typed-key-0123456789");
     type("Model", "claude-future");
     testMutate.mockImplementation((_b, opts: { onSuccess: (c: LLMCheck) => void }) =>
       opts.onSuccess({ ...check, kind: "anthropic", baseURL: anthropic.baseURL, model: "claude-future", modelListed: "no", capabilities: anthropic.capabilities }),

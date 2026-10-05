@@ -332,7 +332,8 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
 
   return (
     <Box sx={frame}>
-      {!showStored && (
+      {stored === null && <CredentialField label={tokenLabel} set={false} />}
+      {stored !== null && !showStored && (
         <Typography variant="body2" fontWeight={500}>
           {tokenLabel}
         </Typography>

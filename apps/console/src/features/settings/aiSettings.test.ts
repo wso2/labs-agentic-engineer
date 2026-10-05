@@ -121,9 +121,13 @@ describe("keyRequired", () => {
     expect(keyRequired(unconnected, draft({}, unconnected))).toBe(true);
   });
 
-  it("keeps the stored key on the same host, even across a format or model change", () => {
+  it("keeps the stored key across a model change only", () => {
     expect(keyRequired(connected, draft({ model: "claude-haiku-4-5" }))).toBe(false);
-    expect(keyRequired(connected, draft({ kind: "openai-compatible" }))).toBe(false);
+  });
+
+  it("asks for the key again when the format or the base URL changes, even on the same host", () => {
+    expect(keyRequired(connected, draft({ kind: "openai-compatible" }))).toBe(true);
+    expect(keyRequired(connected, draft({ baseURL: "https://api.anthropic.com/v2" }))).toBe(true);
   });
 
   it("asks for a new key when the host moves", () => {
@@ -289,6 +293,10 @@ describe("draftProblem", () => {
       field: "apiKey",
       message: "Paste the API key for ollama.com.",
     });
+  });
+
+  it("holds back a same-host format change without a key", () => {
+    expect(draftProblem(connected, draft({ kind: "openai-compatible" }), false)?.field).toBe("apiKey");
   });
 
   it("holds back a format no coding agent here runs", () => {
