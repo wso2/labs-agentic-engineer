@@ -31,7 +31,13 @@ package mcp
 //     that is not AE_GITHUB_OWNER (the org's connected GitHub account,
 //     case-insensitive), before any network call. An unset AE_GITHUB_OWNER
 //     refuses every read.
-//  2. Search is scoped to that one repo: a query carrying its own scope
+//  2. The coordinates stay inside that owner's repo: repo must be a plain
+//     repository name (ErrInvalidRepoName) and no path segment may be "." or
+//     ".." (ErrPathDotSegment). url.PathEscape keeps dots, so `repo ".."` or a
+//     path climbing out of contents/ could re-point the read at another
+//     owner's repo past guard 1 wherever dot segments get resolved, and a repo
+//     carrying a space could smuggle a qualifier past guard 3.
+//  3. Search is scoped to that one repo: a query carrying its own scope
 //     qualifier is refused (ErrQueryScopeQualifier).
 //
 // The token is the pod's gitpat (GITHUB_PAT). Reads are bounded: a fixed API
@@ -62,6 +68,18 @@ var ErrOwnerNotInOrg = errors.New("repo owner is not in org: only the organizati
 // `"secret repo:acme/other-private"` searches both). Refused before any
 // network call, so the appended `repo:{owner}/{repo}` is the sole scope.
 var ErrQueryScopeQualifier = errors.New("query must not contain a repo/org/user/fork scope qualifier")
+
+// ErrInvalidRepoName is returned when repo is not a plain GitHub repository
+// name (letters, digits, ".", "-", "_"; never "." or ".."). Refused before
+// any network call.
+var ErrInvalidRepoName = errors.New("invalid repository name")
+
+// ErrPathDotSegment is returned when a path has a "." or ".." segment.
+// Refused before any network call.
+var ErrPathDotSegment = errors.New(`path must not contain "." or ".." segments`)
+
+// repoNamePattern is the character set of a GitHub repository name.
+var repoNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // ErrFileTooLargeToInline is returned when the Contents API reports a file it
 // cannot inline as base64 (encoding "none", GitHub's signal for a file over
@@ -141,11 +159,36 @@ func (g RemoteGit) authorize(owner string) error {
 	return nil
 }
 
+// checkRepo refuses a repo that is not a plain repository name.
+func checkRepo(repo string) error {
+	if !repoNamePattern.MatchString(repo) || repo == "." || repo == ".." {
+		return fmt.Errorf("%w: %q", ErrInvalidRepoName, repo)
+	}
+	return nil
+}
+
+// checkPath refuses a path with a "." or ".." segment. An empty segment
+// ("a//b") stays under contents/ and cannot re-root the URL.
+func checkPath(p string) error {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%w: %q", ErrPathDotSegment, p)
+		}
+	}
+	return nil
+}
+
 // GetFileContents reads one path via the Contents API: a file answers its
 // decoded content and sha, a directory its entries. Another owner is refused
-// before any network call.
+// before any network call, as are coordinates that leave the owner's repo.
 func (g RemoteGit) GetFileContents(ctx context.Context, owner, repo, path, ref string) (*RemoteGitFile, error) {
 	if err := g.authorize(owner); err != nil {
+		return nil, err
+	}
+	if err := checkRepo(repo); err != nil {
+		return nil, err
+	}
+	if err := checkPath(path); err != nil {
 		return nil, err
 	}
 	// Each segment is escaped, the slashes kept; an empty path is the root.
@@ -181,10 +224,14 @@ func (g RemoteGit) GetFileContents(ctx context.Context, owner, repo, path, ref s
 	return &RemoteGitFile{Content: content, SHA: file.SHA}, nil
 }
 
-// SearchCode runs a code search scoped to owner/repo. Another owner, or a
-// query carrying its own scope qualifier, is refused before any network call.
+// SearchCode runs a code search scoped to owner/repo. Another owner, a repo
+// that is not a plain name, or a query carrying its own scope qualifier is
+// refused before any network call.
 func (g RemoteGit) SearchCode(ctx context.Context, owner, repo, query string) ([]RemoteGitSearchHit, error) {
 	if err := g.authorize(owner); err != nil {
+		return nil, err
+	}
+	if err := checkRepo(repo); err != nil {
 		return nil, err
 	}
 	if scopeQualifierPattern.MatchString(query) {

@@ -23,14 +23,19 @@
 //   - get_remote_git_file_contents → GET /repos/{owner}/{repo}/contents/{path}?ref=
 //   - search_remote_git_code       → GET /search/code?q=<query> repo:{owner}/{repo}
 //
-// There is deliberately no write surface. Two guards bound the reads, both
+// There is deliberately no write surface. Three guards bound the reads, all
 // checked before any GitHub request:
 //
 //  1. Owner-must-match-org. `owner` must be the org's own GitHub account
 //     (AEP_GITHUB_OWNER, stamped by aep-api from the github_login the org
 //     connected), compared case-insensitively. An agent in org A cannot read
 //     org B's repos, or any other account's, through the org's token.
-//  2. No scope qualifier in a search query. GitHub OR-combines `repo:` (and
+//  2. The coordinates stay inside that owner's repo. `repo` must be a plain
+//     repository name and no path segment may be "." or "..": fetch resolves
+//     dot segments, so `repo: ".."` or `path: "../../victim/x/contents/y"`
+//     would otherwise re-point the read at another owner past guard 1, and a
+//     `repo` carrying a space could smuggle a search qualifier past guard 3.
+//  3. No scope qualifier in a search query. GitHub OR-combines `repo:` (and
 //     `org:`/`user:`) qualifiers, so `secret repo:acme/other` next to the
 //     appended `repo:{owner}/{repo}` would search both. Refused, so the
 //     appended scope is always the query's only one.
@@ -61,6 +66,9 @@ const MAX_SEARCH_ITEMS = 30;
 const MAX_ERROR_BODY = 512;
 
 const SCOPE_QUALIFIER = /\b(repo|org|user|fork):/i;
+// A GitHub repository name: letters, digits, ".", "-", "_" ("." and ".." are
+// not names).
+const REPO_NAME = /^[A-Za-z0-9._-]+$/;
 
 const OWNER_PROPERTY = { type: "string", description: "repo owner — MUST be your organization's GitHub account" };
 const REPO_PROPERTY = { type: "string", description: "repository name" };
@@ -137,6 +145,12 @@ export function createRemoteGitTools(opts: RemoteGitToolsOpts): LocalMcpTools {
     }
   }
 
+  function checkRepo(repo: string): void {
+    if (!REPO_NAME.test(repo) || repo === "." || repo === "..") {
+      throw new RefusedError(`invalid repository name: ${JSON.stringify(repo)}`);
+    }
+  }
+
   async function get(url: string, label: string): Promise<Buffer> {
     let res: Response;
     try {
@@ -163,8 +177,13 @@ export function createRemoteGitTools(opts: RemoteGitToolsOpts): LocalMcpTools {
     const repo = str(args.repo);
     if (owner === "" || repo === "") throw new RefusedError("missing required arguments: owner and repo");
     authorize(owner);
+    checkRepo(repo);
+    const path = str(args.path);
+    if (path.split("/").some((seg) => seg === "." || seg === "..")) {
+      throw new RefusedError(`path must not contain "." or ".." segments: ${JSON.stringify(path)}`);
+    }
     const ref = str(args.ref);
-    let url = `${apiBase}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${escapePath(str(args.path))}`;
+    let url = `${apiBase}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${escapePath(path)}`;
     if (ref !== "") url += `?ref=${encodeURIComponent(ref)}`;
 
     const body = await get(url, "contents");
@@ -187,6 +206,7 @@ export function createRemoteGitTools(opts: RemoteGitToolsOpts): LocalMcpTools {
       throw new RefusedError("missing required arguments: owner, repo and query");
     }
     authorize(owner);
+    checkRepo(repo);
     if (SCOPE_QUALIFIER.test(query)) {
       throw new RefusedError(`query must not contain a repo/org/user/fork scope qualifier: ${JSON.stringify(query)}`);
     }
@@ -333,7 +353,11 @@ function isValidUtf8(b: Buffer): boolean {
   }
 }
 
-/** Escapes each segment of a repo-relative path, keeping the slashes. Empty = repo root. */
+/**
+ * Escapes each segment of a repo-relative path, keeping the slashes. Empty =
+ * repo root. Dot segments are refused before this; an empty segment ("a//b")
+ * stays under `contents/` and cannot re-root the URL.
+ */
 function escapePath(p: string): string {
   return p.replace(/^\//, "").split("/").map(encodeURIComponent).join("/");
 }

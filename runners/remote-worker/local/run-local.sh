@@ -64,6 +64,16 @@ export AEP_IDENTITY_NAME="${AEP_IDENTITY_NAME:-AEP Local Agent}"
 export AEP_IDENTITY_EMAIL="${AEP_IDENTITY_EMAIL:-aep-local@users.noreply.github.com}"
 export AEP_BEARER="${AEP_BEARER:-$(node -e 'console.log(crypto.randomUUID())')}"
 export AEP_TASK_KIND="${AEP_TASK_KIND:-implementation}"
+# The org's GitHub account (the remote-git owner guard's reference; the runner
+# exits 2 without it). Default: the owner segment of AEP_REPO_URL.
+if [ -z "${AEP_GITHUB_OWNER:-}" ]; then
+  AEP_GITHUB_OWNER="$(printf '%s' "$AEP_REPO_URL" | sed -E 's#^https://github\.com/([^/]+)/.*#\1#')"
+  if [ "$AEP_GITHUB_OWNER" = "$AEP_REPO_URL" ] || [ -z "$AEP_GITHUB_OWNER" ]; then
+    echo "cannot derive AEP_GITHUB_OWNER from AEP_REPO_URL ($AEP_REPO_URL); set it in $ENV_FILE" >&2
+    exit 2
+  fi
+fi
+export AEP_GITHUB_OWNER
 export PUBLISHER_CLIENT_ID="${PUBLISHER_CLIENT_ID:-local-publisher}"
 export PUBLISHER_CLIENT_SECRET="${PUBLISHER_CLIENT_SECRET:-local-publisher-secret}"
 STUB_PORT="${STUB_PORT:-8377}"
@@ -148,7 +158,7 @@ docker run --rm \
   -e AEP_EVAL_MODEL_NAME -e AEP_EVAL_MODEL_AUTH_SCHEME \
   -e AEP_TASK_ID -e AEP_ORG_ID -e AEP_PROJECT_ID -e AEP_COMPONENT_NAME \
   -e AEP_REPO_URL -e AEP_PROMPT -e AEP_BEARER -e AEP_GIT_SERVICE_URL \
-  -e AEP_IDENTITY_NAME -e AEP_IDENTITY_EMAIL -e AEP_TASK_KIND -e AEP_PLATFORM_URL \
+  -e AEP_IDENTITY_NAME -e AEP_IDENTITY_EMAIL -e AEP_GITHUB_OWNER -e AEP_TASK_KIND -e AEP_PLATFORM_URL \
   -e PUBLISHER_CLIENT_ID -e PUBLISHER_CLIENT_SECRET -e PUBLISHER_TOKEN_URL \
   "$IMAGE_TAG" || EXIT_CODE=$?
 

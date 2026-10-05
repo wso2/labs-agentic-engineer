@@ -151,6 +151,47 @@ func TestRemoteGit_SearchCode_EmbeddedScopeQualifierRefused(t *testing.T) {
 	}
 }
 
+// The coordinates cannot climb out of the owner's repo: a resolver on the way
+// to GitHub may collapse "." / ".." segments, and url.PathEscape keeps dots, so
+// an unchecked repo or path could re-point the read at /repos/<another
+// owner>/… past the owner guard, and a repo carrying a space could smuggle a
+// search qualifier. All refused before any GitHub request.
+func TestRemoteGit_CoordinatesStayInTheOwnersRepo(t *testing.T) {
+	srv, n := githubStub(t, func(http.ResponseWriter, *http.Request) {})
+	ctx := context.Background()
+	g := newRemote(srv.URL)
+	for _, path := range []string{"../../../victim/private/contents/secrets.yaml", "specs/../../x", "./a", "a/.", ".."} {
+		if _, err := g.GetFileContents(ctx, "acme", "svc", path, ""); !errors.Is(err, ErrPathDotSegment) {
+			t.Errorf("path %q: err = %v", path, err)
+		}
+	}
+	for _, repo := range []string{"..", ".", "svc repo:victim/x", "a b", "svc/../x", "x:y"} {
+		if _, err := g.GetFileContents(ctx, "acme", repo, "a", ""); !errors.Is(err, ErrInvalidRepoName) {
+			t.Errorf("read repo %q: err = %v", repo, err)
+		}
+		if _, err := g.SearchCode(ctx, "acme", repo, "openapi"); !errors.Is(err, ErrInvalidRepoName) {
+			t.Errorf("search repo %q: err = %v", repo, err)
+		}
+	}
+	if n.Load() != 0 {
+		t.Fatalf("GitHub called %d times for refused coordinates", n.Load())
+	}
+}
+
+func TestRemoteGit_OrdinaryDottedNamesStillRead(t *testing.T) {
+	var gotPath string
+	srv, _ := githubStub(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = fmt.Fprint(w, `[]`)
+	})
+	if _, err := newRemote(srv.URL).GetFileContents(context.Background(), "acme", "my.svc_v-2", "specs/.well-known/a..b.yaml", ""); err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/repos/acme/my.svc_v-2/contents/specs/.well-known/a..b.yaml" {
+		t.Fatalf("path = %q", gotPath)
+	}
+}
+
 func TestRemoteGit_GetFileContents_Limits(t *testing.T) {
 	big := strings.Repeat("a", 4096)
 	srv, _ := githubStub(t, func(w http.ResponseWriter, r *http.Request) {

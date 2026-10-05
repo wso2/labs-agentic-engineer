@@ -213,3 +213,41 @@ test("descriptors name exactly the two tools", () => {
   const tools = createRemoteGitTools({ token: "t", owner: "acme" });
   assert.deepEqual(tools.descriptors.map((d) => d.name), ["get_remote_git_file_contents", "search_remote_git_code"]);
 });
+
+// ---- the coordinates cannot climb out of the owner's repo (fix round 1) ----
+// fetch resolves "." / ".." segments, and encodeURIComponent keeps dots, so an
+// unchecked path or repo could re-point the read at /repos/<another owner>/…
+// past the owner guard. Refused before any GitHub call.
+
+test("a dot-segment path is refused without calling GitHub", async () => {
+  const f = fakeFetch({});
+  const tools = createRemoteGitTools({ token: "t", owner: "acme", fetchImpl: f.impl });
+  for (const path of ["../../../victim/private/contents/secrets.yaml", "specs/../../x", "./a", "a/.", ".."]) {
+    const res = await tools.call("get_remote_git_file_contents", { owner: "acme", repo: "svc", path });
+    assert.equal(res?.isError, true, path);
+    assert.match(res!.content[0].text, /"\." or "\.\." segments/, path);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test("a repo that is not a plain repository name is refused without calling GitHub", async () => {
+  const f = fakeFetch({});
+  const tools = createRemoteGitTools({ token: "t", owner: "acme", fetchImpl: f.impl });
+  for (const repo of ["..", ".", "svc repo:victim/x", "a b", "svc/../x", "x:y"]) {
+    const read = await tools.call("get_remote_git_file_contents", { owner: "acme", repo, path: "a" });
+    assert.equal(read?.isError, true, repo);
+    assert.match(read!.content[0].text, /invalid repository name/, repo);
+    const search = await tools.call("search_remote_git_code", { owner: "acme", repo, query: "openapi" });
+    assert.equal(search?.isError, true, repo);
+    assert.match(search!.content[0].text, /invalid repository name/, repo);
+  }
+  assert.equal(f.calls.length, 0);
+});
+
+test("ordinary names with dots, dashes and underscores still read", async () => {
+  const f = fakeFetch({ "https://api.github.com/repos/acme/my.svc_v-2/contents/": { status: 200, body: [] } });
+  const tools = createRemoteGitTools({ token: "t", owner: "acme", fetchImpl: f.impl });
+  const res = await tools.call("get_remote_git_file_contents", { owner: "acme", repo: "my.svc_v-2", path: "specs/.well-known/a..b.yaml" });
+  assert.equal(res?.isError, undefined);
+  assert.equal(f.calls[0], "https://api.github.com/repos/acme/my.svc_v-2/contents/specs/.well-known/a..b.yaml");
+});
