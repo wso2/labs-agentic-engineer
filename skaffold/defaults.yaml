@@ -1,11 +1,3 @@
-platform:
-  workspaces:
-    # PVC access mode for the shared git workspaces volume.
-    # Leave empty to use the chart default (ReadWriteOnce).
-    # Set to ReadWriteMany only if your storage class supports it and pods
-    # run across multiple nodes — most cloud storage classes do not.
-    access_mode: ""
-
 # The platform's browser-facing origins. Each is routed by Host header on the
 # same gateway port, so they are separate hostnames rather than paths, and
 # re-domaining an install means moving all of them together. Leave them as

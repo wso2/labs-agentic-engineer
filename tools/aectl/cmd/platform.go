@@ -484,9 +484,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	helmArgs = append(helmArgs, aeStudioOverrides(initPlatformNamespace)...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
 	helmArgs = append(helmArgs, aeStudioImageOverrides(initAEStudioImageDesignAgent, initAEStudioImageCollab, initAEStudioImageStudioTools)...)
-	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
-		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
-	}
 	if u := viper.GetString("oc.observability_api_url"); u != "" {
 		helmArgs = append(helmArgs, "--set", "observer.baseURL="+u)
 	}

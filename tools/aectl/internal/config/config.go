@@ -58,7 +58,6 @@ var ConfigMapKeys = []string{
 	"oc.pipeline_source_environment",
 	"oc.local_org_provisioning.enabled",
 	"oc.data_plane_gateway_tls",
-	"platform.workspaces.access_mode",
 	"codingagent.openbao_direct.enabled",
 	"openbao.addr",
 	"ae_studio.webhook_relay.enabled",
@@ -126,7 +125,6 @@ var keyRegistry = map[string]configKeyMeta{
 	// never answer. Set true only when aectl is installing against a gateway
 	// that genuinely fronts TLS.
 	"oc.data_plane_gateway_tls":          {required: false, kind: kindBool},
-	"platform.workspaces.access_mode":    {required: false, kind: kindEnum, enumValues: []string{"", "ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"}},
 	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
 	"openbao.addr":                       {required: false, kind: kindURL},
 	// The per-org AE Studio webhook relay (smee.io channel per org) for a

@@ -152,8 +152,9 @@ longer has a workspace volume: the chart drops PVC `aep-workspaces`, the mount,
 the `workspaces.*` values and the `AEP_WORKSPACE_*` env. The PVC carries no
 `helm.sh/resource-policy: keep`, so `helm upgrade` deletes it, and with it
 everything on the volume: the run recordings under `runs/` and the pre-phase-4
-`repos/`, `trash/` and `tmp/` trees. Nothing is migrated; a cycle's feed is now
-read from its pod log, then the observability plane. On a StorageClass with
+`repos/`, `trash/` and `tmp/` trees. Nothing is migrated, and losing the recordings is intended: run history now
+comes from the observer (a cycle's feed is read from its pod log, then the
+observability plane). On a StorageClass with
 `reclaimPolicy: Retain` the PersistentVolume is left `Released`; delete it by
 hand (`kubectl delete pv <name>`) once you no longer need the data. Remove any
 `workspaces:` block from your own values files; Helm ignores it.

@@ -187,3 +187,32 @@ func TestWebhookRelayEnabled_IsAPersistedBoolKey(t *testing.T) {
 		t.Errorf("ae_studio.webhook_relay.enabled registry = %+v (present %v), want optional bool", meta, ok)
 	}
 }
+
+// An install made before aep-api dropped its /workspaces volume still has
+// platform.workspaces.access_mode in its ConfigMap. The key is gone from the
+// registry; loading and validating such a config must keep succeeding.
+func TestLoadFromCluster_LegacyWorkspacesAccessMode_Tolerated(t *testing.T) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: ConfigMapName, Namespace: "aep"},
+		Data: map[string]string{
+			"platform.workspaces.access_mode": "ReadWriteMany",
+			"gateway.hostname":                "myapis.example.com",
+			"thunder.namespace":               "thunder",
+			"thunder.url":                     "http://thunder.example.com",
+			"thunder.admin_client_id":         "admin",
+			"thunder.public_url":              "http://thunder.example.com",
+			"oc.api_url":                      "http://oc.example.com",
+			"oc.system_namespace":             "openchoreo-system",
+		},
+	}
+	viper.Reset()
+	if _, err := LoadFromCluster(context.Background(), fake.NewSimpleClientset(cm), "aep"); err != nil {
+		t.Fatalf("legacy key must not fail the load: %v", err)
+	}
+	if errs := ValidateLoaded(); len(errs) != 0 {
+		t.Errorf("legacy key must not fail validation: %v", errs)
+	}
+	if got := viper.GetString("gateway.hostname"); got != "myapis.example.com" {
+		t.Errorf("gateway.hostname = %q", got)
+	}
+}
