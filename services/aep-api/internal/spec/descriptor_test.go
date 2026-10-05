@@ -124,7 +124,7 @@ func TestWriteDescriptor_RetriesAfterAConflict(t *testing.T) {
 			return
 		}
 		raced = true
-		_, _ = pod.Commit(ctx, descriptorRef, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: SpecIgnorePath, Content: "theirs\n"}}})
+		_, _ = pod.Commit(ctx, descriptorRef, sourcecontrol.CommitRequest{Message: "theirs", Writes: []sourcecontrol.FileWrite{{Path: SpecIgnorePath, Content: "theirs\n"}}})
 	})
 
 	if err := w.WriteDescriptor(ctx, "default", "p", "greeter", "idea"); err != nil {

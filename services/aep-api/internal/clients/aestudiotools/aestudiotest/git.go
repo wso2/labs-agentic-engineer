@@ -23,7 +23,6 @@ import (
 	"context"
 	"crypto/sha1" //nolint:gosec // git object ids are sha1 by definition
 	"encoding/hex"
-	"errors"
 	"maps"
 	"regexp"
 	"slices"
@@ -34,30 +33,43 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// errInvalidCommit is a commit request the pod refuses with 400
-// validation_failed.
-var errInvalidCommit = errors.New("aestudiotest: invalid commit request")
-
 // bundleExtPattern is the contract's `ext` item pattern (ae-studio-tools
 // internal/v1 openapi.yaml, read-bundle).
 var bundleExtPattern = regexp.MustCompile(`^\.[A-Za-z0-9._-]{1,32}$`)
 
 const maxBundleExts = 20
 
-// invalidBundleFilter is the error a pod 400 validation_failed becomes in
-// production (permanent, so sourcecontrol.IsPermanent classifies it alike).
-func invalidBundleFilter() error {
-	return &aestudiotools.StatusError{Op: OpReadBundle, Status: 400, Code: "validation_failed", Detail: "invalid read-bundle filter"}
+// atPattern is the contract's `at` (ae-studio-tools internal/v1 openapi.yaml,
+// parameter At): a tag or a full lowercase sha; "" (the tip) is the omitted
+// parameter.
+var atPattern = regexp.MustCompile(`^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$`)
+
+// podRefusal is the error a pod 400 validation_failed becomes in production
+// (permanent, so sourcecontrol.IsPermanent classifies it alike).
+func podRefusal(op, detail string) error {
+	return &aestudiotools.StatusError{Op: op, Status: 400, Code: "validation_failed", Detail: detail}
+}
+
+// validAt refuses an `at` the pod refuses, and an `at` beside local (the pod
+// reads the mirror's tip with local, else 400).
+func validAt(op, at string, local bool) error {
+	if at != "" && !atPattern.MatchString(at) {
+		return podRefusal(op, "at must be tags/<name> or a full sha")
+	}
+	if local && at != "" {
+		return podRefusal(op, "local reads the default-branch tip, not at")
+	}
+	return nil
 }
 
 // validBundleFilter refuses what the pod's request validator answers 400 to.
 func validBundleFilter(filter sourcecontrol.BundleFilter) error {
 	if len(filter.Exts) > maxBundleExts {
-		return invalidBundleFilter()
+		return podRefusal(OpReadBundle, "invalid read-bundle filter")
 	}
 	for _, e := range filter.Exts {
 		if !bundleExtPattern.MatchString(e) {
-			return invalidBundleFilter()
+			return podRefusal(OpReadBundle, "invalid read-bundle filter")
 		}
 	}
 	return nil
@@ -188,7 +200,11 @@ func (f *Fake) read(op string, ref sourcecontrol.RepoRef, at string, filter sour
 	if err := f.begin(Call{Op: op, Ref: ref, At: at, Local: o.Local, Filter: filter}); err != nil {
 		return nil, err
 	}
-	if err := validBundleFilter(filter); err != nil { // the pod validates before any git work
+	// The pod validates before any git work.
+	if err := validAt(op, at, o.Local); err != nil {
+		return nil, err
+	}
+	if err := validBundleFilter(filter); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()
@@ -288,6 +304,12 @@ func (f *Fake) Tag(_ context.Context, ref sourcecontrol.RepoRef, spec sourcecont
 	if err := f.begin(Call{Op: OpTag, Ref: ref, At: spec.Target}); err != nil {
 		return err
 	}
+	if err := validAt(OpTag, spec.Target, false); err != nil {
+		return err
+	}
+	if strings.TrimSpace(spec.Message) == "" {
+		return podRefusal(OpTag, "empty tag message")
+	}
 	f.mu.Lock()
 	hook := f.beforeTag
 	f.mu.Unlock()
@@ -339,22 +361,26 @@ func (f *Fake) Commit(_ context.Context, ref sourcecontrol.RepoRef, req sourceco
 	return st.apply(req)
 }
 
-// validCommit refuses what the pod answers 400 to: no change, a repeated
-// path, or a delete without its baseSha.
+// validCommit refuses what the pod answers 400 to: an empty message, no
+// change, a repeated path, or a delete without its baseSha.
 func validCommit(req sourcecontrol.CommitRequest) error {
+	invalid := podRefusal(OpCommit, "invalid commit request")
+	if strings.TrimSpace(req.Message) == "" {
+		return podRefusal(OpCommit, "empty commit message")
+	}
 	if len(req.Writes)+len(req.Deletes) == 0 {
-		return errInvalidCommit
+		return invalid
 	}
 	seen := map[string]bool{}
 	for _, w := range req.Writes {
 		if w.Path == "" || seen[w.Path] {
-			return errInvalidCommit
+			return invalid
 		}
 		seen[w.Path] = true
 	}
 	for _, d := range req.Deletes {
 		if d.Path == "" || d.BaseSHA == "" || seen[d.Path] {
-			return errInvalidCommit
+			return invalid
 		}
 		seen[d.Path] = true
 	}

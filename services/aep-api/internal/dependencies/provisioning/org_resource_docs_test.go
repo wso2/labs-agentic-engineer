@@ -91,7 +91,7 @@ func TestOrgResourceDocs_CommitRetriesOnConflict(t *testing.T) {
 			return
 		}
 		raced = true
-		_, _ = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "payments/openapi.yaml", Content: "theirs"}}})
+		_, _ = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "theirs", Writes: []sourcecontrol.FileWrite{{Path: "payments/openapi.yaml", Content: "theirs"}}})
 	})
 	docs := NewGitOrgResourceDocs(docsRepoService{url: "https://github.com/acme/org-resource-docs"}, f)
 

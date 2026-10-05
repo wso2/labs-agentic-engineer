@@ -27,6 +27,7 @@ import (
 	"mime/multipart"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
@@ -59,11 +60,11 @@ func TestFake_CommitConflictAndShas(t *testing.T) {
 	ref := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
 	f.SeedRepo(ref, map[string]string{"specs/a.md": "1"})
 	_, sha, _ := f.ReadFile(context.Background(), ref, "", "specs/a.md")
-	res, err := f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "2", BaseSHA: sha}}})
+	res, err := f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "2", BaseSHA: sha}}})
 	if err != nil || !res.Changed || len(res.CommitSHA) != 40 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	_, err = f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "3", BaseSHA: sha}}})
+	_, err = f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "3", BaseSHA: sha}}})
 	var cc *sourcecontrol.CommitConflictError
 	if !errors.As(err, &cc) || !errors.Is(err, sourcecontrol.ErrCommitConflict) || cc.Conflicts[0].Path != "specs/a.md" {
 		t.Fatalf("err = %v, want a CommitConflictError", err)
@@ -105,7 +106,7 @@ func TestFake_CommitResultIsGitShaped(t *testing.T) {
 	}
 	_, bSHA, _ := f.ReadFile(ctx, ref, "", "b.md")
 
-	same, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1", BaseSHA: aSHA}}})
+	same, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1", BaseSHA: aSHA}}})
 	if err != nil || same.Changed || same.CommitSHA != tip {
 		t.Fatalf("a no-op commit = %+v err=%v, want unchanged at %s", same, err, tip)
 	}
@@ -134,6 +135,7 @@ func TestFake_CommitResultIsGitShaped(t *testing.T) {
 	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{
 		Writes:  []sourcecontrol.FileWrite{{Path: "a.md", Content: "2"}},
 		Deletes: []sourcecontrol.FileDelete{{Path: "c.md", BaseSHA: blobSHA("old")}},
+		Message: "m",
 	})
 	var cc *sourcecontrol.CommitConflictError
 	if !errors.As(err, &cc) || len(cc.Conflicts) != 2 ||
@@ -172,18 +174,18 @@ func TestFake_ReadsListBundleAndTags(t *testing.T) {
 	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "first"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1"}); !errors.Is(err, sourcecontrol.ErrTagAlreadyExists) {
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "v1"}); !errors.Is(err, sourcecontrol.ErrTagAlreadyExists) {
 		t.Fatalf("retag: err = %v", err)
 	}
-	_ = f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "w1", Target: sha})
-	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "z", Target: "tags/missing"}); !errors.Is(err, sourcecontrol.ErrRefNotFound) {
+	_ = f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "w1", Target: sha})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "z", Target: "tags/missing"}); !errors.Is(err, sourcecontrol.ErrRefNotFound) {
 		t.Fatalf("tag at an unknown ref: err = %v", err)
 	}
 	tags, err := f.ListTags(ctx, ref, "v")
 	if err != nil || len(tags) != 1 || tags[0].Name != "v1" || tags[0].CommitHash != sha || tags[0].Message != "first" || tags[0].CreatedAt.IsZero() {
 		t.Fatalf("tags=%+v err=%v", tags, err)
 	}
-	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "n.md", Content: "n"}}}); err != nil {
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "n.md", Content: "n"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := f.Head(ctx, ref, "tags/v1"); got != sha {
@@ -217,11 +219,11 @@ func TestFake_CallsAndBeforeCommit(t *testing.T) {
 		}
 		raced = true
 		_, cur, _ := f.ReadFile(ctx, ref, "", "a.md")
-		if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "other", BaseSHA: cur}}}); err != nil {
+		if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "other", BaseSHA: cur}}}); err != nil {
 			t.Errorf("the racing commit: %v", err)
 		}
 	})
-	_, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "mine", BaseSHA: blobSHA("1")}}})
+	_, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "mine", BaseSHA: blobSHA("1")}}})
 	if !errors.Is(err, sourcecontrol.ErrCommitConflict) {
 		t.Fatalf("err = %v, want the race to conflict", err)
 	}
@@ -454,10 +456,10 @@ func TestFake_CommitRecordsAuthorAndCommitter(t *testing.T) {
 	f.SeedRepo(ref, nil)
 	author := &sourcecontrol.GitIdentity{Name: "Ada", Email: "ada@example.com"}
 	bot := &sourcecontrol.GitIdentity{Name: "AEP", Email: "aep@example.com"}
-	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1"}}, Author: author, Committer: bot}); err != nil {
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1"}}, Author: author, Committer: bot}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "1"}}, Author: author}); err != nil {
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "1"}}, Author: author}); err != nil {
 		t.Fatal(err)
 	}
 	calls := f.Calls()
@@ -557,4 +559,61 @@ func TestFake_ReadBundleValidatesExts(t *testing.T) {
 	if err != nil || len(files) != 1 || files["specs/a.json"] != "1" {
 		t.Fatalf("valid filter: files=%v err=%v", files, err)
 	}
+}
+
+// wantPod400 asserts err is the permanent StatusError a pod 400
+// validation_failed becomes in the adapter.
+func wantPod400(t *testing.T, what string, err error) {
+	t.Helper()
+	var se *aestudiotools.StatusError
+	if !errors.As(err, &se) || se.Status != 400 || se.Code != "validation_failed" || !sourcecontrol.IsPermanent(err) {
+		t.Errorf("%s: err = %v, want a permanent 400 validation_failed", what, err)
+	}
+}
+
+// The Fake refuses what the pod refuses, in the adapter's shape: an `at`
+// outside tags/<name> | 40 lowercase hex, a Local read with an `at`, and a
+// commit or tag with an empty message.
+func TestFake_RefusesWhatThePodRefuses(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	tip, err := f.Head(ctx, ref, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, at := range []string{"main", "HEAD", tip[:7], strings.ToUpper(tip), "v1", "tags/", "tags/a b"} {
+		_, err := f.Head(ctx, ref, at)
+		wantPod400(t, "head at "+at, err)
+		_, _, err = f.List(ctx, ref, at)
+		wantPod400(t, "list at "+at, err)
+		_, _, err = f.ReadFile(ctx, ref, at, "a.md")
+		wantPod400(t, "read-file at "+at, err)
+		_, _, err = f.ReadBundle(ctx, ref, at, sourcecontrol.BundleFilter{Prefix: "a"})
+		wantPod400(t, "read-bundle at "+at, err)
+		wantPod400(t, "tag target "+at, f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "x-" + strconv.Itoa(len(at)), Message: "m", Target: at}))
+	}
+	for _, at := range []string{"", tip, "tags/v1"} {
+		if _, err := f.Head(ctx, ref, at); err != nil {
+			t.Errorf("head at %q: %v", at, err)
+		}
+	}
+
+	_, err = f.Head(ctx, ref, tip, sourcecontrol.Local())
+	wantPod400(t, "local head with at", err)
+	_, _, err = f.List(ctx, ref, "tags/v1", sourcecontrol.Local())
+	wantPod400(t, "local list with at", err)
+	if _, _, err := f.List(ctx, ref, "", sourcecontrol.Local()); err != nil {
+		t.Errorf("local list at the tip: %v", err)
+	}
+
+	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: " ", Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "2"}}})
+	wantPod400(t, "empty commit message", err)
+	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m"})
+	wantPod400(t, "commit with no change", err)
+	wantPod400(t, "empty tag message", f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v2", Message: ""}))
 }

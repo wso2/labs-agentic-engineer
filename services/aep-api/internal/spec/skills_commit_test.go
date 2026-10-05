@@ -57,7 +57,7 @@ func TestSkillsCommit_RetriesOnConflictAndKeepsConcurrentManifestEntry(t *testin
 		}
 		raced = true // a concurrent writer adds "other" between our read and our commit
 		_, sha, _ := f.ReadFile(ctx, skillsRef, "", "skills-manifest.json")
-		_, _ = f.Commit(ctx, skillsRef, sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{
+		_, _ = f.Commit(ctx, skillsRef, sourcecontrol.CommitRequest{Message: "theirs", Writes: []sourcecontrol.FileWrite{{
 			Path: "skills-manifest.json", Content: `{"other":{"origin":"imported","baseHash":"x"}}`, BaseSHA: sha}}})
 	})
 	svc := NewSkillService(f, f, skillsRepoRows(t, "default", "https://github.com/acme/org-skills"), fstest.MapFS{})

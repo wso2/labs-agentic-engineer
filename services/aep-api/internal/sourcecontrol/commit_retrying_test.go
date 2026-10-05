@@ -31,7 +31,7 @@ func TestCommitRetrying(t *testing.T) {
 	ctx := context.Background()
 	ref := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
 	write := func(context.Context) (sourcecontrol.CommitRequest, error) {
-		return sourcecontrol.CommitRequest{Writes: []sourcecontrol.FileWrite{{Path: "a", Content: "1"}}}, nil
+		return sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a", Content: "1"}}}, nil
 	}
 	commits := func(f *aestudiotest.Fake) int {
 		n := 0
