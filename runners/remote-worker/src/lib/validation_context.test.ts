@@ -52,12 +52,12 @@ function stubFetch(status: number, body: string) {
 test("validationContextUrl targets the cycle-scoped validation path", () => {
   assert.equal(
     validationContextUrl("https://bff.example", CYCLE),
-    `https://bff.example/internal/v1/validation/${CYCLE}/context`,
+    `https://bff.example/internal/v1/runs/${CYCLE}/validation-context`,
   );
   // A trailing slash on AEP_PLATFORM_URL must not double up.
   assert.equal(
     validationContextUrl("https://bff.example/", CYCLE),
-    `https://bff.example/internal/v1/validation/${CYCLE}/context`,
+    `https://bff.example/internal/v1/runs/${CYCLE}/validation-context`,
   );
 });
 

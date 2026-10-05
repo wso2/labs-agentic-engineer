@@ -38,7 +38,7 @@ import (
 // while the ServeMux hands handlers the decoded PathValue.
 func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 	runnerOps := []struct{ name, method, prefix, suffix string }{
-		{"validation context", http.MethodGet, "/internal/v1/validation/", "/context"},
+		{"validation context", http.MethodGet, "/internal/v1/runs/", "/validation-context"},
 	}
 
 	// (a) An escape that decodes to another org's cycle is fenced as that cycle.
@@ -82,6 +82,37 @@ func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 	}
 }
 
+// The runs/ group keeps the runner's credential and the cycle fence: an org's
+// publisher token opens only its own org's cycles, and the ae-studio-<org>
+// client token, though signed by the same issuer for the same org, never
+// clears a runner op (Q-1=A). Neither reaches the service.
+func TestInternalGate_RunsRowIsCycleFenced(t *testing.T) {
+	const path = "/internal/v1/runs/cyc-1/validation-context" // cyc-1 belongs to org-acme
+	s := newInternalStack(t)
+	for _, tc := range []struct {
+		name, bearer string
+		want         int
+	}{
+		{"publisher token of the cycle's org", "Bearer " + s.mint("org-acme"), http.StatusOK},
+		{"publisher token of another org", "Bearer " + s.mint("org-other"), http.StatusForbidden},
+		{"ae-studio client token of the cycle's org", "Bearer " + s.mintStudio("org-acme"), http.StatusUnauthorized},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			*s.context = fakeValidationContext{}
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", tc.bearer)
+			rec := httptest.NewRecorder()
+			s.handler.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d (body %s)", rec.Code, tc.want, rec.Body.String())
+			}
+			if reached := s.context.gotCycle != ""; reached != (tc.want == http.StatusOK) {
+				t.Fatalf("service reached = %v (cycle %q), want %v", reached, s.context.gotCycle, tc.want == http.StatusOK)
+			}
+		})
+	}
+}
+
 // (c) An invalid escape fails closed. net/http rejects such a request URI
 // with 400 before any handler runs, so a real request never reaches the gate;
 // the gate's own unescape check is the backstop, answering 401 without a
@@ -100,7 +131,7 @@ func TestInternalGate_InvalidEscapeFailsClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer func() { _ = conn.Close() }()
-		if _, err := conn.Write([]byte("GET /internal/v1/validation/%zz/context HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " +
+		if _, err := conn.Write([]byte("GET /internal/v1/runs/%zz/validation-context HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " +
 			s.mint("org-acme") + "\r\nConnection: close\r\n\r\n")); err != nil {
 			t.Fatal(err)
 		}
@@ -148,10 +179,10 @@ func TestInternalGate_HEADAuthenticatesLikeGET(t *testing.T) {
 		name, path, bearer string
 		want               int
 	}{
-		{"runner op, valid bearer", "/internal/v1/validation/c1/context", "Bearer " + s.mint("org-acme"), 200},
-		{"runner op, no bearer", "/internal/v1/validation/c1/context", "", 401},
-		{"runner op, other org's bearer", "/internal/v1/validation/c1/context", "Bearer " + s.mint("org-other"), 403},
-		{"runner op, encoded other-org cycle", "/internal/v1/validation/%6Fther-org-x/context", "Bearer " + s.mint("org-acme"), 403},
+		{"runner op, valid bearer", "/internal/v1/runs/c1/validation-context", "Bearer " + s.mint("org-acme"), 200},
+		{"runner op, no bearer", "/internal/v1/runs/c1/validation-context", "", 401},
+		{"runner op, other org's bearer", "/internal/v1/runs/c1/validation-context", "Bearer " + s.mint("org-other"), 403},
+		{"runner op, encoded other-org cycle", "/internal/v1/runs/%6Fther-org-x/validation-context", "Bearer " + s.mint("org-acme"), 403},
 		{"sre op, sre bearer", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", 200},
 		{"sre op, no bearer", "/internal/v1/sre/projects/p/issues", "", 401},
 		{"sre op, publisher token", "/internal/v1/sre/projects/p/issues", "Bearer " + s.mint("acme"), 401},

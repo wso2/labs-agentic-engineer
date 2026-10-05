@@ -171,7 +171,7 @@ func newInternalStack(t *testing.T) internalStack {
 	return stack
 }
 
-// The validation callback lives under its own prefix, so the edge must MOUNT
+// The validation callback lives under the runs/ prefix, so the edge must MOUNT
 // that prefix — the inner mux registers the contract's full paths, and a prefix
 // missing from the outer mux 404s before any handler or auth gate runs. That is a
 // silent break the contract test cannot see, so it is asserted through real HTTP.
@@ -183,13 +183,13 @@ func TestInternalRoutes_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 	tok := s.mint("org-acme")
 
 	t.Run("context", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/"+cycle+"/context", nil)
+		req := httptest.NewRequest(http.MethodGet, "/internal/v1/runs/"+cycle+"/validation-context", nil)
 		req.Header.Set("Authorization", "Bearer "+tok)
 		rec := httptest.NewRecorder()
 		s.handler.ServeHTTP(rec, req)
 
 		if rec.Code == 404 {
-			t.Fatalf("404 — the /internal/v1/validation/ prefix is not mounted on the edge mux")
+			t.Fatalf("404 — the /internal/v1/runs/ prefix is not mounted on the edge mux")
 		}
 		if rec.Code != 200 {
 			t.Fatalf("want 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -207,7 +207,7 @@ func TestInternalRoutes_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 	// Org fence: a publisher token for another org cannot read this cycle.
 	t.Run("bearer bound to another org → 403", func(t *testing.T) {
 		other := s.mint("org-other")
-		req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/"+cycle+"/context", nil)
+		req := httptest.NewRequest(http.MethodGet, "/internal/v1/runs/"+cycle+"/validation-context", nil)
 		req.Header.Set("Authorization", "Bearer "+other)
 		rec := httptest.NewRecorder()
 		s.handler.ServeHTTP(rec, req)
@@ -222,7 +222,7 @@ func TestInternalRoutes_AuthPosture(t *testing.T) {
 	h, mint := newInternalTestStack(t)
 
 	// No bearer → 401 envelope.
-	req := httptest.NewRequest(http.MethodGet, "/internal/v1/validation/cyc-42/context", strings.NewReader(""))
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/runs/cyc-42/validation-context", strings.NewReader(""))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 401 || !strings.Contains(rec.Body.String(), `"code"`) {
@@ -231,7 +231,7 @@ func TestInternalRoutes_AuthPosture(t *testing.T) {
 
 	// Publisher token for another org → 403 (org fence).
 	tok := mint("org-other")
-	req = httptest.NewRequest(http.MethodGet, "/internal/v1/validation/cyc-42/context", strings.NewReader(""))
+	req = httptest.NewRequest(http.MethodGet, "/internal/v1/runs/cyc-42/validation-context", strings.NewReader(""))
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

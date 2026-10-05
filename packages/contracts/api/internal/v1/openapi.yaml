@@ -17,7 +17,7 @@ info:
 servers:
 - url: /internal/v1
 paths:
-  /validation/{cycleId}/context:
+  /runs/{cycleId}/validation-context:
     get:
       operationId: runner-validation-context
       summary: Fetch a validation run's deployed endpoints (runner callback)

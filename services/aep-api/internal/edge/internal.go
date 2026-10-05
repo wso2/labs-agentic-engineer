@@ -247,7 +247,7 @@ var internalOpGates = map[string]internalOpGate{
 // before the validator, so an unauthenticated caller gets 401 and never a
 // schema-detail 400 or a body parse:
 //
-//	validation/                coding runner   publisher token, cycle fence (cycle id in the path)
+//	runs/                      coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
 //	mcp                        runner, pod     route miss here: own gate (auth.PublisherMCPGate), publisher token only, binds its org

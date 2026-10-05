@@ -24,7 +24,7 @@
 // before the agent starts. Git needs no stub: the runner authenticates with the
 // GITHUB_TOKEN run-local.sh passes through, as a dispatched Job does.
 //
-//   GET /internal/v1/validation/{cycleId}/context
+//   GET /internal/v1/runs/{cycleId}/validation-context
 //     -> { endpoints:[{component,url}] }
 //
 // The default endpoints are localhost placeholders. The validation-task skill
@@ -51,9 +51,9 @@ const expectedBearer = process.env.STUB_BEARER ?? "";
 const stubClientId = process.env.STUB_CLIENT_ID ?? "local-publisher";
 const stubClientSecret = process.env.STUB_CLIENT_SECRET ?? "local-publisher-secret";
 
-// Validation callbacks live under the feature that owns them and are keyed by the
-// CYCLE id the runner carries (AEP_TASK_ID).
-const VALIDATION_CONTEXT_RE = /^\/internal\/v1\/validation\/([^/]+)\/context$/;
+// Runner callbacks live under runs/ and are keyed by the CYCLE id the runner
+// carries (AEP_TASK_ID).
+const VALIDATION_CONTEXT_RE = /^\/internal\/v1\/runs\/([^/]+)\/validation-context$/;
 const JSON_HEADERS = { "Content-Type": "application/json", "Cache-Control": "no-store" };
 
 // The validation-context payload the stub returns: localhost placeholders unless

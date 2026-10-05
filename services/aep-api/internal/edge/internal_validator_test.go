@@ -61,7 +61,7 @@ func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 func TestInternalValidator_AcceptsRunnerRequests(t *testing.T) {
 	s := newInternalStack(t)
 	for _, tc := range []struct{ method, path, contentType, body string }{
-		{http.MethodGet, "/internal/v1/validation/cyc-1/context", "", ""},
+		{http.MethodGet, "/internal/v1/runs/cyc-1/validation-context", "", ""},
 	} {
 		var body io.Reader
 		if tc.body != "" {
@@ -127,7 +127,7 @@ func TestInternalBodyCap_PerOp(t *testing.T) {
 	caps := map[string]int64{"runner-validation-context": 2 << 20}
 	h := capInternalBody(internalRouter(), caps, next)
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/internal/v1/validation/c/context", strings.NewReader(strings.Repeat("x", 1<<20+1))))
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/internal/v1/runs/c/validation-context", strings.NewReader(strings.Repeat("x", 1<<20+1))))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d, want 200 under a 2 MiB per-op cap", w.Code)
 	}
@@ -143,8 +143,8 @@ func TestInternalGate_RunsBeforeValidator(t *testing.T) {
 	for _, tc := range []struct{ name, method, path, bearer, body string }{
 		{"sre op, no bearer", http.MethodPost, "/internal/v1/sre/projects/p/issues", "", `{"title":1}`},
 		{"sre op, publisher token", http.MethodPost, "/internal/v1/sre/rca-reports", "Bearer " + s.mint("acme"), `{}`},
-		{"runner op, no bearer", http.MethodGet, "/internal/v1/validation/c/context", "", ""},
-		{"runner op, sre bearer", http.MethodGet, "/internal/v1/validation/c/context", "Bearer s3cr3t", ""},
+		{"runner op, no bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "", ""},
+		{"runner op, sre bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "Bearer s3cr3t", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			validated := false

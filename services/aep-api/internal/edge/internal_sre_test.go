@@ -103,9 +103,9 @@ func TestInternalGate_SRE(t *testing.T) {
 		{"publisher token posts report", on, "POST", "/internal/v1/sre/rca-reports", "Bearer " + stack.mint("acme"), report, 401},
 		{"no verifier configured", off, "GET", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", "", 401},
 		{"no verifier configured, report", off, "POST", "/internal/v1/sre/rca-reports", "Bearer s3cr3t", report, 401},
-		{"sre bearer on a runner op", on, "GET", "/internal/v1/validation/c/context", "Bearer s3cr3t", "", 401},
+		{"sre bearer on a runner op", on, "GET", "/internal/v1/runs/c/validation-context", "Bearer s3cr3t", "", 401},
 		{"no runner auth: sre still served", noRunner, "GET", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", "", 200},
-		{"no runner auth: runner op 503", noRunner, "GET", "/internal/v1/validation/c/context", "Bearer " + stack.mint("org-acme"), "", 503},
+		{"no runner auth: runner op 503", noRunner, "GET", "/internal/v1/runs/c/validation-context", "Bearer " + stack.mint("org-acme"), "", 503},
 		{"rca report POST off /api/v1", on, "POST", "/api/v1/rca-agent/reports", "", report, 405},
 	}
 	for _, tc := range cases {

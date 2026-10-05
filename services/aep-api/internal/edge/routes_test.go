@@ -43,6 +43,8 @@ var removedRoutes = []removedRoute{
 	// mint. TestRemovedTokenRoutesAre404 repeats them with the old flag set.
 	{http.MethodGet, "/auth/external/jwks.json", http.StatusNotFound},
 	{http.MethodPost, "/internal/v1/mcp/playground-token", http.StatusNotFound},
+	// The validation-context callback moved to runs/{cycleId}/validation-context.
+	{http.MethodGet, "/internal/v1/validation/c/context", http.StatusNotFound},
 }
 
 func TestRemovedRoutes(t *testing.T) {
