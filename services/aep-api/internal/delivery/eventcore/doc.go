@@ -100,7 +100,8 @@
 // It is deliberately NOT applied to pull_request.*. In App mode the coding
 // runner opens its PR as <slug>[bot] — the SAME login as the platform identity
 // — so suppressing self-sender PR deliveries would drop the runner's own
-// pull_request.opened and strand the run waiting for a PR that already exists.
+// pull_request.opened (or the pull_request.edited a retried cycle adopts an
+// open PR with) and strand the run waiting for a PR that already exists.
 // The PR is the runner's report, not a platform projection, so its deliveries
 // are always acted on.
 package eventcore

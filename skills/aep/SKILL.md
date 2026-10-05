@@ -469,9 +469,14 @@ already looks done as not yours to redo.
 
 - **Work pushed but no PR open** → open the PR with a `Resolves` line for each
   `(#N)` in `git log origin/main..HEAD`.
-- **A PR already open for this branch and the working set is empty** → verify
-  its `Resolves` list covers every `(#N)` on the branch, add any missing with
-  `gh pr edit --body ...`, and exit. Do not open a second PR.
+- **A PR already open for this branch and the working set is empty** → adopt
+  it: **always** rewrite its body with `gh pr edit <number> --body ...` — a
+  `Resolves #N` line for every `(#N)` on the branch, the rest of the body kept,
+  and a last line `Adopted: <date -u +%Y-%m-%dT%H:%M:%SZ>` replacing any earlier
+  one — then exit. Rewrite it even when the list is already complete: that edit
+  is the only way the platform learns this cycle is waiting behind the PR, and
+  the `Adopted:` line keeps the body from being identical, which may send it
+  nothing. Do not open a second PR.
 - **Empty working set and nothing pushed** → nothing to do. Exit cleanly and say
   so.
 

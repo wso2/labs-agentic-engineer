@@ -1023,13 +1023,19 @@ func TestAdoption_StillAdoptsARealDefect(t *testing.T) {
 // prBodyAt is prBody with the pull request's updated_at, which is the moment
 // the delivery describes.
 func prBodyAt(action, branch, body string, number int, merged bool, mergeSHA string, updatedAt time.Time) []byte {
+	return prBodyInStateAt(action, "open", branch, body, number, merged, mergeSHA, updatedAt)
+}
+
+// prBodyInStateAt is prBodyAt with the pull request's state, for the one action
+// that can arrive on a pull request that is no longer open (`edited`).
+func prBodyInStateAt(action, state, branch, body string, number int, merged bool, mergeSHA string, updatedAt time.Time) []byte {
 	return []byte(fmt.Sprintf(`{
 	  "action": %q,
-	  "pull_request": {"number": %d, "draft": false, "merged": %t, "state": "open",
+	  "pull_request": {"number": %d, "draft": false, "merged": %t, "state": %q,
 	                   "body": %q, "html_url": %q, "merge_commit_sha": %q, "head": {"ref": %q},
 	                   "updated_at": %q},
 	  "repository": {"full_name": %q}
-	}`, action, number, merged, body, prURL(number), mergeSHA, branch, updatedAt.UTC().Format(time.RFC3339), testRepo))
+	}`, action, number, merged, state, body, prURL(number), mergeSHA, branch, updatedAt.UTC().Format(time.RFC3339), testRepo))
 }
 
 func TestLateMergeDelivery_DoesNotCloseALaterCycle(t *testing.T) {
@@ -1086,5 +1092,74 @@ func TestPullRequestUpdatedDuringTheCycle_IsRecorded(t *testing.T) {
 	}
 	if len(h.cycles.notedPR) != 1 || h.cycles.notedPR[0] != "cycle-2:aep/m7-c1:41:"+prURL(41) {
 		t.Fatalf("a push made during the cycle must be recorded on it, got %v", h.cycles.notedPR)
+	}
+}
+
+// ---- adoption: a retried cycle takes over its milestone's open PR ---------
+//
+// A cycle can be closed while its pod still runs, and that pod can open the
+// cycle's pull request after it has nothing to attach to. The retry cycle finds
+// the pull request already open on the milestone's branch and, per the skill,
+// adopts it rather than opening a second one — pushing nothing. The only event
+// that adoption can produce is the agent's rewrite of the pull request body, so
+// `edited` is what tells the open cycle which pull request it is waiting behind.
+
+func TestOnPullRequest_EditedAfterCycleStartAdoptsThePR(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
+	retryOpened := time.Date(2026, 9, 30, 10, 20, 0, 0, time.UTC)
+	h.cycles.latest = aCycle("cycle-retry", "run-1")
+	h.cycles.latest.CreatedAt = retryOpened
+	h.issues.withWork(7, 12, 13)
+
+	adopted := prBodyAt("edited", "aep/m7-c1", "Resolves #12\nResolves #13", 2, false, "", retryOpened.Add(3*time.Minute))
+	if err := h.deliver(t, "pull_request", adopted); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.cycles.notedPR) != 1 || h.cycles.notedPR[0] != "cycle-retry:aep/m7-c1:2:"+prURL(2) {
+		t.Fatalf("the retry cycle must learn the adopted pull request, got %v", h.cycles.notedPR)
+	}
+	if len(h.cycles.decisions) != 1 || h.cycles.decisions[0] != "cycle-retry::[12 13]" {
+		t.Fatalf("the merge policy must run on the adopted pull request, got %v", h.cycles.decisions)
+	}
+	if len(h.merger.merged) != 1 || h.merger.merged[0] != 2 {
+		t.Fatalf("the adopted pull request must be merged, got %v", h.merger.merged)
+	}
+}
+
+func TestOnPullRequest_EditedBeforeCycleStartIsIgnored(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
+	retryOpened := time.Date(2026, 9, 30, 10, 20, 0, 0, time.UTC)
+	h.cycles.latest = aCycle("cycle-retry", "run-1")
+	h.cycles.latest.CreatedAt = retryOpened
+	h.issues.withWork(7, 12)
+
+	stale := prBodyAt("edited", "aep/m7-c1", "Resolves #12", 2, false, "", retryOpened.Add(-5*time.Minute))
+	if err := h.deliver(t, "pull_request", stale); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.cycles.notedPR) != 0 || len(h.cycles.decisions) != 0 {
+		t.Fatalf("an edit made before the open cycle began is not this cycle's adoption, got noted=%v decisions=%v",
+			h.cycles.notedPR, h.cycles.decisions)
+	}
+}
+
+// `edited` is the one registered action that also fires on a pull request that
+// is no longer open — a body or title edit on one that already merged. That pull
+// request is an earlier cycle's outcome: recording it onto the open cycle would
+// relabel the cycle with work that has already landed.
+func TestOnPullRequest_EditedOnAClosedPullRequestIsIgnored(t *testing.T) {
+	h := newHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
+	cycleOpened := time.Date(2026, 9, 30, 10, 20, 0, 0, time.UTC)
+	h.cycles.latest = aCycle("cycle-2", "run-1")
+	h.cycles.latest.CreatedAt = cycleOpened
+	h.issues.withWork(7, 12)
+
+	edited := prBodyInStateAt("edited", "closed", "aep/m7-c1", "Resolves #12", 1, true, "abc123def456789", cycleOpened.Add(time.Minute))
+	if err := h.deliver(t, "pull_request", edited); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	if len(h.cycles.notedPR) != 0 || len(h.cycles.decisions) != 0 || len(h.merger.merged) != 0 {
+		t.Fatalf("an edit to a closed pull request must change nothing, got noted=%v decisions=%v merged=%v",
+			h.cycles.notedPR, h.cycles.decisions, h.merger.merged)
 	}
 }
