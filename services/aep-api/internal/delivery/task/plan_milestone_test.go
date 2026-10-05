@@ -58,7 +58,6 @@ func (stubRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("not 
 func (stubRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
 	panic("not used")
 }
-func (stubRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) { return nil, nil }
 func (stubRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }

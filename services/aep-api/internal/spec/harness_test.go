@@ -72,9 +72,6 @@ func (s *stubRepoRepo) SetStatusIf(context.Context, string, string, string, stri
 func (s *stubRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("stubRepoRepo: ListByOrg not expected in artifacts tests")
 }
-func (s *stubRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	return nil, nil
-}
 func (s *stubRepoRepo) Create(context.Context, *sourcecontrol.GitRepository) error { return nil }
 func (s *stubRepoRepo) Update(context.Context, *sourcecontrol.GitRepository) error { return nil }
 func (s *stubRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) error {

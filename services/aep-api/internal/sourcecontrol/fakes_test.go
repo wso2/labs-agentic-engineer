@@ -128,16 +128,6 @@ func (f *fakeRepoRepo) ListByOrg(_ context.Context, ocOrgID string) ([]sourcecon
 	return out, nil
 }
 
-func (f *fakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var out []sourcecontrol.GitRepository
-	for _, r := range f.rows {
-		out = append(out, *r)
-	}
-	return out, nil
-}
-
 func (f *fakeRepoRepo) Create(_ context.Context, repo *sourcecontrol.GitRepository) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

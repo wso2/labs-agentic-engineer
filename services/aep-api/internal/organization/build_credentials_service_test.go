@@ -50,9 +50,6 @@ func (f *fakeRepoRepo) SetStatusIf(context.Context, string, string, string, stri
 func (f *fakeRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("fakeRepoRepo: ListByOrg not expected in orgcreds tests")
 }
-func (f *fakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	return nil, nil
-}
 func (f *fakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return nil, nil
 }

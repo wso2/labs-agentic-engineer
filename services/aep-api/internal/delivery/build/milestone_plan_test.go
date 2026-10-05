@@ -69,9 +69,6 @@ func (planFakeRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("
 func (planFakeRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
 	panic("not used")
 }
-func (planFakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	return nil, nil
-}
 func (planFakeRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }

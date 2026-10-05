@@ -40,9 +40,6 @@ type RepoRepository interface {
 	// (provisioning) — not a clone pre-warm. Bounded by the table size; not
 	// paginated because the caller bounds concurrency separately.
 	ListAllReady(ctx context.Context) ([]GitRepository, error)
-	// ListAll returns every repo row across all orgs and ALL statuses.
-	// Bounded by the table size, like ListAllReady.
-	ListAll(ctx context.Context) ([]GitRepository, error)
 	// ListByOrg returns the org's repo rows (all statuses). Feeds the
 	// project-list repoUrl annotation (#108); one indexed query per page.
 	ListByOrg(ctx context.Context, ocOrgID string) ([]GitRepository, error)
@@ -126,14 +123,6 @@ func (r *repoRepository) ListAllReady(ctx context.Context) ([]GitRepository, err
 	if err := r.db.WithContext(ctx).
 		Where("status = ?", RepoStatusReady).
 		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-func (r *repoRepository) ListAll(ctx context.Context) ([]GitRepository, error) {
-	var rows []GitRepository
-	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
