@@ -125,8 +125,8 @@ export function BuildDetailPage({
   // the only one this page could reach: on the live stack, testing9231 v1 showed a
   // 105-event two-file FX fix labelled "Cycle 1" while the 841-event run that
   // actually wrote the version (pull request #6, three subagents) had no surface
-  // anywhere. The recordings were never the problem — all four were intact on the
-  // volume, and `stream-run-progress` is keyed per run — the page just asked for one.
+  // anywhere. The logs were never the problem — all four were still readable, and
+  // the progress stream is keyed per run — the page just asked for one.
   const deliveryRuns = runList.filter(isDeliveryRun);
   // The run the page's own header, actions and park notice speak for: the newest,
   // because those answer "what is happening now" and an older run answers a

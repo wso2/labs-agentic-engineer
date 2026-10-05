@@ -983,6 +983,10 @@ function milestoneRun(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
         // else can attribute a closed issue to the session that closed it.
         resolves: [9],
         mergeSha: "dcb1edc5fe0417b2",
+        // Every log state is reachable in mock mode from this one run: the
+        // oldest cycle's log has aged out (no retry), the second could not be
+        // read from the log store (Try again), the third is the live feed.
+        recording: "expired",
         createdAt: "2026-07-10T09:14:00Z",
         endedAt: "2026-07-10T09:41:00Z",
       },
@@ -1000,6 +1004,7 @@ function milestoneRun(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
         resolves: [10],
         mergeVerdict: "refused",
         mergeReason: "the pull request does not merge cleanly",
+        recording: "unavailable",
         createdAt: "2026-07-10T09:44:00Z",
         endedAt: "2026-07-10T09:52:00Z",
       },
@@ -1007,6 +1012,7 @@ function milestoneRun(over: Partial<MilestoneRunView> = {}): MilestoneRunView {
         id: "cycle-3",
         kind: "fix",
         attempts: 2,
+        recording: "live",
         createdAt: "2026-07-10T09:55:00Z",
       },
     ],
@@ -1117,6 +1123,7 @@ const settledRun: BuildRunList = {
           prUrl: `${REPO_URL}/pull/3`,
           resolves: [9],
           mergeSha: "dcb1edc5fe0417b2",
+          recording: "kept",
           createdAt: "2026-07-10T09:14:00Z",
           endedAt: "2026-07-10T09:41:00Z",
         },

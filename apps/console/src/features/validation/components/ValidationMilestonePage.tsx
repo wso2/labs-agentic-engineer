@@ -97,8 +97,8 @@ const groupedCycleCorners = (theme: Theme) => ({
  * about the same version and a reader moves between them. What differs is the
  * ordering argument: here the REPORT sits above the log, where builds puts its
  * Tasks. The report is the durable record — committed to git, kept forever —
- * while the feed behind the log is a recording pruned at 30 days (ADR-0027), so
- * on an older version the log has nothing to say and the report still does.
+ * while the feed behind the log is kept only for a few days (a cycle reports
+ * `expired` once it is gone), so on an older version the log has nothing to say and the report still does.
  */
 export function ValidationMilestonePage({
   projectName,
@@ -270,7 +270,7 @@ export function ValidationMilestonePage({
         {/* Open while something is running, collapsed once the version has
             settled. LogSection unmounts its children when closed, so a settled
             version opens no SSE connection until the reader asks for one —
-            which matters most on an old version, whose recording is likely
+            which matters most on an old version, whose log is likely
             gone anyway. */}
         <LogSection title="Validation logs" defaultOpen={live}>
           <Stack spacing={2}>

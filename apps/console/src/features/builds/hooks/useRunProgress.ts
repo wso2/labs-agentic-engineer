@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSseStream } from "@aep/agent-stream";
 import { client } from "../../../api/client";
 import type { components } from "../../../generated/aep-api";
@@ -63,6 +63,9 @@ export interface RunProgressState {
   /** Terminal run state from the `done` frame — the stream is over. */
   settledState: string | undefined;
   phase: RunProgressPhase;
+  /** Drop the connection and attach afresh. The replay is idempotent, so this is
+   *  what a "Try again" on an unavailable log calls. */
+  reconnect: () => void;
 }
 
 const RECONNECT_DELAY_MS = 3_000;
@@ -132,6 +135,11 @@ export function useRunProgress(
   const [settledState, setSettledState] = useState<string>();
   const [phase, setPhase] = useState<RunProgressPhase>("idle");
   const seen = useRef(new Set<string>());
+  // Bumped by reconnect(); an effect dependency, so a bump re-runs the attach.
+  const [attachment, setAttachment] = useState(0);
+  const reconnect = useCallback(() => {
+    setAttachment((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     // Reset on run change (the hook instance survives a param update).
@@ -243,7 +251,7 @@ export function useRunProgress(
       disposed = true;
       controller.abort();
     };
-  }, [projectName, runId, enabled]);
+  }, [projectName, runId, enabled, attachment]);
 
-  return { cycles, settledState, phase };
+  return { cycles, settledState, phase, reconnect };
 }

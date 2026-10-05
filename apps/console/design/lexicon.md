@@ -487,6 +487,22 @@ its last event beside it; only the runtime saying so makes a row a failure.
 **Plan** is the lead's own task list, shown under the agent that owns each entry.
 It is what the run set out to do, beside what it did.
 
+### A cycle's log can be missing
+
+A cycle's log is kept for a few days, not forever. When it is not on screen the
+cycle says why, above where the crew would be; the run's outcome and failure
+explanation (*A failed run explains itself*) are unaffected and still show.
+
+| The log is | Says | Offers |
+|---|---|---|
+| Streaming, or kept | nothing: the crew is the content | |
+| No longer kept | **`This run's log is no longer kept (logs are kept for a few days)`** | nothing: it is not coming back |
+| Not loadable right now | **`Couldn't load this run's log right now`** | **Try again** |
+
+**No retention number and no expiry date in copy.** "A few days" is the promise;
+the exact window is the platform's to change. Naming a number would make every
+change to it a copy change here.
+
 ## The project overview
 
 ### Where project status lives

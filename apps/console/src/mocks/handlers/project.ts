@@ -428,6 +428,9 @@ export const projectHandlers = [
           for (const cycle of run?.cycles ?? []) {
             if (request.signal.aborted) return controller.close();
             send(JSON.stringify({ type: "cycle", cycle }));
+            // A log that has expired or could not be loaded carries no events —
+            // the cycle frame alone says why.
+            if (cycle.recording === "expired" || cycle.recording === "unavailable") continue;
             for (const event of runCycleEvents(cycle, seq, mockRuntime())) {
               if (request.signal.aborted) return controller.close();
               send(

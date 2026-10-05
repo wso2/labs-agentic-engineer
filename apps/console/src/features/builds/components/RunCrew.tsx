@@ -88,7 +88,7 @@ export function RunCrew({ events }: { events: StampedRunEvent[] }) {
   // Rebuilt every render rather than memoised: the clock is an INPUT, so a memo
   // keyed on the events would return a crew whose ages stopped moving — which is
   // exactly the bug. The model is a fold over one cycle's events; the 761-event
-  // recording folds in well under a millisecond.
+  // log folds in well under a millisecond.
   const crew = buildCrew(events, Date.now());
   // Only while somebody is still working. A settled cycle's rows do not move, so
   // a timer on one is a re-render a second for no reader.

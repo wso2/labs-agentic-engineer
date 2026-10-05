@@ -158,7 +158,7 @@ describe("ValidationMilestonePage", () => {
   });
 
   // The two cards exist because reports outlive logs: rows and reports are kept
-  // forever, the agent's recording is pruned at 30 days (ADR-0027).
+  // forever, the agent's log is kept only for a few days.
   it("puts the report above the log", () => {
     render(<ValidationMilestonePage projectName="p" tag="v1" />);
     const report = screen.getByText("Acceptance reports");

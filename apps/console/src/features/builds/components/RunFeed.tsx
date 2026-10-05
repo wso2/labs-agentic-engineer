@@ -29,6 +29,7 @@ import {
 import { ChevronDown } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "../../../components/EmptyState";
 import { GitHubRefChip } from "../../../components/GitHubRefChip";
+import { CycleLogState } from "./CycleLogState";
 import { RunCrew } from "./RunCrew";
 import { connectionTail } from "../lib/feedTail";
 import { useRunProgress, type RunProgressCycle } from "../hooks/useRunProgress";
@@ -58,6 +59,7 @@ function CycleSection({
   showKind,
   expanded,
   onToggle,
+  onRetry,
 }: {
   section: RunProgressCycle;
   /** The heading — ONE string for it and for the pull request's accessible name.
@@ -70,6 +72,8 @@ function CycleSection({
   showKind: boolean;
   expanded: boolean;
   onToggle: (open: boolean) => void;
+  /** Re-attach the feed — "Try again" on a log that could not be loaded. */
+  onRetry: () => void;
 }) {
   const { cycle, events } = section;
   return (
@@ -132,7 +136,14 @@ function CycleSection({
         </Stack>
       </AccordionSummary>
       <AccordionDetails sx={{ pt: 0 }}>
-        <RunCrew events={events} />
+        {/* Why the log is missing, above the crew: the cycle's outcome and failure
+            explanation live elsewhere on the page and are unaffected. */}
+        <CycleLogState recording={cycle.recording} onRetry={onRetry} />
+        {/* With the reason on screen, an empty crew ("No output from this cycle
+            yet") would contradict it. */}
+        {(events.length > 0 || cycle.recording === "live" || cycle.recording === "kept" || !cycle.recording) && (
+          <RunCrew events={events} />
+        )}
       </AccordionDetails>
     </Accordion>
   );
@@ -246,6 +257,7 @@ export function RunFeed({
             onToggle={(open) => {
               setChosen(open ? section.cycle.id : null);
             }}
+            onRetry={all.reconnect}
           />
         ))
       )}

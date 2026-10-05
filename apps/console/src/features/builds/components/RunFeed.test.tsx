@@ -29,6 +29,7 @@ import type {
 let mockCycles: RunProgressCycle[] = [];
 let mockPhase: RunProgressPhase = "live";
 let mockSettled: string | undefined;
+const reconnect = vi.fn();
 
 vi.mock("../hooks/useRunProgress", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../hooks/useRunProgress")>();
@@ -38,6 +39,7 @@ vi.mock("../hooks/useRunProgress", async (importOriginal) => {
       cycles: mockCycles,
       phase: mockPhase,
       settledState: mockSettled,
+      reconnect,
     }),
   };
 });
@@ -95,12 +97,45 @@ function section(
 }
 
 afterEach(() => {
+  reconnect.mockClear();
   mockCycles = [];
   mockPhase = "live";
   mockSettled = undefined;
 });
 
 describe("RunFeed", () => {
+  describe("run log states", () => {
+    const withRecording = (recording: "live" | "kept" | "expired" | "unavailable") => {
+      const c = section("c1", "coding", ["lead"]);
+      c.cycle.recording = recording;
+      return c;
+    };
+
+    it("says an expired log is no longer kept, and offers no retry", () => {
+      mockCycles = [withRecording("expired")];
+      render(<RunFeed projectName="acme" runId="run-1" />);
+      expect(
+        screen.getByText("This run's log is no longer kept (logs are kept for a few days)"),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+    });
+
+    it("offers Try again on an unavailable log, which reconnects the feed", () => {
+      mockCycles = [withRecording("unavailable")];
+      render(<RunFeed projectName="acme" runId="run-1" />);
+      expect(screen.getByText("Couldn't load this run's log right now")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(reconnect).toHaveBeenCalledOnce();
+    });
+
+    it.each(["live", "kept"] as const)("shows no notice for a %s log", (recording) => {
+      mockCycles = [withRecording(recording)];
+      render(<RunFeed projectName="acme" runId="run-1" />);
+      expect(screen.queryByText(/no longer kept/)).toBeNull();
+      expect(screen.queryByText(/Couldn't load/)).toBeNull();
+    });
+  });
+
   // The placeholder is drawn by the SHARED `EmptyState`, the same one the Build
   // logs section one card below uses. It used to be a bare left-aligned
   // paragraph, which put two differently-drawn placeholders side by side on one

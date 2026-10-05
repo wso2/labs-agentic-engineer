@@ -63,9 +63,9 @@ export interface Attempt {
  *
  * The reports are the durable half of the record and the log below is not:
  * run and cycle rows live forever and the report is committed to git, while the
- * agent's feed is a recording pruned at 30 days (ADR-0027). That is why they are
+ * agent's feed is kept only for a few days. That is why they are
  * two cards rather than one section per attempt holding both — fused, every
- * attempt older than a month would render as a half-empty box.
+ * attempt older than that would render as a half-empty box.
  *
  * Only the NEWEST attempt's snapshot is fetched with the page; the rest load
  * when their section is opened. A snapshot carries a whole report plus every
