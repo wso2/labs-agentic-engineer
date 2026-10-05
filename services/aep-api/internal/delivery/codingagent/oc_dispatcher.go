@@ -161,6 +161,9 @@ type runnerImage struct {
 type OCDispatchResult struct {
 	RunName     string
 	Environment string
+	// ComponentUID is the Component's UID, read from CreateComponent (which
+	// re-reads the existing Component on a 409).
+	ComponentUID string
 }
 
 // NewOCDispatcher wires the dispatcher against an OC surface and the resolver
@@ -248,7 +251,8 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		Labels:      labels,
 		Parameters:  componentParameters(in, d.jobTTLSeconds),
 	}
-	if _, err := d.oc.CreateComponent(ctx, in.OrgID, in.ProjectID, req); err != nil {
+	component, err := d.oc.CreateComponent(ctx, in.OrgID, in.ProjectID, req)
+	if err != nil {
 		if errors.Is(err, openchoreo.ErrPaymentRequired) {
 			return OCDispatchResult{}, fmt.Errorf("%w: create component %q", delivery.ErrAgentQuotaExceeded, in.RunName)
 		}
@@ -273,7 +277,11 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: release binding for %q: %w", in.RunName, err)
 	}
 
-	return OCDispatchResult{RunName: in.RunName, Environment: environment}, nil
+	componentUID := ""
+	if component != nil {
+		componentUID = component.UID
+	}
+	return OCDispatchResult{RunName: in.RunName, Environment: environment, ComponentUID: componentUID}, nil
 }
 
 // writeTarget resolves the environment this cycle's Job is bound into. The

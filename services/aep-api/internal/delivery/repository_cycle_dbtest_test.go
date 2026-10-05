@@ -43,7 +43,7 @@ func admitRun(t *testing.T, repo delivery.MilestoneRunRepository, org, project s
 // dispatch activity does — the host its capture is then priced against.
 func dispatchedOn(t *testing.T, cycles delivery.RunCycleRepository, c *delivery.RunCycle, host string) {
 	t.Helper()
-	if _, err := cycles.NoteLaunch(context.Background(), c.ID, host, "development"); err != nil {
+	if _, err := cycles.NoteLaunch(context.Background(), c.ID, host, "development", ""); err != nil {
 		t.Fatalf("NoteLaunch(%s): %v", c.ID, err)
 	}
 }
@@ -64,7 +64,7 @@ func TestRunCycleRepository_NoteLaunchRecordsHostAndEnvironment(t *testing.T) {
 	if err := cycles.Append(ctx, cycle); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	row, err := cycles.NoteLaunch(ctx, cycle.ID, modelconn.AnthropicHost, "dev-b")
+	row, err := cycles.NoteLaunch(ctx, cycle.ID, modelconn.AnthropicHost, "dev-b", "")
 	if err != nil || row == nil {
 		t.Fatalf("NoteLaunch(open) = (%+v, %v), want the updated row", row, err)
 	}
@@ -76,7 +76,7 @@ func TestRunCycleRepository_NoteLaunchRecordsHostAndEnvironment(t *testing.T) {
 	if _, err := cycles.Finish(ctx, cycle.ID, "deadbeef"); err != nil {
 		t.Fatalf("Finish: %v", err)
 	}
-	if row, err := cycles.NoteLaunch(ctx, cycle.ID, modelconn.OllamaHost, "staging"); err != nil || row != nil {
+	if row, err := cycles.NoteLaunch(ctx, cycle.ID, modelconn.OllamaHost, "staging", ""); err != nil || row != nil {
 		t.Fatalf("NoteLaunch(closed) = (%+v, %v), want (nil, nil)", row, err)
 	}
 	var env string
@@ -810,7 +810,7 @@ func TestRunCycleRepository_ModelHostPricesTheCapture(t *testing.T) {
 	if _, err := cycles.Finish(ctx, anthropic.ID, "deadbeef"); err != nil {
 		t.Fatalf("Finish: %v", err)
 	}
-	if row, err := cycles.NoteLaunch(ctx, anthropic.ID, modelconn.OllamaHost, "development"); err != nil || row != nil {
+	if row, err := cycles.NoteLaunch(ctx, anthropic.ID, modelconn.OllamaHost, "development", ""); err != nil || row != nil {
 		t.Fatalf("NoteLaunch(closed) = (%+v, %v), want (nil, nil)", row, err)
 	}
 }

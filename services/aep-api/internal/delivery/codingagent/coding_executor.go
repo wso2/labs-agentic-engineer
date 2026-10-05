@@ -380,7 +380,7 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 	if err != nil {
 		return delivery.AgentLaunch{}, err
 	}
-	return delivery.AgentLaunch{JobRef: res.RunName, ModelHost: creds.model.Conn.Host, Environment: res.Environment}, nil
+	return delivery.AgentLaunch{JobRef: res.RunName, ModelHost: creds.model.Conn.Host, Environment: res.Environment, ComponentUID: res.ComponentUID}, nil
 }
 
 // stageBuildSecret pre-stages the org's build git credential and returns the

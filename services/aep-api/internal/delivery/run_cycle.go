@@ -216,12 +216,28 @@ type RunCycle struct {
 	// which may have moved since. Empty on a cycle not yet dispatched.
 	Environment string `gorm:"type:text" json:"-"`
 
+	// ComponentUID is the UID of the OpenChoreo Component the cycle's Job runs
+	// as, copied at launch (NoteLaunch). The settler deletes exactly this
+	// Component, so a same-named replacement is never touched. Empty on a cycle
+	// not yet dispatched or one that predates the column.
+	ComponentUID string `gorm:"type:text;not null;default:''" json:"-"`
+	// JobSuspendedAt, PodGoneAt and ComponentDeletedAt are the settle facts:
+	// when the Job was suspended, when its pod was first seen gone (cleared if
+	// it reappears) and when its Component was deleted. Each is written once.
+	JobSuspendedAt     *time.Time `gorm:"column:job_suspended_at" json:"-"`
+	PodGoneAt          *time.Time `gorm:"column:pod_gone_at" json:"-"`
+	ComponentDeletedAt *time.Time `gorm:"column:component_deleted_at" json:"-"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	// EndedAt stamps the cycle closed. A nil EndedAt is the "still open" guard
 	// every mutator is fenced on.
 	EndedAt *time.Time `json:"endedAt,omitempty"`
 }
+
+// CycleReasonCancelled is the terminal agent reason of a cycle ended by a
+// cancel (FinishCancelled), not by the agent itself.
+const CycleReasonCancelled = "cancelled"
 
 // TableName pins the table name so a struct rename cannot silently move the
 // table.

@@ -56,7 +56,33 @@ type RunCycleRepository interface {
 	// name a host it never ran on (RecordUsage prices the capture against the
 	// host), and a write target moved mid-run does not send the cycle's readers
 	// to an environment its Job was never in. Guarded on the cycle being open.
-	NoteLaunch(ctx context.Context, id, host, environment string) (*RunCycle, error)
+	// componentUID is the UID of the Component the Job runs as.
+	NoteLaunch(ctx context.Context, id, host, environment, componentUID string) (*RunCycle, error)
+
+	// MarkJobSuspended stamps job_suspended_at once (WHERE it IS NULL); a later
+	// call keeps the first stamp. Not fenced on the cycle being open: a Job is
+	// suspended after its cycle closes.
+	MarkJobSuspended(ctx context.Context, id string) error
+
+	// NotePodGone records when the cycle's pod was first seen gone, once
+	// (WHERE pod_gone_at IS NULL).
+	NotePodGone(ctx context.Context, id string, at time.Time) error
+
+	// ClearPodGone forgets a recorded pod_gone_at, for a pod that reappeared.
+	ClearPodGone(ctx context.Context, id string) error
+
+	// MarkComponentDeleted stamps component_deleted_at once
+	// (WHERE component_deleted_at IS NULL).
+	MarkComponentDeleted(ctx context.Context, id string) error
+
+	// FinishCancelled closes an open cycle with agent_reason CycleReasonCancelled.
+	// Unlike FinishAgentFailed it has no pr_number fence: a cancel ends a cycle
+	// that already opened its pull request. (nil, nil) when already closed.
+	FinishCancelled(ctx context.Context, id string) (*RunCycle, error)
+
+	// ListSettling returns closed Job cycles (job_ref 'ca-%') whose Component is
+	// not yet deleted, oldest ended first, at most limit.
+	ListSettling(ctx context.Context, limit int) ([]RunCycle, error)
 
 	// NotePullRequest records the pull request the agent actually opened, learned
 	// from the pull_request webhook — the platform never dictates branch identity
@@ -232,8 +258,56 @@ func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string
 	})
 }
 
-func (r *runCycleRepository) NoteLaunch(ctx context.Context, id, host, environment string) (*RunCycle, error) {
-	return r.updateOpen(ctx, id, map[string]any{"model_host": host, "environment": environment})
+func (r *runCycleRepository) NoteLaunch(ctx context.Context, id, host, environment, componentUID string) (*RunCycle, error) {
+	return r.updateOpen(ctx, id, map[string]any{
+		"model_host": host, "environment": environment, "component_uid": componentUID,
+	})
+}
+
+func (r *runCycleRepository) MarkJobSuspended(ctx context.Context, id string) error {
+	return r.stampOnce(ctx, id, "job_suspended_at", time.Now().UTC())
+}
+
+func (r *runCycleRepository) NotePodGone(ctx context.Context, id string, at time.Time) error {
+	return r.stampOnce(ctx, id, "pod_gone_at", at.UTC())
+}
+
+func (r *runCycleRepository) ClearPodGone(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND pod_gone_at IS NOT NULL", id).
+		Update("pod_gone_at", nil).Error
+}
+
+func (r *runCycleRepository) MarkComponentDeleted(ctx context.Context, id string) error {
+	return r.stampOnce(ctx, id, "component_deleted_at", time.Now().UTC())
+}
+
+// stampOnce sets a nullable timestamp column only while it is still NULL, so a
+// repeated call is a no-op that keeps the first stamp.
+func (r *runCycleRepository) stampOnce(ctx context.Context, id, column string, at time.Time) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND "+column+" IS NULL", id).
+		Update(column, at).Error
+}
+
+func (r *runCycleRepository) FinishCancelled(ctx context.Context, id string) (*RunCycle, error) {
+	return r.updateOpen(ctx, id, map[string]any{
+		"agent_reason": CycleReasonCancelled,
+		"ended_at":     time.Now().UTC(),
+	})
+}
+
+func (r *runCycleRepository) ListSettling(ctx context.Context, limit int) ([]RunCycle, error) {
+	var rows []RunCycle
+	err := r.db.WithContext(ctx).
+		Where("job_ref LIKE 'ca-%' AND ended_at IS NOT NULL AND component_deleted_at IS NULL").
+		Order("ended_at ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 func (r *runCycleRepository) NotePullRequest(ctx context.Context, id string, pr CyclePullRequest) (*RunCycle, error) {

@@ -54,7 +54,7 @@ func (s *stubCycles) Append(_ context.Context, cycle *delivery.RunCycle) (string
 
 func (s *stubCycles) NoteDispatch(context.Context, string, string) error { return nil }
 
-func (s *stubCycles) NoteLaunch(_ context.Context, cycleID, host, environment string) error {
+func (s *stubCycles) NoteLaunch(_ context.Context, cycleID, host, environment, _ string) error {
 	if s.hostErr != nil {
 		return s.hostErr
 	}

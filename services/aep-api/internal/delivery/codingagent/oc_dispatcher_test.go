@@ -43,6 +43,7 @@ type fakeOCSurface struct {
 	createErr              error
 	ensureTypeErr          error
 	simulateCreateConflict bool // mirrors ComponentClient 409 → GetComponent
+	componentUID           string
 }
 
 func (f *fakeOCSurface) note(op string) {
@@ -72,9 +73,9 @@ func (f *fakeOCSurface) CreateComponent(_ context.Context, _, _ string, req *ope
 	if simulateConflict {
 		// ComponentClient.CreateComponent coalesces 409 into a GetComponent refetch.
 		f.note("create-conflict-refetch")
-		return &gen.Component{Name: req.Name, DisplayName: "pre-existing"}, nil
+		return &gen.Component{Name: req.Name, DisplayName: "pre-existing", UID: f.componentUID}, nil
 	}
-	return &gen.Component{Name: req.Name}, nil
+	return &gen.Component{Name: req.Name, UID: f.componentUID}, nil
 }
 
 func (f *fakeOCSurface) EnsureWorkload(_ context.Context, _, _ string, in openchoreo.WorkloadInput) error {
@@ -347,5 +348,23 @@ func TestDispatch_NoJobTTLLeavesTheSchemaDefault(t *testing.T) {
 	}
 	if got, ok := fake.create.Parameters["ttlSecondsAfterFinished"]; ok {
 		t.Fatalf("ttlSecondsAfterFinished = %v, want unset", got)
+	}
+}
+
+// The cycle row stores the Component UID the dispatch minted (or, on the 409
+// path, re-read), so the settler can later delete exactly that Component.
+func TestDispatch_ReportsTheComponentUID(t *testing.T) {
+	for name, conflict := range map[string]bool{"created": false, "conflict re-read": true} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeOCSurface{componentUID: "uid-9", simulateCreateConflict: conflict}
+			d := NewOCDispatcher(fake, testWriteTargets())
+			got, err := d.Dispatch(context.Background(), ocDispatchInputs())
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if got.ComponentUID != "uid-9" {
+				t.Errorf("ComponentUID = %q, want uid-9", got.ComponentUID)
+			}
+		})
 	}
 }

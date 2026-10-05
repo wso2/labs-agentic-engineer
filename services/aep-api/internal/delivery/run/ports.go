@@ -118,7 +118,7 @@ type RunStore interface {
 type CycleStore interface {
 	Append(ctx context.Context, cycle *delivery.RunCycle) (cycleID string, err error)
 	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
-	NoteLaunch(ctx context.Context, cycleID, host, environment string) error
+	NoteLaunch(ctx context.Context, cycleID, host, environment, componentUID string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
 	// row — the verdict, the issue it was dispatched at, and the DIGEST of the

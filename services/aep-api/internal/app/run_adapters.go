@@ -145,8 +145,8 @@ func (a runCycles) NoteDispatch(ctx context.Context, cycleID, jobRef string) err
 	return err
 }
 
-func (a runCycles) NoteLaunch(ctx context.Context, cycleID, host, environment string) error {
-	_, err := a.cycles.NoteLaunch(ctx, cycleID, host, environment)
+func (a runCycles) NoteLaunch(ctx context.Context, cycleID, host, environment, componentUID string) error {
+	_, err := a.cycles.NoteLaunch(ctx, cycleID, host, environment, componentUID)
 	return err
 }
 

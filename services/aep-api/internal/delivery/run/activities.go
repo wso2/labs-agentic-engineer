@@ -1088,7 +1088,7 @@ func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDis
 	if err != nil {
 		return "", err
 	}
-	if err := a.cycles.NoteLaunch(ctx, in.CycleID, launch.ModelHost, launch.Environment); err != nil {
+	if err := a.cycles.NoteLaunch(ctx, in.CycleID, launch.ModelHost, launch.Environment, launch.ComponentUID); err != nil {
 		slog.WarnContext(ctx, "run: the agent launched but its host and environment were not recorded; the cycle's usage will be unpriced and its readers will resolve the project's write target",
 			"cycle", in.CycleID, "host", launch.ModelHost, "environment", launch.Environment, "error", err)
 	}
