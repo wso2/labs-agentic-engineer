@@ -67,6 +67,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/ConfigProjection'
           description: OK
+        '502':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: >-
+            `agent_manager_not_updated` (on `body.llm`): the key is saved, but
+            pushing it to Agent Manager's provider failed, so governed deploys
+            fail until the key is saved again. Also an upstream failure while
+            probing a section (for example `llm_upstream_error`).
         default:
           content:
             application/json:

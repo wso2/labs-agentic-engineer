@@ -26,6 +26,8 @@ package organization_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -33,7 +35,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
 
@@ -444,5 +448,48 @@ func TestConfigLLM_EveryMemberReadsTheAttachCapabilities(t *testing.T) {
 	caps := llmOf(t, resp.Body.Bytes())["capabilities"].(map[string]any)
 	if caps["imageInput"] != "yes" || caps["nativePdf"] != true {
 		t.Fatalf("capabilities = %v", caps)
+	}
+}
+
+// --- the Agent Manager push -----------------------------------------------------
+
+// failingPublisher is an Agent Manager that answers every publish with err.
+type failingPublisher struct{ err error }
+
+func (p *failingPublisher) PublishOrgModelConnection(context.Context, string, modelconn.Connection, string) error {
+	return p.err
+}
+
+func (p *failingPublisher) ClearOrgModelKey(context.Context, string, modelconn.Connection) error {
+	return p.err
+}
+
+// A key save whose Agent Manager push fails answers 502
+// agent_manager_not_updated, and the key stays saved: the vault write and its
+// default-key row are the save, and saving the key again retries the push.
+func TestPatchConfig_AgentManagerPushFailureIs502AndTheKeyStaysSaved(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarnessWithModelProvider(t, &failingPublisher{err: errors.New("amp down")})
+
+	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"sk-ant-testkey-0123456789","model":"claude-x"}}`)
+	if r.Code != 502 {
+		t.Fatalf("want 502, got %d body=%s", r.Code, r.Body.String())
+	}
+	body := r.Body.String()
+	for _, want := range []string{`"code":"agent_manager_not_updated"`, `"body.llm"`,
+		"Key saved; Agent Manager was not updated. Save the key again."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the response must carry %s: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "amp down") || strings.Contains(body, "sk-ant-testkey") {
+		t.Fatalf("the response leaks the cause or the key: %s", body)
+	}
+	ref, err := organization.NewOrgSecretRepository(c.db).Get(context.Background(), "acme", organization.OrgSecretDefaultKey)
+	if err != nil || ref == nil {
+		t.Fatalf("the vault write and its row stay: default-key row = %+v (%v)", ref, err)
+	}
+	if llm, ok := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["llm"].(map[string]any); !ok || llm["kind"] != "anthropic" {
+		t.Fatalf("GET must read the saved connection: %v", llm)
 	}
 }

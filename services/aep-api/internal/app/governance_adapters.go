@@ -244,19 +244,14 @@ func (p ampModelProviderPublisher) PublishOrgModelConnection(ctx context.Context
 }
 
 func (p ampModelProviderPublisher) publishTo(ctx context.Context, ocOrgID string, binding openchoreo.AIGatewayBinding, conn modelconn.Connection, apiKey string) error {
-	// THIS path always re-asserts, and it is the one place that must.
-	//
-	// The govern stage writes the provider only when its fingerprint changed
-	// (agentgovernance.Governor.providerChanged). A save that changed the
-	// key, URL, format or auth is exactly the case where it DID change, and it
-	// is reached from the organization domain, which holds no fingerprint of
-	// its own — so it says so explicitly rather than relying on a later deploy
-	// to notice.
+	// THIS is the provider's only writer while the org is connected: the key
+	// save, the one moment the key is in hand. EnsureProvider creates the
+	// provider when the org has none and otherwise writes the connection onto
+	// it; the deploy path only looks it up (agentgovernance.ErrProviderMissing).
 	providerIn, err := agentgovernance.ProviderInputFor(ocOrgID, conn, apiKey, binding.GatewayID)
 	if err != nil {
 		return err
 	}
-	providerIn.ReassertCredential = true
 	if _, err := p.amp.For(binding.AdminURL).EnsureProvider(ctx, providerIn); err != nil {
 		return fmt.Errorf("publish org model connection to the provider: %w", err)
 	}

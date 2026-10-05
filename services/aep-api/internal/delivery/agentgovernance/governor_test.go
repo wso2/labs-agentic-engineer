@@ -35,11 +35,15 @@ import (
 // default is set by newFakeAMP; a zero value stands for "AMP answered without
 // one".
 type fakeAMP struct {
-	providerIn agentmanager.EnsureProviderInput
-	// puts is every provider write that re-asserted the connection — what
-	// reaches Agent Manager as a PUT on an existing provider.
-	puts     []agentmanager.EnsureProviderInput
-	agentIn  agentmanager.EnsureAgentInput
+	// providers is what Agent Manager holds, by handle. newFakeAMP seeds the
+	// default org's; a test that wants none replaces the map.
+	providers map[string]agentmanager.ProviderRef
+	// creates and credentialWrites count provider writes, which the governor
+	// must never make: the organization domain writes the provider when the
+	// key is saved.
+	creates          int
+	credentialWrites int
+	agentIn          agentmanager.EnsureAgentInput
 	configIn agentmanager.EnsureModelConfigInput
 	keyRef   agentmanager.ModelKeyRef
 	proxyURL string
@@ -57,29 +61,41 @@ type fakeAMP struct {
 
 // newFakeAMP is an Agent Manager that answers the way the real one does.
 func newFakeAMP(keys ...string) *fakeAMP {
-	return &fakeAMP{proxyURL: "http://ai-gateway.amp.localhost:8084/aep-checkout-3d748f50", keys: keys}
+	return &fakeAMP{
+		providers: map[string]agentmanager.ProviderRef{
+			"aep-default-anthropic": {UUID: "prov", Handle: "aep-default-anthropic", Context: "/aep-default-anthropic"},
+		},
+		proxyURL: "http://ai-gateway.amp.localhost:8084/aep-checkout-3d748f50", keys: keys,
+	}
 }
 
 func (f *fakeAMP) For(string) agentmanager.Client { return f }
 
 // UpdateProviderCredential is the organization domain's write, never the
-// governor's: a deploy that reached it would be a regression.
+// governor's.
 func (f *fakeAMP) UpdateProviderCredential(context.Context, agentmanager.EnsureProviderInput) (bool, error) {
-	panic("the governor must not write a provider credential outside EnsureProvider")
+	f.credentialWrites++
+	return true, nil
 }
 
+// EnsureProvider is the organization domain's write at key save, never the
+// governor's.
 func (f *fakeAMP) EnsureProvider(_ context.Context, in agentmanager.EnsureProviderInput) (agentmanager.ProviderRef, error) {
+	if _, ok := f.providers[in.ID]; ok {
+		f.credentialWrites++
+	} else {
+		f.creates++
+	}
+	return agentmanager.ProviderRef{UUID: "prov", Handle: in.ID, Context: in.Context}, nil
+}
+
+func (f *fakeAMP) FindProvider(_ context.Context, _, id string) (agentmanager.ProviderRef, bool, error) {
 	f.calls++
-	f.providerIn = in
-	if in.ReassertCredential {
-		f.puts = append(f.puts, in)
-	}
 	if f.err != nil {
-		return agentmanager.ProviderRef{}, f.err
+		return agentmanager.ProviderRef{}, false, f.err
 	}
-	return agentmanager.ProviderRef{
-		UUID: "prov", Handle: "aep-default-anthropic", Context: "/aep-default-anthropic",
-	}, nil
+	p, ok := f.providers[id]
+	return p, ok, nil
 }
 
 func (f *fakeAMP) EnsureAgent(_ context.Context, in agentmanager.EnsureAgentInput) (agentmanager.AgentRef, error) {
@@ -217,26 +233,22 @@ func (f fakeBindings) GetAIGatewayBinding(context.Context, string, string) (open
 	}, nil
 }
 
-// fakeConnections is the org's model connection. The zero value is Anthropic's
-// own API with a key; none stands for an org that has connected nothing.
+// fakeConnections is the org's model connection, without its key: the
+// governor never sees one. The zero value is Anthropic's own API; none stands
+// for an org that has connected nothing.
 type fakeConnections struct {
 	conn *modelconn.Connection
-	key  string
 	none bool
 }
 
-func (f *fakeConnections) Effective(context.Context, string) (modelconn.Connection, string, bool, error) {
+func (f *fakeConnections) Connection(context.Context, string) (modelconn.Connection, bool, error) {
 	if f.none {
-		return modelconn.Connection{}, "", false, nil
+		return modelconn.Connection{}, false, nil
 	}
-	conn, key := firstPartyConn(), "sk-ant-org"
 	if f.conn != nil {
-		conn = *f.conn
+		return *f.conn, true, nil
 	}
-	if f.key != "" {
-		key = f.key
-	}
-	return conn, key, true, nil
+	return firstPartyConn(), true, nil
 }
 
 func firstPartyConn() modelconn.Connection {
@@ -630,157 +642,57 @@ func TestGovernAddressesRecordBindingAndKeyByTheSameName(t *testing.T) {
 	}
 }
 
-// The provider is written when the connection it is built from CHANGES, not
-// on every deploy and every converge tick (EnsureProviderInput.ReassertCredential),
-// and a change to any one of key, upstream, template or header is one write
-// carrying all four.
-func TestGovernReassertsTheProviderOnlyWhenTheConnectionChanges(t *testing.T) {
-	anthropicOnOllama := modelconn.Connection{
-		Format: modelconn.FormatAnthropic, BaseURL: "https://ollama.com",
-		Host: modelconn.OllamaHost, Model: "gpt-oss:20b", AuthScheme: modelconn.AuthBearer,
-	}
-	bearerFirstParty := firstPartyConn()
-	bearerFirstParty.AuthScheme = modelconn.AuthBearer
-	otherHost := firstPartyConn()
-	otherHost.BaseURL, otherHost.Host = "https://anthropic.example.com/v1", "anthropic.example.com"
-
-	for _, tc := range []struct {
-		name  string
-		next  modelconn.Connection
-		key   string
-		field func(agentmanager.EnsureProviderInput) string
-		want  string
-	}{
-		{"key", firstPartyConn(), "sk-ant-two",
-			func(in agentmanager.EnsureProviderInput) string { return in.APIKey }, "sk-ant-two"},
-		{"upstream", otherHost, "",
-			func(in agentmanager.EnsureProviderInput) string { return in.UpstreamURL }, "https://anthropic.example.com"},
-		{"template", ollamaOpenAIConn(), "",
-			func(in agentmanager.EnsureProviderInput) string { return in.Template }, "openai"},
-		{"header", bearerFirstParty, "",
-			func(in agentmanager.EnsureProviderInput) string { return in.AuthHeader }, "Authorization"},
-		{"template on the same upstream", anthropicOnOllama, "",
-			func(in agentmanager.EnsureProviderInput) string { return in.Template }, "anthropic"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			amp := newFakeAMP()
-			conns := &fakeConnections{}
-			g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{}, Connections: conns})
-
-			// First deploy of this process: nothing is known, so assert it.
-			if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-				t.Fatalf("first: %v", err)
-			}
-			if len(amp.puts) != 1 {
-				t.Fatalf("first deploy wrote the provider %d time(s); a restart must re-establish it once", len(amp.puts))
-			}
-
-			// Same connection again — a redeploy, or a converge tick.
-			if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-				t.Fatalf("second: %v", err)
-			}
-			if len(amp.puts) != 1 {
-				t.Fatal("re-asserted an unchanged connection — every proxy in the org redeploys for nothing")
-			}
-
-			// The org changes one thing.
-			next := tc.next
-			conns.conn, conns.key = &next, tc.key
-			if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-				t.Fatalf("after the change: %v", err)
-			}
-			if len(amp.puts) != 2 {
-				t.Fatalf("provider writes = %d after a %s change, want exactly one more", len(amp.puts), tc.name)
-			}
-			put := amp.puts[1]
-			if got := tc.field(put); got != tc.want {
-				t.Errorf("%s = %q, want %q", tc.name, got, tc.want)
-			}
-			want, err := ProviderInputFor("default", next, keyOr(tc.key, "sk-ant-org"), "gw-uuid")
-			if err != nil {
-				t.Fatalf("ProviderInputFor: %v", err)
-			}
-			want.ReassertCredential = true
-			if put != want {
-				t.Errorf("the PUT carries\n %+v\nwant all four from the new connection\n %+v", put, want)
-			}
-		})
-	}
-}
-
-func keyOr(key, fallback string) string {
-	if key != "" {
-		return key
-	}
-	return fallback
-}
-
-// The fingerprint lives in memory, so the first deploy after an upgrade (or
-// any restart) writes the provider once for an org whose provider already
-// matches. That write must be the same body every time — a PUT of what is
-// already there — so it redeploys the proxies once and changes nothing else.
-func TestGovernTheFirstWriteAfterARestartIsTheSameBody(t *testing.T) {
-	var puts []agentmanager.EnsureProviderInput
-	for range 2 {
-		amp := newFakeAMP()
-		g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{}, Connections: &fakeConnections{}})
-		if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-			t.Fatalf("GovernAgent: %v", err)
-		}
-		if len(amp.puts) != 1 {
-			t.Fatalf("a fresh process wrote the provider %d time(s), want once", len(amp.puts))
-		}
-		puts = append(puts, amp.puts[0])
-	}
-	if puts[0] != puts[1] {
-		t.Errorf("two restarts wrote different providers:\n %+v\n %+v", puts[0], puts[1])
-	}
-}
-
-// A provider write that failed is not remembered: the next deploy writes the
-// provider again, or Agent Manager keeps the old upstream, template and header
-// until the process restarts.
-func TestGovernRetriesAProviderWriteThatFailed(t *testing.T) {
+// A missing provider fails the govern stage closed. The governor holds no key,
+// so it cannot create one; the provider is created when the Default key is
+// saved, and saving it again is the fix the error names.
+func TestGovern_MissingProviderFailsAndCreatesNothing(t *testing.T) {
 	amp := newFakeAMP()
-	g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{}, Connections: &fakeConnections{}})
+	amp.providers = map[string]agentmanager.ProviderRef{}
+	g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{},
+		Connections: &fakeConnections{conn: &modelconn.Connection{Format: modelconn.FormatAnthropic, BaseURL: "https://api.anthropic.com"}}})
 
-	amp.err = errors.New("agent manager: 503")
-	if _, err := g.GovernAgent(context.Background(), input()); err == nil {
-		t.Fatal("GovernAgent succeeded over a failed provider write")
-	}
-	amp.err = nil
-	if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	if len(amp.puts) != 2 || !amp.providerIn.ReassertCredential {
-		t.Fatalf("provider writes = %d, last reassert = %v; the retry must re-send the provider",
-			len(amp.puts), amp.providerIn.ReassertCredential)
-	}
-
-	if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-		t.Fatalf("third: %v", err)
-	}
-	if len(amp.puts) != 2 {
-		t.Error("re-asserted after the successful retry — the success must be remembered")
-	}
-}
-
-// The fingerprint map must never hold the credential itself.
-func TestGovernorRemembersAFingerprintNotTheKey(t *testing.T) {
-	g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: newFakeAMP(), Keys: &fakeKeyStore{}, Bindings: fakeBindings{},
-		Connections: &fakeConnections{key: "sk-ant-secret-value"}})
-	if _, err := g.GovernAgent(context.Background(), input()); err != nil {
-		t.Fatalf("GovernAgent: %v", err)
-	}
-	if len(g.providerFingerprint) != 1 {
-		t.Fatalf("remembered %d provider(s), want 1", len(g.providerFingerprint))
-	}
-	for org, fp := range g.providerFingerprint {
-		if strings.Contains(fp, "sk-ant") {
-			t.Errorf("providerFingerprint[%q] = %q — that is the key, not a fingerprint", org, fp)
+	for _, call := range []struct {
+		name string
+		run  func(context.Context, delivery.GovernAgentInput) (delivery.GovernAgentOutcome, error)
+	}{{"GovernAgent", g.GovernAgent}, {"EnsureRegistration", g.EnsureRegistration}} {
+		out, err := call.run(context.Background(), input())
+		if !errors.Is(err, ErrProviderMissing) || out.Skipped {
+			t.Fatalf("%s: err %v skipped %v, want ErrProviderMissing and not skipped", call.name, err, out.Skipped)
+		}
+		if !strings.Contains(err.Error(), "save the Default key again in Settings → Models") {
+			t.Errorf("%s: error %q does not name the fix", call.name, err)
 		}
 	}
+	if amp.creates != 0 || amp.credentialWrites != 0 {
+		t.Fatalf("creates=%d credential writes=%d: the governor must not write a provider", amp.creates, amp.credentialWrites)
+	}
+	if amp.agentIn.Name != "" || amp.configIn.Name != "" {
+		t.Error("registered the agent against a provider that does not exist")
+	}
 }
+
+// An existing provider is bound as it stands: no deploy-time reassert of the
+// credential, and the binding names the provider Agent Manager holds.
+func TestGovern_ExistingProviderIsUsedWithoutAKey(t *testing.T) {
+	amp := newFakeAMP()
+	amp.providers = map[string]agentmanager.ProviderRef{"aep-acme-anthropic": {UUID: "u", Handle: "aep-acme-anthropic"}}
+	g := New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{},
+		Connections: &fakeConnections{conn: ptrConn(firstPartyConn())}})
+	in := input()
+	in.OrgID = "acme"
+
+	if _, err := g.GovernAgent(context.Background(), in); err != nil {
+		t.Fatal(err)
+	}
+	if amp.credentialWrites != 0 || amp.creates != 0 {
+		t.Fatalf("credential writes=%d creates=%d: no deploy-time reassert", amp.credentialWrites, amp.creates)
+	}
+	if amp.configIn.ProviderHandle != "aep-acme-anthropic" {
+		t.Errorf("bound to provider %q, want aep-acme-anthropic", amp.configIn.ProviderHandle)
+	}
+}
+
+func ptrConn(c modelconn.Connection) *modelconn.Connection { return &c }
 
 // --- the connection's base path ------------------------------------------------
 
@@ -845,7 +757,6 @@ func TestGovernRewritesAStoredEndpointWhenTheBasePathMoves(t *testing.T) {
 		Format: modelconn.FormatOpenAICompatible, BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 		Host: "dashscope-intl.aliyuncs.com", Model: "qwen-plus", AuthScheme: modelconn.AuthBearer,
 	}
-	conns.key = "sk-dashscope-fake"
 	out, err := replica().GovernAgent(context.Background(), input())
 	if err != nil {
 		t.Fatalf("after the switch: %v", err)

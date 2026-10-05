@@ -26,8 +26,6 @@ package agentgovernance
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -50,13 +48,21 @@ type BindingReader interface {
 	GetAIGatewayBinding(ctx context.Context, orgID, environment string) (openchoreo.AIGatewayBinding, error)
 }
 
-// ConnectionReader yields the org's model connection and its key VALUE — the
-// credential Agent Manager's provider holds on the org's behalf, so plaintext
-// rather than a vault reference. ok is false when the org has connected none.
-// Satisfied by organization.ConnectionReader.
+// ConnectionReader yields the org's model connection, WITHOUT its key: the
+// governor never holds the org's credential. Agent Manager's provider gets the
+// key when the key is saved (the organization domain's publish), so a deploy
+// only needs the connection's non-secret fields — the base path an agent's
+// endpoint ends in. ok is false when the org has connected none. Satisfied by
+// organization.ModelConnectionService.
 type ConnectionReader interface {
-	Effective(ctx context.Context, ocOrgID string) (conn modelconn.Connection, key string, ok bool, err error)
+	Connection(ctx context.Context, ocOrgID string) (conn modelconn.Connection, ok bool, err error)
 }
+
+// ErrProviderMissing is a governed deploy or build-time gate that found no
+// Agent Manager provider for the org. The governor cannot create one — it
+// holds no key — so the stage fails closed and names the fix: saving the
+// Default key writes the provider.
+var ErrProviderMissing = errors.New("agentgovernance: the org has no Agent Manager provider")
 
 // KeyStore persists an agent's AMP key and reports whether one is already
 // stored. Satisfied by organization.SecretRefWriter plus a read.
@@ -134,32 +140,8 @@ type Deps struct {
 type Governor struct {
 	deps Deps
 
-	// mu guards providerFingerprint and tracingExpiry.
+	// mu guards tracingExpiry.
 	mu sync.Mutex
-	// providerFingerprint remembers, per org, a FINGERPRINT of the provider
-	// this process last wrote to Agent Manager successfully: the key, the
-	// upstream, the template and the auth header — everything a connection
-	// switch changes. A failed write records nothing, so the next deploy
-	// writes again.
-	//
-	// It exists to stop a needless write. Updating a provider redeploys every
-	// LLM proxy bound to it — twelve redeploys per governed deploy in a
-	// single-agent org, and a redeploy is the window in which a proxy can lose
-	// the API keys broadcast to it. Re-asserting a key that has not changed
-	// bought nothing and paid that cost on every deploy, every converge tick.
-	//
-	// A FINGERPRINT, never the key: this map outlives a single call and has no
-	// business holding a credential.
-	//
-	// In memory rather than persisted, deliberately. The first governed deploy
-	// after a restart re-asserts once and the map is warm again — so the
-	// self-healing property that motivated the original unconditional write
-	// survives, at the cost of one write per process rather than one per
-	// deploy. A saved connection still pushes immediately through the
-	// organization domain's own path, and changes the fingerprint here on the
-	// next deploy.
-	providerFingerprint map[string]string
-
 	// tracingExpiry remembers, per (org, component, environment), when the
 	// tracing token this process last minted runs out.
 	//
@@ -168,49 +150,18 @@ type Governor struct {
 	// read), so nothing can ask what token an agent holds or when it lapses —
 	// the only moment the expiry is knowable is the mint that produced it.
 	//
-	// In memory, for the same reason and with the same trade as
-	// providerFingerprint: the
-	// first governed deploy after a restart mints once more than it strictly
-	// needed to. That costs nothing here — a tracing token is a signed JWT that
-	// Agent Manager keeps no record of, so a second one neither revokes the
-	// first nor accumulates anything to clean up. A model key would not
-	// tolerate the same treatment, which is exactly why the two reconcile
-	// differently.
+	// In memory: the first governed deploy after a restart mints once more
+	// than it strictly needed to. That costs nothing here — a tracing token is
+	// a signed JWT that Agent Manager keeps no record of, so a second one
+	// neither revokes the first nor accumulates anything to clean up. A model
+	// key would not tolerate the same treatment, which is exactly why the two
+	// reconcile differently.
 	tracingExpiry map[string]int64
 }
 
 // New builds the governor.
 func New(d Deps) *Governor {
-	return &Governor{deps: d, providerFingerprint: map[string]string{}, tracingExpiry: map[string]int64{}}
-}
-
-// providerFingerprintOf is the fingerprint of the provider `in` describes.
-//
-// The key alone is not enough: a connection switch that kept the key (the
-// same Ollama key on another format) or changed only the host would leave the
-// provider calling the old upstream, with the old template, under the old
-// header. The fields are NUL-separated so no two different providers can
-// concatenate to the same bytes.
-func providerFingerprintOf(in agentmanager.EnsureProviderInput) string {
-	sum := sha256.Sum256([]byte(strings.Join(
-		[]string{in.APIKey, in.UpstreamURL, in.Template, in.AuthHeader}, "\x00")))
-	return hex.EncodeToString(sum[:])
-}
-
-// providerChanged reports whether the provider fingerprinted `fp` differs from
-// the one this process last wrote for this org.
-func (g *Governor) providerChanged(org, fp string) bool {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return g.providerFingerprint[org] != fp
-}
-
-// providerWritten records that Agent Manager now holds the provider
-// fingerprinted `fp`. Called only once the write succeeded.
-func (g *Governor) providerWritten(org, fp string) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.providerFingerprint[org] = fp
+	return &Governor{deps: d, tracingExpiry: map[string]int64{}}
 }
 
 // GovernAgent makes Agent Manager's view of this agent true AND settles its
@@ -268,11 +219,13 @@ type registration struct {
 }
 
 // register settles everything about an agent that is safe to assert at any
-// time: the org's provider, the agent record, and this agent's model binding.
+// time: the agent record and this agent's model binding to the org's existing
+// provider.
 //
 // A Skipped outcome is never an error. Each of the three gates below is a
 // deliberate "this agent is not governed here", and the caller falls back to
-// the path that existed before Agent Manager.
+// the path that existed before Agent Manager. A missing provider is NOT one of
+// them: a bound environment promised governance, so it is ErrProviderMissing.
 func (g *Governor) register(ctx context.Context, in delivery.GovernAgentInput) (registration, delivery.GovernAgentOutcome, error) {
 	agent, err := g.isAgent(ctx, in)
 	if err != nil {
@@ -298,12 +251,12 @@ func (g *Governor) register(ctx context.Context, in delivery.GovernAgentInput) (
 		return registration{}, delivery.GovernAgentOutcome{}, fmt.Errorf("resolve AI gateway binding: %w", err)
 	}
 
-	conn, orgKey, ok, err := g.deps.Connections.Effective(ctx, in.OrgID)
+	conn, ok, err := g.deps.Connections.Connection(ctx, in.OrgID)
 	if err != nil {
 		return registration{}, delivery.GovernAgentOutcome{}, fmt.Errorf("read org model connection: %w", err)
 	}
-	if !ok || orgKey == "" {
-		// No connection: there is no provider to build. The agent comes up
+	if !ok {
+		// No connection: there is no provider to bind. The agent comes up
 		// unconfigured and reports 503 from /healthz, exactly as it does today.
 		// Not a governance bypass — an agent with no model access reaches no
 		// model at all.
@@ -313,20 +266,19 @@ func (g *Governor) register(ctx context.Context, in delivery.GovernAgentInput) (
 		}, nil
 	}
 
-	providerIn, err := ProviderInputFor(in.OrgID, conn, orgKey, binding.GatewayID)
-	if err != nil {
-		return registration{}, delivery.GovernAgentOutcome{}, err
-	}
-	fp := providerFingerprintOf(providerIn)
-	providerIn.ReassertCredential = g.providerChanged(in.OrgID, fp)
-
+	// The provider is LOOKED UP, never written. It is created, and its
+	// credential set, when the Default key is saved — the only moment the key
+	// is in hand. A connected org without one (Agent Manager was down at the
+	// save, or the binding came later) fails here rather than deploying an
+	// agent bound to nothing.
 	amp := g.deps.AMP.For(binding.AdminURL)
-	provider, err := amp.EnsureProvider(ctx, providerIn)
+	provider, found, err := amp.FindProvider(ctx, in.OrgID, ProviderID(in.OrgID))
 	if err != nil {
-		return registration{}, delivery.GovernAgentOutcome{}, fmt.Errorf("ensure LLM provider: %w", err)
+		return registration{}, delivery.GovernAgentOutcome{}, fmt.Errorf("find LLM provider: %w", err)
 	}
-	if providerIn.ReassertCredential {
-		g.providerWritten(in.OrgID, fp)
+	if !found {
+		return registration{}, delivery.GovernAgentOutcome{},
+			fmt.Errorf("%w: save the Default key again in Settings → Models", ErrProviderMissing)
 	}
 
 	// ONE name for all three calls below. The agent record, its model binding
@@ -695,9 +647,9 @@ const (
 // ProviderInputFor builds the org's provider from its model connection, exactly
 // as AEP declares it.
 //
-// One builder, used by the deploy path and by a saved connection, so the two
-// can never describe the same provider differently — which would show up as a
-// provider that flips shape depending on which path last wrote it.
+// One builder, used by the saved connection's publish and its disconnect's
+// clear, so the two can never describe the same provider differently. The
+// deploy path never builds one: it only looks the provider up (ProviderID).
 //
 // The connection supplies everything a template would otherwise default:
 //

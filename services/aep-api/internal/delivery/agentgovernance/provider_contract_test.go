@@ -84,7 +84,6 @@ func providerWire(t *testing.T, conn modelconn.Connection, key string) (post, pu
 	if _, err := c.EnsureProvider(context.Background(), in); err != nil {
 		t.Fatalf("EnsureProvider (create): %v", err)
 	}
-	in.ReassertCredential = true
 	if _, err := c.EnsureProvider(context.Background(), in); err != nil {
 		t.Fatalf("EnsureProvider (update): %v", err)
 	}

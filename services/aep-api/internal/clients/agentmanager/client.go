@@ -67,7 +67,14 @@ func (e *PermanentError) Error() string {
 	return fmt.Sprintf("agentmanager: request rejected with %d: %s", e.Status, e.Body)
 }
 
-// EnsureProvider creates the org's provider, or returns the one already there.
+// EnsureProvider creates the org's provider, or writes in's connection onto
+// the one already there.
+//
+// ALWAYS a write when it exists: the caller is the key save, which has a new
+// key (or a new host for the stored one) to put on the provider. Updating a
+// provider redeploys every LLM proxy bound to it, which is why the deploy path
+// never calls this — it binds the provider with FindProvider and writes
+// nothing.
 //
 // The body is the shape AMP's console BUILDS, not the shape its form collects —
 // the two differ, and the form's field names answer 400 "Invalid input".
@@ -87,13 +94,8 @@ func (c *client) EnsureProvider(ctx context.Context, in EnsureProviderInput) (Pr
 		return ProviderRef{}, err
 	}
 	if found {
-		// It exists. Re-assert the org's connection only when the caller says
-		// it changed — the key is masked on read, so the caller is the only one
-		// that can know. See EnsureProviderInput.ReassertCredential.
-		if in.ReassertCredential {
-			if err := c.updateProviderCredential(ctx, tok, uuid, in); err != nil {
-				return ProviderRef{}, err
-			}
+		if err := c.updateProviderCredential(ctx, tok, uuid, in); err != nil {
+			return ProviderRef{}, err
 		}
 		return ProviderRef{UUID: uuid, Handle: in.ID, Context: in.Context}, nil
 	}
@@ -109,6 +111,21 @@ func (c *client) EnsureProvider(ctx context.Context, in EnsureProviderInput) (Pr
 		created.ID = in.ID
 	}
 	return ProviderRef{UUID: created.UUID, Handle: created.ID, Context: in.Context}, nil
+}
+
+// FindProvider looks the org's provider up by its handle and writes nothing.
+// The ref carries the UUID and handle the lookup returns; Context stays empty,
+// since the list is not read for it and no binding needs it.
+func (c *client) FindProvider(ctx context.Context, org, id string) (ProviderRef, bool, error) {
+	tok, err := c.token(ctx, scopeProvider)
+	if err != nil {
+		return ProviderRef{}, false, err
+	}
+	uuid, found, err := c.findProvider(ctx, tok, org, id)
+	if err != nil || !found {
+		return ProviderRef{}, false, err
+	}
+	return ProviderRef{UUID: uuid, Handle: id}, true, nil
 }
 
 // UpdateProviderCredential writes in's connection onto the org's provider when

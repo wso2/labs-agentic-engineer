@@ -213,19 +213,36 @@ func newConfigHarnessGuarded(t *testing.T) *configHarness {
 // secrets provider (secrets delivery off): no vault to keep a token in.
 func newConfigHarnessNoSecrets(t *testing.T) *configHarness {
 	t.Helper()
-	return newConfigHarnessWith(t, nil, orgconfig.AgentRuntimes, false, false)
+	return newConfigHarnessWith(t, configHarnessOpts{runtimes: orgconfig.AgentRuntimes})
 }
 
 func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
 	t.Helper()
-	return newConfigHarnessWith(t, thunder, runtimes, guarded, true)
+	return newConfigHarnessWith(t, configHarnessOpts{thunder: thunder, runtimes: runtimes, guarded: guarded, secretsDelivery: true})
 }
 
-// newConfigHarnessWith assembles the harness. With secretsDelivery, the
+// newConfigHarnessWithModelProvider is newConfigHarness with Agent Manager's
+// provider behind the key save (the publisher a governed installation wires)
+// and the key's default-key reference written to the fake vault.
+func newConfigHarnessWithModelProvider(t *testing.T, provider organization.ModelProviderPublisher) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, configHarnessOpts{runtimes: orgconfig.AgentRuntimes, secretsDelivery: true, modelProvider: provider})
+}
+
+// configHarnessOpts are the harness's knobs. With secretsDelivery, the
 // credential service writes the PAT's github-pat reference to a fake vault
 // (the gitpat submit's write); without, the installation has no secrets
-// provider.
-func newConfigHarnessWith(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded, secretsDelivery bool) *configHarness {
+// provider. With modelProvider (which needs secretsDelivery), the key save
+// publishes to it and writes the key's default-key reference.
+type configHarnessOpts struct {
+	thunder                  thundersvc.Client
+	runtimes                 []orgconfig.AgentRuntime
+	guarded, secretsDelivery bool
+	modelProvider            organization.ModelProviderPublisher
+}
+
+// newConfigHarnessWith assembles the harness.
+func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 	t.Helper()
 	db := dbtest.New(t) // self-skips under -short
 	gh := newCfgFakeGH(t)
@@ -240,25 +257,30 @@ func newConfigHarnessWith(t *testing.T, thunder thundersvc.Client, runtimes []or
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
 	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo, store).WithAnthropicAPIBase(anth.URL)
 	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, store, sonnetRates())
-	if !guarded {
+	if !o.guarded {
 		conns.WithProbeClient(model.client())
 	}
 	credRepo := organization.NewOrgCredentialRepository(db, nil)
 	credSvc := organization.NewCredentialService(credRepo, store).WithGitHubAPIBase(gh.URL)
-	if secretsDelivery {
+	if o.secretsDelivery {
 		vault := &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 		orgSecrets := organization.NewOrgSecretWriter(vault, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
-		credSvc.WithSecretRefWriter(organization.NewSecretRefWriter(vault, credRepo, anthropicRepo,
-			organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db)).WithOrgSecretWriter(orgSecrets))
+		refWriter := organization.NewSecretRefWriter(vault, credRepo, anthropicRepo,
+			organization.NewIDPRepository(db, nil), organization.NewOrgModelConnectionRepository(db)).WithOrgSecretWriter(orgSecrets)
+		credSvc.WithSecretRefWriter(refWriter)
+		if o.modelProvider != nil {
+			conns.WithSecretRefWriter(refWriter)
+			anthropicSvc.WithModelProvider(o.modelProvider)
+		}
 	}
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
-	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
+	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), o.thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
 		credSvc, disconnectSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
 	).WithOrgSecretRefs(organization.NewOrgSecretRepository(db)).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
-		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), runtimes))
+		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db, store), o.runtimes))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.

@@ -99,17 +99,18 @@ type published struct {
 	key  string
 }
 
-// recordingProvider counts what reached the provider; clearErr is what every
-// clear answers.
+// recordingProvider counts what reached the provider; publishErr and clearErr
+// are what every publish and clear answer.
 type recordingProvider struct {
-	published []published
-	cleared   []modelconn.Connection
-	clearErr  error
+	published  []published
+	cleared    []modelconn.Connection
+	publishErr error
+	clearErr   error
 }
 
 func (p *recordingProvider) PublishOrgModelConnection(_ context.Context, _ string, conn modelconn.Connection, apiKey string) error {
 	p.published = append(p.published, published{conn: conn, key: apiKey})
-	return nil
+	return p.publishErr
 }
 
 func (p *recordingProvider) ClearOrgModelKey(_ context.Context, _ string, last modelconn.Connection) error {
@@ -186,16 +187,19 @@ func TestSyncModelProvider_AKeptKeyIsReadFromTheStore(t *testing.T) {
 	}
 }
 
-// A key that cannot be read is logged and swallowed — the save has committed —
-// and nothing half-built reaches the provider.
+// A key that cannot be read publishes nothing half-built, and is returned
+// like a failed publish: the provider did not get the save.
 func TestSyncModelProvider_AnUnreadableKeyPublishesNothing(t *testing.T) {
 	provider := &recordingProvider{}
 	svc := NewAnthropicCredentialService(nil, nil).WithModelProvider(provider)
 
-	svc.syncModelProvider(context.Background(), holding(anthropicOnOllama(), ""), "acme", onOllama(), anthropicOnOllama(), false)
+	err := svc.syncModelProvider(context.Background(), holding(anthropicOnOllama(), ""), "acme", onOllama(), anthropicOnOllama(), false)
 
 	if len(provider.published) != 0 {
 		t.Fatalf("published %+v with no key to send", provider.published)
+	}
+	if err == nil {
+		t.Fatal("an unpublished save must be returned")
 	}
 }
 
@@ -255,9 +259,24 @@ func TestSyncModelProvider_AFailedClearOnDisconnectIsAttemptedOnceAndSwallowed(t
 	provider := &recordingProvider{clearErr: errors.New("amp unreachable")}
 	svc := NewAnthropicCredentialService(nil, nil).WithModelProvider(provider)
 
-	svc.syncModelProvider(context.Background(), holding(nil, ""), "acme", firstParty(), nil, false)
-
+	if err := svc.syncModelProvider(context.Background(), holding(nil, ""), "acme", firstParty(), nil, false); err != nil {
+		t.Fatalf("err = %v, want the clear failure logged, not returned", err)
+	}
 	if len(provider.cleared) != 1 {
 		t.Fatalf("cleared %d time(s), want one attempt", len(provider.cleared))
 	}
 }
+
+// A failed publish is returned, not swallowed: the save answers 502
+// agent_manager_not_updated, since a governed deploy now fails closed without
+// the provider and only a key save writes it.
+func TestSyncModelProvider_APublishFailureIsReturned(t *testing.T) {
+	provider := &recordingProvider{publishErr: errors.New("amp down")}
+	svc := NewAnthropicCredentialService(nil, nil).WithModelProvider(provider)
+
+	err := svc.syncModelProvider(context.Background(), holding(firstParty(), "sk-ant-api03-key-0123456789"), "acme", nil, firstParty(), true)
+	if !errors.Is(err, provider.publishErr) {
+		t.Fatalf("err = %v, want the publish failure", err)
+	}
+}
+

@@ -44,7 +44,7 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
 | `CredentialStore` | needs | `platform/secrets` — sealed git-token / model-key / subscription store |
 | `thundersvc` · `secretmanagersvc` | needs | publisher-app CRUD + OU check · secret-ref mirror |
 | `OrganizationService` · `CredentialService` · `AnthropicCredentialService` · `IDPService` | offers | `delivery` (coding identity/publisher) · `sourcecontrol` (credential resolution) · the edge (dev secret-ref resync) |
-| `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the spec agents' and task planning's connection + key per turn; Agent Manager's provider key) · `projects` (ai-agent model access) · `delivery` (the coding credential and the connection's model; the evaluation key) |
+| `ModelConnectionService` — `ConnectionReader` · `CodingCredentialResolver` | offers | the app root (the spec agents' and task planning's connection + key per turn; the governor's keyless `Connection`) · `projects` (ai-agent model access) · `delivery` (the coding credential and the connection's model; the evaluation key) |
 | `RateCard` | needs | `platform/modelcost` (the boot-time `Stamper`) — whether `(host, model)` is priced, for `llm.priced` |
 | `AgentSettingsService` | offers | `delivery` (the run's runtime) |
 | `StudioConverger` · `AEStudioStatusReader` (+ `AEStudioStatus`) | declared here, implemented by `aestudio` | the gitpat submit and a key or connection save trigger a converge; `GET /ae-studio` reads the state |
@@ -106,7 +106,7 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
   - `llm_disconnected_at` is the only trace of a disconnected connection; projected as
     `llmDisconnectedAt` while `llm` is null, cleared by the next connection save.
   - The copies outside Postgres (the key references, the Agent Manager provider) follow the commit,
-    best-effort, in a second transaction under the same locks, made from the rows as they stand, so
+    best-effort except the provider push (below), in a second transaction under the same locks, made from the rows as they stand, so
     two saves' copies land in save order and a stored key never sits beside another host's row. A
     saved connection key is a new `default-key` reference and a saved subscription token a new
     `coding-agent-key` one (`OrgSecretWriter.Write`), each row's triplet stamped inside that
@@ -129,8 +129,9 @@ model-connection / idp services and the model key rename watcher (`ModelKeyRenam
     variable name; dispatch (`codingagent/model_env.go`) maps that to the runner's env.
   - Generated agents run on the connection, on every format (`modelconn.CapabilitiesOf` says
     `GeneratedAgents` for all). The Agent Manager provider's copy follows it (`syncModelProvider`):
-    republished after commit on a save that changes the key, URL, format or auth scheme, and
-    cleared once on a disconnect.
+    republished after commit on a save that changes the key, URL, format or auth scheme (a failed
+    push answers `502 agent_manager_not_updated`, the key staying saved), and cleared once on a
+    disconnect (best-effort).
 - **The model connection is read only through `ModelConnectionService`** (`model_connection_service.go`):
   a `modelconn.Connection` (format, base URL, host, model, auth scheme, limits, image input) beside the
   key's bytes (`Effective`), its vault reference (`KeyRef`) or the coding credential

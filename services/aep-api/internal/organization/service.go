@@ -56,8 +56,8 @@ const SecretsDeliveryUnavailableCode = "secrets_delivery_unavailable"
 
 // sectionErrorFrom classifies a reused-service error into a SectionError with
 // the right status: a section-field validation failure is a 422 pointing at the
-// section, a cross-mode conflict a 409, an upstream 5xx a 502, no secret store
-// a 503. An unclassified
+// section, a cross-mode conflict a 409, an upstream 5xx or a key save Agent
+// Manager missed a 502, no secret store a 503. An unclassified
 // error is returned verbatim (the caller maps it to an opaque 500).
 func sectionErrorFrom(section string, err error) error {
 	var se *SectionError
@@ -71,6 +71,11 @@ func sectionErrorFrom(section string, err error) error {
 	var ce *ConflictError
 	if errors.As(err, &ce) {
 		return &SectionError{Section: section, Status: http.StatusConflict, Message: ce.Error()}
+	}
+	var am *AgentManagerNotUpdatedError
+	if errors.As(err, &am) {
+		return &SectionError{Section: section, Status: http.StatusBadGateway, Code: AgentManagerNotUpdatedCode,
+			Message: agentManagerNotUpdatedMessage}
 	}
 	if errors.Is(err, ErrSecretsDeliveryUnavailable) {
 		return &SectionError{Section: section, Status: http.StatusServiceUnavailable, Code: SecretsDeliveryUnavailableCode,
@@ -295,9 +300,17 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 	// 3. Persist phase — probes already passed, so these are writes over
 	//    freshly-validated inputs. Ordered card → gitProvider → idp.
 	sections := []string{}
+	// notPushed is a committed card save whose Agent Manager push failed. The
+	// remaining sections still persist — the card is saved and stopping here
+	// would only add a partial save — and the request answers 502 after them.
+	var notPushed error
 	if card {
 		if err := s.agentSettings.apply(ctx, org, actor, p, probed); err != nil {
-			return nil, err
+			var am *AgentManagerNotUpdatedError
+			if !errors.As(err, &am) {
+				return nil, err
+			}
+			notPushed = err
 		}
 		if p.LLM.Sent {
 			sections = append(sections, "llm")
@@ -337,6 +350,9 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 	// Audit which sections were carried — never the secret values (Decision:
 	// coarser RBAC compensated by section-level audit logging).
 	slog.InfoContext(ctx, "orgconfig.patched", "org", org, "sections", sections)
+	if notPushed != nil {
+		return nil, sectionErrorFrom("llm", notPushed)
+	}
 
 	out, err := s.Get(ctx, org)
 	if err != nil {

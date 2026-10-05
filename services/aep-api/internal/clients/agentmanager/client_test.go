@@ -164,7 +164,6 @@ func TestProviderBodyIsTheSameBytesOnCreateAndUpdate(t *testing.T) {
 	if _, err := c.EnsureProvider(context.Background(), in); err != nil {
 		t.Fatalf("EnsureProvider (create): %v", err)
 	}
-	in.ReassertCredential = true
 	if _, err := c.EnsureProvider(context.Background(), in); err != nil {
 		t.Fatalf("EnsureProvider (update): %v", err)
 	}
@@ -351,11 +350,8 @@ func TestFourXXIsPermanent(t *testing.T) {
 
 // A ROTATED key must reach a provider that already exists — returning early on
 // "it exists" is what lets a stale copy go unnoticed until every governed agent
-// in the org starts failing at Anthropic.
-//
-// The write is conditional (ReassertCredential); this covers the case where the
-// caller has determined the key changed. Its twin,
-// TestEnsureProviderSkipsTheCredentialWriteWhenUnchanged, covers the other.
+// in the org starts failing at Anthropic. EnsureProvider is the key save's
+// write, so it always writes; the deploy path reads with FindProvider.
 func TestEnsureProviderReassertsTheKeyWhenItExists(t *testing.T) {
 	var put map[string]any
 	putPath := ""
@@ -382,8 +378,7 @@ func TestEnsureProviderReassertsTheKeyWhenItExists(t *testing.T) {
 
 	c := New(Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token"})
 	ref, err := c.EnsureProvider(context.Background(), EnsureProviderInput{
-		ReassertCredential: true,
-		Org:                "default", ID: "aep-default-anthropic", Name: "AEP Default Anthropic",
+		Org: "default", ID: "aep-default-anthropic", Name: "AEP Default Anthropic",
 		Version: "v1.0", Context: "/aep-default-anthropic", Template: "anthropic",
 		UpstreamURL: "https://api.anthropic.com", AuthType: "api-key",
 		AuthHeader: "x-api-key", APIKey: "sk-ant-ROTATED", GatewayID: "gw-1",
@@ -715,44 +710,42 @@ func TestAPersistent401IsNotRetriedForever(t *testing.T) {
 	}
 }
 
-// An existing provider is left alone unless the caller says the credential
-// changed (EnsureProviderInput.ReassertCredential).
-func TestEnsureProviderSkipsTheCredentialWriteWhenUnchanged(t *testing.T) {
+// FindProvider is the deploy path's read: it reports the provider by handle and
+// never writes one, found or not.
+func TestFindProviderWritesNothing(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		reassert bool
-		wantPut  bool
+		name      string
+		providers []map[string]any
+		wantFound bool
 	}{
-		{"unchanged: no write", false, false},
-		{"changed: write", true, true},
+		{name: "exists", providers: []map[string]any{{"uuid": "prov-uuid", "id": "aep-default-anthropic"}}, wantFound: true},
+		{name: "another org's only", providers: []map[string]any{{"uuid": "other", "id": "aep-other-anthropic"}}},
+		{name: "none", providers: []map[string]any{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			put := false
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case strings.HasSuffix(r.URL.Path, "/oauth2/token"):
 					_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
 				case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/llm-providers"):
-					_ = json.NewEncoder(w).Encode(map[string]any{"providers": []map[string]any{
-						{"uuid": "prov-uuid", "id": "aep-default-anthropic"}}})
-				case r.Method == http.MethodPut:
-					put = true
-					_ = json.NewEncoder(w).Encode(map[string]any{})
+					_ = json.NewEncoder(w).Encode(map[string]any{"providers": tc.providers})
 				default:
+					t.Errorf("FindProvider made a %s %s; it must only read", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
 				}
 			}))
 			defer srv.Close()
 
 			c := New(Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token"})
-			if _, err := c.EnsureProvider(context.Background(), EnsureProviderInput{
-				Org: "default", ID: "aep-default-anthropic", APIKey: "sk-ant",
-				ReassertCredential: tc.reassert,
-			}); err != nil {
-				t.Fatalf("EnsureProvider: %v", err)
+			ref, found, err := c.FindProvider(context.Background(), "default", "aep-default-anthropic")
+			if err != nil {
+				t.Fatalf("FindProvider: %v", err)
 			}
-			if put != tc.wantPut {
-				t.Errorf("credential written = %v, want %v", put, tc.wantPut)
+			if found != tc.wantFound {
+				t.Fatalf("found = %v, want %v", found, tc.wantFound)
+			}
+			if found && (ref.UUID != "prov-uuid" || ref.Handle != "aep-default-anthropic") {
+				t.Errorf("ref = %+v, want the provider's UUID and handle", ref)
 			}
 		})
 	}

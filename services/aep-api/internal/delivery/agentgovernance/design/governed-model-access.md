@@ -9,8 +9,12 @@ shipped shape of that path.
 
 | Entry point | When | Does |
 |---|---|---|
-| `EnsureRegistration` | the version's **`provision` gate**, at planning | provider · agent record · model binding |
+| `EnsureRegistration` | the version's **`provision` gate**, at planning | provider lookup · agent record · model binding |
 | `GovernAgent` | **every deploy**, and the converge sweep | the same, plus the key |
+
+Neither writes the provider. They look it up (`FindProvider`) and fail closed
+with `ErrProviderMissing` ("save the Default key again in Settings → Models")
+when the org has none: the governor holds no key, so it cannot make one.
 
 The gate is the FIRST assertion, never the only one. It exists so that an Agent
 Manager which cannot serve this build fails it at planning — before a coding
@@ -102,20 +106,15 @@ new provider, the publisher client has no delete scope to remove the old one,
 and every bound agent would rebind. Only the display name
 (`AEP <org> model connection`) is format-neutral.
 
-**When it is written.** Updating a provider redeploys every proxy bound to it
-(twelve per governed deploy were measured in a single-agent org), and a
-redeploy is the window in which a proxy can lose the keys broadcast to it. So:
+**When it is written.** Only by a Settings save, the one moment the key is in
+hand. Updating a provider redeploys every proxy bound to it, so nothing writes
+it on a deploy. So:
 
-- The govern stage writes it when its fingerprint of key, upstream, template
-  and auth header changed. The fingerprint is in memory and recorded only
-  once the write succeeds: the first governed deploy after a restart writes
-  once, a PUT of the same body, and a failed write is retried by the next
-  deploy.
 - A Settings save that changes the key, URL, format or auth scheme publishes
-  the connection at once, post-commit and best-effort
-  (`organization.ModelProviderPublisher`). A save that keeps the key sends the
-  stored one. A model-only change writes nothing: the provider does not carry
-  the model.
+  the connection post-commit (`organization.ModelProviderPublisher`), creating
+  the provider when the org has none. A failed push answers `502
+  agent_manager_not_updated` with the key still saved; saving it again retries.
+  A model-only change writes nothing: the provider does not carry the model.
 - A disconnect overwrites the provider's key with a value that authenticates
   nowhere, once, under the last connection's header. The provider itself stays:
   there is no delete scope.

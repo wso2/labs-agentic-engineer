@@ -93,9 +93,8 @@ func ollamaConnection() modelconn.Connection {
 	}
 }
 
-// A saved connection reaches the provider as the same input the deploy path
-// builds, re-asserted, on any format: one write carrying the template, the
-// upstream, the auth and the key.
+// A saved connection reaches the provider on any format: one write carrying
+// the template, the upstream, the auth and the key.
 func TestAMPModelProviderPublisher_PublishesTheConnection(t *testing.T) {
 	client := &providerClient{exists: true}
 	pub := ampModelProviderPublisher{amp: providerClients{client}, bindings: oneBinding{}, targets: oneTarget()}
@@ -110,7 +109,6 @@ func TestAMPModelProviderPublisher_PublishesTheConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProviderInputFor: %v", err)
 	}
-	want.ReassertCredential = true
 	if got := client.ensured[0]; got != want {
 		t.Fatalf("write = %+v, want %+v", got, want)
 	}

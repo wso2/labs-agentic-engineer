@@ -470,15 +470,21 @@ func TestModelConnectionDisconnect_SurvivesAClearFailure_DB(t *testing.T) {
 	}
 }
 
-// A publisher failure must not fail the user's Settings action: the key IS
-// stored, and the next governed deploy re-asserts it on the provider.
-func TestModelConnectionSave_SurvivesAPublisherFailure_DB(t *testing.T) {
+// A publisher failure fails the save with agent_manager_not_updated (502), and
+// the key stays stored: a governed deploy fails closed without the provider,
+// so the user is told to save the key again rather than told "Saved".
+func TestModelConnectionSave_APublisherFailureIsAgentManagerNotUpdated_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	c.svc.WithModelProvider(&fakeModelProviderPublisher{err: errors.New("amp unreachable")})
 
-	if _, err := c.config.Patch(context.Background(), "acme", "ada", keyPatch(anthropicDBKey2)); err != nil {
-		t.Fatalf("the save must succeed even when the provider push fails: %v", err)
+	_, err := c.config.Patch(context.Background(), "acme", "ada", keyPatch(anthropicDBKey2))
+	var se *organization.SectionError
+	if !errors.As(err, &se) || se.Status != http.StatusBadGateway || se.Code != "agent_manager_not_updated" || se.Section != "llm" {
+		t.Fatalf("err = %v, want a 502 agent_manager_not_updated on llm", err)
+	}
+	if se.Message != "Key saved; Agent Manager was not updated. Save the key again." {
+		t.Fatalf("message = %q", se.Message)
 	}
 	c.row(t, "acme")
 }

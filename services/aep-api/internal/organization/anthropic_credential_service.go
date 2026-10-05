@@ -324,6 +324,27 @@ func (s *AnthropicCredentialService) forgetKey(ctx context.Context, tx AgentsCar
 	}
 }
 
+// AgentManagerNotUpdatedError is a committed key save whose push to Agent
+// Manager's provider failed. The key IS saved (vault and its reference row);
+// only the provider's copy lags. It is a failure the user must act on, not a
+// warning: a governed deploy fails closed without the provider
+// (agentgovernance.ErrProviderMissing), and only a key save writes it. /config
+// answers it 502 agent_manager_not_updated.
+type AgentManagerNotUpdatedError struct{ Err error }
+
+func (e *AgentManagerNotUpdatedError) Error() string {
+	return "agent manager not updated: " + e.Err.Error()
+}
+
+func (e *AgentManagerNotUpdatedError) Unwrap() error { return e.Err }
+
+// AgentManagerNotUpdatedCode and agentManagerNotUpdatedMessage are the 502 a
+// key save answers when its Agent Manager push failed.
+const (
+	AgentManagerNotUpdatedCode    = "agent_manager_not_updated"
+	agentManagerNotUpdatedMessage = "Key saved; Agent Manager was not updated. Save the key again."
+)
+
 // syncModelProvider brings the org's Agent Manager provider, which holds a
 // COPY of the connection and its key on behalf of every governed agent, in
 // line with a committed save: before and after are the org's connection on
@@ -334,41 +355,43 @@ func (s *AnthropicCredentialService) forgetKey(ctx context.Context, tx AgentsCar
 // not put the earlier host or key back. A publish finding no connection, or a
 // clear finding one, defers to the later save that changed it.
 //
-// WHY THIS MATTERS MORE THAN IT LOOKS: without it, a rotated key leaves the
-// provider calling the upstream with a revoked one, and a switch to another
-// host leaves it calling the old one — and EVERY governed agent in the org
-// fails at once, at the upstream, far from Settings, with nothing in AEP
-// saying why. And a disconnected key is not one the provider may keep, so a
-// disconnect clears it once rather than leaving it live in a second system.
+// WHY THIS MATTERS MORE THAN IT LOOKS: the save is the provider's ONLY writer.
+// The deploy path never writes it (it holds no key), so without this a rotated
+// key leaves the provider calling the upstream with a revoked one, a switch to
+// another host leaves it calling the old one, and an org that never got a
+// provider fails every governed deploy. And a disconnected key is not one the
+// provider may keep, so a disconnect clears it once rather than leaving it
+// live in a second system.
 //
-// Best-effort, and deliberately so: the connection IS stored, and failing the
-// user's Settings action because a downstream copy lagged would be the worse
-// outcome.
+// A failed publish is RETURNED (the caller answers 502
+// agent_manager_not_updated, the key staying saved); a failed clear is logged:
+// the connection is gone either way and nothing fails closed on the copy.
 //
 // Only the connection's key is ever published: that is the key agents run on.
 // The subscription token belongs to the coding agent, which does not go
 // through the gateway.
-func (s *AnthropicCredentialService) syncModelProvider(ctx context.Context, tx AgentsCardTx, ocOrgID string, before, after *modelconn.Connection, keyWritten bool) {
+func (s *AnthropicCredentialService) syncModelProvider(ctx context.Context, tx AgentsCardTx, ocOrgID string, before, after *modelconn.Connection, keyWritten bool) error {
 	if s.modelProvider == nil {
-		return
+		return nil
 	}
 	switch modelProviderStepFor(before, after, keyWritten) {
 	case modelProviderPublish:
 		conn, key, err := currentConnection(ctx, tx, ocOrgID)
 		if err == nil && conn == nil {
-			return
+			return nil
 		}
 		if err == nil {
 			err = s.modelProvider.PublishOrgModelConnection(ctx, ocOrgID, *conn, key)
 		}
 		if err != nil {
-			slog.WarnContext(ctx, "model connection: could not publish the saved connection to the Agent Manager provider; governed agents keep the previous one until the next deploy",
+			slog.WarnContext(ctx, "model connection: could not publish the saved connection to the Agent Manager provider",
 				"ocOrgId", ocOrgID, "host", after.Host, "error", err)
+			return fmt.Errorf("publish the saved connection to the Agent Manager provider: %w", err)
 		}
 	case modelProviderClear:
 		row, err := tx.GetConnection(ocOrgID)
 		if err == nil && row != nil {
-			return
+			return nil
 		}
 		if err == nil {
 			err = s.modelProvider.ClearOrgModelKey(ctx, ocOrgID, *before)
@@ -379,6 +402,7 @@ func (s *AnthropicCredentialService) syncModelProvider(ctx context.Context, tx A
 		}
 	case modelProviderLeave:
 	}
+	return nil
 }
 
 // currentConnection is the org's connection and its key as they stand in tx;

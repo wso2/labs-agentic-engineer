@@ -317,7 +317,7 @@ func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string,
 	if err != nil {
 		return err
 	}
-	s.syncCopies(ctx, ocOrgID, cardCopies{
+	return s.syncCopies(ctx, ocOrgID, cardCopies{
 		forgotToken:    forgotToken,
 		forgotKey:      forgotKey,
 		keyWritten:     eff.writeConn != nil && eff.writeConn.Key != "",
@@ -327,7 +327,6 @@ func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string,
 		before:         before,
 		after:          after,
 	})
-	return nil
 }
 
 // cardCopies is what a committed save changed that the card's copies outside
@@ -386,8 +385,13 @@ func equalLimit(a, b *int) bool {
 // A replaced reference is deleted only after the transaction that stamped its
 // successor commits, so nothing that commit could have rolled back still
 // reads a deleted one. A failure is logged and never undoes the save.
-func (s *AgentSettingsService) syncCopies(ctx context.Context, ocOrgID string, c cardCopies) {
+//
+// The one failure it returns is the Agent Manager push, as
+// *AgentManagerNotUpdatedError: the save and every other copy stand, but the
+// user must save the key again (see syncModelProvider).
+func (s *AgentSettingsService) syncCopies(ctx context.Context, ocOrgID string, c cardCopies) error {
 	var written []OrgSecretWrite
+	var pushErr error
 	if !c.none() {
 		err := s.card.Tx(ctx, func(tx AgentsCardTx) error {
 			if err := lockCard(tx.AdvisoryLock, ocOrgID); err != nil {
@@ -400,7 +404,7 @@ func (s *AgentSettingsService) syncCopies(ctx context.Context, ocOrgID string, c
 					written = append(written, w)
 				}
 			}
-			s.creds.syncModelProvider(ctx, tx, ocOrgID, c.before, c.after, c.keyWritten)
+			pushErr = s.creds.syncModelProvider(ctx, tx, ocOrgID, c.before, c.after, c.keyWritten)
 			if c.tokenWritten {
 				if w, ok := s.creds.mirrorKey(ctx, tx, ocOrgID, AnthropicRoleCoding, c.tokenRefBefore); ok {
 					written = append(written, w)
@@ -420,6 +424,10 @@ func (s *AgentSettingsService) syncCopies(ctx context.Context, ocOrgID string, c
 	for _, w := range written {
 		w.Retire(ctx)
 	}
+	if pushErr != nil {
+		return &AgentManagerNotUpdatedError{Err: pushErr}
+	}
+	return nil
 }
 
 // covers reports whether this probe vouches for writing draft over stored: it

@@ -332,8 +332,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	credService.WithSecretRefWriter(secretRefWriter)
 	anthropicCredService.WithSecretRefWriter(secretRefWriter)
 	// A saved model connection must reach the Agent Manager provider that holds
-	// a copy of it, or every governed agent in the org keeps calling the old
-	// upstream with the old credential until the next deploy re-asserts it.
+	// a copy of it: the key save is the provider's only writer (a deploy only
+	// looks it up), so a failed push answers 502 agent_manager_not_updated.
 	anthropicCredService.WithModelProvider(ampModelProviderPublisher{
 		amp: ampClientFactory{cfg: agentmanager.Config{
 			TokenURL:     cfg.AgentManager.TokenURL,
