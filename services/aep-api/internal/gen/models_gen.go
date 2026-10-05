@@ -636,25 +636,22 @@ func (e RunCycleViewMergeVerdict) Valid() bool {
 
 // Defines values for RunCycleViewRecording.
 const (
-	RunCycleViewRecordingComplete  RunCycleViewRecording = "complete"
-	RunCycleViewRecordingGaps      RunCycleViewRecording = "gaps"
-	RunCycleViewRecordingLost      RunCycleViewRecording = "lost"
-	RunCycleViewRecordingNone      RunCycleViewRecording = "none"
-	RunCycleViewRecordingRecording RunCycleViewRecording = "recording"
+	RunCycleViewRecordingExpired     RunCycleViewRecording = "expired"
+	RunCycleViewRecordingKept        RunCycleViewRecording = "kept"
+	RunCycleViewRecordingLive        RunCycleViewRecording = "live"
+	RunCycleViewRecordingUnavailable RunCycleViewRecording = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the RunCycleViewRecording enum.
 func (e RunCycleViewRecording) Valid() bool {
 	switch e {
-	case RunCycleViewRecordingComplete:
+	case RunCycleViewRecordingExpired:
 		return true
-	case RunCycleViewRecordingGaps:
+	case RunCycleViewRecordingKept:
 		return true
-	case RunCycleViewRecordingLost:
+	case RunCycleViewRecordingLive:
 		return true
-	case RunCycleViewRecordingNone:
-		return true
-	case RunCycleViewRecordingRecording:
+	case RunCycleViewRecordingUnavailable:
 		return true
 	default:
 		return false
@@ -2559,9 +2556,9 @@ type RunCycleView struct {
 	// PrURL The pull request's own page on the host, as the webhook reported it — never composed from a repo URL and a number, so a console link either is the host's own or is absent. Empty until a pull request is seen.
 	PrURL string `json:"prUrl,omitempty"`
 
-	// Recording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
-	// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
-	// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+	// Recording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle. Derived from the cycle row alone; no log is read to answer it.
+	// `live` — the cycle is running: its feed is read from the pod's log and a reader should expect it to grow. `kept` — the cycle is over and its feed is still readable: from the pod's log while the pod exists, then from the observability plane by the cycle's Component UID. `expired` — the platform no longer keeps this cycle's log: it ended longer ago than the observability plane's log retention, or it predates Component UID capture. `unavailable` — the log should exist but cannot be read right now (no observability plane, or the last read of it failed).
+	// Losses inside a feed are not a state: each hole is a `notice` with `code: gap` at the point it happened.
 	Recording RunCycleViewRecording `json:"recording,omitempty"`
 
 	// Resolves The milestone agent-work issues this cycle's pull request claims — the merge policy's matched set, which is what the merge closes. Recorded so a cycle's working set survives its issues being closed; empty until a pull request is seen.
@@ -2580,9 +2577,9 @@ type RunCycleViewKind string
 // RunCycleViewMergeVerdict Why this cycle's pull request did NOT merge, when something decided so: `declined` is the auto-merge policy saying the pull request is not this run's work, `refused` is the host declining an open pull request (a conflict — a conflict issue is minted and the next cycle works it). Absent on a cycle whose merge was never decided against, which includes every cycle that merged: a merge is recorded by `mergeSha`, and each fresh decision overwrites this field, so a declined pull request that later merges does not keep the verdict.
 type RunCycleViewMergeVerdict string
 
-// RunCycleViewRecording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
-// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
-// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+// RunCycleViewRecording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle. Derived from the cycle row alone; no log is read to answer it.
+// `live` — the cycle is running: its feed is read from the pod's log and a reader should expect it to grow. `kept` — the cycle is over and its feed is still readable: from the pod's log while the pod exists, then from the observability plane by the cycle's Component UID. `expired` — the platform no longer keeps this cycle's log: it ended longer ago than the observability plane's log retention, or it predates Component UID capture. `unavailable` — the log should exist but cannot be read right now (no observability plane, or the last read of it failed).
+// Losses inside a feed are not a state: each hole is a `notice` with `code: gap` at the point it happened.
 type RunCycleViewRecording string
 
 // RunCycleViewValidationVerdict What THIS validation attempt concluded, from the report at its own `mergeSha`. Set on validation cycles only, and only once the attempt settles. The run carries the latest attempt's verdict; this is how a self-healed run shows that an earlier attempt failed.
@@ -2603,7 +2600,7 @@ type RunEvent struct {
 	Branch string `json:"branch,omitempty"`
 
 	// Code `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
-	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (a hole in the producer's seqs, or a log the platform can no longer read); `artifact_failed` something the run produced that could not be stored.
 	// Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
 	// `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 	Code RunEventCode `json:"code,omitempty"`
@@ -2695,7 +2692,7 @@ type RunEvent struct {
 	// Runtime `run_started` only: which coding runtime executed this attempt. Recorded on the event rather than looked up from the run, because a feed is read back long after the org's runtime setting may have moved on, and the two runtimes emit different agent ids, model names and tool names — a reader that guesses wrong misreads all three.
 	Runtime RunEventRuntime `json:"runtime,omitempty"`
 
-	// Seq Position of this event within its attempt, monotonic from the attempt's first event. This is what the recorder dedupes on: a producer that retries a flush, or a client that reconnects and replays, sends the same `seq` again and the second write is a no-op. It is NOT unique across a cycle — a re-dispatch starts a new attempt at the beginning — so anything that orders or dedupes needs RunProgressEvent.attempt alongside it.
+	// Seq Position of this event within its attempt, monotonic from the attempt's first event. It is the producer's own number, so the same event carries the same `seq` whichever source the platform read it from (the pod's log or the observability plane), and a client that reconnects and replays receives the same `seq` again and dedupes it. Platform notices take negative seqs, stable for the state or the position they describe. It is NOT unique across a cycle — a re-dispatch starts a new attempt at the beginning — so anything that orders or dedupes needs RunProgressEvent.attempt alongside it.
 	Seq int64 `json:"seq"`
 
 	// Sha `git_commit` and `git_push`: the commit.
@@ -2748,7 +2745,7 @@ type RunEvent struct {
 }
 
 // RunEventCode `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
-// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (a hole in the producer's seqs, or a log the platform can no longer read); `artifact_failed` something the run produced that could not be stored.
 // Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
 // `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 type RunEventCode string

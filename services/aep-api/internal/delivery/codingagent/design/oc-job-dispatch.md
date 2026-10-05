@@ -20,7 +20,7 @@ written. A project whose pipeline names none is refused before
 `CreateComponent`, so no billed Component is minted; the run settles failed
 (`no-write-target`) without spending the re-dispatch budget. The environment the
 Job was bound into is recorded on the cycle (`run_cycles.environment`, beside
-`model_host`), and the watcher, the recorder, the log source and the archive
+`model_host`), and the watcher, the feed, the log source and the archive
 read the cycle there. A cycle with none recorded (dispatched before the column
 existed, or whose launch write failed) falls back to the project's write target
 at read time, and says so in the log. OC renders the `batch/v1 Job` into the project's `dp-…` release namespace and
@@ -270,16 +270,18 @@ pull-request webhook interaction are spelled out in
 
 ## Two log planes, and a third state that is not an error
 
-- **Live**, while the pod exists: the pod's own log, read through the OC API
-  (`GetReleaseBindingK8sResourceLogs`) with the pod name taken from the resource
-  tree. This is what the run progress stream serves.
+- **Live**, while the pod exists (whatever its Job's state): the pod's own
+  whole log, read through the OC API (`GetReleaseBindingK8sResourceLogs`) with
+  the pod name taken from the resource tree.
 - **Archive**, after the pod is gone: an observer query
-  (`POST /api/v1/logs/query`) at component scope. Component-scope indexing
-  resolves through the Component CR, so this answer exists **only while the
-  Component is retained**.
-- **Unavailable**: a cycle whose Component has been pruned has no log; the
-  reader emits a single `logs_unavailable` progress line ("Logs for this cycle
-  are no longer available.") rather than an empty stream. There is no Postgres
+  (`POST /api/v1/logs/query`) filtered on the cycle's Component UID
+  (`run_cycles.component_uid`) — component scope while the Component's release
+  binding resolves, project scope once the settler has deleted it. The lines
+  stay readable for the observability plane's log retention
+  (`OBSERVER_LOG_RETENTION`, default 72h).
+- **Unavailable**: a cycle past that retention, or one with no Component UID,
+  has no log; the reader emits a single `logs_unavailable` line rather than an
+  empty stream. There is no Postgres
   copy of agent output — OpenChoreo observability is the log system, and a stored
   second copy would be a second truth to keep honest.
 

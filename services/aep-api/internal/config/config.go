@@ -226,6 +226,11 @@ type Config struct {
 	// is never enough. Default 5m (CODING_AGENT_SETTLE_GRACE).
 	CodingAgentSettleGrace time.Duration
 
+	// ObserverLogRetention is how long the observability plane keeps pod logs.
+	// A coding cycle that ended longer ago than this reports its log as
+	// `expired` and is not read. Default 72h (OBSERVER_LOG_RETENTION).
+	ObserverLogRetention time.Duration
+
 	// CodingAgentJobTTL is how long a finished coding-agent Job (and its pod)
 	// is kept before Kubernetes deletes it, rendered per Component as the
 	// ComponentType's ttlSecondsAfterFinished. Default 600s (CODING_AGENT_JOB_TTL).

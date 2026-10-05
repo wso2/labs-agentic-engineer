@@ -6154,34 +6154,32 @@ components:
           description: >-
             What the platform can serve of this cycle's RunEvent feed — a
             different question from what the cycle did, and one a client has to
-            ask before it presents a feed as the story of the cycle.
+            ask before it presents a feed as the story of the cycle. Derived
+            from the cycle row alone; no log is read to answer it.
 
-            `none` — the platform has no record of this cycle's feed at all: a
-            v1 cycle, or one whose recorder never started. `recording` — one is
-            being written right now, so a reader should expect it to grow.
-            `complete` — the attempt's events were recorded end to end.
-            `gaps` — a record is being served that the platform KNOWS is
-            incomplete, because events were dropped or arrived outside their
-            attempt's sequence. `lost` — the platform had a record and cannot
-            serve it.
+            `live` — the cycle is running: its feed is read from the pod's log
+            and a reader should expect it to grow. `kept` — the cycle is over
+            and its feed is still readable: from the pod's log while the pod
+            exists, then from the observability plane by the cycle's Component
+            UID. `expired` — the platform no longer keeps this cycle's log: it
+            ended longer ago than the observability plane's log retention, or
+            it predates Component UID capture. `unavailable` — the log should
+            exist but cannot be read right now (no observability plane, or the
+            last read of it failed).
 
-            The last two exist so a partial feed is never presented as the whole
-            of it, and so "there is nothing to show" (`none`) stays
-            distinguishable from "something was here and is gone" (`lost`) —
-            which are the same empty screen and very different bugs.
+            Losses inside a feed are not a state: each hole is a `notice` with
+            `code: gap` at the point it happened.
           enum:
-          - none
-          - recording
-          - complete
-          - gaps
-          - lost
+          - live
+          - kept
+          - expired
+          - unavailable
           type: string
           x-enum-varnames:
-          - None
-          - Recording
-          - Complete
-          - Gaps
-          - Lost
+          - Live
+          - Kept
+          - Expired
+          - Unavailable
         resolves:
           description: >-
             The milestone agent-work issues this cycle's pull request claims —
@@ -6291,8 +6289,8 @@ components:
             `rate_limit` the provider throttling; `permission_denied` a tool call
             the harness refused; `terminated` the run being killed from outside;
             `workspace_guard` a write denied outside the workspace; `gap` the
-            feed itself losing events (which also shows up as
-            RunCycleView.recording `gaps`); `artifact_failed` something the run
+            feed itself losing events (a hole in the producer's seqs, or a log
+            the platform can no longer read); `artifact_failed` something the run
             produced that could not be stored.
 
             Eight more describe the stretch BEFORE the first model turn — the
@@ -6633,9 +6631,12 @@ components:
         seq:
           description: >-
             Position of this event within its attempt, monotonic from the
-            attempt's first event. This is what the recorder dedupes on: a
-            producer that retries a flush, or a client that reconnects and
-            replays, sends the same `seq` again and the second write is a no-op.
+            attempt's first event. It is the producer's own number, so the same
+            event carries the same `seq` whichever source the platform read it
+            from (the pod's log or the observability plane), and a client that
+            reconnects and replays receives the same `seq` again and dedupes it.
+            Platform notices take negative seqs, stable for the state or the
+            position they describe.
             It is NOT unique across a cycle — a re-dispatch starts a new attempt
             at the beginning — so anything that orders or dedupes needs
             RunProgressEvent.attempt alongside it.

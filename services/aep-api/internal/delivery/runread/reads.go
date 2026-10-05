@@ -37,8 +37,8 @@ const validationReportPath = "tests/acceptance/report.json"
 type Reads struct {
 	runs   RunReader
 	cycles CycleReader
-	// recordings answers RunCycleView.recording. Optional: nil reports `none`
-	// for every cycle, which is exactly right on a boot that records nothing.
+	// recordings answers RunCycleView.recording. Optional: nil reports
+	// `unavailable` for every cycle — a boot with no feed can serve none.
 	recordings RecordingReader
 }
 
@@ -130,11 +130,11 @@ func runView(row *delivery.MilestoneRun, cycles []delivery.RunCycle, recordings 
 }
 
 // RecordingOf resolves one cycle's recording state through an optional reader.
-// A nil reader answers `none`: the platform has no record of this cycle's feed,
-// which is what a boot with no recording store honestly has.
+// A nil reader answers `unavailable`: a boot with no feed can serve no cycle's
+// log.
 func RecordingOf(recordings RecordingReader, c *delivery.RunCycle) gen.RunCycleViewRecording {
 	if recordings == nil {
-		return gen.RunCycleViewRecordingNone
+		return gen.RunCycleViewRecordingUnavailable
 	}
 	return recordings.RecordingState(c)
 }

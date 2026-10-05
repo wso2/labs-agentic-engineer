@@ -93,7 +93,7 @@ const cycle = (over: Partial<RunCycleView> = {}): RunCycleView =>
     mergeSha: "abc1234",
     validationVerdict: "passed",
     validationIssue: 7,
-    recording: "complete",
+    recording: "kept",
     ...over,
   }) as RunCycleView;
 
@@ -112,7 +112,7 @@ const runningCycle = (id: string): RunCycleView =>
     endedAt: null,
     mergeSha: "",
     validationIssue: 7,
-    recording: "recording",
+    recording: "live",
   }) as RunCycleView;
 
 const run = (over: Partial<MilestoneRunView> = {}): MilestoneRunView =>

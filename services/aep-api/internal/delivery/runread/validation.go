@@ -43,8 +43,8 @@ type ValidationReads struct {
 	runs      ValidationRunReader
 	cycles    ValidationCycleReader
 	snapshots ValidationSnapshotReader
-	// recordings answers RunCycleView.recording. Optional: nil reports `none`,
-	// which is the honest answer on a boot that records nothing.
+	// recordings answers RunCycleView.recording. Optional: nil reports
+	// `unavailable` — a boot with no feed can serve none.
 	recordings RecordingReader
 }
 

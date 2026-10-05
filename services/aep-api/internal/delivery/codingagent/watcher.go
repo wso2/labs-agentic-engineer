@@ -24,14 +24,11 @@ package codingagent
 //  1. It NEVER reads the ReleaseBinding's Ready condition. OpenChoreo registers
 //     no health check for `batch/v1 Job`, so a binding reports "completed
 //     successfully" over a Job that is still running or has already failed.
-//  2. It NEVER writes an agent log to Postgres. What it DOES do is hand each
-//     dispatched cycle to the CycleRecorder, which writes the cycle's feed to
-//     the workspace volume as v2 RunEvents — observability, not a ledger
-//     (ADR-0027) — so a viewer reads a file instead of re-deriving the pod's
-//     log per connection. Postgres is still not the log system of record. The
-//     one thing this watcher takes out of the log itself is the runner's
-//     terminal line: its token usage, and whether its model provider's limit
-//     is what stopped it.
+//  2. It NEVER writes an agent log anywhere. The log is the pod's while the
+//     pod exists and the observability plane's after (ADR-0027); the feed
+//     reads it from there (cycle_feed.go). The one thing this watcher takes
+//     out of the log itself is the runner's terminal line: its token usage,
+//     and whether its model provider's limit is what stopped it.
 //  3. It never deletes a Component; it suspends the Job at the first terminal
 //     pod, and the settler deletes once no pod is left. The suspend comes after
 //     the run's usage is captured, so the pod whose log carries the spend is
@@ -109,17 +106,9 @@ type JobWatcher struct {
 	// nothing is suspended (tests).
 	jobs jobSuspender
 
-	// recorder owns each dispatched cycle's feed recording. The watcher is its
-	// DISCOVERY, not its clock: it hands over every cycle it sees on its own 30s
-	// tick, and each recording session then paces itself (1s while its pod is
-	// Running). Discovery belongs here because this is already the one pass that
-	// knows which cycles are dispatched and still in the window. nil → nothing is
-	// recorded and every feed reports `none`.
-	recorder *CycleRecorder
-
 	// deaths wakes the run supervisor when a cycle's agent ended without a pull
-	// request. Discovery belongs here for the same reason the recorder's does:
-	// this is the one pass that learns a pod died.
+	// request. It belongs here because this is the one pass that learns a pod
+	// died.
 	deaths AgentDeathNotifier
 
 	// failures records the run's failure record for the one fault this pass
@@ -177,12 +166,6 @@ func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, tar
 		absent:       map[string]int{},
 		seen:         map[string]bool{},
 	}
-}
-
-// WithRecorder attaches the run-feed recorder. Optional. Returns the receiver.
-func (w *JobWatcher) WithRecorder(rec *CycleRecorder) *JobWatcher {
-	w.recorder = rec
-	return w
 }
 
 // WithAgentDeathNotifier attaches the run wake-up. Optional. Returns the
@@ -248,10 +231,9 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 		live[cycle.ID] = true
 		live[attemptKey(cycle)] = true
 		// Everything below reads the cycle in the environment its Job was bound
-		// into. The row copy carries it for this pass (the recorder's session
-		// keeps its own copy); nothing writes it back. A cycle whose fallback
-		// cannot be resolved is left alone this tick: that is no evidence about
-		// its Job, and its session, if any, is kept.
+		// into. The row copy carries it for this pass; nothing writes it back. A
+		// cycle whose fallback cannot be resolved is left alone this tick: that
+		// is no evidence about its Job.
 		env, err := cycleEnvironment(ctx, w.targets, cycle)
 		if err != nil {
 			slog.WarnContext(ctx, "codingagent.JobWatcher: no environment to read the cycle in (no verdict)",
@@ -259,21 +241,10 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 			continue
 		}
 		cycle.Environment = env
-		// Recording is started BEFORE the classification below, because a cycle
-		// this pass is about to close still has a feed worth keeping — and the
-		// recorder's own terminal handling (a final full read) is what captures
-		// the runner's last words.
-		//
-		// ctx here is the Run loop's context lifted into the service identity, not
-		// a per-tick one: a session outlives the tick that started it, and one
-		// started on a tick-scoped context would be cancelled a moment later and
-		// record exactly one poll.
-		w.recorder.Ensure(ctx, cycle)
 		w.checkCycle(ctx, cycle)
 	}
 	// Drop streaks for cycles that have left the window, so the maps cannot grow
-	// with the table. The recorder's sessions go with them: a cycle out of the
-	// window is one nothing is watching any more.
+	// with the table.
 	for id := range w.missing {
 		if !live[id] {
 			delete(w.missing, id)
@@ -289,7 +260,6 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 			delete(w.seen, id)
 		}
 	}
-	w.recorder.retain(live)
 }
 
 func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {

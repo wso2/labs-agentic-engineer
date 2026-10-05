@@ -31,7 +31,7 @@ func (f fakeRecordings) RecordingState(c *delivery.RunCycle) gen.RunCycleViewRec
 	if st, ok := f[c.ID]; ok {
 		return st
 	}
-	return gen.RunCycleViewRecordingNone
+	return gen.RunCycleViewRecordingUnavailable
 }
 
 // TestCycleView_CarriesTheRecordingState pins the one field on this projection
@@ -43,11 +43,10 @@ func TestCycleView_CarriesTheRecordingState(t *testing.T) {
 
 	row := &delivery.RunCycle{ID: "c1", Kind: delivery.CycleKindCoding, Attempts: 1}
 	for _, state := range []gen.RunCycleViewRecording{
-		gen.RunCycleViewRecordingNone,
-		gen.RunCycleViewRecordingRecording,
-		gen.RunCycleViewRecordingComplete,
-		gen.RunCycleViewRecordingGaps,
-		gen.RunCycleViewRecordingLost,
+		gen.RunCycleViewRecordingLive,
+		gen.RunCycleViewRecordingKept,
+		gen.RunCycleViewRecordingExpired,
+		gen.RunCycleViewRecordingUnavailable,
 	} {
 		if got := runread.CycleView(row, state).Recording; got != state {
 			t.Errorf("CycleView(_, %q).Recording = %q", state, got)
@@ -55,22 +54,18 @@ func TestCycleView_CarriesTheRecordingState(t *testing.T) {
 	}
 }
 
-// TestRecordingOf_NilReaderIsNone pins the degraded boot. A platform that
-// records nothing must SAY so — `none` is "there is no record of this cycle's
-// feed", which is exactly true — rather than leave the field empty and let a
-// console guess.
-func TestRecordingOf_NilReaderIsNone(t *testing.T) {
+// TestRecordingOf_NilReaderIsUnavailable pins the degraded boot. A platform
+// with no feed must SAY it can serve no cycle's log rather than leave the field
+// empty and let a console guess.
+func TestRecordingOf_NilReaderIsUnavailable(t *testing.T) {
 	t.Parallel()
 
 	row := &delivery.RunCycle{ID: "c1"}
-	if got := runread.RecordingOf(nil, row); got != gen.RunCycleViewRecordingNone {
-		t.Errorf("RecordingOf(nil) = %q, want none", got)
+	if got := runread.RecordingOf(nil, row); got != gen.RunCycleViewRecordingUnavailable {
+		t.Errorf("RecordingOf(nil) = %q, want unavailable", got)
 	}
-	states := fakeRecordings{"c1": gen.RunCycleViewRecordingGaps}
-	if got := runread.RecordingOf(states, row); got != gen.RunCycleViewRecordingGaps {
-		t.Errorf("RecordingOf = %q, want gaps", got)
-	}
-	if got := runread.RecordingOf(states, &delivery.RunCycle{ID: "unknown"}); got != gen.RunCycleViewRecordingNone {
-		t.Errorf("RecordingOf(unknown cycle) = %q, want none", got)
+	states := fakeRecordings{"c1": gen.RunCycleViewRecordingKept}
+	if got := runread.RecordingOf(states, row); got != gen.RunCycleViewRecordingKept {
+		t.Errorf("RecordingOf = %q, want kept", got)
 	}
 }

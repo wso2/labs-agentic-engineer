@@ -167,7 +167,7 @@ describe("failureCopy — runs with no record", () => {
     const copy = failureCopy(
       run({
         terminalReason: "redispatch-budget",
-        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", agentReason: "timed_out", recording: "none" }] as MilestoneRunView["cycles"],
+        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", agentReason: "timed_out", recording: "kept" }] as MilestoneRunView["cycles"],
       }),
     );
     expect(copy?.title).toBe("The coding agent stopped without opening a pull request");
@@ -178,7 +178,7 @@ describe("failureCopy — runs with no record", () => {
     const once = failureCopy(
       run({
         terminalReason: "redispatch-budget",
-        cycles: [{ id: "c1", kind: "coding", attempts: 1, createdAt: "2026-09-11T07:40:00Z", agentReason: "agent_failed:OOMKilled", recording: "none" }] as MilestoneRunView["cycles"],
+        cycles: [{ id: "c1", kind: "coding", attempts: 1, createdAt: "2026-09-11T07:40:00Z", agentReason: "agent_failed:OOMKilled", recording: "kept" }] as MilestoneRunView["cycles"],
       }),
     );
     // A cycle the pod-truth watcher closed cannot be re-dispatched, so this run
@@ -189,7 +189,7 @@ describe("failureCopy — runs with no record", () => {
     const twice = failureCopy(
       run({
         terminalReason: "redispatch-budget",
-        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", recording: "none" }] as MilestoneRunView["cycles"],
+        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", recording: "kept" }] as MilestoneRunView["cycles"],
       }),
     );
     expect(twice?.body).toContain("dispatched it twice");

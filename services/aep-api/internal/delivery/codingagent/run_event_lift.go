@@ -38,16 +38,10 @@ package codingagent
 // from one this reader deduced.
 //
 // THE LIFT DOES NOT NUMBER. Every event it returns carries `seq: 0`, and the
-// recorder stamps the real one as it appends (recordingSession.number). That
-// split is not tidiness — it is the fix for a measured data loss. Numbering here
-// could only ever be a function of the PRODUCER's seq, and a third of this
-// stream has none: raw stdout (container bootstrap, a stray library write, a
-// subprocess writing straight to fd 1, a crash tail) reaches the default arm
-// below with no envelope at all. Those lines were all numbered 0, so a consumer
-// deduping on (cycle, attempt, seq) — which the contract tells it to — kept the
-// first and threw the rest away. A five-line npm notice arrived as one line; a
-// five-line stack trace would have arrived as its first line. Only the party
-// that writes the events in order can number them, and that is the recorder.
+// feed stamps the real one from the PRODUCER's seq (cycle_feed.go): a v2 line
+// keeps its own, a v1 line's s becomes 2s with a synthesised `agent_started`
+// at 2s-1. Lines with no producer seq never reach the v2 feed, so no two of
+// its events can share a number by both being unnumbered.
 
 import (
 	"encoding/json"
@@ -135,12 +129,8 @@ func (l *lifter) line(raw, podTs string) []gen.RunEvent {
 		if ev.AgentID == "" {
 			ev.AgentID = leadAgentID
 		}
-		// The producer's own seq is DROPPED here and re-stamped by the recorder.
-		// It is not lost: the recorder reads it off the raw line for dedupe and
-		// gap detection (producerSeq), which is the only job it can do — one
-		// producer's numbering cannot also number the seq-less lines interleaved
-		// with it. In the ordinary case the recorder hands the line back the same
-		// number, because both sequences are dense and start at 1.
+		// The seq is stamped by the feed, which reads it off the raw line
+		// (producerSeq) for every envelope version alike.
 		ev.Seq = 0
 		return []gen.RunEvent{ev}
 	}
@@ -192,7 +182,7 @@ func (l *lifter) lift(ln runnerLine) []gen.RunEvent {
 }
 
 // announce is the synthesised `agent_started` for a subagent this page has just
-// met. It is returned BEFORE the line that revealed the agent, and the recorder
+// met. It is returned BEFORE the line that revealed the agent, and the feed
 // numbers the slice in order, so the row that opens an agent always precedes the
 // row that reports on it. depth is 1 because that is all a v1 feed can support: it carried one
 // `emitterId` per line and no parent, so every agent it can describe is one the

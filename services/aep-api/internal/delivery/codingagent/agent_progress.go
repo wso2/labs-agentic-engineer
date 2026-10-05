@@ -22,10 +22,11 @@ package codingagent
 // v1 envelope from a pre-cutover image — and this reader turns that stream into
 // a v1 feed from whichever source can still see it:
 //
-//   - while the cycle's Component exists, the pod's live log through the
-//     OpenChoreo API (LiveLogSource);
-//   - once the pod is reaped but the Component is retained, the observability
-//     plane's archive (ArchiveLogSource);
+//   - while the cycle's pod exists, the pod's log through the OpenChoreo API
+//     (LiveLogSource);
+//   - once the pod is gone, the observability plane by the cycle's Component
+//     UID (ArchiveLogSource) — component scope while the Component exists,
+//     project scope after the settler deleted it;
 //   - when neither can answer, a single synthetic "logs unavailable" line.
 //
 // That last case is deliberate. An empty stream and a lost log look identical
@@ -34,10 +35,10 @@ package codingagent
 //
 // THIS DERIVE-PER-VIEWER SHAPE IS THE OLD ONE, and it survives only for the v1
 // surfaces: the VERSION build-progress stream, which stitches many runs into
-// one narrative, and the legacy execution path. The v2 RUN feed no longer
-// derives anything — the platform records each cycle once and serves every
-// viewer from that file (run_recorder.go, run_events.go). Which is why the
-// page cap below is named `legacy`: a recording has no window at all.
+// one narrative, and the legacy execution path. The v2 RUN feed is the
+// CycleFeed's (cycle_feed.go): the whole log, read once per tick for every
+// viewer and numbered by the producer. Which is why the page cap below is
+// named `legacy`: the v2 feed has no window at all.
 //
 // The legacy coding_agent_logs snapshot is still READ for execution rows that
 // predate the milestone model, and nothing writes new ones.
@@ -67,10 +68,9 @@ const (
 	//
 	// It is a property of deriving a feed from a sliding pod-log window: a page
 	// has to end somewhere, and the newest events are the ones a live tail wants.
-	// The cost was that a finished run's whole post-mortem WAS this window —
-	// 200 events, however long the run — which is one of the five losses the
-	// recording closes. The v2 run feed therefore has no cap: it reads a file
-	// from offset zero. Nothing here applies to it.
+	// The cost is that a finished run's whole v1 post-mortem IS this window —
+	// 200 events, however long the run. The v2 run feed has no cap: it reads
+	// the whole log. Nothing here applies to it.
 	legacyProgressLimit = 200
 )
 
@@ -242,10 +242,9 @@ func firstLine(s string) string {
 
 // AgentProgressReader serves a cycle's (or a legacy execution's) agent activity.
 //
-// It answers two different questions from two different places, which is the
-// whole shape of the cutover: the v2 RUN feed comes out of the platform's own
-// recording (recordings), and the v1 surfaces still derive theirs from the live
-// pod log or the archive (live / archive).
+// It answers two different questions, which is the whole shape of the
+// cutover: the v2 RUN feed is the CycleFeed's (feed), and the v1 surfaces
+// derive theirs per viewer from the pod log or the archive (live / archive).
 type AgentProgressReader struct {
 	live    LiveLogSource
 	archive ArchiveLogSource
@@ -255,11 +254,9 @@ type AgentProgressReader struct {
 	// one.
 	targets writeTargetResolver
 
-	// recordings is the v2 read: the file the CycleRecorder wrote for this
-	// cycle. nil on a boot with no workspace volume, which every reader then
-	// reports as `none` rather than falling back to a per-viewer pod tail —
-	// silently re-deriving would hide the fact that nothing is being recorded.
-	recordings *RecordingStore
+	// feed is the v2 read. nil → every cycle's feed is empty and its state
+	// `unavailable`.
+	feed *CycleFeed
 
 	// logs is the LEGACY execution-keyed snapshot store. Read-only: the
 	// milestone model mints no execution rows, so this serves history that
@@ -281,17 +278,15 @@ func (r *AgentProgressReader) WithArchive(a ArchiveLogSource) *AgentProgressRead
 	return r
 }
 
-// WithRecordings attaches the run-feed recording store — the v2 read's only
-// source. Optional; without it every cycle reports `none`. Returns the receiver.
-func (r *AgentProgressReader) WithRecordings(store *RecordingStore) *AgentProgressReader {
-	r.recordings = store
+// WithFeed attaches the v2 run feed. Optional; without it every cycle's feed
+// is empty and its state `unavailable`. Returns the receiver.
+func (r *AgentProgressReader) WithFeed(feed *CycleFeed) *AgentProgressReader {
+	r.feed = feed
 	return r
 }
 
 // cycleLog is WHICH source could still answer for a cycle, plus how to read its
-// silence. It serves the V1 surfaces only: the v2 run feed reads a recording
-// and asks no such question, because the platform wrote the file and knows what
-// it holds.
+// silence. It serves the V1 surfaces only.
 type cycleLog struct {
 	// text is the raw pod stdout the winning source returned. Empty is a real
 	// answer — "nothing said yet" — not a failure.
@@ -309,9 +304,10 @@ type cycleLog struct {
 	reason string
 }
 
-// resolveCycleLog picks the source that can still see a cycle's output: the live
-// pod tail while its Component exists, then the observability archive while the
-// Component is retained, then nothing at all.
+// resolveCycleLog picks the source that can still see a cycle's output: the
+// pod's log while the pod EXISTS (whatever its Job's state — a finished pod's
+// log is whole, while the index may lag), else the observability plane by the
+// cycle's Component UID, else nothing at all.
 //
 // Both sources are read in the environment the cycle's Job was bound into. A
 // cycle whose fallback cannot be resolved is a failed read, like a transport
@@ -323,40 +319,44 @@ func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delive
 		return cycleLog{}, fmt.Errorf("cycle environment: %w", err)
 	}
 
+	var pod openchoreo.RuntimePod
+	componentGone := r.live == nil
 	if r.live != nil {
 		tail, err := r.live.Tail(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, env, logPageBytes)
 		switch {
+		case err == nil && tail.Pod.Found:
+			// The pod is the source. Empty text is its real answer: a closed
+			// cycle's agent that wrote nothing, or one still booting.
+			if strings.TrimSpace(tail.Text) == "" && closed {
+				return cycleLog{gone: true, reason: "the agent wrote no output", final: true}, nil
+			}
+			return cycleLog{text: tail.Text, live: !closed && !terminalPod(tail.Pod), final: closed, pod: tail.Pod}, nil
 		case err == nil:
-			// Real OCLogSource.Tail returns success + empty text when the
-			// Component is retained but the pod has nothing to say — not
-			// ErrComponentGone. Empty live falls through to the archive when
-			// the cycle is closed, the pod is terminal, or the archive already
-			// holds lines (pod reaped while the cycle is still open awaiting
-			// its PR webhook). Otherwise empty live is still scheduling / boot.
-			if strings.TrimSpace(tail.Text) != "" {
-				return cycleLog{text: tail.Text, live: !closed, final: closed, pod: tail.Pod}, nil
-			}
-			if !closed && !terminalPod(tail.Pod) {
-				if text, aerr := r.readArchive(ctx, cycle, env); aerr == nil && strings.TrimSpace(text) != "" {
-					return cycleLog{text: text}, nil
-				}
-				return cycleLog{text: tail.Text, live: true, pod: tail.Pod}, nil
-			}
-		case !errors.Is(err, ErrComponentGone):
+			pod = tail.Pod
+		case errors.Is(err, ErrComponentGone):
+			componentGone = true
+		default:
 			// A transport failure is not an answer about the cycle: surface it so
 			// the caller degrades this poll and tries again.
 			return cycleLog{}, fmt.Errorf("tail cycle pod log: %w", err)
 		}
 	}
 
-	// The Component is gone, live was empty on a closed cycle, or there is no
-	// live source: the archive is the only remaining reader. It only answers
-	// while the Component is retained — so this is also where "the component
-	// was reclaimed" surfaces.
+	// No pod: the observability plane is the only remaining reader.
 	text, err := r.readArchive(ctx, cycle, env)
+	if !closed && !componentGone {
+		// An open cycle whose Component has no pod is either still being
+		// scheduled (the dark zone) or between its pod's end and the PR webhook
+		// (the archive has its lines). An empty or failed archive read is the
+		// dark zone, narrated from the pod state.
+		if err == nil && strings.TrimSpace(text) != "" {
+			return cycleLog{text: text}, nil
+		}
+		return cycleLog{live: true, pod: pod}, nil
+	}
 	if err != nil {
 		// A CLOSED cycle will never gain a new source, so its unavailability is
-		// settled. An open one may still be mid-render or mid-observer-hiccup.
+		// settled. An open one may still be mid-observer-hiccup.
 		return cycleLog{gone: true, reason: unavailableReason(err), final: closed}, nil
 	}
 	if strings.TrimSpace(text) == "" && closed {
@@ -368,9 +368,9 @@ func (r *AgentProgressReader) resolveCycleLog(ctx context.Context, cycle *delive
 // CycleProgress returns one run CYCLE's agent activity as V1 progress events,
 // filtered to events strictly newer than sinceMillis.
 //
-// The v2 read of the same cycle is CycleEvents, and the two no longer share a
-// source: this one derives per viewer from the pod (or the archive), while that
-// one reads the platform's recording. This survives because the VERSION
+// The v2 read of the same cycle is CycleEvents, which keeps the producer's
+// numbering and reads the whole log once per tick; this one derives per viewer
+// from a 64KiB pod tail (or the archive). This survives because the VERSION
 // build-progress stream still speaks v1 — it stitches many runs into one
 // narrative and is not part of the run feed's cutover.
 func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error) {
@@ -395,20 +395,15 @@ func (r *AgentProgressReader) CycleProgress(ctx context.Context, cycle *delivery
 	return r.fromText(resp, src.text, sinceMillis, src.live, src.final, src.pod), nil
 }
 
-// readArchive asks the observability plane for the cycle's window. The window
-// is the cycle's own lifetime, padded either side: the dispatch write and the
-// first pod line are seconds apart, and a closed cycle's last lines land after
-// the merge webhook that closed it.
+// readArchive asks the observability plane for the cycle's lines in its window
+// (cycleLogWindow), filtered on the cycle's Component UID.
 func (r *AgentProgressReader) readArchive(ctx context.Context, cycle *delivery.RunCycle, env string) (string, error) {
 	if r.archive == nil {
 		return "", fmt.Errorf("%w: no archive configured", ErrArchiveUnavailable)
 	}
-	from := cycle.CreatedAt.UTC().Add(-5 * time.Minute)
-	to := time.Now().UTC()
-	if cycle.EndedAt != nil {
-		to = cycle.EndedAt.UTC().Add(10 * time.Minute)
-	}
+	from, to := cycleLogWindow(cycle, time.Now())
 	return r.archive.CycleArchive(ctx, ArchiveScope{
+		CycleID:       cycle.ID,
 		OrgName:       cycle.OrgID,
 		ProjectName:   cycle.ProjectID,
 		ComponentName: cycle.JobRef,

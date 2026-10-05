@@ -90,8 +90,8 @@ type ProgressService struct {
 	cycles CycleReader
 	logs   CycleLogReader
 	// recordings answers RunCycleView.recording on every `cycle` frame. It is a
-	// separate port from logs because a boot can serve cycles without recording
-	// them, and the frame must then say `none` rather than nothing.
+	// separate port from logs because a boot can serve cycles without a feed,
+	// and the frame must then say `unavailable` rather than nothing.
 	recordings RecordingReader
 
 	// tick / keepAlive are the loop's two cadences, held as fields purely so a
@@ -185,11 +185,10 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 
 	// Per-connection dedup + cursor state.
 	lastCycleJSON := map[string]string{} // cycle id → last emitted cycle frame
-	// cursor is the OPAQUE feed cursor per cycle — a position inside the
-	// platform's recording of that cycle, whose grammar belongs to the reader.
-	// It is per CONNECTION: a reconnect starts at "" and replays the cycle from
-	// its first event, which is the whole point of recording it. The client
-	// dedups on (cycleId, attempt, seq).
+	// cursor is the OPAQUE feed cursor per cycle — a position in that cycle's
+	// feed, whose grammar belongs to the reader. It is per CONNECTION: a
+	// reconnect starts at "" and replays the cycle from its first event. The
+	// client dedups on (cycleId, attempt, seq).
 	cursor := map[string]string{}
 
 	// derive re-reads the run row, walks its cycles oldest-first emitting changed
@@ -220,7 +219,7 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 		alive = s.emitCycles(ctx, cycles, lastCycleJSON,
 			func(v *gen.RunCycleView) bool { return writeFrame(&runFrame{Type: frameTypeCycle, Cycle: v}) },
 			func(ctx context.Context, c *delivery.RunCycle, _ int) bool {
-				return s.emitEvents(ctx, c, cursor, func(f *runFrame) bool { return writeFrame(f) })
+				return s.emitEvents(ctx, row, c, cursor, func(f *runFrame) bool { return writeFrame(f) })
 			})
 		return row.State, false, alive
 	}
@@ -291,11 +290,11 @@ func (s *ProgressService) run(ctx context.Context, w io.Writer, flush func(), or
 // attempt's recording — stamping the row's number on those events would file a
 // retry's history under the retry, and a client deduping on (cycleId, attempt,
 // seq) would then drop half of it as duplicates of the other half.
-func (s *ProgressService) emitEvents(ctx context.Context, c *delivery.RunCycle, cursor map[string]string, emit func(*runFrame) bool) bool {
+func (s *ProgressService) emitEvents(ctx context.Context, run *delivery.MilestoneRun, c *delivery.RunCycle, cursor map[string]string, emit func(*runFrame) bool) bool {
 	if s.logs == nil || c.JobRef == "" {
 		return true
 	}
-	events, attempt, next, err := s.logs.CycleEvents(ctx, c, cursor[c.ID])
+	events, attempt, next, err := s.logs.CycleEvents(ctx, run, c, cursor[c.ID])
 	if err != nil {
 		return true
 	}

@@ -152,6 +152,8 @@ func Load() (Config, error) {
 		AgentRunnerImageOpenCode: r.readOptionalString("AGENT_RUNNER_IMAGE_OPENCODE", ""),
 		// See Config.CodingAgentSettleGrace.
 		CodingAgentSettleGrace: r.readOptionalDuration("CODING_AGENT_SETTLE_GRACE", 5*time.Minute),
+		// The observability plane's log retention (3 days on Cloud).
+		ObserverLogRetention: r.readOptionalDuration("OBSERVER_LOG_RETENTION", 72*time.Hour),
 		// Finished cycle Jobs are deleted after this; see Config.CodingAgentJobTTL.
 		CodingAgentJobTTL: r.readOptionalDuration("CODING_AGENT_JOB_TTL", 600*time.Second),
 	}
