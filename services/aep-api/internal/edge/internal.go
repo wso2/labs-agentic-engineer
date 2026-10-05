@@ -51,8 +51,9 @@ import (
 // InternalDeps carries the services + authorizer the internal S2S operations
 // need. main.go (internal/app) fills it with real instances.
 type InternalDeps struct {
-	// RunnerAuth verifies runner publisher-cc bearers against the
-	// path execution id. nil fails closed: every runner op answers 503.
+	// RunnerAuth verifies runner publisher-cc bearers against the path
+	// cycle id: the token's org must own that run cycle (the cycle fence).
+	// nil fails closed: every runner op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
 	// SREHandoff verifies aep-mcp-server's static SRE handoff bearer for the
 	// sre/ ops. It is the same instance that switches auto-RCA on

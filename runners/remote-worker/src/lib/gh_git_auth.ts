@@ -74,7 +74,7 @@ export function ghGitCredentialHelper(realGhPath: string): string {
 /** Minimal wrapper: exec the real gh. Env GITHUB_TOKEN/GH_TOKEN is enough for auth. */
 export function ghPassthroughScript(realGhPath: string): string {
   return `#!/usr/bin/env bash
-# Env-token mode: exec the real gh binary. GitHub auth comes from
+# Passthrough: exec the real gh binary. GitHub auth comes from
 # GITHUB_TOKEN/GH_TOKEN in the environment — no platform token exchange.
 exec ${JSON.stringify(realGhPath)} "$@"
 `;

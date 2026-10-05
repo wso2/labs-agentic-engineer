@@ -222,7 +222,7 @@ exit 1
       assert.ok(!cfg.includes(GH_TOKEN), "no credential at rest in .git/config");
 
       const wrapper = await fs.promises.readFile(layout.ghWrapper, "utf-8");
-      assert.match(wrapper, /Env-token mode/);
+      assert.match(wrapper, /^# Passthrough: exec the real gh binary/m);
       assert.ok(!wrapper.includes("credhelper.sh"), wrapper);
 
       const agentEnv = {

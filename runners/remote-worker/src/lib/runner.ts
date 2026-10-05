@@ -305,10 +305,10 @@ export async function startCodingRun(
   // the controls sit on the way OUT rather than on concealment: the fail-closed
   // WebSearch/WebFetch DLP hooks below, and the progress scrubber primed from
   // credential_env.ts before this process logs anything.
-  // F3c — surface AEP_TASK_ID and AEP_PLATFORM_URL to the agent's
-  // child env so the aep skill's verification-failed shell snippet can
-  // hit POST $AEP_PLATFORM_URL/api/v1/tasks/$AEP_TASK_ID/verification-failed.
-  // The curl snippet reads AEP_BEARER_FILE at call time.
+  // The agent's child env also names its run cycle (AEP_TASK_ID), the
+  // platform's URL (AEP_PLATFORM_URL) and the bearer's file path: a shell step
+  // that calls aep-api reads AEP_BEARER_FILE at call time, so it always gets
+  // the token the loop below last refreshed.
   const childEnv: Record<string, string> = {
     ...(process.env as Record<string, string>),
     PATH: `${layout.aepDir}:${process.env.PATH ?? ""}`,

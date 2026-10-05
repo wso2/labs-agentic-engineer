@@ -41,8 +41,10 @@ import (
 //   - list_org_endpoints             → every service endpoint published across the org
 //   - list_org_component_endpoints   → list_org_endpoints resolved with repo coords + discovered OpenAPI spec
 //   - list_platform_resource_types   → the platform-provisioned resource types on the cluster
+//   - list_groups                    → the org's directory groups
 //   - validate_openapi_spec          → validate + normalize an OpenAPI doc the caller already has
 //   - fetch_openapi_spec             → SSRF-hardened fetch of an OpenAPI doc by URL, then validate + normalize
+//   - slice_openapi_spec             → cut the named operations + their schemas out of a provider's OpenAPI doc
 //
 // Mounted at POST /internal/v1/mcp behind auth.PublisherMCPGate, which binds
 // the acting org onto the request context from a verified publisher client

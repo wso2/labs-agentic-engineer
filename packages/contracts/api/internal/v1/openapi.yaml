@@ -28,7 +28,8 @@ paths:
       parameters:
       - description: Validation cycle id the runner callback is scoped to — the
           run cycle the platform dispatched this runner for, carried to the pod as
-          AEP_TASK_ID and bound into its bearer token
+          AEP_TASK_ID. The per-org publisher token does not name it; the edge
+          answers only a cycle of the token's own org (the cycle fence)
         in: path
         name: cycleId
         required: true
