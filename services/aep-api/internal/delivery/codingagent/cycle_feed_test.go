@@ -638,3 +638,92 @@ func TestCycleFeed_AnIndexThatCatchesUpDeliversTheTailOnce(t *testing.T) {
 		t.Fatalf("seqs %v", all)
 	}
 }
+
+// R3-I1: an open cycle whose pod is Pending and has never run has written
+// nothing, so the observer is not asked, and a pod-log read that fails on a
+// container not yet created is the dark zone, not "logs unavailable".
+func TestCycleFeed_PendingPodNarratesTheDarkZoneWithoutAnObserverRead(t *testing.T) {
+	pending := openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Pending", WaitingReason: "ContainerCreating"}
+	for name, logErr := range map[string]error{
+		"log not found":  openchoreo.ErrNotFound,
+		"log read fails": errors.New("openchoreo: internal server error"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rt := &fakeRuntime{pod: pending, logErr: logErr}
+			obs := &fakeObserver{err: errors.New("observer: 500")}
+			f := newTestFeed(rt, obs)
+			c := openCycle("c1", "uid-1")
+			evs, attempt, _, _ := f.Events(context.Background(), nil, &c, "")
+			if obs.calls != 0 {
+				t.Fatalf("observer calls %d, want 0 for a pod that never ran", obs.calls)
+			}
+			if len(evs) != 1 || evs[0].Seq >= 0 || evs[0].Seq == seqLogsUnavailable || attempt != 1 {
+				t.Fatalf("events %+v attempt %d, want one bootstrap marker", evs, attempt)
+			}
+			if st := f.State(&c); st != gen.RunCycleViewRecordingLive {
+				t.Fatalf("state %s, want live", st)
+			}
+		})
+	}
+}
+
+// R3-I1: an open cycle with no pod yet narrates its dark zone even when the
+// observer read fails, as the v1 resolver does.
+func TestCycleFeed_ObserverErrorOnAnOpenCycleWithoutAPodIsTheDarkZone(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	obs := &fakeObserver{err: errors.New("observer: 500")}
+	c := openCycle("c1", "uid-1")
+	evs, _, _, _ := newTestFeed(rt, obs).Events(context.Background(), nil, &c, "")
+	if len(evs) != 1 || evs[0].Seq != seqBootScheduling {
+		t.Fatalf("events %+v, want the scheduling marker", evs)
+	}
+}
+
+// A running pod whose log read fails is still a failed read: it has spoken,
+// and the dark-zone marker would hide that.
+func TestCycleFeed_RunningPodLogFailureIsUnavailable(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"}, logErr: errors.New("openchoreo: 500")}
+	c := openCycle("c1", "uid-1")
+	evs, _, _, _ := newTestFeed(rt, &fakeObserver{}).Events(context.Background(), nil, &c, "")
+	if len(evs) != 1 || evs[0].Seq != seqLogsUnavailable {
+		t.Fatalf("events %+v, want logs unavailable", evs)
+	}
+}
+
+// 5.11 M-1: attempts are numbered on producer-seq lines only. A crashed
+// attempt that wrote only bootstrap output is in the component scope but not
+// the project scope (its phrase needs agentId), so counting it would shift
+// earlier attempts by one across the Component's deletion.
+func TestCycleFeed_SeqLessPodsDoNotTakeAnAttemptNumber(t *testing.T) {
+	ctx := context.Background()
+	podA := toObsLinesAt(v2Lines(t, 1, 2), "uid-1", "pod-a", feedT0)
+	podB := []observability.LogLine{{Timestamp: feedT0.Add(5 * time.Minute), Log: "npm ERR! crashed before the runner", ComponentUID: "uid-1", PodName: "pod-b"}}
+	podC := toObsLinesAt(v2Lines(t, 1, 2, 3), "uid-1", "pod-c", feedT0.Add(10*time.Minute))
+	rawC := []observability.LogLine{{Timestamp: feedT0.Add(9 * time.Minute), Log: "npm WARN raw", ComponentUID: "uid-1", PodName: "pod-c"}}
+	c := settledCycle("c1", "uid-1")
+	c.Attempts = 3
+
+	walk := func(f *CycleFeed) [][2]any {
+		var out [][2]any
+		cur := ""
+		for i := 0; i < 4; i++ {
+			evs, attempt, next, _ := f.Events(ctx, nil, &c, cur)
+			if len(evs) > 0 {
+				out = append(out, [2]any{attempt, seqsOf(evs)})
+			}
+			cur = next
+		}
+		return out
+	}
+	component := &fakeObserver{lines: append(append(append(append([]observability.LogLine{}, podA...), podB...), rawC...), podC...)}
+	project := &fakeObserver{lines: append(append([]observability.LogLine{}, podA...), podC...)}
+	fromComponent := walk(newTestFeed(&fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}, component))
+	fromProject := walk(newTestFeed(&fakeRuntime{bindingErr: openchoreo.ErrNotFound}, project))
+	if !reflect.DeepEqual(fromComponent, fromProject) {
+		t.Fatalf("component scope %v, project scope %v: want identical attempts and seqs", fromComponent, fromProject)
+	}
+	want := [][2]any{{2, []int64{1, 2}}, {3, []int64{1, 2, 3}}}
+	if !reflect.DeepEqual(fromProject, want) {
+		t.Fatalf("attempts %v, want %v", fromProject, want)
+	}
+}

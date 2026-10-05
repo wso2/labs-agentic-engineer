@@ -44,8 +44,9 @@ package codingagent
 // on it, so a line the index returned twice is served once.
 //
 // ATTEMPTS. A re-dispatch reuses the cycle's Component, so one log can hold
-// several pods. Lines group by pod name, ordered by each pod's first line; the
-// newest pod is the cycle's current attempt and earlier pods count down. A pod
+// several pods. Producer-seq lines group by pod name (seq-less lines number
+// nothing: the project scope never returns them), ordered by each pod's first
+// line; the newest pod is the cycle's current attempt and earlier pods count down. A pod
 // whose last line is older than the current attempt's dispatch (less the
 // watcher's clock skew) is the previous attempt's leftover — the watcher's rule
 // (isLeftoverPod), stated on lines so both sources apply it identically.
@@ -275,6 +276,16 @@ func (f *CycleFeed) load(ctx context.Context, cycle *delivery.RunCycle) feedRead
 				}
 				return feedRead{pod: pod, lines: out}
 			}
+			if cycleLive(cycle) && podNeverRan(pod) {
+				// The pod has written nothing yet, so the index has nothing of
+				// it either, and OpenChoreo answers a container still being
+				// created with an error. Its state is the whole report.
+				if !errors.Is(err, openchoreo.ErrNotFound) {
+					slog.DebugContext(ctx, "codingagent.CycleFeed: pending pod log not readable",
+						"cycle", cycle.ID, "error", err)
+				}
+				return feedRead{pod: pod}
+			}
 			if !errors.Is(err, openchoreo.ErrNotFound) {
 				return f.failed(ctx, cycle, "pod_log", err)
 			}
@@ -302,6 +313,15 @@ func (f *CycleFeed) load(ctx context.Context, cycle *delivery.RunCycle) feedRead
 		To:            to,
 	}, componentExists)
 	if err != nil {
+		if cycleLive(cycle) && componentExists && !terminalPod(pod) {
+			// An open cycle whose Component has no readable pod log is still
+			// in its dark zone (or between its pod's end and the close, where
+			// the next read catches up): narrate the pod state rather than
+			// call the log lost, as the v1 resolver does.
+			slog.WarnContext(ctx, "codingagent.CycleFeed: cycle log read failed, serving the dark zone",
+				"cycle", cycle.ID, "source", "observer", "error", err)
+			return feedRead{pod: pod}
+		}
 		return f.failed(ctx, cycle, "observer", err)
 	}
 	out := make([]feedLine, 0, len(lines))
@@ -321,7 +341,7 @@ func (f *CycleFeed) failed(ctx context.Context, cycle *delivery.RunCycle, source
 
 // assemble builds every attempt's feed from one read.
 func (f *CycleFeed) assemble(cycle *delivery.RunCycle, run *delivery.MilestoneRun, rd feedRead) []feedAttempt {
-	groups := groupByPod(rd.lines)
+	groups := groupByPod(producerLines(rd.lines))
 	numbers := attemptNumbers(cycle, groups)
 	byAttempt := map[int][]feedLine{}
 	for i, g := range groups {
@@ -383,9 +403,27 @@ func (f *CycleFeed) cancelledAndIndexed(cycle *delivery.RunCycle, run *delivery.
 	return f.clock().Sub(*end) >= feedIndexLag
 }
 
-// attemptEvents turns one attempt's raw lines into its feed: producer-seq
-// lines only, redacted, sorted and deduped on seq, lifted to v2, with a gap
-// notice before the line after each hole.
+// producerLines keeps the lines that carry a producer seq, redacted. Only these
+// are numbered into attempts: a pod that wrote only seq-less output (a crash
+// before the runner started) is absent from the observer's project scope, so
+// counting it would number the same attempt differently on each source.
+func producerLines(lines []feedLine) []feedLine {
+	out := make([]feedLine, 0, len(lines))
+	for _, l := range lines {
+		if len(l.log) > feedLineCap {
+			continue
+		}
+		l.log = redactSecrets(l.log)
+		if _, _, ok := producerSeq(l.log); ok {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// attemptEvents turns one attempt's producer lines (see producerLines) into
+// its feed: sorted and deduped on seq, lifted to v2, with a gap notice before
+// the line after each hole.
 func attemptEvents(lines []feedLine) []gen.RunEvent {
 	type produced struct {
 		seq  int64
@@ -395,15 +433,11 @@ func attemptEvents(lines []feedLine) []gen.RunEvent {
 	}
 	parsed := make([]produced, 0, len(lines))
 	for _, l := range lines {
-		if len(l.log) > feedLineCap {
-			continue
-		}
-		msg := redactSecrets(l.log)
-		seq, v1, ok := producerSeq(msg)
+		seq, v1, ok := producerSeq(l.log)
 		if !ok {
 			continue
 		}
-		parsed = append(parsed, produced{seq: seq, v1: v1, msg: msg, line: l})
+		parsed = append(parsed, produced{seq: seq, v1: v1, msg: l.log, line: l})
 	}
 	sort.SliceStable(parsed, func(i, j int) bool { return parsed[i].seq < parsed[j].seq })
 
@@ -647,6 +681,12 @@ func producerSeq(raw string) (seq int64, v1 bool, ok bool) {
 // cycleLive is an open cycle whose Job has not been suspended.
 func cycleLive(cycle *delivery.RunCycle) bool {
 	return cycle.EndedAt == nil && cycle.JobSuspendedAt == nil
+}
+
+// podNeverRan is a listed pod still Pending with no container that ever
+// finished: nothing it would write has been written yet.
+func podNeverRan(pod openchoreo.RuntimePod) bool {
+	return pod.Found && pod.Phase == "Pending" && pod.FinishedAt.IsZero()
 }
 
 // cycleEnd is the later of the cycle's close and its Job's suspend, nil while
