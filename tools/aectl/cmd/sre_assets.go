@@ -78,7 +78,8 @@ spec:
 // secret the plane's installer gave it, so the observer must log in with that
 // one. Otherwise its project lookups 401 and every query the SRE agent makes
 // through it comes back empty. Takes over the plane installer's ExternalSecret
-// of the same name; srePlaneSecretsTmpl carries the same key.
+// of the same name; srePlaneSecretsTmpl carries the same key. `aectl platform
+// install` and `sync-clients` apply it too (observer_client_secret.go).
 const sreObserverClientSecretTmpl = `
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

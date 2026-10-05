@@ -1711,6 +1711,7 @@ if [ "$WITH_OBSERVABILITY" = "1" ]; then
     kubectl create configmap cluster-gateway-ca --from-literal=ca.crt="$CA_CRT" \
         -n openchoreo-observability-plane --dry-run=client -o yaml | kubectl apply -f -
 
+    # observer-secret starts on OpenChoreo's default; aectl owns the observer client wiring and repoints it (observer_client_secret.go).
     kubectl apply -f - <<EOF
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

@@ -67,7 +67,7 @@ type thunderClientDef struct {
 // Public (PKCE) clients use the redirect URIs supplied at registration time.
 var aepThunderClients = []thunderClientDef{
 	{clientID: "openchoreo-workload-publisher-client", clientType: "confidential", vaultName: "oc-workload-publisher", secretKey: "OC_WORKLOAD_PUBLISHER_SECRET"},
-	{clientID: "openchoreo-observer-resource-reader-client", clientType: "confidential", vaultName: "oc-observer-reader", secretKey: "OC_OBSERVER_READER_SECRET"},
+	{clientID: observerReaderClientID, clientType: "confidential", vaultName: "oc-observer-reader", secretKey: "OC_OBSERVER_READER_SECRET"},
 	{clientID: "aep-api-client", clientType: "confidential", vaultName: "aep-api-client", secretKey: "AEP_API_CLIENT_SECRET"},
 	{clientID: "bff-git-service", clientType: "confidential", vaultName: "bff-git-service", secretKey: "BFF_TO_GIT_SERVICE_SECRET"},
 	{clientID: "bff-remote-worker", clientType: "confidential", vaultName: "bff-remote-worker", secretKey: "BFF_TO_REMOTE_WORKER_SECRET"},
@@ -254,6 +254,11 @@ func doThunderSetup(
 			return fmt.Errorf("register Thunder client %q: %w", def.clientID, err)
 		}
 		clientSp.Success(def.clientID)
+		if def.clientID == observerReaderClientID {
+			// Thunder now holds aep/thunder-clients/oc-observer-reader for the
+			// observer's client, so the plane's observer must read that one.
+			syncObserverClientSecret(ctx, k8sClient)
+		}
 	}
 
 	// 5. Ensure the system client is assigned to the aep-system role so it can manage resources.

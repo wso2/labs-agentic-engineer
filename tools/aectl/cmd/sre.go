@@ -103,7 +103,7 @@ func init() {
 
 	f := sreInstallCmd.Flags()
 	f.StringVar(&sreNamespace, "namespace", "wso2-aep", "Namespace where AEP + OpenBao are installed")
-	f.StringVar(&sreObsNamespace, "obs-namespace", "openchoreo-observability-plane", "Observability plane namespace")
+	f.StringVar(&sreObsNamespace, "obs-namespace", defaultObsNamespace, "Observability plane namespace")
 	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.0.1-hotfix.1", "openchoreo-observability-plane chart version, when no plane is installed yet (an installed plane keeps its own)")
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.1", "observability-logs-opensearch chart version, when no plane is installed yet")
 	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "tharindulak/sre-agent", "RCA/SRE agent image repository")
@@ -119,7 +119,7 @@ func init() {
 	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions, services/aep-mcp-server/skills); default: search upward from the working directory")
 	f.StringVar(&sreOrgNamespace, "org-namespace", "", "OpenChoreo namespace of the org whose Console-saved model connection key (an Anthropic key) the agent uses (default: config oc.default_org_namespace, else \"default\")")
 	f.StringVar(&sreOrgSecretStore, "org-secret-store", "default", "ClusterSecretStore that resolves the org's secret paths")
-	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
+	f.StringVar(&srePlatformStore, "platform-secret-store", defaultPlatformSecretStore, "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.String("oc-api-url", "", "In-cluster OpenChoreo platform API URL (overrides config)")
 	_ = viper.BindPFlag("oc.api_url", f.Lookup("oc-api-url"))
 }
@@ -384,16 +384,38 @@ func onOff(b bool) string {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, tmpl string, p sreParams) error {
-	t, err := template.New(fieldManager).Parse(tmpl)
+// yamlApplier server-side-applies manifests; satisfied by *k8s.Applier.
+type yamlApplier interface {
+	ApplyYAML(ctx context.Context, fieldManager, defaultNamespace, manifests string) error
+}
+
+// objectGetter reads one object, nil when it is not found; satisfied by
+// *k8s.Applier.
+type objectGetter interface {
+	Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error)
+}
+
+// renderTemplate renders one of this file's manifest templates.
+func renderTemplate(name, tmpl string, p sreParams) (string, error) {
+	t, err := template.New(name).Parse(tmpl)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// applyTemplate renders a template and applies it as the aectl-sre field
+// manager, so every writer of these objects is the same SSA owner.
+func applyTemplate(ctx context.Context, applier yamlApplier, name, ns, tmpl string, p sreParams) error {
+	manifests, err := renderTemplate(name, tmpl, p)
+	if err != nil {
 		return err
 	}
-	return applier.ApplyYAML(ctx, "aectl-sre", ns, buf.String())
+	return applier.ApplyYAML(ctx, "aectl-sre", ns, manifests)
 }
 
 // ensureClusterGatewayCA copies the cluster gateway CA cert from the
@@ -458,7 +480,7 @@ func waitForSecret(ctx context.Context, client *kubernetes.Clientset, ns, name s
 // waitForExternalSecretRefresh waits until ESO has synced the ExternalSecret
 // at or after since: for a Secret that already exists, the point at which it
 // holds the ExternalSecret's current source.
-func waitForExternalSecretRefresh(ctx context.Context, applier *k8s.Applier, ns, name string, since time.Time, timeout time.Duration) error {
+func waitForExternalSecretRefresh(ctx context.Context, applier objectGetter, ns, name string, since time.Time, timeout time.Duration) error {
 	// refreshTime has second precision.
 	since = since.Truncate(time.Second)
 	deadline := time.Now().Add(timeout)
