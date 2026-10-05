@@ -19,8 +19,10 @@ package projects
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 	"github.com/wso2/aep/aep-api/internal/spec/artifactstest"
 )
@@ -124,6 +126,35 @@ func TestDesignOutdated(t *testing.T) {
 		}
 	})
 
+	// A baseline the pod refuses (a BaseRef it does not accept) or no longer
+	// has is skipped with a warning, as the save path does: the poll must not
+	// 500 every few seconds on a ledger row nobody can fix.
+	for name, refusal := range map[string]error{
+		"an unknown base commit":        fmt.Errorf("list tree at gone: %w", sourcecontrol.ErrRefNotFound),
+		"a base commit the pod refuses": fmt.Errorf("list tree at main: %w", podRefusal{}),
+	} {
+		t.Run(name+" skips the fact", func(t *testing.T) {
+			t.Parallel()
+			svc := svcFor(&stubDesignTurns{lastDesign: &spec.AgentTurn{BaseRef: "gone"}}, "", refusal)
+
+			got, err := svc.designOutdated(context.Background(), "acme", "proj", "now")
+			if err != nil || got {
+				t.Fatalf("designOutdated = (%v, %v), want (false, nil)", got, err)
+			}
+		})
+	}
+
+	// AE Studio not serving is not a refusal: it reaches the caller, whose
+	// degrade marks the spec facts unavailable.
+	t.Run("AE Studio unavailable still reaches the caller", func(t *testing.T) {
+		t.Parallel()
+		svc := svcFor(&stubDesignTurns{lastDesign: &spec.AgentTurn{BaseRef: "abc"}}, "", sourcecontrol.ErrAEStudioUnavailable)
+
+		if _, err := svc.designOutdated(context.Background(), "acme", "proj", "now"); !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) {
+			t.Fatalf("err = %v, want ErrAEStudioUnavailable", err)
+		}
+	})
+
 	// An unwired source cannot answer, and guessing "stale" would block Build
 	// on every project.
 	t.Run("an unwired turn source reports nothing", func(t *testing.T) {
@@ -136,3 +167,10 @@ func TestDesignOutdated(t *testing.T) {
 		}
 	})
 }
+
+// podRefusal stands in for the adapter's StatusError on a pod 400: an error
+// that classifies itself permanent.
+type podRefusal struct{}
+
+func (podRefusal) Error() string   { return "ae studio: list-tree answered 400 bad_request" }
+func (podRefusal) Permanent() bool { return true }

@@ -134,7 +134,10 @@ const designFlow = "design"
 // A baseline that cannot be read is reported as an ERROR rather than as
 // "unchanged". The two failures are not symmetric: a spurious warning costs one
 // re-derivation, while a swallowed one lets the coding agents implement a
-// design the user has already changed their mind about.
+// design the user has already changed their mind about. The exception is a
+// baseline commit the pod refuses or no longer has (baseCommitRefused): no
+// retry or user action can read it, so, as the save path does, the fact is
+// skipped with a warning instead of failing every poll.
 func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowFingerprint string) (bool, error) {
 	if s.specTurns == nil {
 		return false, nil
@@ -148,9 +151,29 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 	}
 	was, err := s.artifactSvc.RequirementsFingerprintAt(ctx, orgName, projectName, lastDesign.BaseRef)
 	if err != nil {
+		if baseCommitRefused(err) {
+			slog.WarnContext(ctx, "project status: the last design run's commit is unreadable; staleness unchecked",
+				"org", orgName, "project", projectName, "base", lastDesign.BaseRef, "error", err)
+			return false, nil
+		}
 		return false, fmt.Errorf("requirements at the last design run's base: %w", err)
 	}
 	return was != nowFingerprint, nil
+}
+
+// baseCommitRefused is a read of the design baseline that names a commit the
+// pod does not have (ErrRefNotFound) or refuses outright (a permanent pod
+// refusal, e.g. a 400 for an `at` it does not accept). The AE Studio states
+// the status poll degrades on (absent, unavailable, misconfigured) and a
+// missing repository are not refusals of the commit.
+func baseCommitRefused(err error) bool {
+	if errors.Is(err, sourcecontrol.ErrRefNotFound) {
+		return true
+	}
+	if specUnavailableReason(err) != "" || errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		return false
+	}
+	return sourcecontrol.IsPermanent(err)
 }
 
 // SetStageSources wires the build/deploy stage inputs at the composition
