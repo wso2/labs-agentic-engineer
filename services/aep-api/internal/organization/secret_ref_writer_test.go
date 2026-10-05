@@ -509,18 +509,17 @@ func TestSecretRefWriter_DeletePublisher(t *testing.T) {
 }
 
 // seedUserPATRow inserts a minimal valid org_credentials row of kind
-// user-pat (the CHECK constraints require webhook_secrets to be a non-empty
-// array for this kind, and installation_id/selected_repos to be NULL).
+// user-pat (the app_fields CHECK requires installation_id/selected_repos to
+// be NULL for this kind).
 func seedUserPATRow(t testing.TB, db *gorm.DB, ocOrgID string) {
 	t.Helper()
 	row := organization.OrgCredential{
-		OcOrgID:        ocOrgID,
-		Kind:           "user-pat",
-		GitHubLogin:    "ada",
-		IdentityName:   "Ada Lovelace",
-		IdentityEmail:  "ada@example.com",
-		IdentityLogin:  "ada",
-		WebhookSecrets: organization.WebhookSecrets{{Secret: "seed-secret"}},
+		OcOrgID:       ocOrgID,
+		Kind:          "user-pat",
+		GitHubLogin:   "ada",
+		IdentityName:  "Ada Lovelace",
+		IdentityEmail: "ada@example.com",
+		IdentityLogin: "ada",
 	}
 	if err := db.Create(&row).Error; err != nil {
 		t.Fatalf("seed user-pat row %s: %v", ocOrgID, err)

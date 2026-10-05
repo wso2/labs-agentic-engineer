@@ -25,8 +25,8 @@ import (
 
 // OrgAnthropicRepository reads the per-org, per-role Anthropic credential
 // metadata rows (`org_anthropic_credentials`, PK (oc_org_id, role) — the
-// non-secret projection fields; the encrypted bytes live in org_secrets) and
-// stamps their secret-ref columns. Every accessor is keyed by BOTH oc_org_id and
+// non-secret projection fields; the token lives only in the vault, behind the
+// org's coding-agent-key reference row). Every accessor is keyed by BOTH oc_org_id and
 // role, so a dropped filter is a missing method, not a cross-org write or a
 // cross-role one.
 //

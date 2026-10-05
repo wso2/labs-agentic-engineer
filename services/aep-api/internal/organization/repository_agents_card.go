@@ -164,17 +164,12 @@ func (t *agentsCardTx) UpsertCredential(row *OrgAnthropicCredential) error {
 	// would leave the column at its 'api_key' default, and dispatch would then
 	// mount a subscription token as ANTHROPIC_API_KEY — a name Claude Code ranks
 	// higher, so the run would bill the wrong credential with no error to show.
-	//
-	// key_prefix and key_last4 are written empty: no character of the token
-	// is kept (the columns are NOT NULL until they are dropped).
 	return t.tx.Raw(`
 		INSERT INTO org_anthropic_credentials
-		    (oc_org_id, role, credential_kind, key_prefix, key_last4, status, connected_at, last_validated_at, validation_error)
-		VALUES (?, ?, ?, '', '', ?, ?, ?, NULL)
+		    (oc_org_id, role, credential_kind, status, connected_at, last_validated_at, validation_error)
+		VALUES (?, ?, ?, ?, ?, ?, NULL)
 		ON CONFLICT (oc_org_id, role) DO UPDATE
 		  SET credential_kind    = EXCLUDED.credential_kind,
-		      key_prefix         = '',
-		      key_last4          = '',
 		      status             = EXCLUDED.status,
 		      last_validated_at  = EXCLUDED.last_validated_at,
 		      validation_error   = NULL

@@ -50,8 +50,8 @@ type Infra struct {
 // touches the network, the clock, OpenBao, or the filesystem at boot — Assemble
 // is pure. Required infra errors; optional infra warns.
 func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
-	// Credential encryption key — needed for migrations (encrypt-in-place) and
-	// the column cipher. Decoded once here.
+	// Credential encryption key — the column cipher's (test_users'
+	// password_sealed). Decoded once here.
 	credKey, err := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
 	if err != nil || len(credKey) != 32 {
 		// config.Validate guarantees this decodes to 32 bytes; kept as defense.
@@ -64,7 +64,7 @@ func Resolve(ctx context.Context, cfg config.Config) (Infra, error) {
 	if err != nil {
 		return Infra{}, fmt.Errorf("database init: %w", err)
 	}
-	if err := Bootstrap(ctx, db, cfg, credKey); err != nil {
+	if err := Bootstrap(ctx, db, cfg); err != nil {
 		return Infra{}, err
 	}
 

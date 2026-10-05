@@ -160,9 +160,8 @@ func TestStorePasswordRoundTripsThroughTheSealedColumn(t *testing.T) {
 	}
 }
 
-// A reveal under a DIFFERENT credential-encryption-key must ERROR. This pins the
-// deliberate choice of Open over OpenTolerant: OpenTolerant would answer a
-// key rotation by handing the caller the base64 ciphertext AS the password,
+// A reveal under a DIFFERENT credential-encryption-key must ERROR, never answer
+// a key rotation by handing the caller the base64 ciphertext AS the password,
 // which the validation runner would then type into a login form.
 func TestStoreRevealFailsUnderADifferentKeyRatherThanReturningCiphertext(t *testing.T) {
 	t.Parallel()

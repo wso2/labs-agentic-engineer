@@ -22,8 +22,6 @@
 // The behavior lives in sibling files, one per concern: credential_connect.go
 // (connect/replace), credential_lifecycle.go (status/disconnect),
 // credential_identity.go (identity view + validator support),
-// credential_webhook_secrets.go (HMAC secret rotation),
-// credential_installations.go (App-installation lifecycle + webhook routing),
 // credential_github_probe.go (raw GitHub REST probes for the PAT path).
 package organization
 

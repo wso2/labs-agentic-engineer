@@ -62,16 +62,6 @@ func RunPhase6APIPlatformIDP(db *gorm.DB) error {
 		slog.Info("phase6_api_platform_idp migration: created table", "table", "organization_idp_profiles")
 	}
 
-	// Backfill publisher_client_secret on pre-existing tables that predate
-	// the column. Idempotent.
-	if !hasColumn(db, "organization_idp_profiles", "publisher_client_secret") {
-		if err := db.Exec(`ALTER TABLE organization_idp_profiles ADD COLUMN publisher_client_secret TEXT`).Error; err != nil {
-			return fmt.Errorf("phase6_api_platform_idp: add publisher_client_secret column: %w", err)
-		}
-		slog.Info("phase6_api_platform_idp migration: added column",
-			"table", "organization_idp_profiles", "column", "publisher_client_secret")
-	}
-
 	// Ensure pgcrypto is available for gen_random_uuid(). No-op on
 	// PostgreSQL ≥ 13 with the extension already enabled.
 	if err := db.Exec(`CREATE EXTENSION IF NOT EXISTS pgcrypto`).Error; err != nil {

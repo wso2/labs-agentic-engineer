@@ -105,7 +105,7 @@ type TestUser struct {
 	// RoleName is the role this account holds. It matches an IdPRole.Name.
 	RoleName string `gorm:"column:role_name;type:text;not null;index" json:"roleName"`
 	// PasswordSealed is the generated password under AES-256-GCM
-	// (credential-encryption-key), the same framing as publisher_client_secret.
+	// (credential-encryption-key), sealed by secrets.ColumnCipher.
 	//
 	// It exists because Thunder will not give a password back: `GET /users/{id}`
 	// returns no password field at all. Without a sealed copy a credential could

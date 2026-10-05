@@ -84,8 +84,8 @@ func TestSubscription_SchemaRefusesAnythingElse_DB(t *testing.T) {
 		{"default", "api_key", "subscription_only"},
 	} {
 		err := c.db.Exec(`
-			INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, key_prefix, key_last4, status)
-			VALUES ('acme', ?, ?, 'sk-ant-x', 'wxyz', 'active')`, tc.role, tc.kind).Error
+			INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, status)
+			VALUES ('acme', ?, ?, 'active')`, tc.role, tc.kind).Error
 		if err == nil || !strings.Contains(err.Error(), tc.constraint) {
 			t.Errorf("%s/%s: want the %s CHECK to refuse it, got %v", tc.role, tc.kind, tc.constraint, err)
 		}

@@ -157,7 +157,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// part of its own stamp, so there is no way to run one without the other.
 	usageLedgerRepo := delivery.NewAgentUsageLedgerRepository(db)
 	orgRepo := organization.NewOrganizationRepository(db)
-	orgCredRepo := organization.NewOrgCredentialRepository(db, in.ColumnCipher)
+	orgCredRepo := organization.NewOrgCredentialRepository(db)
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
 	orgModelConnRepo := organization.NewOrgModelConnectionRepository(db)
 	orgAgentSettingsRepo := organization.NewOrgAgentSettingsRepository(db)

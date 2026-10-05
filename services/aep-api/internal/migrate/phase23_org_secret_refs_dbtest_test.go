@@ -28,6 +28,7 @@ func TestPhase23OrgSecretRefs(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 	// Rebuild the pre-phase23 shape on the migrated test database.
+	prePhase26Shape(t, db)
 	for _, stmt := range []string{
 		`ALTER TABLE org_secrets DROP COLUMN secret_ref_name`,
 		`ALTER TABLE org_secrets DROP COLUMN written_at`,

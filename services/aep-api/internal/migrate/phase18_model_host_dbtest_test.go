@@ -336,7 +336,7 @@ func bootMigrate(t *testing.T, db *gorm.DB) {
 	if err := db.AutoMigrate(migrate.BaseModels()...); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
-	if err := migrate.RunAll(context.Background(), db, "dev", make([]byte, 32)); err != nil {
+	if err := migrate.RunAll(context.Background(), db, "dev"); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
 	dropIdleConnections(t, db)

@@ -42,7 +42,6 @@ package organization_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"slices"
 	"sort"
@@ -109,20 +108,6 @@ func publisherRef(t *testing.T, db *gorm.DB, org string) string {
 		return ""
 	}
 	return ref.Name
-}
-
-// assertNoSecretColumnWritten reads the profile's legacy secret columns raw:
-// the client ensure must leave them NULL (the secret lives only in vault).
-func assertNoSecretColumnWritten(t *testing.T, db *gorm.DB, org string) {
-	t.Helper()
-	var secret, ref, refName sql.NullString
-	if err := db.Raw(`SELECT publisher_client_secret, publisher_secret_ref, secret_ref_name
-		FROM organization_idp_profiles WHERE org_id = ?`, org).Row().Scan(&secret, &ref, &refName); err != nil {
-		t.Fatalf("read the legacy columns: %v", err)
-	}
-	if secret.Valid || ref.Valid || refName.Valid {
-		t.Fatalf("legacy secret columns written: secret=%v ref=%v secret_ref_name=%v", secret.Valid, ref.Valid, refName.Valid)
-	}
 }
 
 // idpDBFakeThunder is idp_service_test.go's fakeThunder, duplicated under a
@@ -313,7 +298,6 @@ func TestEnsurePublisherClient_RecordsIDsAndRowAndAudits_DB(t *testing.T) {
 	if publisherRef(t, gormDB, "acme") == "" {
 		t.Fatal("the ae-publisher-client row was not recorded")
 	}
-	assertNoSecretColumnWritten(t, gormDB, "acme")
 
 	// Exactly one audit row, action=ensure_publisher, the ensure's actor, no error.
 	rows := auditRows(t, gormDB, "acme")
@@ -498,7 +482,6 @@ func TestRevokeOrgPublisher_ClearsAndAudits_DB(t *testing.T) {
 	if row.PublisherClientID != "" || row.PublisherThunderAppID != "" || publisherRef(t, gormDB, "acme") != "" {
 		t.Fatalf("revoke must clear the publisher ids and its reference: %+v", row)
 	}
-	assertNoSecretColumnWritten(t, gormDB, "acme")
 
 	if got := auditActions(t, gormDB, "acme"); !equalStrings(got, []string{
 		organization.IDPAuditEnsurePublisher, organization.IDPAuditRevokePublisher,

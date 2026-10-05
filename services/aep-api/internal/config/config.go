@@ -172,8 +172,8 @@ type Config struct {
 
 	GitHubRepoVisibility string
 
-	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
-	// used to encrypt per-org credentials at rest in org_secrets.
+	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key of
+	// the column cipher, which seals test_users.password_sealed at rest.
 	CredentialEncryptionKey string
 
 	// OpenBaoAddr / OpenBaoToken — local-only OpenBao connection for the

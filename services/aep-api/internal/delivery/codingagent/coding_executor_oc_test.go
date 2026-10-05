@@ -283,7 +283,7 @@ func TestDispatch_UnresolvableAnthropicKey_ErrorsNoFallback(t *testing.T) {
 	rec := &chainRecorder{}
 	_, github := fullSecretRefs()
 	anthropic := fakeCodingKey{err: errors.New(
-		"coding-agent Anthropic key for org \"acme\" is configured but secret_ref_kv_path is not populated")}
+		"coding-agent Anthropic key for org \"acme\" is configured but its reference row is missing")}
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
@@ -292,7 +292,7 @@ func TestDispatch_UnresolvableAnthropicKey_ErrorsNoFallback(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when the anthropic secret ref cannot be resolved")
 	}
-	if !strings.Contains(err.Error(), "Anthropic") || !strings.Contains(err.Error(), "secret_ref_kv_path") {
+	if !strings.Contains(err.Error(), "Anthropic") || !strings.Contains(err.Error(), "reference row is missing") {
 		t.Fatalf("error must carry the resolver's diagnosis, got: %v", err)
 	}
 	if len(rec.calls) != 0 {

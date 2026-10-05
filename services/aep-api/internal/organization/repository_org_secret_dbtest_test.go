@@ -17,8 +17,8 @@
 package organization_test
 
 // DBTEST tier (skips under -short; `make test-db` runs it): the org secrets'
-// reference rows against a pristine migrated Postgres, beside a legacy value
-// row the repository must never read, list or touch, and the compare-and-swap
+// reference rows against a pristine migrated Postgres, beside a row for a name
+// that is not one of the six (List never returns it), and the compare-and-swap
 // writes that make concurrent writers of one secret lose instead of clobber.
 
 import (
@@ -35,8 +35,8 @@ import (
 func TestRepository_RoundTrip(t *testing.T) {
 	db := dbtest.New(t)
 	repo := organization.NewOrgSecretRepository(db)
-	if err := db.Exec(`INSERT INTO org_secrets (oc_org_id, key, value) VALUES ('default', 'github/pat', 'sealed-bytes')`).Error; err != nil {
-		t.Fatalf("seed legacy row: %v", err)
+	if err := db.Exec(`INSERT INTO org_secrets (oc_org_id, secret, secret_ref_name) VALUES ('default', 'not-an-org-secret', 'x')`).Error; err != nil {
+		t.Fatalf("seed a row for an unknown name: %v", err)
 	}
 	gp, dk := organization.OrgSecretGitHubPAT, organization.OrgSecretDefaultKey
 
@@ -75,7 +75,7 @@ func TestRepository_RoundTrip(t *testing.T) {
 		names = append(names, string(r.Secret)+"="+r.Name)
 	}
 	if want := []string{"default-key=default-default-key-00000002", "github-pat=default-github-pat-00000004"}; !slices.Equal(names, want) {
-		t.Fatalf("List = %v, want %v (no legacy row, no other org)", names, want)
+		t.Fatalf("List = %v, want %v (no unknown name, no other org)", names, want)
 	}
 
 	if err := repo.Delete(ctx, "default", gp, "default-github-pat-00000004"); err != nil {
@@ -88,9 +88,13 @@ func TestRepository_RoundTrip(t *testing.T) {
 		t.Fatal("Delete crossed orgs")
 	}
 
-	var legacy string
-	if err := db.Raw(`SELECT value FROM org_secrets WHERE oc_org_id = 'default' AND key = 'github/pat'`).Scan(&legacy).Error; err != nil || legacy != "sealed-bytes" {
-		t.Fatalf("legacy row = %q, %v; want untouched", legacy, err)
+	// A write that carries no time is stamped by the database: written_at is
+	// NOT NULL.
+	if err := repo.Upsert(ctx, "default", organization.OrgSecretRef{Secret: gp, Name: "default-github-pat-00000005"}, ""); err != nil {
+		t.Fatalf("Upsert without WrittenAt: %v", err)
+	}
+	if got, err := repo.Get(ctx, "default", gp); err != nil || got == nil || got.WrittenAt == nil {
+		t.Fatalf("Get = %+v, %v; want written_at stamped", got, err)
 	}
 }
 
@@ -132,12 +136,6 @@ func TestRepository_CompareAndSwap(t *testing.T) {
 	conflict("stale restore", repo.Upsert(ctx, "default", ref("P"), "N2"))
 	conflict("stale delete", repo.Delete(ctx, "default", dk, "P"))
 	nameIs("N1")
-	// The legacy value row is not a reference row: a swap never matches it.
-	if err := db.Exec(`INSERT INTO org_secrets (oc_org_id, key, value) VALUES ('legacy', 'default-key', 'sealed-bytes')`).Error; err != nil {
-		t.Fatalf("seed a value-only row: %v", err)
-	}
-	conflict("delete a value-only row", repo.Delete(ctx, "legacy", dk, "x"))
-	conflict("insert over a value-only row", repo.Upsert(ctx, "legacy", ref("Y"), ""))
 }
 
 // The advisory lock: a second holder of one (org, secret) waits (bounded by

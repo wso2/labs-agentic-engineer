@@ -120,7 +120,7 @@ func TestModelConnectionKeyRef_DB(t *testing.T) {
 
 	// A connection row whose default-key row is gone has no key to mount: an
 	// error, never a fallback.
-	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'default-key'`).Error; err != nil {
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'default-key'`).Error; err != nil {
 		t.Fatalf("drop the row: %v", err)
 	}
 	if _, _, err := c.conns.KeyRef(ctx, "acme"); err == nil || errors.As(err, &nf) || !strings.Contains(err.Error(), "default-key") {
@@ -176,7 +176,7 @@ func TestResolveCodingCredential_SubscriptionOnClaudeCode_DB(t *testing.T) {
 // rows existed has none.
 func dropRow(t *testing.T, c *cardDB, s organization.OrgSecret) {
 	t.Helper()
-	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = ?`, string(s)).Error; err != nil {
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = ?`, string(s)).Error; err != nil {
 		t.Fatalf("drop the %s row: %v", s, err)
 	}
 }

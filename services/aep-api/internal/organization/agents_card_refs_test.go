@@ -156,9 +156,6 @@ func TestCardSave_DefaultKeyNewRefAndRoll(t *testing.T) {
 	if got := f.converger.count(); got != 2 {
 		t.Fatalf("triggers = %d, want one per key save", got)
 	}
-	if row := f.card.row(t, "acme"); row.SecretRefName != nil || row.KeyPreview != "" {
-		t.Fatalf("connection row %+v: no triplet and no key character (the default-key row names the reference)", row)
-	}
 }
 
 func TestCardSave_CodingKeyDoesNotRoll(t *testing.T) {
@@ -175,8 +172,8 @@ func TestCardSave_CodingKeyDoesNotRoll(t *testing.T) {
 		t.Fatalf("triggers = %d, want only the key save's: the subscription reaches no pod", got)
 	}
 	sub, err := f.card.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding)
-	if err != nil || sub == nil || sub.SecretRefName != nil {
-		t.Fatalf("subscription row %+v (%v): no triplet (the coding-agent-key row names the reference)", sub, err)
+	if err != nil || sub == nil {
+		t.Fatalf("subscription row %+v (%v), want one (the coding-agent-key row names the reference)", sub, err)
 	}
 
 	f.save(subscriptionPatch(anthropicDBOAuthToken))

@@ -43,8 +43,6 @@ type OrgModelConnection struct {
 	ContextWindow *int               `gorm:"column:context_window"`
 	OutputLimit   *int               `gorm:"column:output_limit"`
 	ImageInput    modelconn.Tristate `gorm:"column:image_input;not null"`
-	// KeyPreview is written empty: no character of the key is kept.
-	KeyPreview string `gorm:"column:key_preview;not null"`
 	// ConnectedAt is when a key was first saved on this host; a key rotation or
 	// a model change keeps it, a host change resets it.
 	ConnectedAt time.Time `gorm:"column:connected_at;not null"`
@@ -52,12 +50,6 @@ type OrgModelConnection struct {
 	// UpdatedBy is the actor from the JWT; NULL on a row the migration carried
 	// over from the Anthropic-only card, which recorded no author.
 	UpdatedBy *string `gorm:"column:updated_by"`
-
-	// The pre-reference-row triplet; nothing writes or reads it (the
-	// default-key row names the reference).
-	SecretRefName     *string `gorm:"column:secret_ref_name"`
-	SecretRefKVPath   *string `gorm:"column:secret_ref_kv_path"`
-	SecretRefProperty *string `gorm:"column:secret_ref_property"`
 }
 
 func (OrgModelConnection) TableName() string { return "org_model_connections" }

@@ -68,13 +68,13 @@ func (c *configHarness) count(t *testing.T, sql string, args ...any) int64 {
 }
 
 // cardRows counts every row the card writes for org: the connection and
-// subscription rows, the setting row, and secret bytes.
+// subscription rows, the setting row, and its keys' reference rows.
 func (c *configHarness) cardRows(t *testing.T, org string) (creds, settings, secrets int64) {
 	t.Helper()
 	return c.count(t, `SELECT count(*) FROM org_anthropic_credentials WHERE oc_org_id = ?`, org) +
 			c.count(t, `SELECT count(*) FROM org_model_connections WHERE oc_org_id = ?`, org),
 		c.count(t, `SELECT count(*) FROM org_agent_settings WHERE oc_org_id = ?`, org),
-		c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = ? AND key LIKE 'anthropic/%'`, org)
+		c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = ? AND secret IN ('default-key', 'coding-agent-key')`, org)
 }
 
 // refused asserts a 400 on body.<section> carrying code.
@@ -251,8 +251,8 @@ func TestConfigAgents_OpenCodeDeletesTheToken(t *testing.T) {
 	if a["runtime"] != "opencode" || a["subscription"] != nil {
 		t.Fatalf("OpenCode must leave no subscription: %v", a)
 	}
-	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'anthropic/coding-key'`); n != 0 {
-		t.Fatalf("the token's bytes survived the switch to OpenCode")
+	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`); n != 0 {
+		t.Fatalf("the token's reference survived the switch to OpenCode")
 	}
 }
 

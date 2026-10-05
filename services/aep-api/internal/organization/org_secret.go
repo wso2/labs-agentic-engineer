@@ -22,7 +22,7 @@ import (
 )
 
 // OrgSecret names one of the six per-org secrets AE Studio and the build read
-// from the vault. Its string is both the org_secrets.key of the secret's
+// from the vault. Its string is both the org_secrets.secret of the secret's
 // reference row and the entity segment of the reference name.
 type OrgSecret string
 

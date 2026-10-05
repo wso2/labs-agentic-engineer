@@ -288,7 +288,7 @@ func newSubmitFixture(t *testing.T, opts ...submitOption) *submitFixture {
 	vault := &submitVault{log: log, err: o.vaultErr, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
 	rows := organization.NewOrgSecretRepository(db)
 	orgSecrets := organization.NewOrgSecretWriter(vault, rows, organization.NewOrgSecretLock(db), time.Now)
-	credRepo := submitCredRepo{OrgCredentialRepository: organization.NewOrgCredentialRepository(db, nil), log: log}
+	credRepo := submitCredRepo{OrgCredentialRepository: organization.NewOrgCredentialRepository(db), log: log}
 	idpRepo := organization.NewIDPRepository(db)
 	refWriter := organization.NewSecretRefWriter(vault, idpRepo).
 		WithOrgSecretWriter(orgSecrets)
@@ -569,7 +569,6 @@ func TestGetConfig_GitProviderNeedsTheGitHubPATRow(t *testing.T) {
 		OcOrgID: "default", Kind: "user-pat", GitHubLogin: "ghorg",
 		IdentityName: "GH Org", IdentityEmail: "gh@x.io", IdentityLogin: "ghorg",
 		Status: "active", ConnectedAt: now, LastValidatedAt: &now,
-		WebhookSecrets: organization.WebhookSecrets{{Secret: "seed", AddedAt: now}},
 	}).Error; err != nil {
 		t.Fatalf("seed a pre-phase-1 credential row: %v", err)
 	}

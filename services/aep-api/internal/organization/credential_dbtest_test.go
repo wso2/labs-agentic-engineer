@@ -51,7 +51,7 @@ import (
 // GitHub.
 func newCredSvcDB(t testing.TB, db *gorm.DB, gh *stubGitHub) *organization.CredentialService {
 	t.Helper()
-	return organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil)).WithGitHubAPIBase(gh.URL)
+	return organization.NewCredentialService(organization.NewOrgCredentialRepository(db)).WithGitHubAPIBase(gh.URL)
 }
 
 // patHappyGitHub serves the responses a valid PAT connect needs: GET /user
@@ -67,7 +67,7 @@ func patHappyGitHub(t testing.TB, login, name, email string) *stubGitHub {
 }
 
 // getRow reads the raw credential row for assertions the projection hides
-// (webhook_secrets, drift columns).
+// (connected_at, drift columns).
 func getRow(t testing.TB, db *gorm.DB, ocOrgID string) organization.OrgCredential {
 	t.Helper()
 	var row organization.OrgCredential
@@ -78,8 +78,8 @@ func getRow(t testing.TB, db *gorm.DB, ocOrgID string) organization.OrgCredentia
 }
 
 // insertAppRow inserts an app-installation row directly (bypassing the App
-// connect flow, which needs a real App key). Satisfies the CHECK constraints:
-// webhook_secrets NULL, installation_id NOT NULL.
+// connect flow, which needs a real App key). Satisfies the app_fields CHECK:
+// installation_id NOT NULL.
 func insertAppRow(t testing.TB, db *gorm.DB, ocOrgID string, installID int64, status string, selected []string) {
 	t.Helper()
 	id := installID
@@ -125,17 +125,11 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 		t.Fatal("lastValidatedAt must be stamped on connect")
 	}
 
-	// webhook_secrets is seeded non-empty (the CHECK needs it) until phase 6
-	// drops the column.
-	row := getRow(t, db, "acme")
-	if len(row.WebhookSecrets) != 1 || row.WebhookSecrets[0].Secret == "" {
-		t.Fatalf("webhook_secrets seed: %+v", row.WebhookSecrets)
-	}
-
-	// The PAT lives only in vault: Connect writes no github/pat entry.
+	// The PAT lives only in vault: Connect writes no org_secrets row (the
+	// submit's github-pat reference row is written after the vault write).
 	var pats int64
-	if err := db.Raw(`SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'github/pat'`).Scan(&pats).Error; err != nil || pats != 0 {
-		t.Fatalf("Connect stored the PAT in Postgres: rows %d (%v)", pats, err)
+	if err := db.Raw(`SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme'`).Scan(&pats).Error; err != nil || pats != 0 {
+		t.Fatalf("Connect wrote %d org_secrets row(s) (%v)", pats, err)
 	}
 
 	// The on-wire projection shape matches the harvested golden's key-set.
@@ -145,7 +139,7 @@ func TestConnectPAT_FreshRow_DB(t *testing.T) {
 }
 
 // The gitpat lives only in vault: after a PAT connect no table of the schema
-// holds the PAT, and (from Task 6.5) no value-bearing column is left.
+// holds the PAT, and no value-bearing column is left.
 func TestConnectPAT_WritesNoValueToPostgres(t *testing.T) {
 	t.Parallel()
 	db := dbtest.New(t)
@@ -158,22 +152,22 @@ func TestConnectPAT_WritesNoValueToPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("no github/pat entry", func(t *testing.T) {
+	t.Run("no org_secrets row", func(t *testing.T) {
 		var n int64
-		if err := db.Raw(`SELECT count(*) FROM org_secrets WHERE key = 'github/pat'`).Scan(&n).Error; err != nil {
+		if err := db.Raw(`SELECT count(*) FROM org_secrets`).Scan(&n).Error; err != nil {
 			t.Fatal(err)
 		}
 		if n != 0 {
-			t.Fatalf("%d org_secrets rows hold the PAT", n)
+			t.Fatalf("Connect wrote %d org_secrets row(s)", n)
 		}
 	})
 	t.Run("value in no table", func(t *testing.T) {
 		assertNoValueInDump(t, db, pat)
 	})
 	t.Run("no value-bearing columns", func(t *testing.T) {
-		t.Skip("columns dropped in Task 6.5")
 		var n int64
-		if err := db.Raw(`SELECT count(*) FROM information_schema.columns WHERE table_name IN ('org_secrets','org_credentials')
+		if err := db.Raw(`SELECT count(*) FROM information_schema.columns
+		        WHERE table_schema = 'public' AND table_name IN ('org_secrets','org_credentials')
 		        AND column_name IN ('value','webhook_secrets','pat_secret_ref','secret_ref_kv_path','secret_ref_property')`).Scan(&n).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +257,7 @@ func TestConnectPAT_ReplaceRecordsDrift_DB(t *testing.T) {
 
 	// Re-connect with a DIFFERENT identity login (the PAT now belongs to a
 	// renamed/other account) — must record identity drift and preserve the
-	// existing webhook_secrets.
+	// original connection time.
 	gh.on("GET", "/user", 200, `{"login":"bob","name":"Bob","email":"bob@example.com"}`)
 	gh.on("GET", "/orgs/bob/repos", 200, `[]`)
 	proj, err := svc.Connect(ctx, "acme", organization.ConnectRequest{Kind: "user-pat", PAT: "p2", GitHubLogin: "bob"})
@@ -277,8 +271,8 @@ func TestConnectPAT_ReplaceRecordsDrift_DB(t *testing.T) {
 		t.Fatalf("drift not recorded: prev=%v changed=%v", proj.PrevIdentityLogin, proj.IdentityChangedAt)
 	}
 	after := getRow(t, db, "acme")
-	if len(after.WebhookSecrets) != 1 || after.WebhookSecrets[0].Secret != before.WebhookSecrets[0].Secret {
-		t.Fatalf("replace must preserve webhook_secrets: before=%v after=%v", before.WebhookSecrets, after.WebhookSecrets)
+	if !after.ConnectedAt.Equal(before.ConnectedAt) {
+		t.Fatalf("replace must preserve connected_at: before=%v after=%v", before.ConnectedAt, after.ConnectedAt)
 	}
 }
 

@@ -256,7 +256,7 @@ func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 	if !o.guarded {
 		conns.WithProbeClient(model.client())
 	}
-	credRepo := organization.NewOrgCredentialRepository(db, nil)
+	credRepo := organization.NewOrgCredentialRepository(db)
 	credSvc := organization.NewCredentialService(credRepo).WithGitHubAPIBase(gh.URL)
 	var vault *submitVault
 	if o.secretsDelivery {
@@ -395,9 +395,9 @@ func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if err := c.db.Exec(`INSERT INTO org_model_connections
-		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, key_preview, connected_at, updated_at)
+		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, connected_at, updated_at)
 		VALUES ('acme', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-haiku-4-5',
-		        'x-api-key', 'yes', '', now(), now())`).Error; err != nil {
+		        'x-api-key', 'yes', now(), now())`).Error; err != nil {
 		t.Fatalf("seed a migrated connection: %v", err)
 	}
 	if err := organization.NewOrgSecretRepository(c.db).Upsert(context.Background(), "acme",
@@ -940,7 +940,7 @@ func TestConfigComponent_G2_TenantIsolation(t *testing.T) {
 	// Seed org B's connection row directly.
 	if err := c.db.Create(&organization.OrgModelConnection{
 		OcOrgID: "orgb", Format: "anthropic", BaseURL: "https://api.anthropic.com/v1", Host: "api.anthropic.com",
-		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes", KeyPreview: "sk-a…0000",
+		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes",
 		ConnectedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}).Error; err != nil {
 		t.Fatalf("seed org B: %v", err)

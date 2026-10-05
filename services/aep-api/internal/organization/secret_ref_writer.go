@@ -34,9 +34,8 @@ import (
 // secrets under (matches SM-API's VAULT_PATH_PREFIX env, default
 // "user-app-secrets" — see wso2cloud/backend/secret-manager-api/
 // internal/vault/eso.go::VaultPath). Hardcoded here because the BFF
-// must reconstruct the actual Vault path it stamps into the credential
-// row's secret_ref_kv_path column (read by the dispatcher's ExternalSecret).
-// If SM-API's mount changes, both sides must change together.
+// must reconstruct the actual Vault path of a reference it wrote (see
+// vaultKeyFor). If SM-API's mount changes, both sides must change together.
 const vaultPathPrefix = "user-app-secrets"
 
 // SecretRefWriter writes the org's secrets to the vault through the injected

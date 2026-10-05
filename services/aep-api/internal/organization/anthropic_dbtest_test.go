@@ -181,8 +181,8 @@ func TestModelConnectionConnect_HappyPath_DB(t *testing.T) {
 		row.AuthScheme != "x-api-key" || row.ContextWindow != nil || row.OutputLimit != nil || row.ImageInput != "yes" {
 		t.Fatalf("row = %+v, want Anthropic's API with its defaults and NULL limits", row)
 	}
-	if row.KeyPreview != "" || row.UpdatedBy == nil || *row.UpdatedBy != "ada" || row.ConnectedAt.Before(start) {
-		t.Fatalf("row = %+v, want no key character, the actor and a fresh connectedAt", row)
+	if row.UpdatedBy == nil || *row.UpdatedBy != "ada" || row.ConnectedAt.Before(start) {
+		t.Fatalf("row = %+v, want the actor and a fresh connectedAt", row)
 	}
 	// The probe's findings ride the response.
 	if out.LLMCheck == nil || out.LLMCheck.ModelListed != "yes" || !out.LLMCheck.Priced {
@@ -193,11 +193,6 @@ func TestModelConnectionConnect_HappyPath_DB(t *testing.T) {
 	ref := c.ref(t, "acme", organization.OrgSecretDefaultKey)
 	if ref == nil || !c.vault.refs[ref.Name] || c.vault.lastData["api-key"] != anthropicUnitKey {
 		t.Fatalf("default-key %+v, vault %v: want the trimmed key under the recorded reference", ref, c.vault.live())
-	}
-	var values int64
-	c.db.Raw(`SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND value IS NOT NULL`).Scan(&values)
-	if values != 0 {
-		t.Fatalf("org_secrets holds %d value rows for the org, want none", values)
 	}
 }
 
@@ -302,8 +297,8 @@ func TestModelConnectionOrgIsolation_DB(t *testing.T) {
 // --- the keys in vault -------------------------------------------------------
 
 // Each saved key and token is written to the vault from the request, as a new
-// reference its org_secrets row records; no triplet is stamped on the rows,
-// and a disconnect deletes the key's reference and the token's.
+// reference its org_secrets row records, and a disconnect deletes the key's
+// reference and the token's.
 func TestAgentsCardSave_WritesTheRequestKeysToVault_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
@@ -313,9 +308,6 @@ func TestAgentsCardSave_WritesTheRequestKeysToVault_DB(t *testing.T) {
 	if c.vault.lastData[secretmanagersvc.SecretKeyAPIKey] != anthropicUnitKey || key == nil || !c.vault.refs[key.Name] {
 		t.Fatalf("default-key %+v, vault %v: want the saved key under a recorded reference", key, c.vault.live())
 	}
-	if row := c.row(t, "acme"); row.SecretRefName != nil || row.SecretRefKVPath != nil {
-		t.Fatalf("connection triplet = %v %v, want none written", row.SecretRefName, row.SecretRefKVPath)
-	}
 
 	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
 	token := c.ref(t, "acme", organization.OrgSecretCodingAgentKey)
@@ -323,8 +315,8 @@ func TestAgentsCardSave_WritesTheRequestKeysToVault_DB(t *testing.T) {
 		t.Fatalf("coding-agent-key %+v: want the subscription token under a recorded reference", token)
 	}
 	sub, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding)
-	if err != nil || sub == nil || sub.SecretRefName != nil || sub.KeyPrefix != "" || sub.KeyLast4 != "" {
-		t.Fatalf("subscription row = %+v (%v), want no triplet and no token character", sub, err)
+	if err != nil || sub == nil {
+		t.Fatalf("subscription row = %+v (%v), want one", sub, err)
 	}
 
 	c.patch(t, "acme", disconnectPatch())
@@ -524,7 +516,7 @@ func TestAgentSettings_SubscriptionProjectedOnlyWithItsReferenceRow_DB(t *testin
 	}
 
 	// The legacy shape: the credential row stays, the reference row is gone.
-	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'coding-agent-key'`).Error; err != nil {
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`).Error; err != nil {
 		t.Fatal(err)
 	}
 	if c.ref(t, "acme", organization.OrgSecretCodingAgentKey) != nil {

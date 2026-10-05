@@ -15,7 +15,7 @@
 // under the License.
 
 // credential_connect.go — the Connect/replace flow: kind dispatch, the PAT
-// path (validate + record the connection row + seed webhook secret), and the
+// path (validate + record the connection row), and the
 // PAT's reference write the submit runs after it. The PAT itself lives only
 // in vault, behind its github-pat reference.
 
@@ -92,14 +92,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 	now := time.Now().UTC()
 
 	if !hadRow {
-		// CREATE — seed webhook_secrets with a random value. Nothing verifies
-		// against it any more (the AE Studio pod owns delivery verification);
-		// the secrets_shape_per_kind CHECK still wants a non-empty list for a
-		// user-pat row, until the column is dropped (phase 6).
-		secret, err := generateRandomHex(32)
-		if err != nil {
-			return nil, fmt.Errorf("connect: gen webhook secret: %w", err)
-		}
 		row := OrgCredential{
 			OcOrgID:         ocOrgID,
 			Kind:            "user-pat",
@@ -110,9 +102,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 			Status:          "active",
 			ConnectedAt:     now,
 			LastValidatedAt: &now,
-			WebhookSecrets: WebhookSecrets{
-				{Secret: secret, AddedAt: now},
-			},
 		}
 		if err := tx.Create(&row); err != nil {
 			return nil, fmt.Errorf("connect: insert: %w", err)
@@ -123,11 +112,9 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 		}, nil
 	}
 
-	// REPLACE — preserve webhook_secrets, possibly record identity drift.
-	// Cross-mode reconnect (after disconnect): also flip `kind`, clear App-only
-	// columns (installation_id, selected_repos), and seed webhook_secrets if
-	// the prior row was App-mode (which has webhook_secrets=NULL per the
-	// CHECK constraint).
+	// REPLACE — possibly record identity drift. Cross-mode reconnect (after
+	// disconnect): also flip `kind` and clear the App-only columns
+	// (installation_id, selected_repos).
 	updates := map[string]any{
 		"kind":              "user-pat",
 		"github_login":      req.GitHubLogin,
@@ -145,16 +132,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 		prev := existing.IdentityLogin
 		updates["prev_identity_login"] = &prev
 		updates["identity_changed_at"] = now
-	}
-	// If switching from App → PAT, the prior row had webhook_secrets=NULL
-	// (the secrets_shape_per_kind CHECK requires NOT NULL with array_length>=1
-	// for user-pat). Seed a random value to keep the constraint satisfied.
-	if existing.Kind == "app-installation" {
-		secret, sErr := generateRandomHex(32)
-		if sErr != nil {
-			return nil, fmt.Errorf("connect: generate webhook secret: %w", sErr)
-		}
-		updates["webhook_secrets"] = WebhookSecrets{{Secret: secret, AddedAt: now}}
 	}
 	if err := tx.UpdateColumns(ocOrgID, updates); err != nil {
 		return nil, fmt.Errorf("connect: update: %w", err)

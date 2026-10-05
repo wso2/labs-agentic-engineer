@@ -175,8 +175,8 @@ func TestConfigLLM_LeavingAnthropicDeletesTheSubscription(t *testing.T) {
 	if resp.Code != 200 || agentsOf(t, resp.Body.Bytes())["subscription"] != nil {
 		t.Fatalf("the subscription survived leaving Anthropic's API: %d %s", resp.Code, resp.Body.String())
 	}
-	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'anthropic/coding-key'`); n != 0 {
-		t.Fatal("the token's bytes survived")
+	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`); n != 0 {
+		t.Fatal("the token's reference survived")
 	}
 	// And a new one cannot be added while the connection lacks claudeSubscription.
 	if r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+ollamaKey2+`"},"agents":{"runtime":"claude-code"}}`); r.Code != 200 {
@@ -620,8 +620,8 @@ func TestGetConfig_LLMIsNullWithoutADefaultKeyRow(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if err := c.db.Exec(`INSERT INTO org_model_connections
-		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, key_preview, connected_at, updated_at)
-		VALUES ('legacy', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-sonnet-5', 'x-api-key', 'yes', '', now(), now())`).Error; err != nil {
+		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, connected_at, updated_at)
+		VALUES ('legacy', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-sonnet-5', 'x-api-key', 'yes', now(), now())`).Error; err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if llm := decodeCfg(t, c.h.AsOrg("legacy").Get(configPath).Body.Bytes())["llm"]; llm != nil {

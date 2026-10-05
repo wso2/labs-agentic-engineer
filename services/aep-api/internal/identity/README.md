@@ -234,10 +234,8 @@ mint credentials, so that boundary is the single most important property here.
 returns no password field, so a credential could otherwise be issued exactly once
 and never served again — a rebuild would have nothing to publish for the accounts
 it reused, and the panel nothing to reveal. The seal uses `secrets.ColumnCipher` under
-`credential-encryption-key`, the same framing as `publisher_client_secret`, and
-opens with `Open` rather than `OpenTolerant`: there is no migration window here,
-so a decrypt failure must be an error, not a base64 blob handed out as a
-password.
+`credential-encryption-key` (the cipher's only column), and a decrypt failure is
+an error, never a base64 blob handed out as a password.
 
 **Membership is written by delete-and-recreate.** The identity provider sets
 group members only at group creation (`PUT /groups/{id}` accepts `members`,

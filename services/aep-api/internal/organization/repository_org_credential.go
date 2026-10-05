@@ -21,8 +21,6 @@ import (
 	"errors"
 
 	"gorm.io/gorm"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // OrgCredentialRepository persists the per-org GitHub credential record
@@ -68,24 +66,14 @@ type OrgCredentialTx interface {
 }
 
 type orgCredentialRepository struct {
-	db     *gorm.DB
-	cipher *secrets.ColumnCipher
+	db *gorm.DB
 }
 
 // NewOrgCredentialRepository constructs the gorm-backed OrgCredentialRepository.
-// cipher may be nil (passthrough) — production always passes the credential
-// column cipher so webhook_secrets entries are AES-256-GCM at rest.
-func NewOrgCredentialRepository(db *gorm.DB, cipher *secrets.ColumnCipher) OrgCredentialRepository {
-	return &orgCredentialRepository{db: db, cipher: cipher}
-}
-
-func (r *orgCredentialRepository) openRow(row *OrgCredential) error {
-	opened, err := openWebhookSecrets(r.cipher, row.WebhookSecrets)
-	if err != nil {
-		return err
-	}
-	row.WebhookSecrets = opened
-	return nil
+// The row holds no secret: the PAT lives only in the vault, behind the org's
+// github-pat reference.
+func NewOrgCredentialRepository(db *gorm.DB) OrgCredentialRepository {
+	return &orgCredentialRepository{db: db}
 }
 
 func (r *orgCredentialRepository) GetByOrg(ctx context.Context, ocOrgID string) (*OrgCredential, error) {
@@ -97,16 +85,10 @@ func (r *orgCredentialRepository) GetByOrg(ctx context.Context, ocOrgID string) 
 	if err != nil {
 		return nil, err
 	}
-	if err := r.openRow(&row); err != nil {
-		return nil, err
-	}
 	return &row, nil
 }
 
 func (r *orgCredentialRepository) UpdateColumns(ctx context.Context, ocOrgID string, updates map[string]any) error {
-	if err := sealWebhookUpdates(r.cipher, updates); err != nil {
-		return err
-	}
 	return r.db.WithContext(ctx).
 		Model(&OrgCredential{}).
 		Where("oc_org_id = ?", ocOrgID).
@@ -121,11 +103,6 @@ func (r *orgCredentialRepository) ListActiveRows(ctx context.Context) ([]OrgCred
 	if err != nil {
 		return nil, err
 	}
-	for i := range rows {
-		if err := r.openRow(&rows[i]); err != nil {
-			return nil, err
-		}
-	}
 	return rows, nil
 }
 
@@ -135,15 +112,14 @@ func (r *orgCredentialRepository) Tx(ctx context.Context, fn func(tx OrgCredenti
 		return tx.Error
 	}
 	defer func() { _ = tx.Rollback() }() // no-op once committed
-	if err := fn(&orgCredentialTx{tx: tx, cipher: r.cipher}); err != nil {
+	if err := fn(&orgCredentialTx{tx: tx}); err != nil {
 		return err
 	}
 	return tx.Commit().Error
 }
 
 type orgCredentialTx struct {
-	tx     *gorm.DB
-	cipher *secrets.ColumnCipher
+	tx *gorm.DB
 }
 
 func (t *orgCredentialTx) AdvisoryLock(key string) error {
@@ -159,31 +135,14 @@ func (t *orgCredentialTx) GetByOrg(ocOrgID string) (*OrgCredential, error) {
 	if err != nil {
 		return nil, err
 	}
-	opened, err := openWebhookSecrets(t.cipher, row.WebhookSecrets)
-	if err != nil {
-		return nil, err
-	}
-	row.WebhookSecrets = opened
 	return &row, nil
 }
 
 func (t *orgCredentialTx) Create(row *OrgCredential) error {
-	if row == nil {
-		return t.tx.Create(row).Error
-	}
-	sealed, err := sealWebhookSecrets(t.cipher, row.WebhookSecrets)
-	if err != nil {
-		return err
-	}
-	cp := *row
-	cp.WebhookSecrets = sealed
-	return t.tx.Create(&cp).Error
+	return t.tx.Create(row).Error
 }
 
 func (t *orgCredentialTx) UpdateColumns(ocOrgID string, updates map[string]any) error {
-	if err := sealWebhookUpdates(t.cipher, updates); err != nil {
-		return err
-	}
 	return t.tx.
 		Model(&OrgCredential{}).
 		Where("oc_org_id = ?", ocOrgID).

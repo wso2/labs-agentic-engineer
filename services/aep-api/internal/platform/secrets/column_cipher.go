@@ -26,10 +26,11 @@ import (
 	"io"
 )
 
-// ColumnCipher seals and opens credential column values with the same
-// AES-256-GCM framing as dbStore (base64(nonce || ciphertext+tag)). Used for
-// columns that live outside org_secrets (publisher_client_secret,
-// webhook_secrets entries) so they share credential-encryption-key.
+// ColumnCipher seals and opens a column value with AES-256-GCM under
+// credential-encryption-key (base64(nonce || ciphertext+tag)). Its one column
+// is test_users.password_sealed: Thunder never returns a password, so the
+// platform keeps the test users' generated passwords sealed. No org secret is
+// in Postgres; those live only in the vault.
 type ColumnCipher struct {
 	gcm cipher.AEAD
 }
@@ -80,32 +81,4 @@ func (c *ColumnCipher) Open(encoded string) ([]byte, error) {
 		return nil, fmt.Errorf("decrypt: gcm: %w", err)
 	}
 	return pt, nil
-}
-
-// OpenTolerant decrypts sealed values; if Open fails, returns the stored
-// bytes as plaintext. Migration-window only — lets readers accept rows that
-// have not yet been rewritten by the encrypt-in-place migration. All new
-// writes go through Seal; there is no permanent dual-format read API.
-func (c *ColumnCipher) OpenTolerant(stored string) ([]byte, error) {
-	if stored == "" {
-		return nil, nil
-	}
-	if c == nil {
-		return []byte(stored), nil
-	}
-	pt, err := c.Open(stored)
-	if err != nil {
-		return []byte(stored), nil
-	}
-	return pt, nil
-}
-
-// IsSealed reports whether stored looks like a value this cipher produced
-// (successful Open). Used by migrations to skip already-encrypted rows.
-func (c *ColumnCipher) IsSealed(stored string) bool {
-	if c == nil || stored == "" {
-		return false
-	}
-	_, err := c.Open(stored)
-	return err == nil
 }

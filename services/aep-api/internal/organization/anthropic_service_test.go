@@ -110,19 +110,12 @@ func TestAnthropicProjectionFromRow(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 1, 5, 2, 1, 0, time.UTC)
 	valErr := "probe failed"
-	smRef := "must-not-leak"
 	row := &OrgAnthropicCredential{
 		OcOrgID:         "acme",
-		KeyPrefix:       "sk-ant-api03-Ab",
-		KeyLast4:        "1234",
 		Status:          "active",
 		ConnectedAt:     now,
 		LastValidatedAt: &now,
 		ValidationError: &valErr,
-		// The secret-ref triplet is row-internal; the projection must not carry it.
-		SecretRefName:     &smRef,
-		SecretRefKVPath:   &smRef,
-		SecretRefProperty: &smRef,
 	}
 
 	p := projectionFromAnthropicRow(row)
@@ -138,7 +131,7 @@ func TestAnthropicProjectionFromRow(t *testing.T) {
 
 	// Wire shape: with no validation error the marshaled field set is EXACTLY
 	// {connectedAt, credentialKind, lastValidatedAt, ocOrgId, status}: never a
-	// character of the token, never the SM-API triplet.
+	// character of the token.
 	p.ValidationError = nil
 	raw, err := json.Marshal(p)
 	if err != nil {

@@ -75,10 +75,6 @@ func TestKeyPathRef_ResolvesThePathFromTheSecretReference_DB(t *testing.T) {
 	c.connect(t, "acme", anthropicUnitKey)
 	a := c.ref(t, "acme", organization.OrgSecretDefaultKey).Name
 
-	row := c.row(t, "acme")
-	if row.SecretRefName != nil || row.SecretRefKVPath != nil || row.SecretRefProperty != nil {
-		t.Fatalf("triplet columns = %v %v %v, want none written", row.SecretRefName, row.SecretRefKVPath, row.SecretRefProperty)
-	}
 	_, ref, err := c.conns.KeyPathRef(context.Background(), "acme")
 	if err != nil || ref != (organization.SecretRefTriplet{Name: a, KVPath: "kv/elsewhere/" + a, Property: "api-key"}) {
 		t.Fatalf("KeyPathRef = %+v, %v; want %s with the path its SecretReference reads", ref, err, a)
@@ -109,15 +105,12 @@ func TestKeyPathRef_WithoutAReaderFailsClosed_DB(t *testing.T) {
 	}
 }
 
-// K-2: an org whose reference rows are missing (saved before the rows
-// existed) does not resolve from its triplet columns: dispatch fails closed.
-func TestResolveCodingCredential_NoTripletFallbackWithoutARow_DB(t *testing.T) {
+// K-2: an org whose reference row is missing (saved before the rows existed)
+// has no other source for its key's reference: dispatch fails closed.
+func TestResolveCodingCredential_WithoutARowFailsClosed_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	c.connect(t, "acme", anthropicUnitKey)
-	if err := c.db.Exec(`UPDATE org_model_connections SET secret_ref_name = 'acme-anthropic', secret_ref_property = 'api-key' WHERE oc_org_id = 'acme'`).Error; err != nil {
-		t.Fatalf("seed a pre-phase-1 triplet: %v", err)
-	}
 	dropRow(t, c, organization.OrgSecretDefaultKey)
 
 	if cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeOpenCode); err == nil {

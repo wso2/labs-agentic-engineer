@@ -62,7 +62,7 @@ func anthropicConn() *OrgModelConnection {
 	return &OrgModelConnection{
 		OcOrgID: "acme", Format: modelconn.FormatAnthropic, BaseURL: modelconn.AnthropicBaseURL,
 		Host: modelconn.AnthropicHost, Model: modelconn.DefaultAnthropicModel, AuthScheme: modelconn.AuthXAPIKey,
-		ImageInput: modelconn.Yes, KeyPreview: "sk-a…mnop", UpdatedAt: time.Unix(100, 0),
+		ImageInput: modelconn.Yes, UpdatedAt: time.Unix(100, 0),
 	}
 }
 
@@ -71,7 +71,7 @@ func ollamaConn() *OrgModelConnection {
 	return &OrgModelConnection{
 		OcOrgID: "acme", Format: modelconn.FormatOpenAICompatible, BaseURL: "https://ollama.com/v1",
 		Host: modelconn.OllamaHost, Model: "gpt-oss:20b", AuthScheme: modelconn.AuthBearer,
-		ImageInput: modelconn.No, KeyPreview: "olla…6789", UpdatedAt: time.Unix(100, 0),
+		ImageInput: modelconn.No, UpdatedAt: time.Unix(100, 0),
 	}
 }
 

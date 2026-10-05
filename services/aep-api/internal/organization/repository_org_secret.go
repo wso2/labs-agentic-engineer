@@ -31,10 +31,10 @@ import (
 var ErrOrgSecretConflict = errors.New("org secret row changed concurrently")
 
 // OrgSecretRepository reads and writes the org secrets' reference rows in
-// org_secrets: key = the OrgSecret string, value NULL, secret_ref_name = the
-// SecretReference holding the value. A row means "set". The legacy value rows
-// (keys such as github/pat) share the table but never these keys, so no
-// accessor here reads or writes one. Every accessor is keyed by oc_org_id.
+// org_secrets (oc_org_id, secret, secret_ref_name, written_at): secret = the
+// OrgSecret string, secret_ref_name = the SecretReference holding the value
+// in the vault. A row means "set"; Postgres never holds the value. Every
+// accessor is keyed by oc_org_id.
 //
 // Writes are compare-and-swap on secret_ref_name, so two writers that read
 // the same row cannot both replace it: the loser gets ErrOrgSecretConflict.
@@ -70,20 +70,20 @@ func NewOrgSecretRepository(db *gorm.DB) OrgSecretRepository {
 
 // orgSecretRefRow is the projection of an org_secrets reference row.
 type orgSecretRefRow struct {
-	Key           string
+	Secret        string
 	SecretRefName string
 	WrittenAt     *time.Time
 }
 
 func (r orgSecretRefRow) ref() OrgSecretRef {
-	return OrgSecretRef{Secret: OrgSecret(r.Key), Name: r.SecretRefName, WrittenAt: r.WrittenAt}
+	return OrgSecretRef{Secret: OrgSecret(r.Secret), Name: r.SecretRefName, WrittenAt: r.WrittenAt}
 }
 
 func (r *orgSecretRepository) Get(ctx context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error) {
 	var row orgSecretRefRow
 	err := r.db.WithContext(ctx).Table("org_secrets").
-		Select("key, secret_ref_name, written_at").
-		Where("oc_org_id = ? AND key = ? AND secret_ref_name IS NOT NULL", ocOrgID, string(s)).
+		Select("secret, secret_ref_name, written_at").
+		Where("oc_org_id = ? AND secret = ?", ocOrgID, string(s)).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -98,9 +98,9 @@ func (r *orgSecretRepository) Get(ctx context.Context, ocOrgID string, s OrgSecr
 func (r *orgSecretRepository) List(ctx context.Context, ocOrgID string) ([]OrgSecretRef, error) {
 	var rows []orgSecretRefRow
 	if err := r.db.WithContext(ctx).Table("org_secrets").
-		Select("key, secret_ref_name, written_at").
-		Where("oc_org_id = ? AND key IN ? AND secret_ref_name IS NOT NULL", ocOrgID, OrgSecrets()).
-		Order("key").
+		Select("secret, secret_ref_name, written_at").
+		Where("oc_org_id = ? AND secret IN ?", ocOrgID, OrgSecrets()).
+		Order("secret").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -118,15 +118,15 @@ func (r *orgSecretRepository) Upsert(ctx context.Context, ocOrgID string, ref Or
 	var res *gorm.DB
 	if expectPrev == "" {
 		res = r.db.WithContext(ctx).Exec(`
-			INSERT INTO org_secrets (oc_org_id, key, value, secret_ref_name, written_at)
-			VALUES (?, ?, NULL, ?, ?)
-			ON CONFLICT (oc_org_id, key) DO NOTHING`,
+			INSERT INTO org_secrets (oc_org_id, secret, secret_ref_name, written_at)
+			VALUES (?, ?, ?, COALESCE(?, now()))
+			ON CONFLICT (oc_org_id, secret) DO NOTHING`,
 			ocOrgID, string(ref.Secret), ref.Name, ref.WrittenAt)
 	} else {
 		res = r.db.WithContext(ctx).Exec(`
 			UPDATE org_secrets
-			   SET secret_ref_name = ?, written_at = ?, updated_at = now()
-			 WHERE oc_org_id = ? AND key = ? AND secret_ref_name = ?`,
+			   SET secret_ref_name = ?, written_at = COALESCE(?, now())
+			 WHERE oc_org_id = ? AND secret = ? AND secret_ref_name = ?`,
 			ref.Name, ref.WrittenAt, ocOrgID, string(ref.Secret), expectPrev)
 	}
 	if res.Error != nil {
@@ -143,7 +143,7 @@ func (r *orgSecretRepository) Delete(ctx context.Context, ocOrgID string, s OrgS
 		return fmt.Errorf("org secret %s: reference name is required", s)
 	}
 	res := r.db.WithContext(ctx).Exec(
-		`DELETE FROM org_secrets WHERE oc_org_id = ? AND key = ? AND secret_ref_name IS NOT NULL AND secret_ref_name = ?`,
+		`DELETE FROM org_secrets WHERE oc_org_id = ? AND secret = ? AND secret_ref_name = ?`,
 		ocOrgID, string(s), name)
 	if res.Error != nil {
 		return res.Error
