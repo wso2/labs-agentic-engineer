@@ -42,8 +42,9 @@ mutates during a turn. Lives only in the service process; never sent to a sandbo
 _Avoid_: workspace, repo, project.
 
 **Turn**:
-One request→response cycle of the main agent: a user instruction plus the current
-spec bundle in, a stream of file mutations out. One turn = one POST.
+One cycle of the main agent: a user instruction plus the current spec bundle in, a
+stream of file mutations into the project's **Room** out. Started by one request,
+watched over a replayable stream.
 
 **Conversation**:
 The design agent's thread of turns. A project has one current Conversation, shared
@@ -112,6 +113,14 @@ skills as guidance for that work, and records which skills each component's buil
 will need.
 _Avoid_: engineering agent (coding is engineering too), architect (a role heading
 inside a skill's body, not the agent).
+
+**AE Studio**:
+The organization's design workspace: chat with the design agent, the live spec and
+the project files. One per organization; the design agent, the Room and every git
+operation for that organization run in it, and in nothing shared with another
+organization. Its `ae-studio` client is how it calls the platform on the
+organization's behalf.
+_Avoid_: studio pod, tools pod (name the workspace, not where it runs).
 
 **Coding agent**:
 The agent that implements a component — it builds, verifies, and opens the pull
@@ -528,17 +537,16 @@ live face while a room is open).
 
 **Room**:
 One live collaboration session over a single project's spec bundle. While a room is
-live for a project, the live doc is that project's spec authority and the session's
-committer is the sole writer to committed truth.
+live for a project, the live doc is that project's spec authority. Every
+file-writing **Turn** streams its file mutations into the live doc and commits
+nothing itself; the room's committer is the one writer to committed truth.
 _Avoid_: workspace, session-id (a room is scoped to one project's spec bundle).
 
-**Room-mode (turn)**:
-A generation Turn that runs while a room is live: it streams its file mutations into
-the live doc and commits nothing itself — the room's committer lands them. This is
-what keeps the two write paths from racing (only one writer to committed truth while
-a room is open).
-_Avoid_: dry-run, preview turn (a room-mode turn's edits are real, just landed by the
-committer rather than the turn).
+**Room-mode (turn)** — _retired_:
+Formerly the special case of a Turn that ran while a room was live. Every
+file-writing Turn now writes through the Room, so there is one write path and
+nothing to distinguish.
+_Avoid_: room-mode turn (say Turn).
 
 ## Secrets
 

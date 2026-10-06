@@ -76,3 +76,11 @@ console rendering — mock-verified. The agents-service tool registration + stop
 condition, and the platform grilling skill, land via the backend handshake
 (#271); until then real-mode cards don't render (the agent never calls the
 tools) and the FE is mock-complete by design.
+
+## Amendment (2026-10-06): the tools live in the design agent
+
+Read "the agents service" above as the design agent, `ae-design-agent`, in the
+organization's AE Studio
+([root ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+It registers `ask_question` / `ask_questions` and the stop condition
+(`src/agents/main/tools/files.ts`, `src/conversation/run-conversation-turn.ts`).

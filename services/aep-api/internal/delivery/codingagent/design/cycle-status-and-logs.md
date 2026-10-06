@@ -136,8 +136,8 @@ once the current one has nothing new and a later one exists.
 
 ### What the feed says it is
 
-`RunCycleView.recording` comes from the cycle row alone; no log is read to
-answer it (`CycleFeed.State`).
+`RunCycleView.recording` comes from the cycle row plus the outcome of this
+cycle's last observer read (`CycleFeed.State`); no log is read to answer it.
 
 | State | When |
 |---|---|

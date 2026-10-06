@@ -1,6 +1,6 @@
 # platform/secrets — credential storage and delivery
 
-> **Kernel package.** Part of the [aep-api architecture](../../README.md).
+> **Kernel package.** Part of the [aep-api architecture](../../../README.md).
 
 Owns the BFF-side secret fence: the one sealed column left in Postgres and
 OpenBao/Vault KV delivery into the dataplane. Domains import only the ports
@@ -38,4 +38,4 @@ No credential table keeps a value, a sealed copy, a preview or a vault path.
 - Vault SDK imports stay inside this package (`DeliveryKV`, provider wiring).
 - aep-api holds no OpenBao token at rest: every `DeliveryKV` takes a
   `VaultAuth`, and the only implementation is the Kubernetes-auth session.
-- Platform-wide rules → [../../README.md](../../README.md).
+- Platform-wide rules → [../../../README.md](../../../README.md).

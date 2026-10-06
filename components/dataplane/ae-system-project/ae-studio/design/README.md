@@ -159,8 +159,8 @@ secrets drops `es-agent`, whose id is then gone, so OpenChoreo prunes it.
 
 ## Converge
 
-`aep-api` (`organization/aestudio`) installs and upgrades the Resource per
-org, both installs.
+`aep-api` (`organization/aestudio`) installs, upgrades and removes the Resource
+per org, both installs.
 
 - **Steps**, each read-first, writing only what differs, logged as
   `ae_studio.converge {org, step, ms}` or `ae_studio.converge_failed {org,
@@ -186,6 +186,11 @@ org, both installs.
   `ReleaseOwnershipConflict`) after a 1 min settle, or a binding not Ready for
   10 min (above the 200 s startup budget, equal to the Deployment's progress
   deadline).
+- **Remove:** a GitHub disconnect removes AE Studio (`Service.Remove`). It
+  holds the org so no converge starts, waits out a running one, and deletes the
+  Resource; OpenChoreo deletes its bindings and the pod with it. The Project
+  `ae-system` and the ResourceType stay, and a reconnect converges a new
+  Resource.
 - A first install on Cloud takes about 15 minutes, most of it OpenChoreo's
   first converge (ADR-0040).
 
