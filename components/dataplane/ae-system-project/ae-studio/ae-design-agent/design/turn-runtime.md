@@ -126,7 +126,7 @@ turn's record has no `project`.
 
 ## Shutdown
 
-Kubernetes signals the pod's three containers at once, and the pod's
+Kubernetes signals every container in the pod at once, and the pod's
 `terminationGracePeriodSeconds` is 30. On SIGTERM this container:
 
 1. Refuses new turns: `/v1` and the Turn socket answer `503 shutting_down`.

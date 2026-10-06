@@ -31,7 +31,8 @@ with.
   aep-api `Error` shape.
 - A few schemas are hand-written Go types (e.g. `platform/orgconfig.Config*`) and
   marked `x-go-type:` in the contract — don't duplicate them.
-- Every error response points at the shared `Error` schema
+- Every aep-api contract error response (`api/v1`, `api/internal/v1`) points
+  at the shared `Error` schema
   (`{code, message, details?[{field, message}]}`, always `application/json`);
   validation failures are `400`.
 - The `path` parameter of `read-file` is a trailing wildcard (may contain

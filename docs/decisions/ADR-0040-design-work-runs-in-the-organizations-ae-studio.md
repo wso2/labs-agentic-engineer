@@ -90,8 +90,10 @@ Resource in the org's dataplane, installed and kept current by `aep-api`.**
 - A first install on Cloud was measured at about 15 minutes, most of it
   OpenChoreo's first converge.
 - The pod runs without a sandboxed runtime. The design agent has no shell, no
-  URL fetch and no file access outside its snapshots, and the threat model
-  records gVisor as an open gap.
+  arbitrary URL fetch and no file access outside its snapshots: `web_search`
+  goes to the model connection's host (Anthropic's server tool, or the
+  connection's Ollama search API), and `fetch_openapi_spec` runs in `aep-api`
+  over the MCP socket. The threat model records gVisor as an open gap.
 
 ## Alternatives considered
 

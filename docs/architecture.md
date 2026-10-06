@@ -19,7 +19,7 @@ compile error, not a runtime surprise.
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `components/` | deployables arranged as they are deployed: `dataplane/ae-system-project/ae-studio/` is the per-org AE Studio; `controlplane/` and `dataplane/user-project/` are placeholders | yes (`ae-studio`: per org, by `aep-api`) |
 | `runners/` | one-shot / job images | as jobs |
-| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette` | no |
+| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette`, `platform-idp-auth`, `web-search`, `agent-eval`, `bal-library-tool` | no |
 | `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
 | `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
 | `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real design agent; see its README) | no — never in CI |
@@ -30,11 +30,11 @@ compile error, not a runtime surprise.
 - Contracts are hand-maintained and live in `packages/contracts`, one document per
   audience rather than one per service:
   - `api/v1/openapi.yaml` — the public BFF contract the console is generated from.
-  - `api/internal/v1/openapi.yaml` — the service-to-service surface.
-  - `workflows/v1/openapi.yaml` — the workflow/runner surface.
+  - `api/internal/v1/openapi.yaml` — the service-to-service contract.
+  - `workflows/v1/openapi.yaml` — the workflow/runner contract.
   - `api/ae-studio-tools/{v1,internal/v1}/openapi.yaml` — the AE Studio tools
     container: `/v1` for the console, `/internal/v1` for `aep-api`.
-  - `api/ae-design-agent/v1/openapi.yaml` — the design agent's console surface.
+  - `api/ae-design-agent/v1/openapi.yaml` — the design agent's console contract.
   - `sockets/ae-studio/{files,mcp,turn}/openapi.yaml` — one spec per Unix
     socket inside the AE Studio pod.
 - Artifacts the agents produce are JSON Schema under `packages/contracts/schemas/`

@@ -55,7 +55,7 @@ group, and the org is the only claim it checks.**
    pod call is AE-only M2M on `/internal/v1`. A user's request to `aep-api`
    is authorized by `aep-api`, which then acts as itself.
 
-5. **The pod holds two `aep-api` credentials, each opening one route group.**
+5. **The pod holds two `aep-api` credentials, each used for one route group.**
    - The org's `ae-studio-<org>` client (org secret `ae-studio-client`)
      opens the `ae-studio/` route group of `/internal/v1`: the project repository and skills
      lookups, dependency completion, turn usage and the webhook forward.
@@ -67,7 +67,11 @@ group, and the org is the only claim it checks.**
    The invariant: a publisher token opens `mcp` and the org's own `runs/`
    ops (fenced to cycles of its org) and nothing else, and every
    `ae-studio/` op accepts only the `ae-studio-<org>` client, so each token
-   is 401 on the other's group.
+   is 401 on the other's group. The pod's publisher token therefore also
+   clears its own org's `runs/` ops (`runner-validation-context`, gated by
+   `runnerCredential` in `services/aep-api/internal/edge/internal.go`),
+   though the pod never calls them. Whether to narrow the pod's publisher
+   client to `mcp` alone is an open decision.
 
 6. **The issuer is checked exactly; the key set may live elsewhere.** Each
    container takes the issuer (`AE_IDP_ISSUER`) and the key-set URL

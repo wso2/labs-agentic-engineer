@@ -11,12 +11,14 @@ The mount tables are `internal/edge/routes.go` (`Routes`,
 
 ## Gate table
 
-Every refusal is `application/problem+json` with a stable `code`.
+Every refusal on an HTTP route group is `application/problem+json` with a
+stable `code`; the MCP socket's tool and method refusals are JSON-RPC errors
+(see the allow-list below).
 
 | Prefix | Caller | Check, in order | Refusals |
 |---|---|---|---|
 | `/v1/` (port 8082) | the browser (console) | Platform IdP user JWT: RS256, exact `iss` (`AE_IDP_ISSUER`), `exp`, `aud` in `AE_USER_AUDIENCES`, a `sub`, not a `client_credentials` token; then the org rule: `ouId` = `AE_ORG_ID` and `ouHandle` = `AE_ORG_HANDLE`. Then the contract validator. | 401 `unauthenticated` (with `WWW-Authenticate`), 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `path_invalid` |
-| `/internal/v1/` (port 8082) | `aep-api` | Body cap per operation (1 MiB, `create-commit` 16 MiB, `start-repo-turn` 4 MiB, `put-repo-references` 80 MiB), ahead of the gate. AE-only M2M: `client_credentials`, `aud` and `client_id` = `AE_M2M_CLIENT_ID`, no `ouId` claim; then `X-Impersonate-Org` = `AE_ORG_ID`. Then the validator, then the owner guard: a `/internal/v1/repos/{owner}/{repo}/…` owner must equal `AE_GITHUB_OWNER` (case-insensitive; unset refuses all). | 413 `payload_too_large`, 401 `unauthenticated`, 403 `org_mismatch`, 503 `idp_unavailable`, 400 `validation_failed`, 403 `owner_not_allowed` |
+| `/internal/v1/` (port 8082) | `aep-api` | Body cap per operation (1 MiB, `create-commit` 16 MiB, `start-repo-turn` 4 MiB, `put-repo-references` 80 MiB), ahead of the gate. AE-only M2M: `client_credentials`, `aud` contains and `client_id` equals `AE_M2M_CLIENT_ID`, no `ouId` claim; then `X-Impersonate-Org` = `AE_ORG_ID`. Then the validator, then the owner guard: a `/internal/v1/repos/{owner}/{repo}/…` owner must equal `AE_GITHUB_OWNER` (case-insensitive; unset refuses all). | 413 `payload_too_large`, 401 `unauthenticated`, 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `validation_failed`, 403 `owner_not_allowed` |
 | `POST /webhooks/github` (port 8082) | GitHub, or the local `webhook-relay` | 8 deliveries in flight, body 25 MiB, body read within 10 s, then `X-Hub-Signature-256` against `GITHUB_WEBHOOK_SECRET` (current secret only). No token. | 503 `busy`, 413 `payload_too_large`, 408 `request_timeout`, 400 `body_unreadable`, 401 `signature_invalid` |
 | Files socket `AE_FILES_SOCKET` | `ae-collab` | The mount. 40 s per request (inside `ae-collab`'s 45 s call deadline), 25 MiB body, then the validator. | 413 `payload_too_large`, 400 `path_invalid` |
 | MCP socket `AE_MCP_SOCKET` | `ae-design-agent` | The mount. 20 s per request, 1 MiB body, the validator, then the tool allow-list (below). | 413 `payload_too_large`, 400 `invalid_request` |
@@ -66,8 +68,10 @@ ref. A user's write goes to `aep-api`, which uses `/internal/v1`.
 
 ## Calls out to aep-api
 
-The container holds two `aep-api` credentials; each opens one route group
-(ADR-0041 decision 5).
+The container holds two `aep-api` credentials; each is used for one route
+group. The publisher token also clears its own org's `runs/` ops, which this
+container never calls; whether to narrow that is an open decision (ADR-0041
+decision 5).
 
 | Credential | Env | Used for |
 |---|---|---|

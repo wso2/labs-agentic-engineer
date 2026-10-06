@@ -56,7 +56,8 @@ the only pod rather than return ENOSPC.
   fetched, skipping any whose `repo.lock` is held. Reference stores are never
   evicted.
 
-Trash first, because a rename into `trash/` frees nothing on `statfs`: without
+Trash first, because a rename into `trash/` frees nothing on the root's `du`,
+which the 85 % mark reads (`trash/` is under the root): without
 the purge, the volume would stay over the mark and eviction would drain
 `repos/` sweep after sweep.
 

@@ -129,5 +129,5 @@ and the shared `/workspaces` volume is gone. Decisions 1 and 4 to 6 stand.
   still with no console surface.
 - **Rejected, revisited:** the new home is close to "Agents-pod local disk".
   It is accepted now because `/start` already ran without references whenever
-  the store failed it, so losing them on a roll costs what a failed overlay
+  the overlay failed, so losing them on a roll costs what a failed overlay
   always cost, and one pod per org removes the replica objection.

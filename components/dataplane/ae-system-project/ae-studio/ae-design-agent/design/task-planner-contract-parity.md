@@ -42,6 +42,7 @@ consumer's Task lists its providers in `dependsOn`) and as the rationale text.
 
 ## Who may start a Plan
 
-Only `aep-api`, through the Turn socket: the mount is the gate and no request
-carries a token ([ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+Only `aep-api`, through `ae-studio-tools` `/internal/v1` (AE-only M2M), which
+relays the request onto the Turn socket; on the socket the mount is the gate and
+no request carries a token ([ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
 The model is the org's connection from the pod env, like every other turn.

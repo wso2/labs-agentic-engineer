@@ -47,7 +47,8 @@ Pod: non-root UID/GID/fsGroup 10001, seccomp `RuntimeDefault`,
 `automountServiceAccountToken: false`, `enableServiceLinks: false`,
 `shareProcessNamespace: false`, `terminationGracePeriodSeconds: 30` (each
 container drains inside it). Every container: read-only root, `drop: [ALL]`,
-no privilege escalation, its own `/tmp` emptyDir, `HOME=/tmp`.
+no privilege escalation. Every app container also gets its own `/tmp`
+emptyDir and `HOME=/tmp`; `webhook-relay` gets neither.
 
 | Container | Port / health port | Mounts | Startup probe budget |
 |---|---|---|---|

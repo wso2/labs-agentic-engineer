@@ -111,7 +111,7 @@ A line with no producer seq (container bootstrap output, a stray library
 write) is not in the v2 feed. The project-scope query admits only lines that
 carry `agentId`, so the observer cannot return seq-less lines, and serving
 them from the pod would make the two sources disagree. They stay in the v1
-surface below.
+progress reads below.
 
 ### Attempts
 
@@ -151,7 +151,7 @@ A cancelled cycle's feed ends with a platform-minted `run_settled`
 60 s have passed since the cycle ended, so the runner's last lines are in the
 index before the settle takes a seq.
 
-## The V1 surfaces still derive per viewer
+## The v1 progress reads derive per viewer
 
 `CycleProgress` (`agent_progress.go`) serves the VERSION build-progress
 stream, which stitches many runs into one narrative, and the legacy
@@ -171,7 +171,7 @@ capped at `legacyProgressLimit` (200) with the head drop named on the feed.
 Execution rows that predate the milestone model are still read from
 `coding_agent_logs`; nothing writes new ones.
 
-| Read | Shape | Source | Surface |
+| Read | Shape | Source | Stream |
 |---|---|---|---|
 | `CycleEvents` | `gen.RunEvent` (v2) | the pod, then the observer | the RUN progress stream |
 | `CycleProgress` | `contracts.ProgressEvent` (v1) | the pod, then the archive | the VERSION build-progress stream, and the legacy execution path |

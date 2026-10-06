@@ -41,7 +41,15 @@ via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the E
   listener and port suffix come from `tls.enabled` alone (`http`/`http`/`:19080`
   or `https`/`https`/`:19443`); `consoleOrigins` is `[console public URL,
   http://localhost:8090]`.
-- The only non-Thunder seed aectl writes is `aep/webhook-relay-seed`
-  (create-only, only with `ae_studio.webhook_relay.enabled`, or the legacy `webhook.local_smee.enabled` while the new key is unset); a store without
-  it is topped up on `update`. `aep/agents-jwt-secret`, `aep/task-signing-key`,
+- `platform install` overwrites (plain PUT) every OpenBao seed it owns: the
+  `aep/thunder-clients/<vaultName>` secrets, `aep/thunder-clients/system-client-id`,
+  `aep/anthropic-api-key`, `aep/postgres-password`, `aep/webhook-relay-seed`
+  (relay on or off), `aep/opensearch-{username,password}` and
+  `aep/thunder-admin/client-{id,secret}` (`cmd/platform.go`, the `secrets`
+  list). `install --reuse-secrets` overwrites nothing: it requires
+  `requiredOpenBaoPaths` and tops up, create-only, missing Thunder client
+  secrets and (relay on) the relay seed. `platform update` writes only
+  `aep/webhook-relay-seed`, create-only and only with
+  `ae_studio.webhook_relay.enabled` (or the legacy `webhook.local_smee.enabled`
+  while the new key is unset) (`cmd/webhook_relay.go`). `aep/agents-jwt-secret`, `aep/task-signing-key`,
   `aep/webhook-secret` and `aep/openbao-token` are no longer seeded or required.
