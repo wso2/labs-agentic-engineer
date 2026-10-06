@@ -62,6 +62,9 @@ export function isAwaitingValues(build: BuildSummary): boolean {
   return build.waitingReason === "external-values";
 }
 
+/** The deploy aggregate's read is still in flight (see `ledgerStatus`). */
+export const DEPLOY_LOADING = "loading";
+
 /**
  * What a version's row says about itself.
  *
@@ -72,7 +75,9 @@ export function isAwaitingValues(build: BuildSummary): boolean {
  * `deploy` is the project's deploy aggregate. Only the version it names can be
  * described by where it reached; every other completed version says `Built`,
  * because the platform records ONE deployed version per project and inferring
- * anything about the others would be a guess.
+ * anything about the others would be a guess. While a surface's status read is
+ * still in flight it passes `DEPLOY_LOADING`, and a completed version says so
+ * rather than `Built`: the read may name it as deployed a moment later.
  */
 /**
  * A raw status value as a label — `in_progress` → "In progress". Only the
@@ -140,7 +145,7 @@ function movingStatus(stages: SpineStage[] | undefined): LedgerStatus {
 
 export function ledgerStatus(
   build: BuildSummary,
-  deploy?: DeployStage | undefined,
+  deploy?: DeployStage | typeof DEPLOY_LOADING | undefined,
   /** This version's current build session, when the surface has read it. The
    *  ledger has not; the build page has. */
   stages?: SpineStage[] | undefined,
@@ -185,6 +190,9 @@ export function ledgerStatus(
       // telling a reader it does not recognise a state the API had just named.
       return { label: "Cancelled", tone: "neutral", live: false };
     case "completed": {
+      if (deploy === DEPLOY_LOADING) {
+        return { label: "Loading deploy status", tone: "neutral", live: false };
+      }
       if (deploy && deploy.version === build.tag) {
         if (deploy.status === "deployed") {
           return { label: "Deployed", tone: "success", live: false };

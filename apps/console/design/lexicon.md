@@ -183,6 +183,7 @@ not carry: who is acting, why it failed.
 | Built, and it is the version running in development | **`Deployed to development`** |
 | Built, and its rollout is under way | **`Deploying to development`** |
 | Built, and its rollout failed | **`Deploy failed`** |
+| Built, and the build page's deploy status read has not landed yet | **`Loading deploy status`** |
 | Built, everything else | **`Built`** |
 
 **`Built`, never *Completed*.** "Completed" describes the run; the row is about

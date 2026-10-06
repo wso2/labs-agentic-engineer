@@ -19,6 +19,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import {
+  DEPLOY_LOADING,
   buildDuration,
   countTasks,
   isAwaitingValues,
@@ -222,6 +223,16 @@ describe("ledgerStatus", () => {
       "Built",
     );
     expect(ledgerStatus(build()).label).toBe("Built");
+  });
+
+  it("says the deploy status is loading, not Built, while the aggregate is unread", () => {
+    // Until the status read lands nothing is known about where a completed
+    // version reached, and "Built" would be a claim the next poll may undo.
+    const status = ledgerStatus(build({ tag: "v1" }), DEPLOY_LOADING);
+    expect(status.label).toBe("Loading deploy status");
+    expect(status).toMatchObject({ tone: "neutral", live: false });
+    // A version still running says what it is doing whatever the aggregate.
+    expect(ledgerStatus(build({ status: "in_progress" }), DEPLOY_LOADING).label).toBe("Running");
   });
 
   it("says Built when the named version has not reached an environment", () => {

@@ -106,13 +106,19 @@ let mockReadiness:
   | components["schemas"]["ProjectDependencyReadiness"]
   | undefined;
 let mockDeploy: DeployStage | undefined;
+// The project status read still in flight: no data yet.
+let mockStatusPending = false;
 vi.mock("../../projects/api/queries", () => ({
-  useProjectStatus: () => ({
-    data: {
-      repoUrl: "https://github.com/acme/demo.git",
-      ...(mockDeploy ? { deploy: mockDeploy } : {}),
-    },
-  }),
+  useProjectStatus: () =>
+    mockStatusPending
+      ? { data: undefined, isPending: true }
+      : {
+          data: {
+            repoUrl: "https://github.com/acme/demo.git",
+            ...(mockDeploy ? { deploy: mockDeploy } : {}),
+          },
+          isPending: false,
+        },
   useProjectDependencyReadiness: () => ({
     data: mockReadiness,
     isPending: false,
@@ -272,6 +278,7 @@ afterEach(() => {
   mockRuns = [];
   mockTasks = [];
   mockDeploy = undefined;
+  mockStatusPending = false;
   mockCycleBuilds = [];
   mockDesignDeps = [];
   mockReadiness = undefined;
@@ -515,6 +522,22 @@ describe("BuildDetailPage — what the header says is happening", () => {
     renderPage();
     expect(headerPill("Deploying to development")).toBeInTheDocument();
     expect(screen.queryByText("Running · Coding agent")).not.toBeInTheDocument();
+  });
+
+  // The deploy aggregate arrives with the project status read. Until it does,
+  // a completed version is not yet known to be only "Built".
+  it("does not claim Built while the deploy status loads", () => {
+    mockBuilds = [build({ status: "completed", completedAt: "2026-08-14T16:40:00Z" })];
+    mockStatusPending = true;
+    renderPage();
+    expect(headerPill("Loading deploy status")).toBeInTheDocument();
+    expect(screen.queryByText("Built")).not.toBeInTheDocument();
+  });
+
+  it("says Built once the status read names no deploy of this version", () => {
+    mockBuilds = [build({ status: "completed", completedAt: "2026-08-14T16:40:00Z" })];
+    renderPage();
+    expect(headerPill("Built")).toBeInTheDocument();
   });
 
   // A run in its planning phase has no build session, so there is no stage to

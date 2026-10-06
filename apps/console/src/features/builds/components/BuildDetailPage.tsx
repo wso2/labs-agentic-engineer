@@ -53,6 +53,7 @@ import { runStamp } from "../lib/format";
 import {
   buildDuration,
   countTasks,
+  DEPLOY_LOADING,
   hasDeployment,
   isDurationOpen,
   isLedgerLive,
@@ -232,7 +233,11 @@ export function BuildDetailPage({
     );
   }
 
-  const status = ledgerStatus(build, projectStatus.data?.deploy, stages);
+  const status = ledgerStatus(
+    build,
+    projectStatus.isPending ? DEPLOY_LOADING : projectStatus.data?.deploy,
+    stages,
+  );
   // The deploy gate's park (ADR-0023), read from the RUN. `ledgerStatus`
   // already knows a parked version is parked — `BuildSummary.waitingReason`
   // carries it — but only the run names the dependencies the notice below
