@@ -43,10 +43,13 @@ else
   skip 8.3 "reads the roll window (set P8_ROLL=1 while the banner shows)"
 fi
 
-# 8.6: the references and the roll.
-if need OLD_PAT_REF 8.6 "the github-pat reference name before the rotation"; then
+# 8.6: the references and the roll. The org_secrets reads need one org (OC_ORG_ID
+# or a single-org database); with many and no OC_ORG_ID they SKIP.
+scoped=0
+org_secrets_scope 8.6 && scoped=1
+if [ "$scoped" = 1 ] && need OLD_PAT_REF 8.6 "the github-pat reference name before the rotation"; then
   safe_ident 8.6 OLD_PAT_REF "$OLD_PAT_REF" || finish
-  if ref=$(psql_q "select secret_ref_name from org_secrets where secret = 'github-pat'" 2>/dev/null); then
+  if ref=$(psql_q "select secret_ref_name from org_secrets where secret = 'github-pat' $OC_AND" 2>/dev/null); then
     if [[ $ref =~ ^$prefix-github-pat-[0-9a-f]+$ ]] && [ "$ref" != "$OLD_PAT_REF" ]; then
       pass 8.6 "org_secrets github-pat names a new reference"
     else
@@ -58,8 +61,8 @@ if need OLD_PAT_REF 8.6 "the github-pat reference name before the rotation"; the
   gone=$(kubectl get secretreference "$OLD_PAT_REF" -n "$ORG" 2>&1 || true)
   case $gone in *NotFound*) pass 8.6 "old SecretReference $OLD_PAT_REF is gone" ;; *) fail 8.6 "old SecretReference $OLD_PAT_REF still answers" ;; esac
 fi
-if need OLD_WEBHOOK_REF 8.6 "the webhook-secret reference name before the rotation"; then
-  expect_eq 8.6 "$OLD_WEBHOOK_REF" "$(psql_q "select secret_ref_name from org_secrets where secret = 'github-webhook-secret'" 2>/dev/null || true)" "github-webhook-secret reference name"
+if [ "$scoped" = 1 ] && need OLD_WEBHOOK_REF 8.6 "the webhook-secret reference name before the rotation"; then
+  expect_eq 8.6 "$OLD_WEBHOOK_REF" "$(psql_q "select secret_ref_name from org_secrets where secret = 'github-webhook-secret' $OC_AND" 2>/dev/null || true)" "github-webhook-secret reference name"
 fi
 if resolve_studio; then
   if need POD_UID_BEFORE_ROTATION 8.6 "the pod uid before the rotation"; then

@@ -187,8 +187,9 @@ safe_ident() {
 # ("and oc_org_id = '<id>'") for the org_secrets reads. OC_ORG_ID set: it must be
 # a plain identifier (FAIL otherwise, never a quote-strip) and narrows the reads.
 # OC_ORG_ID unset: the reads are unscoped, which is only right when the database
-# holds one org; with more, a SKIP line (set OC_ORG_ID) and false. Callers
-# guard the org_secrets checks with it.
+# holds one org (and then that org is assumed to be the one under test; the
+# SecretReference cross-checks in $ORG catch a mismatch); with more, a SKIP line
+# (set OC_ORG_ID) and false. Callers guard the org_secrets checks with it.
 org_secrets_scope() {
   OC_WHERE=""
   OC_AND=""
@@ -203,7 +204,8 @@ org_secrets_scope() {
     fail "$1" "psql on postgres-0 failed (org count)"
     return 1
   fi
-  if [ "${n:-0}" -gt 1 ] 2>/dev/null; then
+  case ${n:-} in '' | *[!0-9]*) fail "$1" "org count is not a number: ${n:-empty}"; return 1 ;; esac
+  if [ "$n" -gt 1 ]; then
     skip "$1" "org_secrets holds $n orgs: set OC_ORG_ID to read one"
     return 1
   fi

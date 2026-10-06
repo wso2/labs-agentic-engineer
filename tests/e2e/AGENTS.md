@@ -21,8 +21,8 @@ in [`apps/console/PRD.md`](../../apps/console/PRD.md).
 - The user does the steps only a human can: GitHub org and PAT setup, the Google
   sign-in on Cloud, VPN, every "yes at run time", repo deletion.
 - A failed check goes to an Opus subagent for root-cause diagnosis. A fix needs
-  the user's yes unless the run's rulings record a standing authorization for
-  that kind of fix; an agent-driven run acts only under those.
+  the user's yes unless the run's rulings (`Ruling:` lines in its ledger) record
+  a standing authorization for that kind of fix; an agent-driven run acts only under those.
 
 ## Rules
 
