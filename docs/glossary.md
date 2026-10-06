@@ -108,9 +108,9 @@ Cloud overlay may use a different backend via SM-API.
 
 ### `effective-key` — retired
 The git-service endpoint that returned the org's Anthropic key for the spec
-agents. aep-api now reads the model connection's key itself
-(`ConnectionReader.Effective`) and renders it into the org's `ae-design-agent`
-env when the key is saved; the pod rolls.
+agents. aep-api never reads the key: the org's `default-key` Org secret is
+mounted into the org's `ae-design-agent` env by reference when the key is saved;
+the pod rolls.
 
 ---
 
@@ -260,11 +260,11 @@ sourced from Vault on cloud; a literal env var locally.
 The organization's Thunder confidential OAuth app (`aep-publisher-{org}`).
 The coding-agent Job authenticates to aep-api as this client
 (`client_credentials`) for platform callbacks and MCP — local and cloud.
-Distinct from other M2M clients and from the design
-agent's `ae-studio` client.
+Distinct from other M2M clients and from AE Studio's
+`ae-studio` client.
 
-### `Task JWT`
-Gone (2026-10). The BFF no longer mints identity JWTs and serves no JWKS
+### `Task JWT` — retired
+The BFF no longer mints identity JWTs and serves no JWKS
 (`/auth/external/jwks.json` is 404). The coding-agent Job's bearer is the
 organization's publisher client token (`client_credentials`), a Thunder token
 that aep-api verifies against Thunder's published keys; a JWT signed by any
