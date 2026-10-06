@@ -312,7 +312,11 @@ rescued), which rotates secrets under the running platform. Never write a value
 with `value=-` over `kubectl exec -i`: it intermittently stores an empty value.
 
 Never print a value, not even to compare. Compare lengths or sha256 hashes.
-Never put a value on a command line (no `echo`, no `value=<literal>`).
+Never put a value on a command line (no `echo`, no `value=<literal>`). That
+includes the OpenBao token: log the in-pod CLI in from a 0600 file on stdin
+(`kubectl -n openbao exec -i openbao-0 -- bao login -no-print - < "$tokfile"`).
+Never `bao kv get` a multi-field document without `-field=<name>` piped to
+`wc -c`: the whole document prints its secrets.
 
 1. **Re-import each `aep/*` key from the Secret it feeds.** Write each value
    to a 0600 file straight from its Secret. The file then holds the exact
@@ -333,7 +337,9 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    - **Inside the OpenBao pod.** Copy the file in with
      `kubectl cp "$f" <ns>/<pod>:/tmp/v` (it needs `tar` in the image), so argv
      carries only its path. Run
-     `bao kv put secret/<path> value=@/tmp/v`, then remove `/tmp/v`.
+     `bao kv put secret/<path> value=@/tmp/v`, then remove `/tmp/v`. A
+     multi-field path takes one `<field>=@/tmp/<file>` per field in the same
+     `kv put`.
 
    Delete `$f` (and `$body`) once the key is verified (step 2). Each key's
    source:
@@ -346,11 +352,15 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    | `aep/aep-mcp-token` | `aep-sre-handoff-secrets` | `SRE_HANDOFF_TOKEN` |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
 
+   Do NOT restore `aep/openbao-token`, `aep/task-signing-key` or
+   `aep/webhook-secret`: nothing reads them any more, even if a Secret still
+   holds an old copy.
+
    `aep/anthropic-api-key`, `aep/opensearch-username` and `aep/opensearch-password`
    have no ESO target Secret; re-enter them from where you hold them (the
    OpenSearch pair is in the observability plane's own Secret, if installed).
    Restore the `aep/thunder-clients/*` keys too, from their Secrets. Leaving
-   one out does not preserve it. Step 6's `sync-clients` seeds a **new** random
+   one out does not preserve it. The sync step's `sync-clients` seeds a **new** random
    value for each missing key, syncs it into the Secret and updates the Thunder
    client to match. That is a rotation of that client's secret. Every holder of
    the old value then fails until it restarts on the new Secret. Do it only if
@@ -358,10 +368,44 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    non-generated path above is back.
 2. **Verify** each written key by length (or sha256) against the Secret it came
    from.
-3. **Org publisher secrets.** Restore each org's
-   `user-app-secrets/<org>/publisher-secrets` from a surviving runner or pod
-   Secret, if one exists.
-4. **aep-api's OpenBao access.** The wipe also took aep-api's write-only
+3. **Environment identity bindings.** Each environment with a Thunder binding
+   has a document at `secret/aep/thunder/<org>/<env>`, aep-api's only vault
+   read (environment-tier sign-in fails without it). aectl wrote it when it
+   bound the environment (`tools/aectl/internal/envidp`); rewrite its 5 fields
+   from what survives, one 0600 file per field, in one `kv put`:
+
+   | Field | Source |
+   |---|---|
+   | `issuer` | Environment `<env>` (org namespace) annotation `aep.wso2.com/thunder-issuer` |
+   | `adminURL` | annotation `aep.wso2.com/thunder-admin-url` |
+   | `systemResourceIdentifier` | annotation `aep.wso2.com/thunder-system-resource-identifier` |
+   | `clientId` | Secret `thunder-<org>-<env>-aep-system-client` (namespace `thunder-<org>-<env>`), key `client-id` |
+   | `clientSecret` | the same Secret, key `client-secret` |
+
+   An environment lists its binding path in the annotation
+   `aep.wso2.com/thunder-secret-path`; one without it has nothing to restore.
+4. **Org secrets (`user-app-secrets/<vault-org-ns>/<ref>`).** Every org secret
+   (`<ns>-github-pat-…`, `<ns>-github-webhook-secret-…`, `<ns>-default-key-…`,
+   `<ns>-coding-agent-key-…`, `<ns>-ae-publisher-client-…`,
+   `<ns>-ae-studio-client-…`) lives only in the vault, but each one a workload
+   consumes has an ExternalSecret whose target Secret keeps the last synced
+   value. List them by remote path, names only:
+
+   ```bash
+   kubectl get externalsecret -A -o json | jq -r '.items[] | .metadata.namespace as $ns
+     | (.spec.target.name // .metadata.name) as $t | .spec.data[]?
+     | select(.remoteRef.key | test("user-app-secrets/"))
+     | [.remoteRef.key, .remoteRef.property, $ns, $t, .secretKey] | @tsv' | sort -u
+   ```
+
+   For each remote path, write every property from its target Secret's key
+   (0600 file per field, as in step 1) in one `kv put`. When several Secrets
+   feed the same path and property, check they agree by sha256 first. A path
+   that `org_secrets` names but no Secret feeds has no surviving copy:
+   re-enter it in Settings (the GitHub token regenerates the webhook secret
+   and both org clients; the model key and the Claude token are re-saved on
+   their cards). Do not delete `org_secrets` rows by hand.
+5. **aep-api's OpenBao access.** The wipe also took aep-api's write-only
    policy `aep-api-writer` and its Kubernetes-auth role `aep-api`; until they
    are back every secret write aep-api makes fails (log event
    `openbao.login_failed`). Re-apply both (idempotent; `make dev-update` runs
@@ -371,11 +415,14 @@ Never put a value on a command line (no `echo`, no `value=<literal>`).
    bash deployments/scripts/openbao-aep-api-auth.sh
    kubectl -n openbao exec openbao-0 -- bao read auth/kubernetes/role/aep-api
    ```
-5. **Vault-only org secrets.** `github-webhook-secret` and `ae-studio-client`
-   have no surviving copy: delete those `org_secrets` rows and re-submit the
-   GitHub token in Settings, which regenerates them. Re-save the model key and
-   the Claude token in Settings.
-6. **Sync.** Force-sync the ExternalSecrets
+6. **`host.k3d.internal`.** A colima or Docker restart that did not go through
+   `k3d cluster start` can also drop `host.k3d.internal` from the node's
+   `/etc/hosts` (and from CoreDNS `NodeHosts`). Check from inside a pod
+   (`kubectl -n wso2-aep exec deploy/aep-api -- nslookup host.k3d.internal`);
+   if it fails, add `<k3d network gateway, e.g. 172.18.0.1> host.k3d.internal`
+   to both and restart CoreDNS. Do not stop and start the cluster to fix it:
+   that wipes OpenBao again.
+7. **Sync.** Force-sync the ExternalSecrets
    (`kubectl annotate externalsecret <name> -n wso2-aep force-sync=$(date +%s) --overwrite`)
    and run `aectl platform sync-clients`.
 
@@ -385,8 +432,10 @@ From this release aep-api only writes secrets: no org secret value lives in
 Postgres, and aep-api reads none back. It logs in to OpenBao by Kubernetes auth
 (role `aep-api`, policy `aep-api-writer`, see
 `deployments/scripts/openbao-aep-api-auth.sh`) instead of a static token. The
-chart no longer renders the objects below, and the upgrade does not delete
-them. Remove them by hand. Every command is value-free: a root token is piped on
+chart no longer renders the objects below. Helm removes the ones it rendered
+itself (the `aep-openbao-secrets` ExternalSecret, and with it its Secret), so
+their deletes below are no-ops after the upgrade, kept for installs that drifted
+from the chart. Remove the rest by hand. Every command is value-free: a root token is piped on
 stdin, never put on argv, and no command prints or compares a value.
 
 **Cloud: SRE request (phase 10).** Each item's Cloud step is a request to SRE,
@@ -432,7 +481,7 @@ bao_do() { printf '%s' "${OPENBAO_ROOT_TOKEN:-root}" \
 | Static OpenBao token: vault `secret/aep/openbao-token`, ExternalSecret and Secret `aep-openbao-secrets` (`wso2-aep`). Replaced by Kubernetes auth. | `bao_do kv metadata delete secret/aep/openbao-token`; `kubectl -n wso2-aep delete externalsecret aep-openbao-secrets --ignore-not-found`; `kubectl -n wso2-aep delete secret aep-openbao-secrets --ignore-not-found` | SRE request (phase 10) |
 | Task signing key: vault `secret/aep/task-signing-key`, ExternalSecret and Secret `aep-task-signing-key`. Nothing reads it any more. | `bao_do kv metadata delete secret/aep/task-signing-key`; delete ExternalSecret and Secret `aep-task-signing-key` the same way | SRE request (phase 10) |
 | Webhook secret: vault `secret/aep/webhook-secret`, ExternalSecret and Secret `aep-webhook-secrets`. Webhooks are verified per org by the AE Studio relay; the org's own `github-webhook-secret` row is separate and stays. | `bao_do kv metadata delete secret/aep/webhook-secret`; delete ExternalSecret and Secret `aep-webhook-secrets` the same way | SRE request (phase 10) |
-| Per-org OpenChoreo **GitSecret** `aep-component-build-git-secret` (a `GitSecret` CR in each org's control-plane namespace, created and deleted through OpenChoreo's `gitsecrets` API; not a plain Secret). No code references it. | Delete the GitSecret the way aep-api did: `DELETE /api/v1alpha1/namespaces/<oc-org-ns>/gitsecrets/aep-component-build-git-secret` on the OpenChoreo API, or `kubectl -n <oc-org-ns> delete gitsecret aep-component-build-git-secret --ignore-not-found`. Then confirm nothing of that name is left: `kubectl -n <oc-org-ns> get secretreference,secret aep-component-build-git-secret --ignore-not-found` and `bao_do kv list secret/user-app-secrets/<vault-org-ns>`. Delete a leftover with the matching kubectl delete or `kv metadata delete`. (How OpenChoreo backs a GitSecret is not visible from this repo, so the check is the proof, not the delete.) | SRE request (phase 10) |
+| Per-org OpenChoreo **GitSecret** `aep-component-build-git-secret` (a `GitSecret` CR in each org's control-plane namespace, created and deleted through OpenChoreo's `gitsecrets` API; not a plain Secret). No code references it. | Delete the GitSecret the way aep-api did, through the OpenChoreo API (there is no `gitsecret` kubectl resource type; OpenChoreo backs a GitSecret by a SecretReference labelled `openchoreo.dev/secret-type=git-credentials`): `DELETE /api/v1alpha1/namespaces/<oc-org-ns>/gitsecrets/aep-component-build-git-secret` (204). Then confirm nothing of that name is left: `kubectl -n <oc-org-ns> get secretreference,secret aep-component-build-git-secret --ignore-not-found`, and check the vault copy `bao_do kv metadata get secret/default/git/aep-component-build-git-secret`. Locally that vault copy is seeded by OpenChoreo when OpenBao starts; leave it. On an install where OpenChoreo did not seed it, delete it with `bao_do kv metadata delete`. | SRE request (phase 10) |
 | Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<vault-org-ns>/<ref>` | SRE request (phase 10) |
 
 Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
@@ -471,34 +520,40 @@ an `org_secrets` row. A key is an orphan **candidate** only if both hold:
    SecretReference or ExternalSecret has its vault path as a `remoteRef.key`
    (that covers `ai-agent-model-access`).
 
-Names only, no value is read:
+Names only, no value is read. Run it as a bash script (not pasted into your
+login shell: it sets `-euo pipefail` and an exit trap). The scratch files go in
+a private temporary directory:
 
 ```bash
-VNS=<vault-org-ns>; ONS=<oc-org-ns>
+set -euo pipefail
+# Paste the bao_do function from "Legacy objects to delete" here.
+VNS='<vault-org-ns>'; ONS='<oc-org-ns>'  # replace both placeholders
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 ENT='github-pat|github-webhook-secret|default-key|coding-agent-key|ae-publisher-client|ae-studio-client'
 
 # Vault keys of AEP's form
 bao_do kv list -format=json "secret/user-app-secrets/$VNS" \
-  | jq -r '.[]' | grep -E "(^|-)($ENT)-[0-9a-f]{8}\$" | sort > /tmp/vault-aep-refs
+  | jq -r '.[]' | { grep -E "(^|-)($ENT)-[0-9a-f]{8}\$" || true; } | sort > "$T/vault-aep-refs"
 
 # 1. Names an org_secrets row still holds
 kubectl -n wso2-aep exec postgres-0 -- sh -c \
   "psql -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\" -Atc \
-   \"SELECT secret_ref_name FROM org_secrets WHERE oc_org_id = '$ONS'\"" | sort > /tmp/live-rows
+   \"SELECT secret_ref_name FROM org_secrets WHERE oc_org_id = '$ONS'\"" | sort > "$T/live-rows"
 
 # 2. Vault paths any SecretReference or ExternalSecret in the cluster points at
 { kubectl get secretreferences -A -o json \
     | jq -r '.items[].spec.data[]?.remoteRef.key';
   kubectl get externalsecrets -A -o json \
     | jq -r '.items[].spec.data[]? | .remoteRef.key'; } \
-  | sed -n "s#^user-app-secrets/$VNS/##p" | sort -u > /tmp/live-paths
+  | sed -n "s#^user-app-secrets/$VNS/##p" | sort -u > "$T/live-paths"
 
 # Candidates: AEP-shaped, in neither list
-comm -23 /tmp/vault-aep-refs <(sort -u /tmp/live-rows /tmp/live-paths)
+comm -23 "$T/vault-aep-refs" <(sort -u "$T/live-rows" "$T/live-paths")
 ```
 
-Review each candidate by hand before running the delete in the table, and delete
-the matching SecretReference too if one exists. The `/tmp` files hold names only.
+Review each candidate by hand before running the delete in the table. By
+construction no SecretReference names a candidate, so there is none to delete.
+The scratch files hold names only and are removed on exit.
 Both lists must come back non-empty on a cluster with a connected org; if one is
 empty, fix its query before trusting the candidate list.
 
