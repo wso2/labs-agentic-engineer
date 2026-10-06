@@ -130,41 +130,81 @@ Temporal own retries.
 
 ## Log events
 
-All JSON `slog` on stdout. No event carries a body, a token, a signature,
-tool arguments or a usage record's values. Git's and GitHub's own error text
-(it names the command and the clone URL) and the project resolver's error text
-never reach a line: a failure is logged by class, `githubStatus` or `cause`.
-A new event follows both rules and joins this table.
+All JSON `slog` on stdout, one row per event in the code. A new event goes in
+this table in the same commit.
 
-| Event | Fields | When |
-|---|---|---|
-| `repo.root` | `root_layout` | once at start, the studio-data root's layout |
-| `internal.access` | `method`, `path`, `status`, `ms` | every `/internal/v1` request, after the answer (no headers, no query) |
-| `webhook.forwarded` | `delivery`, `event`, `status` | `aep-api` took or refused the delivery for good; `status` is `aep-api`'s |
-| `webhook.rejected` | `delivery`, `event`, `reason`, `status` (forward failures only) | `reason` is the refusal code (`busy`, `payload_too_large`, `request_timeout`, `body_unreadable`, `signature_invalid`) or `aep_api_unavailable`, whose `status` is `aep-api`'s last (0 when not reached) |
-| `turns.start` | `kind`, `project`, `turnId` | the agent accepted the turn |
-| `turns.result` | `kind`, `project`, `turnId`, `status` | the turn's stream ended |
-| `turns.socket_failed` | the turn's fields, then `error` (unreachable) or `status` (any other answer) | the Turn socket failed the relay (503 `agent_unavailable`, 502 `agent_error`) |
-| `mcp.tools_call` | `tool`, `repo` (remote-git only), `upstream` (`pod` or `aep-api`) | each allowed `tools/call` |
-| `mcp.upstream_failed` | `method`, `error` | `aep-api` could not answer a forwarded call (502 `aep_api_unavailable`) |
-| `repo.clone` | `repo`, `mode` (`bare`), `ms` | a cold clone finished |
-| `files.git_failed` | `op`, `project`, `repo`, `class` | a Files op's git failure (502 `github_error`) |
-| `files.disk_full` | `op`, `project` or `repo` | a Files op or a reference upload met a full disk (503 `disk_full`) |
-| `repo.git_failed` | `op`, `repo`, `githubStatus` | a `/internal/v1` git op's failure (502 `github_error`) |
-| `repo.disk_full` | `op`, `repo` | a `/internal/v1` git op met a full disk |
-| `repo.commit_conflict` | `op`, `repo` | a commit's tree kept changing, nothing applied (409 `conflict`) |
-| `repo.not_fast_forward` | `op`, `repo` | the branch moved during a commit (409 `not_fast_forward`) |
-| `github.call_failed` | `op`, `repo`, `status`, `githubStatus` | a GitHub op was refused or failed |
-| `github.repo_owner_mismatch` | `owner`, `githubOwner`, `repo` | create-repo answered a different owner than asked, so nothing is returned (403 `owner_not_allowed`) |
-| `aep_api.unavailable` | `op`, `project` | the project resolver could not reach `aep-api` (503, `Retry-After`) |
-| `aep_api.auth_rejected` | `op`, `project`, `cause` (`aep_api` or `token_endpoint`) | `aep-api` or the token endpoint refused the pod's own credentials; the operator's signal |
-| `auth.idp_unavailable` | `gate` (`user` or `m2m`) | the IdP's key set could not be fetched |
-| `usage.dropped` | `count`, `reason` (`outbox_full` or `rejected`), `status` (rejected only) | records left the outbox for good |
-| `usage.send_failed` | `count`, `error` | a batch will be retried |
-| `reaper.sweep` | `usedBytes`, `budgetBytes`, `pct`, `evicted` | each sweep of the studio-data root |
-| `skills.mirror_conflict` | `repo`, `attempt` | the skills mirror commit lost a race and recomputes |
-| `snapshot.idea_unreadable` | `project`, `step` (`read` or `parse`), `error` (read only) | the project descriptor's idea could not be read; the snapshot answers no idea |
-| `references.overlay_failed` | `project`, `step`, `error` | a reference overlay step failed (best effort; the lookup still answers) |
+No event carries a body, a token, a signature, tool arguments or a usage
+record's values. A line about git, GitHub or the project resolver carries a
+class, a `status` or a `githubStatus`, not the error's text (it names the
+command and the clone URL). Only the rows that list an `error` field log error
+text, and those errors come from the pod's own sockets, disk and local mirror
+(`references.overlay_failed` and the `reaper.*` rows log local git and
+filesystem errors); `github.identity_failed` logs the GitHub call's error.
+
+Levels: `I` info, `W` warn, `E` error.
+
+| Event | Lvl | Fields | When |
+|---|---|---|---|
+| `repo.root` | I | `root_layout` | once at start, the studio-data root's layout |
+| `internal.access` | I | `method`, `path`, `status`, `ms` | every `/internal/v1` request, after the answer (no headers, no query) |
+| `internal.handler_failed` | E | `path`, `error` | a `/internal/v1` handler error no typed response covers (500 `internal_error`) |
+| `files_socket.handler_failed` | E | `path` | the Files socket's response failed to encode (no error text: a Files error can carry git text) |
+| `mcp_socket.handler_failed` | E | `path` | the MCP socket's response failed to encode |
+| `webhook.forwarded` | I | `delivery`, `event`, `status` | `aep-api` took or refused the delivery for good; `status` is `aep-api`'s |
+| `webhook.rejected` | W | `delivery`, `event`, `reason`, `status` (forward failures only) | `reason` is the refusal code (`busy`, `payload_too_large`, `request_timeout`, `body_unreadable`, `signature_invalid`) or `aep_api_unavailable`, whose `status` is `aep-api`'s last (0 when not reached) |
+| `turns.start` | I | `kind`, `project`, `turnId` | the agent accepted the turn |
+| `turns.result` | I | `kind`, `project`, `turnId`, `status` | the turn's stream ended |
+| `turns.socket_failed` | W | the turn's fields, then `error` (unreachable) or `status` (any other answer) | the Turn socket failed the relay (503 `agent_unavailable`, 502 `agent_error`) |
+| `mcp.tools_call` | I | `tool`, `repo` (remote-git only), `upstream` (`pod` or `aep-api`) | each allowed `tools/call` |
+| `mcp.upstream_failed` | W | `method`, `error` | `aep-api` could not answer a forwarded call (502 `aep_api_unavailable`) |
+| `repo.clone` | I | `repo`, `mode` (`bare`), `ms` | a cold clone finished |
+| `files.git_failed` | W | `op`, `project`, `repo`, `class` | a Files op's git failure (502 `github_error`) |
+| `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload met a full disk (503 `disk_full`) |
+| `files.not_fast_forward` | W | `op`, `project` | a Files save lost every CAS retry to concurrent writers (409 `not_fast_forward`) |
+| `files.identity_unavailable` | W | `class` (`rate_limited`, `status`, `canceled`, `transport`), `status` | the gitpat identity could not be read for a save; the engine commits as its default identity |
+| `files.completions_unavailable` | W | `project`, `stubs`, `misconfigured` | `aep-api`'s dependency completions failed; the save carries a warning per stub |
+| `commit.identity_unavailable` | W | `op` | the gitpat identity could not be read for a `/internal/v1` commit; the engine's default is used |
+| `repo.git_failed` | W | `op`, `repo`, `githubStatus` | a `/internal/v1` git op's failure (502 `github_error`) |
+| `repo.disk_full` | W | `op`, `repo` | a `/internal/v1` git op met a full disk |
+| `repo.commit_conflict` | W | `op`, `repo` | a commit's tree kept changing, nothing applied (409 `conflict`) |
+| `repo.not_fast_forward` | W | `op`, `repo` | the branch moved during a commit (409 `not_fast_forward`) |
+| `repo.trash_failed` | W | `repo` | trashing a repository failed on the studio's own disk (500 `trash_failed`) |
+| `github.call_failed` | W | `op`, `repo`, `status`, `githubStatus` | a GitHub op was refused or failed |
+| `github.repo_owner_mismatch` | W | `owner`, `githubOwner`, `repo` | create-repo answered a different owner than asked, so nothing is returned (403 `owner_not_allowed`) |
+| `github.identity_failed` | W | `error` | the gitpat user lookup failed (502) |
+| `github.issue_list_capped` | W | `owner`, `repo`, `pages` | an issue list hit its page cap; the answer is partial |
+| `github.milestone_comments_capped` | W | `owner`, `repo`, `milestone`, `covered` | a milestone's comment read hit its page; later issues read as having none |
+| `aep_api.unavailable` | W | `op`, `project` | the project resolver could not reach `aep-api` (503, `Retry-After`) |
+| `aep_api.auth_rejected` | E | `op`, `project`, `cause` (`aep_api` or `token_endpoint`) | `aep-api` or the token endpoint refused the pod's own credentials; the operator's signal |
+| `auth.idp_unavailable` | W | `gate` (`user` or `m2m`) | the IdP's key set could not be fetched |
+| `usage.dropped` | W | `count`, `reason` (`outbox_full` or `rejected`), `status` (rejected only) | records left the outbox for good |
+| `usage.send_failed` | W | `count`, `error` | a batch will be retried |
+| `usage.flush_failed` | E | `error` | the final outbox flush at shutdown failed |
+| `skills.mirror_conflict` | W | `repo`, `attempt` | the skills mirror commit lost a race and recomputes |
+| `skills.manifest_unparseable` | W | none | the library's `skills-manifest.json` did not parse; every skill reads as enabled by default |
+| `skills.skill_unparseable` | W | `name`, `legacyDir` | a `SKILL.md` did not parse and is left out of the catalog |
+| `snapshot.idea_unreadable` | W | `project`, `step` (`read` or `parse`), `error` (read only) | the project descriptor's idea could not be read; the snapshot answers no idea |
+| `references.overlay_failed` | W | `project`, `step`, `error` | a reference overlay step failed (best effort; the lookup still answers) |
+
+### Reaper events
+
+The sweeps and what they evict are in [clone-storage.md](clone-storage.md#reaper).
+
+| Event | Lvl | Fields | When |
+|---|---|---|---|
+| `reaper.sweep` | I | `usedBytes`, `budgetBytes`, `pct`, `evicted` | each sweep of the studio-data root |
+| `reaper.pass_failed` | W | `pass` (force trash purge only), `error` | a sweep pass failed |
+| `reaper.tmp_purge_failed` | W | `error` | removing an old tmp entry failed |
+| `reaper.trash_purge_failed` | W | `error` | removing an old trash entry failed |
+| `reaper.snapshot_trash_failed` | W | `project`, `error` | trashing an unused snapshot failed |
+| `reaper.snapshot_evicted` | I | `project`, `bytes` | the budget pass evicted a snapshot |
+| `reaper.evicted` | I | `repo`, `bytes` | the budget pass evicted a mirror |
+| `reaper.evict_skipped` | I | `repo`, `reason` | a mirror's eviction was skipped (its `repo.lock` was held) |
+| `reaper.evict_short` | W | `freedBytes`, `targetBytes` | the budget pass freed less than its target |
+| `reaper.maintained` | I | `repo`, `looseBefore`, `packsBefore` | git maintenance ran on a mirror |
+| `reaper.maintain_skipped` | I | `repo`, `reason` | maintenance was skipped |
+| `reaper.count_objects_failed` | W | `repo`, `error` | counting a mirror's objects failed |
+| `reaper.packed_refs_scan_stopped` | W | `error` | the `packed-refs` scan ended early on an over-long line |
 
 `delivery` and `event` are sender-chosen headers logged before the signature
 is checked, so both are cut to 64 runes.

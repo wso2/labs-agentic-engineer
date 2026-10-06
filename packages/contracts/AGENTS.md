@@ -1,12 +1,12 @@
 # AGENTS.md — packages/contracts (`@aep/contracts`)
 
-## Instructions
+## Regenerate
 
-- The OpenAPI contracts are hand-maintained (contract-first), never generated.
-  Edit deliberately: server code and client types are generated FROM them.
-  After an edit, regenerate in EVERY consumer below; CI's `gen-api-check`
-  goes red in any Go module you skipped, and a skipped `pnpm gen` leaves a
-  stale committed `src/generated/` file.
+The OpenAPI contracts are hand-maintained (contract-first), never generated.
+Edit deliberately: server code and client types are generated FROM them.
+After an edit, regenerate in EVERY consumer below; CI's `gen-api-check` goes
+red in any Go module you skipped, and a skipped `pnpm gen` leaves a stale
+committed `src/generated/` file.
 
 | Contract | Regenerate with |
 |---|---|
@@ -19,10 +19,13 @@
 | `sockets/ae-studio/mcp/openapi.yaml` | `make gen-api` in `ae-studio-tools`; `pnpm gen` in `ae-design-agent` |
 | `sockets/ae-studio/turn/openapi.yaml` (`golden/` holds the NDJSON streams both sides test against) | `make gen-api` in `ae-studio-tools`; `pnpm gen` in `ae-design-agent` |
 
-  `ae-studio-tools` is `components/dataplane/ae-system-project/ae-studio/ae-studio-tools`;
-  `ae-design-agent` and `ae-collab` are its siblings. A socket's mount is its
-  gate. `schemas/` holds the JSON Schemas the design and planning tools
-  validate with.
+`ae-studio-tools` is `components/dataplane/ae-system-project/ae-studio/ae-studio-tools`;
+`ae-design-agent` and `ae-collab` are its siblings. A socket's mount is its
+gate. `schemas/` holds the JSON Schemas the design and planning tools validate
+with.
+
+## Instructions
+
 - The `ae-studio-tools` contracts' errors are RFC 9457 problems
   (`application/problem+json` `{type, title, status, detail?, code}`), not the
   aep-api `Error` shape.
@@ -38,4 +41,3 @@
   idea) that a caller puts on a `TurnSpec` (declared in `@aep/agent-stream`, `src/contracts/sse-events.ts`). The sentences those facts become —
   including which skill a token loads, and which branch of it — belong to
   `components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/` (ADR-0003 in that service's `design/`).
-

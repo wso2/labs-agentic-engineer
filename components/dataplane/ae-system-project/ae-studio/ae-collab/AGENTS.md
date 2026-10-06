@@ -77,13 +77,10 @@ How a Room saves (committer cadence, failure classes, conflicts,
 `pod/commits.ts`. Keep these in step with it:
 
 - The stateless messages `flush` / `flushed` / `flush-error` /
-  `flush-warnings` and the reasons `upstream-unavailable`, `token-expired`,
-  `permission-denied` are spelled on the console side too (`useCollabSpec.ts`)
-  and the agent's (`room-peer.ts`).
+  `flush-warnings` and the reason `upstream-unavailable` are spelled on the
+  console side too (`useCollabSpec.ts`); the agent's `room-peer.ts` spells
+  `upstream-unavailable`.
 - Shutdown's 8 s budget ends inside ae-studio-tools' 10 s Files socket drain.
-- One flush per room at a time (`RoomState.flushing`): the debounced store,
-  `flush`, the last leave, a retry and shutdown queue on the room, so a later
-  flush diffs against the baseline the earlier one left.
 - `/healthz` and `/readyz` are on the health port.
 
 ## Env
