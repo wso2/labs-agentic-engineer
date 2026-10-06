@@ -124,6 +124,24 @@ log_hits() {
        END { print hits + 0 }' "$@"
 }
 
+# epoch_to_utc SECONDS: SECONDS since the epoch as YYYY-MM-DDTHH:MM:SSZ (BSD or GNU date).
+epoch_to_utc() {
+  date -u -r "$1" +%FT%TZ 2>/dev/null || date -u -d "@$1" +%FT%TZ 2>/dev/null
+}
+
+# log_hits_between SINCE UNTIL PATTERN...: like log_hits, and only for slog
+# lines whose "time" lies in [SINCE, UNTIL] (UTC, YYYY-MM-DDTHH:MM:SSZ, compared
+# to the second). An empty UNTIL leaves the window open at the end.
+log_hits_between() {
+  awk 'BEGIN { since = substr(ARGV[1], 1, 19); until = substr(ARGV[2], 1, 19); ARGV[1] = ""; ARGV[2] = ""
+               for (i = 3; i < ARGC; i++) { p[i] = ARGV[i]; ARGV[i] = "" } n = ARGC - 1 }
+       { if (!match($0, /"time":"[^"]*"/)) next
+         ts = substr($0, RSTART + 8, 19)
+         if (ts < since || (until != "" && ts > until)) next
+         ok = 1; for (i = 3; i <= n; i++) if (index($0, p[i]) == 0) { ok = 0; break } hits += ok }
+       END { print hits + 0 }' "$@"
+}
+
 # value_scan: reads stdin, prints "<lines> <lines holding a value>" where the
 # values are the lines of $VALUES_FILE. The values stay inside awk (the file
 # path is the only argument); the line count tells a dead producer (0 lines)
