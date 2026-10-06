@@ -349,8 +349,9 @@ type CycleFacts struct {
 	MergeSHA string `json:"mergeSha,omitempty"`
 	Ended    bool   `json:"ended"`
 	// AgentReason is why the cycle's agent stopped without landing, as the
-	// pod-truth watcher closed it. Read for the one reason that is not agent
-	// death: delivery.CycleReasonModelProviderLimit.
+	// pod-truth watcher closed it. Read for the two reasons that are not agent
+	// death: delivery.CycleReasonModelProviderLimit, and a startup_failed
+	// close (delivery.IsStartupFailure: the agent never started).
 	AgentReason string `json:"agentReason,omitempty"`
 	// CancelRequested is the run row's cancellation stamp, not the signal. The
 	// signal is a wake-up; this is the evidence — which is what stops a reaped

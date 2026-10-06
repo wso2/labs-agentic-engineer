@@ -178,7 +178,7 @@ func validationView(verdict string, issue int) gen.RunValidation {
 // differently.
 //
 // `recording` is passed IN rather than derived here, and that is the seam: it is
-// the only field on this shape that is not a column of the row. It answers what
+// the only field on this shape that is not derived from the row. It answers what
 // the PLATFORM can serve of the cycle's feed — `none` when it has no record at
 // all, `lost` when it had one and cannot serve it — and those two are the same
 // empty screen and very different bugs, so a projection that could not be told
@@ -208,8 +208,26 @@ func CycleView(c *delivery.RunCycle, recording gen.RunCycleViewRecording) gen.Ru
 		ValidationVerdict: gen.RunCycleViewValidationVerdict(c.ValidationVerdict),
 		ValidationIssue:   int64(c.ValidationIssue),
 		Recording:         recording,
+		StartupWait:       startupWaitView(c),
 		CreatedAt:         c.CreatedAt,
 		EndedAt:           c.EndedAt,
+	}
+}
+
+// startupWaitView projects the watcher's durable startup wait, nil when there
+// is none to show. Only an OPEN cycle waits: once the cycle has ended, an agent
+// that never started is told by agentReason (`startup_failed:…`), and a wait
+// left on the row would read as one still going. failsAt is the deadline the
+// watcher applies (delivery.RunCycle.StartupDeadline), so the console's "fails
+// at" and the close agree.
+func startupWaitView(c *delivery.RunCycle) *gen.RunCycleStartupWait {
+	if c.EndedAt != nil || c.StartupWaitReason == "" || c.StartupWaitSince == nil {
+		return nil
+	}
+	return &gen.RunCycleStartupWait{
+		Reason:  c.StartupWaitReason,
+		Since:   *c.StartupWaitSince,
+		FailsAt: c.StartupDeadline(),
 	}
 }
 

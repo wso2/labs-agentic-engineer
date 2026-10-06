@@ -197,6 +197,8 @@ func stateForUnlandedValidation(res cycleResult) (state, reason string) {
 		return delivery.RunStateFailed, delivery.RunReasonNoWriteTarget
 	case cycleConflict:
 		return delivery.RunStateFailed, delivery.RunReasonConflictBudget
+	case cycleAgentStartFailed:
+		return delivery.RunStateFailed, delivery.RunReasonAgentStartFailed
 	default:
 		return delivery.RunStateFailed, delivery.RunReasonRedispatchBudget
 	}

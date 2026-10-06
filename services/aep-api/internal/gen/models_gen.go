@@ -1548,6 +1548,7 @@ type BuildSummary struct {
 	StartedAt time.Time `json:"startedAt"`
 
 	// Status What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
+	// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. The overview's build stage applies the same rule.
 	Status BuildSummaryStatus `json:"status"`
 	Tag    string             `json:"tag"`
 
@@ -1556,6 +1557,7 @@ type BuildSummary struct {
 }
 
 // BuildSummaryStatus What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
+// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. The overview's build stage applies the same rule.
 type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
@@ -2030,7 +2032,7 @@ type MilestoneRunView struct {
 	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked), or the model provider's usage limit stopped the coding agent (terminalReason model-provider-limit); either way a person starts the run again.
 	State MilestoneRunViewState `json:"state"`
 
-	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked, publisher-credentials-missing and model-provider-limit explain state=blocked. no-write-target is a failed run whose project's deployment pipeline names no environment to deploy into, met at coding-agent dispatch or at any deploy step (the gate, the version read, a promote or a readiness poll); it files no fix work and dispatches no agent.
+	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked, publisher-credentials-missing and model-provider-limit explain state=blocked. no-write-target is a failed run whose project's deployment pipeline names no environment to deploy into, met at coding-agent dispatch or at any deploy step (the gate, the version read, a promote or a readiness poll); it files no fix work and dispatches no agent. agent-start-failed is a failed run whose agent never started (its pod did not reach Running within the startup grace, e.g. no room in the cluster); nothing ran, no pull request was opened, and the cycle's Job was suspended.
 	TerminalReason string `json:"terminalReason,omitempty"`
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
@@ -2521,9 +2523,21 @@ type RunBudgets struct {
 	ValidationCycles int64 `json:"validationCycles"`
 }
 
+// RunCycleStartupWait Why an OPEN cycle's agent has not started yet: its pod is stuck before Running, as the platform's pod-truth watcher last saw it. Present only while the cycle is open and its current attempt's pod is stuck; absent once the pod runs or is merely starting, and once the cycle has ended (an agent that never started then ends the cycle with an `agentReason` of `startup_failed:<reason>`). Derived from the cycle record alone; no cluster read answers it.
+type RunCycleStartupWait struct {
+	// FailsAt When the platform gives up on this attempt if the pod has still not started: the attempt's dispatch plus the startup grace. The cycle then closes `startup_failed:<reason>`, its Job is suspended, and the run fails `agent-start-failed`.
+	FailsAt time.Time `json:"failsAt"`
+
+	// Reason The pod's own waiting reason, verbatim from Kubernetes: `Unschedulable` (the cluster has no room for the pod), `ImagePullBackOff` / `ErrImagePull` (the image does not pull), `CreateContainerConfigError` (a secret or config the pod needs is not there yet), or another kubelet reason. A client maps the ones it knows to plain words and shows any other as is.
+	Reason string `json:"reason"`
+
+	// Since When the watcher first saw this attempt's pod stuck.
+	Since time.Time `json:"since"`
+}
+
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
-	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
+	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised; the cycle's Job is then suspended, so its pod cannot start later, and the run settles `agent-start-failed`) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
 	AgentReason string `json:"agentReason,omitempty"`
 
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
@@ -2558,6 +2572,9 @@ type RunCycleView struct {
 
 	// Resolves The milestone agent-work issues this cycle's pull request claims — the merge policy's matched set, which is what the merge closes. Recorded so a cycle's working set survives its issues being closed; empty until a pull request is seen.
 	Resolves []int64 `json:"resolves,omitempty"`
+
+	// StartupWait Why this open cycle's agent has not started yet. Absent while nothing holds it up, and on an ended cycle.
+	StartupWait *RunCycleStartupWait `json:"startupWait,omitempty"`
 
 	// ValidationIssue The validation issue this cycle was dispatched at. Set on validation cycles only, and recorded per cycle rather than only on the run so a repeated validation stays navigable to the issue that framed each attempt.
 	ValidationIssue int64 `json:"validationIssue,omitempty"`

@@ -32,7 +32,15 @@ package codingagent
 //  3. It never deletes a Component; it suspends the Job at the first terminal
 //     pod, and the settler deletes once no pod is left. The suspend comes after
 //     the run's usage is captured, so the pod whose log carries the spend is
-//     read before anything is done to its Job.
+//     read before anything is done to its Job. A cycle whose pod never started
+//     is suspended when the watcher closes it startup_failed (and on any later
+//     tick that finds it closed so, unsuspended, with a live pod): Kubernetes
+//     would otherwise start that pod once the cluster had room, an agent
+//     working for a closed cycle.
+//
+// While an open cycle's pod is stuck before Running, the watcher records why
+// on the row (NoteStartupWait), so the console can say what the agent is
+// waiting for before the grace runs out.
 //
 // Its state is the cycle rows themselves — the not-found streak is the only
 // in-memory fact, and losing it on restart costs at most two extra ticks.
@@ -67,11 +75,11 @@ const finalLogTailBytes = 256 * 1024
 // nearly every usage capture.
 const cycleCaptureWindow = 6 * time.Hour
 
-// Watcher cadences. The startup grace is generous because it has to cover an
-// image pull on a cold node, and its expiry is a verdict.
+// Watcher cadences. The startup grace (delivery.CycleStartupGrace) is the
+// platform's, not the watcher's: the run view derives the waiting cycle's
+// deadline from the same constant.
 const (
 	defaultPollInterval = 30 * time.Second
-	defaultStartupGrace = 10 * time.Minute
 	// missingTicksToFail is B9's "sustained 404": one missing read is a race
 	// with a render or a delete, three consecutive ones are a fact.
 	missingTicksToFail = 3
@@ -84,12 +92,15 @@ const (
 
 // cycleWatchStore is the cycle state this watcher reads and writes. It is a
 // narrow interface rather than the whole repository so the watcher's write
-// surface — one verdict, usage, and the suspend stamp — is visible at a glance.
+// surface — one verdict, usage, the suspend stamp and the startup wait — is
+// visible at a glance.
 type cycleWatchStore interface {
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]delivery.RunCycle, error)
 	FinishAgentFailed(ctx context.Context, id, reason string) (*delivery.RunCycle, error)
 	RecordUsage(ctx context.Context, id string, u contracts.CapturedUsage) error
 	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
+	NoteStartupWait(ctx context.Context, id, reason string, at time.Time) error
+	ClearStartupWait(ctx context.Context, id string) error
 }
 
 // JobWatcher reconciles dispatched run cycles against the pods OpenChoreo
@@ -161,7 +172,7 @@ func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, tar
 		jobs:         jobs,
 		asService:    asService,
 		pollInterval: defaultPollInterval,
-		startupGrace: defaultStartupGrace,
+		startupGrace: delivery.CycleStartupGrace,
 		missing:      map[string]int{},
 		absent:       map[string]int{},
 		seen:         map[string]bool{},
@@ -290,19 +301,35 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		return
 	}
 
-	switch ClassifyPod(pod) {
+	outcome := ClassifyPod(pod)
+	if cycle.EndedAt != nil && delivery.IsStartupFailure(cycle.AgentReason) &&
+		(outcome == OutcomePending || outcome == OutcomeRunning) {
+		// Closed startup_failed, and its pod is still there — not yet started,
+		// or started since: a zombie working for a closed cycle. The close that
+		// should have suspended it lost to another replica, or a restart fell
+		// between the two writes, or the row predates the rule. suspendJob is a
+		// no-op once job_suspended_at is stamped. A terminal pod takes the
+		// branches below, which suspend it as any terminal pod.
+		w.suspendJob(ctx, cycle, causeStartupFailed)
+		return
+	}
+	if cycle.EndedAt == nil {
+		w.noteStartupWait(ctx, cycle, pod)
+	}
+
+	switch outcome {
 	case OutcomeSucceeded:
 		// The agent's process ended. Whether the WORK landed is the pull
 		// request's answer, and it reaches the run as a webhook — so nothing is
 		// concluded here beyond banking the run's token spend.
 		w.captureUsage(ctx, cycle, w.readTerminal(ctx, cycle, binding, pod, false))
-		w.suspendAtTerminal(ctx, cycle, "terminal")
+		w.suspendJob(ctx, cycle, causeTerminal)
 	case OutcomeFailed:
 		// An open cycle still needs its verdict, and the runner's last line is
 		// where a provider limit says it was one.
 		report := w.readTerminal(ctx, cycle, binding, pod, cycle.EndedAt == nil)
 		w.captureUsage(ctx, cycle, report)
-		w.suspendAtTerminal(ctx, cycle, "terminal")
+		w.suspendJob(ctx, cycle, causeTerminal)
 		if report.providerLimit != nil {
 			w.failOnProviderLimit(ctx, cycle, *report.providerLimit)
 			return
@@ -358,9 +385,16 @@ func isLeftoverPod(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
 	return pod.CreatedAt.Before(cutoff) && (pod.FinishedAt.IsZero() || pod.FinishedAt.Before(cutoff))
 }
 
-// suspendAtTerminal suspends the cycle's Job binding once, the first time its
-// pod is seen terminal. Idempotent through job_suspended_at: a marked cycle is
-// never asked again. Outcomes:
+// The causes a watcher suspend is announced with (codingagent.job_suspended
+// `cause`): the first terminal pod, or a cycle closed startup_failed.
+const (
+	causeTerminal      = "terminal"
+	causeStartupFailed = "startup_failed"
+)
+
+// suspendJob suspends the cycle's Job binding once: the first time its pod is
+// seen terminal, or when the cycle is closed startup_failed. Idempotent through
+// job_suspended_at: a marked cycle is never asked again. Outcomes:
 //   - success: marked, then codingagent.job_suspended is logged — the one event
 //     that says a suspend took effect;
 //   - ErrNotFound: the binding is gone, so there is nothing left to suspend;
@@ -369,7 +403,7 @@ func isLeftoverPod(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
 //     left to its TTL and NOT marked, which is how the settler knows suspend
 //     did not apply;
 //   - anything else: not marked, so the next tick retries.
-func (w *JobWatcher) suspendAtTerminal(ctx context.Context, cycle *delivery.RunCycle, cause string) {
+func (w *JobWatcher) suspendJob(ctx context.Context, cycle *delivery.RunCycle, cause string) {
 	if w.jobs == nil || cycle.JobSuspendedAt != nil {
 		return
 	}
@@ -420,11 +454,13 @@ func (w *JobWatcher) noteReadFailure(ctx context.Context, cycle *delivery.RunCyc
 // checkStartupGrace fails a cycle whose pod never reached Running within the
 // grace, naming the cause from the pod's own waiting reason or its events —
 // which is the difference between "your image does not pull", "the cluster has
-// no room" and "a secret had not synced yet".
+// no room" and "a secret had not synced yet" — and then suspends its Job, so
+// the pod Kubernetes would schedule once the cluster has room never starts an
+// agent on the closed cycle.
 func (w *JobWatcher) checkStartupGrace(ctx context.Context, cycle *delivery.RunCycle, binding string, pod openchoreo.RuntimePod) {
-	// UpdatedAt is the row's last dispatch write (NoteDispatch), so the grace is
-	// measured from the attempt in flight and a re-dispatch restarts it.
-	if time.Since(cycle.UpdatedAt) < w.startupGrace {
+	// Measured from the attempt in flight (its dispatch), so a re-dispatch
+	// restarts it.
+	if time.Since(cycle.StartupGraceStart()) < w.startupGrace {
 		return
 	}
 	var events []openchoreo.RuntimeEvent
@@ -436,23 +472,74 @@ func (w *JobWatcher) checkStartupGrace(ctx context.Context, cycle *delivery.RunC
 				"cycle", cycle.ID, "pod", pod.Name, "error", err)
 		}
 	}
-	w.failCycle(ctx, cycle, StartupFailureReason(pod, events))
+	// Suspend only on the branch that won the close, AFTER it: the close is
+	// the verdict, and an open cycle is never suspended here (a cycle with a
+	// pull request is fenced out of the close). A close lost to another
+	// replica is suspended by the closed-cycle rule in checkCycle next tick.
+	if w.failCycle(ctx, cycle, StartupFailureReason(pod, events)) {
+		w.suspendJob(ctx, cycle, causeStartupFailed)
+	}
+}
+
+// startupWaitBenign are waiting reasons of a pod that is starting normally,
+// not stuck: they are not recorded as a startup wait.
+var startupWaitBenign = map[string]bool{"ContainerCreating": true, "PodInitializing": true}
+
+// noteStartupWait keeps the open cycle's durable startup wait in step with
+// its pod: a Pending pod with a stuck waiting reason (Unschedulable,
+// ImagePullBackOff, CreateContainerConfigError, …) is recorded, written only
+// when the reason differs from the row's, so a steady wait costs no write per
+// tick; a pod that runs, or that is Pending and no longer stuck, clears a
+// recorded wait. An Unknown pod (a node that stopped reporting), no pod, and a
+// leftover from the previous attempt (already blanked) write nothing. A
+// failed write is logged and retried by the next tick's comparison.
+func (w *JobWatcher) noteStartupWait(ctx context.Context, cycle *delivery.RunCycle, pod openchoreo.RuntimePod) {
+	if !pod.Found {
+		return
+	}
+	waiting := cycle.StartupWaitReason != "" || cycle.StartupWaitSince != nil
+	switch pod.Phase {
+	case "Pending":
+		if reason := pod.WaitingReason; reason != "" && !startupWaitBenign[reason] {
+			if reason == cycle.StartupWaitReason {
+				return
+			}
+			if err := w.cycles.NoteStartupWait(ctx, cycle.ID, reason, time.Now().UTC()); err != nil {
+				slog.WarnContext(ctx, "codingagent.JobWatcher: note startup wait failed (retried next tick)",
+					"cycle", cycle.ID, "error", err)
+				return
+			}
+			slog.InfoContext(ctx, "codingagent.startup_wait", "cycle", cycle.ID, "component", cycle.JobRef, "reason", reason)
+			return
+		}
+	case "Running", "Succeeded", "Failed":
+	default:
+		return
+	}
+	if !waiting {
+		return
+	}
+	if err := w.cycles.ClearStartupWait(ctx, cycle.ID); err != nil {
+		slog.WarnContext(ctx, "codingagent.JobWatcher: clear startup wait failed (retried next tick)",
+			"cycle", cycle.ID, "error", err)
+	}
 }
 
 // failCycle records the terminal reason. The repository's own fences (open, and
 // no pull request) decide whether the write lands, so this is safe to re-enter
-// and safe to run in more than one replica.
-func (w *JobWatcher) failCycle(ctx context.Context, cycle *delivery.RunCycle, reason string) {
+// and safe to run in more than one replica. Reports whether THIS call closed
+// the cycle.
+func (w *JobWatcher) failCycle(ctx context.Context, cycle *delivery.RunCycle, reason string) bool {
 	if cycle.EndedAt != nil {
-		return
+		return false
 	}
 	closed, err := w.cycles.FinishAgentFailed(ctx, cycle.ID, reason)
 	if err != nil {
 		slog.ErrorContext(ctx, "codingagent.JobWatcher: finish cycle failed", "cycle", cycle.ID, "reason", reason, "error", err)
-		return
+		return false
 	}
 	if closed == nil {
-		return // another replica got there, or the cycle has a pull request
+		return false // another replica got there, or the cycle has a pull request
 	}
 	slog.InfoContext(ctx, "codingagent.JobWatcher: cycle agent terminal",
 		"cycle", cycle.ID, "run", cycle.RunID, "job", cycle.JobRef, "reason", reason)
@@ -467,6 +554,7 @@ func (w *JobWatcher) failCycle(ctx context.Context, cycle *delivery.RunCycle, re
 				"cycle", cycle.ID, "run", cycle.RunID, "error", err)
 		}
 	}
+	return true
 }
 
 // failOnProviderLimit closes a cycle whose runner stopped because its model

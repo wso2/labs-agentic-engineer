@@ -17,6 +17,7 @@
 package delivery
 
 import (
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
@@ -238,6 +239,17 @@ type RunCycle struct {
 	// column.
 	DispatchedAt *time.Time `gorm:"column:dispatched_at" json:"-"`
 
+	// StartupWaitReason and StartupWaitSince say why the current attempt's pod
+	// is stuck before Running, while it is: the pod's own waiting reason
+	// (`Unschedulable`, `ImagePullBackOff`, `CreateContainerConfigError`, …)
+	// and when the watcher first saw the attempt stuck. Written by the watcher
+	// (NoteStartupWait) on an open cycle, cleared when the pod runs or is no
+	// longer stuck and by a re-dispatch. Durable so the run view can show the
+	// wait without reading the cluster; past CycleStartupGrace the cycle closes
+	// `startup_failed:<reason>` and the run view stops showing it.
+	StartupWaitReason string     `gorm:"column:startup_wait_reason;type:text;not null;default:''" json:"-"`
+	StartupWaitSince  *time.Time `gorm:"column:startup_wait_since" json:"-"`
+
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 	// EndedAt stamps the cycle closed. A nil EndedAt is the "still open" guard
@@ -248,6 +260,41 @@ type RunCycle struct {
 // CycleReasonCancelled is the terminal agent reason of a cycle ended by a
 // cancel (FinishCancelled), not by the agent itself.
 const CycleReasonCancelled = "cancelled"
+
+// CycleReasonStartupFailedPrefix starts the terminal agent reason of a cycle
+// whose pod never reached Running within CycleStartupGrace:
+// `startup_failed:<reason>[: <message>]`. Nothing ran, so the agent never
+// started: the run settles RunReasonAgentStartFailed, and the cycle's Job is
+// suspended so its pod cannot start later on a closed cycle.
+const CycleReasonStartupFailedPrefix = "startup_failed:"
+
+// CycleStartupGrace is how long a dispatched attempt's pod may take to reach
+// Running before the watcher closes the cycle startup_failed. Generous because
+// it has to cover an image pull on a cold node. The run view derives the
+// waiting cycle's deadline from it (StartupDeadline).
+const CycleStartupGrace = 10 * time.Minute
+
+// IsStartupFailure reports whether a cycle's agent reason says its agent never
+// started (CycleReasonStartupFailedPrefix).
+func IsStartupFailure(agentReason string) bool {
+	return strings.HasPrefix(agentReason, CycleReasonStartupFailedPrefix)
+}
+
+// StartupGraceStart is when the current attempt's startup grace began: its
+// dispatch (DispatchedAt), or, on a row that predates that column, the last
+// write (the dispatch was the last write such a row received while waiting).
+func (c RunCycle) StartupGraceStart() time.Time {
+	if c.DispatchedAt != nil {
+		return *c.DispatchedAt
+	}
+	return c.UpdatedAt
+}
+
+// StartupDeadline is when the watcher fails the current attempt if its pod has
+// not reached Running: StartupGraceStart plus CycleStartupGrace.
+func (c RunCycle) StartupDeadline() time.Time {
+	return c.StartupGraceStart().Add(CycleStartupGrace)
+}
 
 // TableName pins the table name so a struct rename cannot silently move the
 // table.

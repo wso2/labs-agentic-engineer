@@ -270,6 +270,12 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// shape on the boots after. Appended last because the list is
 		// append-only.
 		ctxStep("phase26_secrets_refs_only", RunPhase26SecretsRefsOnly),
+		// run_cycles gains the durable startup wait: why the current attempt's
+		// pod is stuck before Running and since when, so the run view shows the
+		// wait without a cluster read. Two plain columns, no backfill (a row
+		// written before them has no wait to show). Appended last because the
+		// list is append-only.
+		ctxStep("phase27_run_cycle_startup_wait", RunPhase27RunCycleStartupWait),
 	}
 }
 

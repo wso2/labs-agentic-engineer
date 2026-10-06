@@ -268,6 +268,15 @@ func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 			wantBuild: "failed", wantValidation: "failed",
 		},
 		{
+			// On a dev run the agent that could not start is the CODING agent:
+			// nothing was built, so the build failed. Only a validation run's
+			// agent-start-failed is carved out (delivery.EndedInValidation), and
+			// the overview's build stage never reads a validation run.
+			name:      "a coding agent that could not start is the build's own",
+			runs:      failedFor(delivery.RunReasonAgentStartFailed),
+			wantBuild: "failed", wantValidation: "failed",
+		},
+		{
 			// Still never carved out — the carve-out is about a validation cycle's
 			// failure being attributed to validation rather than to the build, and a
 			// cancel has no verdict either way. What changed is only the word: the
@@ -287,6 +296,24 @@ func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 				t.Errorf("deploy.validation = %q, want %q", st.Deploy.Validation, tc.wantValidation)
 			}
 		})
+	}
+}
+
+// A validation agent that could not start leaves the deployed version's build
+// succeeded, as the version ledger's row stays Deployed for the same run.
+func TestBuildStage_ValidationAgentStartFailedLeavesTheBuildSucceeded(t *testing.T) {
+	t.Parallel()
+	build := devRun("v3", delivery.RunStateSucceeded)
+	validation := devRun("v3", delivery.RunStateFailed)
+	validation.Kind, validation.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
+	validation.TerminalReason = delivery.RunReasonAgentStartFailed
+
+	st := mustStatus(t, statusFixture{
+		runs:   []delivery.MilestoneRun{validation, build},
+		counts: map[string]int{"v3": 4},
+	})
+	if st.Build.Version != "v3" || st.Build.Status != "succeeded" {
+		t.Errorf("build = %s/%s, want v3/succeeded", st.Build.Version, st.Build.Status)
 	}
 }
 

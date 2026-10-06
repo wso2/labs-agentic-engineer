@@ -148,12 +148,16 @@ func newInternalStack(t *testing.T) internalStack {
 		t.Fatal("NewStudioClientVerifier returned nil")
 	}
 	fenced := &[]string{}
-	lookup := func(_ context.Context, cycleID string) (string, error) {
+	lookup := func(_ context.Context, cycleID string) (auth.RunnerCycle, error) {
 		*fenced = append(*fenced, cycleID)
 		if strings.HasPrefix(cycleID, "other-org-") {
-			return "org-other", nil
+			return auth.RunnerCycle{OrgHandle: "org-other", Open: true}, nil
 		}
-		return "org-acme", nil
+		// A closed cycle of the token's own org: its runner has nothing left to do.
+		if strings.HasPrefix(cycleID, "closed-") {
+			return auth.RunnerCycle{OrgHandle: "org-acme"}, nil
+		}
+		return auth.RunnerCycle{OrgHandle: "org-acme", Open: true}, nil
 	}
 	stack := internalStack{
 		mint:       mint,
@@ -215,6 +219,25 @@ func TestInternalRoutes_ValidationCallbackIsRoutedAndCycleKeyed(t *testing.T) {
 			t.Fatalf("want 403, got %d body=%s", rec.Code, rec.Body.String())
 		}
 	})
+}
+
+// A validation runner whose cycle has closed is refused at the gate with the
+// same 403 an unknown cycle gets — before the service is asked anything. The
+// coding runner has no cycle-scoped callback; for it the Job suspend is the
+// fence (codingagent design, oc-job-dispatch.md).
+func TestInternalRoutes_ClosedCycleIsRefusedAtTheGate(t *testing.T) {
+	t.Parallel()
+	s := newInternalStack(t)
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/runs/closed-9d90f001/validation-context", nil)
+	req.Header.Set("Authorization", "Bearer "+s.mint("org-acme"))
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, req)
+	if rec.Code != 403 || !strings.Contains(rec.Body.String(), "cycle not found") {
+		t.Fatalf("want 403 cycle not found, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if s.context.gotCycle != "" {
+		t.Fatalf("the service must not be reached for a closed cycle (saw %q)", s.context.gotCycle)
+	}
 }
 
 func TestInternalRoutes_AuthPosture(t *testing.T) {

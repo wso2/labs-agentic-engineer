@@ -495,6 +495,56 @@ func TestSettler_BackstopSuspendsACancelledCycleAtOnce(t *testing.T) {
 	}
 }
 
+// A cycle closed startup_failed is suspended at once, whatever its pod is
+// doing: its agent never started, so there is no last line to protect, and a
+// Pending pod left alone would start an agent on a closed cycle the moment
+// the cluster has room. With no pod at all it is suspended at once too: the
+// Job could still create one.
+func TestSettler_BackstopSuspendsAStartupFailedCycleAtOnce(t *testing.T) {
+	cases := map[string]openchoreo.RuntimePod{
+		"pending": {Found: true, Name: "p", Phase: "Pending", WaitingReason: "Unschedulable"},
+		"running": {Found: true, Name: "p", Phase: "Running"},
+		"no pod":  {},
+	}
+	for name, pod := range cases {
+		t.Run(name, func(t *testing.T) {
+			records := captureLogs(t)
+			rt := &fakeRuntime{pod: pod}
+			jobs := &fakeJobs{}
+			c := settled("c1", false)
+			recent := time.Now().Add(-time.Minute)
+			c.EndedAt = &recent
+			c.AgentReason = "startup_failed:Unschedulable: 0/1 nodes are available"
+			cycles := newSettleCycles(c)
+			NewComponentSettler(rt, jobs, &fakeDeleter{}, cycles, testWriteTargets(), nil).Tick(context.Background())
+			if len(jobs.suspends) != 1 || !cycles.marked["c1"] {
+				t.Fatalf("suspends %v marked %v", jobs.suspends, cycles.marked)
+			}
+			got := logsNamed(*records, "codingagent.job_suspended")
+			if len(got) != 1 || got[0].attrs["cause"] != "backstop" {
+				t.Fatalf("job_suspended logs = %+v", got)
+			}
+		})
+	}
+}
+
+// The hold stays for every other close: a merge-closed cycle's Running pod a
+// minute after the merge is still writing its usage line.
+func TestBackstopDue_HoldsAMergeClosedLivePodInsideTheCeiling(t *testing.T) {
+	now := time.Now()
+	ended := now.Add(-time.Minute)
+	merged := delivery.RunCycle{EndedAt: &ended, PRNumber: 7, MergeSHA: "abc"}
+	for _, phase := range []string{"Running", "Pending"} {
+		if backstopDue(&merged, openchoreo.RuntimePod{Found: true, Phase: phase}, now) {
+			t.Fatalf("%s pod of a merge-closed cycle must be held until the ceiling", phase)
+		}
+	}
+	startup := delivery.RunCycle{EndedAt: &ended, AgentReason: delivery.CycleReasonStartupFailedPrefix + "Unschedulable"}
+	if !backstopDue(&startup, openchoreo.RuntimePod{Found: true, Phase: "Pending"}, now) {
+		t.Fatal("a startup_failed cycle's Pending pod is due at once")
+	}
+}
+
 // The backstop's suspend finding the binding gone marks the cycle suspended
 // (nothing left to suspend), as the watcher does.
 func TestSettler_BackstopOnAGoneBindingMarksSuspended(t *testing.T) {

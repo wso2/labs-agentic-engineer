@@ -3412,12 +3412,19 @@ components:
           format: date-time
           type: string
         status:
-          description: What became of this version. `cancelled` is its own value rather than a
+          description: >-
+            What became of this version. `cancelled` is its own value rather than a
             flavour of `failed`, because the two are different facts and a reader acts on them
             differently — a failure is the platform reporting it could not deliver the increment,
             while a cancel is a person deciding not to. Folding them lost that; a build somebody
             deliberately stopped rendered as Failed, with no reason beside it to say why, while the
             same page's run row said Cancelled two lines below.
+
+            A validation run that ended on judging the version — `validation-failed`,
+            `validation-unreported`, or `agent-start-failed` (its validation agent never started) —
+            does not fail the version's row: the version was built and deployed, so the row reads
+            `completed` with no reason, and the validation board carries the failure. The
+            overview's build stage applies the same rule.
           enum:
           - started
           - in_progress
@@ -5301,7 +5308,9 @@ components:
             no-write-target is a failed run whose project's deployment pipeline names no
             environment to deploy into, met at coding-agent dispatch or at any deploy step
             (the gate, the version read, a promote or a readiness poll); it files no fix
-            work and dispatches no agent.
+            work and dispatches no agent. agent-start-failed is a failed run whose agent never
+            started (its pod did not reach Running within the startup grace, e.g. no room in the
+            cluster); nothing ran, no pull request was opened, and the cycle's Job was suspended.
           type: string
         waitingReason:
           description: Why a `waiting` run is waiting. Empty for the ordinary between-cycles park,
@@ -6077,9 +6086,11 @@ components:
             deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed
             container), `startup_failed:<reason>: <message>` (the runner never
             started: image pull, scheduling, or a secret that had not
-            materialised) or `job_not_found` (the runner's workload disappeared).
-            Absent on every cycle that opened a pull request: there the pull
-            request is the outcome.
+            materialised; the cycle's Job is then suspended, so its pod cannot
+            start later, and the run settles `agent-start-failed`) or
+            `job_not_found` (the runner's workload disappeared). Absent on every
+            cycle that opened a pull request: there the pull request is the
+            outcome.
           type: string
         attempts:
           description: Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every
@@ -6186,6 +6197,13 @@ components:
             format: int64
             type: integer
           type: array
+        startupWait:
+          allOf:
+          - $ref: '#/components/schemas/RunCycleStartupWait'
+          description: >-
+            Why this open cycle's agent has not started yet. Absent while
+            nothing holds it up, and on an ended cycle.
+          x-go-type-skip-optional-pointer: false
         validationIssue:
           description: >-
             The validation issue this cycle was dispatched at. Set on validation
@@ -6213,6 +6231,43 @@ components:
       - kind
       - attempts
       - createdAt
+      type: object
+    RunCycleStartupWait:
+      additionalProperties: false
+      description: >-
+        Why an OPEN cycle's agent has not started yet: its pod is stuck before
+        Running, as the platform's pod-truth watcher last saw it. Present only
+        while the cycle is open and its current attempt's pod is stuck; absent
+        once the pod runs or is merely starting, and once the cycle has ended
+        (an agent that never started then ends the cycle with an `agentReason`
+        of `startup_failed:<reason>`). Derived from the cycle record alone; no
+        cluster read answers it.
+      properties:
+        failsAt:
+          description: >-
+            When the platform gives up on this attempt if the pod has still
+            not started: the attempt's dispatch plus the startup grace. The
+            cycle then closes `startup_failed:<reason>`, its Job is suspended,
+            and the run fails `agent-start-failed`.
+          format: date-time
+          type: string
+        reason:
+          description: >-
+            The pod's own waiting reason, verbatim from Kubernetes:
+            `Unschedulable` (the cluster has no room for the pod),
+            `ImagePullBackOff` / `ErrImagePull` (the image does not pull),
+            `CreateContainerConfigError` (a secret or config the pod needs is
+            not there yet), or another kubelet reason. A client maps the ones it
+            knows to plain words and shows any other as is.
+          type: string
+        since:
+          description: When the watcher first saw this attempt's pod stuck.
+          format: date-time
+          type: string
+      required:
+      - reason
+      - since
+      - failsAt
       type: object
     RunEvent:
       additionalProperties: false

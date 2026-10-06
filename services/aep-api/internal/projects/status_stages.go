@@ -412,8 +412,9 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 		// landed and the failure already rides deploy.validation below. Without this
 		// the overview says "build failed" while the validation chip contradicts it.
 		// Covers every reason the phase can settle under, not just a red suite — an
-		// unreported run is equally not a build failure.
-		if delivery.IsValidationTerminalReason(latest.TerminalReason) {
+		// unreported run is equally not a build failure. The version ledger reads
+		// the same rule (delivery.EndedInValidation), so the two never disagree.
+		if delivery.EndedInValidation(latest.Kind, latest.TerminalReason) {
 			status.Build.Status = buildSucceeded
 		}
 	}

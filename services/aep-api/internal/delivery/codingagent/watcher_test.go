@@ -91,6 +91,16 @@ type watchedCycles struct {
 	finished  map[string]string
 	usage     map[string]contracts.CapturedUsage
 	suspended map[string]bool
+	// waits is every NoteStartupWait call, in order; clears counts
+	// ClearStartupWait calls per cycle.
+	waits  []startupWaitNote
+	clears map[string]int
+}
+
+// startupWaitNote is one NoteStartupWait call, recorded whole.
+type startupWaitNote struct {
+	id, reason string
+	at         time.Time
 }
 
 func newWatchedCycles(rows ...delivery.RunCycle) *watchedCycles {
@@ -99,7 +109,18 @@ func newWatchedCycles(rows ...delivery.RunCycle) *watchedCycles {
 		finished:  map[string]string{},
 		usage:     map[string]contracts.CapturedUsage{},
 		suspended: map[string]bool{},
+		clears:    map[string]int{},
 	}
+}
+
+func (c *watchedCycles) NoteStartupWait(_ context.Context, id, reason string, at time.Time) error {
+	c.waits = append(c.waits, startupWaitNote{id: id, reason: reason, at: at})
+	return nil
+}
+
+func (c *watchedCycles) ClearStartupWait(_ context.Context, id string) error {
+	c.clears[id]++
+	return nil
 }
 
 func (c *watchedCycles) ListRecentDispatched(context.Context, time.Time) ([]delivery.RunCycle, error) {
@@ -948,8 +969,11 @@ func redispatched(c delivery.RunCycle, ago time.Duration) delivery.RunCycle {
 // still be in the tree when attempt 2 is dispatched. That pod predates the
 // attempt: it must not re-suspend the binding (attempt 2 would be born
 // suspended), must not count as attempt 2's pod for the startup grace, and
-// attempt 2's own pod is then watched as usual.
+// attempt 2's own pod is then watched as usual. Attempt 2 never starting is a
+// startup close, which suspends the Job itself (cause startup_failed) — after
+// the close, never on the leftover's account.
 func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
+	logs := captureLogs(t)
 	old := time.Now().UTC().Add(-3 * time.Hour)
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old}}
 	c := dispatchedCycle("c1", 3*time.Hour)
@@ -967,21 +991,30 @@ func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
 	// Attempt 2 is dispatched past the grace; attempt 1's pod is still there.
 	cycles.rows[0] = redispatched(cycles.rows[0], time.Hour)
 	delete(cycles.suspended, "c1")
-	for i := 0; i < missingTicksToFail; i++ {
+	for i := 0; i < missingTicksToFail-1; i++ {
 		w.Tick(context.Background())
 	}
 	if len(jobs.suspends) != 1 || cycles.suspended["c1"] {
 		t.Fatalf("a pod from before the attempt must not suspend it: suspends %v, marked %v", jobs.suspends, cycles.suspended)
 	}
+	w.Tick(context.Background()) // the sustained no-pod verdict
 	if cycles.finished["c1"] != StartupFailureReason(openchoreo.RuntimePod{}, nil) {
 		t.Fatalf("finished = %v: attempt 2 never started, and attempt 1's pod must not hide it", cycles.finished)
+	}
+	causes := []string{}
+	for _, r := range logsNamed(*logs, "codingagent.job_suspended") {
+		causes = append(causes, r.attrs["cause"])
+	}
+	if len(jobs.suspends) != 2 || !reflect.DeepEqual(causes, []string{"terminal", "startup_failed"}) {
+		t.Fatalf("attempt 2's startup close suspends once, as startup_failed: suspends %v, causes %v", jobs.suspends, causes)
 	}
 
 	// Attempt 2's own pod appears and ends: the normal path, suspended again.
 	delete(cycles.finished, "c1")
+	delete(cycles.suspended, "c1")
 	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded", CreatedAt: time.Now().UTC()}
 	w.Tick(context.Background())
-	if len(jobs.suspends) != 2 || !cycles.suspended["c1"] {
+	if len(jobs.suspends) != 3 || !cycles.suspended["c1"] {
 		t.Fatalf("attempt 2: suspends %v, marked %v", jobs.suspends, cycles.suspended)
 	}
 }

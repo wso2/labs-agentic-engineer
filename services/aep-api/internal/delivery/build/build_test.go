@@ -764,6 +764,51 @@ func TestListBuilds_FailedVersionCarriesItsTerminalReason(t *testing.T) {
 	}
 }
 
+// A validation run that ended on judging the version — its verdict failed, it
+// never reported, or its agent could not start — leaves the deployed version's
+// row Deployed: the build delivered, and the validation board carries the
+// failure. The same rule as the overview's build stage
+// (delivery.EndedInValidation), so the two views agree. Any other ending of a
+// validation run, and an agent that could not start on a DEV run (the coding
+// agent: the build did fail), still fails the row.
+func TestListBuilds_ValidationEndingLeavesTheVersionDeployed(t *testing.T) {
+	t0 := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, kind, reason string
+		wantStatus         string
+		wantReason         string
+	}{
+		{"validation agent could not start", delivery.RunKindValidation, delivery.RunReasonAgentStartFailed, "completed", ""},
+		{"validation failed", delivery.RunKindValidation, delivery.RunReasonValidationFailed, "completed", ""},
+		{"validation unreported", delivery.RunKindValidation, delivery.RunReasonValidationUnreported, "completed", ""},
+		{"validation agent died", delivery.RunKindValidation, delivery.RunReasonRedispatchBudget, "failed", delivery.RunReasonRedispatchBudget},
+		{"coding agent could not start", delivery.RunKindDev, delivery.RunReasonAgentStartFailed, "failed", delivery.RunReasonAgentStartFailed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ended := t0.Add(2 * time.Hour)
+			spy := newPlanSpy()
+			spy.rows = []delivery.MilestoneRun{
+				{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: c.kind, Origin: delivery.RunOriginSpecBuild,
+					State: delivery.RunStateFailed, TerminalReason: c.reason, CreatedAt: t0.Add(time.Hour), EndedAt: &ended,
+					Failure: &delivery.RunFailure{Code: "some-code"}},
+				{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
+					State: delivery.RunStateSucceeded, CreatedAt: t0},
+			}
+			svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
+
+			_, rawBody := listBuilds(t, svc, "shop")
+			got := decodeBody[gen.BuildList](t, rawBody).Builds[0]
+			if string(got.Status) != c.wantStatus || got.Reason != c.wantReason {
+				t.Fatalf("row = %s/%q, want %s/%q", got.Status, got.Reason, c.wantStatus, c.wantReason)
+			}
+			if c.wantStatus == "completed" && got.FailureCode != "" {
+				t.Fatalf("a Deployed row carries no failure code, got %q", got.FailureCode)
+			}
+		})
+	}
+}
+
 // A version parked at the deploy gate (ADR-0023) says so on the ledger row.
 // `status` alone is `in_progress` for a waiting run as much as a running one,
 // so without the reason the row reads as a coding agent still working when the

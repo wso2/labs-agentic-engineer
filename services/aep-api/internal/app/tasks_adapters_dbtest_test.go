@@ -22,6 +22,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
+	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
@@ -65,5 +67,41 @@ func TestRepoLookups_StayInTheDeliveryOrg(t *testing.T) {
 		if err != nil || org != "" || project != "" {
 			t.Errorf("%s in org-b: got %q/%q %v, want nothing", name, org, project, err)
 		}
+	}
+}
+
+// The runner-callback lookup reads the cycle's org and whether it is still
+// open (ended_at), and an unknown id is an error the authorizer fails closed on.
+func TestCycleRunnerLookup_ReadsOrgAndOpen(t *testing.T) {
+	db := dbtest.New(t)
+	ctx := context.Background()
+	runs := delivery.NewMilestoneRunRepository(db)
+	cycles := delivery.NewRunCycleRepository(db, nil)
+	ok, run, err := runs.TryAdmit(ctx, &delivery.MilestoneRun{
+		OrgID: "org-a", ProjectID: "p1", MilestoneNumber: 1, MilestoneTitle: "v1",
+		Kind: delivery.RunKindValidation, Origin: delivery.RunOriginSpecBuild,
+	})
+	if err != nil || !ok {
+		t.Fatalf("TryAdmit = (%v, %v)", ok, err)
+	}
+	c := &delivery.RunCycle{OrgID: "org-a", ProjectID: "p1", RunID: run.ID, Kind: delivery.CycleKindValidation}
+	if err := cycles.Append(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	lookup := cycleRunnerLookup(db)
+
+	got, err := lookup(ctx, c.ID)
+	if err != nil || got != (authn.RunnerCycle{OrgHandle: "org-a", Open: true}) {
+		t.Fatalf("open cycle = (%+v, %v)", got, err)
+	}
+	if _, err := cycles.FinishAgentFailed(ctx, c.ID, "startup_failed:Unschedulable"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = lookup(ctx, c.ID)
+	if err != nil || got != (authn.RunnerCycle{OrgHandle: "org-a", Open: false}) {
+		t.Fatalf("closed cycle = (%+v, %v)", got, err)
+	}
+	if _, err := lookup(ctx, "00000000-0000-0000-0000-000000000000"); err == nil {
+		t.Fatal("an unknown cycle must be an error")
 	}
 }
