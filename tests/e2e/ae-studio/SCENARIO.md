@@ -251,7 +251,9 @@ The checks read these events. All are JSON slog lines (`"msg":"<event>"`, then t
 | `webhook-relay` | subscription and per-delivery lines | (gosmee defaults) |
 | `aep-api` | `observer.read` | `cycle`, `componentUid`, `scope` (`project` or `component`), `lines`, `pages`, `linesMissing` |
 | `aep-api` | `ae_studio.auth_failed` / `ae_studio.misconfigured` | `org`, `status` / `org`, `reason` |
-| `aep-api` | `codingagent.job_suspended` / `codingagent.component_deleted` | `cycle`, `component`, … |
+| `aep-api` | `codingagent.job_suspended` / `codingagent.component_deleted` | `cycle`, `component`, … (`job_suspended` adds `cause`: `terminal`, `startup_failed`, `cancel`, `backstop`) |
+| `aep-api` | `codingagent.startup_wait` | `cycle`, `component`, `reason` (the stuck pod's waiting reason) |
+| `aep-api` | `runner callback: cycle closed` | `cycle` |
 
 `aep-api` has no per-request access log: a request to it is proven by its effect (a row, a Component, a tools-pod `internal.access` line) or by the events above.
 

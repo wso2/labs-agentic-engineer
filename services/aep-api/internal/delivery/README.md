@@ -453,7 +453,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   three seconds of it. Do not add a cap anywhere else without an answer to "which permanent mode does
   this catch that a classifier could not name?"
 - **Every terminal reason names exactly one failure class.** `redispatch-budget` is agent death (including
-  a Job that exited without a pull request); `build-retrigger-budget` is a build that stayed red through
+  a Job that exited without a pull request); `agent-start-failed` is an agent that never started (its pod
+  did not reach Running within the startup grace, so the watcher closed the cycle `startup_failed:*` and
+  suspended its Job): nothing ran, after one dispatch; `build-retrigger-budget` is a build that stayed red through
   its one automatic re-trigger with no fix issue to recover it; `deploy-budget` is a component that
   built and never came up, with no fix issue to recover it — a different class from a red build,
   because the code compiled and the platform could not run it; `fix-chain-budget` and `conflict-budget`
@@ -463,7 +465,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   a fact about the software — while `validation-unreported` is the agent merging its pull request
   without committing a report at all, which proves nothing about the software and is a breach of the
   runner contract. `ValidationVerdictFailsRun` / `IsValidationTerminalReason` are the executable copy of
-  that pair. A run that settles for a reason outside this list is a bug in the loop, not a new state.
+  that pair. `EndedInValidation(kind, reason)` widens it for READERS of the build: that pair on any run,
+  plus `agent-start-failed` on a validation run, leave a deployed version Deployed, in the overview's
+  build stage and the version ledger alike. A run that settles for a reason outside this list is a bug in the loop, not a new state.
 - **The deploy set is the VERSION's, not the cycle's** (ADR-0026). `desired(c)` is the release
   `c`'s newest SUCCEEDED build would cut; `actual(c)` is what its binding pins and whether that is
   Ready; the difference classifies every design component as `serving`, `behind`, `converging`,

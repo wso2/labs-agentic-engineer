@@ -103,6 +103,16 @@ pod's MCP proxy present. A token aep-api signs itself (`aud=aep-api-mcp`) and
 an `ae-studio-<org>` client token are both refused (401). The two remote-git
 tools are not on aep-api: the runner and the tools pod serve them in-process.
 
+That gate is org-scoped, so the CODING runner has no cycle-scoped callback:
+nothing on aep-api can refuse a coding agent because its cycle closed. For a
+coding cycle the Job suspend (below) is the only fence against an agent
+running for a closed cycle. The one cycle-scoped callback is the validation
+runner's `GET /internal/v1/runs/{cycleId}/validation-context`, behind
+`auth.RunnerAuthorizer`: the cycle must belong to the token's org (checked
+first) and be open, and both refusals give the same 403 `cycle not found`, so
+neither "closed" nor "another org's" is an oracle for which cycle ids exist. A
+closed cycle logs `runner callback: cycle closed` with the cycle id only.
+
 ```mermaid
 flowchart TB
   subgraph job [Coding-agent Job]
@@ -171,6 +181,32 @@ NOT stamped, leaving the Job to its TTL; any other error is retried next tick.
 Only a suspend that took effect logs `codingagent.job_suspended` (`cause` =
 `terminal`). Once a cycle is suspended or closed, a snapshot with no pod is the
 expected state, never an absent-pod or startup verdict.
+
+The watcher also suspends an agent that never started. Past the startup grace
+(`delivery.CycleStartupGrace`, 10 min from `dispatched_at`, or `updated_at` on
+a row without it) a pod not yet Running closes the cycle
+`startup_failed:<reason>[: <message>]`; the replica whose close won then
+suspends the Job (`cause` = `startup_failed`), whatever the pod is doing.
+Kubernetes deletes a suspended Job's active pods, Pending ones included, so
+the pod that would schedule once the cluster has room never starts an agent
+for the closed cycle. Any later tick that finds a cycle closed
+`startup_failed:*`, unsuspended, with a Pending or Running pod suspends it too:
+that covers a close won by another replica, a restart between the close and
+the suspend, and rows closed before this rule. A terminal pod takes the
+terminal path above. The run then settles `failed` / `agent-start-failed`
+(dev and validation runs alike), not `redispatch-budget`: one dispatch was
+made and nothing ran.
+
+While an open cycle's pod is Pending with a stuck waiting reason
+(`Unschedulable`, `ImagePullBackOff`, `CreateContainerConfigError`, anything
+but the normal `ContainerCreating` / `PodInitializing`), the watcher records it
+on the row (`startup_wait_reason`, `startup_wait_since`), writing only when the
+reason changes and logging `codingagent.startup_wait {cycle, component,
+reason}`. A pod that runs, or is Pending and no longer stuck, clears it;
+`NoteDispatch` clears it for a new attempt. Neither write moves `updated_at`.
+The run view projects it as `RunCycleView.startupWait {reason, since, failsAt}`
+on an open cycle only, `failsAt` = grace start + grace, so the console shows
+the wait and its deadline without a cluster read.
 
 The stamp belongs to the attempt, not the cycle. A landing-timeout re-dispatch
 reuses the cycle's Component (its name is stable per cycle and the 409 is
@@ -329,11 +365,13 @@ terminal pod, and a failed usage write is logged, not retried.
 
 **The backstop** suspends a closed cycle's Job nobody suspended
 (`codingagent.job_suspended`, `cause` = `backstop`): on sight for a terminal
-pod, at once for a cancelled cycle (its cancel-time suspend failed), and for
-no pod only when an earlier pass also saw none (one empty read can hide a
-Running pod). A merge-closed cycle's `Running`/`Pending` pod is left to the watcher
-until `ended_at` + 3h10m (the deadline ceiling + 10 min), so its last line and
-usage are kept. A suspend that keeps failing (for example a binding naming a
+pod; at once, whatever the pod is doing, for a cancelled cycle (its
+cancel-time suspend failed) and a `startup_failed:*` one (its agent never
+started, so there is no line to protect); and for no pod only when an earlier
+pass also saw none (one empty read can hide a Running pod). Any other closed
+cycle's `Running`/`Pending` pod (a merge-closed cycle's agent still writing its
+result line) is left to the watcher until `ended_at` + 3h10m (the deadline
+ceiling + 10 min), so its last line and usage are kept. A suspend that keeps failing (for example a binding naming a
 missing release) leaves the row settling and never deleted.
 
 **Fair paging.** Every visited row is stamped `settle_checked_at` before

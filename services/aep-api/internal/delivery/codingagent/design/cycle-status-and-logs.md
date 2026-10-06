@@ -23,9 +23,11 @@ phase (`internal/delivery/codingagent/cycle_outcome.go`, a pure function).
 | `Failed` | the cycle is closed failed, with `DeadlineExceeded` reported as `timed_out` — unless the runner's settle says its model provider stopped it (below) |
 
 Two rules bound the watcher's willingness to conclude anything: a **startup
-grace** (10 minutes without a Running pod closes the cycle with a reason built
-from the pod's waiting reason or its events, so an image-pull backoff, an
-unschedulable pod and an unsynced secret are three different answers), and a
+grace** (10 minutes from the attempt's dispatch without a Running pod closes
+the cycle with a reason built from the pod's waiting reason or its events, so
+an image-pull backoff, an unschedulable pod and an unsynced secret are three
+different answers; until then a stuck pod's reason is recorded on the row as
+the cycle's startup wait), and a
 **sustained-404 rule** (three *consecutive* missing reads mean the workload is
 gone; anything else — a 5xx, a timeout — is never evidence). Once a cycle's
 Job is suspended or the cycle is closed, "no pod" is the expected state and
@@ -42,6 +44,8 @@ completes the run.
 |---|---|---|
 | Dispatch | The Component's UID is copied from the create reply (a 409 re-reads it) at launch. Every observer read filters on it. | `run_cycles.component_uid`, `dispatched_at` |
 | First terminal pod | The watcher captures the run's usage from the pod's log, THEN suspends the Job binding. Idempotent: a stamped cycle is never asked again. | `job_suspended_at`; `codingagent.job_suspended {cause: terminal}` |
+| Pod stuck before Running | The watcher records the pod's waiting reason while the cycle is open; cleared when the pod runs or is no longer stuck. | `startup_wait_reason`, `startup_wait_since`; `codingagent.startup_wait {cycle, component, reason}` |
+| Startup grace expires | The cycle closes `startup_failed:<reason>`, THEN its Job binding is suspended, so the Pending pod never starts. A later tick suspends a closed, unsuspended one it still finds with a live pod. | `job_suspended_at`; `codingagent.job_suspended {cause: startup_failed}` |
 | Cancel | The cycle closes cancelled, THEN its Job binding is suspended; the runner gets its 30 s SIGTERM grace. Nothing is deleted. | `job_suspended_at`; `codingagent.job_suspended {cause: cancel}` |
 | Nobody suspended a closed cycle | The settle sweep's backstop suspends it. | `codingagent.job_suspended {cause: backstop}` |
 | Job finished | Kubernetes deletes the Job and its pod after `CODING_AGENT_JOB_TTL` (600 s). The Job OpenChoreo re-creates is born suspended and runs nothing. | |
