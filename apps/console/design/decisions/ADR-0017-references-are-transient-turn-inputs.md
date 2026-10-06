@@ -4,6 +4,8 @@ Status: Accepted. Reverses the core of feature #383 v1 (grilling comment
 2026-08-04, decisions 2, 3 and 5), which committed uploaded references to
 `specs/requirements/references/` through `files/apply` and rendered them in the
 Spec view.
+**Amended** ([below](#amendment-2026-10-06-references-live-in-ae-studio)):
+decisions 2 and 3 now place the store and the overlay in the org's AE Studio.
 
 ## Context
 
@@ -101,3 +103,31 @@ transient input.
 - **A union lookup over the store and the git tree**, to keep v1 projects
   working. Two permanent code paths and a which-wins ambiguity, for a case that
   cannot recur once this ships.
+
+## Amendment (2026-10-06): references live in AE Studio
+
+Design work moved into the organization's AE Studio
+([root ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)),
+and the shared `/workspaces` volume is gone. Decisions 1 and 4 to 6 stand.
+
+- **Decision 2 now reads:** bytes live on the org's AE Studio `studio-data`
+  cache beside the mirror, under `references/<owner>/<repo>/`, written by
+  `ae-studio-tools` through `aep-api`'s stream-through `put-project-references`
+  (the console still sends `POST /projects/{projectName}/references`). They
+  are a **temporary cache**: the reaper's budget eviction never removes them,
+  but a pod roll (every release, secret save or model-connection edit) wipes
+  them. They are never durable. They count against the pod's storage budget,
+  and an upload is refused as `disk_full` at 90 % pressure (see
+  [clone storage](../../../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/clone-storage.md)).
+- **Decision 3 now reads:** `ae-studio-tools` does the overlay, copying the
+  stored references into `specs/requirements/references/` inside the project
+  snapshot it writes. The project lookup returns `references[]`, which both
+  `/start` **and** flow turns read.
+- **Consequences:** "survive pod restarts" and "the 85% watermark eviction"
+  no longer hold; a roll is now the usual way references go. A failed overlay
+  is logged (`references.overlay_failed`) and the turn runs without them,
+  still with no console surface.
+- **Rejected, revisited:** the new home is close to "Agents-pod local disk".
+  It is accepted now because `/start` already ran without references whenever
+  the store failed it, so losing them on a roll costs what a failed overlay
+  always cost, and one pod per org removes the replica objection.

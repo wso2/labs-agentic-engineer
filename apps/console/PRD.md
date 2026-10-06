@@ -96,6 +96,21 @@ which is also what closes its issue. Newest first; links go to the feature's
 GitHub issue plus any ADRs it produced. Features still being built aren't
 here: they're the open `console` + `feature` issues.
 
+- AE Studio — chat turns, the spec Room and spec file reads go straight to
+  the org's AE Studio, through generated `designAgent()`/`studioTools()`
+  clients pointed at the URLs `GET /ae-studio` names once it is `ready`.
+  `AeStudioGate` holds the whole console on *Upgrading AE Studio* when a
+  session's first answer is `provisioning`, shows the banner *AE Studio is
+  restarting…* for a later one, and a full page *AE Studio couldn't start*
+  with **Try again** on `failed`; Settings is never held. A dropped or
+  reloaded turn stream resumes with `?from`, and a send refused with 409
+  `turn_in_progress` attaches to the running turn (*Another turn is
+  running*). A run's log reads `live`, `kept`, `expired` (*This run's log is
+  no longer kept*) or `unavailable` (*Couldn't load this run's log right
+  now*). Credentials show only `Set` or `Not set`
+  ([ADR-0034](design/decisions/ADR-0034-the-console-calls-the-orgs-ae-studio-directly.md),
+  [root ADR-0040](../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md),
+  [root ADR-0044](../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md))
 - Settings → AI agents and the welcome onboarding — **one model connection**
   for every agent: API format (Anthropic Messages · OpenAI-compatible), base
   URL (the format's default prefilled, still editable), key and a free-text
@@ -409,8 +424,8 @@ here: they're the open `console` + `feature` issues.
   `.tsv`/`.json`/`.yaml`/`.yml`/`.xml`/`.html`/`.rst` read as text (≤10 files,
   ≤5 MB each) — attached in a chat-style composer and uploaded post-create over
   multipart to `POST /projects/{name}/references`. References are **transient
-  turn inputs, never committed** (ADR-0017): bytes live on the shared
-  `/workspaces` volume for the project's life and are overlaid into each turn's
+  turn inputs, never committed** (ADR-0017): bytes live in a temporary cache
+  on the org's AE Studio, wiped by a pod roll, and are overlaid into each turn's
   snapshot at `specs/requirements/references/`, surfaced to the `/start` kickoff
   through the idea-steer channel. No console surface after create —
   [#383](https://github.com/wso2/labs-agentic-engineer/issues/383)
@@ -423,7 +438,7 @@ here: they're the open `console` + `feature` issues.
   chips survive a reload — the bytes ride one multipart `POST
   /projects/{p}/agents/{conversationId}/messages` into the turn and are durable
   only as parts of the conversation's history, which is what makes re-sending
-  one free (the agents service dedupes by file name). The agent reads them
+  one free (the design agent dedupes by file name). The agent reads them
   natively — a PDF as a document, an image as an image, every text format as
   text — and the turn prompt NAMES them, so "add this as a separate form"
   resolves to the file the user just attached rather than drawing a clarifying
@@ -445,7 +460,7 @@ here: they're the open `console` + `feature` issues.
   `ask_questions` (batch form) tool-calls rendered as native Oxygen UI cards
   in the activity stream (answer returns as the next turn's plain text);
   grilling interview auto-started on the spec-generation CTA; tool-call-as-UI
-  convention in ADR-0012. FE mock-verified; agents-service + platform grilling
+  convention in ADR-0012. FE mock-verified; design agent + platform grilling
   skill via [#271](https://github.com/wso2/labs-agentic-engineer/issues/271) —
   [#270](https://github.com/wso2/labs-agentic-engineer/issues/270)
 - Usage & cost — org-wide agent spend on a dedicated **Settings → Usage**
@@ -605,8 +620,9 @@ session; changing one requires a grilling + a decisions entry.
 
 ## Cross-cutting requirements
 
-- All API access through the generated `aep-api` client; contract-first
-  (see `design/api-guidelines.md`).
+- All API access through generated clients: `aep-api`'s, and the org's AE
+  Studio `designAgent`/`studioTools` clients from their `/v1` specs;
+  contract-first (see `design/api-guidelines.md`, ADR-0034).
 - Oxygen UI design system throughout (see `design/design-system.md`).
 - UI must be fully developable and demoable against the mock layer, without a
   running backend.
