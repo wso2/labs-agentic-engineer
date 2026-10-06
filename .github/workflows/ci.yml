@@ -131,7 +131,7 @@ jobs:
           done
           exit $rc
 
-      - name: Dead-code gate (TS — agents + playground)
+      - name: Dead-code gate (TS, scope in knip.jsonc)
         run: make deadcode-ts-check
 
       - name: Lint

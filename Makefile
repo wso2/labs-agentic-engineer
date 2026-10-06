@@ -140,9 +140,9 @@ tools:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
 # TS dead-code gate (knip) — the counterpart of services/aep-api's Go
-# `deadcode-check`. Whole-program unused-export/file/dependency analysis over the
-# agents runtime, the ae-collab server + the playground that consumes the agents,
-# run with --production so *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
+# `deadcode-check`. Whole-program unused-export/file/dependency analysis, run with
+# --production so *.test.ts never count as consumers. The packages it covers, the
+# config and the rationale live in knip.jsonc.
 #   make deadcode-ts        human report (never fails)
 #   make deadcode-ts-check  CI gate (fails on any finding)
 deadcode-ts:
