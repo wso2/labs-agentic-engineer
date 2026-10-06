@@ -554,4 +554,4 @@ One of the six secrets an organization holds: `github-pat`, `github-webhook-secr
 Its value lives only in the vault; the platform database records just the name of
 its **SecretReference**, and a recorded name means the secret is set. The two
 client secrets belong to the org's **Publisher client** and its `ae-studio` client.
-_Avoid_: credential (too broad), key (only two of the six are LLM credentials).
+_Avoid_: credential (too broad), key (only two of the six hold an LLM credential).
