@@ -20,7 +20,7 @@
  * Boot the REAL design agent in-process (docs/design/playground.md §2): the
  * same `/v1` edge (`createApp`) and Turn socket the AE Studio pod serves, the
  * same TurnStarter, TurnDesk and ThreadBook, with the playground's adapters
- * around them (07 §9):
+ * around them:
  *
  * - `authenticate`: the dev verifier (`kit/auth.ts`), not the Platform IdP;
  * - `tools`: the in-process tools socket over the project folder

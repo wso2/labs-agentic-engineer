@@ -43,7 +43,7 @@ import (
 // Once absent, this is already-migrated and the truncates are skipped.
 //
 // Refuses to run unless DEPLOYMENT_TIER=dev. Production cutover is empty
-// per evolution-doc §8 — there are no pre-Phase-2 projects to migrate.
+// — there are no earlier projects to migrate.
 func RunPhase2PRA(db *gorm.DB, deploymentTier string) error {
 	if deploymentTier != "dev" {
 		slog.Info("phase2_pra migration skipped — DEPLOYMENT_TIER is not dev",

@@ -17,14 +17,14 @@
  */
 
 /**
- * Who may join a Room, per listener (07 §11). One Hocuspocus instance serves
+ * Who may join a Room, per listener. One Hocuspocus instance serves
  * two listeners, and the listener a socket came in on (`context.listener`,
  * set by the listener, never by the client) decides who it is:
  *
  *   public  a Platform IdP user token of the pod's org (`userRule`). The
  *           participant is the token's user; a `credit` parameter is ignored.
  *   local   the Room socket, mounted only into ae-design-agent: the socket is
- *           the agent's identity and no token is read (Task 4.7a: the
+ *           the agent's identity and no token is read (the
  *           ae-studio client token never leaves ae-studio-tools). The
  *           participant is the user the `credit` parameter names
  *           (`{name, email}`), for whom the in-pod agent runs the turn.

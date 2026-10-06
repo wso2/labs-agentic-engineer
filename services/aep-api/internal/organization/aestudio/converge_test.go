@@ -67,7 +67,7 @@ func TestConverge_SecondPassWritesNothing(t *testing.T) {
 	}
 }
 
-// Review Focus 4: a key save (a new reference) rolls the pod: new
+// A key save (a new reference) rolls the pod: new
 // parameters, a new release, the binding re-pinned to it.
 func TestConverge_KeySaveRePins(t *testing.T) {
 	f := newFixture(t).withAllRefs().converged()
@@ -83,7 +83,7 @@ func TestConverge_KeySaveRePins(t *testing.T) {
 	}
 }
 
-// Review Focus 4: a new template is PUT in place (never deleted) and the
+// A new template is PUT in place (never deleted) and the
 // pod re-pinned.
 func TestConverge_TemplateChangePutsInPlace(t *testing.T) {
 	f := newFixture(t).withAllRefs().converged().withLiveHash("old")
@@ -199,7 +199,7 @@ func TestConverge_FailureRetriedAtOnceOnChange(t *testing.T) {
 	f.waitConverged(t)
 }
 
-// I-1: a converge that fails before it has a desired state (its read of the
+// A converge that fails before it has a desired state (its read of the
 // references fails, Status's succeeds) is still backed off:
 // Status answers failed, and exactly one retry runs after the back-off.
 func TestConverge_FailureBeforeDesiredIsBackedOff(t *testing.T) {

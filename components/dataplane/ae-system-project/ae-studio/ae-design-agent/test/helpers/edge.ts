@@ -49,7 +49,7 @@ export const PROJECT = "greeter";
 export const HEAD = "a".repeat(40);
 export const SKILLS = "b".repeat(40);
 
-/** The connection a pod with a Default key renders (07 §4). */
+/** The connection a pod with a Default key renders. */
 export const CONNECTION: ModelConnection = { ...anthropicConnection("sk-ant-test-0000000000", "claude-sonnet-5"), contextWindow: 200_000 };
 
 export interface EdgeOptions {

@@ -104,7 +104,7 @@ type Warning struct {
 // ignored. It never fails: a stub it cannot complete lands as written, with a
 // warning.
 //
-// Its caller is the AE Studio tools pod's dependency-completions op (04 §4),
+// Its caller is the AE Studio tools pod's dependency-completions op,
 // which keeps the registry read and the fetch of a model-chosen URL on
 // aep-api's side of the CP/DP seam, away from the container that holds the
 // org's git credential (SSRF).

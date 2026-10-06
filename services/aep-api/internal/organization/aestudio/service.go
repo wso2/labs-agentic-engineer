@@ -33,7 +33,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 )
 
-// The OpenChoreo object names (R18): every org's AE Studio is the Resource
+// The OpenChoreo object names: every org's AE Studio is the Resource
 // ae-studio of the Project ae-system, in the org's own namespace.
 const (
 	ProjectName  = "ae-system"
@@ -132,7 +132,7 @@ type Deps struct {
 	OC OC
 }
 
-// Service installs and converges each org's AE Studio (ticket 08 §9, §10).
+// Service installs and converges each org's AE Studio (ADR-0040).
 type Service struct {
 	cfg        config.AEStudioConfig
 	orgSecrets interface {

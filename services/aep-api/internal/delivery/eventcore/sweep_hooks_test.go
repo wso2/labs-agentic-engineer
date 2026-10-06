@@ -102,7 +102,7 @@ func hookSweep(h *harness, hooks HookEnsurer, repos ...RepoRef) *Sweep {
 }
 
 // A ready row with no hook id is the one a failed create-time registration
-// leaves behind (05 §7 step 4): the sweep ensures its hook. A row that holds
+// leaves behind: the sweep ensures its hook. A row that holds
 // one is left alone, whatever its age (R12: no migration of old hooks).
 func TestSweep_RepairsMissingHooks(t *testing.T) {
 	h := newHarness(t)
@@ -118,7 +118,7 @@ func TestSweep_RepairsMissingHooks(t *testing.T) {
 }
 
 // A permanent refusal (the repository gone from GitHub: 404) must not make
-// the sweep call GitHub every minute for the life of the process (T-4.18.2):
+// the sweep call GitHub every minute for the life of the process:
 // the row is skipped from then on, with one value-free log line.
 func TestSweep_HookRepairSkipsAPermanentRefusalForTheProcessLifetime(t *testing.T) {
 	logs := captureHookLogs(t)

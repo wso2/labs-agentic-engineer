@@ -41,15 +41,15 @@ import (
 
 // specUnavailableReason answers why a git read failed when the cause is the
 // org's AE Studio being unable to answer for its repositories: GitHub is not
-// connected, the pod is not serving, or aep-api's own client is refused (Q-12).
+// connected, the pod is not serving, or aep-api's own client is refused.
 // The poll degrades on these (spec.availability = "unavailable" with this
 // reason, build and deploy intact) rather than failing, because they are the
 // org's state, not a fault in this read, and the delivery stages still have
-// true answers (05 §6). "" for every other error, which still fails the poll.
+// true answers. "" for every other error, which still fails the poll.
 //
 // The reasons are named after the edge's codes for the same sentinels, so the
 // console speaks of one cause in one word; this maps a sentinel to a status
-// fact, not to HTTP (the edge's classifier stays the only HTTP map, Q-9).
+// fact, not to HTTP (the edge's classifier stays the only HTTP map).
 func specUnavailableReason(err error) gen.SpecStageUnavailableReason {
 	switch {
 	case errors.Is(err, sourcecontrol.ErrAEStudioAbsent):

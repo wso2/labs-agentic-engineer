@@ -17,7 +17,7 @@
  */
 
 /**
- * The Room's Hocuspocus instance (07 §11): no server and no port of its own;
+ * The Room's Hocuspocus instance: no server and no port of its own;
  * the listeners hand it sockets (`listeners.ts`). It authenticates per
  * listener (`auth.ts`), holds each connection to its token's `exp`
  * (`expiry.ts`), and seeds a room from the Files socket's bundle.

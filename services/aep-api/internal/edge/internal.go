@@ -132,7 +132,7 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 	return capInternalBody(internalRouter(), internalBodyCaps, internalGate(deps, internalValidator(mux)))
 }
 
-// internalDefaultBodyBytes caps every /internal/v1 request body (03 §4);
+// internalDefaultBodyBytes caps every /internal/v1 request body;
 // internalBodyCaps lists the operations allowed more, keyed by the embedded
 // spec's operation id.
 const internalDefaultBodyBytes int64 = 1 << 20
@@ -391,7 +391,7 @@ func (s *internalServer) RunnerValidationContext(ctx context.Context, request ig
 
 // toIgenValidationContext projects the validation service's own struct onto the
 // S2S wire shape. igen must stay a leaf, so it cannot import the feature/domain
-// that owns the value type (§7) — hence a mapping here rather than the former
+// that owns the value type — hence a mapping here rather than the former
 // x-go-type alias. The wire keys are byte-identical; a nil endpoints slice stays
 // nil (marshals `null`) exactly as the alias did, never silently becoming `[]`.
 func toIgenValidationContext(r validation.ValidationContextResponse) igen.ValidationContextResponse {

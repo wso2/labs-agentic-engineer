@@ -17,7 +17,7 @@
  */
 
 /**
- * Who is calling `/v1` (07 §8). `authenticate(req)` answers the verified
+ * Who is calling `/v1`. `authenticate(req)` answers the verified
  * user, or throws `AuthError` with the status the gate answers. Two adapters:
  * the Platform IdP's here (`idpAuthenticate`: a user token of the pod's org,
  * never an M2M token) and the playground's dev verifier (`playground/src/kit/auth.ts`).
@@ -34,7 +34,7 @@ import {
   type UserClaims,
 } from "@aep/platform-idp-auth";
 
-/** A verified user: the credit a turn carries (07 §1 "Credit"). */
+/** A verified user: the credit a turn carries. */
 export interface AuthenticatedUser {
   sub: string;
   /** `displayIdentity`'s rule: never empty. */

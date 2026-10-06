@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// Resume (Review Focus 2): a stream that dies before its terminal re-attaches
+// Resume: a stream that dies before its terminal re-attaches
 // with `?from=<last id + 1>`, so every activity step renders exactly once. The
 // real SSE parser and the real chat store run here; only the pod is faked.
 

@@ -17,13 +17,13 @@
  */
 
 /**
- * The Room in the pod (07 §11), end to end over real sockets: a real
+ * The Room in the pod, end to end over real sockets: a real
  * HocuspocusProvider against both listeners (the public port and the agent's
  * Room socket), a loopback JWKS standing in for
  * the Platform IdP, and the fake Files socket. Token deadlines run on a test
  * clock, so expiry is stepped, never slept.
  *
- * Review Focus 3 (token expiry) and 4 (listener confusion) are pinned here.
+ * Token expiry and listener confusion are pinned here.
  */
 
 import { test } from "node:test";
@@ -366,7 +366,7 @@ async function flush(peer: Peer, id: string): Promise<Peer["stateless"][number]>
 const events = (s: TestCollab, msg: PodLogLine["msg"]) => s.lines.filter((l) => l.msg === msg);
 
 // ---------------------------------------------------------------------------
-// Review Focus 4: listener confusion, all four combinations
+// Listener confusion, all four combinations
 
 test("public listener: user JWT ok, agent token refused, credit param ignored", async () => {
   const s = await startTestCollab();
@@ -509,7 +509,7 @@ test("a room whose bundle cannot be read is refused: outage retries, verdict doe
 });
 
 // ---------------------------------------------------------------------------
-// Review Focus 3: token expiry, onTokenSync re-verification
+// Token expiry, onTokenSync re-verification
 
 test("connection closes at exp without a synced token; a synced valid token keeps it; a wrong-org sync closes it", async () => {
   const s = await startTestCollab();

@@ -17,7 +17,7 @@
  */
 
 /**
- * The `/v1` edge (07 §1, flow 13) on the pod's public listener: a turn starts
+ * The `/v1` edge on the pod's public listener: a turn starts
  * with 202 and runs detached, the stream attaches with `?from`, a busy
  * project is 409 `turn_in_progress`, credit comes from the verified user
  * token, marketplace conversations belong to their creator, and the body
@@ -380,7 +380,7 @@ test("an idle stream gets keep-alives, and closing the pod ends an attached stre
     const reader = res.body!.getReader();
     let seen = "";
     while (!seen.includes(": keep-alive")) seen += new TextDecoder().decode((await reader.read()).value);
-    // The pod's close() must not wait for the turn (K-17): it ends the connection.
+    // The pod's close() must not wait for the turn: it ends the connection.
     const closed = edge.close();
     for (;;) {
       try {

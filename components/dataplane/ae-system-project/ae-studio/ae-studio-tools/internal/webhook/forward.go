@@ -33,7 +33,7 @@ import (
 const (
 	// forwardBudget bounds one Forward, retries included: it must end inside
 	// GitHub's 10 s delivery window (a delivery not answered in 10 s is marked
-	// failed) so GitHub sees our answer (04 §8).
+	// failed) so GitHub sees our answer.
 	forwardBudget = 8 * time.Second
 	// forwardRetries is how many times a transport error or a 5xx is retried.
 	forwardRetries = 2
@@ -56,7 +56,7 @@ type ingester interface {
 }
 
 // Forwarder hands a verified delivery to aep-api's ingest-webhook-event
-// (flow 6, ticket 04 §8), synchronously: there is no buffer in the pod. GitHub
+// (ADR-0043), synchronously: there is no buffer in the pod. GitHub
 // does not redeliver by itself: a 503 marks the delivery failed, and it is
 // redelivered only by hand (or by an API call), so what aep-api did not take
 // waits there.

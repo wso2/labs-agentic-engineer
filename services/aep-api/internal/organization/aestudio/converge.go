@@ -16,7 +16,7 @@
 
 package aestudio
 
-// converge.go — the Ensure (ticket 08 §9), in order: Project ae-system →
+// converge.go — the Ensure (ADR-0040), in order: Project ae-system →
 // its ProjectReleaseBinding (creates the cell namespace) → ResourceType →
 // Resource → wait for its release → RRB pin. Each step reads what is there
 // first and writes only what differs, so a converge with nothing to do
@@ -24,7 +24,7 @@ package aestudio
 // own identity where configured) in the org's namespace.
 //
 // The ResourceType is PUT in place and never deleted (Cloud cannot delete
-// it, ticket 16). The converge takes no lock and ensures no client: secrets
+// it). The converge takes no lock and ensures no client: secrets
 // are only read, by reference.
 
 import (

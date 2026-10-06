@@ -17,7 +17,7 @@
  */
 
 /**
- * `/<command>` flow commands, recognised in the pod (07 §1; port of aep-api's
+ * `/<command>` flow commands, recognised in the pod (port of aep-api's
  * `A/spec/start_command.go`). Clients send commands verbatim and this turns
  * one into a `TurnSpec`: what the turn is for. The instruction wording is
  * composed later, in `prompts/turn.ts` (ADR-0003).
@@ -60,7 +60,7 @@ export interface TurnLookupInputs {
  * the history from the kickoff). A `/<command>` rides on as its token: most
  * tokens are a skill name, and the few that name a branch of one
  * (`/feature`) resolve in `prompts/turn.ts`. `/start` and flow turns carry
- * the reference documents as their snapshot paths (09 §2), so a flow's
+ * the reference documents as their snapshot paths, so a flow's
  * artifacts are grounded in what the user attached. `/start` also carries
  * the idea: typed inline wins, else the lookup's; none, and the start skill
  * asks the user.

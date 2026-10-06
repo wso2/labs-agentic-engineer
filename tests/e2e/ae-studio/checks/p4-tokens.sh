@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P4 token negatives (scenario 4.2, 4.4 to 4.11). Read-only requests. 4.3 (the
+# P4 token negatives (4.4 to 4.11). Read-only requests. 4.3 (the
 # Room WebSocket) stays a manual agent-browser step.
 # Tokens: U user (TOK_USER_FILE), W other-org user (TOK_W_FILE), M the AE-only
 # M2M client (TOK_M_FILE), B the publisher client (TOK_B_FILE).

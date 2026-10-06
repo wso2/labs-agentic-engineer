@@ -80,7 +80,7 @@ func (s *Service) submitGitPAT(ctx context.Context, org, pat string) error {
 }
 
 // ensureWebhookSecret generates the org's GitHub webhook secret (32 random
-// bytes, hex) at the first submit and keeps it on every later one (06 §6).
+// bytes, hex) at the first submit and keeps it on every later one.
 // "First" is decided under the secret's lock, so two concurrent first
 // submits store one secret.
 func (s *Service) ensureWebhookSecret(ctx context.Context, org string) error {
@@ -129,7 +129,7 @@ func submitFailure(ctx context.Context, org, step string, err error) error {
 	const saved = "The GitHub connection was saved, but AE Studio setup didn't finish: "
 	switch {
 	case store != nil && store.Secret == OrgSecretGitHubPAT:
-		// No github-pat row, so the org has no GitHub connection (Q-1=C).
+		// No github-pat row, so the org has no GitHub connection.
 		return &SectionError{Section: "gitProvider", Status: http.StatusBadGateway, Code: SecretStoreWriteFailedCode,
 			Message: patNotSavedMessage}
 	case errors.Is(err, ErrOrgSecretConflict):

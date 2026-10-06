@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// The #86 phase-3 committer (#133), over the Files socket (07 §11): project a
+// The #86 phase-3 committer (#133), over the Files socket: project a
 // room's live doc into git as ONE commit per flush. ae-studio-tools owns git
 // and resolves the project's repository per call; the socket is pod-local, so
 // a flush carries no token. This module decides WHEN (Hocuspocus's debounced

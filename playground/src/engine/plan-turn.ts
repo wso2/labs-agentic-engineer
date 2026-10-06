@@ -18,7 +18,7 @@
 
 /**
  * A Plan turn (docs/design/playground.md §5 phase 3), started as aep-api
- * starts one in production: on the design agent's Turn socket (07 §5), kind
+ * starts one in production: on the design agent's Turn socket, kind
  * `plan`, with the existing-Task renders as its task context. The socket
  * answers NDJSON — a `task-op` line per ok `planTask` / `updateTask` result,
  * keep-alives, then one `result` line — and the playground folds the task

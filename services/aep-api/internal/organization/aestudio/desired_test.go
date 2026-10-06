@@ -59,7 +59,7 @@ func TestDesired_SecretsFromReferencesAndRev(t *testing.T) {
 	}
 }
 
-// O-5 / R6: the agent's ExternalSecret entry exists exactly while the
+// The agent's ExternalSecret entry exists exactly while the
 // Default key's row does.
 func TestDesired_AgentKeyOnlyWhileDefaultKeyIsSet(t *testing.T) {
 	f := newFixture(t).withAllRefs().withRef(organization.OrgSecretDefaultKey, "default-default-key-cccc0005")
@@ -135,7 +135,7 @@ func TestDesired_OrgAndEnvConfigs(t *testing.T) {
 	}
 }
 
-// Task 1.8: the pod must never be configured into a legacy mode.
+// The pod must never be configured into a legacy mode.
 func TestDesired_NoLegacyModeInputs(t *testing.T) {
 	f := newFixture(t).withAllRefs().withConnection(anthropicConn("claude-x"))
 	d, _ := f.svc.desired(ctx, "default")
@@ -184,7 +184,7 @@ func TestDesired_MissingInputsAreFailed(t *testing.T) {
 	}
 }
 
-// Task 4.20: with the install's relay seed, the Resource names the org's
+// With the install's relay seed, the Resource names the org's
 // relay channel and the binding the relay image; without it (Cloud), no relay.
 func TestDesired_WebhookRelay(t *testing.T) {
 	f := newFixture(t).withAllRefs()

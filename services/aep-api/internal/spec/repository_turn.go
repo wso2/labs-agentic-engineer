@@ -28,7 +28,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
-// The agent_turns store: the finished-turn ledger (07 §12). Every turn an
+// The agent_turns store: the finished-turn ledger. Every turn an
 // org's AE Studio pod runs lands here once, whole and already finished,
 // through record-turn-usage. The AgentTurn gorm lives here, in the spec
 // domain's own repository, as single write-authority.
@@ -86,7 +86,7 @@ type TurnRepository interface {
 	// whose turn id org already stored is skipped, never rewritten, so a
 	// resent batch changes nothing. The ledger's identity is (org, turn id),
 	// so another org's row with the same id never stands in for this org's
-	// record. cost_usd is stamped here from the rates in force (07 §7). The
+	// record. cost_usd is stamped here from the rates in force. The
 	// caller has checked each record's project belongs to org.
 	RecordFinished(ctx context.Context, org string, recs []TurnRecord) error
 

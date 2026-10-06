@@ -32,7 +32,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// Q-13: one OpenBao session per process. The OpenBao-direct provider and the
+// One OpenBao session per process. The OpenBao-direct provider and the
 // environment Thunder binding reader are built with the same VaultAuth, so a
 // write and a read log in once between them.
 func TestEnvironmentThunderCredentials_SharesTheProcessSession(t *testing.T) {

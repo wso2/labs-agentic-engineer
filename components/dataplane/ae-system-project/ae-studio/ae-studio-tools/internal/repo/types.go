@@ -19,7 +19,7 @@
 // refspec fetch, never checked out), plumbing reads (rev-parse / ls-tree /
 // cat-file), and plumbing writes via a throwaway index (read-tree /
 // update-index / write-tree / commit-tree / `push --force-with-lease`). It is
-// moved from aep-api's gitfs (which stays until phase 4); snapshots,
+// moved from aep-api's gitfs; snapshots,
 // references, tags and the baseSha Commit returned with their callers in
 // phases 3 and 4.
 package repo

@@ -16,7 +16,7 @@
 
 package aestudio
 
-// state.go — the status state machine (ticket 08 §10): compare desired with
+// state.go — the status state machine (ADR-0040): compare desired with
 // live, answer at once, and start a converge on drift. A binding that will
 // not become Ready by itself (stuck) answers failed.
 //

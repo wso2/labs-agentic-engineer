@@ -17,7 +17,7 @@
  */
 
 /**
- * The `/v1` edge (07 §1, flow 13): the browser API of the org's design agent,
+ * The `/v1` edge: the browser API of the org's design agent,
  * served on the pod's public listener (`pod/listeners.ts`) behind
  * `authenticate`. A user token of the pod's org is the only admission; the
  * gate runs before route matching, so an unknown `/v1` path is 401/403 before

@@ -24,7 +24,7 @@ import (
 	"testing"
 )
 
-// A cold clone records its bytes on the engine (ticket 20 §2: usage between
+// A cold clone records its bytes on the engine (design/clone-storage.md: usage between
 // sweeps is the last du plus the clones since), and a warm read records none.
 func TestCloneRecordsUsage(t *testing.T) {
 	fx := NewFixture(t, seedFiles())

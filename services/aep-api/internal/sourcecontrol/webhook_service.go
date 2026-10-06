@@ -44,7 +44,7 @@ type WebhookService interface {
 	Unregister(ctx context.Context, orgID, projectID string) error
 
 	// UnregisterOrg unregisters the hook of every repository row the org has
-	// (the gitpat disconnect, 06 §9). One row's failure does not stop the
+	// (the gitpat disconnect). One row's failure does not stop the
 	// others; the failures are returned joined.
 	UnregisterOrg(ctx context.Context, orgID string) error
 

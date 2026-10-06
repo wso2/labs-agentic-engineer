@@ -25,7 +25,7 @@
 # One ok/FAIL line per check; exit 1 on any FAIL. A kubectl read that fails
 # is a FAIL line too, never an abort without a summary. Never reads a Secret
 # value: only key names, and AE_SECRET_REV compared in-shell and never
-# printed; the relay channel URL (Task 4.20) is compared in-shell too, never
+# printed; the relay channel URL is compared in-shell too, never
 # printed. It writes nothing; the one POST is an unsigned GitHub ping, which
 # the tools container refuses (401) before acting on it.
 
@@ -86,7 +86,7 @@ check "ResourceType ae-studio has its template-hash annotation" test -n "$rt_has
 
 read_into latest "Resource ae-studio" kcp get resource ae-studio -n "$ORG" -o jsonpath='{.status.latestRelease.name}'
 check "Resource ae-studio has a latestRelease" test -n "$latest"
-# The org's relay channel (Task 4.20): set = the pod runs a webhook-relay container.
+# The org's relay channel: set = the pod runs a webhook-relay container.
 read_into relay_url "Resource ae-studio webhookRelayUrl" kcp get resource ae-studio -n "$ORG" \
   -o jsonpath='{.spec.parameters.webhookRelayUrl}'
 
@@ -155,7 +155,7 @@ if [ "$ndeploy" = 1 ]; then
       test -n "$expect_rev" -a "$live_rev" = "$expect_rev"
   fi
 
-  # Webhook relay (Task 4.20): present exactly when the Resource names a channel;
+  # Webhook relay: present exactly when the Resource names a channel;
   # then the tools container's hooks point at it and gosmee has subscribed.
   read_into cnames "Deployment $dpns/$dname container names" kdp get deploy "$dname" -n "$dpns" \
     -o jsonpath='{range .spec.template.spec.containers[*]}{.name}{"\n"}{end}'

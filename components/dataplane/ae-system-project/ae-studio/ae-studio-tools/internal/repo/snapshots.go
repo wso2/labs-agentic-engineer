@@ -29,7 +29,7 @@ import (
 )
 
 // Snapshots are the plain-file trees ae-design-agent reads a turn from (moved
-// from aep-api's gitfs/snapshots.go; ticket 04 §6, 20 §1). The agent mounts
+// from aep-api's gitfs/snapshots.go; design/route-groups.md). The agent mounts
 // only <root>/snapshots, read-only, and reads
 // /snapshots/projects/<project>/<sha> and /snapshots/skills/<sha>.
 

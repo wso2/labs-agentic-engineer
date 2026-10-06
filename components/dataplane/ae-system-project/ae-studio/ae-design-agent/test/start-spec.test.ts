@@ -17,11 +17,11 @@
  */
 
 /**
- * Slash commands parsed in the pod (07 §1, port of aep-api's
+ * Slash commands parsed in the pod (port of aep-api's
  * `A/spec/start_command.go`): a raw instruction becomes a `TurnSpec` and its
  * flow token. `/start` takes the idea typed inline, else the one the project
  * lookup read from the descriptor; `/start` and flow turns carry the
- * reference documents as snapshot paths (09 §2); chat stays reference-free.
+ * reference documents as snapshot paths; chat stays reference-free.
  */
 
 import { test } from "node:test";

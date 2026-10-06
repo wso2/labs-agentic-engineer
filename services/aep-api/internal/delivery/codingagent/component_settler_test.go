@@ -168,7 +168,7 @@ func settlerAt(rt openchoreo.RuntimeClient, jobs jobSuspender, del componentDele
 		WithGrace(5 * time.Minute).WithClock(func() time.Time { return *clock })
 }
 
-// ---- grace (Review Focus 1) ------------------------------------------------
+// ---- grace ------------------------------------------------
 
 func TestSettler_DeletesOnlyAfterTwoNoPodReadsAGraceApart(t *testing.T) {
 	ctx := context.Background()
@@ -298,7 +298,7 @@ func TestSettler_LogsTheDeleteValueFree(t *testing.T) {
 	}
 }
 
-// ---- backstop (Review Focus 2) ---------------------------------------------
+// ---- backstop ---------------------------------------------
 
 func TestSettler_BackstopSuspendsATerminalPod(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p", Phase: "Succeeded"}}
@@ -311,7 +311,7 @@ func TestSettler_BackstopSuspendsATerminalPod(t *testing.T) {
 }
 
 // One empty tree read on a merge-closed cycle is no evidence: it may hide a
-// Running pod writing its usage line (Review Focus 2). It only notes pod_gone.
+// Running pod writing its usage line. It only notes pod_gone.
 func TestSettler_BackstopIgnoresASingleEmptyRead(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
 	jobs := &fakeJobs{}
@@ -577,7 +577,7 @@ func TestSettler_BackstopOnAGoneBindingMarksSuspended(t *testing.T) {
 	}
 }
 
-// ---- legacy releases (Q-5 a) -----------------------------------------------
+// ---- legacy releases -----------------------------------------------
 
 func TestSettler_LegacyWithoutSuspendIsNeverDeletedWithAPod(t *testing.T) {
 	ctx := context.Background()
@@ -831,7 +831,7 @@ func TestSettler_BackstopIgnoresAStaleNoteWhileTheClearFails(t *testing.T) {
 	}
 }
 
-// R3-M1: the watcher stamped the suspend between this pass's read and the
+// The watcher stamped the suspend between this pass's read and the
 // backstop's mark; the backstop's mark changed nothing and announces nothing.
 func TestSettler_BackstopDoesNotAnnounceASuspendStampedElsewhere(t *testing.T) {
 	records := captureLogs(t)

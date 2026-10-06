@@ -152,7 +152,7 @@ func TestRelay_StreamsEveryFrameUnchanged(t *testing.T) {
 	}
 }
 
-// K-1: a provider_limit result's resetAt reaches aep-api: the relay passes
+// A provider_limit result's resetAt reaches aep-api: the relay passes
 // the line through unchanged, a field it does not read included.
 func TestRelay_PassesTheResultsResetTimeThrough(t *testing.T) {
 	golden := turnstest.Golden(t, "provider_limit.ndjson")

@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 )
 
-// Readiness is the container's /readyz state (08 §2): ready once the public
+// Readiness is the container's /readyz state: ready once the public
 // listener, the Files socket and the MCP socket are all bound, and not ready
 // again from the moment the container starts draining. Safe for concurrent
 // use.
@@ -47,7 +47,7 @@ func (r *Readiness) Ready() bool {
 	return r.public.Load() && r.filesSocket.Load() && r.mcpSocket.Load() && !r.draining.Load()
 }
 
-// NewHealth serves the probe endpoints on the health port (08 §2), which is
+// NewHealth serves the probe endpoints on the health port, which is
 // not in the Service and not routed. GET /healthz is liveness and always 200;
 // GET /readyz is 200 once ready() reports true and 503 before.
 func NewHealth(ready func() bool) http.Handler {

@@ -203,7 +203,7 @@ func (s *SkillService) List(ctx context.Context, orgID string) ([]Skill, error) 
 //
 // Unlike catalog(), a read failure is RETURNED: the skills page is a person
 // asking, and an empty list would tell them their library is gone when AE
-// Studio is only restarting or GitHub is not connected (05 §5).
+// Studio is only restarting or GitHub is not connected.
 func (s *SkillService) ListSummaries(ctx context.Context, orgID string) ([]SkillSummary, error) {
 	skills, err := s.readCatalog(ctx, orgID)
 	if err != nil {
@@ -228,7 +228,7 @@ func (s *SkillService) ListSummaries(ctx context.Context, orgID string) ([]Skill
 // URL with any ".git" suffix trimmed (the contract SkillSummaryList.repoUrl;
 // it powers the console Import dialog's via-pull-request link). Provisions the
 // repo on first touch like every read, and degrades to "" on any failure —
-// same posture as the catalog (§12); the console shows its connect-GitHub
+// same posture as the catalog; the console shows its connect-GitHub
 // guidance for an empty URL.
 func (s *SkillService) RepoWebURL(ctx context.Context, orgID string) string {
 	if !s.configured() || orgID == "" {

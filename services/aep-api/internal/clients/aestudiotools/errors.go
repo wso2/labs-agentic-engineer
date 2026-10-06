@@ -53,7 +53,7 @@ const (
 // code, and on a provider_limit the reset time the provider stated (zero when
 // it stated none). The result's free-text message is the agent's, possibly a
 // provider's error body, so the adapter never reads it and it cannot reach an
-// error string, a log line or Temporal history (R1-M4). Whether to start the
+// error string, a log line or Temporal history. Whether to start the
 // turn again, and when, is the caller's policy; IsPermanent does not judge it.
 type TurnFailedError struct {
 	Code    string
@@ -163,8 +163,7 @@ func retryAfter(v string) time.Duration {
 
 // authRefused is a refusal of the AE-only token itself: a 401, or a 403 the
 // pod's auth layer wrote (no problem body, or org_mismatch). Any other 403 is
-// the pod's verdict on the request (owner_not_allowed), never a token fault
-// (Q-8).
+// the pod's verdict on the request (owner_not_allowed), never a token fault.
 func (a answer) authRefused() bool {
 	switch a.status {
 	case http.StatusUnauthorized:

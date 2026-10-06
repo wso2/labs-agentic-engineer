@@ -24,7 +24,7 @@ import (
 	"fmt"
 )
 
-// The baseSha write surface (Task 4.2a; ticket 05 §3): one commit of writes
+// The baseSha write surface: one commit of writes
 // and deletes, each pinned to the blob it expects. The precondition check is
 // the one the Room's apply (files.Applier) also runs inside its own Mutate.
 

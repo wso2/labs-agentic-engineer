@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's Room join (07 §9, amended by Task 4.7a): ae-collab's Room socket
+ * The pod's Room join: ae-collab's Room socket
  * (`AE_ROOM_SOCKET`, a Unix socket on an emptyDir shared by ae-collab and
  * this container only), the Room `spec-<orgHandle>-<project>`, and the
  * credited user as the `credit` connection parameter. No token: socket

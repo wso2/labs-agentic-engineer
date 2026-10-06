@@ -227,7 +227,7 @@ func TestInvalidPathSegmentsRejected(t *testing.T) {
 	}
 }
 
-// Ported from gitfs reads_test.go (Task 4.2a): HeadLocal serves the mirror's
+// Ported from gitfs reads_test.go: HeadLocal serves the mirror's
 // default-branch tip without a fetch.
 func TestHeadLocalServesMirrorWithoutFetch(t *testing.T) {
 	fx := NewFixture(t, seedFiles())

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P3 AE Studio pod (scenario 3.3, 3.4, 3.5). Read-only: `make ae-studio-check`
+# P3 AE Studio pod (3.4, 3.5). Read-only: `make ae-studio-check`
 # is itself read-only (its one POST is an unsigned ping the pod refuses).
 # 3.4 compares against POD_UID_BEFORE_KEY, which phase 3 of the run records.
 # shellcheck source=tests/e2e/ae-studio/checks/lib.sh

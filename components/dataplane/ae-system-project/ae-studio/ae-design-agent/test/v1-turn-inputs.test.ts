@@ -18,7 +18,7 @@
 
 /**
  * What a `/v1` turn hands the model, built in the pod from the lookup, the
- * snapshots and the org's connection (07 §1, §4): `/<flow>` commands and
+ * snapshots and the org's connection: `/<flow>` commands and
  * their reference documents, documents fitted to the connection, the
  * console's narration policy, the skills snapshot, and the connection's
  * reasoning options. Ported from the legacy route's tests (server.test.ts),

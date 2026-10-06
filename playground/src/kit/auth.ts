@@ -18,7 +18,7 @@
 
 /**
  * The playground's dev verifier: the second `Authenticate` adapter of the
- * design agent's `/v1` edge (07 §9; the pod's is `idpAuthenticate`). There is
+ * design agent's `/v1` edge (the pod's is `idpAuthenticate`). There is
  * no IdP in a local run, so a session mints one random bearer secret, hands
  * the client its headers, and the verifier admits that secret alone as the
  * local user. Nothing is signed and nothing outlives the session; the app

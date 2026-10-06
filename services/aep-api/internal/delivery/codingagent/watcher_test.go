@@ -1129,7 +1129,7 @@ func TestTick_SkipsACycleWhoseComponentIsDeleted(t *testing.T) {
 	}
 }
 
-// R3-M1: the settler's backstop stamped the suspend between this tick's read
+// The settler's backstop stamped the suspend between this tick's read
 // and its own mark. The watcher's mark changed nothing, so it announces
 // nothing: one job_suspended event per suspend that took effect.
 func TestTick_SuspendStampedByAnotherCallerIsNotAnnouncedAgain(t *testing.T) {

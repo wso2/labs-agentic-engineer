@@ -42,7 +42,7 @@ type cancelStore interface {
 // suspended Job's pod is terminated (the runner gets its 30 s SIGTERM grace),
 // and the Job OpenChoreo re-creates after its TTL is born suspended, so the
 // runner never runs again for this cycle. It deletes nothing: the Component,
-// and with it the org's billing concurrency slot, goes at settle (Task 5.9's
+// and with it the org's billing concurrency slot, goes at settle (the
 // settler), at most CODING_AGENT_SETTLE_GRACE plus one sweep tick after that
 // SIGTERM grace.
 //

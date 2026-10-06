@@ -26,7 +26,7 @@ import (
 )
 
 // aeStudioUnavailableRetryAfter is the Retry-After (seconds) on 503
-// ae_studio_unavailable: the pod is coming up, provisioning or rolling (05 §5).
+// ae_studio_unavailable: the pod is coming up, provisioning or rolling.
 const aeStudioUnavailableRetryAfter = 5
 
 // classifyAEStudio is the ONE map from the AE Studio sentinels
@@ -39,7 +39,7 @@ const aeStudioUnavailableRetryAfter = 5
 //	ErrAEStudioAbsent         409 github_not_connected       (a person connects GitHub)
 //	ErrAEStudioUnavailable    503 ae_studio_unavailable      Retry-After: 5
 //	ErrAEStudioMisconfigured  503 ae_studio_misconfigured    no Retry-After: an operator fixes it (C3)
-//	ErrOwnerNotAllowed        409 owner_not_allowed          the repo is not under the connected account (Q-8)
+//	ErrOwnerNotAllowed        409 owner_not_allowed          the repo is not under the connected account
 //	*RateLimitedError         429 github_rate_limited        Retry-After: what GitHub said, when it said
 func classifyAEStudio(err error) *apierr.Error {
 	var rl *sourcecontrol.RateLimitedError

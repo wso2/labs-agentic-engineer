@@ -17,7 +17,7 @@
  */
 
 /**
- * The Turn socket (07 §5; `packages/contracts/sockets/ae-studio/turn/`):
+ * The Turn socket (`packages/contracts/sockets/ae-studio/turn/`):
  * ae-studio-tools starts the turns aep-api asks for, a kickoff (`start`) or a
  * Plan, on the Unix socket in `AE_TURN_SOCKET`. The mount is the gate, so no
  * request carries a token.
@@ -53,7 +53,7 @@ const KEEP_ALIVE_MS = 15_000;
 const MAX_BODY_BYTES = 4 << 20;
 /** How often a follower checks again on a turn whose replay overflowed. */
 const TRUNCATED_RECHECK_MS = 1_000;
-/** The result message of a turn the pod's shutdown ended (07 §10). */
+/** The result message of a turn the pod's shutdown ended. */
 export const SHUTDOWN_MESSAGE = "the studio is shutting down";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

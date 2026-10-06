@@ -35,7 +35,7 @@ type IdentitySource = repo.IdentitySource
 
 // saveIdentities returns the author and committer of a save: both the gitpat
 // user, as two distinct values so a caller changing one never aliases the
-// other. A failed lookup does not gate the save (20 §5): both come back nil
+// other. A failed lookup does not gate the save: both come back nil
 // and the engine commits as its default AEP identity.
 func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.GitIdentity) {
 	name, email, err := a.Identity.Identity(ctx)

@@ -94,8 +94,8 @@ func TestV1Files_PathRulesAndOrg(t *testing.T) {
 		{"GET", "/v1/projects/greeter/files/src/main.go", u, 400, "path_invalid"},                        // outside the read rules
 		{"GET", "/v1/projects/greeter/files/README.md", u, 400, "path_invalid"},                          // one segment, refused
 		{"GET", "/v1/projects/greeter/files/specs/%2e%2e/src/main.go", u, 400, "path_invalid"},           // traversal reaches the rules
-		{"GET", "/v1/projects/greeter/files/specs/../src/main.go", u, 404, "not_found"},                  // unclean path (phase 1)
-		{"GET", "/v1/projects/greeter/files/specs//a.md", u, 404, "not_found"},                           // unclean path (phase 1)
+		{"GET", "/v1/projects/greeter/files/specs/../src/main.go", u, 404, "not_found"},                  // unclean path
+		{"GET", "/v1/projects/greeter/files/specs//a.md", u, 404, "not_found"},                           // unclean path
 		{"GET", "/v1/projects/greeter/files/specs/requirements/prd.md?ref=main", u, 400, "path_invalid"}, // ref must be hex
 		{"GET", "/v1/projects/greeter/files/specs/requirements/missing.md", u, 404, "path_not_found"},
 		{"GET", "/v1/projects/greeter/files/specs/requirements/prd.md?ref=0123456789abcdef0123456789abcdef01234567", u, 404, "ref_not_found"},

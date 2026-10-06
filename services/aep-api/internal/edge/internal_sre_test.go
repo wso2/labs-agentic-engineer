@@ -54,7 +54,7 @@ type fakeReports struct {
 
 func (f *fakeReports) Create(_ context.Context, r *ops.RcaAgentReport) error { f.got = r; return nil }
 
-// The credential × route-group matrix (Review Focus 2): the SRE handoff bearer
+// The credential × route-group matrix: the SRE handoff bearer
 // opens sre/… and nothing else, nothing else opens sre/…, and a nil verifier
 // admits nobody.
 func TestInternalGate_SRE(t *testing.T) {

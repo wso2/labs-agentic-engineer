@@ -32,7 +32,7 @@ import (
 // neither a clone nor its documents behind. The owner must be the connected
 // account (the edge's path guard cannot see a body), else 403
 // owner_not_allowed and nothing moves. GitHub is not touched; nothing
-// stored is success. There is no org-wide form (05 §7).
+// stored is success. There is no org-wide form.
 func (h Handler) TrashRepo(ctx context.Context, req gen.TrashRepoRequestObject) (gen.TrashRepoResponseObject, error) {
 	owner, name := req.Body.Owner, req.Body.Repo
 	if h.owner == "" || !strings.EqualFold(h.owner, owner) {

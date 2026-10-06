@@ -16,9 +16,9 @@
 
 package spec_test
 
-// DB tier for the finished-turn ledger (record-turn-usage, 07 §12): the AE
+// DB tier for the finished-turn ledger (record-turn-usage): the AE
 // Studio tools pod hands over finished turns, the store keeps each once
-// (idempotent on the turn id), stamps cost_usd at ingest (07 §7), and the
+// (idempotent on the turn id), stamps cost_usd at ingest, and the
 // readers that drive the status poll, the build gate's design baseline and
 // kickoff idempotency see the rows unchanged.
 
@@ -159,7 +159,7 @@ func TestRecordFinished_StoresTheRecord(t *testing.T) {
 	}
 }
 
-// cost_usd is stamped at ingest from the (host, model) rate in force (07 §7);
+// cost_usd is stamped at ingest from the (host, model) rate in force;
 // an unpriced host stays null.
 func TestRecordFinished_StampsCost(t *testing.T) {
 	t.Parallel()

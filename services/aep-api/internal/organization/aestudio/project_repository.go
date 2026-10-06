@@ -17,7 +17,7 @@
 package aestudio
 
 // project_repository.go — where a project's code lives, as AE Studio's tools
-// pod resolves it on every request (04 §2). The pod keeps no cache: it asks
+// pod resolves it on every request. The pod keeps no cache: it asks
 // aep-api each time, so a repo rename or a project deleted from the org shows
 // up on the next request.
 

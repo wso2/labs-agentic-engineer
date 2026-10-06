@@ -17,7 +17,7 @@
  */
 
 /**
- * The composition root of the AE Studio pod's design agent (07 §9): the pod
+ * The composition root of the AE Studio pod's design agent: the pod
  * env (`pod/config.ts`), the model connection (`shared/connection-env.ts`),
  * the tools socket, the usage outbox, the conversation books, the TurnDesk
  * and the turn start path with its Room join (`collab/local-room.ts`), then

@@ -34,7 +34,7 @@ import (
 )
 
 // PlanService assembles the plan-turn context, runs the Plan turn in the
-// org's AE Studio pod (07 §12), and mints the Tasks its task-op events
+// org's AE Studio pod, and mints the Tasks its task-op events
 // describe. One turn per project is the pod's lock: a different turn running
 // is aestudiotools.ErrTurnInProgress, which the planning activity retries.
 type PlanService struct {
@@ -84,7 +84,7 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 		return err
 	}
 
-	// Gate: a versioned (tagged) spec must exist (§6, build-first). The tag is
+	// Gate: a versioned (tagged) spec must exist (build-first). The tag is
 	// cut by the build endpoint AFTER the whole-spec hard gate, so its presence
 	// certifies a buildable requirements+design pair.
 	//

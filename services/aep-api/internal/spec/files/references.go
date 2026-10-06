@@ -38,14 +38,14 @@ import (
 const referencesField = "files"
 
 // PutProjectReferences passes the reference documents attached on the create
-// view through to the org's AE Studio pod, which stores them (09 §1). They
+// view through to the org's AE Studio pod, which stores them. They
 // are transient turn inputs, never committed (console ADR-0017); the pod
 // validates them (count, size, type) and replaces the whole set, so a retry
 // after a partial failure converges rather than accumulating.
 //
 // The strict server hands this handler a *multipart.Reader, so the bytes
 // cannot pass through as they came: each `files` part is re-streamed, chunk by
-// chunk, into a new multipart body under the same field and file name (R21).
+// chunk, into a new multipart body under the same field and file name.
 // No part is buffered whole. A body that breaks off mid-part aborts the pod's
 // upload with the same error, so the pod never stores a truncated set.
 func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProjectReferencesRequestObject) (gen.PutProjectReferencesResponseObject, error) {
@@ -124,7 +124,7 @@ const codeRequestTooLarge = "request_too_large"
 // mapReferenceError maps what the pod (or the project lookup) answered onto
 // the envelope. The AE Studio answers (absent, unavailable, misconfigured,
 // owner not allowed) are not mapped here: they stay in the chain and the
-// edge's one classifier speaks for them, Retry-After included (Q-9).
+// edge's one classifier speaks for them, Retry-After included.
 func mapReferenceError(ctx context.Context, err error) error {
 	var se *aestudiotools.StatusError
 	switch {

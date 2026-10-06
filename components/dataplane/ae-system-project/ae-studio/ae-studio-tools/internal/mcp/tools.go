@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package mcp is the MCP socket's JSON-RPC server (04 §7): the in-pod design
+// Package mcp is the MCP socket's JSON-RPC server: the in-pod design
 // agent's only tool surface. It answers tools/list from the pinned local
 // descriptors, refuses tools/call of any name outside AllowedTools, runs the
 // two remote-git tools in the pod with the gitpat and forwards the other nine
@@ -24,7 +24,7 @@ package mcp
 import "slices"
 
 // AllowedTools is the pinned list of the tools the in-pod agent may call
-// (04 §7, §10). Whatever aep-api serves, tools/list answers exactly these and
+// Whatever aep-api serves, tools/list answers exactly these and
 // tools/call refuses any other name. Changing it is a reviewed decision;
 // TestAllowedTools_Pinned pins it.
 var AllowedTools = []string{
@@ -60,7 +60,7 @@ type Tool struct {
 
 // The descriptors below are copied from aep-api's
 // internal/dependencies/mcpdiscovery/mcp_tools.go (mcpTools), which keeps
-// serving them to the legacy runner until phase 5. Keep the two in step.
+// serving them to the legacy runner. Keep the two in step.
 
 // listGroupsDescription is the description text behind `list_groups` — the ONE
 // place a model is told what the directory-group catalog is and which of its

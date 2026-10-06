@@ -72,7 +72,7 @@ func TestCompleteDependencies_ProviderStub(t *testing.T) {
 	}
 }
 
-// Ticket 04 §4 (Q-9): completion is for stubs only. A dependency file that
+// Completion is for stubs only. A dependency file that
 // already names its provider and owes no document is completed by nobody and
 // warned about by nobody, even while the registry and the fetch are down.
 func TestCompleteDependencies_NonStubIsLeftAlone(t *testing.T) {

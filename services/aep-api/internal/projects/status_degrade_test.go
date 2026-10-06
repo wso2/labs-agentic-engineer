@@ -16,7 +16,7 @@
 
 package projects
 
-// The status poll's AE Studio degrade (05 §6, Q-12): when the org's AE Studio
+// The status poll's AE Studio degrade: when the org's AE Studio
 // cannot answer for the repo, the git-derived spec facts are marked
 // unavailable and the poll still answers, with the build and deploy stages
 // intact. Driven over the REAL artifact service and the in-memory pod.
@@ -105,7 +105,7 @@ func TestProjectStatus_DegradesTo200(t *testing.T) {
 	}{
 		{sourcecontrol.ErrAEStudioAbsent, gen.SpecStageUnavailableReasonGithubNotConnected},
 		{sourcecontrol.ErrAEStudioUnavailable, gen.SpecStageUnavailableReasonAeStudioUnavailable},
-		{sourcecontrol.ErrAEStudioMisconfigured, gen.SpecStageUnavailableReasonAeStudioMisconfigured}, // Q-12: the same degrade
+		{sourcecontrol.ErrAEStudioMisconfigured, gen.SpecStageUnavailableReasonAeStudioMisconfigured}, // The same degrade
 	} {
 		sentinel := tc.sentinel
 		t.Run(sentinel.Error(), func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestProjectStatus_OtherGitFailureStillFails(t *testing.T) {
 	}
 }
 
-// I-1: the pre-ready answers (no repo, cloning, repo error) never read git, so
+// The pre-ready answers (no repo, cloning, repo error) never read git, so
 // their spec facts are known-empty rather than unreadable — and the required
 // enum must carry a member on every answer, not "".
 func TestProjectStatus_PreReadyAnswersAreAvailable(t *testing.T) {

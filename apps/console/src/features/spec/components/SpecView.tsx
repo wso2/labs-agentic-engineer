@@ -1429,7 +1429,7 @@ export function SpecView({ projectName }: { projectName: string }) {
           </Alert>
         )}
 
-        {/* The Room's last commit landed with soft warnings (10 §6); the
+        {/* The Room's last commit landed with soft warnings; the
             next commit's set replaces these. */}
         {collab.flushWarnings.length > 0 && (
           <Alert

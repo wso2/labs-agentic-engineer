@@ -17,7 +17,7 @@
  */
 
 /**
- * The project's current thread, as the console keeps it (07 §3): one thread
+ * The project's current thread, as the console keeps it: one thread
  * per project on the design agent, its id kept in the project state so the
  * next session resumes it. `--fresh` rotates it; a send the agent refuses as
  * `conversation_rotated` (the thread filled up) adopts the fresh one.

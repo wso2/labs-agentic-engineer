@@ -466,7 +466,7 @@ export function toolsetFor(turn: TurnSpec): Toolset {
 
 /**
  * Marketplace register chat needs a draft tool the files set does not carry.
- * Every turn on a marketplace route gets it (07 §6): follow-up answers there
+ * Every turn on a marketplace route gets it: follow-up answers there
  * are classified as `chat`, not the `/register-external-resource` flow, and
  * still need it. On a project route only that flow does.
  */

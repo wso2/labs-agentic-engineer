@@ -56,7 +56,7 @@ test("pod mode: /v1 is gated before routing, health is separate", async () => {
     assert.equal(foreign.status, 403);
     assert.equal(((await foreign.json()) as { code: string }).code, "org_mismatch");
 
-    // The gate admits the pod's user: the /v1 routes answer (D-1).
+    // The gate admits the pod's user: the /v1 routes answer.
     assert.equal((await v1("/v1/projects/p/turns/active", own)).status, 204);
     const r = await v1("/v1/x", own);
     assert.equal(r.status, 404);

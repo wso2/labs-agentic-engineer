@@ -31,7 +31,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// Every internal op names its caller in its tags (03 §4). Read from the YAML,
+// Every internal op names its caller in its tags. Read from the YAML,
 // not igen.GetSpec, because call-mcp-tool is excluded from generation.
 func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 	doc, err := openapi3.NewLoader().LoadFromFile("../../../../packages/contracts/api/internal/v1/openapi.yaml")
@@ -56,7 +56,7 @@ func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 	}
 }
 
-// Today's runner request shapes still pass the validator (Review Focus 1):
+// Today's runner request shapes still pass the validator:
 // validation_context.ts GETs the context with no body.
 func TestInternalValidator_AcceptsRunnerRequests(t *testing.T) {
 	s := newInternalStack(t)
@@ -133,7 +133,7 @@ func TestInternalBodyCap_PerOp(t *testing.T) {
 	}
 }
 
-// Authenticate, then parse (I-1): an unauthenticated request to a generated
+// Authenticate, then parse: an unauthenticated request to a generated
 // op is answered 401 by internalGate before the validator (next) runs, so an
 // anonymous caller never gets schema detail or forces a body parse.
 func TestInternalGate_RunsBeforeValidator(t *testing.T) {

@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's listeners (07 §11, 08 §2): two that hand WebSockets to ONE
+ * The pod's listeners: two that hand WebSockets to ONE
  * Hocuspocus instance, and the health port.
  *
  *   public  0.0.0.0:`listenPort`. `/v1` HTTP sits behind the user gate (a
@@ -33,7 +33,7 @@
  *   health  `/healthz` (liveness) and `/readyz` (200 once both room listeners
  *           are bound, 503 while closing); not in the Service, not routed.
  *
- * Closing (SIGTERM, 07 §10): both room listeners stop accepting, then `drain`
+ * Closing (SIGTERM): both room listeners stop accepting, then `drain`
  * runs (the Room's shutdown flush), handed `endSockets`: it ends the open room
  * sockets first, so no edit reaches a room after its flush read it, then
  * flushes. The sockets are ended in any case once drain settles, and the
@@ -138,7 +138,7 @@ function refuseUpgrade(socket: Duplex, status: number, code: string, detail: str
 }
 
 /**
- * The public listener's Origin rule (07 §11): the `Origin` must be present
+ * The public listener's Origin rule: the `Origin` must be present
  * and listed in `AE_ALLOWED_ORIGINS`, exactly. Only browsers join here; the
  * in-pod agent joins on the Room socket, which has no Origin check.
  */

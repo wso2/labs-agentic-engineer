@@ -25,7 +25,7 @@ import (
 // RunProjectConversations is a RETIRED tombstone. It created the
 // one-current-thread-per-scope partial unique index on project_conversations
 // (#430), the conversation store of aep-api's in-process turn engine. Turns
-// and their conversations live in the org's AE Studio pod now (phase 3), the
+// and their conversations live in the org's AE Studio pod now, the
 // model is gone, and phase24 drops the table. The step stays in the list
 // because the list is frozen (a removal would break the golden order), and it
 // does nothing so an upgrade boot never re-creates the index on a table

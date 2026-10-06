@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P8 secret rotation (scenario 8.3, 8.6 to 8.9). Read-only. The run records
+# P8 secret rotation (8.6 to 8.9). Read-only. The run records
 # what the rotation replaces: OLD_PAT_REF, OLD_WEBHOOK_REF, POD_UID_BEFORE_ROTATION
 # and REV_BEFORE_ROTATION (8.2). 8.3 reads the roll window, which lasts seconds:
 # it runs only with P8_ROLL=1, started while the banner shows. 8.8 reads the

@@ -24,10 +24,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 )
 
-// 06 §9 gitpat disconnect: the org's Resource ae-studio is deleted (its
+// The gitpat disconnect: the org's Resource ae-studio is deleted (its
 // binding, release and pod go with it in OpenChoreo), as aep-api's own
 // identity. Nothing else is touched: the Project ae-system and the
-// ResourceType stay (Cloud cannot delete a ResourceType, ticket 16), and a
+// ResourceType stay (Cloud cannot delete a ResourceType), and a
 // reconnect converges a new Resource.
 func TestRemove_DeletesOnlyTheResource(t *testing.T) {
 	f := newFixture(t).withAllRefs().converged()

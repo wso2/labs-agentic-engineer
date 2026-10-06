@@ -18,7 +18,7 @@ package aestudio
 
 // desired.go — what an org's AE Studio should be: the Resource's
 // parameters (a change cuts a ResourceRelease and re-pins) and the binding's
-// environment configs (an RRB PUT only), ticket 08 §6. Secret values never
+// environment configs (an RRB PUT only), ADR-0040. Secret values never
 // pass through here: the parameters carry reference names, vault keys and
 // properties only.
 
@@ -59,7 +59,7 @@ type secretSet struct {
 }
 
 // secretEntry is one container env read from the vault: Key and Property
-// are copied from the SecretReference's spec.data, never recomputed (06 §2).
+// are copied from the SecretReference's spec.data, never recomputed.
 type secretEntry struct {
 	Env      string `json:"env"`
 	Key      string `json:"key"`
@@ -78,12 +78,12 @@ type params struct {
 		Handle string `json:"handle"`
 	} `json:"org"`
 	// ModelConnection is the connection's non-secret fields as one JSON
-	// string (AE_MODEL_CONNECTION), "" when the org has none (07 §4, R18).
+	// string (AE_MODEL_CONNECTION), "" when the org has none.
 	ModelConnection string `json:"modelConnection"`
 	// GitHubOwner is org_credentials.github_login (AE_GITHUB_OWNER).
 	GitHubOwner string `json:"githubOwner"`
 	// WebhookRelayURL is the org's smee.io relay channel, "" without the
-	// install's relay seed (Task 4.20).
+	// install's relay seed.
 	WebhookRelayURL string `json:"webhookRelayUrl"`
 	Secrets         struct {
 		DesignAgent secretSet `json:"designAgent"`
@@ -112,7 +112,7 @@ type envConfigs struct {
 	Storage          struct {
 		SizeLimit        string `json:"sizeLimit"`
 		EphemeralRequest string `json:"ephemeralRequest"`
-		// BudgetBytes is a string in the RT schema (P-10).
+		// BudgetBytes is a string in the RT schema.
 		BudgetBytes string `json:"budgetBytes"`
 	} `json:"storage"`
 	PullSecret struct {
@@ -189,7 +189,7 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 	}
 	// The gitpat's row alone is not enough: a disconnected (or suspended)
 	// credential is no GitHub connection, whatever rows a half-run
-	// disconnect left (06 §9), so nothing converges a pod for it.
+	// disconnect left, so nothing converges a pod for it.
 	login, active, err := s.githubConnection(ctx, org)
 	if err != nil {
 		return d, err
@@ -265,7 +265,7 @@ func isJSONArray(raw json.RawMessage) bool {
 }
 
 // secretSets builds both containers' ExternalSecret entries from the set
-// references. The Default key's entry exists only while its row does (O-5).
+// references. The Default key's entry exists only while its row does.
 func secretSets(ctx context.Context, oc OC, org string, set map[organization.OrgSecret]string) (tools, agent secretSet, err error) {
 	byName := map[string]*secretmanagersvc.SecretReference{}
 	names := map[container]map[string]bool{studioTools: {}, designAgent: {}}

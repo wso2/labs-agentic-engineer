@@ -40,20 +40,20 @@ import (
 
 const (
 	internalV1 = "/internal/v1"
-	// internalBodyBytes caps every /internal/v1 request body (ticket 04 §10)
+	// internalBodyBytes caps every /internal/v1 request body (design/route-groups.md)
 	// unless internalBodyCaps names the operation.
 	internalBodyBytes int64 = 1 << 20
 	// referencesBodyBytes caps a references upload: 10 files × 5 MiB plus
-	// the multipart framing, with room to spare (09 §1). The handler checks
+	// the multipart framing, with room to spare. The handler checks
 	// the parts themselves.
 	referencesBodyBytes int64 = 80 << 20
 	// turnBodyBytes caps a turn start at what the agent's Turn socket takes
 	// (ae-design-agent src/edge/turn-socket.ts MAX_BODY_BYTES): a re-plan's
 	// taskContext carries the open Tasks' bodies, and a cap below the agent's
-	// would refuse here a turn the agent accepts (R1-M3).
+	// would refuse here a turn the agent accepts.
 	turnBodyBytes int64 = 4 << 20
 	// commitBodyBytes caps a create-commit: its writes travel base64 in one
-	// JSON body (05 §3, report gap G5).
+	// JSON body.
 	commitBodyBytes int64 = 16 << 20
 )
 

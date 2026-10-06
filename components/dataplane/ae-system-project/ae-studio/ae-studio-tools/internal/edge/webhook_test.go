@@ -193,7 +193,7 @@ func TestWebhook_UnknownLengthOverCapIs413(t *testing.T) {
 	}
 }
 
-// The reply rule (04 §8), end to end through the real forwarder: GitHub sees
+// The reply rule, end to end through the real forwarder: GitHub sees
 // 200 when aep-api took the delivery or refused it for good, 503 when aep-api
 // failed or could not be reached, and the log names aep-api's status.
 func TestWebhook_ReplyRule(t *testing.T) {

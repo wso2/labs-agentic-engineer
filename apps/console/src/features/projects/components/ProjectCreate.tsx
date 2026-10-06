@@ -426,7 +426,7 @@ export function ProjectCreate() {
 
 /**
  * A create the platform refused. Three refusals are states rather than failures
- * and say what to do (10 §7): GitHub not connected goes to Settings →
+ * and say what to do: GitHub not connected goes to Settings →
  * Credentials, AE Studio restarting offers Try again (the platform took the
  * half-made project away, so a retry is a clean create), and AE Studio
  * misconfigured names the administrator (no retry fixes it). An earlier delete

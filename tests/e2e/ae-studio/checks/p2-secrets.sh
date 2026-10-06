@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P2 secrets are references only (scenario 2.2, 2.5, 2.6, 2.7). Read-only.
+# P2 secrets are references only (2.5, 2.6, 2.7). Read-only.
 # SECRETREF_PREFIX defaults to ORG (local names are default-<secret>-<hex>).
 # shellcheck source=tests/e2e/ae-studio/checks/lib.sh
 . "$(dirname "$0")/lib.sh"

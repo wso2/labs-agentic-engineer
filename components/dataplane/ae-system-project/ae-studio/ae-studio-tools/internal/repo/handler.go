@@ -29,7 +29,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 )
 
-// The /internal/v1/repos/{owner}/{repo} git content ops (05 §3): thin
+// The /internal/v1/repos/{owner}/{repo} git content ops: thin
 // wrappers over the Workspace, addressed by GitHub owner/repo, so aep-api's
 // calls and the Room's land on one mirror. No path allow-list (the Files
 // read rules are the Room's, not aep-api's). The edge embeds Handler in its
@@ -366,7 +366,7 @@ func parseCommit(body *gen.CreateCommitRequest) (commitRequest, error) {
 
 // AuthorOf is the gitpat user as src names it, or nil (the engine's AEP
 // default) when there is no source or the lookup failed: a failed lookup
-// does not gate the commit (20 §5); it is logged under op.
+// does not gate the commit; it is logged under op.
 func AuthorOf(ctx context.Context, src IdentitySource, op string) *GitIdentity {
 	if src == nil {
 		return nil

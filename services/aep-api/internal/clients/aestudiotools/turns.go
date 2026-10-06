@@ -46,7 +46,7 @@ const (
 // TurnEvent types on the stream.
 const (
 	EventTaskOp    = "task-op"
-	EventKeepAlive = "keep-alive" // every 15 s; yielded, so a watchdog can see the turn is alive (D-2)
+	EventKeepAlive = "keep-alive" // every 15 s; yielded, so a watchdog can see the turn is alive
 	EventResult    = "result"     // the last event
 )
 

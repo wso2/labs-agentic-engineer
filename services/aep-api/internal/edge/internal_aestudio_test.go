@@ -56,9 +56,9 @@ func (f *fakeProjectRepos) Lookup(_ context.Context, org, project string) (aestu
 }
 
 // The ae-studio/ route group admits only an org's ae-studio-<org> client
-// token, and the org is the one that client is recorded for (04 §2, 03 §1,
-// Q-1). aep-api never accepts the org's publisher token (a coding Job holds
-// it) or the AE-only client's token (no org claim; scenario 4.9): the AE-only
+// token, and the org is the one that client is recorded for.
+// aep-api never accepts the org's publisher token (a coding Job holds
+// it) or the AE-only client's token (no org claim): the AE-only
 // pin lives in the tools pod's /internal/v1 gate, not here.
 func TestInternalGate_AEStudio(t *testing.T) {
 	stack := newInternalStack(t)
@@ -112,7 +112,7 @@ func TestInternalGate_AEStudio(t *testing.T) {
 		// is refused, with or without an impersonation header.
 		{name: "AE-only client token", bearer: token("ae-studio-internal-client", ""), want: 401},
 		{name: "AE-only client token impersonating the org", bearer: token("ae-studio-internal-client", ""), header: map[string]string{"X-Impersonate-Org": "acme"}, want: 401},
-		// Q-1: the org's publisher token (what its coding Jobs hold) never
+		// The org's publisher token (what its coding Jobs hold) never
 		// opens ae-studio/.
 		{name: "publisher token of the owning org", bearer: "Bearer " + stack.mint("acme"), want: 401},
 		{name: "ae-studio audience without an org claim", bearer: token("ae-studio-acme", ""), want: 401},

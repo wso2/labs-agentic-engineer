@@ -90,7 +90,7 @@ func (f *fakeOpenBao) counts() (logins, writes int) {
 	return f.logins, f.writes
 }
 
-// Review Focus 4: a token minted at boot expires after the role's ttl; the
+// A token minted at boot expires after the role's ttl; the
 // session must re-login on the first 403 and before it runs out, never answer
 // a write with a 403 because its token aged.
 func TestKubernetesAuth_ReloginsOn403AndNearExpiry(t *testing.T) {

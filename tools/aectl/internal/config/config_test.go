@@ -177,7 +177,7 @@ func TestLoadFromCluster_GatewayHostname_Absent(t *testing.T) {
 	}
 }
 
-// Task 4.20 (Q-11): the relay switch is a persisted, optional bool key.
+// The relay switch is a persisted, optional bool key.
 func TestWebhookRelayEnabled_IsAPersistedBoolKey(t *testing.T) {
 	if !slices.Contains(ConfigMapKeys, "ae_studio.webhook_relay.enabled") {
 		t.Error("ae_studio.webhook_relay.enabled must be present in ConfigMapKeys")

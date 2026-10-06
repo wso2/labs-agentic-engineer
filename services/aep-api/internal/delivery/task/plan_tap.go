@@ -36,7 +36,7 @@ import (
 // longer silence means a hung pod, and the planning activity would otherwise
 // hold its 30-minute timeout for a turn that is not coming back. Keep-alives
 // reset it like any other event: a turn reading files for minutes between
-// two Tasks is alive (D-2).
+// two Tasks is alive.
 const planDrainIdleTimeout = 90 * time.Second
 
 // errPlanTurnSilent is a Plan turn whose stream sent nothing, not even a
@@ -45,9 +45,9 @@ const planDrainIdleTimeout = 90 * time.Second
 var errPlanTurnSilent = errors.New("plan: the turn sent nothing for the idle deadline")
 
 // planTap reads a Plan turn's event stream from the org's AE Studio pod and
-// performs the GitHub writes for planTask/updateTask as they pass (§6). The
+// performs the GitHub writes for planTask/updateTask as they pass. The
 // pod projects the agent's successful task tool results to `task-op` events
-// (07 §12); the tap decodes each with the same taskplan decoders the raw
+// the tap decodes each with the same taskplan decoders the raw
 // tool results used.
 //
 // Every issue it mints is PROSE in a MILESTONE: the milestone number rides the
@@ -139,7 +139,7 @@ func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient
 // off, or errPlanTurnSilent when the idle watchdog fired.
 //
 // Every event, keep-alives included, resets the watchdog and reports progress
-// on t.ctx, which the planning activity turns into a heartbeat (04 §5, D-2).
+// on t.ctx, which the planning activity turns into a heartbeat.
 // On expiry the watchdog calls abort, which must end the stream (cancel the
 // context the stream was started under, closing its body). GitHub write
 // failures are not Stream's answer; they are counted in t.failures.

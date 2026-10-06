@@ -31,7 +31,7 @@ import type { components } from "../../../generated/aep-api";
 import { aeStudioKeys, useAeStudio } from "../../ae-studio/api/queries";
 
 // Console side of #86 phase 5: connect the spec view to the Room, the
-// `ae-collab` container of the org's AE Studio pod (10 §6). One room + one
+// `ae-collab` container of the org's AE Studio pod. One room + one
 // Y.Doc per project (`spec-<org>-<project>`), Y.Map('files') of path → Y.Text.
 // The Room's URL comes from AE Studio's `ready` answer; without one (AE Studio
 // not ready, or the Room unreachable) the view degrades to solo (#86
@@ -174,7 +174,7 @@ export function useCollabSpec(
 ): CollabSpec {
   const queryClient = useQueryClient();
   const studio = useAeStudio();
-  // No provider without a Room URL (10 §2): the Room is joined once AE Studio
+  // No provider without a Room URL: the Room is joined once AE Studio
   // is `ready`, kept through a transient `provisioning`, and left when AE
   // Studio fails or is gone (see `heldRoomUrl`). Held as state, adjusted while
   // rendering, because the URL to hold depends on the one held before.

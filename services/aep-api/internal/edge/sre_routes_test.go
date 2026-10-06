@@ -25,7 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// /api/v1 takes user JWTs only (03 §1): the SRE handoff bearer that once
+// /api/v1 takes user JWTs only: the SRE handoff bearer that once
 // cleared list-issues/create-issue there is refused on the real JWT path, even
 // with the verifier configured. Its ops now live under /internal/v1/sre
 // (internal_sre_test.go).

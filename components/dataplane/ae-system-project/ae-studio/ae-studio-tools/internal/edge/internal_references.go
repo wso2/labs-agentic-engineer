@@ -31,7 +31,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// The references upload (09 §1): aep-api relays the documents a user attached
+// The references upload: aep-api relays the documents a user attached
 // on the create view, and the pod owns every check on them (moved from
 // aep-api's spec/files/references.go). The validator skips this op's
 // multipart body, so the parts are read here one at a time, each bounded,

@@ -178,7 +178,7 @@ func TestInternalGit_CommitOverHTTP(t *testing.T) {
 		http.StatusBadRequest, "validation_failed")
 }
 
-// The commit cap is 16 MiB (05 §3): past it is 413 before the gate, under
+// The commit cap is 16 MiB: past it is 413 before the gate, under
 // it a body bigger than the 1 MiB default commits.
 func TestInternalGit_CommitBodyCap(t *testing.T) {
 	h, origin := gitHarness(t, map[string]string{"specs/a.md": "a"})

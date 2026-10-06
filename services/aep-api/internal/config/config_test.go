@@ -131,7 +131,7 @@ func TestLoad_CodingAgentJobTTL(t *testing.T) {
 	}
 }
 
-// 11 §7: aep-api holds no static OpenBao token. OPENBAO_TOKEN is read by
+// Aep-api holds no static OpenBao token. OPENBAO_TOKEN is read by
 // nothing, and the Kubernetes-auth login defaults to role aep-api on mount
 // kubernetes with the pod's projected service-account token.
 func TestConfig_NoOpenBaoTokenEnv(t *testing.T) {

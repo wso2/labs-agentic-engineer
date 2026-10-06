@@ -16,7 +16,7 @@
 
 package projects
 
-// The deploy-time issuer read is read-only (06 §3, O-3): deploying a protected
+// The deploy-time issuer read is read-only: deploying a protected
 // API never creates or heals the org's publisher app. The real
 // organization IDP service is wired, over a Thunder admin client that counts
 // every call, so a write slipping back into resolveIssuers shows as a call.

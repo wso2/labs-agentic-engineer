@@ -80,7 +80,7 @@ func TestDeleteRepo_IsIdempotent(t *testing.T) {
 }
 
 // DeleteRepo trashes the pod's mirror and reference documents of the
-// project's repository BEFORE it drops the row (05 §7 delete): the row is
+// project's repository BEFORE it drops the row: the row is
 // what names the repository, so after it is gone nothing can ask the pod to
 // drop them.
 func TestDeleteRepo_TrashesThePodMirrorBeforeTheRow(t *testing.T) {

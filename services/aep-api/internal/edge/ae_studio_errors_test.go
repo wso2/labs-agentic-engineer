@@ -16,7 +16,7 @@
 
 package edge_test
 
-// Review Focus 1: every git-backed /api/v1 op, driven through the REAL
+// Every git-backed /api/v1 op, driven through the REAL
 // production handler chain over its REAL service and the in-memory AE Studio
 // pod failing for the org, answers the AE Studio code — never the 500 a
 // handler's fallback would flatten it into. Only the out-of-process edges
@@ -165,7 +165,7 @@ func newEdgeWithFake(t *testing.T, arrange func(*aestudiotest.Fake)) *componentt
 		DeleteProjectFunc: func(context.Context, string, string) error { return nil },
 	}
 	createRepos := sourcecontrol.NewRepoService(repoRows{}, pod, pod, fixedOwner{}, "private")
-	// The Ready check runs first (05 §7), so the create row answers from it.
+	// The Ready check runs first, so the create row answers from it.
 	projectSvc := projects.NewProjectService(oc, createRepos, nil, artifacts, nil)
 	projectSvc.SetAEStudioReady(pod)
 	projH, err := projectshttpapi.New(projects.Deps{ProjectSvc: projectSvc})
@@ -233,7 +233,7 @@ func TestGitBackedOps_MapAEStudioErrors(t *testing.T) {
 		{"skills-save", http.MethodPost, "/api/v1/skills", `{"name":"my-skill","skillMd":` + jsonString(skillMD) + `}`},
 		{"issues", http.MethodGet, "/api/v1/projects/p/issues", ""},
 		{"task", http.MethodGet, "/api/v1/projects/p/tasks/1", ""},
-		// T-4.17.1: the design write that goes through the committed-truth surface.
+		// The design write that goes through the committed-truth surface.
 		{"design-save", http.MethodPost, "/api/v1/projects/p/dependencies/payments/assumption", `{}`},
 	} {
 		for _, f := range []struct {

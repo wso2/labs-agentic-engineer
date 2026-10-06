@@ -63,7 +63,7 @@ func (OrganizationIDPProfile) TableName() string { return "organization_idp_prof
 type IDPAuditEvent struct {
 	ID           int64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	OrgID        string    `gorm:"column:org_id;not null;index:idx_idp_audit_events_org_occurred,priority:1" json:"orgId"`
-	Action       string    `gorm:"not null" json:"action"` // ensure_publisher | revoke_publisher | update_profile (rows from before phase 6 may say regenerate_secret)
+	Action       string    `gorm:"not null" json:"action"` // ensure_publisher | revoke_publisher | update_profile (older rows may say regenerate_secret)
 	Actor        string    `gorm:"not null" json:"actor"`  // user email / service principal
 	OccurredAt   time.Time `gorm:"column:occurred_at;index:idx_idp_audit_events_org_occurred,priority:2,sort:desc" json:"occurredAt"`
 	BeforeState  []byte    `gorm:"column:before_state;type:jsonb" json:"beforeState,omitempty"`

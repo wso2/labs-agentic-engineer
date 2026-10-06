@@ -255,7 +255,7 @@ func TestPlanMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
 	require.Equal(t, 1, planner.count(), "a permanent planning failure must be asked exactly once")
 }
 
-// K-1: the provider-limit bound counts provider limits, not Temporal
+// The provider-limit bound counts provider limits, not Temporal
 // attempts. Four shutdowns first (attempts 1-4) leave all four
 // provider-limit tries (attempts 5-8); the count crosses each retry in the
 // heartbeat details. Under the old attempt-number rule the provider limit at

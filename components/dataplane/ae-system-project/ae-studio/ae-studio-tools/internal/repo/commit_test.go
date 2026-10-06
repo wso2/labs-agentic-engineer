@@ -137,7 +137,7 @@ func TestCommit_StaleBaseShaIsAConflictAndAppliesNothing(t *testing.T) {
 }
 
 // Commit is the engine's commit only: a design.cell write lands alone, with
-// no component skeletons scaffolded beside it (05 §3).
+// no component skeletons scaffolded beside it.
 func TestCommit_DoesNotScaffold(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
 	cell := "component lunch-api service\ncomponent lunch-web web-application\n"

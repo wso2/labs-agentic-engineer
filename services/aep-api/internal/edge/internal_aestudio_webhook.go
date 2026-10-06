@@ -29,7 +29,7 @@ import (
 )
 
 // ingest-webhook-event: the org's AE Studio tools pod verified a GitHub hook
-// delivery's signature and hands it over, one per request (03 §3). The org is
+// delivery's signature and hands it over, one per request. The org is
 // the gate's (the ae-studio client's recorded org), never the payload's; the
 // body is the generated json.RawMessage, the bytes as they arrived (the
 // schema declares no defaults, so the validator restores them unchanged).

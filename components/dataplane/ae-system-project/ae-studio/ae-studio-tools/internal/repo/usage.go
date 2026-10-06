@@ -22,7 +22,7 @@ import (
 	"syscall"
 )
 
-// Studio-data usage (ticket 20 §2). The reaper owns the measurement: each
+// Studio-data usage (design/clone-storage.md). The reaper owns the measurement: each
 // sweep it records a fresh du of the root with SetUsedBytes. Between sweeps
 // every cold clone adds its own bytes with AddUsage, so the budget is not
 // blind for up to one sweep interval while repos are being cloned.

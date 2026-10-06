@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's per-project current thread (ticket 07 §3). Every member of a
+ * The pod's per-project current thread. Every member of a
  * project shares one current thread, minted lazily as a plain uuid; rotating
  * replaces it and drops the old thread's messages, which are never listed or
  * served again. The book holds only the current id, its creator and the last
@@ -30,7 +30,7 @@
  * 80 % of the connection's declared window is rotated before the send, which
  * is then refused (`409 conversation_rotated`). A connection that declares no
  * window has no token bound, so the thread's stored messages are bounded
- * instead (R2-I2): past `THREAD_FALLBACK_BYTES` (base64 attachments counted)
+ * instead: past `THREAD_FALLBACK_BYTES` (base64 attachments counted)
  * it rotates the same way. Without it, a thread on such a connection would
  * grow in the pod's memory until the pod's death.
  */

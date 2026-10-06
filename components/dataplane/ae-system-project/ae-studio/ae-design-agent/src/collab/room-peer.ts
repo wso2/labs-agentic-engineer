@@ -22,12 +22,12 @@
 // @aep/collab-doc (Y.Text diff-and-patch, md fragment reparse), presence as
 // an agent (`kind: "agent"`, the console renders square avatars, #86 d7).
 //
-// The pod joins through `local-room.ts` (07 §9): ae-collab's Room socket,
+// The pod joins through `local-room.ts`: ae-collab's Room socket,
 // whose access is the agent's identity (no token is sent), and the credited
 // user as a connection parameter.
 //
 // Every connection gets a FRESH Y.Doc, and a dropped connection is never
-// resumed with the doc it had (C13): a client that reconnects with a kept doc
+// resumed with the doc it had: a client that reconnects with a kept doc
 // merges its old copy of the seed into a Room that re-seeded after a restart,
 // and the document doubles. A dropped connection is replaced by a new one
 // (new doc), and the files this peer wrote are written again where
@@ -181,7 +181,7 @@ export async function joinRoom(input: JoinRoomInput): Promise<RoomPeer> {
   const agentName = input.agentName ?? "Spec Agent";
   const url = withParameters(input.url, input.parameters);
 
-  /** A new connection, not yet attached: a fresh doc every time (C13). */
+  /** A new connection, not yet attached: a fresh doc every time. */
   const open = (): Connection => {
     // Explicit websocket sub-provider so the Node `ws` implementation is
     // pinned (the polyfill knob lives on the websocket configuration). The

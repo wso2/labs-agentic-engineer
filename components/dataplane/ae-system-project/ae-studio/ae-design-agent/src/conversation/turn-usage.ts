@@ -18,7 +18,7 @@
 
 /**
  * A turn's token usage on the pinned cross-runtime wire shape (#249): what the
- * turn's usage record (07 §7) carries.
+ * turn's usage record carries.
  */
 
 import type { LanguageModelUsage } from "ai";

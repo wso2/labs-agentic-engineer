@@ -23,17 +23,17 @@
 // whose agent is already interviewing them. A create that declared reference
 // documents holds it, and the references upload fires it instead.
 //
-// The turn runs in the org's AE Studio pod (07 §12): aep-api asks the pod's
+// The turn runs in the org's AE Studio pod: aep-api asks the pod's
 // ae-studio-tools to start a `start` turn for the project and reads its
 // NDJSON stream. The pod owns the turn from there — its Room, its model key,
 // its usage record; aep-api only starts it.
 //
 // IDEMPOTENT twice over. The finished-turn ledger refuses a project that has
 // already run a turn (the 3.16 ledger records every pod turn), and the turn
-// id is deterministic, uuidv5 of org/project (07 §5): a retry while the
+// id is deterministic, uuidv5 of org/project: a retry while the
 // interview is still running (a create, then its references upload; a
 // retried upload) reattaches to the same turn instead of starting a second
-// interview (Review Focus 3).
+// interview.
 
 package spec
 

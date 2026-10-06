@@ -26,7 +26,7 @@ import (
 	"strings"
 )
 
-// Config is what ae-studio-tools reads from its pod env (ticket 08 §3). Each
+// Config is what ae-studio-tools reads from its pod env (ADR-0040). Each
 // later phase adds the keys its feature reads; nothing is read before it is used.
 type Config struct {
 	OrgID, OrgHandle      string
@@ -45,13 +45,13 @@ type Config struct {
 	IDPTokenURL   string
 	AEPAPIBaseURL string
 	// StudioDataDir is the studio-data volume root (the git engine's root);
-	// StorageBudgetBytes is the reaper's one budget over it (ticket 20 §2).
+	// StorageBudgetBytes is the reaper's one budget over it (design/clone-storage.md).
 	StudioDataDir      string
 	StorageBudgetBytes int64
-	// FilesSocket is the Files socket's path (04 §7), on the emptyDir shared
+	// FilesSocket is the Files socket's path, on the emptyDir shared
 	// with ae-collab.
 	FilesSocket string
-	// MCPSocket is the MCP socket's path (04 §7), served here for
+	// MCPSocket is the MCP socket's path, served here for
 	// ae-design-agent; TurnSocket is the Turn socket's, which ae-design-agent
 	// serves and this container calls. Both are on the emptyDir the two
 	// containers share.
@@ -167,7 +167,7 @@ func Load(getenv func(string) string) (Config, error) {
 	return c, nil
 }
 
-// CheckSecretRev enforces 08 §7: the container refuses to start on a Secret
+// CheckSecretRev enforces: the container refuses to start on a Secret
 // ESO has not refreshed yet. kubelet restarts it until the revs match. The
 // revisions are hashes of reference names, not secrets, so the error may
 // print them.

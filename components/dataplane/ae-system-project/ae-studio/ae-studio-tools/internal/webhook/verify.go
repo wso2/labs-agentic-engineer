@@ -28,7 +28,7 @@ const signaturePrefix = "sha256="
 // Valid reports whether header, an X-Hub-Signature-256 value
 // ("sha256=" + hex HMAC-SHA256 of body), was made with secret. The digests are
 // compared in constant time; a missing prefix, bad hex or a digest of the
-// wrong length is false. Only the current secret is accepted (06 §6).
+// wrong length is false. Only the current secret is accepted.
 func Valid(secret string, body []byte, header string) bool {
 	hexSig, ok := strings.CutPrefix(header, signaturePrefix)
 	if !ok {

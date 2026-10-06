@@ -403,7 +403,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 }
 
 // RemoveGitHubSecrets removes the org's github-pat and github-webhook-secret
-// (06 §9 gitpat disconnect): each one's row, then its reference by the stored
+// (the gitpat disconnect): each one's row, then its reference by the stored
 // name, under the secret's lock. An unset secret is a no-op, so a
 // re-run finishes what a failed one left, and a reconnect writes both anew
 // (the PAT on the submit, the webhook secret once more as a first submit).

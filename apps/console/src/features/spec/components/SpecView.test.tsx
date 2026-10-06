@@ -830,7 +830,7 @@ describe("SpecView while the kickoff is still writing", () => {
   });
 });
 
-// 10 §6: the Room reports each commit's soft warnings; the view shows the
+// The Room reports each commit's soft warnings; the view shows the
 // latest set beside the flush-error slot, and the user can dismiss it.
 describe("SpecView flush warnings", () => {
   it("shows the last commit's warnings as a dismissible warning", () => {

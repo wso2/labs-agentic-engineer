@@ -17,7 +17,7 @@
  */
 
 /**
- * The AE Studio pod's env for this container (07 §11, 08 §2): the org the pod
+ * The AE Studio pod's env for this container: the org the pod
  * serves, the Platform IdP that signs its users' tokens, the user audiences,
  * the browser origins allowed to open a room, the Files socket of
  * ae-studio-tools, the Room socket the in-pod agent joins on, and the public

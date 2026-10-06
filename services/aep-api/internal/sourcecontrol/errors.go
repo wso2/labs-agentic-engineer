@@ -107,21 +107,21 @@ var (
 // not match the tip.
 type CommitConflictError struct{ Conflicts []Conflict }
 
-//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (the conflict code map)
+//deadcode:keep returned by the aestudiotools adapter (the conflict code map)
 func (e *CommitConflictError) Error() string {
 	return fmt.Sprintf("commit precondition failed on %d path(s)", len(e.Conflicts))
 }
 
 // Is makes errors.Is(err, ErrCommitConflict) hold.
 //
-//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (the conflict code map)
+//deadcode:keep returned by the aestudiotools adapter (the conflict code map)
 func (e *CommitConflictError) Is(target error) bool { return target == ErrCommitConflict }
 
 // RateLimitedError is GitHub's rate limit as the pod relays it. RetryAfter
 // is when GitHub said to come back (zero when it did not say). Transient.
 type RateLimitedError struct{ RetryAfter time.Duration }
 
-//deadcode:keep returned by the aestudiotools adapter from Task 4.12 (github_rate_limited)
+//deadcode:keep returned by the aestudiotools adapter (github_rate_limited)
 func (e *RateLimitedError) Error() string { return "github rate limited" }
 
 // IsRepoNameConflict reports whether err represents a host name-conflict rejection.

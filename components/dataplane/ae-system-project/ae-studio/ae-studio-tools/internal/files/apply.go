@@ -110,9 +110,9 @@ type Conflict = repo.Conflict
 type Applier struct {
 	Reader Reader
 	// Completer completes dependency stubs on aep-api's side of the CP/DP
-	// seam (04 §4).
+	// seam.
 	Completer Completer
-	// Identity names the gitpat user every commit is authored by (07 §11).
+	// Identity names the gitpat user every commit is authored by.
 	Identity IdentitySource
 }
 

@@ -17,7 +17,7 @@
  */
 
 /**
- * When a Room commits (07 §11), as Hocuspocus hooks over the committer:
+ * When a Room commits, as Hocuspocus hooks over the committer:
  *
  *   onStoreDocument       the debounced flush: a quiet period, the max age,
  *                         and the last leave all funnel here. Interim: files

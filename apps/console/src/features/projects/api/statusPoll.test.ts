@@ -38,7 +38,7 @@ function status(spec: Partial<ProjectStatus["spec"]>): ProjectStatus {
 }
 
 describe("statusIsMoving", () => {
-  // I-2: unavailable spec facts are read by their cause. Only a restart
+  // Unavailable spec facts are read by their cause. Only a restart
   // recovers on its own; the other two wait on a person, on the idle cadence.
   it("keeps the fast cadence for a restarting AE Studio only", () => {
     const unavailable = (unavailableReason: ProjectStatus["spec"]["unavailableReason"]) =>

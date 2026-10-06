@@ -17,7 +17,7 @@
  */
 
 /**
- * SIGTERM inside the grace (07 §10, Review Focus 6): new turns are refused
+ * SIGTERM inside the grace: new turns are refused
  * first (`/v1` and the Turn socket answer 503), every running turn ends at
  * once (`turn-failed {reason: shutdown}` on the SSE stream, `result {status:
  * failed, code: shutdown}` on the Turn socket), its record reaches the tools
@@ -77,7 +77,7 @@ test("SIGTERM during a turn: refuse, end it (SSE and Turn socket), hand its reco
     assert.deepEqual(frames.at(-2)?.data, { type: "turn-failed", reason: "shutdown" });
     assert.equal(frames.at(-1)?.raw, "[DONE]");
 
-    // While the records drain, new turns are refused on both doors (D-6).
+    // While the records drain, new turns are refused on both doors.
     const conv = (await (await call(edge, `/v1/projects/${PROJECT}/conversations/current`, tok)).json()) as { conversationId: string };
     const browser = await call(edge, `/v1/projects/${PROJECT}/conversations/${conv.conversationId}/turns`, tok, { json: { instruction: "hi" } });
     assert.equal(browser.status, 503);

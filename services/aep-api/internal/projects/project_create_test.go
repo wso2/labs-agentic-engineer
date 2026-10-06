@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// UNIT tier: project create's ordering against the org's AE Studio (05 §7):
+// UNIT tier: project create's ordering against the org's AE Studio:
 // the Ready check comes before the OpenChoreo project, and a repository the
 // pod could not create fails the create and compensates the OC project. The
 // repo half runs the REAL sourcecontrol RepoService over the in-memory pod
@@ -149,7 +149,7 @@ func TestCreateProject_NoReadyCheckWiredStillCreates(t *testing.T) {
 }
 
 // A create cut short by its client (or a gateway timeout) still compensates:
-// the OC delete runs on the request's values, not its cancellation (I-2).
+// the OC delete runs on the request's values, not its cancellation.
 func TestCreateProject_CompensatesOnACancelledRequest(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -184,7 +184,7 @@ func TestCreateProject_CompensatesOnACancelledRequest(t *testing.T) {
 
 // The delete marks the repo row before the OC delete, so no sweep lists the
 // project and no hook id can land on its row while it is torn down; a delete
-// OpenChoreo refuses puts the mark back (I-1).
+// OpenChoreo refuses puts the mark back.
 func TestDeleteProject_MarksTheRowFirstAndUnmarksOnARefusedDelete(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

@@ -17,7 +17,7 @@
  */
 
 /**
- * The design agent's SIGTERM (07 §10). Kubernetes signals the pod's three
+ * The design agent's SIGTERM. Kubernetes signals the pod's three
  * containers at once, and each step here is bounded by what its peer in
  * ae-studio-tools waits for:
  *
@@ -76,7 +76,7 @@ export async function shutdown(deps: ShutdownDeps): Promise<void> {
   log({ msg: "pod_shutdown_started", source: "ae-design-agent" });
   deps.turns.refuse();
   await deps.desk.abortAll("shutdown");
-  // A record still queued after the bound is lost with the pod (07 §7).
+  // A record still queued after the bound is lost with the pod.
   const left = Math.max(0, SHUTDOWN_HANDOVER_MS - (now() - started));
   if (!(await deps.outbox.drain(left))) log({ msg: "usage_drain_incomplete", source: "ae-design-agent" });
   await deps.listeners.close();

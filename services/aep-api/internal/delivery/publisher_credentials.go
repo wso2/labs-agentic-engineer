@@ -27,7 +27,7 @@ var ErrPublisherCredentialsMissing = errors.New("publisher credentials missing")
 
 // PublisherReconnectMessage is what a user is told when the org has no
 // publisher credentials: reconnecting GitHub (the gitpat submit) is the one
-// path that writes them (06 §3).
+// path that writes them.
 const PublisherReconnectMessage = "Reconnect GitHub to set up this organization's build credentials"
 
 // ErrTypePublisherCredentialsMissing is the Temporal ApplicationError TYPE the

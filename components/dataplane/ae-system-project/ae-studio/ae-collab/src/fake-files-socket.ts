@@ -16,8 +16,8 @@
  * under the License.
  */
 
-// A stand-in for ae-studio-tools' Files socket, for tests and `pnpm dev`
-// (07 §11): an HTTP server on a temp Unix socket over ONE in-memory tree,
+// A stand-in for ae-studio-tools' Files socket, for tests and `pnpm dev`:
+// an HTTP server on a temp Unix socket over ONE in-memory tree,
 // shared by every project name. Shas are real git blob shas, so a seed
 // baseline means what it would against git. It speaks the contract
 // (packages/contracts/sockets/ae-studio/files/openapi.yaml) and the pod's
@@ -79,7 +79,7 @@ export interface FakeFilesSocket {
   close(): Promise<void>;
 }
 
-/** The pod's request body cap (04 §7). */
+/** The pod's request body cap. */
 const BODY_LIMIT = 25 << 20;
 /** The pod's per-file write cap. */
 const MAX_FILE_BYTES = 5 << 20;

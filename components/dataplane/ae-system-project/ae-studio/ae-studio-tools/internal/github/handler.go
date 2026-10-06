@@ -32,10 +32,10 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// The /internal/v1 GitHub ops (04 §3): POST /repos, and under
+// The /internal/v1 GitHub ops: POST /repos, and under
 // /repos/{owner}/{repo} the issue, milestone, pull request and hook ops. One
 // Client call each (two for an adopt or a hook ensure), one shared error map
-// (problem), no retries (04 §12; aep-api decides). The edge embeds Handler
+// (problem), no retries (aep-api decides). The edge embeds Handler
 // in its /internal/v1 server; the gate, the body cap, the request validator
 // and the owner guard (for the path-scoped ops) ran before any method here.
 
@@ -399,7 +399,7 @@ func commentsOut(comments []IssueComment) []gen.IssueComment {
 	return out
 }
 
-// problem maps a failed GitHub call to its answer (04 §12): the missing
+// problem maps a failed GitHub call to its answer: the missing
 // subject 404, a rate limit (REST, or GraphQL RATE_LIMITED) 429 with
 // Retry-After, anything else 502 github_error with GitHub's status when it
 // answered one (a GraphQL NOT_FOUND names 404). A caller that left gets its

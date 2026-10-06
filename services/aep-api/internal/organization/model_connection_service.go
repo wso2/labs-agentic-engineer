@@ -99,7 +99,7 @@ type CodingCredential struct {
 }
 
 // SecretRefTriplet is a resolved secret reference: its name and the key a
-// consumer mounts, which is all a SecretKeyRef needs (C10), plus its vault
+// consumer mounts, which is all a SecretKeyRef needs, plus its vault
 // path when known, for a consumer that points another SecretReference at the
 // same vault entry. KVPath may be empty.
 type SecretRefTriplet struct {
@@ -130,7 +130,7 @@ type ModelConnectionService struct {
 	probers modelProbers
 
 	// orgSecrets reads the default-key and coding-agent-key rows, the
-	// references the readers below hand out (R7).
+	// references the readers below hand out.
 	orgSecrets OrgSecretRefReader
 
 	// secretRefs reads the default-key SecretReference's vault path
@@ -200,7 +200,7 @@ func (s *ModelConnectionService) Connection(ctx context.Context, ocOrgID string)
 }
 
 // KeyRef returns the connection and its key's reference as a mount needs it:
-// the default-key row's name and key, no vault path (R7). It never reads the
+// the default-key row's name and key, no vault path. It never reads the
 // key, for a caller that mounts the reference (e.g. the build's evaluation
 // key). No default-key row is an error: the key was never saved to vault.
 func (s *ModelConnectionService) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, SecretRefTriplet, error) {
@@ -327,9 +327,9 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 }
 
 // recordedRef is the reference of the org secret sec that a mount reads: the
-// name its org_secrets row records with sec's fixed key (R7), so a rotation
+// name its org_secrets row records with sec's fixed key, so a rotation
 // never hands out the reference the write already deleted. A mount needs only
-// the name and the key (C10), so no vault path is carried; a consumer of the
+// the name and the key, so no vault path is carried; a consumer of the
 // path reads KeyPathRef. No row is an error: the secret was never written to
 // vault.
 func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string, sec OrgSecret) (SecretRefTriplet, error) {

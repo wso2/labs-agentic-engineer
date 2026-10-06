@@ -594,7 +594,7 @@ describe("useAgentChat — a committed turn refreshes the thread cache", () => {
 });
 
 
-// 409 turn_in_progress (10 §4): the draft goes back into the composer, the
+// 409 turn_in_progress: the draft goes back into the composer, the
 // console attaches to the running turn so the user watches it, and a note
 // says why the message did not go.
 describe("useAgentChat — a send refused because a turn is running", () => {

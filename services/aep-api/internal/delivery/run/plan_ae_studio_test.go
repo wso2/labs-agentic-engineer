@@ -35,7 +35,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// The planning turn runs in the org's AE Studio pod (Task 3.17). What its
+// The planning turn runs in the org's AE Studio pod. What its
 // failures mean to Temporal: a turn already running is a wait (retry), an
 // operator fault or a permanent answer is not (fail on the first attempt).
 
@@ -49,7 +49,7 @@ func nonRetryable(err error) (*temporal.ApplicationError, bool) {
 	return appErr, errors.As(err, &appErr) && appErr.NonRetryable()
 }
 
-// 05 §5: a different turn running for the project (a browser turn, or the
+// A different turn running for the project (a browser turn, or the
 // kickoff) is a wait, not a failure. The activity returns a RETRYABLE error,
 // so Temporal asks again with backoff until the turn ends.
 func TestPlanMilestone_ATurnInProgressIsRetried(t *testing.T) {
@@ -120,7 +120,7 @@ func (p progressPlanner) PlanIntoMilestone(ctx context.Context, _, _ string, _ i
 	return errors.New("turn failed")
 }
 
-// The planning activity heartbeats per turn event (04 §5, D-2/Q-8), each
+// The planning activity heartbeats per turn event, each
 // beat carrying how many events the turn has sent: proof the turn is moving,
 // not only that the worker is.
 func TestPlanMilestone_HeartbeatsPerTurnEvent(t *testing.T) {
@@ -146,7 +146,7 @@ func TestPlanMilestone_HeartbeatsPerTurnEvent(t *testing.T) {
 	require.Zero(t, last.ProviderLimits, "a turn that failed otherwise is no provider limit")
 }
 
-// A turn the pod ends `failed` (R1-I1). Each attempt of the planning activity
+// A turn the pod ends `failed`. Each attempt of the planning activity
 // is a new paid model turn, so only a turn that did not run to its own end is
 // retried freely; a provider limit is retried a bounded number of times, each
 // after planProviderLimitRetryDelay; any other ending is the model's answer
@@ -180,7 +180,7 @@ func TestPlanMilestone_AFailedTurnIsClassifiedByItsCode(t *testing.T) {
 }
 
 // provider_limit is bounded by how many attempts the provider's limit
-// stopped, counted apart from the Temporal attempt (K-1): a shutdown or a
+// stopped, counted apart from the Temporal attempt: a shutdown or a
 // dead stream before it never spends the bound. Each try waits for the
 // provider's reset time when it stated one, clamped to
 // [planProviderLimitMinDelay, planProviderLimitMaxDelay], else the fixed

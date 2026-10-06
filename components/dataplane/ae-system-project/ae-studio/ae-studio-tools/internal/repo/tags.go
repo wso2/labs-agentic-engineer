@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-// Tags, ported from aep-api's gitfs/tags.go (Task 4.2a; behaviour 1:1, 05 §3).
+// Tags, ported from aep-api's gitfs/tags.go (behaviour 1:1).
 // The diff surface stays behind: nothing in the pod needs it.
 
 // Tag implements Workspace (design §10): annotated tag + push, under the

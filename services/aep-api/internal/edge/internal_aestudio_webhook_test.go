@@ -100,7 +100,7 @@ func ingestStack(t *testing.T, ing *fakeIngestor) (internalStack, http.Handler) 
 
 // ingest-webhook-event takes only the org's ae-studio client token; the org
 // is the token's recorded one, and a repository of another org is 404
-// repository_unknown (Review Focus 4).
+// repository_unknown.
 func TestInternalGate_IngestWebhookEvent(t *testing.T) {
 	ing := &fakeIngestor{repos: map[string][]string{"acme": {"acme-gh/greeter"}, "evil": {"evil-gh/ledger"}}}
 	stack, h := ingestStack(t, ing)
@@ -145,7 +145,7 @@ func TestInternalGate_IngestWebhookEvent(t *testing.T) {
 }
 
 // The handler hands the ingestor the exact bytes that arrived: no re-encoding
-// by the validator or the decoder (Review Focus 3), and the delivery headers
+// by the validator or the decoder, and the delivery headers
 // as sent. A duplicate answers 200, a held delivery 202 held.
 func TestInternalRoutes_IngestWebhookEvent(t *testing.T) {
 	body := []byte("{ \"zen\" : \"Keep it logically awesome.\",\n  \"repository\":{\"full_name\":\"acme-gh/greeter\"}, \"z\":1, \"a\":[ ] }")
@@ -209,7 +209,7 @@ func TestInternalRoutes_IngestWebhookEventLimitsAndFailures(t *testing.T) {
 	}
 }
 
-// Q-1: the org's publisher token is refused on EVERY ae-studio/ op, and the
+// The org's publisher token is refused on EVERY ae-studio/ op, and the
 // org's ae-studio client token clears each one's gate. Walks the gate table,
 // so a new ae-studio/ op is covered without editing this test.
 func TestInternalGate_AEStudioOpsRefusePublisherToken(t *testing.T) {

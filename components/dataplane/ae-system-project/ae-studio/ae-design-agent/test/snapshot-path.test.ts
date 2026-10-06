@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's snapshot paths (07 §12): the lookup answers the shas, and this is
+ * The pod's snapshot paths: the lookup answers the shas, and this is
  * the one place they become paths under `AE_SNAPSHOTS_DIR`. No id fence: the
  * shas are the lookup's, the project name is checked to be one directory name.
  */

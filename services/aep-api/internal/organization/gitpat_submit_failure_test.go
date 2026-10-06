@@ -31,7 +31,7 @@ import (
 // must never reach a log line.
 const storeText = "store-echoed-text-7f3a"
 
-// A PAT the secret store did not accept is not saved (Q-1=C: no github-pat row,
+// A PAT the secret store did not accept is not saved (no github-pat row,
 // so GET shows no GitHub connection), so the answer is the model-key path's
 // secret_store_write_failed, never "The GitHub connection was saved".
 func TestSubmitFailure_PATStoreWriteFailureSaysNotSaved(t *testing.T) {

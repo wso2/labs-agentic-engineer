@@ -59,7 +59,7 @@ func TestIsPermanent(t *testing.T) {
 
 // A failed turn's error names its code and nothing else: the pod's free-text
 // message (possibly a provider's error body) never reaches an error string,
-// so it never reaches Temporal history or a run record (R1-M4).
+// so it never reaches Temporal history or a run record.
 func TestTurnFailedError_ClassifiesByCodeAndCarriesNoMessage(t *testing.T) {
 	for _, tc := range []struct {
 		code                         string

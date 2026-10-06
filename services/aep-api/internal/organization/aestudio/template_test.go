@@ -128,7 +128,7 @@ func TestTemplate_Invariants(t *testing.T) {
 	if !strings.Contains(byID["es-agent"].IncludeWhen, "size(parameters.secrets.designAgent.data) > 0") {
 		t.Error("O-5: es-agent must be conditional")
 	}
-	// I-2: a retired org-secret path must not wipe the pod's Secret before
+	// A retired org-secret path must not wipe the pod's Secret before
 	// the converge repoints it.
 	for _, id := range []string{"es-tools", "es-agent", "es-pull"} {
 		var es struct {
@@ -191,7 +191,7 @@ func TestTemplate_ContainerCommandsAndEnv(t *testing.T) {
 	}
 }
 
-// TestTemplate_WebhookURLEnvIsTheOutput (Q-6): without a relay,
+// TestTemplate_WebhookURLEnvIsTheOutput: without a relay,
 // ae-studio-tools registers its repo hooks at AE_WEBHOOK_URL, which must
 // render to the very URL the webhookUrl output publishes, or GitHub delivers
 // where nothing listens.
@@ -213,7 +213,7 @@ func TestTemplate_WebhookURLEnvIsTheOutput(t *testing.T) {
 	}
 }
 
-// TestTemplate_WebhookRelay (Task 4.20, Q-15): webhookRelayUrl set adds the
+// TestTemplate_WebhookRelay: webhookRelayUrl set adds the
 // webhook-relay container (4 in the pod) and points the repo hooks at the
 // relay channel; empty renders the three containers and the public route.
 func TestTemplate_WebhookRelay(t *testing.T) {
@@ -236,7 +236,7 @@ func TestTemplate_WebhookRelay(t *testing.T) {
 	if strings.Join(r.Args, " ") != "client "+relay+" http://127.0.0.1:8082/webhooks/github" || len(r.Command) != 0 {
 		t.Errorf("relay command/args = %v %v", r.Command, r.Args)
 	}
-	// Task 4.7a: no socket dir (any mount), no port, no Secret, no env.
+	// No socket dir (any mount), no port, no Secret, no env.
 	if len(r.VolumeMounts) != 0 || len(r.Ports) != 0 || len(r.EnvFrom) != 0 || len(r.Env) != 0 {
 		t.Errorf("relay must mount, expose and read nothing: %+v", r)
 	}

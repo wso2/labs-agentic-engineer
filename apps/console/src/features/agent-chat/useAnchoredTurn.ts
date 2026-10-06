@@ -152,7 +152,7 @@ export function useAnchoredTurn(
         }
         return true;
       } catch (err) {
-        // Another turn is running (10 §4): nothing is wrong with this message.
+        // Another turn is running: nothing is wrong with this message.
         // The row withdraws, the words go back to the caller, and the running
         // turn is handed to the panel's active-turn watch — which is what
         // attaches it — by opening the panel onto it.

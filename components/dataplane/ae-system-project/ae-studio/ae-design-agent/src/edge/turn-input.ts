@@ -17,14 +17,14 @@
  */
 
 /**
- * A turn start's body (07 §1): JSON (`TurnInputBody`) or, when the message
+ * A turn start's body: JSON (`TurnInputBody`) or, when the message
  * carries chat attachments, multipart (`TurnInputMultipart`): `instruction`,
  * `target?`, `anchor?` (JSON), `intent?`, `files[]`. The caps are aep-api's
  * (`A/spec/genaiturns/attachments.go`): at most 10 files, 5 MiB each, 15 MiB
  * in total, and the same accepted extensions and the media type the model
  * reads each as.
  *
- * Nothing is buffered past a cap (D-9): the body is counted as it streams and
+ * Nothing is buffered past a cap: the body is counted as it streams and
  * the read stops at the cap with 413, so a multipart body holds at most
  * `MAX_MULTIPART_BODY_BYTES` in memory before it is parsed; the per-file cap
  * is then checked on each part. Every refusal is an `InputError`.

@@ -30,7 +30,7 @@ import (
 
 var errFake = errors.New("openchoreo unavailable")
 
-// Review Focus 2: what OpenChoreo fills in on its own is never drift.
+// What OpenChoreo fills in on its own is never drift.
 func TestDrift_LiveWithOCDefaultsEqualsDesired(t *testing.T) {
 	f := newFixture(t).withAllRefs()
 	f.svc.Trigger(userCtx(), "default")
@@ -219,7 +219,7 @@ func TestStatus_FailedAnswerLoggedAgainAfterRecovery(t *testing.T) {
 	}
 }
 
-// I-1: a binding that will not become Ready answers failed, not
+// A binding that will not become Ready answers failed, not
 // provisioning for ever; one that may still come up keeps provisioning.
 func TestStatus_StuckBindingFails(t *testing.T) {
 	cases := []struct {

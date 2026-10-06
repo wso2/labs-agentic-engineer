@@ -17,11 +17,11 @@
  */
 
 /**
- * The AE Studio pod's env for this container (08 §2/§3, 07 §9): the org the
+ * The AE Studio pod's env for this container: the org the
  * pod serves, the Platform IdP that signs its users' tokens, the user
  * audiences, the public and health ports, the tools socket, the Turn socket,
- * ae-collab's Room socket, the snapshot mount, and the secret revisions of
- * 08 §7. The model connection is read
+ * ae-collab's Room socket, the snapshot mount, and the secret revisions
+ * (ADR-0042). The model connection is read
  * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
 

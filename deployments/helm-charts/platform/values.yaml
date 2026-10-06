@@ -115,7 +115,7 @@ aeStudio:
     sizeLimit: "3Gi"
     ephemeralRequest: "1Gi"
     budgetBytes: "2147483648"
-  # Per-org webhook relay (Task 4.20), for installs GitHub cannot reach (local
+  # Per-org webhook relay, for installs GitHub cannot reach (local
   # k3d). When enabled, aep-api reads the seed aep/webhook-relay-seed (ESO
   # Secret aep-webhook-relay) and gives each org's AE Studio pod a webhook-relay
   # container on its own smee.io channel, derived from the seed; the pod's repo

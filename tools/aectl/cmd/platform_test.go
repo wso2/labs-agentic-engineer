@@ -225,7 +225,7 @@ func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
 // Update keeps the release's user-supplied values but renders on the new
 // chart's defaults (--reset-then-reuse-values): under --reuse-values Helm
 // renders on the defaults of the chart the release was installed with, so a
-// default a newer chart adds never reaches an existing install (Task 4.22a:
+// default a newer chart adds never reaches an existing install (for example
 // aeStudio.webhookRelay.image). --reset-values still opts out of the reuse.
 func TestBuildUpdateArgs_ValueStrategy(t *testing.T) {
 	for _, tc := range []struct {
@@ -325,7 +325,7 @@ func TestAEStudioOverrides_EmptyGatewayHostOmitted(t *testing.T) {
 	}
 }
 
-// Task 4.20 (Q-11): install and update both carry the relay switch from
+// Install and update both carry the relay switch from
 // ae_studio.webhook_relay.enabled; absent is false.
 func TestAEStudioOverrides_WebhookRelaySwitch(t *testing.T) {
 	t.Cleanup(viper.Reset)

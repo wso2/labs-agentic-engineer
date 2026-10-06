@@ -60,7 +60,7 @@ func (c crtTypeCatalog) ResourceTypesByName(ctx context.Context) (map[string]spe
 // dependency.json (and the user's acceptance of an assumed contract) atomically
 // to main, through the org's AE Studio pod. The design service's writes are
 // already complete files, so they commit raw: no scaffolding, completion or
-// soft validation runs on them (05 §3; the pod runs those for the Room's
+// soft validation runs on them (the pod runs those for the Room's
 // edits). It lives at the composition root so the design feature names no
 // repository port (arch boundary).
 type designFilesCommitter struct {

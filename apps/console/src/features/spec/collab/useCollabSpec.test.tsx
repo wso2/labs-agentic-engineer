@@ -188,7 +188,7 @@ beforeEach(() => {
   vi.mocked(renewAccessToken).mockResolvedValue("token");
 });
 
-// 10 §6: the Room lives in the org's pod, at the URL AE Studio hands out, and
+// The Room lives in the org's pod, at the URL AE Studio hands out, and
 // the session's token follows the user through the provider's own token sync.
 describe("useCollabSpec — the Room on AE Studio's ae-collab", () => {
   it("connects to urls.collab/v1/rooms, sends the renewed token, and shows flush-warnings", () => {

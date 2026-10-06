@@ -31,7 +31,7 @@ import (
 
 // POST /internal/v1/repos/{owner}/{repo}/turns (start-repo-turn): aep-api
 // starts a kickoff or plan turn, relayed to ae-design-agent over the Turn
-// socket as an NDJSON stream (04 §5, 07 §5). The generated strict server
+// socket as an NDJSON stream. The generated strict server
 // cannot stream with a flush per frame and notice the caller leaving, so
 // the op is a raw route behind the group's cap → gate → validator chain
 // (internalHandler); the request body is small JSON and is validated like

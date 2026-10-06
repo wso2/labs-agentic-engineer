@@ -40,7 +40,7 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 //     straight to 'disconnected' in Phase D (phase2.md §6.7's staged
 //     intermediate state was never wired).
 //
-// Before Phase D, the 06 §9 gitpat disconnect, in order:
+// Before Phase D, the gitpat disconnect, in order:
 //  1. the repo hooks are unregistered through the pod while it still holds
 //     the gitpat (WithRepoHooks). Best effort: a failure is logged and the
 //     cascade goes on, since nothing can reach GitHub as the org after the

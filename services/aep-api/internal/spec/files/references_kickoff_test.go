@@ -136,7 +136,7 @@ func TestPutProjectReferences_KeepsEveryPartsNameAndType(t *testing.T) {
 }
 
 // No part is buffered whole: the pod reads the first bytes of a document
-// while the client is still sending it (R21). A handler that buffered the
+// while the client is still sending it. A handler that buffered the
 // part would deadlock here, because the client sends the rest only after the
 // pod has seen the start.
 func TestPutProjectReferences_StreamsEachPartWithoutBuffering(t *testing.T) {
@@ -201,7 +201,7 @@ func TestPutProjectReferences_ABrokenUploadAbortsThePodUpload(t *testing.T) {
 }
 
 // What the pod's refusals mean to the caller. No kickoff fires on any of them.
-// The AE Studio answers are not this slice's to map (Q-9): they leave it with
+// The AE Studio answers are not this slice's to map: they leave it with
 // the sentinel in the chain, and the edge's classifier gives them their
 // status, code and Retry-After (edge TestGitBackedOps_MapAEStudioErrors).
 func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
@@ -218,7 +218,7 @@ func TestPutProjectReferences_MapsThePodsAnswers(t *testing.T) {
 		{name: "unavailable", err: sourcecontrol.ErrAEStudioUnavailable, wantSentinel: sourcecontrol.ErrAEStudioUnavailable},
 		{name: "absent", err: sourcecontrol.ErrAEStudioAbsent, wantSentinel: sourcecontrol.ErrAEStudioAbsent},
 		{name: "too large", err: &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusRequestEntityTooLarge}, wantStatus: http.StatusRequestEntityTooLarge, wantCode: "request_too_large"},
-		// Q-8: the edge answers 409 owner_not_allowed, no longer a 502 here.
+		// The edge answers 409 owner_not_allowed, no longer a 502 here.
 		{name: "owner not allowed", err: fmt.Errorf("%w (put-repo-references)", sourcecontrol.ErrOwnerNotAllowed), wantSentinel: sourcecontrol.ErrOwnerNotAllowed},
 		{name: "anything else", err: &aestudiotools.StatusError{Op: "put-repo-references", Status: http.StatusBadRequest, Code: "validation_failed"}, wantStatus: http.StatusBadGateway, wantCode: apierr.CodeBadGateway},
 	}

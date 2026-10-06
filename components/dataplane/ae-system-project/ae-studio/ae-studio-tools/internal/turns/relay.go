@@ -62,7 +62,7 @@ type Turn struct {
 }
 
 // Relay runs a turn on the Turn socket and streams its frames to the caller
-// (04 §5, Review Focus 3). The turn belongs to the agent: the relay never
+// The turn belongs to the agent: the relay never
 // ends it. When the caller goes away it keeps reading to the result, so
 // turns.result is always logged; a retry with the same turnId reattaches on
 // the agent's side.

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P1 fresh-org and removed-route checks (scenario 1.3, 1.4, 1.5). Read-only
+# P1 fresh-org and removed-route checks (1.4, 1.5). Read-only
 # except for requests that change nothing: 1.4 is sent only while 1.3 saw an
 # unconnected org (the call is refused with 409), and 1.5 probes routes that do
 # not exist.

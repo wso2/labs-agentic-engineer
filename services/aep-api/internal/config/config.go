@@ -317,7 +317,7 @@ type AEStudioConfig struct {
 
 	AEPAPIBaseURL string
 	// InternalClientID is aep-api's own AE-only client. The secret is not
-	// needed by Ensure (used from phase 2), so Missing() ignores it and boot
+	// needed by Ensure (the converge uses it), so Missing() ignores it and boot
 	// never requires it.
 	InternalClientID     string
 	InternalClientSecret string

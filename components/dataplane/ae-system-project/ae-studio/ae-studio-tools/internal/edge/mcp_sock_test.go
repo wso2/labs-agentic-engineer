@@ -355,7 +355,7 @@ func sortedNames(list json.RawMessage) []string {
 	return names
 }
 
-// Review Focus 5: tools/list answers exactly the eleven names whatever aep-api
+// Tools/list answers exactly the eleven names whatever aep-api
 // serves; tools/call of any other name is refused in the pod; the remote-git
 // tools run in the pod for AE_GITHUB_OWNER only (case-insensitive) and never
 // call GitHub for another owner; the rest are forwarded to aep-api.
@@ -499,7 +499,7 @@ func TestMCP_RequestShapeIsValidated(t *testing.T) {
 	}
 }
 
-// Task 4.7a: the agent joins its collab Room on ae-collab's Room socket (the
+// The agent joins its collab Room on ae-collab's Room socket (the
 // mount is its identity), so this socket mints no room token: the ae-studio
 // client's token never leaves this container. /room-token is not in the
 // contract, so it is 404 like any undeclared path.

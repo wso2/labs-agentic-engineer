@@ -128,7 +128,7 @@ func heartbeatingWith(ctx context.Context, beat func(), fn func(context.Context)
 // a failed attempt's buffered beat is flushed before its failure is reported,
 // so the count of provider-limited tries survives every retry, a shutdown's
 // or a dead stream's included, without being confused with the attempt
-// number (K-1, Q-23). Events is this attempt's own progress.
+// number. Events is this attempt's own progress.
 type planBeatDetails struct {
 	// Events is how many turn events this attempt has seen.
 	Events int `json:"events"`

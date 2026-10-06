@@ -90,7 +90,7 @@ type aeStudioReady interface {
 }
 
 // SetAEStudioReady wires the check CreateProject runs before it makes the
-// OpenChoreo project (05 §7), so a create the org's AE Studio cannot serve
+// OpenChoreo project, so a create the org's AE Studio cannot serve
 // is refused (409 / 503) before anything exists to compensate. Nil skips it;
 // the repo create then refuses the same way, after the OC project, and
 // compensates it.
@@ -327,7 +327,7 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 		req.DisplayName = req.Name
 	}
 	// The org's AE Studio holds the project's repository, so it must serve
-	// BEFORE the OpenChoreo project exists (05 §7): refused here, a create
+	// BEFORE the OpenChoreo project exists: refused here, a create
 	// leaves nothing half-made. The error is returned unchanged for the edge
 	// to speak for (409 github_not_connected / 503 ae_studio_unavailable).
 	if s.aeStudio != nil {
@@ -418,7 +418,7 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 		}
 		if createErr != nil {
 			// Any repo failure stops the create and compensates the OC
-			// project away (05 §7): a project without its repository has
+			// project away: a project without its repository has
 			// nothing to hold its spec, and nothing repairs it later. The
 			// error is returned unchanged, so a name conflict still reads as
 			// one (the user picks another name) and an AE Studio answer —

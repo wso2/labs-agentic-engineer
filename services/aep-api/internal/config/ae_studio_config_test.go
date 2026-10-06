@@ -81,7 +81,7 @@ func TestLoad_AEStudioParsed(t *testing.T) {
 	}
 }
 
-// Task 4.20: the relay seed and image are optional; unset is no relay. The
+// The relay seed and image are optional; unset is no relay. The
 // image is needed only once a seed is set.
 func TestLoad_WebhookRelay(t *testing.T) {
 	setMinimalEnv(t)

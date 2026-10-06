@@ -95,7 +95,7 @@ func TestConfigComponent_Disconnect_NeverConnected(t *testing.T) {
 
 // --- IDP client-secret rotation (removed) ----------------------------------
 
-// There is no user rotation of the publisher secret (06 §5): it lives only in
+// There is no user rotation of the publisher secret: it lives only in
 // vault, and the gitpat submit's client ensure is its one writer. The route is
 // gone, even for an org with a publisher app, and nothing reaches Thunder.
 func TestConfigComponent_RotateClientSecret_RouteRemoved(t *testing.T) {

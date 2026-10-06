@@ -21,7 +21,7 @@ import (
 	"fmt"
 )
 
-// The snapshots a turn reads (ticket 04 §6, 07 §6): the agent's project
+// The snapshots a turn reads (design/route-groups.md): the agent's project
 // lookup on the MCP socket resolves the project, writes the repo snapshot and
 // the Org skills snapshot, and learns the stored reference documents. The
 // check and the snapshot are one call, so no snapshot exists for a project

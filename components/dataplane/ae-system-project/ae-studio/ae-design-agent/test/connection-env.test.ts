@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's model connection (07 §4): `AE_MODEL_CONNECTION` (rendered by
+ * The pod's model connection: `AE_MODEL_CONNECTION` (rendered by
  * aep-api's `A/organization/aestudio/desired.go` as
  * `json.Marshal(modelConnectionEnv{*agentsvc.TurnConnection, Model})`) plus
  * the `ANTHROPIC_API_KEY` secret. Without a key the pod still starts, and a

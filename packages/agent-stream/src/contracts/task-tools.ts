@@ -175,7 +175,7 @@ export type UpdateTaskResult = UpdateTaskOk | TaskToolErr;
 /**
  * The parsed frontmatter of a `tasks/<issueNumber>.md` rendering. The markdown
  * `body` after the fence is the Task's editable body. Optional fields tolerate a
- * partially-rendered Task; the Go assembler (phase 2) renders against this shape.
+ * partially-rendered Task; the Go assembler renders against this shape.
  */
 export interface TaskContextFile {
   issueNumber: number;

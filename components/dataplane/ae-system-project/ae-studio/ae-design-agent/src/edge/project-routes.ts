@@ -17,7 +17,7 @@
  */
 
 /**
- * `/v1/projects/{p}/...` (07 §1): the project's current conversation, its
+ * `/v1/projects/{p}/...`: the project's current conversation, its
  * messages, rotation, turn start, the active turn, a turn's status and its
  * stream. A project turn's scope is the project: one running turn, any kind.
  */

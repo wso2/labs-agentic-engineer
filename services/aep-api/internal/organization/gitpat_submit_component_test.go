@@ -476,7 +476,7 @@ func TestSubmit_RunsAfterAnIDPKindSwitch(t *testing.T) {
 	}
 }
 
-// Connect → disconnect → connect (06 §9): the disconnect removes the gitpat's
+// Connect → disconnect → connect: the disconnect removes the gitpat's
 // and the webhook secret's rows and references after the pod, and a
 // reconnect writes both anew (the webhook secret as on a first submit), so
 // the converge gate opens again.
@@ -526,7 +526,7 @@ func TestSubmit_DisconnectRemovesTheGitHubSecretsAndReconnectRestoresThem(t *tes
 }
 
 // A build clones with the github-pat reference the submit recorded, and a
-// disconnected org (06 §9 removes the row) gets ErrOrgDisconnected — never
+// disconnected org (the disconnect removes the row) gets ErrOrgDisconnected — never
 // an empty secretRef.
 func TestSubmit_BuildReferencesTheGitpatUntilDisconnect(t *testing.T) {
 	f := newSubmitFixture(t)
@@ -557,7 +557,7 @@ func TestSubmit_BuildReferencesTheGitpatUntilDisconnect(t *testing.T) {
 }
 
 // GET /config projects gitProvider only when the org's github-pat reference
-// row exists (user Q-1=C): an org connected before the rows existed has a
+// row exists: an org connected before the rows existed has a
 // credential row and no reference, so it gets the onboarding wizard and
 // re-enters its token. A submit writes the row and the section reads
 // connected.

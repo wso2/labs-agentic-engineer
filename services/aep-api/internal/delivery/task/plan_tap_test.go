@@ -360,7 +360,7 @@ func TestPlanTap_AFailedTurnIsAnError(t *testing.T) {
 }
 
 // A provider_limit result's reset time rides on the error, so the planning
-// activity can wait until then (K-1).
+// activity can wait until then.
 func TestPlanTap_AProviderLimitCarriesTheResetTime(t *testing.T) {
 	resetAt := time.Date(2026, 10, 4, 10, 15, 0, 0, time.UTC)
 	tap := newTestTap(newFakeIssues())
@@ -391,7 +391,7 @@ func TestPlanTap_ABrokenStreamIsAnError(t *testing.T) {
 }
 
 // Every event — keep-alives included — reports progress, so the planning
-// activity heartbeats per event rather than only on its own clock (D-2/Q-8).
+// activity heartbeats per event rather than only on its own clock.
 func TestPlanTap_EveryEventReportsProgress(t *testing.T) {
 	var beats atomic.Int32
 	ctx := delivery.WithProgress(context.Background(), func() { beats.Add(1) })
@@ -438,7 +438,7 @@ func TestPlanTap_IdleWatchdogAbortsASilentTurn(t *testing.T) {
 // A Plan turn that reads files for two minutes between two Tasks sends only
 // keep-alives in that time. They are proof of life: the watchdog resets on
 // each, so the turn is NOT aborted and the Task planned after the quiet
-// stretch is minted (D-2/Q-8).
+// stretch is minted.
 func TestPlanTap_KeepAlivesHoldAQuietTurnOpen(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		issues := newFakeIssues()
@@ -474,7 +474,7 @@ func TestPlanTap_KeepAlivesHoldAQuietTurnOpen(t *testing.T) {
 
 // The Turn socket's golden stream (packages/contracts/sockets/ae-studio/turn/
 // golden/completed.ndjson) is what the pod sends, ae-studio-tools relays
-// unchanged and this tap consumes (R2-M3): its planTask op mints a Task and
+// unchanged and this tap consumes: its planTask op mints a Task and
 // its updateTask op (by this-turn title) reaches the same issue, with no op
 // skipped as undecodable.
 func TestPlanTap_TheGoldenStreamMintsAndUpdates(t *testing.T) {

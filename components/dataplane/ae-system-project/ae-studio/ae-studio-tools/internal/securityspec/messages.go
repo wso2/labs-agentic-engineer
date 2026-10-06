@@ -34,7 +34,7 @@ package securityspec
 // must hold exactly that set — both directions, so neither a Go check without
 // a message nor a message no check emits survives a test run.
 //
-// Task 1.6 (the OpenAPI security gate) extended this table. Its sentences are
+// The OpenAPI security gate extended this table. Its sentences are
 // authored in the SAME package on the agent side but in a SECOND file
 // (`packages/agent-stream/src/openapi-security-messages.json`), because the two
 // rule sets are two gates over two different documents. That split is kept here:

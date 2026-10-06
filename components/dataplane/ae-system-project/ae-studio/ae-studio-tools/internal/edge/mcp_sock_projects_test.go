@@ -108,7 +108,7 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-// 04 §6 / 09 §2: the lookup writes snapshots/projects/greeter/<head>/ and
+// The lookup writes snapshots/projects/greeter/<head>/ and
 // snapshots/skills/<sha>/, overlays the stored references, and answers both
 // shas and the sorted reference names.
 func TestLookup_WritesSnapshotsAndAnswersShas(t *testing.T) {
@@ -187,7 +187,7 @@ func TestLookup_UnknownProjectWritesNothing(t *testing.T) {
 	}
 }
 
-// 20 §2: at 90 % a new snapshot is refused with 503 disk_full.
+// At 90 % a new snapshot is refused with 503 disk_full.
 func TestLookup_AdmissionAt90IsDiskFull(t *testing.T) {
 	h := newLookupHarness(t)
 	h.engine.SetDiskUsagePct(90)
@@ -217,7 +217,7 @@ func TestLookup_AEPAPIUnavailable(t *testing.T) {
 	}
 }
 
-// 07 §6: GET /skills writes the Org skills snapshot and answers its sha.
+// GET /skills writes the Org skills snapshot and answers its sha.
 func TestSkills_WritesSnapshot(t *testing.T) {
 	h := newLookupHarness(t)
 	code, body := h.get("/skills")
@@ -239,7 +239,7 @@ func TestSkills_WritesSnapshot(t *testing.T) {
 	}
 }
 
-// 07 §1: the lookup answers the idea captured in specs/.agentic-engineer.toml
+// The lookup answers the idea captured in specs/.agentic-engineer.toml
 // at the snapshotted commit (the agent cannot read the dot-led descriptor
 // itself). No descriptor, or one that does not parse, answers no idea: the
 // read is best-effort, as readProjectIdea was in aep-api.

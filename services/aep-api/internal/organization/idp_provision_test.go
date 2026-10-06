@@ -17,7 +17,7 @@
 package organization
 
 // RequirePublisherForBuild: the POST /build gate is a read of the org's
-// ae-publisher-client row and nothing else (06 §3). package organization (not
+// ae-publisher-client row and nothing else. package organization (not
 // organization_test) because these tests and client_ensure_test.go share the
 // unexported in-memory fixtures below and fakeThunder from idp_service_test.go.
 

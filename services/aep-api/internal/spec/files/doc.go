@@ -16,7 +16,7 @@
 
 // Package files serves the project reference-documents upload for the bound
 // org: a pass-through to the org's AE Studio pod, which stores the documents
-// (09 §1). Spec file reads and writes run in the pod too.
+// Spec file reads and writes run in the pod too.
 //
 // Trigger: put-project-references.
 // Ports:   aestudiotools.References, sourcecontrol.ProjectRepoRows, the held-kickoff starter.

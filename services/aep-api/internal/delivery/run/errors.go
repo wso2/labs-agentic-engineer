@@ -112,7 +112,7 @@ func planErr(err error, providerLimits int, now time.Time) error {
 			Cause:          err,
 		})
 	}
-	// Everything else is retried, ErrTurnInProgress among it (05 §5): a
+	// Everything else is retried, ErrTurnInProgress among it: a
 	// different turn running for the project is a wait, not a failure.
 	return err
 }
@@ -129,7 +129,7 @@ const errTypeProviderLimitedPlan = "ProviderLimitedPlan"
 // all, counted apart from the attempts a shutdown or a dead stream ended
 // (those retry freely and never spend it): long enough for a per-minute or
 // hourly limit to reset, short of looping a run on a spent plan for ever.
-// Every try is a new paid turn (R1-I1).
+// Every try is a new paid turn.
 //
 // Between tries the activity waits until the reset time the provider stated,
 // clamped to [planProviderLimitMinDelay, planProviderLimitMaxDelay] so a
@@ -158,7 +158,7 @@ func providerLimitRetryDelay(err error, now time.Time) time.Duration {
 //     AE Studio's included: a misconfigured client, a 4xx of the pod, an org
 //     with no AE Studio (no GitHub token: only a person connecting GitHub
 //     changes that);
-//   - a turn the pod ended failed (R1-I1), unless it was interrupted (a
+//   - a turn the pod ended failed, unless it was interrupted (a
 //     shutdown, a dead stream: retried like a blip) or stopped by the
 //     provider's limit before its last bounded try. Any other ending
 //     (agent-error, output_truncated, internal) is the model's answer, and a

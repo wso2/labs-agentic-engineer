@@ -85,7 +85,7 @@ func TestInternalGate_FencesDecodedCycleID(t *testing.T) {
 // The runs/ group keeps the runner's credential and the cycle fence: an org's
 // publisher token opens only its own org's cycles, and the ae-studio-<org>
 // client token, though signed by the same issuer for the same org, never
-// clears a runner op (Q-1=A). Neither reaches the service.
+// clears a runner op. Neither reaches the service.
 func TestInternalGate_RunsRowIsCycleFenced(t *testing.T) {
 	const path = "/internal/v1/runs/cyc-1/validation-context" // cyc-1 belongs to org-acme
 	s := newInternalStack(t)

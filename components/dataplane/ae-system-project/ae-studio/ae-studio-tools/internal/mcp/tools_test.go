@@ -21,7 +21,7 @@ import (
 	"testing"
 )
 
-// The pod's list is pinned (04 §10): changing it is a reviewed decision, not
+// The pod's list is pinned: changing it is a reviewed decision, not
 // a side effect of what aep-api serves.
 func TestAllowedTools_Pinned(t *testing.T) {
 	want := []string{

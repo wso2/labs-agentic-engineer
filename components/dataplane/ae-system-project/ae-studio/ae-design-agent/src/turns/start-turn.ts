@@ -17,16 +17,16 @@
  */
 
 /**
- * The turn start path (07 §1, §5): one place that turns a request into a
+ * The turn start path: one place that turns a request into a
  * running turn, for the `/v1` edge and the Turn socket. Before
  * a turn is accepted it checks, in order: the pod is not shutting down, the
  * org has a model key, the instruction is usable, the project resolves (the
  * tools socket lookup, which also writes the snapshots), the snapshots and
  * attachments can be read, no turn runs on the scope, and the thread admits
- * the send (P-7: lookup → admit → desk.start, so a refused send takes no
+ * the send (lookup → admit → desk.start, so a refused send takes no
  * lock). Every refusal is a `TurnStartError` the edge maps to a status.
  *
- * Server-started turns (07 §5, the Turn socket) take the same path with the
+ * Server-started turns (the Turn socket) take the same path with the
  * caller's `turnId`: a turn id the desk still knows reattaches instead.
  * **Kickoff** (`start`) is `/start` on the project's current thread, in the
  * Room, credited to the named user. **Plan** runs the task-plan toolset on a
@@ -88,7 +88,7 @@ export function isProjectName(name: string): boolean {
   return PROJECT_RE.test(name);
 }
 
-/** Who a turn is credited to: the verified user (07 §1 "Credit"), or the user a server-started turn names. */
+/** Who a turn is credited to: the verified user, or the user a server-started turn names. */
 export interface Credit {
   /** The JWT `sub`; `""` when a server-started turn names no one. */
   userId: string;
@@ -96,7 +96,7 @@ export interface Credit {
   email: string;
 }
 
-/** A server-started turn, as the Turn socket's `TurnRequest` carries it (07 §5). */
+/** A server-started turn, as the Turn socket's `TurnRequest` carries it. */
 export interface ServerTurnRequest {
   /** The caller's id: a retry with the same id reattaches. */
   turnId: string;
@@ -229,7 +229,7 @@ export class TurnStarter {
   constructor(private readonly deps: TurnStarterDeps) {}
 
   /**
-   * Refuse every later start with `503 shutting_down` (07 §10). Flipped at
+   * Refuse every later start with `503 shutting_down`. Flipped at
    * SIGTERM before `desk.abortAll` (`pod/shutdown.ts`). A start already past
    * its first check (awaiting the lookup or the snapshot read) is refused
    * again at `launch`, and the desk itself refuses once `abortAll` ran.
@@ -280,7 +280,7 @@ export class TurnStarter {
     return req.kind === "start" ? this.startKickoff(req) : this.startPlan(req);
   }
 
-  /** `/start` on the project's current thread, in the Room (07 §5). */
+  /** `/start` on the project's current thread, in the Room. */
   private async startKickoff(req: ServerTurnRequest): Promise<{ turnId: string; reattached: boolean }> {
     const text = req.text?.trim() ?? "";
     const input: TurnInput = { instruction: text ? `${START_COMMAND} ${text}` : START_COMMAND, attachments: [] };
@@ -312,7 +312,7 @@ export class TurnStarter {
     });
   }
 
-  /** The task-plan toolset on a throwaway conversation, no Room (07 §5). */
+  /** The task-plan toolset on a throwaway conversation, no Room. */
   private async startPlan(req: ServerTurnRequest): Promise<{ turnId: string; reattached: boolean }> {
     const spec: TurnSpec = {
       kind: "plan",
@@ -356,7 +356,7 @@ export class TurnStarter {
     const { skillsSha } = await this.toolsCall(() => this.deps.tools.skills());
     const { spec, flow } = turnSpecFor(req.input.instruction, { references: [] });
     // The marketplace reads only the Org skills snapshot: it is both the
-    // turn's files and its skills (07 §6).
+    // turn's files and its skills.
     const material = await this.material(req.input, spec, () => {
       const dir = skillsSnapshotDir(this.deps.snapshotsDir, skillsSha);
       return { snapshotDir: dir, skillsDir: dir, baseRef: skillsSha, skillsRef: skillsSha };

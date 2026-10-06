@@ -17,7 +17,7 @@
  */
 
 /**
- * Token expiry on a Room (07 §11). A connection lives only as long as the
+ * Token expiry on a Room. A connection lives only as long as the
  * token it authenticated with: at `exp` it is closed, unless `onTokenSync`
  * re-verified a fresher token first and re-armed the deadline. Time comes from
  * a `Clock`, so the tests drive the deadline instead of sleeping.

@@ -97,7 +97,7 @@ func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 }
 
 // The edge's SRE gate and the auto-RCA switch read the one verifier Assemble
-// builds from SRE_HANDOFF_TOKEN/SRE_HANDOFF_ORG (Review Focus 3). Through the
+// builds from SRE_HANDOFF_TOKEN/SRE_HANDOFF_ORG. Through the
 // assembled handler: configured, the bearer clears the sre/ gate and reaches
 // the handler; unconfigured, the same bearer is refused. The report carries an
 // unknown classification so the handler answers 400 from ops.NewReport before

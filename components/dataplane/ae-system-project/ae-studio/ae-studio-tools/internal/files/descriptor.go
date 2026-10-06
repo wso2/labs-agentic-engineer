@@ -27,8 +27,8 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// The project descriptor (aep-api writes it at project create; ticket 07
-// §1): specs/.agentic-engineer.toml carries the idea the user typed. Its
+// The project descriptor (aep-api writes it at project create):
+// specs/.agentic-engineer.toml carries the idea the user typed. Its
 // dot-led segment keeps it out of what the agent reads from its snapshot, so
 // the lookup reads the idea here and answers it, and a `/start` turn in the
 // agent uses it when no idea is typed inline.

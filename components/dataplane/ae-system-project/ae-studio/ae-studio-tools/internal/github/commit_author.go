@@ -37,7 +37,7 @@ type Users interface {
 var _ Users = (*Client)(nil)
 
 // CommitAuthor is the author and committer of the pod's commits: the gitpat
-// user, so a save is attributed to the identity that pushes it (07 §11). A
+// user, so a save is attributed to the identity that pushes it. A
 // user without a public name commits as their login, and without a public
 // email as <login>@users.noreply.github.com (the fallbacks aep-api records
 // for the org credential).

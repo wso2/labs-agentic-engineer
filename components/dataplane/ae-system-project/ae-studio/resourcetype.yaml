@@ -14,7 +14,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# The ae-studio ResourceType (ticket 08). Installed per org by aep-api (organization/aestudio), which embeds a byte copy made by go generate. parameters change per AE release or org (a new ResourceRelease, aep-api re-pins); environmentConfigs are install facts (an RRB PUT, no release).
+# The ae-studio ResourceType (ADR-0040). Installed per org by aep-api (organization/aestudio), which embeds a byte copy made by go generate. parameters change per AE release or org (a new ResourceRelease, aep-api re-pins); environmentConfigs are install facts (an RRB PUT, no release).
 
 apiVersion: openchoreo.dev/v1alpha1
 kind: ResourceType
@@ -41,11 +41,11 @@ spec:
             id: { type: string }
             handle: { type: string }
         modelConnection:
-          # 07 §4, R18: the non-secret connection fields as one JSON string (AE_MODEL_CONNECTION); an edit re-pins.
+          # The non-secret connection fields as one JSON string (AE_MODEL_CONNECTION); an edit re-pins.
           type: string
           default: ""
         githubOwner: { type: string, default: "" }   # remote-git owner guard, repo-create guard
-        # Task 4.20: the org's smee.io relay channel (aep-api derives it from the install's relay seed); "" = no
+        # The org's smee.io relay channel (aep-api derives it from the install's relay seed); "" = no
         # relay (Cloud), the repo hooks deliver to the webhookUrl output.
         webhookRelayUrl: { type: string, default: "" }
         secrets:
@@ -90,13 +90,13 @@ spec:
         runtimeClassName: { type: string, default: "" }
         cilium: { type: boolean, default: false }
         storage:
-          # 20 §2: one budget per pod, all three from the same install facts.
+          # One budget per pod, all three from the same install facts.
           type: object
           default: {}
           properties:
             sizeLimit: { type: string, default: 3Gi }
             ephemeralRequest: { type: string, default: 1Gi }
-            budgetBytes: { type: string, default: "2147483648" }   # a STRING: the binding must send it quoted (P-10)
+            budgetBytes: { type: string, default: "2147483648" }   # a STRING: the binding must send it quoted
         pullSecret:
           type: object
           default: { remoteKey: "" }
@@ -215,7 +215,7 @@ spec:
               # Socket dirs: one emptyDir per pair of containers that talk, mounted into that pair only (the mount
               # is the gate, sockets are 0660): files-sock = ae-collab + ae-studio-tools, mcp-sock = ae-design-agent
               # + ae-studio-tools (MCP and Turn sockets), room-sock = ae-collab + ae-design-agent (the agent's Room
-              # join, no token: Task 4.7a). Each serving container's /readyz (its startup probe) waits for its sockets.
+              # join, no token). Each serving container's /readyz (its startup probe) waits for its sockets.
               volumes:
                 - { name: files-sock, emptyDir: { medium: Memory, sizeLimit: 1Mi } }
                 - { name: mcp-sock,   emptyDir: { medium: Memory, sizeLimit: 1Mi } }
@@ -226,7 +226,7 @@ spec:
                 - { name: tmp-collab, emptyDir: { sizeLimit: 64Mi } }
                 - { name: tmp-tools,  emptyDir: { sizeLimit: 256Mi } }
               # A container added here mounts no socket dir unless it is one end of that socket: the webhook-relay
-              # container (Task 4.20, last below) mounts none, since any process that can reach a socket is trusted by it.
+              # container (last below) mounts none, since any process that can reach a socket is trusted by it.
               containers:
                 - name: ae-design-agent
                   image: ${parameters.images.designAgent}
@@ -304,7 +304,7 @@ spec:
                     - { name: AE_HEALTH_PORT, value: "9082" }
                     - { name: AE_GITHUB_OWNER, value: "${parameters.githubOwner}" }
                     # Where the repo hooks this container registers deliver: the org's relay channel when set
-                    # (Task 4.20), else the webhookUrl output.
+                    # otherwise the webhookUrl output.
                     - name: AE_WEBHOOK_URL
                       value: '${parameters.webhookRelayUrl != "" ? parameters.webhookRelayUrl : environmentConfigs.publicScheme + "://" + oc_dns_label(metadata.resourceNamespace, "ae-studio-tools") + "." + environmentConfigs.gatewayHost + environmentConfigs.publicPortSuffix + "/webhooks/github"}'
                   envFrom:
@@ -320,7 +320,7 @@ spec:
                     - { name: mcp-sock, mountPath: /run/ae/mcp }
                     - { name: studio-data, mountPath: /studio-data }            # 20: git root, rw
                     - { name: tmp-tools, mountPath: /tmp }
-                # Task 4.20: webhook-relay (gosmee) subscribes to the org's smee.io channel and posts each delivery
+                # Webhook-relay (gosmee) subscribes to the org's smee.io channel and posts each delivery
                 # (GitHub's headers, the signature among them, and the body as smee.io relays it) to ae-studio-tools
                 # over the pod's loopback; ae-studio-tools verifies the HMAC as for a direct delivery. Present only when parameters.webhookRelayUrl is set:
                 # includeWhen is per resource, so the item is one CEL map that renders to oc_omit() (dropped from the

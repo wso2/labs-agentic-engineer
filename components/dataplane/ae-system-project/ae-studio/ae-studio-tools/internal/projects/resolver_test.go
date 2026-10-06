@@ -78,7 +78,7 @@ func TestResolver_NoCacheAndMapping(t *testing.T) {
 	}
 
 	// An empty json error body must not turn a 404 into "unavailable": the
-	// mapping is by status, the body is never parsed for a decision (Q-2).
+	// mapping is by status, the body is never parsed for a decision.
 	status.Store(http.StatusNotFound)
 	if _, err = r.Resolve(context.Background(), "greeter"); !errors.Is(err, ErrUnknown) {
 		t.Fatalf("404: err = %v, want ErrUnknown", err)

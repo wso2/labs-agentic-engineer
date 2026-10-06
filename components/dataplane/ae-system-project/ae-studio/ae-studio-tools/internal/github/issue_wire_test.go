@@ -23,7 +23,7 @@ package github
 // the issue writes, the hook's body and its delete. Moved from aep-api's
 // service-tier tests (sourcecontrol milestone_ops_test.go,
 // issue_service_test.go, webhook_service_test.go, webhook_unregister_test.go),
-// which drove the same code in githubhost before phase 4 moved it here.
+// which drove the same code in githubhost before it moved here.
 
 import (
 	"context"

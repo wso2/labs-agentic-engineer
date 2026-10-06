@@ -15,7 +15,7 @@
 // under the License.
 
 // Package aestudio installs and converges an org's AE Studio (the ae-studio
-// Resource: ResourceType, Project ae-system, bindings), ticket 08.
+// Resource: ResourceType, Project ae-system, bindings), ADR-0040.
 package aestudio
 
 import (

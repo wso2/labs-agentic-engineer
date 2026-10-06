@@ -89,7 +89,7 @@ const shutdownRecord = `{"turnId":"5f0c6c1e-6c39-4f0e-9a51-7a1d0e5a6b10","projec
 	`"startedAt":"2026-10-03T10:00:00Z","finishedAt":"2026-10-03T10:01:00Z","model":"m","modelHost":"h",` +
 	`"inputTokens":1,"outputTokens":1,"cacheReadTokens":0,"cacheCreationTokens":0}`
 
-// 07 §10 / Q-5: a record the agent hands in during the drain window (its
+// A record the agent hands in during the drain window (its
 // shutdown turn's) is delivered by the shutdown flush, which runs beside the
 // Files socket's shutdown: a Files request still in flight does not hold
 // it back, and the whole step stays inside the budget.
@@ -171,7 +171,7 @@ func TestShutdown_FlushIsBounded(t *testing.T) {
 	}
 }
 
-// The budget the pod's 30 s termination grace must hold (Q-5).
+// The budget the pod's 30 s termination grace must hold.
 func TestShutdownBudget_InsideTheGrace(t *testing.T) {
 	const grace = 30 * time.Second
 	if usageFlushTimeout > socketShutdownTimeout {

@@ -199,7 +199,7 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// phase16 that credential is a Claude subscription only, ADR-0036).
 		ctxStep("phase13_anthropic_credential_role", RunPhase13AnthropicCredentialRole),
 		// project_conversations: RETIRED tombstone. The conversation store went
-		// with aep-api's turn orchestration (phase 3); the step is kept for
+		// with aep-api's turn orchestration; the step is kept for
 		// frozen order and does nothing. phase24 drops the table.
 		ctxStep("project_conversations", RunProjectConversations),
 		// Drop leftover sm_api_* columns.
@@ -251,7 +251,7 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// apps/console ADR-0022). AutoMigrate never drops a table, so this is
 		// the explicit drop. Idempotent.
 		dbStep("phase22_drop_activity_events", RunPhase22DropActivityEvents),
-		// agent_turns becomes the finished-turn ledger (07 §12): turns run in
+		// agent_turns becomes the finished-turn ledger: turns run in
 		// the org's AE Studio pod, so the in-process engine's rows get a kind
 		// and a start time, its running rows, guard index and columns go, the
 		// primary key widens to (org_id, id), and project_conversations is

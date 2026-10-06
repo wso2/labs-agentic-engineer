@@ -38,7 +38,7 @@ import (
 // no owner or repo field, so the validator refuses a request naming one.
 
 const (
-	// filesSocketBodyBytes caps a request body; only apply has one (04 §7).
+	// filesSocketBodyBytes caps a request body; only apply has one.
 	filesSocketBodyBytes int64 = 25 << 20
 	// filesSocketRequestBudget bounds one Files socket request, so the pod
 	// always answers before its caller gives up: it nests every aep-api call

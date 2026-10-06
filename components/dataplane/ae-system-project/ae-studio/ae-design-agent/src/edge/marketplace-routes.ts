@@ -17,7 +17,7 @@
  */
 
 /**
- * `/v1/marketplace/...` (07 §6): conversations with no project, each owned by
+ * `/v1/marketplace/...`: conversations with no project, each owned by
  * the user who created it. Every call must come from the owner (`sub`); to
  * anyone else the conversation and its turns do not exist (404). The lock is
  * per conversation, so two users can register at once.

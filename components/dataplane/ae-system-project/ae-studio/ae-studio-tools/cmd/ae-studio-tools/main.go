@@ -28,7 +28,7 @@
 // aep-api through the usage outbox (usage.Sender).
 // SIGTERM (tini forwards it) drains the public and health listeners, keeps
 // both sockets serving through the drain window for ae-collab's final flush
-// and the agent's outbox drain (07 §10), shuts them down while it flushes the
+// and the agent's outbox drain, shuts them down while it flushes the
 // usage outbox, then stops the reaper.
 package main
 
@@ -65,7 +65,7 @@ import (
 // drain's budget.
 const reaperStopTimeout = 2 * time.Second
 
-// Shutdown budget, inside the pod's 30 s termination grace (Q-5/D-5):
+// Shutdown budget, inside the pod's 30 s termination grace:
 //
 //	socketDrainWindow (10 s)
 //	+ max(socketShutdownTimeout (15 s), usageFlushTimeout (3 s))
@@ -85,7 +85,7 @@ const (
 	// socketDrainWindow is how long after SIGTERM the Files and MCP sockets
 	// keep accepting: ae-collab and ae-design-agent get SIGTERM at the same
 	// moment, ae-collab flushes every Room through the Files socket and the
-	// agent drains its outbox through the MCP socket (07 §10). Coupled to
+	// agent drains its outbox through the MCP socket. Coupled to
 	// ae-collab's shutdown flush budget (SHUTDOWN_FLUSH_BUDGET_MS, 8 s,
 	// ae-collab/src/committer.ts) and the agent's handover
 	// (SHUTDOWN_HANDOVER_MS, ae-design-agent/src/pod/shutdown.ts: turn abort
@@ -95,7 +95,7 @@ const (
 	// socketShutdownTimeout bounds the wait for requests still in flight on
 	// either socket once they stop accepting.
 	socketShutdownTimeout = 15 * time.Second
-	// usageFlushTimeout bounds the final usage send (07 §10): one or more
+	// usageFlushTimeout bounds the final usage send: one or more
 	// record-turn-usage calls, run beside the sockets' shutdown.
 	usageFlushTimeout = 3 * time.Second
 )

@@ -76,7 +76,7 @@ func drain(t *testing.T, events func(func(aestudiotools.TurnEvent, error) bool))
 // The kickoff's turn id is uuidv5(org/project) under the fixed namespace, so
 // a retried kickoff (a create, then the references upload it held for; a
 // retried upload) reattaches to the one interview instead of starting a
-// second (Review Focus 3).
+// second.
 func TestKickoff_EveryAttemptCarriesTheSameTurnID(t *testing.T) {
 	svc, f := newKickoff(kickoffLedger{})
 	ctx := t.Context()

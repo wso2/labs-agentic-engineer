@@ -134,7 +134,7 @@ func waitGone(t *testing.T, path, msg string) {
 	}
 }
 
-// The walk visits every repos/<owner>/<repo> mirror dir (Q-4: the pod keys
+// The walk visits every repos/<owner>/<repo> mirror dir (the pod keys
 // its mirrors by GitHub repository) and nothing that is not a directory.
 func TestWalkRepoDirsVisitsOwnerRepoMirrors(t *testing.T) {
 	root := t.TempDir()

@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package auth is ae-studio-tools' own JWT check (04 §9): exact iss, aud per
-// token kind, and the org rule. It produces the two gates of 04 §1: UserGate
+// Package auth is ae-studio-tools' own JWT check: exact iss, aud per
+// token kind, and the org rule. It produces the two gates: UserGate
 // for /v1/* (Platform IdP user JWT of the pod's org) and M2MGate for
 // /internal/v1/* (the AE-only client_credentials client, impersonating the
 // pod's org).
@@ -161,7 +161,7 @@ func UserGate(v *Verifier, audiences []string, orgID, orgHandle string) func(htt
 }
 
 // M2MGate admits only the pinned AE-only client: a client_credentials token
-// whose aud and client_id are clientID and which carries no org claim (11 §3).
+// whose aud and client_id are clientID and which carries no org claim.
 // Anything else is 401, except an IdP whose keys cannot be fetched: 503
 // idp_unavailable, so aep-api retries rather than reading a credential fault.
 // The X-Impersonate-Org header must then name the pod's org, else 403. It panics on a nil verifier or an empty clientID or orgID:

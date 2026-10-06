@@ -17,7 +17,7 @@
  */
 
 /**
- * The committer over the Files socket (07 §11): a room's live doc lands as
+ * The committer over the Files socket: a room's live doc lands as
  * one commit per flush, with no token. Every test runs against the fake Files
  * socket, so the baseline shas are the real git blob shas a bundle returns.
  */

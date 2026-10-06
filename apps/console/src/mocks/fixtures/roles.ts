@@ -32,7 +32,7 @@
  *    platform test account out of the group that administers the platform.
  *    `Finance` is the platform's and holds roles in TWO projects, which is the
  *    cross-project count a role card shows.
- *  - `projectRoles` is what THIS project owns (phase 2). A self-service role
+ *  - `projectRoles` is what THIS project owns. A self-service role
  *    and a service role both carry an EMPTY `assignedTo`, which is the normal
  *    shape for them and not missing data.
  *  - `testUsers` covers the three account states: the platform's own account,

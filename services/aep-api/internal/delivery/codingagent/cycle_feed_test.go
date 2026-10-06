@@ -124,7 +124,7 @@ func newTestFeed(rt openchoreo.RuntimeClient, obs cycleLogQuerier) *CycleFeed {
 	return NewCycleFeed(rt, obs, testWriteTargets(), 72*time.Hour)
 }
 
-// Review Focus 4: the console dedups on (cycle, attempt, seq), so the seqs a
+// The console dedups on (cycle, attempt, seq), so the seqs a
 // viewer saw from the pod must be the seqs the observer serves later.
 func TestCycleFeed_PodLogAndObserverYieldTheSameSeqs(t *testing.T) {
 	ctx := context.Background()
@@ -639,7 +639,7 @@ func TestCycleFeed_AnIndexThatCatchesUpDeliversTheTailOnce(t *testing.T) {
 	}
 }
 
-// R3-I1: an open cycle whose pod is Pending and has never run has written
+// An open cycle whose pod is Pending and has never run has written
 // nothing, so the observer is not asked, and a pod-log read that fails on a
 // container not yet created is the dark zone, not "logs unavailable".
 func TestCycleFeed_PendingPodNarratesTheDarkZoneWithoutAnObserverRead(t *testing.T) {
@@ -667,7 +667,7 @@ func TestCycleFeed_PendingPodNarratesTheDarkZoneWithoutAnObserverRead(t *testing
 	}
 }
 
-// R3-I1: an open cycle with no pod yet narrates its dark zone even when the
+// An open cycle with no pod yet narrates its dark zone even when the
 // observer read fails, as the v1 resolver does.
 func TestCycleFeed_ObserverErrorOnAnOpenCycleWithoutAPodIsTheDarkZone(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}

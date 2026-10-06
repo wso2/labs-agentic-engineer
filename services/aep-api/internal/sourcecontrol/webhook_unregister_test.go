@@ -125,7 +125,7 @@ func TestWebhookUnregister_PodFailureIsReported(t *testing.T) {
 }
 
 // UnregisterOrg removes the hook of every project repository the org has
-// (06 §9 disconnect): one that fails does not stop the others, the failures
+// (disconnect): one that fails does not stop the others, the failures
 // are reported together, and the ids stay on the rows (ForgetOrg clears
 // them once the pod is gone).
 func TestWebhookUnregisterOrg_RemovesEveryHookAndReportsFailures(t *testing.T) {

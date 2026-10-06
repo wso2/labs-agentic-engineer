@@ -39,7 +39,7 @@ import (
 
 // The AE Studio route group (/internal/v1/ae-studio/…): an org's AE Studio
 // tools pod resolves a project to its GitHub repository on every request
-// (04 §2) and the org's skills repository on every turn (07 §6), and has the dependency stubs of a save completed here (04 §4), so
+// and the org's skills repository on every turn, and has the dependency stubs of a save completed here, so
 // the registry read and the fetch of a model-chosen URL never run in the pod
 // that holds the org's git credential. internalGate admits only the org's
 // ae-studio-<org> client token here and binds the org that client is recorded
@@ -259,7 +259,7 @@ func notCompletedWarning(w spec.Warning) spec.Warning {
 }
 
 // RecordTurnUsage stores the bound org's finished turns in the ledger
-// (07 §12). Every record naming a project must name one of the org's: one that
+// Every record naming a project must name one of the org's: one that
 // does not refuses the whole batch with 404 and nothing is written (a foreign
 // project and an unknown one answer the same). A record without a project is
 // a marketplace turn and is valid.

@@ -19,7 +19,7 @@
 // tasks-github-native model: sentinel translation, CreateProject's best-effort
 // side-effect chain, the delete cascade (repo cleanup + executions purge — NO
 // component_tasks table any more), and the GetProjectStatus phase ladder (which
-// no longer counts tasks: it stops at "tasks" once a design exists, §8). The
+// no longer counts tasks: it stops at "tasks" once a design exists). The
 // HTTP contract lives in project_component_test.go; the DeleteProject executions
 // purge over real Postgres lives in project_dbtest_test.go; the
 // applyRepoToProjectStatus repo-lifecycle table lives in project_status_test.go.
@@ -485,7 +485,7 @@ func TestCreateProject_OCErrorShortCircuits(t *testing.T) {
 }
 
 // A failed repo create stops the project create and compensates the OC
-// project (05 §7), with the repo error unchanged so the edge can speak for an
+// project, with the repo error unchanged so the edge can speak for an
 // AE Studio answer (409 github_not_connected / 503 ae_studio_unavailable).
 func TestCreateProject_RepoFailureReturnsItsErrorUnchanged(t *testing.T) {
 	t.Parallel()
@@ -565,7 +565,7 @@ func TestDeleteProject_CleansUpRepoAndPurgesExecutions(t *testing.T) {
 	if !deleted {
 		t.Error("git repo cleanup was not invoked")
 	}
-	// The platform-owned executions rows are purged, org+project scoped (§7).
+	// The platform-owned executions rows are purged, org+project scoped.
 	// The Task issues themselves are GitHub-owned and SURVIVE: the delete leaves
 	// the remote repository standing, and the service never calls an issue-delete
 	// path.
@@ -770,7 +770,7 @@ func TestDeleteProject_UnreachableOCSkipsTheRunTeardown(t *testing.T) {
 // Repo-lifecycle short-circuits (no-repo / cloning / error) are proven per branch
 // in project_status_test.go against applyRepoToProjectStatus; here the ladder is
 // driven end-through with a ready repo. Under tasks-github-native the ladder no
-// longer counts tasks — it stops at "tasks" once a design exists (§8).
+// longer counts tasks — it stops at "tasks" once a design exists.
 
 // fakeRunReader / fakeBindingsReader fake the stage-source ports
 // (status_stages.go) — the build/deploy inputs of the status poll.
@@ -1006,7 +1006,7 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 			if st.Spec != want {
 				t.Errorf("spec stage = %+v, want %+v", st.Spec, want)
 			}
-			// The tasks-github-native ladder never sets HasTasks (no DB count, §8).
+			// The tasks-github-native ladder never sets HasTasks (no DB count).
 			if st.HasTasks {
 				t.Error("HasTasks must stay false — tasks are counted live from GitHub, not here")
 			}

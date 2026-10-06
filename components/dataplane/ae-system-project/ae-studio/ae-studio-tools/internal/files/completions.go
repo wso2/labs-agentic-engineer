@@ -64,7 +64,7 @@ type Completed struct {
 
 // Completer completes dependency stubs on aep-api's side of the CP/DP seam,
 // so a model-chosen URL is never fetched by the pod that holds the org's git
-// credential (04 §4). It returns the completions keyed by stub path and
+// credential. It returns the completions keyed by stub path and
 // aep-api's warnings; an error means none were made.
 type Completer interface {
 	Complete(ctx context.Context, project string, writes []WriteOp) (map[string]Completed, []Warning, error)

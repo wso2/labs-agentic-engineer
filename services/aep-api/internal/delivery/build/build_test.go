@@ -625,7 +625,7 @@ func TestBuild_PublisherGateRunsBeforeTag(t *testing.T) {
 }
 
 // No ae-publisher-client row: 409 publisher_credentials_missing with the
-// "Reconnect GitHub" sentence, and no tag is cut (06 §3).
+// "Reconnect GitHub" sentence, and no tag is cut.
 func TestBuild_PublisherCredentialsMissingIs409ReconnectGitHub(t *testing.T) {
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
 	svc := newSvc(fakeRepos{}, tagger)

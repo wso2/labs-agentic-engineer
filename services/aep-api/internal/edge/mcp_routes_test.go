@@ -269,7 +269,7 @@ func TestMCPRoutes_FullRoundTrip(t *testing.T) {
 
 // The publisher token lists the nine tools aep-api still serves; the two
 // remote-git tools moved to the runner and the AE Studio tools pod, which
-// serve them in-process (Task 5.1, phase 3).
+// serve them in-process.
 func TestMCP_PublisherTokenListsNineToolsWithoutRemoteGit(t *testing.T) {
 	s := newMCPSurface(t)
 	names := toolNames(t, postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
@@ -441,7 +441,7 @@ func validateSpecCall(size int) string {
 }
 
 // The design agent sends a whole OpenAPI document inline; one of 900 KiB
-// passes the internal body cap and reaches the tool (Review Focus 1).
+// passes the internal body cap and reaches the tool.
 func TestMCPRoutes_LargeInlineSpecUnderCap(t *testing.T) {
 	srv, tok, seen := newMCPSpecToolServer(t)
 	result := rpcResult(t, postMCP(t, srv, tok, validateSpecCall(900<<10)))
@@ -457,7 +457,7 @@ func TestMCPRoutes_LargeInlineSpecUnderCap(t *testing.T) {
 	}
 }
 
-// One byte over 1 MiB is refused at the edge with 413 (03 §4, C2), never a
+// One byte over 1 MiB is refused at the edge with 413 (C2), never a
 // JSON-RPC parse error from a truncated body.
 func TestMCPRoutes_InlineSpecOverCap413(t *testing.T) {
 	srv, tok, seen := newMCPSpecToolServer(t)

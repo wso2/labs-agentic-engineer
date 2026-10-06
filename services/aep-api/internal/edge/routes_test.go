@@ -25,7 +25,7 @@ import (
 )
 
 // removedRoute is a route a phase deleted. A valid user JWT must get the
-// listed status: never 2xx, 401 or 5xx (scenario 1.5).
+// listed status: never 2xx, 401 or 5xx.
 type removedRoute struct {
 	method, path string
 	want         int
@@ -51,7 +51,7 @@ var removedRoutes = []removedRoute{
 	// is proven by TestRouteTable.
 	{http.MethodPost, "/_dev/v1/secret-ref-resync", http.StatusNotFound},
 	// No user rotation of the publisher client secret: it lives only in
-	// vault, written by the gitpat submit's client ensure (06 §5).
+	// vault, written by the gitpat submit's client ensure.
 	{http.MethodPost, "/api/v1/config/idp/client-secret", http.StatusNotFound},
 }
 
@@ -74,7 +74,7 @@ func TestRemovedRoutes(t *testing.T) {
 }
 
 // TestRouteTable pins the mount table: every caller of aep-api and the gate
-// that admits it, in one place (03 §5). Rows a later phase deletes say so.
+// that admits it, in one place. Rows a later phase deletes say so.
 func TestRouteTable(t *testing.T) {
 	got := map[string]route{}
 	for _, r := range routes(AppParams{}) {
@@ -99,7 +99,7 @@ func TestRouteTable(t *testing.T) {
 	if _, ok := got["POST /_dev/v1/secret-ref-resync"]; ok {
 		t.Error("mount table still has the dev secret resync")
 	}
-	// The SRE handoff is an internal caller (03 §1): /api/ admits user JWTs only.
+	// The SRE handoff is an internal caller: /api/ admits user JWTs only.
 	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {
 		t.Errorf("/internal/v1/ caller %q does not name the SRE handoff", c)
 	}

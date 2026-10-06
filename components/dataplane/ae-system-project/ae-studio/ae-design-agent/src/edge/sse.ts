@@ -17,7 +17,7 @@
  */
 
 /**
- * Attach to a turn's stream (07 §1): server-sent events from the TurnDesk's
+ * Attach to a turn's stream: server-sent events from the TurnDesk's
  * replay buffer, replay first, then the live tail. Each frame is
  * `id: <index>` + `data: <part>` (`[DONE]` is a frame too, so ids run without
  * a gap); `: keep-alive` every `keepAliveMs` while the turn is quiet. The

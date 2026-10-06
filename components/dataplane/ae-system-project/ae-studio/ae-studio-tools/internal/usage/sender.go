@@ -14,12 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package usage delivers the records of finished turns to aep-api (07 §7).
+// Package usage delivers the records of finished turns to aep-api.
 // The agent hands each record in over the MCP socket (POST /turn-usage);
 // Sender keeps them in a bounded in-memory outbox, coalesces what arrives
 // inside a short window into one record-turn-usage call (at most
 // MaxBatch records each), retries a failed call on a timer and sends what is
-// left when the pod shuts down (07 §10). aep-api is idempotent on turnId, so
+// left when the pod shuts down. aep-api is idempotent on turnId, so
 // a record sent twice is stored once.
 package usage
 

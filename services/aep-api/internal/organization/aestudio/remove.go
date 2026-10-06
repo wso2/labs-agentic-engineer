@@ -27,8 +27,8 @@ import (
 // Remove deletes org's AE Studio: the Resource ae-studio, as aep-api's own
 // identity. OpenChoreo's Resource finalizer deletes its bindings and releases
 // first, so the pod — and the clones, reference documents and gitpat it
-// held — goes with it (06 §9 gitpat disconnect). The Project ae-system and
-// the ResourceType stay (Cloud cannot delete a ResourceType, ticket 16); a
+// held — goes with it (the gitpat disconnect). The Project ae-system and
+// the ResourceType stay (Cloud cannot delete a ResourceType); a
 // reconnect converges a new Resource. A Resource already gone is success.
 //
 // Remove HOLDS the org first: until Release, no converge starts for it (a

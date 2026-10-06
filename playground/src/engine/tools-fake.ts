@@ -17,7 +17,7 @@
  */
 
 /**
- * The playground's in-process `ToolsSocket` (07 §9): what ae-studio-tools is
+ * The playground's in-process `ToolsSocket`: what ae-studio-tools is
  * to the pod, played from the project folder.
  *
  * - `lookup(<the project>)` materializes the folder and the working-tree skill

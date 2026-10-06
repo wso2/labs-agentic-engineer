@@ -157,7 +157,7 @@ func sequencedAEPAPI(t *testing.T, statuses ...int) (func(context.Context, []Tur
 	}
 }
 
-// I-1: a batch aep-api permanently refuses is dropped, so it cannot block
+// A batch aep-api permanently refuses is dropped, so it cannot block
 // the records behind it: one enqueued after it is delivered within the
 // coalescing window.
 func TestSender_PermanentRefusalDoesNotBlockLaterRecords(t *testing.T) {

@@ -32,7 +32,7 @@
  *
  * Spec edits the DOCUMENT and nothing else: a grant is a design decision and
  * lives in the file, while the accounts the platform created are somebody's
- * credentials — reveal, rotate and delete stay on Deploy (ticket 15).
+ * credentials — reveal, rotate and delete stay on Deploy.
  */
 
 import { useCallback, useMemo } from "react";

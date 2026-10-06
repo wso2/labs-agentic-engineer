@@ -15,7 +15,7 @@
 // under the License.
 
 // Package reaper is the disk-lifecycle authority for the studio-data volume
-// (moved from services/aep-api/internal/platform/gitfs/reaper; ticket 20 §3).
+// (moved from services/aep-api/internal/platform/gitfs/reaper; design/clone-storage.md).
 // The volume is a cache of GitHub: a pod roll wipes it and every repo
 // re-clones on first use. One pod serves one org and runs one reaper, so there
 // is no leader lock. Five passes per sweep, each isolated (one failing never

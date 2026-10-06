@@ -22,7 +22,7 @@
  * socket holding the dev fixtures). Both run the same listeners and the same
  * Room; only who may join and where the files come from differ.
  *
- * Close is the SIGTERM path (07 §10, Q-32): the room listeners stop
+ * Close is the SIGTERM path: the room listeners stop
  * accepting, the room sockets end, every loaded room is force-flushed through
  * the Files socket (bounded, inside ae-studio-tools' drain window), and the
  * health listener closes; the process exits after that.

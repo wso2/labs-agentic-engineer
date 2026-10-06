@@ -17,11 +17,11 @@
 package codingagent
 
 // Coding dispatch takes the GitHub PAT's and the publisher client's
-// SecretReference names from their org_secrets rows (R7), and only from them:
+// SecretReference names from their org_secrets rows, and only from them:
 // an org with no row has no usable reference (the secret lives only in vault,
 // and the row is the record that it was written), so dispatch refuses rather
-// than reading any other column. Dispatch needs only the name and the key
-// (C10): the Job carries SecretKeyRef{Name, Key} and OpenChoreo resolves the
+// than reading any other column. Dispatch needs only the name and the key:
+// the Job carries SecretKeyRef{Name, Key} and OpenChoreo resolves the
 // reference itself.
 
 import (
@@ -84,7 +84,7 @@ func TestNewCodingExecutor_RequiresTheOrgSecretRows(t *testing.T) {
 }
 
 // TestPublisherSecretEnv_FromOrgSecretsRow: the runner's publisher token
-// (Q-1=A) is mounted from the reference the ae-publisher-client row names.
+// is mounted from the reference the ae-publisher-client row names.
 func TestPublisherSecretEnv_FromOrgSecretsRow(t *testing.T) {
 	t.Parallel()
 	r := NewIDPPublisherResolver(fakeOrgSecrets{"acme/ae-publisher-client": "acme-ae-publisher-client-1a2b"})

@@ -18,10 +18,10 @@
 
 import { apiErrorCode } from "./errors";
 
-/** aep-api's answer while the org's AE Studio comes up or rolls (05 §5). */
+/** aep-api's answer while the org's AE Studio comes up or rolls. */
 const AE_STUDIO_UNAVAILABLE = "ae_studio_unavailable";
 
-/** The wait when a 503 ae_studio_unavailable carries no Retry-After (10 §7). */
+/** The wait when a 503 ae_studio_unavailable carries no Retry-After. */
 const AE_STUDIO_UNAVAILABLE_RETRY_MS = 5_000;
 
 function carriedRetryAfterMs(error: unknown): number | undefined {

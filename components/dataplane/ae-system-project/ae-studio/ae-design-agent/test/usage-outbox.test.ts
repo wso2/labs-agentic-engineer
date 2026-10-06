@@ -17,7 +17,7 @@
  */
 
 /**
- * The usage outbox (07 §7): a finished turn's record is kept in a small
+ * The usage outbox: a finished turn's record is kept in a small
  * bounded outbox and retried until the tools socket takes it. Driven against
  * the in-process FakeToolsSocket.
  */

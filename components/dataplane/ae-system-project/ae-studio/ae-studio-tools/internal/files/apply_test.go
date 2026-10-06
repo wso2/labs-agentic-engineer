@@ -196,9 +196,9 @@ func sameStrings(got, want []string) bool {
 
 const paymentsStub = `{"name":"payments","resource":{"ref":"payments","name":"payments"}}`
 
-// ---- Review Focus 1 + the brief's cases ---------------------------------
+// ---- Room save path cases ---------------------------------
 
-// Q-4: the Room's save path (project → owner/repo through aep-api) and a
+// The Room's save path (project → owner/repo through aep-api) and a
 // caller that addresses the repository directly by owner/repo, in any case,
 // share one mirror: repos/ holds exactly one, and the direct caller reads the
 // Room's commit through it.
@@ -344,7 +344,7 @@ func TestApply_ENOSPCIsDiskFull(t *testing.T) {
 	}
 }
 
-// ---- completions (Q-9, carries 2-4) --------------------------------------
+// ---- completions --------------------------------------
 
 // Only dependency stubs reach the completer: a finished definition, a plain
 // spec file and a provider stub whose document the same save writes are not

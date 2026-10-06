@@ -416,7 +416,7 @@ test("modes: COLLAB_DEV alone is dev mode: the pod's listeners, a Room socket in
 });
 
 test("modes: the removed legacy server's keys configure nothing", () => {
-  // The chart Deployment's env (until Task 2.16 deletes it) boots nothing.
+  // The chart Deployment's env (until it is deleted) boots nothing.
   assert.throws(() => selectModes({ AEP_API_BASE: "http://aep-api:9090/api/v1/" }), /ae-collab: no config/);
   assert.throws(() => selectModes({ COLLAB_MOCK_BFF: "1" }), /ae-collab: no config/);
 });

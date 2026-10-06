@@ -34,7 +34,7 @@ var phase24EngineColumns = []string{"heartbeat_at", "spec_tag", "paths", "commit
 const phase24Before = "0002-01-01"
 
 // RunPhase24AgentTurnsLedger makes agent_turns the finished-turn ledger
-// (07 §12). Turns run in the org's AE Studio pod now, which records each one
+// Turns run in the org's AE Studio pod now, which records each one
 // once it has finished; aep-api's in-process engine and its conversation store
 // are gone. In one transaction:
 //

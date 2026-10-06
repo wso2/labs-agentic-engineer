@@ -152,7 +152,7 @@ func (e *Engine) DiskUsagePct() int {
 func (e *Engine) SetUsageGauge(fn func() int) { e.usageGauge = fn }
 
 // DiskAdmissionRefusePct is the pressure at which new snapshots and
-// reference uploads are refused (ticket 20 §2). Commits, tags and reads are
+// reference uploads are refused (design/clone-storage.md). Commits, tags and reads are
 // never gated.
 const DiskAdmissionRefusePct = 90
 
@@ -588,7 +588,7 @@ func (e *Engine) resolveCommit(ctx context.Context, ref RepoRef, p repoPaths, at
 // ----- mirror maintenance (consumed by the reaper) -----
 
 // maintainLockTimeout bounds EX flock acquisition for MaintainMirror only
-// (R4). Git repack/prune/pack-refs use the caller ctx — never this budget —
+// Git repack/prune/pack-refs use the caller ctx — never this budget —
 // so a contended lock skips within ~2s without SIGKILLing a slow maintain.
 const maintainLockTimeout = 2 * time.Second
 

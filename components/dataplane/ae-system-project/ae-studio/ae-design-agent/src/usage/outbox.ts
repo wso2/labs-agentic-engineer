@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// The usage outbox (07 §7): each finished turn's record goes to ae-studio-tools
+// The usage outbox: each finished turn's record goes to ae-studio-tools
 // over the tools socket (`POST /turn-usage`). If the socket is down the record
 // waits here and is retried every OUTBOX_RETRY_MS, one record at a time and in
 // order. The outbox is bounded: past OUTBOX_CAP the oldest record is dropped. A

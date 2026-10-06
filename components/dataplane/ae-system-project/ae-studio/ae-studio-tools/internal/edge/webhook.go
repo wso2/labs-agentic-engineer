@@ -32,7 +32,7 @@ import (
 // The unauthenticated /webhooks/github route reads a body before it can check
 // the signature, so its reads are bounded in size, time and number.
 const (
-	// webhookBodyBytes is GitHub's maximum delivery size (ticket 04 §8).
+	// webhookBodyBytes is GitHub's maximum delivery size (ADR-0043).
 	webhookBodyBytes int64 = 25 << 20
 	// webhookReadTimeout bounds the body read. GitHub's delivery window is
 	// 10 s (a delivery unanswered by then is marked failed), so a body still
@@ -64,7 +64,7 @@ type webhookLimits struct {
 	concurrency int
 }
 
-// WebhookHandler serves POST /webhooks/github (ticket 04 §8). Past
+// WebhookHandler serves POST /webhooks/github (ADR-0043). Past
 // webhookConcurrency deliveries in flight a request is 503 busy before its
 // body is read; the body is capped at 25 MiB (413) and must arrive within
 // webhookReadTimeout (408); the X-Hub-Signature-256 HMAC must be made with

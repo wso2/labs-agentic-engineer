@@ -18,7 +18,7 @@
 // org's gitpat. It is the only place in the pod that builds a GitHub
 // Authorization header (authHeaders, asking Config.Token per request).
 //
-// Moved from aep-api's sourcecontrol/githubhost (phase 4). Repo content never
+// Moved from aep-api's sourcecontrol/githubhost. Repo content never
 // goes through here: it runs on the pod's git engine (internal/repo). GraphQL
 // (graphql.go) is used only where REST cannot answer in one call (milestone
 // counts and comment reads).

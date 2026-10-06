@@ -23,7 +23,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 )
 
-// The owner guard (Q-8): every /internal/v1/repos/{owner}/{repo}/… operation
+// The owner guard: every /internal/v1/repos/{owner}/{repo}/… operation
 // acts on a repository of the org's connected GitHub account (AE_GITHUB_OWNER)
 // only. One middleware applies it, behind the gate and the validator (a
 // malformed owner is the validator's 400) and ahead of every operation, so

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P0 baseline (scenario 0.1, 0.5). Read-only.
+# P0 baseline (0.5). Read-only.
 # 0.5 asserts a fresh org (the two kept client rows may remain); FRESH_ORG=0 skips it on a cluster that has one.
 # shellcheck source=tests/e2e/ae-studio/checks/lib.sh
 . "$(dirname "$0")/lib.sh"

@@ -148,7 +148,7 @@ func TestPlanMilestone_RequiresAVersion(t *testing.T) {
 }
 
 // One turn per project is the pod's lock now: a different turn running is
-// ErrTurnInProgress, which the planning activity retries (05 §5).
+// ErrTurnInProgress, which the planning activity retries.
 func TestPlanMilestone_ATurnInProgressSurfaces(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v1"})
 	r.pod.FailOp(aestudiotest.OpStartTurn, fmt.Errorf("%w (active turn x)", aestudiotools.ErrTurnInProgress))

@@ -18,7 +18,7 @@ package organization_test
 
 // DBTEST tier (skips under -short; `make test-db` runs it): the model
 // connection's readers take the SecretReference name from the org_secrets
-// row (R7), with the fixed key; the ai-agent model access takes the vault
+// row, with the fixed key; the ai-agent model access takes the vault
 // path from that SecretReference's spec (names and paths, never a value).
 // There is no fallback to the pre-reference-row triplet columns.
 
@@ -64,7 +64,7 @@ func TestKeyRef_FollowsARotation(t *testing.T) {
 	}
 }
 
-// K-1: KeyPathRef reads no triplet column. The name is the default-key row's,
+// KeyPathRef reads no triplet column. The name is the default-key row's,
 // the vault path is the one that reference's spec.data reads its api-key
 // from. A save whose vault write failed saved nothing, so the path stays the
 // previous save's; a reference that is gone fails closed, value-free.
@@ -105,7 +105,7 @@ func TestKeyPathRef_WithoutAReaderFailsClosed_DB(t *testing.T) {
 	}
 }
 
-// K-2: an org whose reference row is missing (saved before the rows existed)
+// An org whose reference row is missing (saved before the rows existed)
 // has no other source for its key's reference: dispatch fails closed.
 func TestResolveCodingCredential_WithoutARowFailsClosed_DB(t *testing.T) {
 	t.Parallel()

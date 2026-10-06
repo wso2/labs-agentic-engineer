@@ -23,7 +23,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/gen/mcpsock"
 )
 
-// The MCP socket's snapshot operations (ticket 04 §6, 07 §6): the agent's
+// The MCP socket's snapshot operations (design/route-groups.md): the agent's
 // project lookup and its skills lookup. Each resolves through aep-api on
 // every call and writes the snapshots the agent then reads from its
 // read-only /snapshots mount. Errors share the Files error map

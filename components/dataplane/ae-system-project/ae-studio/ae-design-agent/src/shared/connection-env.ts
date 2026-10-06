@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's model connection (07 §4): the organization's one connection,
+ * The pod's model connection: the organization's one connection,
  * rendered into the pod env by aep-api (`A/organization/aestudio/desired.go`).
  *
  * - `AE_MODEL_CONNECTION`: JSON, the `TurnConnection` wire shape plus

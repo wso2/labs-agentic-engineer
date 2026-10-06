@@ -17,7 +17,7 @@
  */
 
 /**
- * The marketplace conversations' memory bounds (R2-I2): a conversation idle
+ * The marketplace conversations' memory bounds: a conversation idle
  * past `MARKETPLACE_IDLE_MS` is evicted, and an owner keeps at most
  * `MARKETPLACE_PER_OWNER` (the oldest-used goes first). An evicted id is
  * unknown (404), so the console's 404 recovery starts a new one, and its

@@ -147,7 +147,7 @@ func (c *alreadyClosedCycles) FinishCancelled(context.Context, string) (*deliver
 	return nil, nil
 }
 
-// Q-5: a legacy release renders no suspend. The cycle still closes as
+// A legacy release renders no suspend. The cycle still closes as
 // cancelled, but it is NOT marked — the settler reads the missing stamp as
 // "suspend did not apply" — and nothing announces a suspend.
 func TestReap_LegacyReleaseClosesButDoesNotMark(t *testing.T) {
@@ -236,7 +236,7 @@ func TestReap_FallsBackToTheWriteTarget(t *testing.T) {
 	}
 }
 
-// R3-M1: a suspend another caller already stamped is not announced again.
+// A suspend another caller already stamped is not announced again.
 func TestReap_DoesNotAnnounceASuspendStampedElsewhere(t *testing.T) {
 	logs := captureLogs(t)
 	store := &cancelCycles{latest: &delivery.RunCycle{ID: "c1", JobRef: "ca-c1-x", Environment: "development"}, stampedElsewhere: true}

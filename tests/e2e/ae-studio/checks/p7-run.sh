@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P7 Build run (scenario 7.3, 7.8, 7.12, 7.14, 7.16, 7.17, 7b). Read-only.
+# P7 Build run (7.8, 7.12, 7.14, 7.16, 7.17, 7b). Read-only.
 # The OC Component is named <project>-<jobRef> (scoped); run_cycles.job_ref is
 # the unscoped ca-... name, so every lookup matches on JOB_REF as a substring.
 # Checks that need the coding Component to still exist (7.8 live half, 7.16)

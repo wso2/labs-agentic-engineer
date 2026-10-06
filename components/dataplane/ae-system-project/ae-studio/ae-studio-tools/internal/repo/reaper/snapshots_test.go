@@ -58,7 +58,7 @@ func skillsSnap(root, sha string) string {
 	return filepath.Join(repo.SkillsSnapshotsDir(root), sha)
 }
 
-// The snapshot-age pass (20 §3) trashes a <sha> leaf unused for longer than
+// The snapshot-age pass trashes a <sha> leaf unused for longer than
 // SnapshotMaxAge unless its sha is a mirror's current HEAD (mirrors are keyed
 // by owner/repo, not project, so any mirror's HEAD keeps a leaf); the skills
 // snapshots follow the org skills mirror. A project with no mirror (evicted,
@@ -141,7 +141,7 @@ func TestBudget_EvictsMirrorsAfterSnapshots(t *testing.T) {
 	mustNotExist(t, mirror)
 }
 
-// Q-24: ae-design-agent's subPath mount pins the snapshots dir's inode. No
+// Ae-design-agent's subPath mount pins the snapshots dir's inode. No
 // pass (age, budget, trash purge, a forced sweep) and no TrashRepo ever
 // removes or renames snapshots/, snapshots/projects/ or snapshots/skills/:
 // only <sha> leaves go.

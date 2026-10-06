@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// The Files port (07 §11): spec content and commits come from ae-studio-tools
+// The Files port: spec content and commits come from ae-studio-tools
 // over the pod-local Files socket
 // (packages/contracts/sockets/ae-studio/files/openapi.yaml). The socket is
 // reachable only inside the pod, so the calls carry no token, and the pod

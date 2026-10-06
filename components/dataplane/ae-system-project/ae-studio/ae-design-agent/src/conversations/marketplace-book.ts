@@ -17,14 +17,14 @@
  */
 
 /**
- * The pod's marketplace conversations (07 §6). A marketplace conversation has
+ * The pod's marketplace conversations. A marketplace conversation has
  * no project: each belongs to the user who created it (the JWT `sub`), and
  * every call naming it must come from that user; to anyone else it does not
  * exist. Ids are plain uuids; messages stay behind the `ConversationStore`
  * port, as for project threads. Nothing outlives the process. The console's
  * "rotate on Start" is a new conversation.
  *
- * Memory is bounded (R2-I2): a conversation unused for `MARKETPLACE_IDLE_MS`
+ * Memory is bounded: a conversation unused for `MARKETPLACE_IDLE_MS`
  * is evicted, and an owner keeps at most `MARKETPLACE_PER_OWNER` (a new one
  * evicts the owner's least recently used). Any call of the owner naming a
  * conversation is a use. Eviction drops the owner entry and the stored

@@ -15,7 +15,7 @@
 // under the License.
 
 // Package skills is the org skill library as the pod reads it, and the
-// project skill mirror built from it (05 §10).
+// project skill mirror built from it.
 //
 // KNOWN DUPLICATE: the catalog parse here (layout, frontmatter, manifest) is
 // copied from aep-api's internal/spec (repo_store.go loadCatalog and

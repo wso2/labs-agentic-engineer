@@ -51,7 +51,7 @@ const (
 	CodeGatewayTimeout     = "gateway_timeout"
 	CodeServiceUnavailable = "service_unavailable"
 
-	// The AE Studio answers (05 §5). Only the edge's classifier writes them:
+	// The AE Studio answers. Only the edge's classifier writes them:
 	// a slice never constructs these, it keeps the sentinel in the chain.
 	CodeGitHubNotConnected    = "github_not_connected"
 	CodeAEStudioUnavailable   = "ae_studio_unavailable"

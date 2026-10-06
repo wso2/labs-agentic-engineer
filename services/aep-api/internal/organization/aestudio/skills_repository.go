@@ -17,7 +17,7 @@
 package aestudio
 
 // skills_repository.go — where the org's skills library lives, as AE Studio's
-// tools pod resolves it before it writes a turn's Org skills snapshot (07 §6).
+// tools pod resolves it before it writes a turn's Org skills snapshot.
 // Like a project lookup it is asked on every turn and never cached in the pod.
 
 import (

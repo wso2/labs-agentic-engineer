@@ -117,7 +117,7 @@ type call func(ctx context.Context, c *gen.Client, impersonateOrg string, auth g
 // body open, or the mapped error (errorFromProblem). A refused token (401, or
 // a 403 the pod's auth layer wrote) is dropped and the call sent once more
 // with a fresh one when replayable says the request can be sent again; a 403
-// also drops the org's Target first (K-14: a stale URL may point at another
+// also drops the org's Target first (a stale URL may point at another
 // org's pod). Refused again, the call is ErrAEStudioMisconfigured and logs
 // ae_studio.auth_failed {org, status}.
 func (a *Adapter) send(ctx context.Context, org, op string, fn call, replayable func() bool) (*http.Response, error) {
@@ -174,7 +174,7 @@ func bearer(tok string) gen.RequestEditorFn {
 }
 
 // tokenFailed logs a misconfigured AE-only client, value-free: missing
-// credentials once per process (C5, Q-13), a refused client every time.
+// credentials once per process (C5), a refused client every time.
 func (a *Adapter) tokenFailed(ctx context.Context, org string, err error) error {
 	switch {
 	case errors.Is(err, errClientCredentialsMissing):

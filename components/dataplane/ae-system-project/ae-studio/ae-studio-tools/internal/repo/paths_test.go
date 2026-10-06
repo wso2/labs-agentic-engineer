@@ -38,7 +38,7 @@ func TestPathDerivation(t *testing.T) {
 }
 
 // GitHub names are case-insensitive: every spelling of one repository is one
-// mirror (Q-4), so the Room's save path and a direct owner/repo caller share
+// mirror, so the Room's save path and a direct owner/repo caller share
 // one lock and one disk copy.
 func TestRepoDirIsCaseInsensitive(t *testing.T) {
 	const root = "/workspaces"

@@ -129,7 +129,7 @@ func TestOrgDisconnect_AlreadyDisconnected_NoOp_DB(t *testing.T) {
 	}
 }
 
-// disconnectSteps records the 06 §9 steps with the credential status each
+// disconnectSteps records the disconnect steps with the credential status each
 // one saw, proving all ran before Phase D.
 type disconnectSteps struct {
 	t      *testing.T
@@ -171,7 +171,7 @@ func connectedAcme(t *testing.T) (*gorm.DB, *organization.CredentialService) {
 	return db, credSvc
 }
 
-// 06 §9 gitpat disconnect, in order, all before Phase D: the hooks (best
+// The gitpat disconnect, in order, all before Phase D: the hooks (best
 // effort, so a failure goes on), the AE Studio Resource (held until the
 // cascade ends), the gitpat rows and references, the hook ids.
 func TestDisconnect_UnregistersHooksFirst(t *testing.T) {

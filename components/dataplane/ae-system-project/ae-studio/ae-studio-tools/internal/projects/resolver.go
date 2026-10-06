@@ -17,7 +17,7 @@
 // Package projects resolves an AE Studio project, and the org's skills
 // library, to its GitHub repository.
 // The answer comes from aep-api on every call and is never cached in the pod
-// (ticket 04 §2): a project moved or removed in AEP is seen on the next call,
+// (design/route-groups.md): a project moved or removed in AEP is seen on the next call,
 // and an answer for one call is never reused for another.
 package projects
 
@@ -71,15 +71,15 @@ type Resolver interface {
 // GET /internal/v1/ae-studio/skills/repository. c carries the org's ae-studio
 // client token (platform.NewAEPAPI), which scopes the answer to the pod's org. It
 // takes the raw-op interface: the decision is the HTTP status, never a parsed
-// error body (Q-2).
+// error body.
 func NewAEPAPIResolver(c aepapi.ClientInterface) Resolver {
 	return &aepAPIResolver{c: c}
 }
 
 type aepAPIResolver struct{ c aepapi.ClientInterface }
 
-// Resolve maps by HTTP status and never reads an error body for a decision
-// (Q-2): 200 → the repository, 404 → ErrUnknown, 401/403 (after the
+// Resolve maps by HTTP status and never reads an error body for a decision:
+// 200 → the repository, 404 → ErrUnknown, 401/403 (after the
 // transport's one retry) or a rejected ae-studio client → ErrUnavailable and
 // ErrMisconfigured, anything else or a transport failure → ErrUnavailable.
 func (r *aepAPIResolver) Resolve(ctx context.Context, project string) (Repository, error) {

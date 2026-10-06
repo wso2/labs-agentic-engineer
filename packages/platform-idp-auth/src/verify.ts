@@ -17,7 +17,7 @@
  */
 
 /**
- * The Platform IdP token check (07 §8): a signature over the IdP's JWKS, the
+ * The Platform IdP token check: a signature over the IdP's JWKS, the
  * exact issuer, a required exp, and an aud that names one of the token kinds
  * the caller accepts. A token matching no kind is refused. The TypeScript
  * twin of ae-studio-tools' `internal/auth/verify.go`.

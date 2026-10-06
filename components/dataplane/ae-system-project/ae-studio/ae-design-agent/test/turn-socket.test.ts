@@ -17,7 +17,7 @@
  */
 
 /**
- * The Turn socket (07 §5, `packages/contracts/sockets/ae-studio/turn/`): the
+ * The Turn socket (`packages/contracts/sockets/ae-studio/turn/`): the
  * server-started turns ae-studio-tools relays. A Plan turn's ok Task results
  * become `task-op` lines and nothing else does; a kickoff joins the project's
  * Room on ae-collab's Room socket as the credited user; a retry with the

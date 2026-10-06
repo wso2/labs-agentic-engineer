@@ -57,7 +57,7 @@ func recordingOC(t *testing.T) (*httptest.Server, func() seen) {
 	return srv, func() seen { mu.Lock(); defer mu.Unlock(); return last }
 }
 
-// P-19 / I-2: where the install has an M2M identity and impersonates orgs,
+// Where the install has an M2M identity and impersonates orgs,
 // AE Studio's clients (status reads and converge writes alike) never pass the
 // caller's user JWT through, whatever the request strategy decides; the
 // request's own clients still do.

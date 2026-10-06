@@ -16,7 +16,7 @@
 
 package organization
 
-// client_ensure.go — EnsureClient (06 §5): the org's two Thunder clients,
+// client_ensure.go — EnsureClient: the org's two Thunder clients,
 // aep-publisher-<org> and ae-studio-<org>, and their secrets in the org's
 // vault references. Thunder hands a client secret out once, on create, so
 // the reference is the only copy AE keeps:

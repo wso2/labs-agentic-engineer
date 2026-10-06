@@ -227,7 +227,7 @@ func TestCheckSecretRev(t *testing.T) {
 	}
 }
 
-// Phase 3 (Q-16): the MCP and Turn sockets and the ae-studio client are
+// Phase 3: the MCP and Turn sockets and the ae-studio client are
 // required (fail closed at boot); AE_GITHUB_OWNER is read but may be empty,
 // which refuses every remote-git call instead.
 func TestLoad_MCPSocketKeys(t *testing.T) {
@@ -265,7 +265,7 @@ func TestLoad_MCPSocketKeys(t *testing.T) {
 	}
 }
 
-// Phase 4 (Q-6): AE_WEBHOOK_URL, where the repo hooks the pod registers
+// Phase 4: AE_WEBHOOK_URL, where the repo hooks the pod registers
 // deliver, is a required absolute http(s) URL: a hook never registers with an
 // empty URL.
 func TestLoad_WebhookURL(t *testing.T) {

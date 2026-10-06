@@ -256,7 +256,7 @@ func TestEnsureSkillsSnapshot(t *testing.T) {
 	}
 }
 
-// Admission (20 §2): at 90 % usage a new snapshot is refused with a disk-full
+// Admission: at 90 % usage a new snapshot is refused with a disk-full
 // error and nothing is published; an existing one is still served.
 func TestEnsureSnapshotAdmissionAt90(t *testing.T) {
 	fx := NewFixture(t, seedFiles())
@@ -295,7 +295,7 @@ func TestEnsureSnapshotAdmissionAt90(t *testing.T) {
 	}
 }
 
-// Q-24: only <sha> leaves are ever trashed. The snapshot roots the agent's
+// Only <sha> leaves are ever trashed. The snapshot roots the agent's
 // subPath mount pins are refused, as is anything outside them.
 func TestTrashSnapshotOnlyTakesShaLeaves(t *testing.T) {
 	fx := NewFixture(t, seedFiles())

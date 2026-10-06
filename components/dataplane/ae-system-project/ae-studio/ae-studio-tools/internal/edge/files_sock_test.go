@@ -177,7 +177,7 @@ func problemCode(t *testing.T, r socketReply) string {
 
 const oneWrite = `{"writes":[{"path":"specs/a.md","content":"b","baseSha":""}],"deletes":[],"message":"m"}`
 
-// Review Focus 2: every call resolves the project through aep-api; a 404 is
+// Every call resolves the project through aep-api; a 404 is
 // a denial and a 5xx a retryable 503, neither runs a git op; the socket
 // schema has no owner/repo, so a request carrying one never reaches a lookup.
 func TestFilesSocket_ResolvesEveryCallAndMapsErrors(t *testing.T) {

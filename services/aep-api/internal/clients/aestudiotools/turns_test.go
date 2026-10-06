@@ -113,7 +113,7 @@ func TestStartTurn_StreamsEventsInOrderKeepAlivesIncluded(t *testing.T) {
 	}
 	// The result's free-text message is the agent's (possibly a provider's
 	// error body): the adapter does not read it, so it cannot reach an error,
-	// a log line or Temporal history (R1-M4).
+	// a log line or Temporal history.
 	if strings.Contains(fmt.Sprintf("%+v", evs[3]), "agent went away") {
 		t.Fatalf("result event %+v carries the pod's free-text message", evs[3])
 	}
@@ -227,7 +227,7 @@ func TestStartTurn_MalformedLineEndsTheStream(t *testing.T) {
 	}
 }
 
-// T-15(b): the stream runs up to 30 min; the per-call timeout of the unary
+// The stream runs up to 30 min; the per-call timeout of the unary
 // ops must not cut it, only the caller's ctx may.
 func TestStartTurn_StreamOutlivesTheCallTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -324,7 +324,7 @@ func TestStartTurn_TheCallersDeadlineIsNotUnavailable(t *testing.T) {
 	}
 }
 
-// K-1: a provider_limit result may say when the provider's limit resets. The
+// A provider_limit result may say when the provider's limit resets. The
 // adapter reads it, so the planning activity can wait that long rather than
 // a fixed delay; a value that is not an RFC 3339 time is dropped (the fixed
 // delay applies), never a broken stream.

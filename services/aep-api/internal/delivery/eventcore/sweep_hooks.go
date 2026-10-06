@@ -26,7 +26,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// hookRepair is the sweep's hook backstop (05 §7 step 4). A project create
+// hookRepair is the sweep's hook backstop. A project create
 // whose hook registration failed keeps going with a warning, and the row is
 // left with no hook id; each pass ensures a hook for every such ready row,
 // whatever its age (a row that holds an id keeps its hook: R12, no migration

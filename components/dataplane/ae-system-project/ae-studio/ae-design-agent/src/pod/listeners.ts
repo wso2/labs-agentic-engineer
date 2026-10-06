@@ -17,7 +17,7 @@
  */
 
 /**
- * The pod's listeners (07 §5/§8/§9, 08 §2). The public port serves the `/v1`
+ * The pod's listeners. The public port serves the `/v1`
  * edge (`edge/routes.ts`) behind the Platform IdP adapter of `authenticate`:
  * a user token of the pod's org, never an M2M token. Nothing else is served
  * there. The Turn socket (`edge/turn-socket.ts`) is a Unix socket on the
@@ -151,7 +151,7 @@ function urlOf(server: Server): string {
 
 /**
  * Starts both listeners. Refuses to start on a Secret the pod was not
- * rendered for (08 §7), so kubelet restarts the container until ESO has
+ * rendered for, so kubelet restarts the container until ESO has
  * refreshed it. The revisions are hashes of reference names, not secrets.
  */
 export async function startPodListeners(cfg: PodConfig, deps: PodListenerDeps): Promise<PodListeners> {

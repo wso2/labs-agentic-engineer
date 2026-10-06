@@ -586,7 +586,7 @@ export function useAgentChat(org: string, scopeArg: ChatScope): AgentChat {
       } catch (err) {
         markSending(false);
         setIsSending(false);
-        // Another turn is running (10 §4): nothing went wrong with this
+        // Another turn is running: nothing went wrong with this
         // message, so it is not marked failed — its words stay in the
         // composer (the caller keeps the draft on a refused send) and the
         // row withdraws. The user watches the running turn instead.

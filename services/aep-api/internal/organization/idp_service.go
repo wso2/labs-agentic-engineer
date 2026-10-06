@@ -302,7 +302,7 @@ func (s *idpService) ensurePublisherApp(ctx context.Context, orgID, actor, orgOU
 	return app, nil
 }
 
-// RequirePublisherForBuild is the POST /build gate (06 §3, O-3): the org's
+// RequirePublisherForBuild is the POST /build gate: the org's
 // ae-publisher-client row, which the gitpat submit's client ensure writes, is
 // the record that the runner's publisher credentials exist. It only reads:
 // no Thunder call, no heal, no write. A failed read is returned as is, so it

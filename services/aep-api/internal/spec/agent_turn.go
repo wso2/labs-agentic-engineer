@@ -18,7 +18,7 @@ package spec
 
 import "time"
 
-// AgentTurn is one row of the finished-turn ledger (07 §12): every turn an
+// AgentTurn is one row of the finished-turn ledger: every turn an
 // org's AE Studio pod ran lands here once, whole and already finished,
 // through TurnRepository.RecordFinished (record-turn-usage). Nothing runs
 // here and no row is ever updated after it is written.
@@ -28,7 +28,7 @@ import "time"
 // id must never stand in for this org's (migrate's phase24 moved the primary
 // key off id alone). OrgID leads so the key serves org-scoped reads.
 //
-// Rows written before phase 3 came from aep-api's in-process turn engine;
+// Older rows came from aep-api's in-process turn engine;
 // phase24 gave them a kind and a start time and dropped the columns only that
 // engine wrote.
 type AgentTurn struct {

@@ -219,7 +219,7 @@ describe("useAnchoredTurn", () => {
     expect(mockStartTurn).not.toHaveBeenCalled();
   });
 
-  // Decision 10 §4: a refused send is not a failure of the message. The turn
+  // A refused send is not a failure of the message. The turn
   // that refused it is the thing to watch, so the console attaches it — here
   // through the active-turn cache the mounted panel's watch reads — and gives
   // the words back to the caller.

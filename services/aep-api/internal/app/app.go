@@ -285,12 +285,12 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// reference), coding dispatch (which credential a run mounts), AE Studio
 	// and Agent Manager (the connection, no key). Its `priced` reads the same
 	// rate card the usage stamps are priced from. Its key readers take the
-	// reference names from the org secret rows (R7), and the ai-agent model
+	// reference names from the org secret rows, and the ai-agent model
 	// access its vault path from that reference's SecretReference.
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, orgSecretRepo, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter).
 		WithSecretReferences(modelAccessSecretRefClient)
-	// Each org's AE Studio (ticket 08): its status reads and its converge go
+	// Each org's AE Studio (ADR-0040): its status reads and its converge go
 	// out as aep-api's own identity wherever the install impersonates orgs
 	// (aeStudioOC).
 	aeStudio := aestudio.New(aestudio.Deps{
@@ -307,7 +307,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
 	// A project's repository content is read through its org's pod, and the
 	// version tag is cut there. aep-api's own commits and tags name no
-	// author, committer or tagger: the pod uses its gitpat identity (05 §3).
+	// author, committer or tagger: the pod uses its gitpat identity.
 	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools)
 	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
@@ -387,7 +387,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// promotion ordering, so it is built once here instead of twice.
 	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
 	// A create needs the org's AE Studio serving before the OC project exists
-	// (05 §7): it holds the project's repository.
+	// because it holds the project's repository.
 	projectService.SetAEStudioReady(studioTools)
 	projectService.SetProjectCellProvisioner(projectCellClient)
 	projectService.SetWriteTargets(writeTargets)
@@ -655,7 +655,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		componentClient, repoService, identities{cred: credService},
 		executionRepo,
 		cfg.AgentPlatformURL,
-		// The GitHub PAT reference a run mounts is the github-pat row's (R7).
+		// The GitHub PAT reference a run mounts is the github-pat row's.
 		orgRepo, modelConnections, orgSecretRepo).
 		// The org's GitHub account, stamped as AEP_GITHUB_OWNER: the owner
 		// guard's reference for the runner's in-process remote-git tools.
@@ -669,7 +669,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		codingagent.NewIDPPublisherResolver(orgSecretRepo),
 		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
 	)
-	// The OpenChoreo Component dispatch path (phase 08): one Component per run
+	// The OpenChoreo Component dispatch path: one Component per run
 	// cycle in the milestone's own project, rendered by OC into the project's
 	// dataplane namespace. It needs only the OC client and the runner image —
 	// no proxy, no in-cluster Kubernetes client, no per-env branch — and it is
@@ -761,7 +761,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The reconcile sweep (missed webhooks / disaster recovery) + the exec
 	// watcher (OC WorkflowRun → execution-row outcomes + build terminals).
 	// It also repairs the hook of every ready project repository whose row
-	// holds no hook id (a create-time registration that failed, 05 §7).
+	// holds no hook id (a create-time registration that failed).
 	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0).
 		WithHookEnsurer(activeOrgHooks{hooks: webhookRegService, creds: credService})
 	// The build half of the same plane. The ExecWatcher below only reports build
@@ -782,7 +782,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// it shares, and reports outwards rather than importing a peer.
 		WithBuildObserver(eventPlane)
 	// A build that fails at git-clone-auth within budget is re-minted + re-tried
-	// (§7): the build-secret stager is always wired, so the retrier is too.
+	// (the build-secret stager is always wired, so the retrier is too).
 	execWatcher.WithBuildRetrier(codingExecutor, codingExecutor.AuthRetryBudget())
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
@@ -799,7 +799,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Org-scoped GitHub connect/disconnect surface. Tasks are GitHub issues now
-	// (no rows to abandon on disconnect); the disconnect (06 §9) unregisters
+	// (no rows to abandon on disconnect); the disconnect unregisters
 	// the org's repo hooks while its pod still holds the gitpat, deletes its
 	// AE Studio Resource, removes the gitpat's and webhook secret's rows and
 	// references, forgets the hook ids, then severs the credential.
@@ -928,7 +928,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioTools)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
 	// The AE Studio tools pod has its saves' dependency stubs completed here,
-	// over the registry and the guarded fetch (04 §4).
+	// over the registry and the guarded fetch.
 	// The request carries the org's AE Studio client token (ae-studio-<org>),
 	// not a user JWT, so the registry's OpenChoreo reads run as the BFF's own
 	// service identity (X-Impersonate-Org from the namespace), as the runner's

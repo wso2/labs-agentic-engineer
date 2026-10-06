@@ -154,7 +154,7 @@ describe("AgentChatPanel — pendingSeed + turn-end wiring (#252 Task 5)", () =>
     expect(mockSend).toHaveBeenCalledTimes(1);
   });
 
-  // 409 turn_in_progress (10 §4): a refused seed has no composer text behind
+  // 409 turn_in_progress: a refused seed has no composer text behind
   // it, so its words land there rather than being lost.
   it("puts a refused seed's words into the composer", async () => {
     mockSend.mockResolvedValueOnce(false);

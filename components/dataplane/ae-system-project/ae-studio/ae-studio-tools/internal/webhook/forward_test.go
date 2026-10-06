@@ -84,7 +84,7 @@ func TestForward_AcceptsAndRefusesPerTheReplyRule(t *testing.T) {
 	}
 }
 
-// Review Focus 3: the HMAC GitHub made is over these exact bytes, and aep-api
+// The HMAC GitHub made is over these exact bytes, and aep-api
 // hands them to its handlers; nothing in between may re-serialize them.
 func TestForward_SendsExactBytes(t *testing.T) {
 	body := []byte("{\"a\":  1,\n \"repository\":{\"full_name\":\"acme/greeter\"}}") // odd spacing on purpose

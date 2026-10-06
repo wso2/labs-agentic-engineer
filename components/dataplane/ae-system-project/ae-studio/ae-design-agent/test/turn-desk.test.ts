@@ -146,7 +146,7 @@ test("lock release: a runner that rejects before the first frame", async () => {
   await settle();
   assert.equal(desk.active(proj), null);
   assert.equal(desk.status(t.turnId)?.reason, "internal");
-  // The error's own text (paths, room ids, undici text) is never shown (R2-M6).
+  // The error's own text (paths, room ids, undici text) is never shown.
   assert.equal(desk.status(t.turnId)?.message, INTERNAL_TURN_MESSAGE);
   assert.deepEqual((await frames(desk.attach(t.turnId, 0)!)).map((f) => f.part), [
     { type: "turn-failed", reason: "internal", message: INTERNAL_TURN_MESSAGE },

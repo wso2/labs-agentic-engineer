@@ -142,7 +142,7 @@ export const trackOverrides: Record<TrackScenario, TrackAggregates> = {
   },
   // The org's AE Studio cannot answer for the repo (restarting, or GitHub not
   // connected): the poll still answers, the spec facts are unknown, and v1
-  // stays built and live (05 §6).
+  // stays built and live.
   "spec-unavailable": {
     spec: { ...noSpec, availability: "unavailable", unavailableReason: "ae_studio_unavailable" },
     build: { version: "v1", status: "succeeded" },
@@ -720,7 +720,7 @@ function task(
   };
 }
 
-// v3's tasks — one per row state the build page can render (ADR-0021 §3, §4),
+// v3's tasks — one per row state the build page can render (ADR-0021 §3),
 // so the design's 2b arrangement is actually demonstrable in mock mode. Scoped
 // to `v3` by lineage, which is what `list-tasks?tag=` filters on.
 function v3Task(

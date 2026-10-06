@@ -783,7 +783,7 @@ func TestCycleProgress_AnExistingPodIsTheSourceWhateverItsPhase(t *testing.T) {
 	}
 }
 
-// Fix round 1 (I-1): a closed cycle whose pod is listed but whose log 404s
+// Fix round 1: a closed cycle whose pod is listed but whose log 404s
 // (the pod is being reaped) reads the archive, as the v2 feed does — never a
 // final "no output".
 func TestCycleProgress_AListedPodWithAMissingLogReadsTheArchive(t *testing.T) {

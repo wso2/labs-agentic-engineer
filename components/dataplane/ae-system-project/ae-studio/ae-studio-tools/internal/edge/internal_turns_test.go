@@ -118,7 +118,7 @@ func turnRequest(turnID string) string {
 
 var greeterRepo = map[string]projects.Repository{"greeter": {Owner: "acme-gh", Repo: "greeter"}}
 
-// TestTurnsRelay_DrainsAfterCallerLeavesAndReattaches is Review Focus 3:
+// TestTurnsRelay_DrainsAfterCallerLeavesAndReattaches:
 // the caller leaves mid-stream, the turn still completes and turns.result
 // is logged; the same turnId again reattaches; the path must name the
 // project's own repository.
@@ -162,7 +162,7 @@ func TestTurnsRelay_DrainsAfterCallerLeavesAndReattaches(t *testing.T) {
 	}
 }
 
-// TestTurnsRelay_BodyCapIsTheAgents (R1-M3): start-repo-turn takes what the
+// TestTurnsRelay_BodyCapIsTheAgents: start-repo-turn takes what the
 // agent's Turn socket takes (4 MiB), not the group's 1 MiB default. A re-plan's
 // taskContext carries the open Tasks' bodies, and a 413 here is permanent to
 // aep-api, which would fail the version's plan outright.
@@ -187,7 +187,7 @@ func TestTurnsRelay_BodyCapIsTheAgents(t *testing.T) {
 	}
 }
 
-// TestTurnsRelay_DifferentTurnWhileRunningIs409: Review Focus 3, the third
+// TestTurnsRelay_DifferentTurnWhileRunningIs409: the third
 // case.
 func TestTurnsRelay_DifferentTurnWhileRunningIs409(t *testing.T) {
 	sock := turnstest.New(t, turnstest.Script{Hold: 500 * time.Millisecond})

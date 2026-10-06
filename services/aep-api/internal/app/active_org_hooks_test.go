@@ -44,7 +44,7 @@ func (c credStatus) Status(context.Context, string) (*organization.Projection, e
 
 // The sweep's hook repair registers only for an org whose GitHub credential
 // is active: a disconnected or never-connected org reads as absent (passed
-// by this tick), so the repair never undoes a disconnect (I-1).
+// by this tick), so the repair never undoes a disconnect.
 func TestActiveOrgHooks_RegistersOnlyForAnActiveCredential(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

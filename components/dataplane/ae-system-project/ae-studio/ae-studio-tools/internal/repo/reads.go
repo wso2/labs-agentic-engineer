@@ -47,7 +47,7 @@ func (e *Engine) Head(ctx context.Context, ref RepoRef, at string) (string, erro
 // until the next fetch-bearing op. Intended for hot-path reads (the status
 // poll) that must not pay a per-read network round-trip. ensureMirror still
 // clones on first-ever access (a stat when the mirror is already present).
-// Ported from gitfs (Task 4.2a).
+// Ported from gitfs.
 func (e *Engine) HeadLocal(ctx context.Context, ref RepoRef) (sha string, err error) {
 	defer func() { err = e.mapDiskErr(err) }()
 	p, err := e.pathsFor(ref)

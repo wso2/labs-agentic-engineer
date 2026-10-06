@@ -29,7 +29,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
-// The one budget over studio-data (ticket 20 §2): eviction starts at
+// The one budget over studio-data (design/clone-storage.md): eviction starts at
 // highPct of the budget and stops once usage is back at lowPct.
 const (
 	highPct = 85

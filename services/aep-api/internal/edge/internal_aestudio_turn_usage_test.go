@@ -177,7 +177,7 @@ func TestTurnUsage_OptionalFieldsStayEmpty(t *testing.T) {
 	}
 }
 
-// Tenancy on ingest (Review Focus 4, the user's D-4 ruling): every record's
+// Tenancy on ingest (by design): every record's
 // project must be one of the token org's projects. One that is not refuses
 // the WHOLE batch with 404 and nothing is written; a record without a project
 // (marketplace) is valid. The tools sender drops a 400/404/413/422 batch and

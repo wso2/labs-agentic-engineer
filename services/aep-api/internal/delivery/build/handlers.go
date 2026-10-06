@@ -47,7 +47,7 @@ type Handler struct {
 
 // PublisherGate refuses a build whose org has no publisher credentials (its
 // ae-publisher-client reference) before the tag is cut. It only reads: the
-// gitpat submit is the one writer of those credentials (06 §3), so a missing
+// gitpat submit is the one writer of those credentials, so a missing
 // row is delivery.ErrPublisherCredentialsMissing, which sends the user to
 // reconnect GitHub. Wired on Handler (never on Service): the StartProjectBuild
 // auto-kick trigger reaches dispatch, which refuses on its own.

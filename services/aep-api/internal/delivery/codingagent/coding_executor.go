@@ -64,7 +64,7 @@ type CodingExecutor struct {
 	anthropicKey CodingKeyResolver
 
 	// orgSecrets reads the github-pat row, the reference every run mounts
-	// (R7). Required: the PAT lives only in vault, and the row is the only
+	// Required: the PAT lives only in vault, and the row is the only
 	// record of its reference.
 	orgSecrets organization.OrgSecretRefReader
 
@@ -88,7 +88,7 @@ type CodingExecutor struct {
 	// Build-secret staging (nil → unauthenticated clone, correct for public
 	// repos). buildSecrets pre-stages the org's build git credential so a build's
 	// checkout-source step can clone a private repo; authRetryBudget bounds the
-	// git-clone-auth re-mint retries (§7).
+	// git-clone-auth re-mint retries.
 	buildSecrets    BuildSecretStager
 	authRetryBudget int
 
@@ -126,7 +126,7 @@ func NewCodingExecutor(
 	}
 }
 
-// WithOCDispatch enables the OpenChoreo Component dispatch path (phase 08).
+// WithOCDispatch enables the OpenChoreo Component dispatch path.
 // Returns the receiver for chained construction.
 func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
 	e.ocJobs = d
@@ -486,9 +486,9 @@ func (e *CodingExecutor) githubOwner(ctx context.Context, orgID string) (string,
 }
 
 // githubSecretRef is the org's GitHub PAT reference: the name its github-pat
-// row records, with the token key (R7), so a rotation never leaves a Job
+// row records, with the token key, so a rotation never leaves a Job
 // mounting the reference the write already deleted. The Job carries only
-// SecretKeyRef{Name, Key}; OpenChoreo resolves the reference itself (C10).
+// SecretKeyRef{Name, Key}; OpenChoreo resolves the reference itself.
 // No row: the org has no PAT reference (the PAT lives only in vault), and the
 // dispatch fails.
 func (e *CodingExecutor) githubSecretRef(ctx context.Context, orgID string) (SecretRef, error) {
@@ -579,7 +579,7 @@ func codingAgentRunNameFor(projectID, cycleID string) string {
 	return openchoreo.NewCodingAgentRunName(projectID, cycleID)
 }
 
-// buildPrompt is the coding-agent directive (§9): a MILESTONE REFERENCE and
+// buildPrompt is the coding-agent directive: a MILESTONE REFERENCE and
 // nothing else. The agent discovers its own working set from the live issues
 // API and follows the versioned `aep` skill for ordering, fan-out, branch
 // identity, verification and the PR contract — the platform deliberately

@@ -178,7 +178,7 @@ func TestAdapter_AuthFailureAfterRefreshIsMisconfigured(t *testing.T) {
 	}
 }
 
-// K-14: a 403 refusal of the token may come from a stale cached Target (a
+// A 403 refusal of the token may come from a stale cached Target (a
 // rolled pod of another org at the old URL): the Target is dropped and
 // resolved again before the one retry. A 401 keeps it.
 func TestAdapter_RefusalDropsTheTargetBeforeTheRetry(t *testing.T) {
@@ -213,7 +213,7 @@ func TestAdapter_RefusalDropsTheTargetBeforeTheRetry(t *testing.T) {
 	}
 }
 
-// K-15 / Q-8: the pod's owner verdict is an answer about the repository, not
+// The pod's owner verdict is an answer about the repository, not
 // a refusal of the token: no refresh, no auth_failed line, a permanent
 // ErrOwnerNotAllowed — on git ops as on references.
 func TestAdapter_OwnerNotAllowedIsNotAnAuthFailure(t *testing.T) {

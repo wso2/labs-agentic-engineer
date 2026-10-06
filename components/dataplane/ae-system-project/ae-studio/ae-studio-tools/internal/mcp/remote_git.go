@@ -19,7 +19,7 @@ package mcp
 // remote_git.go is the read-only GitHub REST client behind the two tools the
 // pod serves itself (get_remote_git_file_contents, search_remote_git_code),
 // copied from aep-api's internal/dependencies/mcpdiscovery/remote_git.go,
-// which stays for the legacy runner until phase 5. It exposes exactly two
+// which stays for the legacy runner. It exposes exactly two
 // GitHub reads:
 //
 //   - Contents API GET /repos/{owner}/{repo}/contents/{path}?ref=  (file or dir)

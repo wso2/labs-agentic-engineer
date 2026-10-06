@@ -32,7 +32,7 @@ import (
 )
 
 // Reference documents (console #383 / ADR-0017; moved from aep-api's
-// gitfs/references.go, ticket 09 §2) are the files a user attaches on the
+// gitfs/references.go) are the files a user attaches on the
 // create view. They are transient turn inputs, not spec artifacts: nothing
 // commits them and they never reach GitHub.
 //
@@ -218,7 +218,7 @@ func (e *Engine) ListReferences(_ context.Context, r OwnerRepo) ([]string, error
 // before the upload lands publishes it without references; the `/start` turn
 // then reuses it. A re-upload has the same shape with stale content. (A
 // re-upload at the same head still leaves the previous turn's overlay until
-// the next lookup; best-effort, 09 §1.)
+// the next lookup; best-effort.)
 //
 // A replacement that drops a name retires the old file, so a lingering
 // document never reaches the model. Removal is scoped by a manifest

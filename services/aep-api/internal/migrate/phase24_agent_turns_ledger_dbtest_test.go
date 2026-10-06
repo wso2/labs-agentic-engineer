@@ -205,8 +205,8 @@ func TestPhase24AgentTurnsLedger_FreshSchema(t *testing.T) {
 }
 
 // On a table already in the ledger's shape, phase24 runs on every boot and
-// must take no lock that blocks the other replica's ledger writes or reads
-// (R1-M2): no ACCESS EXCLUSIVE (DROP COLUMN, the key swap) and no full-table
+// must take no lock that blocks the other replica's ledger writes or reads:
+// no ACCESS EXCLUSIVE (DROP COLUMN, the key swap) and no full-table
 // UPDATE/DELETE. A concurrent transaction holds SHARE on agent_turns, which
 // conflicts with both; the re-run must still finish.
 func TestPhase24AgentTurnsLedger_ARerunTakesNoTableLock(t *testing.T) {

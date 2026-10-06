@@ -16,7 +16,7 @@
 
 package aestudiotools
 
-// cache.go — the one bounded LRU of immutable reads (05 §4): an answer read
+// cache.go — the one bounded LRU of immutable reads: an answer read
 // at a 40-hex commit sha never changes, so it is kept, keyed by the repo, the
 // sha, the op and its canonical arguments, and served without the hop.
 // Mutable reads (a branch tip, a tag's first resolution) always make the hop;

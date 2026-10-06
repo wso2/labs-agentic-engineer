@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# P6 design turn (scenario 6.2, 6.3, 6.8 to 6.10). Reads the watcher's file
+# P6 design turn (6.3, 6.8 to 6.10). Reads the watcher's file
 # $RUN_DIR/sse-$T.log (each line "<epoch seconds> <SSE line>"), the pod logs,
 # GitHub and the ledger. 6.3 is the one check that sends a request that could
 # start a turn, so it runs only with P6_LIVE=1 and only while the turn T is

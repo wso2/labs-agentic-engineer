@@ -420,7 +420,7 @@ describe("RunFeed", () => {
     expect(screen.queryByText(/settled/)).not.toBeInTheDocument();
   });
 
-  // R4-I2: a cancelled cycle's own `run_settled` is minted only once its pod
+  // A cancelled cycle's own `run_settled` is minted only once its pod
   // is gone and the index has caught up, long after the stream closed. The
   // stream's `done{cancelled}` is what settles the crew for a viewer who
   // watched the cancel.

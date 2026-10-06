@@ -62,7 +62,7 @@ type Deps struct {
 	Turns TurnRelay
 }
 
-// Routes is the public listener's mount table (ticket 04 §1): one row per
+// Routes is the public listener's mount table (design/route-groups.md): one row per
 // route group, each listener → gate → handler. Every gate runs before route
 // matching inside its group, so an unknown path is 401/403 before it is 404.
 // The health probes are on the health listener only. A path not listed here
@@ -102,7 +102,7 @@ func Routes(d Deps) http.Handler {
 	})
 }
 
-// FilesSocketRoutes is the Files socket's mount table (04 §7): request
+// FilesSocketRoutes is the Files socket's mount table: request
 // budget → body cap → validator → generated server (files_sock.go). No token
 // gate: the mount is the gate. Reads go through a.Reader, the apply through
 // a. A path ServeMux would redirect is 404, as on the public listener.
@@ -110,7 +110,7 @@ func FilesSocketRoutes(a files.Applier) http.Handler {
 	return withBudget(filesSocketRequestBudget, capBody(filesSocketBodyBytes, uncleanPathNotFound(filesSocketHandler(a), nil)))
 }
 
-// MCPSocketRoutes is the MCP socket's mount table (04 §7): request budget →
+// MCPSocketRoutes is the MCP socket's mount table: request budget →
 // body cap → validator → generated server (mcp_sock.go). No token gate: the
 // mount is the gate. A path ServeMux would redirect is 404.
 func MCPSocketRoutes(d MCPSocketDeps) http.Handler {

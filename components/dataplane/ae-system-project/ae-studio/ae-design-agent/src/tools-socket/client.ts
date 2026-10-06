@@ -16,7 +16,7 @@
  * under the License.
  */
 
-// The MCP socket port (07 §9): the agent's only door out of the AE Studio pod.
+// The MCP socket port: the agent's only door out of the AE Studio pod.
 // ae-studio-tools serves it on the Unix socket in AE_MCP_SOCKET
 // (packages/contracts/sockets/ae-studio/mcp/openapi.yaml). The mount is the
 // gate, so no call carries a token. Two adapters implement `ToolsSocket`:

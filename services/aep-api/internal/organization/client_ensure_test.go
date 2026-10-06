@@ -18,7 +18,7 @@ package organization
 
 // UNIT tier for EnsureClient: the real idpService, SecretRefWriter and
 // OrgSecretWriter over in-memory rows, a fake vault and a fake Thunder that
-// share one call log, so the 06 §5 table and the heal order (vault before
+// share one call log, so the table below and the heal order (vault before
 // the Thunder PUT) are observable step by step.
 
 import (
@@ -245,7 +245,7 @@ func (f *ensureFixture) profile(t *testing.T) *OrganizationIDPProfile {
 	return p
 }
 
-// --- the 06 §5 table ------------------------------------------------------------
+// --- the table ------------------------------------------------------------
 
 func TestEnsureClient_Table(t *testing.T) {
 	cases := []struct {
@@ -332,7 +332,7 @@ func TestEnsureClient_StudioRecordsIDsAndNoSecretColumn(t *testing.T) {
 	}
 }
 
-// The publisher's secret lives only in its reference (06 §2): the profile
+// The publisher's secret lives only in its reference: the profile
 // records the app's ids, and no secret or secret-reference column is written
 // (memIDPRepo refuses any column the profile does not have).
 func TestEnsureClient_PublisherSecretLivesOnlyInItsReference(t *testing.T) {
