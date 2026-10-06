@@ -20,10 +20,11 @@ import "time"
 
 // AgentTurn is one committed-truth generation turn (design D16/D17): the
 // durable record behind
-// the 202-then-attach turn API. The row is the one-active-turn-per-project
-// guard (D18) — a partial unique index ux_agent_turns_active on
-// (org_id, project_id) WHERE status = 'running' (created by the agent_turns
-// migration; AutoMigrate cannot express a partial index) — and the
+// the 202-then-attach turn API. The row is the one-active-turn guard (D18),
+// one per project and chat view — a partial unique index
+// ux_agent_turns_active_use_case on (org_id, project_id, use_case) WHERE
+// status = 'running' (created by the agent_turns migration; AutoMigrate cannot
+// express a partial index) — and the
 // crash-safety anchor: the running replica heartbeats the row, and a stale
 // heartbeat lets the sweep fail it and release the guard.
 //
@@ -46,8 +47,8 @@ type AgentTurn struct {
 	// newest successful DESIGN run" to answer whether the requirements have
 	// moved since — and a turn is otherwise indistinguishable from any other
 	// once it has finished. NOT a conversation-identity dimension (see
-	// useCaseGeneral): every turn of a project shares one thread whatever its
-	// flow, and this column only ever narrows a lookup.
+	// UseCaseGeneral): every turn of a chat view shares one thread whatever
+	// its flow, and this column only ever narrows a lookup.
 	Flow string `gorm:"type:text;index" json:"-"`
 
 	// BaseRef is the main-tip commit SHA the turn ran against (its snapshot

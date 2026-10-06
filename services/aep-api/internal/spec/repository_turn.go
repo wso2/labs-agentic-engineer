@@ -82,7 +82,8 @@ func knownTurnErrorCode(code string) bool {
 }
 
 // ErrTurnActive is returned by TryStart when another turn holds the D18
-// one-active-turn-per-project guard; the accompanying row is the active turn.
+// one-active-turn guard (per project and chat view); the accompanying row is
+// the active turn.
 var ErrTurnActive = errors.New("a turn is already running for this project")
 
 // TurnTerminal is the terminal state Finish stamps onto a running row.
@@ -122,12 +123,13 @@ type TurnTerminal struct {
 }
 
 // TurnRepository is the agent_turns row store (design D17/D18): the durable
-// turn record, the one-active guard, and the stale-heartbeat sweep. Lookups
+// turn record, the one-active guard (per project and use case — one per chat
+// view), and the stale-heartbeat sweep. Lookups
 // miss with (nil, nil), matching the house convention.
 type TurnRepository interface {
 	// TryStart INSERTs the running row; on conflict with the D18 partial
-	// unique index it fetches and returns the active row alongside
-	// ErrTurnActive. On success the passed row (ID populated) is returned.
+	// unique index (one running row per org, project and use case) it fetches
+	// and returns the active row of t.UseCase alongside ErrTurnActive. On success the passed row (ID populated) is returned.
 	TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn, error)
 
 	// Heartbeat bumps heartbeat_at on a still-running row (no-op otherwise).
@@ -142,8 +144,9 @@ type TurnRepository interface {
 	// tenant fence for the status/stream endpoints. (nil, nil) on miss.
 	Get(ctx context.Context, orgID, projectID, turnID string) (*AgentTurn, error)
 
-	// GetActive returns the project's running turn, or (nil, nil).
-	GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
+	// GetActive returns the project's running turn in one use case, or
+	// (nil, nil).
+	GetActive(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error)
 
 	// LastTerminal returns the most recent completed/failed turn of a
 	// conversation — the D20 filesChangedExternally / divergence-note input.
@@ -171,16 +174,18 @@ type TurnRepository interface {
 	// find, per feature, the run that last designed it (E1).
 	CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error)
 
-	// Newest returns the project's most recent turn row, running or terminal,
-	// across every conversation — or (nil, nil) when nothing has ever run.
+	// Newest returns the project's most recent turn row in one use case,
+	// running or terminal, across every conversation of it — or (nil, nil)
+	// when nothing has ever run there.
 	//
-	// Two callers, both needing "has this project ever had an agent work on
-	// it, and what is it doing now" (#562): the kickoff's idempotence guard,
-	// and the status poll's spec.agent field. Project-scoped rather than
+	// Two callers, both asking about the spec chat (UseCaseGeneral) "has this
+	// project ever had an agent work on it, and what is it doing now" (#562):
+	// the kickoff's idempotence guard, and the status poll's spec.agent field.
+	// Use-case-scoped so an Issues turn is never mistaken for spec work; NOT
 	// conversation-scoped BECAUSE rotation exists — a rotated thread would
 	// otherwise make an interviewed project look untouched and re-fire the
 	// kickoff into it.
-	Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
+	Newest(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error)
 
 	// SweepStale fails every running row whose heartbeat predates olderThan
 	// (reason stream-died, message "replica crashed or hung") and returns the
@@ -223,7 +228,7 @@ func (r *turnRepository) TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn
 		if res.RowsAffected > 0 {
 			return t, nil
 		}
-		active, err := r.GetActive(ctx, t.OrgID, t.ProjectID)
+		active, err := r.GetActive(ctx, t.OrgID, t.ProjectID, t.UseCase)
 		if err != nil {
 			return nil, err
 		}
@@ -320,10 +325,11 @@ func (r *turnRepository) Get(ctx context.Context, orgID, projectID, turnID strin
 	return &t, nil
 }
 
-func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
+func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND status = ?", orgID, projectID, turnStatusRunning).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ?",
+			orgID, projectID, useCase, turnStatusRunning).
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -373,14 +379,18 @@ func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID
 // every turn the project has ever run. That matters: the status poll runs this
 // every 5s per viewer while an agent works.
 //
-// A RUNNING row is always the newest one the project has: TryStart's partial
-// unique admits at most one, and no later row can be inserted while it holds
-// the guard — so ordering by creation is enough to find it, with no status
-// precedence.
-func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
+// The use case is filtered as the index is walked, so the read also steps over
+// the other chat view's turns newer than the answer — the Issues chat's recent
+// turns, bounded by that chat's own volume rather than the project's history.
+//
+// A RUNNING row is always the newest one its use case has: TryStart's partial
+// unique admits at most one per use case, and no later row of that use case
+// can be inserted while it holds the guard — so ordering by creation is enough
+// to find it, with no status precedence.
+func (r *turnRepository) Newest(ctx context.Context, orgID, projectID, useCase string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ?", orgID, projectID).
+		Where("org_id = ? AND project_id = ? AND use_case = ?", orgID, projectID, useCase).
 		Order("created_at DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

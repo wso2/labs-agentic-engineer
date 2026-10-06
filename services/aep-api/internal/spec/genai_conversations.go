@@ -38,10 +38,15 @@ import (
 // instead of panicking on a nil interface call.
 var ErrConversationsUnavailable = errors.New("conversation store not configured")
 
-// ListConversations returns the project's threads — today exactly one, the
-// current thread, created lazily on first read so a project's first visitor
-// (whoever they are) mints it and teammates converge on it.
-func (s *Service) ListConversations(ctx context.Context, orgID, projectID string) ([]ProjectConversation, error) {
+// ListConversations returns one chat view's threads — today exactly one, the
+// view's current thread, created lazily on first read so a project's first
+// visitor (whoever they are) mints it and teammates converge on it. Each view
+// has its own: the Issues chat never shares the main chat's thread.
+func (s *Service) ListConversations(ctx context.Context, orgID, projectID string, view ChatView) ([]ProjectConversation, error) {
+	useCase, err := useCaseFor(view)
+	if err != nil {
+		return nil, err
+	}
 	if s.conversations == nil {
 		return nil, ErrConversationsUnavailable
 	}
@@ -52,17 +57,19 @@ func (s *Service) ListConversations(ctx context.Context, orgID, projectID string
 			return nil, err
 		}
 	}
-	row, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, useCaseGeneral, displayIdentityFrom(ctx))
+	row, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, useCase, displayIdentityFrom(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("resolve current conversation: %w", err)
 	}
 	return []ProjectConversation{*row}, nil
 }
 
-// RotateConversation starts a fresh thread for the WHOLE project (#430 D4):
-// the current thread is demoted and a new one minted. Deliberately ungated —
-// rotation is the escape hatch from an abandoned interview, so the console
-// confirms intent (naming what is at stake) rather than this refusing.
+// RotateConversation starts a fresh main-chat thread for the WHOLE project
+// (#430 D4): the current thread is demoted and a new one minted. Other chat
+// views' threads are untouched (they rotate only when their context fills).
+// Deliberately ungated — rotation is the escape hatch from an abandoned
+// interview, so the console confirms intent (naming what is at stake) rather
+// than this refusing.
 func (s *Service) RotateConversation(ctx context.Context, orgID, projectID string) (*ProjectConversation, error) {
 	if s.conversations == nil {
 		return nil, ErrConversationsUnavailable
@@ -72,7 +79,7 @@ func (s *Service) RotateConversation(ctx context.Context, orgID, projectID strin
 			return nil, err
 		}
 	}
-	row, err := s.conversations.Rotate(ctx, orgID, projectID, useCaseGeneral, displayIdentityFrom(ctx))
+	row, err := s.conversations.Rotate(ctx, orgID, projectID, UseCaseGeneral, displayIdentityFrom(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("rotate conversation: %w", err)
 	}

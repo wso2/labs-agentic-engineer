@@ -126,14 +126,14 @@ func (s *Service) StartKickoff(ctx context.Context, orgID, projectID string) (st
 	if auth.GetAuthToken(ctx) == "" {
 		return "", ErrCollabNoToken
 	}
-	newest, err := s.turns.Newest(ctx, orgID, projectID)
+	newest, err := s.turns.Newest(ctx, orgID, projectID, UseCaseGeneral)
 	if err != nil {
 		return "", fmt.Errorf("read newest turn: %w", err)
 	}
 	if newest != nil {
 		return "", ErrKickoffAlreadyRan
 	}
-	conv, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, useCaseGeneral, displayIdentityFrom(ctx))
+	conv, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, UseCaseGeneral, displayIdentityFrom(ctx))
 	if err != nil {
 		return "", fmt.Errorf("resolve current conversation: %w", err)
 	}

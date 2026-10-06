@@ -62,6 +62,7 @@ type turnJob struct {
 	orgID            string
 	projectID        string
 	flow             string               // recognised `/<skill>` token ("start", "design", …); "" for plain chat
+	view             ChatView             // the chat view the turn was sent from (validated at admission)
 	conversationID   string               // FE-chosen uuid (agent_turns key)
 	nsConversationID string               // namespaced agents-service id
 	turn             agentsvc.TurnSpec    // what this turn is FOR (the agents service composes the text)
@@ -558,10 +559,12 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 	// with its own bounded context — a slow hook must never delay or fail the
 	// turn (the documented TurnFinishHook contract).
 	if hook := s.finishHook; hook != nil {
+		// The view passed useCaseFor at admission, so this cannot miss.
+		useCase, _ := useCaseFor(job.view)
 		go func() {
 			hookCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			hook(hookCtx, job.orgID, job.projectID, job.turnID, useCaseGeneral, term.Status)
+			hook(hookCtx, job.orgID, job.projectID, job.turnID, useCase, term.Status)
 		}()
 	}
 }

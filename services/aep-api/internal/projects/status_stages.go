@@ -86,7 +86,7 @@ type bindingsReader interface {
 // it lands, so the busiest moment in the journey is precisely the one git has
 // no record of.
 type specTurnRows interface {
-	Newest(ctx context.Context, orgID, projectID string) (*spec.AgentTurn, error)
+	Newest(ctx context.Context, orgID, projectID, useCase string) (*spec.AgentTurn, error)
 	// NewestCompletedFlow finds the newest successful run of one flow — the
 	// staleness check (#575) needs the last DESIGN run, so it can read the
 	// requirements as that run saw them.
@@ -245,7 +245,7 @@ func (s *Service) populateStages(ctx context.Context, orgName, projectName strin
 	if s.specTurns != nil {
 		g.Go(func() error {
 			var err error
-			if newestTurn, err = s.specTurns.Newest(gctx, orgName, projectName); err != nil {
+			if newestTurn, err = s.specTurns.Newest(gctx, orgName, projectName, spec.UseCaseGeneral); err != nil {
 				return fmt.Errorf("newest agent turn: %w", err)
 			}
 			return nil

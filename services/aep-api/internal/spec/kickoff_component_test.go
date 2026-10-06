@@ -152,7 +152,7 @@ func TestKickoff_ReturnsOnlyOnceTheTurnExists(t *testing.T) {
 	r.svc.Kickoff(ctx, testOrg, testProj)
 
 	// No polling, no waiting: the row is there the instant Kickoff returns.
-	newest, err := r.turns.Newest(t.Context(), testOrg, testProj)
+	newest, err := r.turns.Newest(t.Context(), testOrg, testProj, spec.UseCaseGeneral)
 	if err != nil {
 		t.Fatalf("newest turn: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestKickoff_SwallowsItsOwnFailure(t *testing.T) {
 	// No bearer — the agent cannot join the spec room, so the dispatch refuses.
 	r.svc.Kickoff(t.Context(), testOrg, testProj)
 
-	newest, err := r.turns.Newest(t.Context(), testOrg, testProj)
+	newest, err := r.turns.Newest(t.Context(), testOrg, testProj, spec.UseCaseGeneral)
 	if err != nil {
 		t.Fatalf("newest turn: %v", err)
 	}

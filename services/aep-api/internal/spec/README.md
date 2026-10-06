@@ -26,7 +26,7 @@ flowchart LR
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
+| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list a chat view's conversation thread / rotate the main one (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
 | `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
 | `tags` | list the project's spec version tags, newest first by creation time | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
@@ -157,6 +157,16 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
   this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
   reached through sourcecontrol's `Workspace`/gitfs engine.
+- **Each chat view owns its conversation** (`chat_view.go`). A create-turn body, the
+  list-conversations query and the active-turn query may name a `view` (`issues`; absent = the main
+  chat), and the view picks a use case — `general` for the main chat, `issues` for the Issues page.
+  The use case is the thread scope in `project_conversations`, the namespace of the agents-service
+  history, and the one-active-turn slot: `ux_agent_turns_active_use_case` admits one running turn per
+  (org, project, use case), so an Issues turn never blocks the spec chat nor waits on it. An Issues
+  turn is always a plain chat turn — no `/<skill>` recognition, no spec room (a `collab` flag is
+  ignored), and a spec scope or prototype feedback is refused with 400. Rehydrate is addressed by
+  thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
+  and the status poll read the main chat's newest turn only.
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`

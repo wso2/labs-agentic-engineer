@@ -49,6 +49,7 @@ const (
 	scopeField       = "scope"
 	anchorField      = "anchor"
 	intentField      = "intent"
+	viewField        = "view"
 )
 
 // The caps, and every one of them restates ONE number.
@@ -105,7 +106,10 @@ type multipartTurn struct {
 	Intent string
 	// Scope is the raw `scope` part (S6), validated with the JSON path's rules
 	// in scope.go.
-	Scope       string
+	Scope string
+	// View is the raw `view` part (the chat view); the service refuses a value
+	// outside the enum, since no request validator reads a multipart form.
+	View        string
 	Attachments []agentsvc.TurnAttachment
 }
 
@@ -160,6 +164,13 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 				return out, err
 			}
 			out.Intent = v
+			continue
+		case viewField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			out.View = strings.TrimSpace(v)
 			continue
 		case collabField:
 			v, err := readFormValue(part)

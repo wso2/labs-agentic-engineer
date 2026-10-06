@@ -25,10 +25,12 @@ import (
 
 // RunProjectConversations creates the one-current-thread-per-scope partial
 // unique index on project_conversations (#430): at most one current row per
-// (org_id, project_id, use_case). Lazy create is INSERT ... ON CONFLICT DO
-// NOTHING against this index, so teammates racing a project's first resolve
-// converge on exactly one thread — the same admission pattern as
-// ux_agent_turns_active and the milestone-run mutex. AutoMigrate creates the
+// (org_id, project_id, use_case) — one per chat view, since each view's use
+// case owns its own thread (the main chat "general", the Issues page
+// "issues"). Lazy create is INSERT ... ON CONFLICT DO NOTHING against this
+// index, so teammates racing a project's first resolve converge on exactly one
+// thread — the same admission pattern as ux_agent_turns_active_use_case and
+// the milestone-run mutex. AutoMigrate creates the
 // table from the model but cannot express a partial (WHERE-clause) index.
 //
 // Idempotent: CREATE UNIQUE INDEX IF NOT EXISTS is a no-op on re-run, and the

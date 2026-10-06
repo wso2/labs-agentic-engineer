@@ -296,7 +296,7 @@ func (m *memTurnRepo) TryStart(_ context.Context, t *spec.AgentTurn) (*spec.Agen
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.rows {
-		if r.OrgID == t.OrgID && r.ProjectID == t.ProjectID && r.Status == "running" {
+		if r.OrgID == t.OrgID && r.ProjectID == t.ProjectID && r.UseCase == t.UseCase && r.Status == "running" {
 			cp := *r
 			return &cp, spec.ErrTurnActive
 		}
@@ -357,11 +357,11 @@ func (m *memTurnRepo) Get(_ context.Context, orgID, projectID, turnID string) (*
 	return nil, nil
 }
 
-func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID string) (*spec.AgentTurn, error) {
+func (m *memTurnRepo) GetActive(_ context.Context, orgID, projectID, useCase string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.rows {
-		if r.OrgID == orgID && r.ProjectID == projectID && r.Status == "running" {
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase && r.Status == "running" {
 			cp := *r
 			return &cp, nil
 		}
@@ -398,12 +398,12 @@ func (m *memTurnRepo) NewestCompletedFlow(_ context.Context, orgID, projectID, f
 	return &cp, nil
 }
 
-func (m *memTurnRepo) Newest(_ context.Context, orgID, projectID string) (*spec.AgentTurn, error) {
+func (m *memTurnRepo) Newest(_ context.Context, orgID, projectID, useCase string) (*spec.AgentTurn, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var newest *spec.AgentTurn
 	for _, r := range m.rows { // insertion order == creation order
-		if r.OrgID == orgID && r.ProjectID == projectID {
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase {
 			newest = r
 		}
 	}
@@ -1510,7 +1510,7 @@ func TestRehydrate_ChatMessages(t *testing.T) {
 		t.Errorf("rehydrate body = %s", rec.Body.String())
 	}
 	// Rehydrate reconstructs the id under the general use case (the console
-	// omits "useCase", so its turns are namespaced under useCaseGeneral).
+	// omits "useCase", so its turns are namespaced under UseCaseGeneral).
 	wantPath := "/conversations/org_" + testOrg + "--proj_" + testProj + "--general--" + convUUID
 	r.fake.mu.Lock()
 	gotPath := r.fake.lastConvPath

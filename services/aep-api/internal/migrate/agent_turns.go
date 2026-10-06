@@ -27,33 +27,40 @@ import (
 // from the model: a partial (WHERE-clause) unique index, and a composite one
 // with a descending column.
 //
-//  1. The one-active-turn-per-project guard: at most one running turn per
-//     (org_id, project_id), across every use case. Turn start is INSERT ...
-//     ON CONFLICT DO NOTHING against this index, so racing POSTs resolve to
-//     exactly one admitted turn and the loser reads the active row for its
-//     409 {activeTurnId}.
+//  1. The one-active-turn guard: at most one running turn per
+//     (org_id, project_id, use_case) — one per chat view, so the Issues chat
+//     never waits on the spec chat. Turn start is INSERT ... ON CONFLICT DO
+//     NOTHING against this index, so racing POSTs resolve to exactly one
+//     admitted turn and the loser reads the active row for its 409
+//     {activeTurnId}. It replaces the per-project ux_agent_turns_active, which
+//     the step drops AFTER creating its successor so no boot runs unguarded.
 //
 //  2. The newest-turn lookup behind the status poll's spec.agent (#562) and
 //     the kickoff's idempotence guard. Both run `WHERE org_id = ? AND
-//     project_id = ? ORDER BY created_at DESC LIMIT 1`, and the status one
-//     runs every 5s per viewer while an agent works. The model's single-column
+//     project_id = ? AND use_case = ? ORDER BY created_at DESC LIMIT 1` (the
+//     use case filters rows as the index is walked; the other view's turns
+//     are the only ones it skips), and the status one runs every 5s per
+//     viewer while an agent works. The model's single-column
 //     indexes cannot serve it and the partial unique above covers only running
 //     rows, so without this Postgres scans the project's whole turn history and
 //     sorts it — on a poll whose entire budget is "cheap enough for 5s".
 //     Descending so the index order IS the query order, making it a one-row
 //     read rather than a sort of the matched set.
 //
-// Idempotent: CREATE INDEX IF NOT EXISTS is a no-op on re-run, and the step
-// no-ops entirely if the table is not present yet.
+// Idempotent: CREATE INDEX IF NOT EXISTS and DROP INDEX IF EXISTS are no-ops
+// on re-run, and the step no-ops entirely if the table is not present yet.
 func RunAgentTurns(ctx context.Context, db *gorm.DB) error {
 	if !hasTable(db, "agent_turns") {
 		return nil
 	}
 	if err := db.WithContext(ctx).Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_turns_active
-		ON agent_turns (org_id, project_id)
+		CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_turns_active_use_case
+		ON agent_turns (org_id, project_id, use_case)
 		WHERE status = 'running'`).Error; err != nil {
 		return fmt.Errorf("agent_turns active-guard index: %w", err)
+	}
+	if err := db.WithContext(ctx).Exec(`DROP INDEX IF EXISTS ux_agent_turns_active`).Error; err != nil {
+		return fmt.Errorf("agent_turns drop per-project active guard: %w", err)
 	}
 	if err := db.WithContext(ctx).Exec(`
 		CREATE INDEX IF NOT EXISTS ix_agent_turns_project_newest
