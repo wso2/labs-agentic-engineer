@@ -56,10 +56,15 @@ else
   fail 10.2 "kubectl get secretreference failed"
 fi
 
-if rows=$(psql_q "select secret from org_secrets order by secret" 2>/dev/null); then
-  names=$(printf '%s\n' "$rows" | paste -sd' ' -)
-  case " $names " in *" github-pat "* | *" github-webhook-secret "*) fail 10.2 "org_secrets still holds github rows: $names" ;; *) pass 10.2 "no github-pat or github-webhook-secret rows" ;; esac
-  case " $names " in *" ae-publisher-client "*" ae-studio-client "*) pass 10.2 "client rows kept" ;; *) fail 10.2 "client rows missing: $names" ;; esac
+where=""
+[ -z "${OC_ORG_ID:-}" ] || where="where oc_org_id = '${OC_ORG_ID//\'/}'"
+if rows=$(psql_q "select secret from org_secrets $where order by secret" 2>/dev/null); then
+  for s in github-pat github-webhook-secret; do
+    expect_eq 10.2 0 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s"
+  done
+  for s in ae-publisher-client ae-studio-client; do
+    expect_eq 10.2 1 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s kept"
+  done
 else
   fail 10.2 "psql on postgres-0 failed"
 fi
