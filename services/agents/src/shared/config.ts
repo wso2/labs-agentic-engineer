@@ -110,6 +110,13 @@ export const config = {
     secret: process.env.AGENT_JWT_SECRET || undefined,
   },
 
+  // Jev (TypeSafe's report classifier) for the Issues chat's `classify_report`.
+  // No key => the tool answers "unknown" and the agent asks instead of filing.
+  jev: {
+    apiKey: process.env.JEV_API_KEY || undefined,
+    url: process.env.JEV_URL || "https://api.typesafe.ai/v1/systemone",
+  },
+
   // ConversationStore selection: Postgres when a URL resolves (DATABASE_URL or
   // discrete DB_*), else the in-memory store (tests/evals). Threads embed
   // inlined file snapshots, so stored rows have real size — a TTL sweep on
