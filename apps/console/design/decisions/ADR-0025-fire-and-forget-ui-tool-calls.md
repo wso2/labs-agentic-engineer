@@ -42,8 +42,8 @@ other tool call — it never renders as a card awaiting input.
 
 The console half ships first, mock-verified, exactly as ADR-0012's did: the
 wire contract in `@aep/agent-stream`, the fold, the rail rendering, and typed
-MSW frames. **The producer does not exist yet** — no tool is registered in the
-agents service, so the Zod schema and its `Equal<>` drift guard, and the
+MSW frames. **The producer does not exist yet** — no tool is registered in the design
+agent, so the Zod schema and its `Equal<>` drift guard, and the
 `design` skill's prompt change, arrive with the backend handshake. Until then
 no real turn declares anything and the rail degrades to its pre-#576 behavior,
 which is also the permanent path for any skill that declares nothing.

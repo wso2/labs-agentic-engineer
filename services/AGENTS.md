@@ -1,10 +1,11 @@
 # AGENTS.md — services/
 
-| New | Tech |
+| Folder | Tech |
 |---|---|
 | `aep-api/`| Go BFF + GitHub webhooks (git ops folded in) |
-| `agents/` | TS interactive spec agents (Vercel AI SDK) |
-| `collab/`|  TS Yjs collaboration server |
+
+The design agent, the Room and the AE Studio tools run in each organization's
+pod, not here: see [`../components/AGENTS.md`](../components/AGENTS.md).
 
 ## Conventions
 

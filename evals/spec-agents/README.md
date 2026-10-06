@@ -2,10 +2,9 @@
 
 Evaluation framework for the spec-flow agents: each SDLC section —
 **requirements**, **design**, **task generation** — evaluable separately and in
-combination (a **chain**), against the *real* agents service booted in-process
-through the playground's production-parity waist. Decision record: the
-[wayfinder map #351](https://github.com/wso2/labs-agentic-engineer/issues/351)
-and its closed tickets (#352–#357).
+combination (a **chain**), against the *real* design agent (`@aep/ae-design-agent`) booted in-process
+through the playground's production-parity waist. Scenarios, drivers and scoring are
+described below.
 
 ## How a run works
 

@@ -1,64 +1,47 @@
-# Task-planner contract parity (Task E3)
+# Task planner: the Plan turn's contract with aep-api
 
-The task-planner is a **structured-output** agent (not a file-mutation
-conversation). It ships as `src/agents/taskplanner/{schema,validator,prompt,run,route}.ts`
-and mounts two SSE routes in `createApp` so the cutover from `agents-legacy` is
-a **URL swap** — aep-api keeps posting the same bodies and parsing the same
-frames.
+The task planner is not a route of its own: a Plan is a design-agent turn
+(`kind: plan`) that `aep-api` starts through `ae-studio-tools` on the Turn
+socket. The turn's lifecycle and the lock it shares with chat are in
+[turn-runtime.md](turn-runtime.md); this note is what the planner and
+`aep-api` each own.
 
-## Wire surface (must stay byte-identical)
+## Wire surface
 
-| Path (POST) | Request (aep-api `client.go`) | Response frames (aep-api `task_stream.go`) |
-|---|---|---|
-| `/internal/v1/agents/task-planner/plan` | `PlanRequestBody` = `TaskPlannerPlanInput` + optional `diff` | `data-plan-item` `{tempId,componentName,title,rationale,dependsOn}` · `data-plan-complete` · `error{scope:"plan",…}` · `[DONE]` |
-| `/internal/v1/agents/task-planner/detail` | `TaskPlannerDetailInput` | `data-task-body-delta` `{taskId,delta}` · `data-task-body-complete` `{taskId,body}` · `[DONE]` |
+| Piece | Where |
+|---|---|
+| Turn socket contract and golden streams | `packages/contracts/sockets/ae-studio/turn/` |
+| Plan tools and their inputs | `src/agents/main/tools/task-plan.ts` (`planTask`, `updateTask`), schemas in `@aep/agent-stream` (`task-tools-schema.ts`) |
+| Per-turn accumulator, the self-correctable errors | `src/agents/main/task-plan-accumulator.ts` |
+| The stream's `task-op` lines | `src/edge/turn-socket.ts` (`taskOpOf`) |
+| The consumer that writes the issues | `services/aep-api/internal/delivery/task/plan_tap.go` |
 
-Both stream `text/event-stream` tagged `x-vercel-ai-ui-message-stream: v1`.
-Pre-stream body-validation failures are a plain HTTP 400.
+The planner's tools validate and accumulate; they never write. Each ok
+`planTask` / `updateTask` result becomes a `task-op` line, and `aep-api`'s
+plan tap mints and edits the Task issues from those lines. A failed call
+(`UNKNOWN_COMPONENT`, `UNKNOWN_REF`, `DUPLICATE_TITLE`, `DEPENDENCY_CYCLE`) returns to the model as a tool result, which corrects
+itself in the same turn.
 
-## The dependency-awareness / parity boundary (the crux)
+## What the planner owns and what the platform owns
 
-`task_stream.go` reads **only** `dependsOn` off each plan item. The persisted
-`DependsOnComponents / DependsOnExternalResources / DependsOnResources` and the
-config-collection / resource-provisioning gate tasks are derived by aep-api
-**directly from design.json** in `persistAndIssue` — **platform-authored, never
-LLM-authored** (the client comment: "The LLM's `PlanItem.dependsOn` is
-context-only"). So the agent expresses dependency-awareness two ways, without
-touching the wire output shape:
+`dependsOn` on a planned Task lists design **component names**, never issue
+numbers. `aep-api` resolves each to an issue number when it renders the
+Task body, because the issue a dependency will get may not exist yet when
+the dependent is planned; an unresolved name is still written by component.
 
-1. **Build order** — a consumer's task lists its providers in `dependsOn`
-   (component-kind deps → consumer ordered after provider).
-2. **Resource gates** — a component with an external / platform-resource
-   dependency names the value-collection / provisioning gate in that task's
-   **rationale**. The planner is explicitly forbidden from emitting
-   config-collection / resource-provisioning tasks (the platform authors those).
+The planner has no say over:
 
-The `SlimDesignComponent.{externalResources,platformResources,orgServiceDependencies}`
-fields that feed this awareness are **additive and optional** — the current
-aep-api client sends only `{name,componentType,language,dependsOn}`, so the wire
-round-trips unchanged; a later aep-api task can widen the client to populate
-them (same additive posture as the architect `mcp` block). Until then the
-planground/eval supply them from design.json's `dependencies[]`.
+- the build's gate tasks and the validation task, which the platform mints
+  elsewhere, so the planner never emits config-collection or resource
+  provisioning tasks;
+- the Task's labels and milestone, set by the plan tap;
+- the stories stamp, derived from the design's citations.
 
-## Auth posture
+So the planner expresses dependency awareness only as build order (a
+consumer's Task lists its providers in `dependsOn`) and as the rationale text.
 
-This service has **no JWT verification** (the conversation route documents the
-same: "behind the platform BFF, which authenticates; this service does not
-re-authenticate"). `agents-legacy` gated these routes with `requireOrgId` +
-`requireAnthropicKey`; per the migration plan we match the **current** posture
-and do not invent auth. The org's model connection key arrives on
-`X-Model-Key` (aep-api always forwards it), and the connection and model on
-the turn body's `connection` and `model` → the route builds a per-turn model
-from them, with Anthropic's own API on `AGENT_MODEL` as the default when none
-is sent (dev/eval/playground).
+## Who may start a Plan
 
-## Cutover checklist (open items)
-
-- The additive slim-design dependency fields are unused by the live aep-api
-  client today — widening `TaskPlannerSlimComponent` in `client.go` is a **future
-  aep-api task** (the "still named DependsOn — a later task owns that contract"
-  TODO). Until then, external/platform-resource gate rationale only appears when
-  the caller populates those fields (playground/eval do).
-- JWT verification for `/internal/v1/*` is not yet implemented in this service;
-  when it lands, gate the task-planner routes with it (parity with legacy's
-  `requireOrgId` + `requireAnthropicKey`).
+Only `aep-api`, through the Turn socket: the mount is the gate and no request
+carries a token ([ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+The model is the org's connection from the pod env, like every other turn.

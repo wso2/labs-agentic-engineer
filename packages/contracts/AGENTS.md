@@ -7,6 +7,13 @@
 - `api/v1/openapi.yaml` is the single contract document (OpenAPI 3.0.3). After
   any edit, run `make gen-api` in `services/aep-api` (CI's `gen-api-check`
   enforces it).
+- `api/ae-design-agent/v1/openapi.yaml` is the design agent's browser
+  contract (the console's turn and conversation routes, called with a Platform
+  IdP user token).
+- `sockets/ae-studio/{files,mcp,turn}/openapi.yaml` are the Unix-socket
+  contracts between the containers of the AE Studio pod (a socket's mount is
+  its gate); `turn/golden/` holds the NDJSON streams both sides test against.
+  `schemas/` holds the JSON Schemas the design and planning tools validate with.
 - `api/ae-studio-tools/{v1,internal/v1}/openapi.yaml` are the AE Studio
   tools container's contracts. Their errors are RFC 9457 problems
   (`application/problem+json` `{type, title, status, detail?, code}`), not the
@@ -21,8 +28,8 @@
   slashes); the server registers the extra catch-all route for it.
 - `commands/` holds the `/<command>` chat grammar and nothing else. **No prompt
   text lives in this package** — a command parses into FACTS (which token, which
-  idea) that a caller puts on a `TurnSpec`. The sentences those facts become —
+  idea) that a caller puts on a `TurnSpec` (declared in `@aep/agent-stream`, `src/contracts/sse-events.ts`). The sentences those facts become —
   including which skill a token loads, and which branch of it — belong to
-  `components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/` (see that service's ADR-0003). A `strings.json`
+  `components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/` (ADR-0003 in that service's `design/`). A `strings.json`
   → Go/TS codegen pipeline used to live here; it is gone, and so is this
   package's `gen` script.

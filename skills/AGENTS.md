@@ -105,7 +105,7 @@ library hardcodes one. Two edits change it, both in places an org may edit:
 
 `architecture` reads the name out of that section rather than holding one of its
 own. It can, because the `organization` body rides the design agent's system
-prompt on **every** turn (`buildOrgDefaultsBlock` in the agents service, not a
+prompt on **every** turn (`buildOrgDefaultsBlock` in `ae-design-agent`, not a
 per-flow eager skill), so the name is always in context when a component's
 `design.json` is written. It then pins that skill on every `web-application`, so
 the pin follows the org's choice with **no platform-skill edit** —

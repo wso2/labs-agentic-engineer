@@ -33,7 +33,9 @@ React SPA console for AEP. Vite + TypeScript + Oxygen UI, talking to the
 - `src/mocks/` — MSW handlers + fixtures, typed against `@aep/contracts`
   generated types. Dev-only; excluded from production builds.
 - Request/response types come from the generated OpenAPI client — never
-  redefined locally.
+  redefined locally. Chat turns, the spec Room and spec file reads go to the
+  org's AE Studio, not `aep-api`, each through its own generated client
+  ([ADR-0034](design/decisions/ADR-0034-the-console-calls-the-orgs-ae-studio-directly.md)).
 - Runtime config via `window._env_` (BFF-owned `env-config.js`).
 - **Adding a `@aep/*` dep whose `types` resolves to `./dist` means adding a
   `RUN pnpm --filter … build` line to `apps/console/Dockerfile`.** The list is

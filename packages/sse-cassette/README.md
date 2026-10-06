@@ -42,7 +42,7 @@ pnpm --filter @aep/sse-cassette serve -- --dir test/fixtures/turns --port 9092
 Requests match on method + path (volatile id segments wildcarded) + the JSON
 body's `useCase`; duplicate recordings of the same key are served in recorded
 order. `--fallback http://localhost:9090` proxies unmatched requests to the
-live BFF so a real browser session works end to end.
+live `aep-api` so a real browser session works end to end.
 
 ## Inspect
 

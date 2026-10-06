@@ -25,3 +25,23 @@ CLI has no local config file. After `aectl init` runs, it writes non-sensitive c
 `aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
 via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
 `aep-thunder-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
+
+## Thunder clients and seeds
+
+- `aepThunderClients` (`cmd/thunder_cli.go`) is the canonical client list; each
+  confidential client's secret is generated once, seeded in OpenBao under
+  `aep/thunder-clients/<vaultName>` (`generatedThunderClientNames`,
+  `cmd/platform.go`) and delivered OpenBao → ESO → Secret → env.
+  `ae-studio-internal-client` (vault name `ae-studio-internal`, env
+  `AE_STUDIO_INTERNAL_CLIENT_SECRET`) carries no org claims
+  (`noUserAttributes`), and is `optional` (its own Secret, `aep-ae-studio-internal-secrets`; a
+  missing Secret skips the client with a warning).
+- `aeStudioOverrides` (`cmd/platform.go`) derives the chart's `aeStudio.*`
+  values for `platform install` and `platform update`. The public scheme,
+  listener and port suffix come from `tls.enabled` alone (`http`/`http`/`:19080`
+  or `https`/`https`/`:19443`); `consoleOrigins` is `[console public URL,
+  http://localhost:8090]`.
+- The only non-Thunder seed aectl writes is `aep/webhook-relay-seed`
+  (create-only, only with `ae_studio.webhook_relay.enabled`); a store without
+  it is topped up on `update`. `aep/agents-jwt-secret`, `aep/task-signing-key`,
+  `aep/webhook-secret` and `aep/openbao-token` are no longer seeded or required.

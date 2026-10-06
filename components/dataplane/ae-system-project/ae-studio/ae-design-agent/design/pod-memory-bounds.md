@@ -40,7 +40,7 @@ bound, and each bound is a named constant beside the code that applies it.
 ## Not bounded here
 
 - A multipart turn start is buffered whole (about 16 MiB raw plus its copies),
-  and nothing caps how many run at once. That is a load question (phase 8).
+  and nothing caps how many run at once. That is a load question for capacity planning.
 - `GET /v1/projects/{p}/conversations/current` opens a thread entry for any
   DNS-label project name before any lookup. Each entry is a few fields with
   no messages.

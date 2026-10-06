@@ -22,7 +22,8 @@ SDLC platform built on OpenChoreo.
 - Proper Fixes always, Propose design changes for better maintainability after exploring and if you are confident.
 - no hacks or workarounds unless explicitly specified.
 - Dead code is gated, in TS by `make deadcode-ts-check` and per Go module by
-  that module's `make deadcode-check` (`services/aep-api`). Keep unwired
+  that module's `make deadcode-check` (`services/aep-api`,
+  `components/dataplane/ae-system-project/ae-studio/ae-studio-tools`). Keep unwired
   infrastructure or a deliberate test seam only with a reason attached: a
   `@knipkeep <reason>` JSDoc tag in TS, `//deadcode:keep` in Go. What each
   gate covers and why is in `knip.jsonc` and `services/aep-api/Makefile`.

@@ -1,42 +1,21 @@
 # AGENTS.md — components/dataplane/ae-system-project/ae-studio/ae-collab (`@aep/ae-collab`)
 
-Yjs collaboration server for spec files —
-[#86](https://github.com/wso2/labs-agentic-engineer/issues/86). One
-`Hocuspocus` instance (`@hocuspocus/server`) hosting one room + one Y.Doc per project
-(room `spec-<org>-<project>`, `Y.Map('files')` of file-path → `Y.Text`).
+Yjs collaboration server for spec files, the `ae-collab` container of the
+org's AE Studio pod. One `Hocuspocus` instance (`@hocuspocus/server`) hosts one
+room + one Y.Doc per project (room `spec-<org>-<project>`, `Y.Map('files')` of
+file-path → `Y.Text`); the doc is live, git is durable.
 
-**Read #86 (body + design comments) before changing anything here** — the
-truth model (doc live / repo durable), persistence tiers, and agent write
-path are all decided there.
+## Who may join
 
-## Trust model
-
-- **Pod mode** (`src/pod/`) verifies itself (07 §11). One Hocuspocus instance,
-  two listeners; the listener a socket came in on decides who it is
-  (`pod/auth.ts`):
-  - public `0.0.0.0:8081`, upgrades only on `/v1/rooms`: a Platform IdP user
-    token of the pod's org (`userRule`). The participant is the token's user
-    (`name`, else given + family name, else `sub`; `email`, else the noreply
-    address). A `credit` connection parameter is ignored.
-  - local: the Room socket (`AE_ROOM_SOCKET`, a Unix socket, mode 0660, on
-    an emptyDir mounted only into ae-design-agent), any path, no Origin
-    check, and no token: socket access is the in-pod agent's identity, so
-    the ae-studio client token never leaves ae-studio-tools. The
-    participant is the user the `credit` query parameter names
-    (`{"name","email"}` JSON, name required); the agent runs the turn for
-    them. Its connection has no deadline; a token synced on it is ignored.
-  Then the room: `spec-<orgHandle>-<project>` with the pod's own handle, and
-  a project the Files socket's lookup knows (once per connection). A user
-  token is kept only as its `exp`: the connection is closed then (`pod/expiry.ts`,
-  reason `token-expired`) unless the client pushed a fresher token
-  (`provider.sendToken()`) that `onTokenSync` re-verified with the same
-  check; a refused sync closes it at once (reason `permission-denied`). An
-  IdP whose keys cannot be fetched is never a verdict: a join gets
-  `upstream-unavailable`, a sync keeps the old deadline. A sync for another
-  user of the org is accepted and logged (`room_token_subject_changed`). A
-  refused room load drops the room state, participants included. Frames are
-  capped at 32 MiB on both listeners (1009). No token, claim or room name is
-  logged: `room_*` lines name the listener and a fixed cause.
+Two listeners share every room; the listener a socket came in on decides who
+it is (`src/pod/auth.ts`). The public one admits a Platform IdP user token of
+the pod's org, the Room socket (`AE_ROOM_SOCKET`) admits the in-pod design
+agent by mount. Token expiry, `onTokenSync` and the participant rules are in
+[`design/room.md`](design/room.md); read it before touching `src/pod/auth.ts`
+or `src/pod/expiry.ts`. Logs carry no token, claim or room name: `room_*`
+lines name the listener and a fixed cause. A token sync for another user of
+the org is accepted and logged (`room_token_subject_changed`). Frames are capped at 32 MiB on
+both listeners (1009).
 
 ## Modes
 
@@ -64,14 +43,13 @@ missing key.
   holding `fixtures.ts`; flushes commit into that fake. Missing config never
   implies it.
 
-Never enable dev mode in a cluster. The chart's `collab-server` Deployment
-(removed in Task 2.16) runs the legacy env and no longer boots.
+Never enable dev mode in a cluster.
 
 ## Room lifecycle
 
 **A room exists only if it was seeded.** If the spec read fails — or the
 project lookup does not know the project — the load is REFUSED rather than opening an empty
-document ([#586](https://github.com/wso2/labs-agentic-engineer/issues/586)). An
+document (an empty doc would look healthy). An
 unseeded room looks healthy and is not: its committer baseline is empty, so
 every path writes with `baseSha: ""` (the Files socket reads that as *must not
 exist*) and every flush 409s for as long as the room lives — which is as long as
@@ -82,17 +60,11 @@ told the project has no files.
 Refusing costs nothing a retry does not recover: `onLoadDocument` runs per room
 LOAD, so the room reloads and reseeds from git on the next attempt.
 
-**Transient failures are tagged.** Hocuspocus runs the load hook inside the same
-try/catch as authentication, so a refused room reaches the client as a
-permission-denied frame — indistinguishable, by default, from a rejected bearer,
-which clients are right to stop retrying. Anything that is not a verdict (a
-Files socket 5xx, 408/425/429, an unreachable or stalled socket) is therefore
-thrown with `reason: "upstream-unavailable"`, which Hocuspocus forwards
-verbatim and the console reads to decide whether to retry or give up. Keep that
-string in step with `useCollabSpec.ts` and `room-peer.ts`, which spell it on
-their own side, as the stateless message types already are. A verdict (any
-other 4xx, e.g. `project_unknown`) is NOT tagged: a project that can never be
-seeded must not have every open tab reconnect forever.
+**Transient failures are tagged** `reason: "upstream-unavailable"`; a verdict
+(any other 4xx, e.g. `project_unknown`) is not (why:
+[`design/room.md`](design/room.md)). Keep that string in step with
+`useCollabSpec.ts` and `room-peer.ts`, which spell it on their own side, as
+the stateless message types already are.
 
 A refused load drops the room state (baseline and participants) and destroys
 the document: no other connection holds a room whose load failed.
@@ -137,7 +109,7 @@ the document: no other connection holds a room whose load failed.
 - **`flush-warnings`**: after every successful apply the room hears
   `{type:"flush-warnings", warnings:[{path, message}]}` (the pod's warnings plus
   the saved-over paths); an empty list clears the console's Alert.
-- **Shutdown** (SIGTERM, 07 §10), inside one 8 s budget that ends inside
+- **Shutdown** (SIGTERM), inside one 8 s budget that ends inside
   ae-studio-tools' 10 s Files socket drain window: both room listeners stop
   accepting, the room sockets end and every update they delivered is applied
   (so no edit reaches a room after its flush read it; an edit typed after

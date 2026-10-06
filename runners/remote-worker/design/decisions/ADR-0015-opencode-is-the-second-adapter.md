@@ -33,7 +33,7 @@ idle.
 | `skills.allow` | `permission.skill`, an allowlist written `"*": "deny"` FIRST | rules are last match wins, and a trailing `*` deny hides the whole tool |
 | `skills.preloadBodies` | an instructions file named in `instructions`, glossary last, kept to the lead by the plugin (below) | the file keeps its place in the lead's prompt |
 | `skills.dir` | discovered natively from `.claude/skills/` | the one directory both runtimes read (below) |
-| `mcp` | a `remote` MCP entry behind the SAME loopback auth proxy Claude Code uses (`lib/mcp_auth_proxy.ts`), `oauth: false` | OpenCode's headers are static too, and a 401 must not start its own OAuth discovery |
+| `mcp` | a `remote` MCP entry behind the SAME loopback auth proxy Claude Code uses (`lib/mcp_auth_proxy.ts`, which also serves the runner's local tools such as the remote-git reads), `oauth: false` | OpenCode's headers are static too, and a 401 must not start its own OAuth discovery |
 | `debug`, `logDir` | `--log-level=DEBUG --print-logs` into `<logDir>/opencode.stderr`, the config beside it as `opencode.config.json`; on every run, the plugin's `session-context.jsonl` | developer files, never the feed |
 
 The rest of the config is not a policy clause but a condition of the workload:

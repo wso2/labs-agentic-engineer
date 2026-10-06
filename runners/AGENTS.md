@@ -28,7 +28,9 @@ into the runner pod at `/app/skills` for live skill edits (see
   `gh auth setup-git` uses), pinned to the **real** `gh` absolute path so the
   `.aep/gh` wrapper cannot intercept. Clone and push share that path. Without
   either variable `provisionWorkspace` throws before any network call and
-  `oneshot.ts` exits 2; there is no `credentials/refresh` and no fallback.
+  `oneshot.ts` exits 2. The runner never calls `aep-api` for a credential;
+  the remote-git tools (`lib/remote_git.ts`) are served in-process with the
+  mounted gitpat, and there is no fallback.
   No GIT_ASKPASS, no token in argv or URL. Don't add a second path.
   `.aep/` (the publisher bearer, the `gh` wrapper) and
   `.gh-config/`, which `provisionWorkspace` drops inside the clone, are in the
@@ -105,7 +107,9 @@ into the runner pod at `/app/skills` for live skill edits (see
   `runtime/claude/runtime.ts` turns the guards into `PreToolUse` hooks, the
   capability classes into `disallowedTools` (`runtime/claude/tools.ts`), and the
   MCP policy into an `http` server behind a loopback auth proxy, because this
-  SDK's MCP config only accepts a static header. The test for whether something
+  SDK's MCP config only accepts a static header. The proxy also answers the
+  runner's local tools (`lib/mcp_local_tools.ts`) itself, so the runtime sees
+  one server. The test for whether something
   belongs in the port is whether a second runtime would write it the same way; if
   it names a tool, a hook or an SDK option, it does not.
   **There are TWO adapters**: `runtime/claude/` and `runtime/opencode/`.

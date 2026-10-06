@@ -31,7 +31,7 @@ flowchart LR
 | `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
 | `discoveridp` | OIDC discovery for a BYO IDP | `GET .../config/idp/discovery` |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
-| `aestudio` | install and converge the org's AE Studio (ticket 08): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
+| `aestudio` | install and converge the org's AE Studio ([ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
 model-connection / idp services.*
@@ -151,7 +151,7 @@ model-connection / idp services.*
   paths, never a value), failing closed when either is missing. The model keys have no triplet
   fallback: an org with no `default-key` / `coding-agent-key` row (saved before the rows existed)
   resolves no key until it saves it again.
-- **The publisher client secret lives only in vault; builds and deploys only read** (06 §2-3, §5).
+- **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0042](../../../../docs/decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
   The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher app and its
   `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
   `publisher_thunder_app_id`, never the secret or a reference to it. `POST /build` runs
@@ -190,8 +190,8 @@ model-connection / idp services.*
   missing or disagreeing OU): the connection is saved, and saving the token again retries every failure
   but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
-- **A gitpat disconnect takes the org's AE Studio down before the credential goes** (06 §9,
-  `OrgDisconnectService`): the repo hooks are unregistered through the pod while it still holds the
+- **A gitpat disconnect takes the org's AE Studio down before the credential goes** (`OrgDisconnectService`,
+  [ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)): the repo hooks are unregistered through the pod while it still holds the
   gitpat (best effort, `WebhookService.UnregisterOrg`); the Resource `ae-studio` is deleted
   (`aestudio.Service.Remove`, which holds the org's converges and waits out a running one until the
   cascade ends; OpenChoreo's finalizer takes its binding, release, pod, clones and reference documents
@@ -202,7 +202,7 @@ model-connection / idp services.*
   both the gitpat row and an ACTIVE credential, and the sweep's hook repair needs the active credential,
   so nothing brings the pod or the hooks back for a disconnected org; a reconnect writes both secrets
   anew (the webhook secret as on a first submit) and converges.
-- **AE Studio converges on drift, single-flight per org** (`aestudio`, ticket 08 §9-§10). The Ensure
+- **AE Studio converges on drift, single-flight per org** (`aestudio`). The Ensure
   is Project `ae-system` → PRB in the write target (`WriteTargets.Resolve(org, "ae-system")`) →
   ResourceType `ae-studio` (PUT in place, annotated `aep.wso2.com/ae-studio-template-hash`, never
   deleted) → Resource `ae-studio` → wait for its release → RRB `ae-studio-<env>` pinned to it. Each
@@ -224,7 +224,7 @@ model-connection / idp services.*
   200 s startup budget; this is how a stuck pod, CrashLoopBackOff, ImagePullBackOff or unschedulable, reaches `failed`, as OC reports no distinct reason for it) counted from the later of that converge and the Ready condition's last
   transition. Nothing is converged for it; a save that changes the desired state starts the clock
   again.
-- **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`, 06 §5): a created app is
+- **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the
   reference back); a found app with its row is left alone. An `ae-studio-<org>` app under another OU

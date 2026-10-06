@@ -181,17 +181,17 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
-- **A create needs the org's AE Studio serving before the OC project exists** (05 §7,
+- **A create needs the org's AE Studio serving before the OC project exists** ([ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md),
   `SetAEStudioReady`, served by the `aestudiotools` adapter's endpoint resolve): absent answers 409
   `github_not_connected`, not serving 503 `ae_studio_unavailable`, and nothing is half-made.
 - **Everything after the OC project + repo is best-effort; the repo is not.** Skills provisioning, the
   webhook, and the project descriptor are each logged-and-continued on failure: none of them may destroy
   a creation the user already committed to. A hook that failed is installed later by the eventcore
   sweep's hook repair (a ready row with no hook id). A failed repo create compensates the project away
-  and fails the create with the repo error unchanged (05 §7): a name conflict reads as one, and an AE
+  and fails the create with the repo error unchanged: a name conflict reads as one, and an AE
   Studio answer reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`).
   A create-repo answer lost after GitHub made the repo leaves it standing, and a retry under the same
-  name reads as the name conflict (05 §7 step 2). The compensation runs on the request's values but
+  name reads as the name conflict. The compensation runs on the request's values but
   not its cancellation (bounded, 30 s), so a client that went away still leaves no OC project. A
   missing descriptor costs the user one question from
   the `/start` skill, nothing more. The OC project delete a compensation makes takes the
@@ -220,7 +220,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   two carve-outs: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500;
   and the org's AE Studio being absent, unavailable or misconfigured (the snapshot, the deploy count or
   the design-staleness baseline) answers 200 with `spec.availability = "unavailable"` and `spec.unavailableReason` (the edge code of the cause), the git-derived
-  spec facts and the flat hasSpec/hasDesign/specStatus/phase unset, build and deploy intact (05 §6).
+  spec facts and the flat hasSpec/hasDesign/specStatus/phase unset, build and deploy intact.
 - **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
   and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a
   project's life, git says the project is untouched. The newest turn row says otherwise, and folds to three

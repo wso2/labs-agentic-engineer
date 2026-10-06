@@ -47,6 +47,9 @@ make dev-env
 # 2. Edit source, then run this to rebuild + redeploy just the changed image(s)
 make dev-update
 
+# 2b. Read-only check of an org's AE Studio Resource and pod (ok/FAIL per check)
+make ae-studio-check ORG=<org>
+
 # 3. Build the coding-agent runner images (Claude Code + OpenCode) from this
 #    checkout and point the release at them; again after a runner change
 make dev-runner
@@ -98,16 +101,20 @@ make dev-env` skips the plane, and with it Agent Manager.
 No model key is needed to bring this up: every agent runs on the calling
 org's model connection (format, base URL, key, model), connected in the
 console's welcome step or on Settings' **AI agents** card, and there is no
-platform fallback. aep-api hands it to the agents per turn (`X-Model-Key`
-plus the connection) and to each coding run at dispatch.
+platform fallback. aep-api writes it into the org's AE Studio pod env
+(`AE_MODEL_CONNECTION` and `ANTHROPIC_API_KEY`, read once at boot) when it
+converges the pod, and hands it to each coding run at dispatch.
 
-`make dev-update` (`skaffold run`, `skaffold.yaml`) is one-shot, not a watch
-loop — run it again after every edit you want reflected in the cluster. It
-only rebuilds images whose dependencies changed and re-points the
-already-installed `aep-platform` release at them; it does not re-derive any of
-aectl's own settings (Thunder/OpenBao URLs), which is why its Helm
-step passes `--reset-then-reuse-values` (helm >= 3.14): the values the install
-set are kept, and the current chart's defaults apply. Plain `--reuse-values`
+`make dev-update` is one-shot, not a watch loop — run it again after every
+edit you want reflected in the cluster. It runs `make dev-images` (two
+`skaffold build`s, `skaffold.yaml` and `skaffold/ae-studio.yaml`, which only
+rebuild images whose dependencies changed), checks the AE Studio refs
+(`make ae-studio-refs-check`), re-creates aep-api's OpenBao role, then calls
+`aectl platform update`, a `helm upgrade` that re-points the already-installed
+`aep-platform` release at the new images. It does not re-derive any of aectl's
+own settings (Thunder/OpenBao URLs), which is why that upgrade passes
+`--reset-then-reuse-values` (helm >= 3.14): the values the install set are
+kept, and the current chart's defaults apply. Plain `--reuse-values`
 would render on the defaults of the chart the release was installed with, so a
 new default (for example `aeStudio.webhookRelay.image`) would never arrive.
 
@@ -152,7 +159,7 @@ sweep's hook repair installs every project's hook on the relay URL.
 longer has a workspace volume: the chart drops PVC `aep-workspaces`, the mount,
 the `workspaces.*` values and the `AEP_WORKSPACE_*` env. The PVC carries no
 `helm.sh/resource-policy: keep`, so `helm upgrade` deletes it, and with it
-everything on the volume: the run recordings under `runs/` and the pre-phase-4
+everything on the volume: the run recordings under `runs/` and the old
 `repos/`, `trash/` and `tmp/` trees. Nothing is migrated, and losing the recordings is intended: run history now
 comes from the observer (a cycle's feed is read from its pod log, then the
 observability plane). On a StorageClass with
@@ -235,7 +242,6 @@ object, `aectl platform install` stops on it: see
   Skaffold-flow's old per-developer chart values
   (`values.local.yaml`/`values.local.dev.yaml.example`). See git history for
   that chain if you need to recover something from it.
-- `collab-server` — collaborative editing is deferred.
 - Long-lived `remote-worker` container — coding agent is now an ephemeral
   OpenChoreo Job Component (`AGENT_RUNNER_IMAGE`), not a ClusterWorkflow.
 
@@ -426,7 +432,7 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    (`kubectl annotate externalsecret <name> -n wso2-aep force-sync=$(date +%s) --overwrite`)
    and run `aectl platform sync-clients`.
 
-## Upgrading to secrets write-only (phase 6)
+## Upgrading to write-only secrets
 
 From this release aep-api only writes secrets: no org secret value lives in
 Postgres, and aep-api reads none back. It logs in to OpenBao by Kubernetes auth
@@ -438,7 +444,7 @@ their deletes below are no-ops after the upgrade, kept for installs that drifted
 from the chart. Remove the rest by hand. Every command is value-free: a root token is piped on
 stdin, never put on argv, and no command prints or compares a value.
 
-**Cloud: SRE request (phase 10).** Each item's Cloud step is a request to SRE,
+**Cloud: SRE request.** Each item's Cloud step is a request to SRE,
 not something done from this repo.
 
 ### Rollout
@@ -478,11 +484,11 @@ bao_do() { printf '%s' "${OPENBAO_ROOT_TOKEN:-root}" \
 
 | What | Local delete | Cloud |
 |---|---|---|
-| Static OpenBao token: vault `secret/aep/openbao-token`, ExternalSecret and Secret `aep-openbao-secrets` (`wso2-aep`). Replaced by Kubernetes auth. | `bao_do kv metadata delete secret/aep/openbao-token`; `kubectl -n wso2-aep delete externalsecret aep-openbao-secrets --ignore-not-found`; `kubectl -n wso2-aep delete secret aep-openbao-secrets --ignore-not-found` | SRE request (phase 10) |
-| Task signing key: vault `secret/aep/task-signing-key`, ExternalSecret and Secret `aep-task-signing-key`. Nothing reads it any more. | `bao_do kv metadata delete secret/aep/task-signing-key`; delete ExternalSecret and Secret `aep-task-signing-key` the same way | SRE request (phase 10) |
-| Webhook secret: vault `secret/aep/webhook-secret`, ExternalSecret and Secret `aep-webhook-secrets`. Webhooks are verified per org by the AE Studio relay; the org's own `github-webhook-secret` row is separate and stays. | `bao_do kv metadata delete secret/aep/webhook-secret`; delete ExternalSecret and Secret `aep-webhook-secrets` the same way | SRE request (phase 10) |
-| Per-org OpenChoreo **GitSecret** `aep-component-build-git-secret` (a `GitSecret` CR in each org's control-plane namespace, created and deleted through OpenChoreo's `gitsecrets` API; not a plain Secret). No code references it. | Delete the GitSecret the way aep-api did, through the OpenChoreo API (there is no `gitsecret` kubectl resource type; OpenChoreo backs a GitSecret by a SecretReference labelled `openchoreo.dev/secret-type=git-credentials`): `DELETE /api/v1alpha1/namespaces/<oc-org-ns>/gitsecrets/aep-component-build-git-secret` (204). Then confirm nothing of that name is left: `kubectl -n <oc-org-ns> get secretreference,secret aep-component-build-git-secret --ignore-not-found`, and check the vault copy `bao_do kv metadata get secret/default/git/aep-component-build-git-secret`. Locally that vault copy is seeded by OpenChoreo when OpenBao starts; leave it. On an install where OpenChoreo did not seed it, delete it with `bao_do kv metadata delete`. | SRE request (phase 10) |
-| Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<vault-org-ns>/<ref>` | SRE request (phase 10) |
+| Static OpenBao token: vault `secret/aep/openbao-token`, ExternalSecret and Secret `aep-openbao-secrets` (`wso2-aep`). Replaced by Kubernetes auth. | `bao_do kv metadata delete secret/aep/openbao-token`; `kubectl -n wso2-aep delete externalsecret aep-openbao-secrets --ignore-not-found`; `kubectl -n wso2-aep delete secret aep-openbao-secrets --ignore-not-found` | SRE request |
+| Task signing key: vault `secret/aep/task-signing-key`, ExternalSecret and Secret `aep-task-signing-key`. Nothing reads it any more. | `bao_do kv metadata delete secret/aep/task-signing-key`; delete ExternalSecret and Secret `aep-task-signing-key` the same way | SRE request |
+| Webhook secret: vault `secret/aep/webhook-secret`, ExternalSecret and Secret `aep-webhook-secrets`. Webhooks are verified per org by the AE Studio relay; the org's own `github-webhook-secret` row is separate and stays. | `bao_do kv metadata delete secret/aep/webhook-secret`; delete ExternalSecret and Secret `aep-webhook-secrets` the same way | SRE request |
+| Per-org OpenChoreo **GitSecret** `aep-component-build-git-secret` (a `GitSecret` CR in each org's control-plane namespace, created and deleted through OpenChoreo's `gitsecrets` API; not a plain Secret). No code references it. | Delete the GitSecret the way aep-api did, through the OpenChoreo API (there is no `gitsecret` kubectl resource type; OpenChoreo backs a GitSecret by a SecretReference labelled `openchoreo.dev/secret-type=git-credentials`): `DELETE /api/v1alpha1/namespaces/<oc-org-ns>/gitsecrets/aep-component-build-git-secret` (204). Then confirm nothing of that name is left: `kubectl -n <oc-org-ns> get secretreference,secret aep-component-build-git-secret --ignore-not-found`, and check the vault copy `bao_do kv metadata get secret/default/git/aep-component-build-git-secret`. Locally that vault copy is seeded by OpenChoreo when OpenBao starts; leave it. On an install where OpenChoreo did not seed it, delete it with `bao_do kv metadata delete`. | SRE request |
+| Orphaned vault references (below). | `bao_do kv metadata delete secret/user-app-secrets/<vault-org-ns>/<ref>` | SRE request |
 
 Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
 `aep-eso-openbao-token` RBAC objects are unrelated and stay.
@@ -492,7 +498,7 @@ Delete the ExternalSecret before its Secret, or ESO recreates the Secret. The
 Earlier code retired a replaced key's old vault copy; this release only retires
 references it created itself, so some stay behind on an upgraded install:
 
-1. Pre-phase-1 org copies: vault entries of references written before the
+1. Org copies from before the `org_secrets` reference rows: vault entries of references written before the
    `org_secrets` reference rows existed.
 2. References named only in the dropped columns: the `secret_ref_*` columns of
    `org_credentials`, `org_anthropic_credentials`, the model connection table and
@@ -561,7 +567,7 @@ Local-only example of a stale path:
 `user-app-secrets/<org-ns>/default-ae-publisher-client-14f4038d`, a leftover
 publisher client copy from a local incident. It is not a Cloud item.
 
-### Orgs connected before phase 1
+### Orgs connected before secret references
 
 There is no backfill. After the upgrade such an org sees the setup wizard on its
 next login and re-enters the GitHub token and the model key. Until then Settings

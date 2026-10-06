@@ -15,8 +15,9 @@ for. It was scattered:
 - `lib/runner.ts` called `query()` directly, with `model: "claude-sonnet-5"` as a
   literal, a sixteen-name `DISALLOWED_TOOLS` list, three `PreToolUse` hooks wired
   to Claude Code's hook grammar, `settingSources`, `strictMcpConfig`,
-  `permissionMode`, and a loopback MCP proxy that exists solely because this
-  SDK's HTTP MCP config only accepts a static `Authorization` header.
+  `permissionMode`, and a loopback MCP proxy that exists because this
+  SDK's HTTP MCP config only accepts a static `Authorization` header (it also
+  answers the runner's own MCP tools in-process).
 - `runtime/claude/translate.ts` translated its messages.
 - `lib/tool_glossary.ts` bound the workflow's role names to its tool names.
 

@@ -17,9 +17,9 @@ round trip), the SSE reader
 (`startAndStreamTurn`), and the published JSON Schema — lives in the workspace package
 **`@aep/agent-stream`** (moved there so the console/playground fold one
 definition). This service imports it; `tool.ts`'s Zod schemas are drift-guarded
-against the wire `*Input` types there. See `design/`
-(`ADR-0001-anchored-file-edits.md`, `ADR-0002-skills-progressive-disclosure.md`,
-`agent-loop.md`).
+against the wire `*Input` types there. Design notes in `design/`:
+`agent-loop.md` (the loop and its locked decisions), `turn-runtime.md` (a
+turn's lifecycle), `pod-memory-bounds.md`, `narration-policy.md`, and the ADRs.
 
 **Prompt wording lives HERE** (`src/prompts/`, ADR-0003): callers state facts on
 a `TurnSpec` and this service composes the instruction. Nothing outside this
@@ -33,36 +33,26 @@ turn's `_skills` snapshot on the mount (`src/conversation/load-workspace.ts`);
 they never travel in the turn payload. No skills → no catalog, behaves as today.
 See ADR-0002 and [`ae-studio-tools/design/clone-storage.md`](../ae-studio-tools/design/clone-storage.md).
 
-**Audience** (ADR-0013) splits that catalog. A skill's `metadata.aep.audience`
-lists the agents its guidance is written for — `design` or `coding` — and this
-service is always the **design** side (`SERVICE_AUDIENCE`; the coding agent runs
-in the remote-worker runner and never calls here), so nothing is passed per
-request. Coding-agent rows are still **listed**: the design agent has to name a
-skill to pin it onto a component's `design.json`, which is how that guidance
-reaches the build — so the catalog groups them into a pin-only block, and
-`load()` returns `{ refused: true }` rather than a body. `loadSkill` reports
-those separately from unknown names (`refused` vs `missing`), because a refusal
-indistinguishable from "no such skill" invites the agent to skip pinning. An
-absent audience means every audience, so unmarked and org-authored skills are
-unaffected — and a library with nothing pin-only renders the catalog
-byte-identically, preserving the cached instruction prefix.
+**Audience** (ADR-0013): a skill's `metadata.aep.audience` names the agents its
+guidance is for. This service is always the **design** side
+(`SERVICE_AUDIENCE`), so nothing is passed per request. Coding-audience skills
+are listed in a pin-only block (the agent pins them onto a component's
+`design.json`) and `load()` returns `{ refused: true }` rather than a body;
+`loadSkill` reports `refused` apart from `missing`, because a refusal that
+reads as "no such skill" invites the agent to skip pinning. A library with
+nothing pin-only renders the catalog byte-identically, keeping the cached
+instruction prefix.
 
-**Tool sets** (derived from `TurnSpec.kind`, tasks-github-native §9.3): the turn
-selects which domain tools the generic loop registers. `files` (default, and identical to
-an absent value) is the file-mutation set (`src/agents/main/tools/files.ts`) over a
-`FileBundle` — the generation flows. `task-plan`
-(`tools/task-plan.ts`) registers `planTask`/`updateTask` over a per-turn `TaskPlan`
-accumulator (`task-plan-accumulator.ts`) and NO file tools; `files` then carries
-READ-ONLY context (the spec/design bundle + one `tasks/<issueNumber>.md` rendering
-per existing open Task) and nothing mutates it. `kind: "plan"` selects `task-plan`; every other kind selects `files`. Register
-chat merges `draftExternalResource` onto that files set on the marketplace
-route; spec and project turns keep the files set byte-identical. Callers do
-not send a tool set — two ways to say what a turn is for is two ways to
-disagree. Selection lives in `run-conversation-turn.ts` (the loop stays generic); the shared skill loaders
-(`tools/skill-tools.ts`) attach to either set. `execute()` validates + accumulates
-only — the service never touches GitHub; aep-api's plan tap performs the issue
-writes off the stream. The plan tool contract (inputs, results, error codes, the
-`tasks/<n>.md` convention) and the published JSON Schemas live in `@aep/agent-stream`.
+**Tool sets** come from `TurnSpec.kind`, selected in `run-conversation-turn.ts`
+(the loop stays generic); callers never send a tool set. `files` (the default)
+is the file-mutation set (`src/agents/main/tools/files.ts`) over a
+`FileBundle`. `kind: "plan"` selects `task-plan` (`tools/task-plan.ts`:
+`planTask`/`updateTask` over a per-turn `TaskPlan` accumulator, no file tools;
+`files` is read-only context). Register chat merges `draftExternalResource` onto
+the files set on the marketplace route. `execute()` validates and accumulates
+only: aep-api's plan tap performs the issue writes off the stream. The plan
+tool contract and its JSON Schemas live in `@aep/agent-stream`; the planner
+side is in [`design/task-planner-contract-parity.md`](design/task-planner-contract-parity.md).
 
 ## Run
 
@@ -72,81 +62,31 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   (`src/pod/config.ts`). A local run goes through `@aep/playground`, which
   drives the same `/v1` edge in process with its dev `authenticate` adapter.
 - **Listeners** (`src/pod/listeners.ts`): the public port (`AE_LISTEN_PORT`,
-  8080) serves `/v1` (`src/edge/`) behind `authenticate`; the pod's adapter
-  (`edge/authenticate.ts`, `@aep/platform-idp-auth`) admits a Platform IdP
-  user token of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` aud and
-  `ouId`/`ouHandle` equal to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another
-  org → 403, IdP keys unreachable → 503 `idp_unavailable` (`Retry-After: 5`),
-  all before route matching. The Turn socket (`AE_TURN_SOCKET`, mode 0660;
-  a stale socket file is replaced, any other file refuses the start) serves
-  `edge/turn-socket.ts`. The health port (`AE_HEALTH_PORT`, 9080, not
-  routed) serves `/healthz` and `/readyz` (ready once the public port and
-  the Turn socket are bound). Start refuses when `AE_SECRET_REV` ≠
-  `AE_EXPECTED_SECRET_REV`. `close()` (once) stops accepting, gives ended
-  responses 1 s, then ends open connections (attached streams), and always
-  closes health.
-- **Turn socket** (07 §5, `packages/contracts/sockets/ae-studio/turn/`):
-  ae-studio-tools relays aep-api's kickoff (`start`) and Plan turns.
-  `POST /turns` runs `TurnStarter.startServerTurn` (a known `turnId`
-  reattaches, a retry after the end gets the final result) and answers
-  NDJSON: `task-op` lines for ok `planTask`/`updateTask` results
-  (`taskOpOf`, aep-api's plan tap filter), `keep-alive` every
-  `AGENT_KEEPALIVE_MS`, then one `result {status, code?, message?, resetAt?}`
-  (a failed turn's code is its own, else its reason; a `provider_limit`
-  carries the provider's stated reset time, which aep-api waits for before
-  its next Plan try). The lines match the golden
-  streams beside the contract. A caller that leaves only detaches.
-- **Shutdown** (`pod/shutdown.ts`, SIGTERM): refuse new turns (503 on `/v1`
-  and the Turn socket), `desk.abortAll("shutdown")` (≤ 2 s; inside
-  ae-studio-tools' 5 s public drain), `outbox.drain` with what is left of
-  `SHUTDOWN_HANDOVER_MS` (abort + drain ≤ 8 s from SIGTERM, 2 s inside its
-  10 s socket window), close the listeners, exit.
-- **`/v1`** (07 §1, `packages/contracts/api/ae-design-agent/v1/openapi.yaml`):
-  `edge/project-routes.ts` (current conversation, rotate, messages, turn
-  start, active turn, turn status, stream) and `edge/marketplace-routes.ts`
-  (the same without a project; a conversation belongs to its creator's
-  `sub`, anyone else gets 404). A turn start answers `202 {turnId}` and runs
-  detached; watchers attach to `GET …/turns/{t}/stream?from=N` (SSE
-  `id: <index>` + `data: <part>`, `: keep-alive` every
-  `AGENT_KEEPALIVE_MS`, end `turn-completed` / `turn-failed {reason, …}`
-  then `[DONE]`; `Last-Event-ID` resumes at the next frame, `from` wins).
-  Refusals: `409 {code: turn_in_progress, activeTurnId}` (also on a rotate
-  while a turn runs), `409 {code: conversation_rotated}`, problem
-  `no_default_key` (409), `project_unknown` (404), `shutting_down` (503,
-  once `TurnStarter.refuse()` ran), `tools_unavailable` (503, the tools
-  socket failed), `invalid_turn` / `attachment_rejected` (400),
-  `payload_too_large` (413). Bodies are JSON or multipart
-  (`edge/turn-input.ts`: ≤ 10 files, 5 MiB each, 15 MiB total, counted while
-  the body streams; instruction ≤ 64 KiB).
-- **The start path** (`turns/start-turn.ts`, `TurnStarter`, shared with the
-  Turn socket): shutdown → key → instruction → `tools.lookup(project)`
-  (writes the snapshots) → `turnSpecFor` → snapshot reads and document
-  fitting → no running turn on the scope → `ThreadBook.admit` →
-  `TurnDesk.start`. The run joins the Room for a project turn when a
-  `room` adapter is wired, loads the MCP tools and
-  web search by the gates of `turns/turn-spec.ts`, and calls
-  `runConversationTurn` with the desk's signal. A failure the agent can name
-  ends `agent-error` with its code (`provider_limit`, `output_truncated`).
-  Credit is the verified user: `sub` as the author id, the name by
-  `displayIdentity`'s rule; a server-started turn is credited to the user
-  its request names. A kickoff is `/start [text]` on the project's current
-  thread, in the Room; a Plan turn runs the task-plan toolset on a
-  throwaway conversation (no Room, dropped when it ends).
-- **Room join** (`collab/local-room.ts`, `collab/room-peer.ts`, 07 §9):
-  ae-collab's Room socket (`AE_ROOM_SOCKET`, a Unix socket on an emptyDir
-  shared with ae-collab only, dialled as `ws+unix:<path>:/`), Room
-  `spec-<AE_ORG_HANDLE>-<project>`, no token (socket access is the agent's
-  identity; the ae-studio client token never leaves ae-studio-tools), and
-  the `credit` parameter `{name, email}` (name falls back to the user id).
-  Every connection has a fresh Y.Doc: a dropped connection is replaced, never resumed with its kept doc (a kept doc
-  doubles a re-seeded Room), and the peer's writes are applied again where
-  the new doc differs; writes still pending when the turn ends are lost.
-  Leaving clears the agent's presence at once.
-- **TurnDesk** (`turns/turn-desk.ts`): the only turn lock (one running turn
-  per project, per marketplace conversation), the replay buffer, the 30-min
-  cap, retention, and each finished turn's record. `finishedTurnSink` pushes
-  the record to the usage outbox and the closing context size to the
-  ThreadBook (auto-rotation past 80 % of the connection's window).
+  8080) serves `/v1` (`src/edge/`) behind the `authenticate` gate
+  (`edge/authenticate.ts`, `@aep/platform-idp-auth`): a Platform IdP user token
+  of `AE_IDP_ISSUER` with an `AE_USER_AUDIENCES` audience and `ouId`/`ouHandle`
+  equal to `AE_ORG_ID`/`AE_ORG_HANDLE`. M2M → 401, another org → 403, IdP keys
+  unreachable → 503 `idp_unavailable` (`Retry-After: 5`), all before route
+  matching. The Turn socket (`AE_TURN_SOCKET`, mode 0660; a stale socket file
+  is replaced, any other file refuses the start) serves `edge/turn-socket.ts`
+  for ae-studio-tools, whose mount is the gate. The health port
+  (`AE_HEALTH_PORT`, 9080, not routed) serves `/healthz` and `/readyz`. Start
+  refuses when `AE_SECRET_REV` ≠ `AE_EXPECTED_SECRET_REV`.
+- **Turns** (start path, lock, replay, usage hand-off, shutdown, the `/v1` and
+  Turn socket shapes): [`design/turn-runtime.md`](design/turn-runtime.md).
+  Contracts: `packages/contracts/api/ae-design-agent/v1/openapi.yaml`,
+  `packages/contracts/sockets/ae-studio/turn/` (its golden streams are the
+  line format), `edge/turn-input.ts` for the body limits.
+- **Room join** (`collab/local-room.ts`, `collab/room-peer.ts`): the
+  agent dials ae-collab's Room socket (`AE_ROOM_SOCKET`, as
+  `ws+unix:<path>:/`) for room `spec-<AE_ORG_HANDLE>-<project>`, sends no
+  token, and names the user it works for in the `credit` parameter
+  `{name, email}` (who may join: [`ae-collab/design/room.md`](../ae-collab/design/room.md)).
+  Every connection has a fresh Y.Doc: a dropped connection is replaced, never
+  resumed with its kept doc (a kept doc doubles a re-seeded Room), and the
+  peer's writes are applied again where the new doc differs; writes still
+  pending when the turn ends are lost. Leaving clears the agent's presence at
+  once.
 - **Model**: built per turn from the org's connection, read once at boot
   (`shared/connection-env.ts`: `AE_MODEL_CONNECTION` + `ANTHROPIC_API_KEY`;
   either missing → turns answer `no_default_key`; malformed → boot fails,
@@ -186,8 +126,6 @@ writes off the stream. The plan tool contract (inputs, results, error codes, the
   the in-process one for tests. `src/usage/outbox.ts` holds finished-turn
   records (cap 200, oldest dropped, retry every 2 s, in order);
   `drain(timeoutMs)` flushes it at shutdown (`pod/shutdown.ts`).
-- The wire has no `manifest` frame: a turn's usage is the run's result and
-  rides its usage record (07 §7).
 
 ## Test
 
@@ -213,7 +151,7 @@ starts the real pod listeners with a local IdP and the fake tools socket.
 - Latest Claude models by default (see the `claude-api` skill for model ids).
 - One agent per `src/agents/<name>/`; the loop (`run-turn.ts`) is shared.
 - `src/` writes no files **on the turn path**; its only filesystem READS are the
-  §12 snapshot dirs (`load-workspace.ts`, paths derived solely by
+  snapshot dirs (`load-workspace.ts`, paths derived solely by
   `snapshot-path.ts`). The one write is DevTools retention
   (`shared/devtools-retention.ts`), which prunes the debug capture once at boot
   before the server listens — never while a turn runs, and never a spec file.
