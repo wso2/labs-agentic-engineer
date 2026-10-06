@@ -37,10 +37,12 @@ dispatch the coding agent directly.
 ## Credentials
 
 The org's model connection is managed by AE per organization. The Console is
-the authoritative write path: saving the connection's key stores it in AE's org
-secret store and mirrors it to OpenBao, and aep-api publishes where it put it
-as the `model-connection-secrets` SecretReference in the org's OpenChoreo
-namespace. The SRE agent has no key of its own; it uses that one.
+the only write path: saving the connection's key writes it to the vault
+(OpenBao) and nowhere else, and aep-api records where it put it as a
+SecretReference in the org's OpenChoreo namespace named
+`<org-namespace>-default-key-<8 hex>`. Every save mints a new reference and
+retires the previous one. The SRE agent has no key of its own; it uses that
+one.
 
 The SRE image calls Anthropic (`--rca-model`, default
 `anthropic:claude-sonnet-4-6`), so this only works when the org's connection
@@ -54,14 +56,17 @@ The SRE hotfix image consumes the key from a file:
 RCA_LLM_API_KEY_FILE=/etc/rca-agent/anthropic/RCA_LLM_API_KEY
 ```
 
-`aectl sre install` reads the KV path from the org's `model-connection-secrets`
-SecretReference and authors an ExternalSecret that projects it into the SRE
-agent's namespace:
+`aectl sre install` reads the KV path from the org's newest
+`<org-namespace>-default-key-<8 hex>` SecretReference (by creation time) and
+authors an ExternalSecret that projects it into the SRE agent's namespace.
+There is no fallback: the pre-reference names (`model-connection-secrets`,
+`anthropic-secrets`) are not read, so an org that has only one of those must
+save its key again in Settings → Models.
 
 ```text
 AE Console model connection key
-  -> OpenBao user-app-secrets/<org base namespace>/model-connection-secrets#api-key
-     (recorded in SecretReference <org-namespace>/model-connection-secrets)
+  -> OpenBao user-app-secrets/<org vault namespace>/<org-namespace>-default-key-<8 hex>#api-key
+     (recorded in SecretReference <org-namespace>/<org-namespace>-default-key-<8 hex>)
   -> ExternalSecret openchoreo-observability-plane/rca-agent-anthropic-secret
      (ClusterSecretStore default, refreshInterval 1m)
   -> /etc/rca-agent/anthropic/RCA_LLM_API_KEY
@@ -69,16 +74,12 @@ AE Console model connection key
 
 The volume is required: until the key is saved, the SRE pod waits in
 `ContainerCreating` instead of accepting an alert and failing inside the
-analysis. The SecretReference only appears on the first save, so after saving
-the key for the first time, re-run `deployments/scripts/setup-sre.sh` (or
-`aectl sre install`). Later rotations from the Console need no re-run: ESO
-re-reads the same path every minute. The key value must not be placed in the
-image, checked into config, or logged.
-
-An org whose key predates the model connection still has an
-`anthropic-secrets` reference until its key is saved again in Settings →
-Models. aectl falls back to that name, and a re-run after the save picks up
-the new one.
+analysis. Re-run `deployments/scripts/setup-sre.sh` (or `aectl sre install`)
+after EVERY save of the key in the Console, the first one included. Each save
+writes the key under a new reference and retires the old one, and the
+ExternalSecret is pinned to the path it was installed with. Until the re-run,
+the SRE agent keeps reading the retired path and loses its key (a known gap).
+The key value must not be placed in the image, checked into config, or logged.
 
 `--org-namespace` picks the org (default: config `oc.default_org_namespace`,
 else `default`).
@@ -281,13 +282,14 @@ If the SRE pod sits in `ContainerCreating` with a missing
 org's model connection in the Console, then re-run the SRE step:
 
 ```bash
-kubectl -n default get secretreference model-connection-secrets   # appears on the first save
+kubectl -n default get secretreference | grep -- -default-key-   # appears on each save; newest wins
 bash deployments/scripts/setup-sre.sh
 ```
 
 If SRE receives the RCA request but fails with
 `Anthropic authentication failed`, check that the ExternalSecret synced from
-the Console key's path:
+the Console key's path. If the key was saved again since `aectl sre install`
+last ran, the ExternalSecret still names the retired path: re-run the SRE step.
 
 ```bash
 kubectl -n openchoreo-observability-plane get externalsecret rca-agent-anthropic-secret
