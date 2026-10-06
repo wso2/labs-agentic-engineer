@@ -508,7 +508,8 @@ change to it a copy change here.
 ### An agent that has not started
 
 A coding or validation agent can wait for the cluster before its first line:
-no free CPU or memory, an image that does not pull, a secret not there yet.
+no room (CPU, memory or a scheduling rule), an image that does not pull, a
+secret not there yet.
 The platform gives it a startup grace, then closes the cycle and fails the run
 `agent-start-failed`. Both halves are said on the build page (the run card)
 and on the version's Validations page; `features/builds/lib/agentStart.ts`
@@ -516,15 +517,16 @@ owns the words.
 
 | Situation | Says |
 |---|---|
-| Waiting, the cluster has no room (`Unschedulable`) | warning · **`Waiting for room in the cluster to start the agent`** · *The cluster has no free CPU or memory for the agent right now. If it has not started by 14:05, this run fails.* |
+| Waiting, the cluster has no room (`Unschedulable`) | warning · **`Waiting for room in the cluster to start the agent`** · *The cluster has no room for the agent right now (CPU, memory or a scheduling rule). If it has not started by 14:05, this run fails.* — `Unschedulable` also covers taints, affinity and limits, so the cause names the scheduling rule, not just CPU and memory |
 | Waiting, any other cause | warning · **`Waiting to start the agent`** · the cause · the same deadline sentence |
 | Cause: image does not pull (`ImagePullBackOff`, `ErrImagePull`) | *The cluster cannot pull the agent's container image.* / after: *The cluster could not pull its container image.* |
 | Cause: secret or config missing (`CreateContainerConfigError`) | *A secret or setting the agent needs is not ready yet.* / after: *A secret or setting it needed was not ready.* |
 | Cause the console has no words for | *The cluster reports the agent as waiting: `<reason>`.* / after: *The cluster reported `<reason>`.* |
 | It never started, coding | **`The coding agent could not start`** · *Nothing ran; no pull request was opened.* |
+| It never started, coding, after an earlier session of the build opened a pull request (a fix or conflict session) | *Nothing ran this time, so no new pull request was opened; #7, opened earlier in this build, is unchanged.* — the newest such pull request is named |
 | It never started, validation | **`The validation agent could not start`** · *Nothing ran; the version was not validated.* · *Run validation again once the cluster has room.* · **Run validation** |
 | The short label | **`Failed · Agent could not start`** |
-| The run's reason line | *The coding agent could not start. The cluster had no free CPU or memory for it.* |
+| The run's reason line | *The coding agent could not start. The cluster had no room for it (CPU, memory or a scheduling rule).* |
 | The build session's Coding agent stage | waiting · *Waiting for room in the cluster to start the agent.* (or *Waiting to start the agent.*) / failed · *Could not start.* + the cause |
 
 **The deadline is the platform's, never a guess.** It is the attempt's

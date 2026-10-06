@@ -229,13 +229,48 @@ describe("failureCopy — an agent that could not start", () => {
     );
     expect(copy?.tone).toBe("error");
     expect(copy?.title).toBe("The coding agent could not start");
-    expect(copy?.body).toContain("The cluster had no free CPU or memory for it.");
+    expect(copy?.body).toContain("The cluster had no room for it (CPU, memory or a scheduling rule).");
     expect(copy?.body).toContain("Nothing ran; no pull request was opened.");
     expect(copy?.body).toContain("Retry this build once the cluster has room.");
     expect(copy?.body).toContain("The cluster reported: Unschedulable: 0/1 nodes are available: 1 Insufficient memory.");
     // It was never a stop: no dispatch count, no "stopped" verb.
     expect(copy?.body).not.toMatch(/stopped|dispatched/);
     expect(copy?.details.code).toBe("agent-start-failed");
+  });
+
+  it("does not deny the pull request an earlier session of the same build opened", () => {
+    // A fix or conflict session dispatched after the first one merged #7: only
+    // that later session could not start.
+    const copy = failureCopy(
+      run({
+        terminalReason: "agent-start-failed",
+        cycles: [
+          {
+            id: "c1",
+            kind: "coding",
+            attempts: 1,
+            createdAt: "2026-09-11T07:00:00Z",
+            endedAt: "2026-09-11T07:30:00Z",
+            prNumber: 7,
+            prUrl: "https://github.com/acme/orders/pull/7",
+            mergeSha: "abc123",
+            recording: "kept",
+          },
+          {
+            id: "c2",
+            kind: "fix",
+            attempts: 1,
+            createdAt: "2026-09-11T07:40:00Z",
+            endedAt: "2026-09-11T07:50:00Z",
+            agentReason: "startup_failed:Unschedulable: no room",
+            recording: "kept",
+          },
+        ] as MilestoneRunView["cycles"],
+      }),
+    );
+    expect(copy?.title).toBe("The coding agent could not start");
+    expect(copy?.body).not.toContain("no pull request was opened");
+    expect(copy?.body).toContain("Nothing ran this time, so no new pull request was opened; #7, opened earlier in this build, is unchanged.");
   });
 
   it("names the validation agent on a validation cycle, and its own way to try again", () => {

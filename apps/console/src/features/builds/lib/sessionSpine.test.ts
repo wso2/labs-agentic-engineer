@@ -261,7 +261,7 @@ describe("sessionStages", () => {
       builds: undefined,
     };
     expect(stateOf(facts)).toMatchObject({ agent: "failed" });
-    expect(noteOf(facts, "agent")).toBe("Could not start. The cluster had no free CPU or memory for it.");
+    expect(noteOf(facts, "agent")).toBe("Could not start. The cluster had no room for it (CPU, memory or a scheduling rule).");
   });
 
   // The cluster writes WorkflowSucceeded / WorkflowFailed, not the bare words.

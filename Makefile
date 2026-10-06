@@ -13,7 +13,8 @@
 #   make typecheck    typecheck TS (tsc) + Go (go vet)
 #   make license      add license headers to all in-scope sources
 #   make license-check  fail if any in-scope source is missing a header
-#   make check-image-names  fail if the chart's platform image lists disagree
+#   make check-image-names  fail if the chart's platform image lists disagree,
+#                     or release.yml's matrix and images.yml's IMAGES differ
 #   make tools        install pinned Go tools (golangci-lint)
 #   make clean        remove build output and caches
 

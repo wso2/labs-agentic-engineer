@@ -527,7 +527,7 @@ describe("terminalReasonText", () => {
         "agent-start-failed",
         cycle({ agentReason: "startup_failed:Unschedulable: 0/1 nodes are available" }),
       ),
-    ).toBe("The coding agent could not start. The cluster had no free CPU or memory for it.");
+    ).toBe("The coding agent could not start. The cluster had no room for it (CPU, memory or a scheduling rule).");
     expect(
       terminalReasonText(
         "agent-start-failed",

@@ -262,13 +262,18 @@ export function dispatchedTimes(attempts: number | undefined): string {
  * cause decides the way forward: room frees up on its own, anything else needs
  * fixing first. A validation cycle's agent is retried from the Validation
  * page, everything else by retrying the build.
+ *
+ * `earlier` are the run's cycles before the one that could not start: a fix or
+ * conflict cycle is dispatched in the same run after an earlier one opened a
+ * pull request, so "no pull request was opened" is said only when none did.
  */
-function agentStartFailedCopy(cycle: RunCycleView | undefined): Omit<FailureCopy, "tone" | "details"> {
+function agentStartFailedCopy(
+  cycle: RunCycleView | undefined,
+  earlier: readonly RunCycleView[],
+): Omit<FailureCopy, "tone" | "details"> {
   const validating = cycle?.kind === "validation";
   const cause = startupFailureCause(cycle?.agentReason);
-  const notDone = validating
-    ? "Nothing ran; the version was not validated."
-    : "Nothing ran; no pull request was opened.";
+  const notDone = validating ? "Nothing ran; the version was not validated." : noPullRequestSentence(earlier);
   const retry = validating ? "Run validation again" : "Retry this build";
   const when = isRoomShortage(cycle?.agentReason) ? "once the cluster has room" : "once that is fixed";
   const reported = clusterReport(cycle?.agentReason);
@@ -278,6 +283,14 @@ function agentStartFailedCopy(cycle: RunCycleView | undefined): Omit<FailureCopy
       .filter(Boolean)
       .join(" "),
   };
+}
+
+/** What a coding agent that never started did not do, true whether or not an
+ *  earlier cycle of the run opened a pull request (the newest such one is named). */
+function noPullRequestSentence(earlier: readonly RunCycleView[]): string {
+  const opened = [...earlier].reverse().find((c) => c.prNumber !== undefined);
+  if (!opened) return "Nothing ran; no pull request was opened.";
+  return `Nothing ran this time, so no new pull request was opened; #${opened.prNumber}, opened earlier in this build, is unchanged.`;
 }
 
 /** A run that failed before the record existed, or in a phase no producer records yet. */
@@ -297,7 +310,7 @@ function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"
         body: `${dispatchesPhrase(newest?.attempts)}${agentReason} Open the coding agent log for what it did before it stopped.`,
       };
     case "agent-start-failed":
-      return agentStartFailedCopy(newest);
+      return agentStartFailedCopy(newest, run.cycles.slice(0, -1));
     case "fix-chain-budget":
     case "cycle-ceiling":
     case "no-progress":

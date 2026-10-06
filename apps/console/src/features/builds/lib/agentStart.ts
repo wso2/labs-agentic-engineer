@@ -33,7 +33,11 @@ type RunCycleView = components["schemas"]["RunCycleView"];
  * the cluster gave it rather than hidden.
  */
 
-/** The cluster has no free CPU or memory: the one cause that is about room. */
+/**
+ * The scheduler found no node for the pod: no free CPU or memory, or a
+ * scheduling rule (taints, affinity, limits) nothing satisfies. The one cause
+ * that is about room in the cluster.
+ */
 const UNSCHEDULABLE = "Unschedulable";
 
 interface CauseWords {
@@ -45,8 +49,8 @@ interface CauseWords {
 
 const CAUSES: Record<string, CauseWords> = {
   [UNSCHEDULABLE]: {
-    waiting: "The cluster has no free CPU or memory for the agent right now.",
-    failed: "The cluster had no free CPU or memory for it.",
+    waiting: "The cluster has no room for the agent right now (CPU, memory or a scheduling rule).",
+    failed: "The cluster had no room for it (CPU, memory or a scheduling rule).",
   },
   ImagePullBackOff: {
     waiting: "The cluster cannot pull the agent's container image.",

@@ -39,7 +39,7 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
   it("names the cluster's lack of room, in plain words, and when the run fails", () => {
     const n = startupWaitNotice(waiting("Unschedulable"), now);
     expect(n?.title).toBe("Waiting for room in the cluster to start the agent");
-    expect(n?.body).toContain("The cluster has no free CPU or memory for the agent right now.");
+    expect(n?.body).toContain("The cluster has no room for the agent right now (CPU, memory or a scheduling rule).");
     expect(n?.body).toContain(`If it has not started by ${resetStamp(failsAt, now)}, this run fails.`);
   });
 
@@ -73,7 +73,7 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
 describe("startupFailureCause — why an agent never started", () => {
   it("reads the cause off the cycle's startup_failed reason", () => {
     expect(startupFailureCause("startup_failed:Unschedulable: 0/1 nodes are available: 1 Insufficient cpu.")).toBe(
-      "The cluster had no free CPU or memory for it.",
+      "The cluster had no room for it (CPU, memory or a scheduling rule).",
     );
     expect(startupFailureCause("startup_failed:ImagePullBackOff")).toBe("The cluster could not pull its container image.");
     expect(startupFailureCause("startup_failed:CreateContainerConfigError: secret not found")).toBe(

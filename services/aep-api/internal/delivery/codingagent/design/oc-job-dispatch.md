@@ -119,7 +119,7 @@ flowchart TB
     J[runner] -->|publisher JWT| R["/internal/v1 refresh + MCP"]
   end
   subgraph studio [AE Studio tools pod]
-    P[MCP proxy] -->|publisher JWT| C["/internal/v1/mcp"]
+    P[MCP proxy] -->|ae-studio-<org> JWT| C["/internal/v1/mcp"]
   end
 ```
 
@@ -369,12 +369,13 @@ pod; for no pod only when an earlier pass also saw none (one empty read can
 hide a Running pod); and for a `Running`/`Pending` pod at once unless the
 cycle merged. A merge-closed cycle's live pod is left to the watcher until
 `ended_at` + 3h10m (the deadline ceiling + 10 min), so its last line and usage
-are kept. Every other close has no line to protect and is suspended at once,
-whatever its pod is doing: a cancel (its cancel-time suspend failed), a
-`startup_failed:*` close (its agent never started), and a cycle the run closed
-with nothing merged (a spent budget, a conflict, no work, a landing timeout),
-so no Pending pod starts an agent on a closed cycle when the cluster has
-room. A suspend that keeps failing (for example a binding naming a
+are kept. Every other close is suspended at once, whatever its pod is doing: a
+cancel (its cancel-time suspend failed), a `startup_failed:*` close (its agent
+never started), and a cycle the run closed with nothing merged (a spent
+budget, a conflict, no work, a landing timeout), so no Pending pod starts an
+agent on a closed cycle when the cluster has room. The trade: an agent still
+running on such a close is stopped mid-run, and its usage line, if any, is not
+captured. A suspend that keeps failing (for example a binding naming a
 missing release) leaves the row settling and never deleted.
 
 **Fair paging.** Every visited row is stamped `settle_checked_at` before

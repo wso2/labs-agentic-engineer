@@ -47,10 +47,12 @@ package codingagent
 // after the usage line) until backstopCeiling past the close, and "no pod"
 // counts only once an earlier pass noted it too: one empty tree read must not
 // kill a Running pod. A terminal pod is suspended on sight. Every other close
-// has no line to protect and is suspended at once whatever its pod is doing:
-// a cancel (its cancel-time suspend failed), a startup_failed close (its agent
-// never started), and a cycle the run closed with nothing merged; so no pod can
-// start later on the closed cycle.
+// is suspended at once whatever its pod is doing: a cancel (its cancel-time
+// suspend failed), a startup_failed close (its agent never started), and a
+// cycle the run closed with nothing merged (a spent budget, a conflict, no
+// work, a landing timeout); so no pod can start later on the closed cycle. The
+// trade: an agent still running on such a close is stopped mid-run, and its
+// usage line, if any, is not captured.
 
 import (
 	"context"

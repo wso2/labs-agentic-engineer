@@ -18,17 +18,20 @@ matrix at `ghcr.io/wso2/aep/<name>:<version>` (and `:latest`); then the
 `oci://ghcr.io/wso2/aep/charts`, and the `thunder-app-operator` chart, pushed to
 `oci://ghcr.io/wso2`; then a `platform/v<version>` GitHub release.
 
-The chart stamps every image it deploys with the release version. That includes
-the AE Studio images (`ae-design-agent`, `ae-collab`, `ae-studio-tools`), which
-land in `aeStudio.images.*`. `aep-api` copies them into each org's `ae-studio`
-Resource, so an install upgrades every org's pod: `GET /ae-studio` starts a
-converge when the Resource differs from the chart (`Status` in
+Each chart pins every image this repo builds to the release version: the
+`platform` chart pins every matrix image except `thunder-app-operator`, which its
+own chart pins. That includes the AE Studio images (`ae-design-agent`,
+`ae-collab`, `ae-studio-tools`), which land in `aeStudio.images.*`. `aep-api`
+copies those three into each org's `ae-studio` Resource, so an install upgrades
+every org's pod: `GET /ae-studio` starts a converge when the Resource differs
+from the chart (`Status` in
 `services/aep-api/internal/organization/aestudio/state.go`), which means on the
 org's next console visit (upgrade on visit).
 
-The `webhook-relay` image (`aeStudio.webhookRelay.image`) is third-party and is
-never built here. `values.yaml` pins it by digest; bump it by digest in a
-reviewed PR.
+Third-party images are never built here and the release does not stamp them:
+`temporal.image` keeps its version pin, and the `webhook-relay` image
+(`aeStudio.webhookRelay.image`) keeps its digest pin. Bump either in a reviewed
+PR (the relay by digest).
 
 **`ctl`** — `aectl` binaries for five GOOS/GOARCH pairs, attached to a
 `ctl/v<version>` GitHub release.
@@ -64,12 +67,12 @@ run before it starts.
 The release cannot order them for you: every image is one matrix entry with no
 `max-parallel` and no `needs` between the legs, so `aep-api` may well publish
 first. What protects you is the chart — it is packaged after every image job and
-pins `aepApi.image.tag`, `codingAgentRunner.image` and
-`codingAgentRunner.opencodeImage` to the same version — so deploy the versioned
-chart once the release has completed. The exposure is the floating
-`remote-worker:latest` this repo's `values.yaml` defaults to, which is what lets
-a new caller meet an old image, and which a partial release splits (see the tags
-note below). Guaranteeing runner-first publication would be a change to
+pins `aepApi.image.tag`, `codingAgentRunner.image`,
+`codingAgentRunner.opencodeImage` and `aeStudio.images.*` to the same version —
+so deploy the versioned chart once the release has completed. The exposure is
+the floating `remote-worker:latest` this repo's `values.yaml` defaults to, which
+is what lets a new caller meet an old image, and which a partial release splits
+(see the tags note below). Guaranteeing runner-first publication would be a change to
 `release.yml`, not a step someone can take at release time.
 
 **New ghcr packages need a visibility check.** The first release creates

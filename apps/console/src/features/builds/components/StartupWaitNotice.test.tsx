@@ -45,7 +45,7 @@ describe("StartupWaitNotice", () => {
     render(<StartupWaitNotice cycle={stuck} />);
     const notice = screen.getByRole("status");
     expect(notice).toHaveTextContent("Waiting for room in the cluster to start the agent");
-    expect(notice).toHaveTextContent("The cluster has no free CPU or memory for the agent right now.");
+    expect(notice).toHaveTextContent("The cluster has no room for the agent right now (CPU, memory or a scheduling rule).");
     expect(notice).toHaveTextContent(/If it has not started by .+, this run fails\./);
   });
 
