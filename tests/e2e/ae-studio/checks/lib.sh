@@ -153,10 +153,12 @@ pg_dump_scan() {
 
 # psql inside postgres-0 with the pod's own POSTGRES_USER/POSTGRES_DB: no
 # credential leaves the pod. SQL on stdin; one value per line, | separated.
+# The session is read-only (default_transaction_read_only), so a write in a
+# check's SQL fails instead of landing.
 psql_q() {
   # shellcheck disable=SC2016 # the pod's shell expands POSTGRES_USER and POSTGRES_DB
   kubectl -n "$NS_AEP" exec -i postgres-0 -- \
-    sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<<"$1"
+    sh -c 'PGOPTIONS="-c default_transaction_read_only=on" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -v ON_ERROR_STOP=1' <<<"$1"
 }
 
 # auth_header_file TOKEN_FILE: prints the path of a 0600 file holding

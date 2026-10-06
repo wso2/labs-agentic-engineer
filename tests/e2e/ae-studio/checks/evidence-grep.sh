@@ -24,8 +24,16 @@ if need_values 10.6; then
   case $(cd "$(dirname "$VALUES_FILE")" && pwd) in
     "$(cd "$RUN_DIR" && pwd)" | "$(cd "$RUN_DIR" && pwd)"/*) fail 10.6 "VALUES_FILE is under RUN_DIR (it would count itself)" ;;
     *)
-      hits=$(grep -r -c -F -f "$VALUES_FILE" "$RUN_DIR" | awk -F: '{ s += $NF } END { print s + 0 }')
-      expect_eq 10.6 0 "$hits" "lines under RUN_DIR holding a secret value"
+      # grep exits 2 when it cannot read VALUES_FILE or any file under RUN_DIR:
+      # an unscanned file is a FAIL, never a zero count.
+      counts=$(grep -r -s -c -F -f "$VALUES_FILE" "$RUN_DIR")
+      rc=$?
+      if [ "$rc" -gt 1 ]; then
+        fail 10.6 "grep could not read VALUES_FILE or a file under RUN_DIR (exit $rc)"
+      else
+        hits=$(printf '%s\n' "$counts" | awk -F: '{ s += $NF } END { print s + 0 }')
+        expect_eq 10.6 0 "$hits" "lines under RUN_DIR holding a secret value"
+      fi
       ;;
   esac
 fi
