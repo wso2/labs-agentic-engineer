@@ -109,8 +109,8 @@ Cloud overlay may use a different backend via SM-API.
 ### `effective-key` — retired
 The git-service endpoint that returned the org's Anthropic key for the spec
 agents. aep-api now reads the model connection's key itself
-(`ConnectionReader.Effective`) and hands it to the agents service per turn in
-`X-Model-Key`.
+(`ConnectionReader.Effective`) and renders it into the org's `ae-design-agent`
+env when the key is saved; the pod rolls.
 
 ---
 
@@ -261,16 +261,14 @@ The organization's Thunder confidential OAuth app (`aep-publisher-{org}`).
 The coding-agent Job authenticates to aep-api as this client
 (`client_credentials`) for platform callbacks and MCP — local and cloud.
 Distinct from other M2M clients and from the design
-agent's BFF MCP token.
+agent's `ae-studio` client.
 
 ### `Task JWT`
-Retired as the coding-agent Job's callback credential (that is the
-publisher client). The BFF still mints short-lived RS256 identity JWTs
-(`IssueServiceToken` / `IssueMCPToken`) for design-agent MCP and outbound
-S2S; they carry org in `ocOrgId` and do not use the cycle id as subject.
-Verifiers fetch the BFF's public key from `/auth/external/jwks.json`.
-Distinct from Thunder user/M2M tokens and from the retired
-`AEP_BFF_TO_REMOTE_WORKER` client.
+Gone (2026-10). The BFF no longer mints identity JWTs and serves no JWKS
+(`/auth/external/jwks.json` is 404). The coding-agent Job's bearer is the
+organization's publisher client token (`client_credentials`), a Thunder token
+that aep-api verifies against Thunder's published keys; a JWT signed by any
+other key is rejected with 401.
 
 ---
 
@@ -596,7 +594,7 @@ replayed to another, so a model change on the same host keeps the history.
 ### Provider limit
 A model provider's 429 that means "the plan is spent", not "wait a moment": a
 `retry-after` past 5 minutes, or 5 minutes of 429s in all. One rule decides in
-the agents service and the runner. A spec turn ends with a `provider_limit`
+the design agent and the runner. A spec turn ends with a `provider_limit`
 frame; a coding run settles **blocked** with reason `model-provider-limit` and
 the reset time when the provider gave one, spending no re-dispatch budget.
 Shorter 429s are **waits**, retried and reported ("waiting on the model
@@ -619,9 +617,9 @@ poison `wc-` namespace derivation and the publisher OU binding.
 
 ### Committed-truth
 aep-api's rule that a spec (requirements + design) is authoritative only once it is
-committed to git `main`. An agent turn's output is hash-parity checked by the fold
-(`platform/agentfold`) before commit; a mismatch rejects the turn and leaves `main`
-untouched. The git commit — not any draft buffer — is the source of truth.
+committed to git `main`. An agent turn's file edits land in the Room; the Room's
+committer commits them to `main`. The git commit — not any draft buffer — is the
+source of truth.
 
 ## Skills
 
@@ -631,7 +629,7 @@ naming which agent the guidance is written for. **Absent means both**, so
 narrowing is opt-in and an unmarked or org-authored skill is never hidden by
 omission. The design agent's catalog still *lists* a coding-audience skill (it
 has to name one in order to pin it) but `load()` refuses to serve the body.
-Audience never crosses a service boundary: the agents service is always the
+Audience never crosses a service boundary: the design agent is always the
 design side, the runner always the coding side. ADR-0014.
 
 ### Skill availability (enabled / disabled)

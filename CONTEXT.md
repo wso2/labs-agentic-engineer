@@ -3,7 +3,7 @@
 Glossary of domain terms for the Agentic Engineer Platform. Implementation-free:
 this file defines what terms *mean*, not how anything works.
 
-## Agents service (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`)
+## Design agent (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`)
 
 **Skill**:
 A unit of procedural guidance — a `SKILL.md` (frontmatter `name` + `description`,
@@ -44,6 +44,14 @@ _Avoid_: workspace, repo, project.
 **Turn**:
 One request→response cycle of the main agent: a user instruction plus the current
 spec bundle in, a stream of file mutations out. One turn = one POST.
+
+**Conversation**:
+The design agent's thread of turns. A project has one current Conversation, shared
+by everyone working on it; the user may rotate it, and it rotates by itself at 80 %
+of the model connection's context window. The marketplace has its own Conversation
+per user. Conversations live only in the design agent's memory, so a pod roll
+starts a new one.
+_Avoid_: session, chat (a Conversation is the agent's thread, not the user's browser tab).
 
 ## Org skills (`services/aep-api`)
 
@@ -128,11 +136,12 @@ _Avoid_: platform key (the platform provides none), primary key (implies a
 secondary that does not exist, and collides with the SQL sense).
 
 **Coding agent key**:
-An organization's optional second Anthropic API key, used by the coding agent and
-by nothing else. It is an override on the default key, not a peer: it can only
-exist while a default key exists, and it changes which key is billed, never
-whether an agent can run.
-_Avoid_: secondary key, coding LLM credential.
+An organization's optional second credential for the coding agent, used by it and
+by nothing else: a Claude subscription token or an API key for the coding role. It
+is the **Org secret** `coding-agent-key`, which the coding Job mounts by reference.
+It is an override on the default key, not a peer: it can only exist while a default
+key exists, and it changes which key is billed, never whether an agent can run.
+_Avoid_: coding agent token, secondary key, coding LLM credential.
 
 **Reuse**:
 The state of an org that has no coding agent key, so the coding agent runs on the
@@ -536,3 +545,11 @@ An OpenChoreo CR that names a vault path for a secret. It lives in the same
 control-plane namespace as the Workload that consumes it. The vault path's
 `wc-…` segment (`OrgBaseNamespace`) is a storage key, not that namespace.
 _Avoid_: treating OrgBaseNamespace as the SecretReference CR namespace.
+
+**Org secret**:
+One of the six secrets an organization holds: `github-pat`, `github-webhook-secret`,
+`default-key`, `coding-agent-key`, `ae-publisher-client` and `ae-studio-client`.
+Its value lives only in the vault; the platform database records just the name of
+its **SecretReference**, and a recorded name means the secret is set. The two
+client secrets belong to the org's **Publisher client** and its `ae-studio` client.
+_Avoid_: credential (too broad), key (only two of the six are LLM keys).
