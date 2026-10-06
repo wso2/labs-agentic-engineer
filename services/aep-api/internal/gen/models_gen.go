@@ -223,6 +223,21 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 	}
 }
 
+// Defines values for ChatView.
+const (
+	Issues ChatView = "issues"
+)
+
+// Valid indicates whether the value is a known member of the ChatView enum.
+func (e ChatView) Valid() bool {
+	switch e {
+	case Issues:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for DeploymentGuardrailStatus.
 const (
 	GuardrailApplied     DeploymentGuardrailStatus = "applied"
@@ -1680,6 +1695,9 @@ type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
+
+// ChatView The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+type ChatView string
 
 // ClientSecretOutputBody defines model for ClientSecretOutputBody.
 type ClientSecretOutputBody struct {
@@ -3616,6 +3634,9 @@ type TurnInputBody struct {
 	//
 	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
 	Scope TurnScope `json:"scope,omitempty"`
+
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `json:"view,omitempty"`
 }
 
 // TurnInputBodyIntent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
@@ -3656,6 +3677,9 @@ type TurnInputMultipart struct {
 	//
 	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
 	Scope TurnScope `json:"scope,omitempty"`
+
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `json:"view,omitempty"`
 }
 
 // TurnInputMultipartIntent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
@@ -3983,6 +4007,12 @@ type StreamActivityParams struct {
 	LastEventID string `json:"Last-Event-ID,omitempty"`
 }
 
+// ListConversationsParams defines parameters for ListConversations.
+type ListConversationsParams struct {
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `form:"view,omitempty" json:"view,omitempty"`
+}
+
 // GetBuildLogsParams defines parameters for GetBuildLogs.
 type GetBuildLogsParams struct {
 	// Since Return only entries stamped AFTER this epoch-millis cursor — feed back the previous response's `nextCursor`. Absent reads from the beginning. Millis rather than a line offset because the cursor must survive the hand-over from a live pod tail to the captured snapshot, where a line count is meaningless but a timestamp still orders correctly.
@@ -4059,6 +4089,12 @@ type ListTasksParams struct {
 
 // ListTasksParamsState defines parameters for ListTasks.
 type ListTasksParamsState string
+
+// GetActiveTurnParams defines parameters for GetActiveTurn.
+type GetActiveTurnParams struct {
+	// View The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+	View *ChatView `form:"view,omitempty" json:"view,omitempty"`
+}
 
 // StreamTurnParams defines parameters for StreamTurn.
 type StreamTurnParams struct {

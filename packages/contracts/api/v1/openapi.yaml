@@ -692,6 +692,14 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
+      - description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        in: query
+        name: view
+        schema:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       responses:
         '200':
           content:
@@ -2956,6 +2964,14 @@ paths:
         schema:
           description: Project name (DNS-label slug)
           type: string
+      - description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        in: query
+        name: view
+        schema:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       responses:
         '200':
           content:
@@ -4376,6 +4392,11 @@ components:
       - status
       - startedAt
       type: object
+    ChatView:
+      description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+      enum:
+      - issues
+      type: string
     ClientSecretOutputBody:
       additionalProperties: false
       properties:
@@ -9340,6 +9361,11 @@ components:
           x-go-type-skip-optional-pointer: false
         scope:
           $ref: '#/components/schemas/TurnScope'
+        view:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       required:
       - instruction
       type: object
@@ -9411,6 +9437,11 @@ components:
           type: string
         scope:
           $ref: '#/components/schemas/TurnScope'
+        view:
+          # Keep an explicit pointer under the global prefer-skip-optional-pointer:
+          # the handler must distinguish 'absent' (the main chat) from a view.
+          x-go-type-skip-optional-pointer: false
+          $ref: '#/components/schemas/ChatView'
       required:
       - instruction
       type: object
