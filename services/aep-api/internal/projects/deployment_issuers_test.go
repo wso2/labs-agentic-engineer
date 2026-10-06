@@ -205,9 +205,10 @@ func TestDeploy_UnreadableIDPProfileRefusesBeforeGovernance(t *testing.T) {
 }
 
 // A saved BYO profile with no issuer has nothing to pin, and an unpinned trait
-// trusts every keymanager on the cluster. It is a configuration fault no retry
-// fixes, so the deploy fails permanently (visibly) and writes nothing.
-func TestDeploy_BYOProfileWithoutIssuerFailsPermanentlyAndWritesNothing(t *testing.T) {
+// trusts every keymanager on the cluster. The deploy is refused and writes
+// nothing, with a retryable error, so it goes through once the admin saves an
+// issuer.
+func TestDeploy_BYOProfileWithoutIssuerFailsRetryablyAndWritesNothing(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, kind, issuer string }{
 		{"custom, empty issuer", "custom", ""},
@@ -226,8 +227,11 @@ func TestDeploy_BYOProfileWithoutIssuerFailsPermanentlyAndWritesNothing(t *testi
 			svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
 
 			_, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
-			if !errors.Is(err, delivery.ErrDeployPermanent) {
-				t.Fatalf("Deploy error = %v; want ErrDeployPermanent", err)
+			if err == nil {
+				t.Fatal("Deploy succeeded with no issuer to pin; want the deploy refused")
+			}
+			if errors.Is(err, delivery.ErrDeployPermanent) {
+				t.Fatalf("Deploy error is permanent (%v); saving an issuer must let the retry through", err)
 			}
 			if n := len(oc.EnsureReleaseCalls()) + len(oc.ApplyReleaseBindingCalls()) + len(oc.ApplyComponentSpecCalls()); n != 0 {
 				t.Fatalf("%d OpenChoreo writes; want none", n)

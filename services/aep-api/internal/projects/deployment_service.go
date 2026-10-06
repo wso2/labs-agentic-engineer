@@ -738,10 +738,11 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 // means any other tenant's IdP. So a failed read refuses the deploy rather
 // than composing an unpinned trait. The error is a plain one, not
 // ErrDeployPermanent: a read failure is transient, and the promote activity
-// retries until the profile reads. A saved BYO profile with no issuer is the
-// opposite case: a configuration fault no retry fixes (PATCH /config refuses
-// it now; older rows may hold it), so it fails with ErrDeployPermanent. No
-// profile at all is the platform-IdP org, which has nothing to pin.
+// retries until the profile reads. A saved BYO profile with no issuer (PATCH
+// /config refuses one now; older rows may hold it) is refused the same way:
+// the retry picks the issuer up once the admin saves one, where a permanent
+// error would fail the run with no way back. No profile at all is the
+// platform-IdP org, which has nothing to pin.
 func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID, projectID string, design *spec.DesignFile) ([]string, error) {
 	if s.idp == nil || !designHasProtectedAPI(design) {
 		return nil, nil
@@ -758,8 +759,8 @@ func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID, projectID
 	if strings.TrimSpace(profile.Issuer) == "" {
 		slog.ErrorContext(ctx, "deployment: org IdP profile has no issuer; the deploy is refused",
 			"orgID", orgID, "projectID", projectID, "kind", profile.Kind)
-		return nil, fmt.Errorf("%w: the org's %s IdP profile has no issuer to pin protected APIs to",
-			delivery.ErrDeployPermanent, profile.Kind)
+		return nil, fmt.Errorf("deployment: the org's %s IdP profile has no issuer to pin protected APIs to",
+			profile.Kind)
 	}
 	return []string{profile.Issuer}, nil
 }
