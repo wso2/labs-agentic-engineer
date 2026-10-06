@@ -40,7 +40,7 @@ jobs:
       matrix:
         include:
           # DECLARED FIRST so the long poles take a slot in the first batch when
-          # the pool is short, rather than queueing behind six shorter builds.
+          # the pool is short, rather than queueing behind the shorter builds.
           # Slot order following declaration order is observed, not documented —
           # a hint, so the worst case is a slower run, never a wrong one.
           #
@@ -146,8 +146,8 @@ jobs:
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ inputs.version }}
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:latest
           # Registry cache rather than type=gha. The Actions cache is capped at
-          # 10 GB per repository and CI's own entries already fill it, so eight
-          # images x two platforms of mode=max layers were evicted by LRU between
+          # 10 GB per repository and CI's own entries already fill it, so every
+          # image's two platforms of mode=max layers were evicted by LRU between
           # releases and every release rebuilt from scratch. GHCR has no such cap.
           #
           # Kept under a buildcache/ prefix so it is not a tag on the released
