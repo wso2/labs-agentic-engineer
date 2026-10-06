@@ -85,7 +85,7 @@ func (r *Reaper) reapLeaves(ctx context.Context, leaves []snapshotLeaf, now time
 			continue
 		}
 		if _, err := r.engine.TrashSnapshot(l.path, cutoff); err != nil {
-			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "error", err)
+			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "class", repo.ErrorClass(err))
 		}
 	}
 	return nil
@@ -199,7 +199,7 @@ func packedRef(gitDir, refName string) string {
 	// A line over the scanner's buffer ends the loop early, and "" means "no
 	// such ref", so say which one it was.
 	if err := scanner.Err(); err != nil {
-		slog.Warn("reaper.packed_refs_scan_stopped", "error", err)
+		slog.Warn("reaper.packed_refs_scan_stopped", "class", repo.ErrorClass(err))
 	}
 	return ""
 }

@@ -136,7 +136,7 @@ func (r *Reaper) evictLeaves(ctx context.Context, leaves []snapshotLeaf, target 
 		size := repo.DirBytes(l.path)
 		trashed, err := r.engine.TrashSnapshot(l.path, cutoff)
 		if err != nil {
-			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "error", err)
+			slog.WarnContext(ctx, "reaper.snapshot_trash_failed", "project", l.project, "class", repo.ErrorClass(err))
 			continue
 		}
 		if !trashed {
@@ -176,7 +176,7 @@ func (r *Reaper) evictLRU(ctx context.Context, target int64) ([]string, error) {
 		err := r.engine.TrashRepo(lockCtx, m.ref)
 		cancel()
 		if err != nil {
-			slog.InfoContext(ctx, "reaper.evict_skipped", "repo", m.ref.FullName(), "reason", err)
+			slog.InfoContext(ctx, "reaper.evict_skipped", "repo", m.ref.FullName(), "class", repo.ErrorClass(err))
 			continue
 		}
 		freed += m.size

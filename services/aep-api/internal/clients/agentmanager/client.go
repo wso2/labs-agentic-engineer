@@ -57,14 +57,24 @@ const (
 // PermanentError marks a response no retry can fix — a 4xx. The govern stage
 // fails its run on one of these rather than retrying until the budget is gone:
 // a rejected payload or a missing permission is as wrong on the tenth attempt
-// as on the first.
+// as on the first. It carries the status only: AMP's body can echo what it
+// was sent, and callers log and wrap this error.
 type PermanentError struct {
 	Status int
-	Body   string
 }
 
 func (e *PermanentError) Error() string {
-	return fmt.Sprintf("agentmanager: request rejected with %d: %s", e.Status, e.Body)
+	return fmt.Sprintf("agentmanager: request rejected with %d", e.Status)
+}
+
+// ServerError is a 5xx from Agent Manager: its fault, worth retrying. Like
+// PermanentError it carries the status, not the body.
+type ServerError struct {
+	Status int
+}
+
+func (e *ServerError) Error() string {
+	return fmt.Sprintf("agentmanager: Agent Manager answered %d", e.Status)
 }
 
 // EnsureProvider creates the org's provider, or writes in's connection onto
@@ -269,9 +279,9 @@ func (c *client) doOnce(ctx context.Context, token, method, path string, in, out
 		// error: two deploys racing the same agent is ordinary.
 		return nil
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
-		return &PermanentError{Status: resp.StatusCode, Body: string(raw)}
+		return &PermanentError{Status: resp.StatusCode}
 	case resp.StatusCode >= 500:
-		return fmt.Errorf("agentmanager: %s %s returned %d", method, path, resp.StatusCode)
+		return fmt.Errorf("agentmanager: %s %s: %w", method, path, &ServerError{Status: resp.StatusCode})
 	}
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {

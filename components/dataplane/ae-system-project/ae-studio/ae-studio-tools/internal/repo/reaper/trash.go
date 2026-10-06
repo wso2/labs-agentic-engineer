@@ -64,7 +64,7 @@ func (r *Reaper) purgeTrash(ctx context.Context, due func(e os.DirEntry, now tim
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(trashDir, e.Name())); err != nil {
-			slog.WarnContext(ctx, "reaper.trash_purge_failed", "error", err)
+			slog.WarnContext(ctx, "reaper.trash_purge_failed", "class", repo.ErrorClass(err))
 		}
 	}
 	return nil

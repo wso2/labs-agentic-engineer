@@ -57,7 +57,7 @@ func (r *Reaper) reclaimTmp(ctx context.Context) error {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(tmpDir, e.Name())); err != nil {
-			slog.WarnContext(ctx, "reaper.tmp_purge_failed", "error", err)
+			slog.WarnContext(ctx, "reaper.tmp_purge_failed", "class", repo.ErrorClass(err))
 		}
 	}
 	return nil

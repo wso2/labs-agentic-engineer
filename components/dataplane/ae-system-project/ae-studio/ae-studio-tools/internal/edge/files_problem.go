@@ -21,7 +21,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"os/exec"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
 	"github.com/wso2/aep/ae-studio-tools/internal/platform"
@@ -85,26 +84,11 @@ func filesProblem(ctx context.Context, op, project string, err error) problemRes
 		if errors.As(err, &re) {
 			repoName = re.Repo
 		}
-		slog.WarnContext(ctx, "files.git_failed", "op", op, "project", project, "repo", repoName, "class", gitErrorClass(err))
+		slog.WarnContext(ctx, "files.git_failed", "op", op, "project", project, "repo", repoName, "class", repo.ErrorClass(err))
 		return problemResponse{status: http.StatusBadGateway, code: "github_error", detail: "the repository could not be read"}
 	}
 }
 
-// gitErrorClass names a git failure without its text: the request ended,
-// git exited non-zero, or anything else.
-func gitErrorClass(err error) string {
-	var exitErr *exec.ExitError
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	case errors.As(err, &exitErr):
-		return "git_exit"
-	default:
-		return "other"
-	}
-}
 
 // problemResponse is a problem+json answer for any Files operation, on /v1
 // or the Files socket. It stands in for the generated per-status types,

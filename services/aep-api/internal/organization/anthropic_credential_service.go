@@ -49,13 +49,16 @@ package organization
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 )
 
@@ -301,17 +304,41 @@ func (s *AnthropicCredentialService) syncModelProvider(ctx context.Context, ocOr
 	case modelProviderPublish:
 		if err := s.modelProvider.PublishOrgModelConnection(ctx, ocOrgID, *after, key); err != nil {
 			slog.WarnContext(ctx, "model connection: could not publish the saved connection to the Agent Manager provider",
-				"ocOrgId", ocOrgID, "host", after.Host, "error", err)
+				append([]any{"ocOrgId", ocOrgID, "host", after.Host}, agentManagerFailureAttrs(err)...)...)
 			return fmt.Errorf("publish the saved connection to the Agent Manager provider: %w", err)
 		}
 	case modelProviderClear:
 		if err := s.modelProvider.ClearOrgModelKey(ctx, ocOrgID, *before); err != nil {
 			slog.WarnContext(ctx, "model connection: could not clear the Agent Manager provider's copy of the disconnected key; it stays live there until cleared by hand",
-				"ocOrgId", ocOrgID, "previousHost", before.Host, "error", err)
+				append([]any{"ocOrgId", ocOrgID, "previousHost", before.Host}, agentManagerFailureAttrs(err)...)...)
 		}
 	case modelProviderLeave:
 	}
 	return nil
+}
+
+// agentManagerFailureAttrs classifies a failed Agent Manager push for the
+// log: a reason class, plus AMP's status when it answered, never the error's
+// text (a transport error names AMP's URL; an AMP body can echo what it was
+// sent).
+func agentManagerFailureAttrs(err error) []any {
+	var perm *agentmanager.PermanentError
+	var server *agentmanager.ServerError
+	var urlErr *url.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return []any{"reason", "timeout"}
+	case errors.Is(err, context.Canceled):
+		return []any{"reason", "canceled"}
+	case errors.As(err, &perm):
+		return []any{"reason", "rejected", "status", perm.Status}
+	case errors.As(err, &server):
+		return []any{"reason", "upstream_error", "status", server.Status}
+	case errors.As(err, &urlErr):
+		return []any{"reason", "unreachable"}
+	default:
+		return []any{"reason", "other"}
+	}
 }
 
 // modelProviderStep is what a save does to the Agent Manager provider's copy

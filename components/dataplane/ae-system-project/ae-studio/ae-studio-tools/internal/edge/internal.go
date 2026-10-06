@@ -167,9 +167,10 @@ func writeRequestError(w http.ResponseWriter, _ *http.Request, _ error) {
 	problem.Write(w, http.StatusBadRequest, "validation_failed", "the request does not match the contract")
 }
 
-// writeResponseError answers a handler error no typed response covers.
+// writeResponseError answers a handler error no typed response covers. The
+// error is logged by class only: it can carry git or GitHub text.
 func writeResponseError(w http.ResponseWriter, r *http.Request, err error) {
-	slog.Error("internal.handler_failed", "path", r.URL.Path, "error", err)
+	slog.Error("internal.handler_failed", append([]any{"path", r.URL.Path}, handlerErrorAttrs(err)...)...)
 	problem.Write(w, http.StatusInternalServerError, "internal_error", "the request could not be completed")
 }
 
@@ -196,8 +197,18 @@ func (s internalServer) GetGithubIdentity(ctx context.Context, _ gen.GetGithubId
 		p.Detail = fmt.Sprintf("GitHub answered %d", se.StatusCode)
 		p.GithubStatus = se.StatusCode
 	}
-	slog.Warn("github.identity_failed", "error", err)
+	slog.Warn("github.identity_failed", github.ErrorAttrs(err)...)
 	return gen.GetGithubIdentity502ApplicationProblemPlusJSONResponse(p), nil
+}
+
+// handlerErrorAttrs names a handler error by class: GitHub's answer when GitHub
+// answered one, else the git engine's class (repo.ErrorClass).
+func handlerErrorAttrs(err error) []any {
+	var se *github.HTTPStatusError
+	if errors.As(err, &se) {
+		return github.ErrorAttrs(err)
+	}
+	return []any{"class", repo.ErrorClass(err)}
 }
 
 // newProblem is the body problem.Write sends, as the generated type.

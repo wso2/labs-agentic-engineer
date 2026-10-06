@@ -845,3 +845,56 @@ func TestIssueTracingTokenRequestsTheTokenManageScope(t *testing.T) {
 		t.Errorf("requested scopes = %q, want the token-manage scope", scopes)
 	}
 }
+
+// A rejection's error names its status only: AMP's body can echo what it was
+// sent, and every caller logs or wraps this error.
+func TestARejectionCarriesNoBody(t *testing.T) {
+	const planted = "planted-token-0123456789abcdef https://planted.example.invalid/x"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/oauth2/token") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"bad credential ` + planted + `"}`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token"})
+	_, err := c.ListModelKeys(context.Background(), ModelKeyRef{
+		Org: "default", Project: "shop", Agent: "checkout-agent", ConfigID: "cfg-uuid", Environment: "default",
+	})
+	var perm *PermanentError
+	if !errors.As(err, &perm) || perm.Status != http.StatusBadRequest {
+		t.Fatalf("err = %v, want a PermanentError carrying 400", err)
+	}
+	if strings.Contains(err.Error(), "planted") {
+		t.Fatalf("the error carries AMP's body: %v", err)
+	}
+}
+
+// A 5xx is a ServerError carrying AMP's status: retryable, so not permanent.
+func TestFiveXXIsAServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/oauth2/token") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "t", "expires_in": 3600})
+			return
+		}
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`planted-token-0123456789abcdef`))
+	}))
+	defer srv.Close()
+
+	c := New(Config{BaseURL: srv.URL, TokenURL: srv.URL + "/oauth2/token"})
+	_, err := c.ListModelKeys(context.Background(), ModelKeyRef{
+		Org: "default", Project: "shop", Agent: "checkout-agent", ConfigID: "cfg-uuid", Environment: "default",
+	})
+	var se *ServerError
+	var perm *PermanentError
+	if !errors.As(err, &se) || se.Status != http.StatusServiceUnavailable || errors.As(err, &perm) {
+		t.Fatalf("err = %v, want a ServerError carrying 503 and no PermanentError", err)
+	}
+	if strings.Contains(err.Error(), "planted") {
+		t.Fatalf("the error carries AMP's body: %v", err)
+	}
+}

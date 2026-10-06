@@ -21,7 +21,6 @@ package files
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
@@ -41,25 +40,9 @@ type IdentitySource = repo.IdentitySource
 func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.GitIdentity) {
 	name, email, err := a.Identity.Identity(ctx)
 	if err != nil {
-		slog.WarnContext(ctx, "files.identity_unavailable", identityErrorAttrs(err)...)
+		slog.WarnContext(ctx, "files.identity_unavailable", github.ErrorAttrs(err)...)
 		return nil, nil
 	}
 	return &repo.GitIdentity{Name: name, Email: email}, &repo.GitIdentity{Name: name, Email: email}
 }
 
-// identityErrorAttrs names a failed identity lookup by class (and GitHub's
-// status when it answered), never by the error's text.
-func identityErrorAttrs(err error) []any {
-	var se *github.HTTPStatusError
-	if _, limited := github.RateLimited(err); limited {
-		return []any{"class", "rate_limited"}
-	}
-	switch {
-	case errors.As(err, &se):
-		return []any{"class", "status", "status", se.StatusCode}
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return []any{"class", "canceled"}
-	default:
-		return []any{"class", "transport"}
-	}
-}

@@ -132,7 +132,9 @@ model-connection / idp services.*
     `GeneratedAgents` for all). The Agent Manager provider's copy follows it (`syncModelProvider`):
     republished after commit, with the request's key, on every save that carries a key (a failed
     push answers `502 agent_manager_not_updated`, the key staying saved), and cleared once on a
-    disconnect (best-effort).
+    disconnect (best-effort). Either failure logs value-free: `reason` (`rejected` or
+    `upstream_error` with AMP's `status`, `unreachable`, `timeout`, `canceled`, `other`), never AMP's
+    body or URL; `agentmanager` errors carry the status only.
 - **The model connection is read only through `ModelConnectionService`** (`model_connection_service.go`):
   a `modelconn.Connection` (format, base URL, host, model, auth scheme, limits, image input) alone
   (`Connection`), beside its key's reference (`KeyRef`, `KeyPathRef`) or as the coding credential

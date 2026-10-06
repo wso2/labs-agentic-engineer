@@ -55,7 +55,7 @@ func (r *Reaper) maintainRepos(ctx context.Context) (int, error) {
 		}
 		loose, packs, err := r.engine.CountObjects(ctx, ref)
 		if err != nil {
-			slog.WarnContext(ctx, "reaper.count_objects_failed", "repo", ref.FullName(), "error", err)
+			slog.WarnContext(ctx, "reaper.count_objects_failed", "repo", ref.FullName(), "class", repo.ErrorClass(err))
 			return
 		}
 		if !shouldMaintain(loose, packs) {
@@ -65,7 +65,7 @@ func (r *Reaper) maintainRepos(ctx context.Context) (int, error) {
 		err = r.engine.MaintainMirror(workCtx, ref)
 		cancel()
 		if err != nil {
-			slog.InfoContext(ctx, "reaper.maintain_skipped", "repo", ref.FullName(), "reason", err)
+			slog.InfoContext(ctx, "reaper.maintain_skipped", "repo", ref.FullName(), "class", repo.ErrorClass(err))
 			return
 		}
 		done++

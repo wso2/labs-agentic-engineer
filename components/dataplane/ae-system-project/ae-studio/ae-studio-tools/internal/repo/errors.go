@@ -17,8 +17,12 @@
 package repo
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -92,4 +96,29 @@ func remoteHTTPStatus(err error) int {
 		return 403
 	}
 	return 0
+}
+
+// ErrorClass names a git or filesystem failure for a log line without its
+// text, which names the git command, the clone URL or a path: the request
+// ended (canceled, timeout), the disk is full, git exited non-zero, a
+// filesystem call failed, or anything else.
+func ErrorClass(err error) string {
+	var exitErr *exec.ExitError
+	var pathErr *fs.PathError
+	var linkErr *os.LinkError
+	var sysErr *os.SyscallError
+	switch {
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case isENOSPC(err):
+		return "disk_full"
+	case errors.As(err, &exitErr):
+		return "git_exit"
+	case errors.As(err, &pathErr), errors.As(err, &linkErr), errors.As(err, &sysErr):
+		return "fs"
+	default:
+		return "other"
+	}
 }

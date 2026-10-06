@@ -136,7 +136,7 @@ func (r *Reaper) Run(ctx context.Context) {
 // engine's ENOSPC hook queues.
 func (r *Reaper) ForceSweep(ctx context.Context) {
 	if err := r.purgeTrashAll(ctx); err != nil {
-		slog.WarnContext(ctx, "reaper.pass_failed", "pass", "force-trash-purge", "error", err)
+		slog.WarnContext(ctx, "reaper.pass_failed", "pass", "force-trash-purge", "class", repo.ErrorClass(err))
 	}
 	r.sweep(ctx)
 }
@@ -154,7 +154,7 @@ func (r *Reaper) requestForceSweep() {
 // sweep runs sweepOnce and logs each failed pass.
 func (r *Reaper) sweep(ctx context.Context) {
 	if _, err := r.sweepOnce(ctx); err != nil {
-		slog.WarnContext(ctx, "reaper.pass_failed", "error", err)
+		slog.WarnContext(ctx, "reaper.pass_failed", "class", repo.ErrorClass(err))
 	}
 }
 

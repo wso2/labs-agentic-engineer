@@ -17,6 +17,7 @@
 package github
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -67,6 +68,24 @@ func RateLimited(err error) (retryAfter time.Duration, ok bool) {
 		return he.RetryAfter, true
 	}
 	return 0, false
+}
+
+// ErrorAttrs names a failed GitHub call for a log line by class, and GitHub's
+// status when it answered, never by the error's text (which names the
+// request URL): rate_limited, status (with status), canceled or transport.
+func ErrorAttrs(err error) []any {
+	var se *HTTPStatusError
+	if _, limited := RateLimited(err); limited {
+		return []any{"class", "rate_limited"}
+	}
+	switch {
+	case errors.As(err, &se):
+		return []any{"class", "status", "status", se.StatusCode}
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return []any{"class", "canceled"}
+	default:
+		return []any{"class", "transport"}
+	}
 }
 
 // GraphQLError carries the errors[] of a GraphQL response, which answers 200

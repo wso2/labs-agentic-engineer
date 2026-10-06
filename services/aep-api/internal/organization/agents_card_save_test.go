@@ -175,6 +175,7 @@ func (v *saveVault) DeleteSecretRef(_ context.Context, _ secretmanagersvc.Secret
 type loggingProvider struct {
 	log        *saveLog
 	publishErr error
+	clearErr   error
 }
 
 func (p *loggingProvider) PublishOrgModelConnection(_ context.Context, _ string, conn modelconn.Connection, key string) error {
@@ -184,7 +185,7 @@ func (p *loggingProvider) PublishOrgModelConnection(_ context.Context, _ string,
 
 func (p *loggingProvider) ClearOrgModelKey(context.Context, string, modelconn.Connection) error {
 	p.log.add("clear")
-	return nil
+	return p.clearErr
 }
 
 // saveFixture is one org's card over the fakes above.

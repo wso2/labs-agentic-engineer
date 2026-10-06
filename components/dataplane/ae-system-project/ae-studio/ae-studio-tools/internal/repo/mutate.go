@@ -125,7 +125,7 @@ func (e *Engine) mutateOnce(ctx context.Context, ref RepoRef, p repoPaths, fn fu
 	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
 		"update-ref", "refs/heads/"+branch, commitSHA); err != nil {
 		slog.WarnContext(ctx, "repo: advance local ref after push failed (next fetch heals)",
-			"repo", ref.FullName(), "branch", branch, "error", err)
+			"repo", ref.FullName(), "branch", branch, "class", ErrorClass(err))
 	}
 	return CommitResult{CommitSHA: commitSHA, Changed: true}, nil
 }

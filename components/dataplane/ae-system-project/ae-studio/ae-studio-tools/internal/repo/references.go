@@ -239,7 +239,7 @@ func (e *Engine) OverlayReferences(ctx context.Context, ref RepoRef, project, sh
 		return
 	}
 	warn := func(step string, err error) {
-		slog.WarnContext(ctx, "references.overlay_failed", "project", project, "step", step, "error", err)
+		slog.WarnContext(ctx, "references.overlay_failed", "project", project, "step", step, "class", ErrorClass(err))
 	}
 	store := ref.OwnerRepo()
 	names, err := e.ListReferences(ctx, store)

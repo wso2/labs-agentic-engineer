@@ -144,7 +144,12 @@ No event carries a body, a token, a signature, tool arguments or a usage
 record's values. A line about git, GitHub or the project resolver carries a
 class, a `status` or a `githubStatus`, not the error's text (it names the
 command and the clone URL). A row that does carry raw error text says so in its
-Fields as **raw `error`** or **raw `reason`**, with where the error comes from.
+Fields as **raw `error`**, with where the error comes from.
+
+The git class (`repo.ErrorClass`) is one of `canceled`, `timeout`,
+`disk_full`, `git_exit`, `fs` (a filesystem call) or `other`. The GitHub class
+(`github.ErrorAttrs`) is `rate_limited`, `status` (with GitHub's `status`),
+`canceled` or `transport`.
 
 Levels: `I` info, `W` warn, `E` error.
 
@@ -152,7 +157,7 @@ Levels: `I` info, `W` warn, `E` error.
 |---|---|---|---|
 | `repo.root` | I | `root_layout` | once at start, the studio-data root's layout |
 | `internal.access` | I | `method`, `path`, `status`, `ms` | every `/internal/v1` request, after the answer (no headers, no query) |
-| `internal.handler_failed` | E | `path`, **raw `error`** (any handler error, so it can carry git or GitHub text) | a `/internal/v1` handler error no typed response covers (500 `internal_error`) |
+| `internal.handler_failed` | E | `path`, `class` (GitHub's when GitHub answered, with `status`; else the git class) | a `/internal/v1` handler error no typed response covers (500 `internal_error`; no error text) |
 | `v1.handler_failed` | E | `path`, `class` (the error's Go type) | the `/v1` response failed to encode (500 `internal_error`; no error text) |
 | `files_socket.handler_failed` | E | `path` | the Files socket's response failed to encode (no error text: a Files error can carry git text) |
 | `mcp_socket.handler_failed` | E | `path` | the MCP socket's response failed to encode |
@@ -164,7 +169,7 @@ Levels: `I` info, `W` warn, `E` error.
 | `mcp.tools_call` | I | `tool`, `repo` (remote-git only), `upstream` (`pod` or `aep-api`) | each allowed `tools/call` |
 | `mcp.upstream_failed` | W | `method`, **raw `error`** (from the `aep-api` client) | `aep-api` could not answer a forwarded call (502 `aep_api_unavailable`) |
 | `repo.clone` | I | `repo`, `mode` (`bare`), `ms` | a cold clone finished |
-| `files.git_failed` | W | `op`, `project`, `repo`, `class` | a Files op's git failure (502 `github_error`) |
+| `files.git_failed` | W | `op`, `project`, `repo`, `class` (git) | a Files op's git failure (502 `github_error`) |
 | `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload met a full disk (503 `disk_full`) |
 | `files.not_fast_forward` | W | `op`, `project` | a Files save lost every CAS retry to concurrent writers (409 `not_fast_forward`) |
 | `files.identity_unavailable` | W | `class` (`rate_limited`, `status`, `canceled`, `transport`), `status` | the gitpat identity could not be read for a save; the engine commits as its default identity |
@@ -177,7 +182,7 @@ Levels: `I` info, `W` warn, `E` error.
 | `repo.trash_failed` | W | `repo` | trashing a repository failed on the studio's own disk (500 `trash_failed`) |
 | `github.call_failed` | W | `op`, `repo`, `status`, `githubStatus` | a GitHub op was refused or failed |
 | `github.repo_owner_mismatch` | W | `owner`, `githubOwner`, `repo` | create-repo answered a different owner than asked, so nothing is returned (403 `owner_not_allowed`) |
-| `github.identity_failed` | W | **raw `error`** (the GitHub client's) | the gitpat user lookup failed (502) |
+| `github.identity_failed` | W | `class` (`rate_limited`, `status`, `canceled`, `transport`), `status` | the gitpat user lookup failed (502) |
 | `github.issue_list_capped` | W | `owner`, `repo`, `pages` | an issue list hit its page cap; the answer is partial |
 | `github.milestone_comments_capped` | W | `owner`, `repo`, `milestone`, `covered` | a milestone's comment read hit its page; later issues read as having none |
 | `aep_api.unavailable` | W | `op`, `project` | the project resolver could not reach `aep-api` (503, `Retry-After`) |
@@ -190,7 +195,7 @@ Levels: `I` info, `W` warn, `E` error.
 | `skills.manifest_unparseable` | W | none | the library's `skills-manifest.json` did not parse; every skill reads as enabled by default |
 | `skills.skill_unparseable` | W | `name`, `legacyDir` | a `SKILL.md` did not parse and is left out of the catalog |
 | `snapshot.idea_unreadable` | W | `project`, `step` (`read` or `parse`), **raw `error`** (read only; the local mirror's git read) | the project descriptor's idea could not be read; the snapshot answers no idea |
-| `references.overlay_failed` | W | `project`, `step`, **raw `error`** (local mirror git and filesystem) | a reference overlay step failed (best effort; the lookup still answers) |
+| `references.overlay_failed` | W | `project`, `step`, `class` (git) | a reference overlay step failed (best effort; the lookup still answers) |
 
 ### Reaper events
 
@@ -199,18 +204,18 @@ The sweeps and what they evict are in [clone-storage.md](clone-storage.md#reaper
 | Event | Lvl | Fields | When |
 |---|---|---|---|
 | `reaper.sweep` | I | `usedBytes`, `budgetBytes`, `pct`, `evicted` | each sweep of the studio-data root |
-| `reaper.pass_failed` | W | `pass` (force trash purge only), **raw `error`** (local filesystem and git) | a sweep pass failed |
-| `reaper.tmp_purge_failed` | W | **raw `error`** (filesystem) | removing an old tmp entry failed |
-| `reaper.trash_purge_failed` | W | **raw `error`** (filesystem) | removing an old trash entry failed |
-| `reaper.snapshot_trash_failed` | W | `project`, **raw `error`** (filesystem) | trashing an unused snapshot failed |
+| `reaper.pass_failed` | W | `pass` (force trash purge only), `class` (git) | a sweep pass failed |
+| `reaper.tmp_purge_failed` | W | `class` (git) | removing an old tmp entry failed |
+| `reaper.trash_purge_failed` | W | `class` (git) | removing an old trash entry failed |
+| `reaper.snapshot_trash_failed` | W | `project`, `class` (git) | trashing an unused snapshot failed |
 | `reaper.snapshot_evicted` | I | `project`, `bytes` | the budget pass evicted a snapshot |
 | `reaper.evicted` | I | `repo`, `bytes` | the budget pass evicted a mirror |
-| `reaper.evict_skipped` | I | `repo`, **raw `reason`** (the trash error, a lock timeout or a filesystem error) | a mirror's eviction was skipped (its `repo.lock` was held) |
+| `reaper.evict_skipped` | I | `repo`, `class` (git; a held lock is `timeout`) | a mirror's eviction was skipped (its `repo.lock` was held) |
 | `reaper.evict_short` | W | `freedBytes`, `targetBytes` | the budget pass freed less than its target |
 | `reaper.maintained` | I | `repo`, `looseBefore`, `packsBefore` | git maintenance ran on a mirror |
-| `reaper.maintain_skipped` | I | `repo`, **raw `reason`** (the local git maintenance error) | maintenance was skipped |
-| `reaper.count_objects_failed` | W | `repo`, **raw `error`** (local git) | counting a mirror's objects failed |
-| `reaper.packed_refs_scan_stopped` | W | **raw `error`** (the scanner's) | the `packed-refs` scan ended early on an over-long line |
+| `reaper.maintain_skipped` | I | `repo`, `class` (git) | maintenance was skipped |
+| `reaper.count_objects_failed` | W | `repo`, `class` (git) | counting a mirror's objects failed |
+| `reaper.packed_refs_scan_stopped` | W | `class` (git; an over-long line is `other`) | the `packed-refs` scan ended early on an over-long line |
 
 ### Startup and shutdown messages
 
@@ -235,7 +240,7 @@ where listed, is raw (config, listener and socket errors; never a secret value).
 Two prose messages are outside both tables: `internal/auth/jwks_cache.go`
 ("kid not found in JWKS, attempting refresh", W, `kid`, `jwks_url`) and
 `internal/repo/mutate.go` ("repo: advance local ref after push failed (next
-fetch heals)", W, `repo`, `branch`, raw `error` from local git).
+fetch heals)", W, `repo`, `branch`, `class` (git)).
 
 `delivery` and `event` are sender-chosen headers logged before the signature
 is checked, so both are cut to 64 runes.
