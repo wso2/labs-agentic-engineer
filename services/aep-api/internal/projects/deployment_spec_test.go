@@ -192,7 +192,7 @@ func TestDesiredDeploymentFor_CarriesWorkloadOverrides(t *testing.T) {
 // the component out or the DEPLOYMENT has auto-RCA off. The second is the
 // wso2cloud case: its org ComponentTypes accept only the org's own alert-rule
 // Trait, whose contract is not the one this trait speaks, and SRE self-healing
-// is not offered there (ADR-0026).
+// is not offered there.
 func TestDesiredDeploymentFor_AutoRCAAlertRule(t *testing.T) {
 	t.Parallel()
 	const service = `{"name":"api","componentType":"service"}`

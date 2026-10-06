@@ -597,7 +597,7 @@ func (e orderedEnsurer) EnsureComponent(_ context.Context, org, project, compone
 // when the release is cut is what deploys. The build's fan-out wrote those
 // traits, possibly long before, and nothing had re-asserted them since: a
 // trait change after the build (a design edit, auto-RCA turned off) never
-// reached a release. The deploy re-asserts the Component spec first (ADR-0026).
+// reached a release. The deploy re-asserts the Component spec first.
 func TestDeploy_ReassertsTheComponentSpecBeforeCuttingTheRelease(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{

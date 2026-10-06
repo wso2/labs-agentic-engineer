@@ -7442,7 +7442,7 @@ components:
           type: string
         availability:
           description: >-
-            Whether the git-derived facts below could be read (05 §6). `unavailable` — the org's
+            Whether the git-derived facts below could be read. `unavailable` — the org's
             AE Studio could not answer for the repository (GitHub not connected, AE Studio
             restarting or misconfigured): exists, version, dirty, design and designOutdated are
             then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus /
