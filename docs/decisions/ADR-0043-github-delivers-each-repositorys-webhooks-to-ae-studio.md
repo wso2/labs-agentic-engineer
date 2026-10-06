@@ -7,6 +7,7 @@
 credential the forward carries) ·
 [ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md) (the webhook
 secret)
+**Detail:** [`components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/route-groups.md`](../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/route-groups.md)
 
 ## Context
 

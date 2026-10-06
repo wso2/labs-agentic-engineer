@@ -18,3 +18,7 @@ as `https://smee.io/` + base64url(HMAC-SHA256(seed, org))[:22] from the install 
 The three folders' containers (and the optional relay, a public image that is not built
 here) run only in the per-org ae-studio pod (aep-api provisions it; the three images are
 built by `skaffold/ae-studio.yaml`); the platform chart has no Deployment for any of them. `ae-studio-tools` has no chart Deployment.
+
+Design notes: [`design/README.md`](design/README.md) for the ResourceType (what it renders,
+env, routes, secrets, converge, local vs Cloud); [`ae-studio-tools/design/`](ae-studio-tools/design/)
+for that container's route-group gates and clone storage.

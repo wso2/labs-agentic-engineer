@@ -10,6 +10,7 @@ tokens) · [ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)
 (where its secrets come from) ·
 [ADR-0043](ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md)
 (its webhook route)
+**Detail:** [`components/dataplane/ae-system-project/ae-studio/design/README.md`](../../components/dataplane/ae-system-project/ae-studio/design/README.md)
 
 ## Context
 
