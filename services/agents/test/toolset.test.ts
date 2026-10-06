@@ -131,6 +131,7 @@ test("issues instructions use the gate's question and option wording", () => {
   const out = buildIssuesInstructions(undefined, undefined);
   assert.ok(out.includes(`"${FILE_QUESTION}"`));
   assert.ok(out.includes(FILE_IT));
+  assert.match(out, /never ask_questions/);
 });
 
 test("issues instructions append the surface's narration policy", () => {

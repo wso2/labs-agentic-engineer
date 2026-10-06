@@ -26,7 +26,7 @@
  */
 
 import type { ToolSet } from "ai";
-import { buildAnswerInstruction, buildAnswersInstruction } from "@aep/agent-stream";
+import { buildAnswerInstruction } from "@aep/agent-stream";
 
 /** The confirmation question the agent asks, and the option that files. */
 export const FILE_QUESTION = "File this issue?";
@@ -39,27 +39,21 @@ const CREATE_ISSUE = "create_issue";
 const NOTE_SEPARATOR = " — ";
 
 const SINGLE_ANSWER = buildAnswerInstruction(FILE_QUESTION, [FILE_IT]);
-/** The batch form's line for this question: `- "File this issue?": File it`. */
-const BATCH_LINE = buildAnswersInstruction([{ question: FILE_QUESTION, selected: [FILE_IT] }]).split("\n")[1]!;
-
-/** True when `rest`, the text after the selected label, is empty or a note. */
-function endsOrNotes(rest: string): boolean {
-  return rest === "" || rest.startsWith(NOTE_SEPARATOR);
-}
 
 /**
  * Is `instruction` the user's answer to FILE_QUESTION selecting exactly
- * FILE_IT? Accepts the single-answer and batch-answer serializations
- * (`buildAnswerInstruction` / `buildAnswersInstruction`), with or without a
- * note; a different question, another label ("File it later", "Change it") or
- * chat that merely contains the words does not count.
+ * FILE_IT? Only the single-answer serialization (`buildAnswerInstruction`),
+ * anchored at the START of the instruction, with nothing after the label or a
+ * note. The batch form is deliberately not accepted: its lines (and any note,
+ * which may span lines) can be forged from text the user pastes, so a gate that
+ * scanned for them would disagree with the serializer. A batch answer simply
+ * gets the refusal, and the agent re-asks with ask_question. Another label
+ * ("File it later", "Change it") or chat that merely contains the words does
+ * not count.
  */
 export function filingConfirmed(instruction: string): boolean {
   const text = instruction.trim();
-  if (text.startsWith(SINGLE_ANSWER)) return endsOrNotes(text.slice(SINGLE_ANSWER.length));
-  return text
-    .split("\n")
-    .some((line) => line.startsWith(BATCH_LINE) && endsOrNotes(line.slice(BATCH_LINE.length)));
+  return text === SINGLE_ANSWER || text.startsWith(SINGLE_ANSWER + NOTE_SEPARATOR);
 }
 
 /**
