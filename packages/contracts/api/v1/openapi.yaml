@@ -77,9 +77,21 @@ paths:
             pushing it to Agent Manager's provider failed, so governed deploys
             fail until the key is saved again. `secret_store_write_failed` (on
             `body.llm` for the connection key, `body.agents` for the
-            subscription token): the secret store did not accept the key and
-            nothing is saved. Also an upstream failure while probing a section
-            (for example `llm_upstream_error`).
+            subscription token, `body.gitProvider` for the GitHub token): the
+            secret store did not accept the secret and nothing is saved.
+            `ae_studio_setup_incomplete` (on `body.gitProvider`): the GitHub
+            connection is saved but AE Studio setup did not finish; saving the
+            token again retries. Also an upstream failure while probing a
+            section (for example `llm_upstream_error`).
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: >-
+            `secrets_delivery_unavailable` (on `body.llm`, `body.agents` or
+            `body.gitProvider`): this installation has no secret store
+            configured, so the secret cannot be saved. Nothing is saved.
         default:
           content:
             application/json:
@@ -568,8 +580,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-          description: The requested `version` name is already in use, or a build is already
-            running for this project. Nothing was cut.
+          description: >-
+            The requested `version` name is already in use, or a build is
+            already running for this project, or (`publisher_credentials_missing`)
+            the organization has no build credentials: "Reconnect GitHub to set
+            up this organization's build credentials". Nothing was cut.
         default:
           content:
             application/json:
