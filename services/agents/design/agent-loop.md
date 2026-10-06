@@ -49,6 +49,18 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 | **A file write settles at its own call** ([ADR-0004](./ADR-0004-a-write-settles-at-its-own-call.md)) | the SDK queues a step's tool calls and runs them all at `model-call-end`, so a batched design turn's first file had no verdict until the last file's body finished streaming — four completed documents shown as pending for minutes. A bundle op is a pure function of the bundle and the args, and the args close at `tool-input-end`, so it runs there and its `tool-result` rides its own `tool-call`; the ledger memoises per `toolCallId`, so the SDK's later `execute()` re-reads that verdict instead of re-applying the op |
 | **SSE event types in `src/contracts/sse-events.ts`** | one shared definition for producer + playground, owned by the service; `OpResult` / tool-input types re-exported from the domain Zod schemas (no parallel copy) |
 
+## Views
+
+A **view** is a main-panel view of the console that owns an agent of its own. The turn
+body's optional `view` (`VIEWS` in `@aep/agent-stream`; absent means the spec agent)
+selects that view's tool set and instructions in place of the spec editor's:
+`toolsetFor(turn, view)` returns `issues` for `view: "issues"` and otherwise derives
+`files`/`task-plan` from the turn as before. `runConversationTurn` dispatches the
+`issues` set to `src/agents/issues/` (the report classifier, the question tools,
+Issues-agent instructions, no spec bundle), and the question stop condition applies
+unchanged, so a "File this issue?" card ends the turn awaiting the user. Adding a view
+is one entry in `VIEWS`, one tool set, and one `src/agents/<view>/`.
+
 ## Prototype write gate
 
 A turn's file tools are built with `gates.prototypeRender` (`buildFileToolSet`),

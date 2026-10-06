@@ -40,6 +40,10 @@ test("chat rides verbatim, with the spec-paths rule appended", () => {
   assert.match(out, /Spec sources live under specs\//);
 });
 
+test("a view's chat turn rides verbatim, without the spec-paths rule", () => {
+  assert.equal(composeInstruction({ kind: "chat", text: "the save button is broken" }, { view: "issues" }), "the save button is broken");
+});
+
 test("flow points at the skill, with the user's trailing text after a blank line", () => {
   assert.ok(
     composeInstruction({ kind: "flow", skill: "design" }).startsWith("Load the design skill and follow it."),
@@ -487,6 +491,12 @@ test("the tool set is derived from the kind", () => {
   assert.equal(toolsetFor({ kind: "chat", text: "x" }), "files");
   assert.equal(toolsetFor({ kind: "start" }), "files");
   assert.equal(toolsetFor({ kind: "flow", skill: "design" }), "files");
+});
+
+test("a view selects its own tool set; no view leaves the turn to decide", () => {
+  assert.equal(toolsetFor({ kind: "chat", text: "x" }, "issues"), "issues");
+  assert.equal(toolsetFor({ kind: "plan" }, undefined), "task-plan");
+  assert.equal(toolsetFor({ kind: "chat", text: "x" }, undefined), "files");
 });
 
 test("only the register-external-resource flow gets the draft tool", () => {

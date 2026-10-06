@@ -49,6 +49,8 @@ import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.j
 import { buildWebSearchTools } from "../agents/main/tools/web-search.js";
 import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
+import { buildIssuesTools } from "../agents/issues/tools.js";
+import { buildIssuesInstructions } from "../agents/issues/prompt.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import type { UnreadableReference } from "./attachments.js";
@@ -299,6 +301,13 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       // planTask/updateTask against it (known components + existing Tasks).
       tools = buildTaskPlanTools(new TaskPlan(input.files), skills);
       instructions = buildTaskPlanInstructions(skills, input.surface);
+    } else if (toolset === "issues") {
+      // The Issues chat: no spec bundle, no file tools, no skill loader — the
+      // report classifier plus the question tools (its filing tools arrive over
+      // the turn's MCP block below). The stop condition keys on the question
+      // tools by name, so a File it question ends the turn like any other.
+      tools = buildIssuesTools({ ...config.jev, fetch: input.toolFetch ?? globalThis.fetch });
+      instructions = buildIssuesInstructions(skills, input.surface);
     } else {
       bundle = input.collabPeer ? new DocFileBundle(input.collabPeer, input.files) : new FileBundle(input.files);
       // A prototype write is drawn by the isolated render check before it lands
@@ -417,12 +426,13 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
         attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
         unreadableReferencesNote(input.unreadableReferences) +
         eagerBlock +
-        buildPrompt(input.files, input.instruction),
+        // The issues agent has no spec snapshot: the user's message is the prompt.
+        (toolset === "issues" ? input.instruction : buildPrompt(input.files, input.instruction)),
       messages: history,
       ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       tools,
       // End the turn at an ACCEPTED HITL question call (the question tools live
-      // on the `files` set only, so this never fires on a task-plan turn).
+      // on the `files` and `issues` sets, so this never fires on a task-plan turn).
       stopWhen: [isStepCount(config.maxSteps), hasValidQuestionCall()],
       maxOutputTokens,
       // Short provider waits (a 429 with a brief retry-after, a 5xx) ride out

@@ -29,6 +29,8 @@ import { buildFileToolSet, buildRegisterDraftTools } from "../src/agents/main/to
 import { buildTaskPlanTools } from "../src/agents/main/tools/task-plan.js";
 import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 import { instructions, buildInstructions, taskPlanInstructions, buildTaskPlanInstructions } from "../src/agents/main/prompt.js";
+import { buildIssuesTools } from "../src/agents/issues/tools.js";
+import { buildIssuesInstructions } from "../src/agents/issues/prompt.js";
 import { testSkillSource } from "./skill-source.js";
 
 const SKILLS = testSkillSource([{ name: "task-planning", description: "plan tasks", content: "one task per component" }]);
@@ -94,4 +96,29 @@ test("planTask carries the Task's feature through to the accumulator (B3)", asyn
   );
   assert.equal((out as { feature?: string }).feature, "F2");
   assert.equal(p.plannedTasks()[0]!.feature, "F2");
+});
+
+// --- issues tool set (the Issues chat) ---------------------------------------
+
+test("issues tool set is the classifier + the question tools — no file tools, no loadSkill", () => {
+  const tools = buildIssuesTools({ apiKey: undefined, url: "http://jev.invalid", fetch: globalThis.fetch });
+  assert.deepEqual(Object.keys(tools).sort(), ["ask_question", "ask_questions", "classify_report"]);
+});
+
+test("issues instructions carry the procedure and keep the classifier unnamed to the user", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  for (const needle of ["classify_report", "search_issues", "create_issue", "File it", "Change it"]) {
+    assert.ok(out.includes(needle), `mentions ${needle}`);
+  }
+  assert.match(out, /never .*classifier/i);
+  // The one allowed occurrence is the rule that forbids naming it.
+  assert.equal(out.match(/Jev/g)?.length, 1);
+  // Not the spec agent's prompt: no file-editing vocabulary.
+  assert.equal(out.includes("addFile"), false);
+});
+
+test("issues instructions append the surface's narration policy", () => {
+  const skills = testSkillSource([{ name: "console", description: "how to speak", content: "Say issue, not ticket." }]);
+  assert.match(buildIssuesInstructions(skills, "console"), /# Narration policy\n\nSay issue, not ticket\./);
+  assert.equal(buildIssuesInstructions(skills, undefined), buildIssuesInstructions(undefined, undefined));
 });

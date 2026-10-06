@@ -981,6 +981,11 @@ export interface TurnRequest {
    * is asking, not what is being asked for.
    */
   surface?: Surface;
+  /**
+   * The main-panel view the user is in; selects that view's agent. Absent = the
+   * spec agent.
+   */
+  view?: View;
 }
 
 /**
@@ -998,11 +1003,27 @@ export function isSurface(v: unknown): v is Surface {
 }
 
 /**
- * The registrable tool sets. NOT a wire field: the agents service derives the
- * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files), so a
- * caller cannot ask for a tool set that disagrees with what its turn is for.
+ * The main-panel views that own an agent of their own. A view selects that
+ * view's tool set and instructions in place of the spec agent's; absent means
+ * the spec agent. Adding a view is one entry here, one tool set below, and one
+ * `agents/<view>/` directory.
  */
-export const TOOLSETS = ["files", "task-plan"] as const;
+export const VIEWS = ["issues"] as const;
+
+export type View = (typeof VIEWS)[number];
+
+/** Runtime guard for a `View` value. */
+export function isView(v: unknown): v is View {
+  return (VIEWS as readonly unknown[]).includes(v);
+}
+
+/**
+ * The registrable tool sets. NOT a wire field: the agents service derives the
+ * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files) and
+ * `TurnRequest.view` (`issues` → issues), so a caller cannot ask for a tool set
+ * that disagrees with what its turn is for.
+ */
+export const TOOLSETS = ["files", "task-plan", "issues"] as const;
 
 export type Toolset = (typeof TOOLSETS)[number];
 

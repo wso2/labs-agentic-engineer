@@ -62,6 +62,13 @@ only — the service never touches GitHub; the BFF plan tap performs the issue w
 off the stream. The plan tool contract (inputs, results, error codes, the
 `tasks/<n>.md` convention) and the published JSON Schemas live in `@aep/agent-stream`.
 
+A third set, `issues` (`src/agents/issues/`), is selected by the turn's `view: "issues"`
+(the console's Issues page) rather than by the turn's kind: `classify_report` (Jev, the
+report classifier; `classify.ts`) plus `ask_question`/`ask_questions`, with the
+search/file tools merged from the turn's `mcp` block. It has its own instructions
+(`prompt.ts`), no spec bundle and no file or skill tools; the user's message is the whole
+prompt. An unknown `view` is a 400, and a view turn cannot join a collab room.
+
 ## Run
 
 - `pnpm --filter @aep/agents dev` — SSE server, watch/reload. `start` — run once.

@@ -55,11 +55,13 @@ import {
   isTurnSpec,
   isCollabConfig,
   isSurface,
+  isView,
   isTurnAim,
   isTurnScope,
   isTurnAttachmentsOrAbsent,
   isTurnConnection,
   SURFACES,
+  VIEWS,
   type CollabConfig,
   type McpConfig,
   type ProviderWaitPart,
@@ -70,6 +72,7 @@ import {
   type TurnScope,
   type TurnJournal,
   type TurnSpec,
+  type View,
 } from "@aep/agent-stream";
 import { composeInstruction, eagerSkillsFor, scopeFactFor, toolsetFor, wantsRegisterDraftTool } from "./prompts/turn.js";
 import type { ConversationStore } from "./store/conversation-store.js";
@@ -228,6 +231,7 @@ export function createApp(deps: CreateAppDeps): Express {
       collab?: unknown;
       webSearch?: unknown;
       surface?: unknown;
+      view?: unknown;
       eagerSkills?: unknown;
       model?: unknown;
       connection?: unknown;
@@ -291,6 +295,16 @@ export function createApp(deps: CreateAppDeps): Express {
         return;
       }
       surface = body.surface;
+    }
+    // The main-panel view the user is in selects that view's agent (the Issues
+    // page → the issues tool set). Absent → the spec agent; unknown → a 400.
+    let view: View | undefined;
+    if (body.view !== undefined) {
+      if (!isView(body.view)) {
+        res.status(400).json({ error: `view must be one of: ${VIEWS.join(", ")}` });
+        return;
+      }
+      view = body.view;
     }
     // aim (#666): what the user pointed at, and what for. Parsed BEFORE the
     // instruction because it leads the wording, and reused for the journal
@@ -367,14 +381,15 @@ export function createApp(deps: CreateAppDeps): Express {
     const instruction = composeInstruction(turn, {
       previousTurnFailed: body.previousTurnFailed === true,
       headless: body.headless === true,
+      ...(view ? { view } : {}),
       ...(scope ? { scope: scopeFactFor(scope, Object.keys(files)) } : {}),
       ...(aim ? { aim } : {}),
     });
 
     // toolset: which domain tools to register (§9.3). DERIVED from the turn —
     // planning registers the task tools and no file tools, everything else
-    // mutates the bundle.
-    const toolset: Toolset = toolsetFor(turn);
+    // mutates the bundle — unless the user's view owns an agent of its own.
+    const toolset: Toolset = toolsetFor(turn, view);
 
     // mcp (optional, dependency-management migration Phase 5): the BFF-minted
     // discovery endpoint + short-lived bearer for this turn. Absent → no MCP
@@ -517,7 +532,8 @@ export function createApp(deps: CreateAppDeps): Express {
     // up front, skipping the loadSkill round-trip. DERIVED from the turn —
     // which guidance a flow needs is a property of the flow, not of the call,
     // so a console CTA, a typed command and a playground run cannot diverge.
-    const derivedEager = eagerSkillsFor(turn, scope);
+    // A view's agent carries no spec flows, so there is nothing to inline.
+    const derivedEager = view ? [] : eagerSkillsFor(turn, scope);
     const eagerSkills = derivedEager.length > 0 ? derivedEager : undefined;
 
     // Build the per-turn model from the connection (fail as a pre-stream 500).

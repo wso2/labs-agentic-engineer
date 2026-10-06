@@ -341,6 +341,57 @@ test("400 when the turn or workspace is missing; retired body shapes are rejecte
   }
 });
 
+test("an unknown view is a 400; an issues-view turn cannot join a collab room", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    const post = (body: unknown) => fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(body, { token, org: WS_ORG }));
+
+    const badView = await post(wsBody({ view: "boards" }));
+    assert.equal(badView.status, 400);
+    assert.deepEqual(await badView.json(), { error: "view must be one of: issues" });
+
+    const collab = await post(wsBody({ view: "issues", collab: { roomId: "room-1", token: "t" } }));
+    assert.equal(collab.status, 400);
+    assert.match(((await collab.json()) as { error: string }).error, /collab turns support only the files toolset/);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a view: issues turn runs the issues tool set, not the spec agent's", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  // Step 1 calls classify_report (executes: no JEV key in tests -> kind "unknown");
+  // step 2 calls the spec agent's addFile, which is NOT on this turn's tool set.
+  const model = mockModel([
+    { kind: "toolCall", toolCallId: "c1", toolName: "classify_report", input: { message: "the save button is broken" } },
+    { kind: "text", text: "which kind is it?" },
+  ]);
+  const { baseUrl, close } = await boot(model, root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ view: "issues", turn: { kind: "chat", text: "the save button is broken" } }), { token, org: WS_ORG }),
+    );
+    assert.equal(res.status, 200);
+    const text = await res.text();
+    assert.match(text, /"type":"tool-result"[^\n]*classify_report|classify_report[^\n]*"type":"tool-result"/);
+    assert.match(text, /"type":"manifest"/);
+
+    const offered = ((model.doStreamCalls[0]!.tools ?? []) as Array<{ name?: string }>).map((t) => t.name).sort();
+    assert.deepEqual(offered, ["ask_question", "ask_questions", "classify_report"]);
+    // The spec agent's system prompt is not what the model received.
+    assert.equal(systemPrompt(model).includes("spec-bundle editing agent"), false);
+    assert.match(systemPrompt(model), /issues/i);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("400 on an unparseable JSON body (the body-parser catch-all)", async () => {
   const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]));
   try {

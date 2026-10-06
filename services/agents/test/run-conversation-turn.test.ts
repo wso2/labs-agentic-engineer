@@ -1223,3 +1223,44 @@ test("webSearch shadow-guard: an MCP-discovered tool named 'web_search' never sh
     await close();
   }
 });
+
+// --- Issues toolset (the Issues chat) ----------------------------------------
+
+test("toolset issues: a File it question ends the turn awaiting-human; no spec bundle, no files in the prompt", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { events, onEvent } = collector();
+  const model = mockModel([
+    {
+      kind: "toolCall",
+      toolCallId: "iq1",
+      toolName: "ask_question",
+      input: { question: "File this issue?", options: [{ label: "File it", recommended: true }, { label: "Change it" }] },
+    },
+  ]);
+
+  const conv = await runConversationTurn({
+    id: "issues1",
+    instruction: "the save button is not working",
+    files: SEED_FILES,
+    toolset: "issues",
+    model,
+    store,
+    guard,
+    onEvent,
+  });
+
+  assert.equal(conv.status, "awaiting-human");
+  const last = events.at(-1);
+  assert.equal(last?.type, "manifest");
+  assert.deepEqual((last as { files: unknown }).files, {});
+  assert.deepEqual((last as { deleted: unknown }).deleted, []);
+
+  // The model was handed the issues tools and none of the spec agent's.
+  const names = toolNames(model).sort();
+  assert.deepEqual(names, ["ask_question", "ask_questions", "classify_report"]);
+  // The prompt is the instruction alone: no "Existing files:" snapshot.
+  const prompt = JSON.stringify(model.doStreamCalls[0]!.prompt);
+  assert.match(prompt, /the save button is not working/);
+  assert.equal(prompt.includes("Existing files:"), false);
+});

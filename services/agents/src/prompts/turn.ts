@@ -42,6 +42,7 @@ import type {
   TurnAim,
   TurnScope,
   TurnSpec,
+  View,
 } from "@aep/agent-stream";
 
 // --- Wording -----------------------------------------------------------------
@@ -352,6 +353,11 @@ export interface TurnModifiers {
    * something the user said and did not.
    */
   aim?: TurnAim | undefined;
+  /**
+   * The view that owns this turn's agent. A view agent writes no spec files, so
+   * its user text rides without the spec-paths rule.
+   */
+  view?: View | undefined;
 }
 
 /**
@@ -363,7 +369,8 @@ export interface TurnModifiers {
  * turn has no scope either: it plans from the whole design.
  */
 export function composeInstruction(turn: TurnSpec, mods: TurnModifiers = {}): string {
-  const body = turn.kind === "plan" ? planBody(turn) : specBody(turn) + SPEC_PATHS_RULE;
+  const body =
+    turn.kind === "plan" ? planBody(turn) : specBody(turn) + (mods.view ? "" : SPEC_PATHS_RULE);
   const lead = mods.previousTurnFailed ? PREVIOUS_TURN_FAILED_NOTE + "\n\n" : "";
   const scope = turn.kind === "plan" ? "" : scopeNote(mods.scope);
   return lead + scope + aimNote(mods.aim) + body + (mods.headless ? HEADLESS_NOTE : "");
@@ -620,11 +627,13 @@ export function eagerSkillsFor(turn: TurnSpec, scope?: TurnScope): string[] {
 
 
 /**
- * Which tool set the turn needs. Planning registers `planTask`/`updateTask` and
- * NO file tools; everything else mutates the bundle. Derived rather than sent:
- * two ways to say it is two ways to disagree.
+ * Which tool set the turn needs. A view that owns an agent (the Issues page)
+ * selects its own set; otherwise planning registers `planTask`/`updateTask` and
+ * NO file tools, and everything else mutates the bundle. Derived rather than
+ * sent: two ways to say it is two ways to disagree.
  */
-export function toolsetFor(turn: TurnSpec): Toolset {
+export function toolsetFor(turn: TurnSpec, view?: View): Toolset {
+  if (view === "issues") return "issues";
   return turn.kind === "plan" ? "task-plan" : "files";
 }
 

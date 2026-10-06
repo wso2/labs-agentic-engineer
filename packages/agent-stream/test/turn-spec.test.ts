@@ -25,7 +25,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPrototypeFeedback, isTurnSpec } from "../src/contracts/sse-events.js";
+import { isPrototypeFeedback, isTurnSpec, isView, VIEWS } from "../src/contracts/sse-events.js";
 // The feedback table the kit and the Go BFF assert too (prototype-kit/test/fixtures/feedback-cases.json).
 import { feedbackBatch, feedbackTable } from "../../prototype-kit/test/feedback-cases.js";
 
@@ -127,4 +127,10 @@ test("judges every row of the feedback table the kit and the Go BFF share", () =
     assert.equal(isTurnSpec(feedbackFlow(batch)), row.valid, row.name);
   }
   assert.equal(isPrototypeFeedback("x"), false);
+});
+
+test("isView accepts exactly the known views", () => {
+  assert.deepEqual([...VIEWS], ["issues"]);
+  assert.ok(isView("issues"));
+  for (const v of ["boards", "", "Issues", undefined, null, 1, {}]) assert.equal(isView(v), false, String(v));
 });
