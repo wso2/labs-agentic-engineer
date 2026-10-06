@@ -43,10 +43,9 @@ func (s *CredentialService) Status(ctx context.Context, ocOrgID string) (*Projec
 // ----------------------------------------------------------------------------
 
 // Disconnect runs Phase D of the disconnect cascade (phase2.md §6.7):
-// org-scoped advisory lock, status flip to 'disconnected', best-effort
-// delete of a PAT stored before it lived only in vault. Phases A/B/C live
-// in the BFF (they need to enumerate ComponentTask rows that this service
-// doesn't own).
+// org-scoped advisory lock and status flip to 'disconnected'. It touches no
+// secret: the PAT lives only in the vault, and the cascade removes its
+// github-pat row and reference before this step (OrgDisconnectService).
 //
 // Idempotent: if the row is already 'disconnected' or absent, returns nil.
 func (s *CredentialService) Disconnect(ctx context.Context, ocOrgID string) error {

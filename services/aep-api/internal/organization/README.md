@@ -12,7 +12,7 @@ flowchart LR
   API(["/api/v1"]) --> SL
   S2S(["/internal/v1"]) -.-> CORE
   subgraph organization
-    SL["slices — getconfig · patchconfig · testllm · disconnect · rotate/discover idp · listorgs"]
+    SL["slices — getconfig · patchconfig · testllm · disconnect · discover idp · listorgs"]
     CORE["config orchestrator + credential / anthropic / model-connection / idp / org services"]
     SL --> CORE
     CORE --> DB[("organizations · org_credentials · org_model_connections · org_anthropic_credentials · org_agent_settings · organization_idp_profiles")]

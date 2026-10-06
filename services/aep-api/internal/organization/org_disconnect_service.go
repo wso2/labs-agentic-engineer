@@ -61,9 +61,9 @@ var ErrOrgNotFound = errors.New("org credentials: not found")
 // that is not active also closes the converge gate and the hook repair, so
 // a half-run cascade never brings the pod back once Phase D ran.
 //
-// Phase D (org-scoped finalize — git-service GC):
-//   - DELETE /internal/credentials/orgs/{ocOrgId} on git-service. Git-service
-//     marks status='disconnected' and best-effort GCs OpenBao keys.
+// Phase D (org-scoped finalize):
+//   - CredentialService.Disconnect marks the credential 'disconnected'. It
+//     deletes no secret; step 3 already removed the vault references.
 //
 // Under the tasks-github-native model Tasks are GitHub issues (no
 // component_tasks rows to abandon): the old Phase B/C task cascade is gone.

@@ -39,7 +39,8 @@ import (
 //     vault (the org's ae-publisher-client reference).
 //   - POST /build and the deploy only read: RequirePublisherForBuild checks
 //     the ae-publisher-client row, the deploy reads the profile's issuer.
-//   - Org delete (or explicit admin action) triggers RevokeOrgPublisher.
+//   - RevokeOrgPublisher has no production caller yet (org delete does not
+//     reach it); the IdP kind switch deletes the publisher app instead.
 //   - There is no user rotation: a lost reference is healed by the next
 //     gitpat submit (reconnect GitHub).
 //

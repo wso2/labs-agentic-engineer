@@ -108,8 +108,8 @@ func (w *SecretRefWriter) orgSecretWriter() (*OrgSecretWriter, error) {
 }
 
 // Enabled reports whether the writer is wired to a real secrets client.
-// Callers should branch on this to avoid no-op DB updates when the
-// provider isn't configured.
+// Callers branch on it to refuse a secret save (secrets_delivery_unavailable)
+// when no provider is configured, since the value has nowhere else to live.
 func (w *SecretRefWriter) Enabled() bool {
 	return w != nil && w.client != nil
 }
@@ -157,7 +157,7 @@ func (w *SecretRefWriter) writeAPIKey(ctx context.Context, ocOrgID string, s Org
 	if err != nil {
 		return OrgSecretWrite{}, fmt.Errorf("secret-ref writer: %s upload: %w", s, err)
 	}
-	written, err := orgSecrets.Write(ctx, ocOrgID, ouID, s, map[string]string{apiKeyProperty: apiKey}, "", func(name string) error {
+	written, err := orgSecrets.Write(ctx, ocOrgID, ouID, s, map[string]string{apiKeyProperty: apiKey}, func(name string) error {
 		if repoint == nil {
 			return nil
 		}
@@ -220,8 +220,8 @@ func (r AnthropicRole) orgSecret() (OrgSecret, error) {
 // revoked on its own. Two agents sharing an entity name would share one key and
 // give that up.
 //
-// Unlike WriteAnthropic this stamps no DB columns: the AMP key is not an org
-// credential a user connected, it is a platform-issued credential whose only
+// Unlike the org secrets it records no org_secrets row: the AMP key is not an
+// org credential a user connected, it is a platform-issued credential whose only
 // consumer is the ReleaseBinding composed moments later. Its coordinates are
 // derived from (org, component, environment) by every reader, so there is
 // nothing to record.
@@ -394,7 +394,7 @@ func (w *SecretRefWriter) WriteGitHubPAT(ctx context.Context, ocOrgID string, pa
 	if err != nil {
 		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
 	}
-	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, "", nil)
+	name, err := orgSecrets.WriteAndRetire(ctx, ocOrgID, ouID, OrgSecretGitHubPAT, map[string]string{githubPATProperty: pat}, nil)
 	if err != nil {
 		return "", fmt.Errorf("secret-ref writer: github-pat upload: %w", err)
 	}
@@ -609,7 +609,7 @@ func (w *SecretRefWriter) writeOrgClient(ctx context.Context, l *OrgSecretLocked
 	name, err := l.WriteAndRetire(ctx, ouID, map[string]string{
 		PublisherSecretFieldClientID:     clientID,
 		PublisherSecretFieldClientSecret: clientSecret,
-	}, "", func(string) error {
+	}, func(string) error {
 		if beforeStamp != nil {
 			if err := beforeStamp(); err != nil {
 				return err

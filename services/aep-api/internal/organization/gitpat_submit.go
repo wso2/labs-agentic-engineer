@@ -104,17 +104,34 @@ func (s *Service) ensureWebhookSecret(ctx context.Context, org string) error {
 // fix first; that message says so (submitFailure).
 const AEStudioSetupIncompleteCode = "ae_studio_setup_incomplete"
 
+// patNotSavedMessage is the gitProvider answer when the secret store did not
+// accept the token: the same secret_store_write_failed the key saves answer.
+const patNotSavedMessage = "Token not saved; the secret store did not accept it. Enter the token again."
+
 // submitFailure logs a failed setup step (value-free) and returns the
 // gitProvider section error the console shows. Connect has committed by
-// then, so every message says the connection was saved. A concurrent write
+// then, so every message says the connection was saved, except when the
+// secret store refused the token itself: with no github-pat row the org has
+// no GitHub connection, so that answer is 502 secret_store_write_failed
+// ("Token not saved"). A concurrent write
 // of the same secret is a retryable 409. A foreign-OU client and an org
 // whose Thunder OU is missing or disagrees with the caller's are 409s that a
 // retry cannot fix, so their messages name the operator action instead. Any
 // other failure is a 502.
 func submitFailure(ctx context.Context, org, step string, err error) error {
-	slog.ErrorContext(ctx, "ae_studio.gitpat_submit_failed", "org", org, "step", step, "error", err)
+	var store *SecretStoreWriteError
+	if errors.As(err, &store) {
+		// A store's error text may carry what it was given: log its class only.
+		slog.ErrorContext(ctx, "ae_studio.gitpat_submit_failed", "org", org, "step", step, "reason", storeFailureReason(store.Err))
+	} else {
+		slog.ErrorContext(ctx, "ae_studio.gitpat_submit_failed", "org", org, "step", step, "error", err)
+	}
 	const saved = "The GitHub connection was saved, but AE Studio setup didn't finish: "
 	switch {
+	case store != nil && store.Secret == OrgSecretGitHubPAT:
+		// No github-pat row, so the org has no GitHub connection (Q-1=C).
+		return &SectionError{Section: "gitProvider", Status: http.StatusBadGateway, Code: SecretStoreWriteFailedCode,
+			Message: patNotSavedMessage}
 	case errors.Is(err, ErrOrgSecretConflict):
 		return &SectionError{Section: "gitProvider", Status: http.StatusConflict, Code: AEStudioSetupIncompleteCode,
 			Message: saved + "another save of this organization's secrets was in progress. Save the token again to retry."}

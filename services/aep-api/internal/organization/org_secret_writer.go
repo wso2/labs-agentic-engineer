@@ -104,9 +104,8 @@ func (w OrgSecretWrite) Retire(ctx context.Context) {
 //
 // Order: new reference → conditional upsert of the row (it must still name
 // the reference read before the write) → repoint(newName). The previous
-// reference is the row's, else legacyOld (a pre-phase-1 deterministic
-// reference with no row). repoint may be nil when nothing consumes the
-// secret yet.
+// reference is the row's (none on a first write). repoint may be nil when
+// nothing consumes the secret yet.
 //
 // On failure the error is returned and the previous reference is never
 // touched. An upsert that definitely wrote nothing (ErrOrgSecretConflict: a
@@ -116,7 +115,7 @@ func (w OrgSecretWrite) Retire(ctx context.Context) {
 // moved off it; when that is uncertain (the restore conflicts or fails) the
 // new reference is kept and logged as an orphan, since a row may still name
 // it.
-func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (OrgSecretWrite, error) {
+func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, repoint func(newName string) error) (OrgSecretWrite, error) {
 	loc, err := orgSecretWriteLocation(ocOrgID, ouID, s, data)
 	if err != nil {
 		return OrgSecretWrite{}, err
@@ -126,16 +125,16 @@ func (w *OrgSecretWriter) Write(ctx context.Context, ocOrgID, ouID string, s Org
 		return OrgSecretWrite{}, err
 	}
 	defer unlock()
-	return w.write(ctx, loc, ocOrgID, s, data, legacyOld, repoint)
+	return w.write(ctx, loc, ocOrgID, s, data, repoint)
 }
 
 // write is Write's sequence; the caller holds the secret's lock.
-func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.SecretLocation, ocOrgID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (OrgSecretWrite, error) {
+func (w *OrgSecretWriter) write(ctx context.Context, loc secretmanagersvc.SecretLocation, ocOrgID string, s OrgSecret, data map[string]string, repoint func(newName string) error) (OrgSecretWrite, error) {
 	prev, err := w.repo.Get(ctx, ocOrgID, s)
 	if err != nil {
 		return OrgSecretWrite{}, fmt.Errorf("org secret %s: read row: %w", s, err)
 	}
-	prevName, oldName := "", legacyOld
+	var prevName, oldName string
 	if prev != nil {
 		prevName, oldName = prev.Name, prev.Name
 	}
@@ -201,14 +200,14 @@ func storeFailureReason(err error) string {
 // WriteAndRetire is Write followed by Retire under the same lock, for a
 // caller with no transaction of its own to commit first. It returns the new
 // name.
-func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
+func (w *OrgSecretWriter) WriteAndRetire(ctx context.Context, ocOrgID, ouID string, s OrgSecret, data map[string]string, repoint func(newName string) error) (string, error) {
 	if _, err := orgSecretWriteLocation(ocOrgID, ouID, s, data); err != nil {
 		return "", err
 	}
 	var name string
 	err := w.WithLock(ctx, ocOrgID, s, func(l *OrgSecretLocked) error {
 		var err error
-		name, err = l.WriteAndRetire(ctx, ouID, data, legacyOld, repoint)
+		name, err = l.WriteAndRetire(ctx, ouID, data, repoint)
 		return err
 	})
 	return name, err
@@ -228,7 +227,7 @@ func (w *OrgSecretWriter) WriteIfUnset(ctx context.Context, ocOrgID, ouID string
 		if err != nil || prev != nil {
 			return err
 		}
-		if _, err := l.WriteAndRetire(ctx, ouID, data, "", nil); err != nil {
+		if _, err := l.WriteAndRetire(ctx, ouID, data, nil); err != nil {
 			return err
 		}
 		wrote = true
@@ -269,12 +268,12 @@ func (l *OrgSecretLocked) Ref(ctx context.Context) (*OrgSecretRef, error) {
 }
 
 // WriteAndRetire is OrgSecretWriter.WriteAndRetire under the held lock.
-func (l *OrgSecretLocked) WriteAndRetire(ctx context.Context, ouID string, data map[string]string, legacyOld string, repoint func(newName string) error) (string, error) {
+func (l *OrgSecretLocked) WriteAndRetire(ctx context.Context, ouID string, data map[string]string, repoint func(newName string) error) (string, error) {
 	loc, err := orgSecretWriteLocation(l.org, ouID, l.secret, data)
 	if err != nil {
 		return "", err
 	}
-	written, err := l.w.write(ctx, loc, l.org, l.secret, data, legacyOld, repoint)
+	written, err := l.w.write(ctx, loc, l.org, l.secret, data, repoint)
 	if err != nil {
 		return "", err
 	}
