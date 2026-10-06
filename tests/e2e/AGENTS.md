@@ -20,8 +20,9 @@ in [`apps/console/PRD.md`](../../apps/console/PRD.md).
 - A Sonnet subagent drives every step it can.
 - The user does the steps only a human can: GitHub org and PAT setup, the Google
   sign-in on Cloud, VPN, every "yes at run time", repo deletion.
-- A failed check goes to an Opus subagent for root-cause diagnosis. No fix
-  without the user's yes.
+- A failed check goes to an Opus subagent for root-cause diagnosis. A fix needs
+  the user's yes unless the run's rulings record a standing authorization for
+  that kind of fix; an agent-driven run acts only under those.
 
 ## Rules
 

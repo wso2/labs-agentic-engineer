@@ -187,6 +187,10 @@ per org, both installs.
   `ReleaseOwnershipConflict`) after a 1 min settle, or a binding not Ready for
   10 min (above the 200 s startup budget, equal to the Deployment's progress
   deadline).
+- **Two views.** `GET /ae-studio` (the binding's state) and the edge 503
+  `ae_studio_unavailable` (the outcome of a call to the pod) are separate reads.
+  After a roll `/ae-studio` can still say `ready` 2 to 4 s after the first 503;
+  the gap is bounded by the converge poll.
 - **Remove:** a GitHub disconnect removes AE Studio (`Service.Remove`). It
   holds the org so no converge starts, waits out a running one, and deletes the
   Resource; OpenChoreo deletes its bindings and the pod with it. The Project
