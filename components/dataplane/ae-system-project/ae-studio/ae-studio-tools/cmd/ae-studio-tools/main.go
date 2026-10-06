@@ -47,6 +47,7 @@ import (
 	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
 	"github.com/wso2/aep/ae-studio-tools/internal/files"
+	"github.com/wso2/aep/ae-studio-tools/internal/gen/aepapi"
 	"github.com/wso2/aep/ae-studio-tools/internal/github"
 	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/platform"
@@ -99,6 +100,17 @@ const (
 	usageFlushTimeout = 3 * time.Second
 )
 
+// newAEPAPI is aep-api's client as the org's ae-studio-<org> client, the
+// pod's one aep-api credential: aep-api's ae-studio/ ops and its MCP endpoint
+// both accept it and bind the org it is recorded for. It never leaves this
+// container: the agent joins its collab Room on ae-collab's Room socket,
+// without a token.
+func newAEPAPI(cfg config.Config) (*aepapi.ClientWithResponses, error) {
+	return platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
+		TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
+	})
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
@@ -130,24 +142,10 @@ func run() error {
 	slog.Info("repo.root", "root_layout", string(layout))
 	reap := reaper.New(engine, reaper.Config{Budget: cfg.StorageBudgetBytes})
 
-	// The org's ae-studio-<org> client: the only credential aep-api's
-	// ae-studio/ ops accept. It never leaves this container: the agent joins
-	// its collab Room on ae-collab's Room socket, without a token.
-	studioClient := &platform.ClientCredentials{
-		TokenURL: cfg.IDPTokenURL, ClientID: cfg.StudioClientID, ClientSecret: cfg.StudioClientSecret,
-	}
-	// aep-api's ae-studio/ ops (project and skills lookups, dependency
-	// completions, turn usage, webhook ingest) as the org's ae-studio client.
-	aepAPI, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, studioClient)
-	if err != nil {
-		slog.Error("aep_api_client_invalid")
-		return err
-	}
-	// aep-api's MCP endpoint (/internal/v1/mcp) as the org's publisher: it
-	// takes the publisher token only, never the ae-studio client.
-	aepAPIMCP, err := platform.NewAEPAPI(cfg.AEPAPIBaseURL, &platform.ClientCredentials{
-		TokenURL: cfg.IDPTokenURL, ClientID: cfg.PublisherClientID, ClientSecret: cfg.PublisherClientSecret,
-	})
+	// aep-api as the org's ae-studio client: its ae-studio/ ops (project and
+	// skills lookups, dependency completions, turn usage, webhook ingest) and
+	// its MCP endpoint.
+	aepAPI, err := newAEPAPI(cfg)
 	if err != nil {
 		slog.Error("aep_api_client_invalid")
 		return err
@@ -160,12 +158,12 @@ func run() error {
 	defer usageOutbox.stopRun()
 	reader := files.Reader{Engine: engine, Projects: resolver}
 	// The MCP socket: remote-git in the pod with the gitpat for the org's own
-	// GitHub account, the other tools forwarded to aep-api as the publisher,
-	// and the project and skills snapshots the agent reads.
+	// GitHub account, the other tools forwarded to aep-api as the org's
+	// ae-studio client, and the project and skills snapshots the agent reads.
 	mcpDeps := edge.MCPSocketDeps{
 		MCP: mcp.Server{
 			Remote:   mcp.RemoteGit{Owner: cfg.GitHubOwner, Token: cfg.GitHubPAT},
-			Upstream: mcp.NewAEPAPIUpstream(aepAPIMCP),
+			Upstream: mcp.NewAEPAPIUpstream(aepAPI),
 		},
 		Snapshots: reader,
 		Usage:     usageOutbox.sender,

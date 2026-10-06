@@ -237,3 +237,43 @@ func TestConverge_FailureBeforeDesiredIsBackedOff(t *testing.T) {
 		t.Fatalf("want exactly one retry after the back-off, converge reads %d", reads())
 	}
 }
+
+// Task 9.H18 upgrade on visit: a pod converged before the change still lists
+// the org's publisher client in its tools secret. The next visit sees the
+// drift and converges it: new parameters without the publisher entries, a new
+// tools rev (the pod rolls), a new release, the binding re-pinned to it.
+func TestConverge_PodHoldingThePublisherClientIsConvergedOnVisit(t *testing.T) {
+	f := newFixture(t).withAllRefs().converged()
+	var p params
+	if err := json.Unmarshal(f.oc.res.Spec.Parameters, &p); err != nil {
+		t.Fatal(err)
+	}
+	newRev := p.Secrets.StudioTools.Rev
+	p.Secrets.StudioTools.Rev = "rev-with-the-publisher"
+	p.Secrets.StudioTools.Data = append(p.Secrets.StudioTools.Data,
+		secretEntry{Env: "AE_PUBLISHER_CLIENT_ID", Key: "user-app-secrets/ns/default-ae-publisher-client-aaaa0003", Property: "client_id"},
+		secretEntry{Env: "AE_PUBLISHER_CLIENT_SECRET", Key: "user-app-secrets/ns/default-ae-publisher-client-aaaa0003", Property: "client_secret"})
+	old, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.oc.mu.Lock()
+	f.oc.res.Spec.Parameters = old
+	f.oc.mu.Unlock()
+	before := f.oc.release
+
+	if st, _ := f.svc.Status(userCtx(), "default"); st.State != StateProvisioning {
+		t.Fatalf("state %s, want provisioning (drift)", st.State)
+	}
+	f.waitConverged(t)
+	var live params
+	_ = json.Unmarshal(f.oc.res.Spec.Parameters, &live)
+	for _, e := range live.Secrets.StudioTools.Data {
+		if strings.HasPrefix(e.Env, "AE_PUBLISHER_") {
+			t.Fatalf("the converged tools secret still lists %s", e.Env)
+		}
+	}
+	if live.Secrets.StudioTools.Rev != newRev || f.oc.release == before || f.oc.rrb.Spec.ResourceRelease != f.oc.release {
+		t.Fatalf("rev %s (want %s) release %s → %s pin %s", live.Secrets.StudioTools.Rev, newRev, before, f.oc.release, f.oc.rrb.Spec.ResourceRelease)
+	}
+}

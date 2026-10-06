@@ -18,10 +18,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,7 +32,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2/aep/ae-studio-tools/internal/config"
 	"github.com/wso2/aep/ae-studio-tools/internal/edge"
+	"github.com/wso2/aep/ae-studio-tools/internal/mcp"
 	"github.com/wso2/aep/ae-studio-tools/internal/usage"
 )
 
@@ -174,5 +179,46 @@ func TestShutdownBudget_InsideTheGrace(t *testing.T) {
 	}
 	if total := socketDrainWindow + socketShutdownTimeout + reaperStopTimeout; total >= grace {
 		t.Fatalf("shutdown budget %v does not fit the %v grace", total, grace)
+	}
+}
+
+// The MCP forwarder calls aep-api's /internal/v1/mcp with a token minted for
+// the org's ae-studio-<org> client, the pod's one aep-api credential (Task
+// 9.H18): the pod holds no publisher client.
+func TestNewAEPAPI_MCPForwardsWithTheStudioClientToken(t *testing.T) {
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id, _, ok := r.BasicAuth()
+		if !ok {
+			http.Error(w, "no client", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"token-of-%s","expires_in":3600}`, id)
+	}))
+	t.Cleanup(idp.Close)
+	var bearer string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/mcp" {
+			http.NotFound(w, r)
+			return
+		}
+		bearer = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{}}`)
+	}))
+	t.Cleanup(api.Close)
+
+	c, err := newAEPAPI(config.Config{
+		IDPTokenURL: idp.URL, AEPAPIBaseURL: api.URL,
+		StudioClientID: "ae-studio-acme", StudioClientSecret: "s",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mcp.NewAEPAPIUpstream(c).Call(context.Background(), "tools/list", json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	if bearer != "Bearer token-of-ae-studio-acme" {
+		t.Fatalf("aep-api saw %q, want the ae-studio client's token", bearer)
 	}
 }

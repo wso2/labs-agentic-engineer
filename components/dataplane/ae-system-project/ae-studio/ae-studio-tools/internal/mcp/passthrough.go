@@ -34,8 +34,9 @@ type mcpCaller interface {
 }
 
 // aepAPIUpstream forwards to aep-api's MCP endpoint over the generated client,
-// which carries the org's publisher token (platform.NewAEPAPI: one retry
-// after a 401). aep-api binds the org from that token, never the request.
+// which carries the org's ae-studio client token (platform.NewAEPAPI: one
+// retry after a 401). aep-api binds the org that client is recorded for,
+// never one the request names.
 type aepAPIUpstream struct {
 	client mcpCaller
 }

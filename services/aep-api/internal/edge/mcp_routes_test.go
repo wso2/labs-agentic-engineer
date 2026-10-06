@@ -41,13 +41,15 @@ import (
 )
 
 // Component test for the mounted MCP discovery route group: the real outer mux
-// (NewHandler → mountRoutes), the real publisher-only gate
-// (auth.PublisherMCPGate) over a real PublisherTokenVerifier backed by a test
-// JWKS, and the real MCP handler over a fake external-resource port. Proves the
-// caller flow with an org's aep-publisher-<org> client token (initialize →
-// tools/list → tools/call) and the negatives: no token, a token minted by
-// aep-api itself (aud aep-api-mcp), an ae-studio-<org> client token signed by
-// the same IdP, and an org planted in the request instead of the claim.
+// (NewHandler → mountRoutes), the real gate (auth.MCPGate) over a real
+// PublisherTokenVerifier and StudioClientVerifier backed by a test JWKS, and
+// the real MCP handler over a fake external-resource port. Proves the caller
+// flow with an org's aep-publisher-<org> client token (the coding runner's;
+// initialize → tools/list → tools/call) and with its recorded ae-studio-<org>
+// client token (the AE Studio tools pod's), and the negatives: no token, a
+// token minted by aep-api itself (aud aep-api-mcp), an ae-studio token for an
+// org it is not recorded for, and an org planted in the request instead of
+// the verified one.
 
 const mcpTestIssuer, mcpTestKid = "platform-idp", "mcp-idp-kid"
 
@@ -75,10 +77,13 @@ func newMCPTestReader(rts ...openchoreo.ResourceType) *mcpTestReader {
 }
 
 // mcpIdP is a test platform IdP: a JWKS server over one RSA key, the
-// publisher verifier aep-api builds over it, and a signer for any claim set.
+// publisher and ae-studio client verifiers aep-api builds over it (every org
+// but orgWithoutStudioClient has ae-studio-<org> recorded), and a signer for
+// any claim set.
 type mcpIdP struct {
 	priv     *rsa.PrivateKey
 	verifier *auth.PublisherTokenVerifier
+	studio   *auth.StudioClientVerifier
 }
 
 func newMCPIdP(t *testing.T) *mcpIdP {
@@ -92,11 +97,13 @@ func newMCPIdP(t *testing.T) *mcpIdP {
 		}}})
 	}))
 	t.Cleanup(jwksSrv.Close)
-	v := auth.NewPublisherTokenVerifier(jwtassertion.NewJWKSCache(jwksSrv.URL), mcpTestIssuer, "aep-publisher-")
-	if v == nil {
-		t.Fatal("NewPublisherTokenVerifier returned nil")
+	jwks := jwtassertion.NewJWKSCache(jwksSrv.URL)
+	v := auth.NewPublisherTokenVerifier(jwks, mcpTestIssuer, "aep-publisher-")
+	studio := auth.NewStudioClientVerifier(jwks, mcpTestIssuer, recordedStudioClients{})
+	if v == nil || studio == nil {
+		t.Fatal("a verifier is nil")
 	}
-	return &mcpIdP{priv: priv, verifier: v}
+	return &mcpIdP{priv: priv, verifier: v, studio: studio}
 }
 
 // clientToken signs a client_credentials token the IdP would issue to the
@@ -109,10 +116,16 @@ func (p *mcpIdP) clientToken(t *testing.T, aud, ouHandle string) string {
 	})
 }
 
-// publisherToken is the org's aep-publisher-<org> client token (the runner's
-// and the AE Studio tools pod's MCP credential).
+// publisherToken is the org's aep-publisher-<org> client token (the coding
+// runner's MCP credential).
 func (p *mcpIdP) publisherToken(t *testing.T, org string) string {
 	return p.clientToken(t, "aep-publisher-"+org, org)
+}
+
+// studioToken is the org's ae-studio-<org> client token (the AE Studio tools
+// pod's MCP credential).
+func (p *mcpIdP) studioToken(t *testing.T, org string) string {
+	return p.clientToken(t, "ae-studio-"+org, org)
 }
 
 // signTestJWT signs claims with RS256 under kid.
@@ -137,7 +150,7 @@ func newTestRSAKey(t *testing.T) *rsa.PrivateKey {
 }
 
 // mcpSurface is the full handler with the MCP route group mounted on the
-// publisher verifier alone (no task-token manager anywhere).
+// publisher and ae-studio client verifiers (no task-token manager anywhere).
 type mcpSurface struct {
 	srv    *httptest.Server
 	idp    *mcpIdP
@@ -156,6 +169,7 @@ func newMCPSurface(t *testing.T, edit ...func(*AppParams)) *mcpSurface {
 	p := AppParams{
 		Config:               config.Config{},
 		Deps:                 Deps{PublisherTokens: s.idp.verifier},
+		InternalDeps:         InternalDeps{StudioClients: s.idp.studio},
 		MCPExternalResources: s.reader,
 		// MCPOrgEndpoints / MCPResourceTypes deliberately nil — those tools
 		// degrade to empty results; the round-trip below uses the resource tools.
@@ -264,12 +278,23 @@ func TestMCP_PublisherTokenListsNineToolsWithoutRemoteGit(t *testing.T) {
 	}
 }
 
-// The mount needs only the publisher verifier: no task-token manager is wired.
-func TestMCP_MountsOnPublisherVerifierAlone(t *testing.T) {
-	s := newMCPSurface(t)
-	resp := postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("MCP must mount on the publisher verifier alone, got %d", resp.StatusCode)
+// The mount needs one verifier, no task-token manager: with one verifier
+// alone, its own token opens MCP and the other caller's token is refused.
+func TestMCP_MountsOnEitherVerifierAlone(t *testing.T) {
+	const initialize = `{"jsonrpc":"2.0","id":1,"method":"initialize"}`
+	publisherOnly := newMCPSurface(t, func(p *AppParams) { p.InternalDeps.StudioClients = nil })
+	if resp := postMCP(t, publisherOnly.srv, publisherOnly.idp.publisherToken(t, "acme"), initialize); resp.StatusCode != http.StatusOK {
+		t.Fatalf("publisher verifier alone, publisher token: got %d, want 200", resp.StatusCode)
+	}
+	if resp := postMCP(t, publisherOnly.srv, publisherOnly.idp.studioToken(t, "acme"), initialize); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("publisher verifier alone, ae-studio token: got %d, want 401", resp.StatusCode)
+	}
+	studioOnly := newMCPSurface(t, func(p *AppParams) { p.Deps.PublisherTokens = nil })
+	if resp := postMCP(t, studioOnly.srv, studioOnly.idp.studioToken(t, "acme"), initialize); resp.StatusCode != http.StatusOK {
+		t.Fatalf("ae-studio verifier alone, ae-studio token: got %d, want 200", resp.StatusCode)
+	}
+	if resp := postMCP(t, studioOnly.srv, studioOnly.idp.publisherToken(t, "acme"), initialize); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("ae-studio verifier alone, publisher token: got %d, want 401", resp.StatusCode)
 	}
 }
 
@@ -292,13 +317,46 @@ func TestMCP_MintedAepApiMcpTokenIs401(t *testing.T) {
 	}
 }
 
-// An org's ae-studio-<org> client token opens ae-studio/ only (user Q-1=A):
-// signed by the same IdP for the same org, it is still refused on MCP.
-func TestMCP_StudioClientTokenIs401(t *testing.T) {
+// The AE Studio tools pod calls MCP with its org's recorded ae-studio-<org>
+// client token (Task 9.H18): the tool runs for the org that client is recorded
+// for, whatever org the request names.
+func TestMCP_StudioClientTokenServesItsRecordedOrg(t *testing.T) {
 	s := newMCPSurface(t)
-	resp := postMCP(t, s.srv, s.idp.clientToken(t, "ae-studio-acme", "acme"), `{"jsonrpc":"2.0","id":1,"method":"initialize"}`)
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("ae-studio client token on /internal/v1/mcp: got %d, want 401", resp.StatusCode)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_external_resources","arguments":{"orgHandle":"attacker-org"}}}`
+	req, err := http.NewRequest(http.MethodPost, s.srv.URL+"/internal/v1/mcp?orgHandle=attacker-org", bytes.NewReader([]byte(body)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.idp.studioToken(t, "acme"))
+	req.Header.Set("X-Impersonate-Org", "attacker-org")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST mcp: %v", err)
+	}
+	defer resp.Body.Close()
+	rpcResult(t, resp)
+	if s.reader.lastOrg != "acme" {
+		t.Fatalf("port org = %q, want acme (the org the ae-studio client is recorded for)", s.reader.lastOrg)
+	}
+}
+
+// An ae-studio token that is not the client recorded for its org gets the
+// same 401 as any other refused token, and no tool runs.
+func TestMCP_UnrecordedStudioClientTokenIs401(t *testing.T) {
+	s := newMCPSurface(t)
+	for name, tok := range map[string]string{
+		"org with no client recorded":   s.idp.studioToken(t, orgWithoutStudioClient),
+		"audience naming another org":   s.idp.clientToken(t, "ae-studio-acme", "evil"),
+		"audience without an org claim": s.idp.clientToken(t, "ae-studio-acme", ""),
+	} {
+		resp := postMCP(t, s.srv, tok, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_external_resources","arguments":{}}}`)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("%s: got %d, want 401", name, resp.StatusCode)
+		}
+	}
+	if s.reader.lastOrg != "" {
+		t.Fatalf("a refused token reached the port (org %q)", s.reader.lastOrg)
 	}
 }
 
@@ -340,10 +398,9 @@ func TestMCPRoutes_OrgFromClaimNotRequest(t *testing.T) {
 	}
 }
 
-// TestMCPRoutes_NoPublisherVerifier404 proves the conditional mount: without
-// the publisher verifier nothing can verify a caller, so the path is not
-// mounted at all.
-func TestMCPRoutes_NoPublisherVerifier404(t *testing.T) {
+// TestMCPRoutes_NoVerifier404 proves the conditional mount: without either
+// verifier nothing can verify a caller, so the path is not mounted at all.
+func TestMCPRoutes_NoVerifier404(t *testing.T) {
 	handler := NewHandler(AppParams{Config: config.Config{}})
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
@@ -355,7 +412,7 @@ func TestMCPRoutes_NoPublisherVerifier404(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404 (route unmounted without a publisher verifier)", resp.StatusCode)
+		t.Fatalf("status = %d, want 404 (route unmounted without a verifier)", resp.StatusCode)
 	}
 }
 

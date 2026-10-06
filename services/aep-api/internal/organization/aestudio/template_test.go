@@ -257,3 +257,50 @@ func TestTemplate_WebhookRelay(t *testing.T) {
 		t.Errorf("relay off: AE_WEBHOOK_URL = %q, want the webhookUrl output", got)
 	}
 }
+
+// The tools ExternalSecret the RT renders from a converge's own params lists
+// exactly the pod's keys: its gitpat, its webhook secret and its ae-studio
+// client, never the org's publisher client (Task 9.H18), even while the org
+// has the publisher row its coding Jobs mount.
+func TestTemplate_ToolsExternalSecretHoldsOnlyThePodsClient(t *testing.T) {
+	d, err := newFixture(t).withAllRefs().svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(d.Params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars := rtVars("")
+	var p map[string]any
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	vars["parameters"] = p
+	// spec.data alone: the harness has no dataplane variable (secretStoreRef).
+	var es struct {
+		Spec struct {
+			Data json.RawMessage `json:"data"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(templateOf(t, "es-tools"), &es); err != nil {
+		t.Fatal(err)
+	}
+	out, err := json.Marshal(renderRT(t, es.Spec.Data, vars))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data []struct {
+		SecretKey string `json:"secretKey"`
+	}
+	if err := json.Unmarshal(out, &data); err != nil {
+		t.Fatal(err)
+	}
+	keys := []string{}
+	for _, e := range data {
+		keys = append(keys, e.SecretKey)
+	}
+	if strings.Join(keys, ",") != "GITHUB_PAT,GITHUB_WEBHOOK_SECRET,AE_STUDIO_CLIENT_ID,AE_STUDIO_CLIENT_SECRET" {
+		t.Fatalf("es-tools secret keys = %v", keys)
+	}
+}

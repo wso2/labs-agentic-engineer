@@ -39,12 +39,11 @@ type Config struct {
 	// deliver; WebhookSecret signs them.
 	WebhookURL             string
 	ListenPort, HealthPort int
-	// IDPTokenURL and the publisher client mint the org's publisher token,
-	// which authenticates the pod's MCP calls to aep-api at AEPAPIBaseURL
-	// (its ae-studio/ ops take the ae-studio client, StudioClientID).
-	IDPTokenURL                              string
-	PublisherClientID, PublisherClientSecret string
-	AEPAPIBaseURL                            string
+	// IDPTokenURL and the ae-studio client (StudioClientID) mint the org's
+	// ae-studio client token, the pod's one credential for aep-api at
+	// AEPAPIBaseURL: its ae-studio/ ops and its MCP endpoint.
+	IDPTokenURL   string
+	AEPAPIBaseURL string
 	// StudioDataDir is the studio-data volume root (the git engine's root);
 	// StorageBudgetBytes is the reaper's one budget over it (ticket 20 §2).
 	StudioDataDir      string
@@ -143,11 +142,9 @@ func Load(getenv func(string) string) (Config, error) {
 		ListenPort:    port("AE_LISTEN_PORT", defaultListenPort),
 		HealthPort:    port("AE_HEALTH_PORT", defaultHealthPort),
 
-		IDPTokenURL:           httpURL("AE_IDP_TOKEN_URL"),
-		PublisherClientID:     req("AE_PUBLISHER_CLIENT_ID"),
-		PublisherClientSecret: req("AE_PUBLISHER_CLIENT_SECRET"),
-		AEPAPIBaseURL:         httpURL("AEP_API_BASE_URL"),
-		WebhookURL:            httpURL("AE_WEBHOOK_URL"),
+		IDPTokenURL:   httpURL("AE_IDP_TOKEN_URL"),
+		AEPAPIBaseURL: httpURL("AEP_API_BASE_URL"),
+		WebhookURL:    httpURL("AE_WEBHOOK_URL"),
 
 		StudioDataDir:      absPath("AE_STUDIO_DATA_DIR"),
 		StorageBudgetBytes: positiveBytes("AE_STORAGE_BUDGET_BYTES"),

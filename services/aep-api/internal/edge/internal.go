@@ -65,8 +65,9 @@ type InternalDeps struct {
 	Issues     sourcecontrol.IssueService
 	RcaReports ops.Repository
 	// StudioClients verifies an org's ae-studio-<org> client token for the
-	// ae-studio/ ops (the AE Studio tools pod) and binds the org recorded for
-	// that client. nil fails closed: every ae-studio/ op answers 401.
+	// ae-studio/ ops and MCP (the AE Studio tools pod) and binds the org
+	// recorded for that client. nil fails closed: every ae-studio/ op answers
+	// 401, and MCP refuses the pod's token.
 	StudioClients *auth.StudioClientVerifier
 	// AEStudioRepositories backs get-ae-studio-project-repository; nil
 	// answers 503.
@@ -89,7 +90,7 @@ type InternalDeps struct {
 	// agent reads it (ADR-0022).
 	ValidationContext validation.ContextProvider
 	// MCP serves POST /internal/v1/mcp (call-mcp-tool), already wrapped in
-	// auth.PublisherMCPGate; nil leaves the route unmounted.
+	// auth.MCPGate; nil leaves the route unmounted.
 	MCP http.Handler
 }
 
@@ -251,16 +252,17 @@ var internalOpGates = map[string]internalOpGate{
 //	runs/                      coding runner   publisher token, cycle fence (cycle id in the path)
 //	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
-//	mcp                        runner, pod     route miss here: own gate (auth.PublisherMCPGate), publisher token only, binds its org
+//	mcp                        runner, pod     route miss here: own gate (auth.MCPGate), publisher or recorded ae-studio-<org> token, binds the verified org
 //	any other embedded op      -               denied (401)
 //
 // A route miss passes through untouched: the inner mux answers 404 or 405, or
 // serves a raw MCP route that verifies its own caller. Each generated operation
 // must present the credential of its route group, and the verified org is bound
-// into the context. A credential opens its own group only: a publisher token
-// never clears sre/ or ae-studio/, the SRE bearer never clears a runner op or
-// ae-studio/, an ae-studio-<org> client token never clears a runner op, and
-// no other token (a user JWT, the AE-only client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
+// into the context. A credential opens its own group only (mcp, the one group
+// two callers share, takes both of theirs): a publisher token never clears
+// sre/ or ae-studio/, the SRE bearer never clears a runner op or ae-studio/,
+// an ae-studio-<org> client token never clears a runner op, and no other
+// token (a user JWT, the AE-only client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
 // denied outright, so adding an internal op means teaching this gate its
 // credential first. The cycle fence checks the decoded path value, the one
 // the handler is served. requireInternalGate denies any generated op that reaches
@@ -404,18 +406,18 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 }
 
 // mcpRoutes returns the internal MCP discovery handler (POST /internal/v1/mcp,
-// raw JSON-RPC). The MCP server answers
-// the coding runner's and the AE Studio tools pod's queries for the org's
-// external resources, endpoints, platform resource types and OpenAPI specs,
-// gated by auth.PublisherMCPGate: an org's aep-publisher-<org> client token
-// only, and the acting org comes from that verified token, never the request.
-// Without the publisher verifier nothing could verify a caller, so mcp is nil
-// and the path 404s instead of 503-ing. routes() hands both to
-// newInternalV1Handler via InternalDeps.
+// raw JSON-RPC). The MCP server answers the coding runner's and the AE Studio
+// tools pod's queries for the org's external resources, endpoints, platform
+// resource types and OpenAPI specs, gated by auth.MCPGate: an org's
+// aep-publisher-<org> client token (the runner's) or its recorded
+// ae-studio-<org> client token (the pod's), and the acting org comes from the
+// verifier that accepted it, never the request. Without either verifier
+// nothing could verify a caller, so mcp is nil and the path 404s instead of
+// 503-ing. routes() hands both to newInternalV1Handler via InternalDeps.
 func mcpRoutes(p AppParams) http.Handler {
 	var mcp http.Handler
-	if p.Deps.PublisherTokens != nil {
-		mcp = auth.PublisherMCPGate(p.Deps.PublisherTokens, mcpdiscovery.NewMCPHandler(
+	if p.Deps.PublisherTokens != nil || p.InternalDeps.StudioClients != nil {
+		mcp = auth.MCPGate(p.Deps.PublisherTokens, p.InternalDeps.StudioClients, mcpdiscovery.NewMCPHandler(
 			p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes, p.MCPGroupCatalog,
 			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
 	}

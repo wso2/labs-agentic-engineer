@@ -68,15 +68,16 @@ ref. A user's write goes to `aep-api`, which uses `/internal/v1`.
 
 ## Calls out to aep-api
 
-The container holds two `aep-api` credentials; each is used for one route
-group. The publisher token also clears its own org's `runs/` ops, which this
-container never calls; whether to narrow that is an open decision (ADR-0041
-decision 5).
+The container holds one `aep-api` credential, the org's `ae-studio-<org>`
+client (`AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`), minted at
+`AE_IDP_TOKEN_URL` (ADR-0041 decision 5). It is used for:
 
-| Credential | Env | Used for |
-|---|---|---|
-| the org's `ae-studio-<org>` client | `AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET` | `/internal/v1/ae-studio/*`: project and skills repository lookups, dependency completions, turn usage, the webhook forward |
-| the org's publisher client | `AE_PUBLISHER_CLIENT_ID`, `AE_PUBLISHER_CLIENT_SECRET` | `/internal/v1/mcp` only |
+- `/internal/v1/ae-studio/*`: project and skills repository lookups,
+  dependency completions, turn usage, the webhook forward;
+- `/internal/v1/mcp`: the forwarded MCP tools (below).
+
+`aep-api` refuses it on `runs/`. The org's publisher client stays with the
+coding Jobs; this container never holds it.
 
 The `ae-studio-<org>` token never leaves this container. The webhook forward
 posts the verified body byte for byte, inside an 8 s budget with at most two
@@ -95,7 +96,7 @@ any other name is JSON-RPC `-32602`; a method other than `initialize`,
 - **Served in the pod with the gitpat:** `get_remote_git_file_contents`,
   `search_remote_git_code`. The owner must equal `AE_GITHUB_OWNER`; `repo`
   must be a plain name; search scope qualifiers are refused.
-- **Forwarded to `aep-api` `POST /internal/v1/mcp` with the publisher token**
+- **Forwarded to `aep-api` `POST /internal/v1/mcp` with the `ae-studio-<org>` token**
   (name and arguments only): `list_external_resources`,
   `get_external_resource_schema`, `list_org_endpoints`,
   `list_org_component_endpoints`, `list_platform_resource_types`,

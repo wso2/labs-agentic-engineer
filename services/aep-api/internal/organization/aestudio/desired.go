@@ -150,7 +150,9 @@ const (
 )
 
 // secretEnvs maps each (secret, data key) a container reads to its env, in
-// the order the container's ExternalSecret lists them.
+// the order the container's ExternalSecret lists them. The tools container's
+// one aep-api credential is the org's ae-studio client (its ae-studio/ ops
+// and MCP); the org's publisher client stays with the coding Jobs.
 var secretEnvs = []struct {
 	in     container
 	secret organization.OrgSecret
@@ -159,8 +161,6 @@ var secretEnvs = []struct {
 }{
 	{studioTools, organization.OrgSecretGitHubPAT, "token", "GITHUB_PAT"},
 	{studioTools, organization.OrgSecretGitHubWebhookSecret, "secret", "GITHUB_WEBHOOK_SECRET"},
-	{studioTools, organization.OrgSecretPublisherClient, "client_id", "AE_PUBLISHER_CLIENT_ID"},
-	{studioTools, organization.OrgSecretPublisherClient, "client_secret", "AE_PUBLISHER_CLIENT_SECRET"},
 	{studioTools, organization.OrgSecretStudioClient, "client_id", "AE_STUDIO_CLIENT_ID"},
 	{studioTools, organization.OrgSecretStudioClient, "client_secret", "AE_STUDIO_CLIENT_SECRET"},
 	{designAgent, organization.OrgSecretDefaultKey, "api-key", "ANTHROPIC_API_KEY"},
@@ -169,7 +169,7 @@ var secretEnvs = []struct {
 // requiredForTools are the secrets the tools container cannot start without.
 var requiredForTools = []organization.OrgSecret{
 	organization.OrgSecretGitHubPAT, organization.OrgSecretGitHubWebhookSecret,
-	organization.OrgSecretPublisherClient, organization.OrgSecretStudioClient,
+	organization.OrgSecretStudioClient,
 }
 
 // desired computes the org's desired state. A *notReadyError is a state

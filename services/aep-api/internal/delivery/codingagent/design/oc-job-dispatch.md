@@ -97,10 +97,10 @@ flowchart LR
   J -->|local HTTP| API
 ```
 
-`POST /internal/v1/mcp` accepts one credential: the org's publisher client
-token (`auth.PublisherMCPGate`), which both the runner and the AE Studio tools
-pod's MCP proxy present. A token aep-api signs itself (`aud=aep-api-mcp`) and
-an `ae-studio-<org>` client token are both refused (401). The two remote-git
+`POST /internal/v1/mcp` (`auth.MCPGate`) accepts the runner's credential, the
+org's publisher client token, and the AE Studio tools pod's, its recorded
+`ae-studio-<org>` client token. A token aep-api signs itself
+(`aud=aep-api-mcp`) is refused (401). The two remote-git
 tools are not on aep-api: the runner and the tools pod serve them in-process.
 
 That gate is org-scoped, so the CODING runner has no cycle-scoped callback:

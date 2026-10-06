@@ -6,8 +6,8 @@ info:
     never the console: non-public, never gateway-advertised. Every operation's
     tags name its caller (Runner, AE Studio, SRE), so the spec reads as who
     calls what. Callers authenticate with a Thunder per-org publisher
-    client-credentials token (runner ops), the org's ae-studio-<org>
-    client-credentials token (ae-studio/ ops only), or (sre/ ops only) the static per-org SRE handoff bearer; the
+    client-credentials token (runner ops and mcp), the org's ae-studio-<org>
+    client-credentials token (ae-studio/ ops and mcp), or (sre/ ops only) the static per-org SRE handoff bearer; the
     acting org is always derived from the verified credential, never from
     request input.
 
@@ -383,6 +383,7 @@ paths:
       - AE Studio
       security:
       - publisherCC: []
+      - aeStudioCC: []
       requestBody:
         required: true
         content:
@@ -938,7 +939,7 @@ components:
         Thunder client-credentials token of the org's AE Studio client
         (ae-studio-<org>), held by its AE Studio tools pod; the org is the one
         that client is recorded for. The only credential the ae-studio/ ops
-        accept.
+        accept, and the pod's credential on mcp; never a runner op's.
     sreHandoff:
       type: http
       scheme: bearer

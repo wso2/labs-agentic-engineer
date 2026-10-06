@@ -47,7 +47,7 @@ func (s *tokenServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		s.t.Errorf("method = %s", r.Method)
 	}
-	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("aep-publisher-acme:s3cr3t"))
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("ae-studio-acme:s3cr3t"))
 	if got := r.Header.Get("Authorization"); got != want {
 		s.t.Errorf("Authorization is not the client's Basic credentials")
 	}
@@ -71,7 +71,7 @@ func (s *tokenServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func newCC(url string) *ClientCredentials {
-	return &ClientCredentials{TokenURL: url, ClientID: "aep-publisher-acme", ClientSecret: "s3cr3t"}
+	return &ClientCredentials{TokenURL: url, ClientID: "ae-studio-acme", ClientSecret: "s3cr3t"}
 }
 
 func TestClientCredentials_MintsWithBasicAuthAndCaches(t *testing.T) {

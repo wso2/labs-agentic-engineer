@@ -55,23 +55,25 @@ group, and the org is the only claim it checks.**
    pod call is AE-only M2M on `/internal/v1`. A user's request to `aep-api`
    is authorized by `aep-api`, which then acts as itself.
 
-5. **The pod holds two `aep-api` credentials, each used for one route group.**
-   - The org's `ae-studio-<org>` client (org secret `ae-studio-client`)
-     opens the `ae-studio/` route group of `/internal/v1`: the project repository and skills
-     lookups, dependency completion, turn usage and the webhook forward.
-     `aep-api` binds the org recorded for that client.
-   - The org's publisher client (org secret `ae-publisher-client`, the
-     pod's `AE_PUBLISHER_CLIENT_ID`) is what the pod uses for
-     `/internal/v1/mcp`.
+5. **The pod holds one `aep-api` credential: the org's `ae-studio-<org>`
+   client** (org secret `ae-studio-client`, the pod's `AE_STUDIO_CLIENT_ID`).
+   It opens two route groups of `/internal/v1`:
+   - `ae-studio/`: the project repository and skills lookups, dependency
+     completion, turn usage and the webhook forward;
+   - `mcp`: the nine tools the pod forwards (`auth.MCPGate`).
 
-   The invariant: a publisher token opens `mcp` and the org's own `runs/`
-   ops (fenced to cycles of its org) and nothing else, and every
-   `ae-studio/` op accepts only the `ae-studio-<org>` client, so each token
-   is 401 on the other's group. The pod's publisher token therefore also
-   clears its own org's `runs/` ops (`runner-validation-context`, gated by
-   `runnerCredential` in `services/aep-api/internal/edge/internal.go`),
-   though the pod never calls them. Whether to narrow the pod's publisher
-   client to `mcp` alone is an open decision.
+   On both, `aep-api` verifies the token with `auth.StudioClientVerifier`
+   and binds the org recorded for that client, never an org the request
+   names. The org's publisher client (org secret `ae-publisher-client`)
+   stays with the coding and validation Jobs; the pod's ExternalSecret does
+   not carry it.
+
+   The invariant: the `ae-studio-<org>` token opens `ae-studio/` and `mcp`
+   and is 401 on `runs/` and `sre/`; a publisher token opens `mcp` and the
+   org's own `runs/` ops (fenced to open cycles of its org) and is 401 on
+   `ae-studio/` and `sre/`. `mcp` is the one group both clients share.
+   An earlier revision had the pod hold the publisher client for `mcp`,
+   which also cleared its own org's `runs/` ops.
 
 6. **The issuer is checked exactly; the key set may live elsewhere.** Each
    container takes the issuer (`AE_IDP_ISSUER`) and the key-set URL

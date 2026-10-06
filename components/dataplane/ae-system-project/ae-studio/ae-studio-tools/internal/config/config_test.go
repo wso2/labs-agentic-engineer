@@ -32,8 +32,7 @@ func base() map[string]string {
 		"AE_USER_AUDIENCES": "aep-console-client, other",
 		"AE_M2M_CLIENT_ID":  "ae-studio-internal-client",
 		"GITHUB_PAT":        "x", "GITHUB_WEBHOOK_SECRET": "y",
-		"AE_IDP_TOKEN_URL":       "http://thunder:8090/oauth2/token",
-		"AE_PUBLISHER_CLIENT_ID": "aep-publisher-default", "AE_PUBLISHER_CLIENT_SECRET": "publisher-secret-value",
+		"AE_IDP_TOKEN_URL":   "http://thunder:8090/oauth2/token",
 		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
 		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
 		"AE_FILES_SOCKET": "/run/ae/files/files.sock",
@@ -90,7 +89,7 @@ func TestLoad_AudienceListWithOnlySeparatorsIsMissing(t *testing.T) {
 func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	_, err := Load(env(map[string]string{}))
 	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
-		"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL",
+		"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL",
 		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET",
 		"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET", "AE_WEBHOOK_URL"} {
 		if err == nil || !strings.Contains(err.Error(), k) {
@@ -99,29 +98,42 @@ func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
 	}
 }
 
-func TestLoad_PublisherAndAEPAPIKeys(t *testing.T) {
+func TestLoad_TokenURLAndAEPAPIKeys(t *testing.T) {
 	c, err := Load(env(base()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.IDPTokenURL != "http://thunder:8090/oauth2/token" || c.PublisherClientID != "aep-publisher-default" ||
-		c.PublisherClientSecret != "publisher-secret-value" || c.AEPAPIBaseURL != "http://aep-api.aep.svc.cluster.local:9090" {
-		t.Fatalf("publisher/aep-api keys not read")
+	if c.IDPTokenURL != "http://thunder:8090/oauth2/token" || c.AEPAPIBaseURL != "http://aep-api.aep.svc.cluster.local:9090" {
+		t.Fatalf("token URL/aep-api keys not read")
+	}
+}
+
+// The pod holds only its own client (Task 9.H18): no publisher key is read,
+// so the config loads without one.
+func TestLoad_NoPublisherClientKeys(t *testing.T) {
+	m := base()
+	for _, k := range []string{"AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET"} {
+		if _, ok := m[k]; ok {
+			t.Fatalf("the base env still sets %s", k)
+		}
+	}
+	if _, err := Load(env(m)); err != nil {
+		t.Fatalf("Load without publisher keys: %v", err)
 	}
 }
 
 // Each key is required on its own (fail closed at boot), and the error names
 // the key, never the value of any other key.
-func TestLoad_EachPublisherKeyIsRequired(t *testing.T) {
-	for _, k := range []string{"AE_IDP_TOKEN_URL", "AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET", "AEP_API_BASE_URL"} {
+func TestLoad_EachAEPAPIKeyIsRequired(t *testing.T) {
+	for _, k := range []string{"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL"} {
 		m := base()
 		m[k] = "  "
 		_, err := Load(env(m))
 		if err == nil || !strings.Contains(err.Error(), "missing "+k) {
 			t.Fatalf("%s blank: err = %v", k, err)
 		}
-		if strings.Contains(err.Error(), "publisher-secret-value") {
-			t.Fatalf("%s blank: error leaks the publisher secret", k)
+		if strings.Contains(err.Error(), "studio-secret-value") {
+			t.Fatalf("%s blank: error leaks the studio client secret", k)
 		}
 	}
 }

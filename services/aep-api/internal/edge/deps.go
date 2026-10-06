@@ -36,8 +36,9 @@ import (
 // (untouched fields nil-guard or 503 in their handlers).
 type Deps struct {
 	// PublisherTokens verifies an org's Thunder publisher client token
-	// (aep-publisher-<org>), the only credential POST /internal/v1/mcp
-	// accepts (auth.PublisherMCPGate). Nil leaves the MCP route unmounted.
+	// (aep-publisher-<org>), the coding runner's credential on POST
+	// /internal/v1/mcp (auth.MCPGate, beside InternalDeps.StudioClients).
+	// With both nil the MCP route is unmounted.
 	PublisherTokens *auth.PublisherTokenVerifier
 
 	// DesignSvc is the narrow design-dependency reader backing the edge's own

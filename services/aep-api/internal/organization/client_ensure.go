@@ -46,8 +46,8 @@ import (
 type ClientKind string
 
 const (
-	// ClientPublisher is aep-publisher-<org>, the coding runner's and the
-	// pod's publisher client (secret ae-publisher-client).
+	// ClientPublisher is aep-publisher-<org>, the coding and validation
+	// runners' client (secret ae-publisher-client).
 	ClientPublisher ClientKind = "publisher"
 	// ClientStudio is ae-studio-<org>, the AE Studio pod's own client
 	// (secret ae-studio-client).

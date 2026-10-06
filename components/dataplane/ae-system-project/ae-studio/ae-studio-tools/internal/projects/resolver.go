@@ -107,7 +107,7 @@ var errNotFound = errors.New("aep-api answered 404")
 
 // repositoryAnswer maps one repository lookup's response by status: 200 →
 // the repository (every field set), 404 → errNotFound, 401/403 or a rejected
-// publisher client → ErrUnavailable and ErrMisconfigured, anything else or a
+// ae-studio client → ErrUnavailable and ErrMisconfigured, anything else or a
 // transport failure → ErrUnavailable.
 func repositoryAnswer(resp *http.Response, err error) (Repository, error) {
 	if err != nil {

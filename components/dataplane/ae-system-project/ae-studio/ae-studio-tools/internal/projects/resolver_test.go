@@ -148,7 +148,7 @@ func TestResolver_CredentialFaultsAreMisconfigured(t *testing.T) {
 			apiCalls.Add(1)
 			w.WriteHeader(c.apiStatus)
 		}))
-		client, err := platform.NewAEPAPI(api.URL, &platform.ClientCredentials{TokenURL: idp.URL, ClientID: "aep-publisher-acme", ClientSecret: "s"})
+		client, err := platform.NewAEPAPI(api.URL, &platform.ClientCredentials{TokenURL: idp.URL, ClientID: "ae-studio-acme", ClientSecret: "s"})
 		if err != nil {
 			t.Fatal(err)
 		}

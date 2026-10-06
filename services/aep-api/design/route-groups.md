@@ -25,20 +25,21 @@ how `aep-api` calls the pod is [git-boundary.md](git-boundary.md).
 |---|---|---|---|
 | `/healthz`, `/readyz` | kubelet | none | none. `/readyz` answers 200 once the server is up: `aep-api` holds no local state to wait on |
 | `/api/v1` | the console | a Platform IdP user JWT | JWT (`JWT_ISSUER`, `JWT_AUDIENCE`, keys from `JWKS_URL`), then `EnsureOrgMiddleware`, then the deny-by-default tenant gate (`edge/tenant_gate.go`) on every generated op. The gate enforces unless `TENANT_GATE_MODE=log`, which only logs its verdicts (any other value enforces). No other credential has a way in |
-| `/internal/v1/runs/{cycleId}/…` | the coding runner (any publisher token of the org clears it, the AE Studio pod's included) | the org's publisher client token | the cycle fence: the token's org must own the cycle the path names (`auth.RunnerAuthorizer`) |
+| `/internal/v1/runs/{cycleId}/…` | the coding and validation runners | the org's publisher client token | the cycle fence: the token's org must own the cycle the path names (`auth.RunnerAuthorizer`) |
 | `/internal/v1/ae-studio/…` | the org's AE Studio tools pod | the org's `ae-studio-<org>` client token | the token must be the client recorded for that org; binds that org; no cycle (`auth.StudioClientVerifier`) |
-| `/internal/v1/mcp` | the coding runner and the AE Studio tools pod | the org's publisher client token | its own gate, `auth.PublisherMCPGate`; binds the token's org |
+| `/internal/v1/mcp` | the coding runner and the AE Studio tools pod | the org's publisher client token (runner) or its `ae-studio-<org>` client token (pod) | its own gate, `auth.MCPGate`: the publisher token as on `runs/`, the `ae-studio-<org>` token as on `ae-studio/` (the client recorded for that org); binds the org that verifier answers. Any refusal is the same 401; an unreadable recorded client is 503 |
 | `/internal/v1/sre/…` | the SRE handoff (`aep-mcp-server`) | the static SRE handoff bearer | `auth.SREHandoffVerifier`; binds its one configured org and the incident context. The same instance turns auto-RCA on |
 
 Each credential opens its own group only. A publisher token never clears
 `sre/` or `ae-studio/`. The SRE bearer never clears a runner op or
-`ae-studio/`. An `ae-studio-<org>` token never clears a runner op or `mcp`.
-A user JWT and `aep-api`'s own AE-only client clear no internal group.
+`ae-studio/`. An `ae-studio-<org>` token never clears a runner op or `sre/`.
+`mcp` is the one group two credentials open. A user JWT and `aep-api`'s own
+AE-only client clear no internal group.
 
-The coding runner and the AE Studio tools pod hold the same org's publisher
-client, so on `runs/` and `mcp` the prefix names the caller but does not
-prove it. The gate is what enforces: the org, and on `runs/` the cycle
-fence.
+The coding runner and the validation runner hold the same org's publisher
+client, so on `runs/` the prefix names the caller but does not prove it. The
+gate is what enforces: the org and the cycle fence. The AE Studio tools pod
+holds only its `ae-studio-<org>` client.
 
 ## How the internal gate runs
 

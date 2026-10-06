@@ -31,8 +31,8 @@ type turnUsageRecorder interface {
 }
 
 // NewAEPAPIPost is the Sender's Post over the aep-api client, which carries
-// the org's publisher token (platform.NewAEPAPI: one retry after a 401);
-// aep-api binds the org from that token. A 2xx is delivered. A permanent
+// the org's ae-studio client token (platform.NewAEPAPI: one retry after a
+// 401); aep-api binds the org from that token. A 2xx is delivered. A permanent
 // refusal is a *RejectedError, so the batch is dropped rather than block the
 // records behind it: 404 (a record names a project that is not the org's,
 // the whole batch refused), 400, 413 and 422 (a batch aep-api will never

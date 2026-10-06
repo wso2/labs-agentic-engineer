@@ -38,7 +38,8 @@ type StudioClientLookup interface {
 
 // StudioClientVerifier verifies the client_credentials token of an org's AE
 // Studio client (ae-studio-<org>), the credential the org's AE Studio tools
-// pod presents on aep-api's ae-studio/ internal operations. The token must be
+// pod presents on aep-api's ae-studio/ internal operations and on MCP
+// (MCPGate). The token must be
 // Thunder-signed with the expected issuer, name the client in its audience
 // with a matching ouHandle (PublisherTokenVerifier's checks over the
 // ae-studio- prefix), AND the client must be the one recorded for that org:

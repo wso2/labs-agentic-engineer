@@ -18,7 +18,7 @@
 // agent's only tool surface. It answers tools/list from the pinned local
 // descriptors, refuses tools/call of any name outside AllowedTools, runs the
 // two remote-git tools in the pod with the gitpat and forwards the other nine
-// to aep-api's /internal/v1/mcp with the org's publisher token.
+// to aep-api's /internal/v1/mcp with the org's ae-studio client token.
 package mcp
 
 import "slices"

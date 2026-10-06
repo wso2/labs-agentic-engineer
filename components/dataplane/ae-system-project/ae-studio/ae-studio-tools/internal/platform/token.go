@@ -44,7 +44,7 @@ const (
 var ErrClientRejected = errors.New("token endpoint rejected the client")
 
 // ClientCredentials mints and caches an OAuth2 client_credentials token. It
-// authenticates with client_secret_basic (the IdP's publisher client takes
+// authenticates with client_secret_basic (the org's ae-studio client takes
 // Basic auth): the id and secret go only in the Authorization header, the
 // form body carries only the grant. The token is refreshed 60 s before it
 // expires, and on demand after Invalidate (the caller saw a 401). A token

@@ -46,9 +46,11 @@ import (
 //   - fetch_openapi_spec             → SSRF-hardened fetch of an OpenAPI doc by URL, then validate + normalize
 //   - slice_openapi_spec             → cut the named operations + their schemas out of a provider's OpenAPI doc
 //
-// Mounted at POST /internal/v1/mcp behind auth.PublisherMCPGate, which binds
-// the acting org onto the request context from a verified publisher client
-// token (aep-publisher-<org>). The org is read ONLY from that context — never
+// Mounted at POST /internal/v1/mcp behind auth.MCPGate, which binds the acting
+// org onto the request context from a verified publisher client token
+// (aep-publisher-<org>, the coding runner's) or a verified, recorded AE Studio
+// client token (ae-studio-<org>, the AE Studio tools pod's). The org is read
+// ONLY from that context — never
 // the path/body/header (the source read it from an {orgHandle} path; that is
 // banned here).
 

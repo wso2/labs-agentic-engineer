@@ -17,45 +17,54 @@
 package auth
 
 // This file holds the tenant gate for aep-api's raw (non-generated) MCP
-// discovery mount (POST /internal/v1/mcp). Its one caller credential is an
-// org's Thunder publisher client token (aud aep-publisher-<org>): the coding
-// runner and the AE Studio tools pod's MCP proxy both present it. The acting
-// org comes SOLELY from the verified token (audience org, cross-checked against
-// ouHandle by PublisherTokenVerifier), never from the path, body or a header.
-// No other token opens this mount: not an ae-studio-<org> client token (that
-// opens ae-studio/ only), not a user JWT, not a token aep-api signs itself.
+// discovery mount (POST /internal/v1/mcp). It takes two caller credentials,
+// each verified exactly as on its own route group: an org's Thunder publisher
+// client token (aud aep-publisher-<org>, PublisherTokenVerifier), which the
+// coding runner presents, and an org's AE Studio client token (aud
+// ae-studio-<org>, StudioClientVerifier: only the client recorded for that
+// org), which the org's AE Studio tools pod presents. The acting org comes
+// SOLELY from the verifier that accepted the token, never from the path, body
+// or a header. No other token opens this mount: not a user JWT, not the
+// AE-only client, not a token aep-api signs itself. Opening MCP to the
+// ae-studio client opens nothing else to it: runs/ stays publisher-only
+// (RunnerAuthorizer).
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 )
 
-// mcpOrgCtxKey carries the org resolved by PublisherMCPGate.
+// mcpOrgCtxKey carries the org resolved by MCPGate.
 type mcpOrgCtxKey struct{}
 
 // WithMCPOrg returns a copy of ctx carrying the MCP-verified org handle. Set by
-// PublisherMCPGate; read by the MCP handler via MCPOrgFromContext.
+// MCPGate; read by the MCP handler via MCPOrgFromContext.
 func WithMCPOrg(ctx context.Context, org string) context.Context {
 	return context.WithValue(ctx, mcpOrgCtxKey{}, org)
 }
 
-// MCPOrgFromContext returns the org bound by PublisherMCPGate. The MCP handler
-// reads it here — the org NEVER comes from the path/body/header. ok is false
-// when the request never passed through the gate (a wiring bug): the handler
-// then fails closed rather than acting on an unresolved org.
+// MCPOrgFromContext returns the org bound by MCPGate. The MCP handler reads it
+// here — the org NEVER comes from the path/body/header. ok is false when the
+// request never passed through the gate (a wiring bug): the handler then fails
+// closed rather than acting on an unresolved org.
 func MCPOrgFromContext(ctx context.Context) (string, bool) {
 	org, ok := ctx.Value(mcpOrgCtxKey{}).(string)
 	return org, ok
 }
 
-// PublisherMCPGate wraps next so it runs only for a verified publisher client
-// token, with that token's org bound onto the context (WithMCPOrg). Every
-// failure — missing or non-bearer header, bad signature, wrong issuer, a
-// non-publisher audience, an ouHandle mismatch, expiry, a nil verifier — is a
-// 401 with a generic body; the reason goes to the log only.
-func PublisherMCPGate(publisher *PublisherTokenVerifier, next http.Handler) http.Handler {
+// MCPGate wraps next so it runs only for a verified publisher client token or
+// a verified, recorded ae-studio client token, with the org that verifier
+// bound onto the context (WithMCPOrg). Every refusal — missing or non-bearer
+// header, bad signature, wrong issuer, an audience neither verifier accepts,
+// an ouHandle mismatch, an ae-studio client not recorded for its org, expiry,
+// a nil verifier — is the same 401 with a generic body; the reason goes to
+// the log only. A recorded ae-studio client that could not be read is a 503
+// (no verdict on the caller), as on the ae-studio/ ops.
+func MCPGate(publisher *PublisherTokenVerifier, studio *StudioClientVerifier, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "Bearer "
 		header := r.Header.Get("Authorization")
@@ -64,12 +73,35 @@ func PublisherMCPGate(publisher *PublisherTokenVerifier, next http.Handler) http
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		claims, err := publisher.Verify(header[len(prefix):]) // nil verifier: error, fails closed
+		org, err := verifyMCPCaller(r.Context(), publisher, studio, header[len(prefix):])
+		if errors.Is(err, ErrStudioClientLookup) {
+			slog.ErrorContext(r.Context(), "mcp auth: ae-studio client lookup failed", "error", err)
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if err != nil {
 			slog.WarnContext(r.Context(), "mcp auth rejected", "error", err)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(WithMCPOrg(r.Context(), claims.OrgHandle)))
+		next.ServeHTTP(w, r.WithContext(WithMCPOrg(r.Context(), org)))
 	})
+}
+
+// verifyMCPCaller answers the org token binds: the publisher token's org, or
+// the org an ae-studio client is recorded for. A nil verifier refuses its
+// tokens (both Verify methods fail closed on a nil receiver).
+func verifyMCPCaller(ctx context.Context, publisher *PublisherTokenVerifier, studio *StudioClientVerifier, token string) (string, error) {
+	claims, perr := publisher.Verify(token)
+	if perr == nil {
+		return claims.OrgHandle, nil
+	}
+	org, serr := studio.Verify(ctx, token)
+	if serr == nil {
+		return org, nil
+	}
+	if errors.Is(serr, ErrStudioClientLookup) {
+		return "", serr
+	}
+	return "", fmt.Errorf("not a publisher token (%v) nor a recorded ae-studio client token (%w)", perr, serr)
 }

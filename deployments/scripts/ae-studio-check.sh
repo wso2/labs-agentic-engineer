@@ -142,10 +142,13 @@ if [ "$ndeploy" = 1 ]; then
   if [ -n "$secret" ]; then
     read_into keys "Secret $dpns/$secret key names" kdp get secret "$secret" -n "$dpns" \
       -o go-template='{{range $k, $v := .data}}{{$k}}{{"\n"}}{{end}}'
-    for k in GITHUB_PAT GITHUB_WEBHOOK_SECRET AE_PUBLISHER_CLIENT_ID AE_PUBLISHER_CLIENT_SECRET \
-      AE_STUDIO_CLIENT_ID AE_STUDIO_CLIENT_SECRET AE_SECRET_REV; do
+    for k in GITHUB_PAT GITHUB_WEBHOOK_SECRET AE_STUDIO_CLIENT_ID AE_STUDIO_CLIENT_SECRET AE_SECRET_REV; do
       check "Secret has key $k" grep -qx "$k" <<<"$keys"
     done
+    # The pod holds only its own aep-api client: the org's publisher client
+    # stays with the coding Jobs (ADR-0041 decision 5).
+    pub_keys=$(grep -c '^AE_PUBLISHER_' <<<"$keys" || true)
+    check "Secret has no AE_PUBLISHER_* key" test "$pub_keys" = 0
     read_into rev_b64 "Secret $dpns/$secret AE_SECRET_REV" kdp get secret "$secret" -n "$dpns" -o jsonpath='{.data.AE_SECRET_REV}'
     live_rev=$(printf '%s' "$rev_b64" | base64 -d 2>/dev/null || true)
     check "Secret AE_SECRET_REV matches the container's AE_EXPECTED_SECRET_REV" \

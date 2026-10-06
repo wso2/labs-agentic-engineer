@@ -81,7 +81,8 @@ type AppParams struct {
 	// platform resource-type catalog); the mounted handler nil-guards each —
 	// a nil MCPExternalResources 503s the route group, a nil lister degrades its
 	// one tool to an empty result. The mount itself (mcpRoutes, internal.go)
-	// needs Deps.PublisherTokens, its only caller credential.
+	// needs a caller verifier: Deps.PublisherTokens (the coding runner) or
+	// InternalDeps.StudioClients (the AE Studio tools pod).
 	MCPExternalResources mcpdiscovery.ExternalResourceReader
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
 	MCPResourceTypes     mcpdiscovery.ResourceTypeLister

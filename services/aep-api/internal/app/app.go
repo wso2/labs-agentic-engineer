@@ -817,7 +817,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleRunnerLookup(db))
 	// The ae-studio/ internal ops take only the org's ae-studio-<org> client
 	// token, checked against the client id recorded for the org; a publisher
-	// token (what a coding Job holds) never opens them.
+	// token (what a coding Job holds) never opens them. MCP takes this token
+	// beside the publisher token; runs/ never does.
 	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
 
 	// One RCA-report store: the SRE handoff writes through it (sre/ ops) and
@@ -845,7 +846,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			Issues:     issueService,
 			RcaReports: rcaReports,
 			// The AE Studio tools pod presents its org's ae-studio-<org>
-			// client token on every ae-studio/ op.
+			// client token on every ae-studio/ op and on MCP (mcpRoutes).
 			StudioClients:        studioClientVerifier,
 			AEStudioRepositories: aestudio.NewProjectRepositories(repoService),
 			// The org's skills library, reconciled before each turn's
@@ -896,7 +897,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// Dependency-management MCP discovery readers (agnostic subset — Phase 4 of
 	// the dependency-management migration). The MCP route group (routes.go) is
-	// mounted behind auth.PublisherMCPGate; wire real backends for its four
+	// mounted behind auth.MCPGate; wire real backends for its four
 	// read-only tools: the org external-resource catalog (org-namespaced OC
 	// ResourceTypes, Task 3 — no longer the external_resources table) and the
 	// org published endpoints + platform resource types (OC Resource-model

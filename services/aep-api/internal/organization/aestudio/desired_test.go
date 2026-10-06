@@ -38,7 +38,7 @@ func TestDesired_SecretsFromReferencesAndRev(t *testing.T) {
 	for _, e := range tools.Data {
 		envs = append(envs, e.Env)
 	}
-	if strings.Join(envs, ",") != "GITHUB_PAT,GITHUB_WEBHOOK_SECRET,AE_PUBLISHER_CLIENT_ID,AE_PUBLISHER_CLIENT_SECRET,AE_STUDIO_CLIENT_ID,AE_STUDIO_CLIENT_SECRET" {
+	if strings.Join(envs, ",") != "GITHUB_PAT,GITHUB_WEBHOOK_SECRET,AE_STUDIO_CLIENT_ID,AE_STUDIO_CLIENT_SECRET" {
 		t.Fatalf("envs %v", envs)
 	}
 	if tools.Data[0].Key != "user-app-secrets/ns/default-github-pat-aaaa0001" || tools.Data[0].Property != "token" {
@@ -167,7 +167,7 @@ func TestDesired_MissingInputsAreFailed(t *testing.T) {
 	cases := map[string]func(*fixture){
 		"no webhook secret":          func(f *fixture) { f.withoutRef(organization.OrgSecretGitHubWebhookSecret) },
 		"no studio client":           func(f *fixture) { f.withoutRef(organization.OrgSecretStudioClient) },
-		"reference gone from the CP": func(f *fixture) { delete(f.oc.refs, "default-ae-publisher-client-aaaa0003") },
+		"reference gone from the CP": func(f *fixture) { delete(f.oc.refs, "default-ae-studio-client-aaaa0004") },
 		"config missing":             func(f *fixture) { f.withoutConfig("AE_STUDIO_GATEWAY_HOST") },
 	}
 	for name, setup := range cases {
@@ -223,5 +223,31 @@ func TestDesired_WebhookRelaySeedNeedsImage(t *testing.T) {
 	}
 	if f.oc.writes() != 0 {
 		t.Fatalf("nothing to ensure, yet wrote: %v", f.oc.calls)
+	}
+}
+
+// The pod holds only its own client (Task 9.H18): the org's publisher client
+// (ae-publisher-client, what its coding Jobs mount) is neither read nor
+// required, so the tools ExternalSecret never carries it and an org without
+// the row still converges. The rev covers only the references the pod reads.
+func TestDesired_ToolsSecretHoldsNoPublisherClient(t *testing.T) {
+	f := newFixture(t).withAllRefs()
+	d, err := f.svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range d.Params.Secrets.StudioTools.Data {
+		if strings.HasPrefix(e.Env, "AE_PUBLISHER_") || strings.Contains(e.Key, "ae-publisher-client") {
+			t.Fatalf("the tools secret carries the publisher client: %+v", e)
+		}
+	}
+	f.withoutRef(organization.OrgSecretPublisherClient)
+	delete(f.oc.refs, "default-ae-publisher-client-aaaa0003")
+	without, err := f.svc.desired(ctx, "default")
+	if err != nil {
+		t.Fatalf("an org without the publisher row must still converge: %v", err)
+	}
+	if without.Params.Secrets.StudioTools.Rev != d.Params.Secrets.StudioTools.Rev {
+		t.Fatal("the publisher row must not feed the tools rev")
 	}
 }
