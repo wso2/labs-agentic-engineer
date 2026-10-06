@@ -14,6 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package edge is aep-api's request boundary and composition root. One spec
+// per audience, one prefix per caller, one gate per prefix: each prefix is a
+// route group (never a "surface", which names a turn's narration reader),
+// mounted in routes() and opened by exactly one credential, whose verified
+// org the gate binds. /api/v1 takes the console's user JWT through the tenant
+// gate; /internal/v1 takes a machine credential per group (runs/, ae-studio/,
+// mcp, sre/) through internalGate's deny-by-default table. The gate table and
+// its reasons: services/aep-api/design/route-groups.md.
 package edge
 
 import (

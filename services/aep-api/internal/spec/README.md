@@ -9,9 +9,8 @@ library. **Single write-authority over the git spec-content store and its versio
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
-  CB(["/collab/validate"]) -.-> SL
   subgraph spec
-    SL["slices — files · tags · skills · collab · designdeps"]
+    SL["slices — files · tags · skills · designdeps"]
     CORE["artifacts store/versioning + kickoff + design + skills services"]
     SL --> CORE
     CORE --> GIT[("git: prd.md · specs/design/** · version tags · org-skills repo")]
@@ -28,12 +27,11 @@ flowchart LR
 | `files` | upload a project's reference documents (a pass-through to the org's AE Studio pod) | `PUT .../references` |
 | `tags` | list the project's spec version tags, newest first by creation time | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
-| `collab` | the collab session descriptor + the S2S room-access oracle | `.../spec/collab-session`, `GET /collab/validate` |
 | `designdeps` | the two writes into an external dependency's directory: provide its contract (a URL the platform fetches, or the document itself), and record the user's authorization to build on the design agent's assumed contract — before the agent writes it (the resolve flow's card) or after (the definition's acceptance box) | `POST .../dependencies/{name}/contract`, `POST .../dependencies/{name}/assumption` |
 
 *Still flat in the domain root (not carved into finer slices): the artifacts store/versioning machinery,
 the kickoff, the finished-turn ledger, and the design / skills services. Agent turns themselves run
-in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores what the pod records.*
+in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/turn-runtime.md)); aep-api starts only the kickoff and stores what the pod records.*
 
 ## Ports
 | Port | Dir | Peer · contract |
@@ -147,7 +145,7 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
   stamped, so nothing falls out of sync, and the question is answerable for projects predating the
   check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
-  the collab doc and the collab server commits them later, carrying no turn id and no author — there
+  the project's Room and the Room's committer (`ae-collab`) commits them later, carrying no turn id and no author — there
   is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
   refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
@@ -156,7 +154,7 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   complete files committed raw: no scaffolding, completions or soft validation run on them (the pod
   runs those for the Room's edits); the design service's writes carry the caller's baseSha, and a
   stale one is `ErrSpecCommitConflict` (409), not retried.
-- **`agent_turns` is the finished-turn ledger** (07 §12). An org's AE Studio tools pod hands
+- **`agent_turns` is the finished-turn ledger.** An org's AE Studio tools pod hands
   over the turns its design agent ran through `record-turn-usage` (`POST
   /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
   writes each record once (`ON CONFLICT (org_id, id) DO NOTHING`, so a resent batch changes nothing) with
@@ -168,9 +166,9 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   `project_id = ''`. The primary key is `(org_id, id)`: the pod chooses turn ids (the kickoff's
   is uuidv5 of `org/project`, which anyone can compute), so another org's row with the same id
   never stands in for this org's record. Nothing runs here: whether a turn is running right now is
-  the pod's to say. Rows from before phase 3 came from aep-api's in-process turn engine; migrate's
-  `phase24_agent_turns_ledger` gave them a kind and a start, deleted the running ones and dropped
-  that engine's columns, guard index and `project_conversations`.
+  the pod's to say. Rows written by aep-api's former in-process turn engine were reshaped by
+  migrate's `phase24_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
+  and dropped that engine's columns, guard index and `project_conversations`.
 
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its version tags — every save/tag/discard
@@ -247,9 +245,9 @@ in the org's AE Studio pod (07 §12); aep-api starts only the kickoff and stores
   - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.
-- The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
-  `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
-  gate, secrets fence) → [../../README.md](../../README.md).
+- Platform-wide rules (tenant gate, secrets fence) → [../../README.md](../../README.md). Who may join a
+  project's Room is decided in the org's AE Studio pod, not here
+  ([room](../../../../components/dataplane/ae-system-project/ae-studio/ae-collab/design/room.md)).
 - **Skill read-only is enforced by the mutation guards, not by visibility.** `Resolve`/`List` return every
   kind — platform skills list read-only on the skills page; reserved names/prefixes block name collisions.
 - **The descriptor is unreadable by the agent, structurally.** Its dot-led segment is stripped from every

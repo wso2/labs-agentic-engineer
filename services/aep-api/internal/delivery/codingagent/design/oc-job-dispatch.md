@@ -21,7 +21,9 @@ written. A project whose pipeline names none is refused before
 (`no-write-target`) without spending the re-dispatch budget. The environment the
 Job was bound into is recorded on the cycle (`run_cycles.environment`, beside
 `model_host`), and the watcher, the feed, the log source and the archive
-read the cycle there. A cycle with none recorded (dispatched before the column
+read the cycle there. So is the Component's UID (`run_cycles.component_uid`,
+from the create reply; the 409 path re-reads it), which every observer read of
+the cycle filters on. A cycle with none recorded (dispatched before the column
 existed, or whose launch write failed) falls back to the project's write target
 at read time, and says so in the log. OC renders the `batch/v1 Job` into the project's `dp-…` release namespace and
 materialises the cycle's ExternalSecrets from the org's secret store — the
@@ -291,6 +293,11 @@ Reader mechanics, the `logs_truncated` banner, and legacy execution-row reads ar
 in [`cycle-status-and-logs.md`](cycle-status-and-logs.md).
 
 ## Settle: the Component is deleted once no pod is left
+
+Why the platform suspends first and deletes at settle is
+[ADR-0044](../../../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md);
+the lifecycle at a glance is in
+[cycle-status-and-logs.md](cycle-status-and-logs.md#the-lifecycle-of-a-cycles-job).
 
 A closed cycle's Component still holds an entitlement slot, and OC re-creates
 its Job after the TTL, so `ComponentSettler` (a watcher, one pass a minute over

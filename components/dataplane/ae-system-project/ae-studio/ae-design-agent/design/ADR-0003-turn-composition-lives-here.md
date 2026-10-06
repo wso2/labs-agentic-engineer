@@ -116,3 +116,25 @@ a field could be read from the workspace, it would not need to be on the wire.
   shared across languages without a generator, and the two never see the same
   input — a divergence shows up as the playground routing a line differently
   from production, never as wrong prompt text.
+
+## Amendment 2026-10-06 — AE Studio
+
+This service is now `ae-design-agent`, a container of the organization's AE
+Studio pod
+([ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+The decision stands, and the pod now holds the facts as well as the wording.
+
+- **Callers are the console and `ae-studio-tools`' Turn socket** (the kickoff
+  and the Plan turn). `aep-api` no longer composes or forwards a turn: it asks
+  `ae-studio-tools` to start a kickoff or a Plan and reads the result.
+  `agentsvc.TurnSpec` is gone; `TurnSpec` exists only in TypeScript.
+- **The pod parses `/<skill>`** (`src/turns/start-spec.ts`). Callers send the
+  instruction verbatim. The grammar is no longer duplicated in Go, so the
+  last consequence above no longer applies.
+- **The pod reads the descriptor's facts itself.** The project lookup in
+  `ae-studio-tools` reads the idea from `specs/.agentic-engineer.toml` and
+  answers it as `idea`. The file stays out of the agent's snapshot reads.
+- The deploy-together consequence now binds the pod's three containers, which
+  roll as one.
+
+Lifecycle of a turn: [turn-runtime.md](turn-runtime.md).

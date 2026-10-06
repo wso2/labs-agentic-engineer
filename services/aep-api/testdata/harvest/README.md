@@ -4,8 +4,7 @@ A **one-time** capture of real aep-api HTTP responses over the public read-spine
 plus representative errors. It is the before/after **diff oracle** that protects
 the Phase 0b `internal/app.Build` extraction (`buildApp` has zero coverage today),
 and a source of realistic inputs for later component tests. It is **not** a
-maintained e2e suite — see [ADR-0003](../../../../docs/decisions/ADR-0003-aep-api-test-migration-strategy.md)
-and [the progress tracker](../../../../docs/design/aep-api-test-migration-progress.md).
+maintained e2e suite.
 
 - **Captured:** 2026-07-01, against the live local OpenChoreo cluster.
 - **Org:** `default` (single tenant). Org is derived from the JWT, never the URL.
@@ -14,6 +13,13 @@ and [the progress tracker](../../../../docs/design/aep-api-test-migration-progre
   server-relative, e.g. `/projects`; the `/api/v1` prefix is applied by the humago
   adapter). The `/internal/v1/*` S2S surface is a separate root and is **out of
   scope** for this harvest.
+- **It is a snapshot of that day's API.** Nine of its entries name routes
+  aep-api no longer serves, and a replay against today's aep-api answers 404
+  for them: `get_collab_session` and `get_collab_validate` (the Room and its
+  access check moved into the org's AE Studio pod; aep-api has no collab
+  route), and the seven `/org/...` reads (skills, IdP and credentials, since
+  moved under `/skills` and `/config`). The goldens stay as the record of
+  what was captured.
 
 ## Layout
 

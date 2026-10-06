@@ -355,7 +355,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   retrying forever against a repository that is gone.
 - **The reconcile sweep repairs missing repo hooks first** (`sweep_hooks.go`, `WithHookEnsurer`): each
   pass ensures a hook for every ready project row with no hook id (a create-time registration that
-  failed, 05 §7). An org whose AE Studio is absent or not serving waits for the next pass; any other
+  failed). An org whose AE Studio is absent or not serving waits for the next pass; any other
   permanent refusal (repository gone, owner refused) skips that row for the life of the process with one
   value-free `eventcore.hook_repair_skipped {org, project, reason}`; a transient failure retries next
   pass (logged as a code and GitHub status, never the error text). A row skipped for good is forgotten
@@ -711,12 +711,13 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   exists, then from the observability plane (see `cycle_feed.go`), and keeps the producer's `seq` through
   both sources so a viewer sees no duplicate and no hole across the switch. `run_cycles` stays the system
   of record, and `RunCycleView.recording` (`live | kept | expired | unavailable`) tells a console what can
-  actually be served. (The recorder design is superseded; see the fold-in ADR in phase 7.)
+  actually be served ([ADR-0044](../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+  [`codingagent/design/cycle-status-and-logs.md`](codingagent/design/cycle-status-and-logs.md)).
   The v1 VERSION build-progress stream still derives per viewer from the pod, then the archive, then a
   synthetic "logs unavailable" marker (`CycleProgress`, resolved once by `resolveCycleLog`), and keeps its
   200-event page cap. Every platform-minted marker that is re-derived per poll — the dark zone, a
-  truncation, a lost log — is a `notice` on a stable NEGATIVE seq with no timestamp, which is what makes it
-  dedup to one row. `CycleLogReader` serves both streams; `codingagent` owns it and writes no log text to Postgres. The one thing taken from
+  truncation, a lost log — is a `notice` on a stable NEGATIVE seq, which is what makes it dedup to one
+  row, stamped with the instant the platform derived it. `CycleLogReader` serves both streams; `codingagent` owns it and writes no log text to Postgres. The one thing taken from
   a terminal pod's log by the WATCHER is the runner's token-usage line — v2 `run_settled` or v1 `result`,
   always the LAST one, because the runtime reports usage cumulatively — stamped onto the cycle row:
   accounting, not logging. `coding_agent_logs` remains for legacy execution rows; milestone cycles never

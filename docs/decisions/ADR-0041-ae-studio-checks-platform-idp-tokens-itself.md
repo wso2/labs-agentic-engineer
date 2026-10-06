@@ -5,6 +5,12 @@
 (the org's AE Studio) ·
 [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md) (the
 Platform IdP)
+**Detail:** [`services/aep-api/design/route-groups.md`](../../services/aep-api/design/route-groups.md)
+(`aep-api`'s gates) ·
+[`services/aep-api/design/git-boundary.md`](../../services/aep-api/design/git-boundary.md)
+(`aep-api` → pod) ·
+[`ae-studio-tools/design/route-groups.md`](../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/route-groups.md)
+(the pod's gates)
 
 ## Context
 

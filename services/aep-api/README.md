@@ -15,10 +15,10 @@ CI-enforced by `internal/arch`.
 
 ```mermaid
 flowchart TB
-  SURF(["HTTP surfaces — /api/v1 · /internal/v1 · /mcp · /connect · /collab"])
+  SURF(["route groups — /api/v1 · /internal/v1 (runs/ · ae-studio/ · mcp · sre/)"])
   subgraph AEPAPI["aep-api"]
     direction TB
-    EDGE["edge — surface composer · tenant gate · composition root"]
+    EDGE["edge — route-group gates · tenant gate · composition root"]
     subgraph DOMAINS["the eight domains — each self-contained, wired only through ports"]
       direction LR
       ORG["organization"]
@@ -36,9 +36,8 @@ flowchart TB
   end
   SURF --> EDGE
   DOMAINS --> PG[("Postgres")]
-  SPEC --> GIT[("git — spec content + version tags")]
   DEP --> OC[[OpenChoreo]]
-  SC --> GH[[GitHub]]
+  SC --> AES[["the org's AE Studio pod (git + GitHub)"]]
   ORG --> TH[[Thunder]]
   IDN --> TH
   DEL --> TMP[[Temporal]]
@@ -47,18 +46,18 @@ flowchart TB
 **Legend (the same shapes at every zoom level):** `subgraph` = the unit you're looking
 inside · `["box"]` = a package within it · `[[Name]]` = something *outside* the current
 unit — another domain or an external system, always reached over a port · `[(store)]` = a
-datastore · `(["/surface"])` = an inbound HTTP surface.
+datastore · `(["/prefix"])` = an inbound route group.
 
 ## The eight domains
 
 | Domain | Owns | Shape | README |
 |---|---|---|---|
 | **organization** | tenant onboarding + every per-org config (GitHub / model connection / IDP), behind `/config` | flat-root | [→](internal/organization/README.md) |
-| **spec** | git-committed requirements+design spec, `v<N>` version tags, agent turns, the org Skill library | flat-root | [→](internal/spec/README.md) |
+| **spec** | git-committed requirements+design spec, `v<N>` version tags, the finished-turn ledger, the org Skill library | flat-root | [→](internal/spec/README.md) |
 | **delivery** | the version's **milestone run loop**: plan, dispatch the coding agent, merge, build, validate | kernel-root | [→](internal/delivery/README.md) |
 | **dependencies** | resource-type catalog + provisioning + runtime-config convergence | kernel-root | [→](internal/dependencies/README.md) |
 | **projects** | OpenChoreo `Project`/`Component` write-authority + the whole-pipeline Stage aggregate read | flat-root | [→](internal/projects/README.md) |
-| **sourcecontrol** | repos / issues / webhooks over a provider-neutral `Host`, + the bare-mirror workspace | flat-root | [→](internal/sourcecontrol/README.md) |
+| **sourcecontrol** | repos / issues / webhooks / git content through the org's AE Studio pod, behind the `Git` and GitHub ports | flat-root | [→](internal/sourcecontrol/README.md) |
 | **ops** | incident RCA reports, correlated live against Task executions | flat-root | [→](internal/ops/README.md) |
 | **identity** | the SHARED identity-provider Roles and Test users a build provisions from `security.json` | flat-root | [→](internal/identity/README.md) |
 
@@ -68,9 +67,11 @@ datastore · `(["/surface"])` = an inbound HTTP surface.
   `database`, `designspec`, `orgconfig`, `modelconn`, `netguard`, `patch`, `validate`, `httpkit`, `k8sname`, `obs`,
   plus the test kits (`componenttest`, `dbtest`, …). It carries no business logic and
   **imports no domain** — the dependency arrow only ever points *into* it.
-- **`edge/`** — the **surface composer / composition root**: the single package that
-  wires every domain together, mounts the HTTP surfaces, and runs the deny-by-default
-  **tenant gate**. It is the only place domains meet.
+- **`edge/`** — the **composition root**: the single package that wires every domain
+  together, mounts the route groups each behind its own gate, and runs the
+  deny-by-default **tenant gate**. It is the only place domains meet. The gate table:
+  [`design/route-groups.md`](design/route-groups.md); how aep-api reaches git:
+  [`design/git-boundary.md`](design/git-boundary.md).
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
@@ -144,7 +145,7 @@ coverage never exercised it either. Detail →
 | **port** | a typed seam between domains — *needs* (an interface a domain requires) / *offers* (one it exposes). Domains meet only at ports |
 | **flat-root** | domain shape: services in the root package; slices import the root |
 | **kernel-root** | domain shape: root holds only shared types + ports; feature logic in sub-packages importing only the root |
-| **edge** | the surface composer / composition root — wires all domains, mounts surfaces, runs the tenant gate |
+| **edge** | the composition root — wires all domains, mounts the route groups, runs the tenant gate |
 | **aggregator** | a domain's `httpapi` package that embeds its slice handlers and declares no methods of its own |
 | **milestone run** | delivery's single dispatch door — one supervised loop over one GitHub milestone, dispatching the coding agent cycle by cycle until the version settles |
 | **seam / Options** | public `app.Options` injectables that are the only place deployment behaviour differs at process start |

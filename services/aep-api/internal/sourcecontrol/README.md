@@ -114,7 +114,7 @@ flowchart LR
   (`SetWebhookIDIfReady`, never re-inserting a dropped row); a row that went, or whose project's delete
   started (`BeginDelete` marks it `deleting`), meanwhile gets the installed hook deleted again.
   `Unregister` deletes the stored hook (never one found by scanning); `UnregisterOrg` does it for every
-  row of an org and `ForgetOrg` clears the org's ids once its pod is gone (the gitpat disconnect, 06 §9).
+  row of an org and `ForgetOrg` clears the org's ids once its pod is gone (the gitpat disconnect deletes the org's AE Studio).
   A ready project row with no hook id is what the eventcore sweep's hook repair ensures a hook for;
   platform repos (`IsPlatformRepo`: project ids starting with `_`, the skills and resource-docs repos)
   carry none.
