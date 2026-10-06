@@ -60,7 +60,7 @@ else
 fi
 if odd=$(psql_q \
   "select table_name || '.' || column_name from information_schema.columns where table_schema = 'public' and column_name ~ '(secret|key_preview|key_prefix|key_last4|sealed|^value\$)' order by 1" 2>/dev/null); then
-  extra=$(printf '%s\n' "$odd" | grep -v -x -E 'org_secrets\.(secret|secret_ref_name)|git_repositories\.oc_secret_ref_name|test_users\.password_sealed' | grep -v -E '\.[a-z_]*(_ref_name|_secret_ref)$' || true)
+  extra=$(printf '%s\n' "$odd" | grep -v -x -E 'org_secrets\.(secret|secret_ref_name)|git_repositories\.oc_secret_ref_name|organization_idp_profiles\.admin_creds_secret_ref|test_users\.password_sealed' || true)
   expect_eq 2.6 "" "$extra" "secret-looking columns beyond the allow-list"
 else
   fail 2.6 "psql on postgres-0 failed (allow/deny query)"
