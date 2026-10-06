@@ -40,13 +40,14 @@ compile error, not a runtime surprise.
 - Artifacts the agents produce are JSON Schema under `packages/contracts/schemas/`
   (`component-design`, `plan-task`, `update-task`), consumed by `@aep/agent-stream`
   and the design views.
-- Both sides of every boundary are generated from its spec, and generated
-  clients/servers are never hand-edited. Whether they are committed differs by
-  consumer: Go codegen is **committed** (aep-api's `internal/gen/`,
-  `internal/igen/`, its `ae-studio-tools` client and the OpenChoreo client;
-  `ae-studio-tools`' `internal/gen/`), and each Go module's `make gen-api-check`
-  is its CI freshness gate; TypeScript `src/generated/` (console, design agent,
-  collab) is gitignored and regenerated as a build prestep.
+- Both sides of every boundary listed above are generated from its spec, and
+  generated clients/servers are never hand-edited. Whether they are committed
+  differs by consumer: Go codegen is **committed** (aep-api's `internal/gen/`,
+  `internal/igen/` and its `ae-studio-tools` client; `ae-studio-tools`'
+  `internal/gen/`), and each Go module's `make gen-api-check` is its CI
+  freshness gate; aep-api's OpenChoreo client is committed too, gated by
+  `make gen-oc-client-check`. TypeScript `src/generated/` (console, design
+  agent, collab) is gitignored and regenerated as a build prestep.
 - An org secret's value lives only in the vault; Postgres keeps the name of
   the reference that holds it
   ([ADR-0042](decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
@@ -85,8 +86,8 @@ console ──/v1──────────────> ae-design-agent ┐
         ──/v1/rooms (ws)───> ae-collab       │ of Project `ae-system`, in the org's
         ──/v1──────────────> ae-studio-tools │ dataplane namespace; one host each
 aep-api ──/internal/v1─────> ae-studio-tools │
-GitHub  ──/webhooks/github─> ae-studio-tools ┘ ──> aep-api /internal/v1/ae-studio/webhook-events
-inside the pod: Unix sockets files · mcp · turn · room, each mounted into the pair that talks
+GitHub  ──/webhooks/github─> ae-studio-tools ┘ ──> aep-api (webhook-events)
+inside the pod: Unix sockets files · mcp · turn · room, mounted per pair
 ```
 
 Every turn, the live spec Room and every git and GitHub operation of an
@@ -94,8 +95,8 @@ organization run in that organization's AE Studio: one pod with three
 containers, the design agent, the collaboration server and `ae-studio-tools`
 (git, GitHub, the skills mirror, the webhook route). `aep-api` installs the
 ResourceType per org and keeps the Resource current (a new release reaches an
-org the next time someone opens its console); the pod holds the org's GitHub token and webhook secret, and
-`aep-api` holds neither
+org the next time someone opens its console); the pod holds the org's GitHub
+token and webhook secret, and `aep-api` holds neither
 ([ADR-0040](decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
 
 The console calls the three hosts directly. `aep-api` reaches the pod only
@@ -154,19 +155,11 @@ decisions and their costs are
 mechanism is
 [`internal/delivery/README.md`](../services/aep-api/internal/delivery/README.md).
 
-**What the agent did** is read from wherever the cycle's log still is;
-nothing in the platform stores a feed. A live cycle's feed is its pod's own
-log, read whole through OpenChoreo; a finished cycle's is the observer's,
-filtered on the Component UID the cycle stored at dispatch (component scope
-while the Component exists, project scope after the settle sweep deletes it).
-Both sources keep the runner's own `seq`, so a viewer connected across the
-switch sees no duplicate and no hole, and a reload replays the cycle from its
-first event. The coding Job is suspended when its pod is first seen terminal
-and its Component is deleted at settle. The log is **observability, not
-ledger**: `run_cycles` in Postgres stays the record of what happened to a
-version, and `RunCycleView.recording` (`live | kept | expired | unavailable`)
-says what can be served, kept until `OBSERVER_LOG_RETENTION`, then expired
-([ADR-0044](decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+**What the agent did** is read from wherever the cycle's log still is: the
+pod's own log while the cycle's pod exists, the observer by the cycle's
+Component UID once the pod is gone. The log is **observability, not ledger**:
+`run_cycles` stays the record, and `RunCycleView.recording` says what can be
+served ([ADR-0044](decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
 which supersedes
 [ADR-0027](decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)
 on where a feed is kept).
