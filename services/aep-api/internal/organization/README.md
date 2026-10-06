@@ -161,6 +161,10 @@ model-connection / idp services.*
   profile's issuer (`projects.OrgIDPProfiles`). There is no user rotation: a lost reference is healed
   by the next gitpat submit. Coding dispatch mounts the reference the row names, and refuses
   without one.
+- **A BYO IdP needs an issuer.** `SetProfile` (and `PATCH /config` before it writes any section)
+  refuses an `asgardeo` or `custom` profile with a blank issuer: 400 `validation_failed` at
+  `body.idp`. The deploy pins protected APIs to that issuer, and with none they would trust every
+  keymanager on the cluster. `platform` takes the cluster's issuer, so it needs none.
 - **Thunder org apps are read by their stored entity id.** Thunder has no lookup by clientId, so the
   profile keeps `publisher_thunder_app_id` (and `studio_thunder_app_id` for `ae-studio-<org>`); every
   ensure and delete passes it to `thundersvc`, which falls back to one full list scan only on a

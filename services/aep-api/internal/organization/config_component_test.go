@@ -805,6 +805,34 @@ func TestConfigComponent_E4_WholesaleReplaceClearsOmitted(t *testing.T) {
 	}
 }
 
+// A BYO idp without an issuer is refused before ANY section is written: the
+// llm section sent beside it is not persisted, and the idp stays platform.
+func TestConfigComponent_E5_BYOWithoutIssuerRejected(t *testing.T) {
+	t.Parallel()
+	for _, idp := range []string{
+		`{"kind":"custom"}`,
+		`{"kind":"custom","issuer":"  ","jwksUrl":"https://byo.example/jwks"}`,
+		`{"kind":"asgardeo"}`,
+	} {
+		c := newConfigHarness(t)
+		resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"idp":`+idp+`}`)
+		if resp.Code != 400 {
+			t.Fatalf("idp %s: want 400, got %d body=%s", idp, resp.Code, resp.Body.String())
+		}
+		if p := componenttest.DecodeEnvelope(t, resp.Body.String()); len(p.Details) == 0 || p.Details[0].Field != "body.idp" {
+			t.Fatalf("idp %s: 400 must point at body.idp: %s", idp, resp.Body.String())
+		}
+		var llmCount int64
+		c.db.Model(&organization.OrgModelConnection{}).Where("oc_org_id = ?", "acme").Count(&llmCount)
+		if llmCount != 0 {
+			t.Fatalf("idp %s: the llm section was persisted beside a refused idp", idp)
+		}
+		if k := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["idp"].(map[string]any)["kind"]; k != "platform" {
+			t.Fatalf("idp %s: kind = %v after a refused patch; want platform", idp, k)
+		}
+	}
+}
+
 // --- F. Merge semantics & atomicity -----------------------------------------
 
 func TestConfigComponent_F1_PatchOnlyLLMLeavesOthers(t *testing.T) {

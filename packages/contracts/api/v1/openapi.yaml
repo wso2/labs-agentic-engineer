@@ -3709,6 +3709,12 @@ components:
           nullable: true
         idp:
           additionalProperties: false
+          description: >-
+            The organization's identity provider, replaced wholesale. `platform`
+            takes the cluster's issuer and JWKS URL whatever is sent. Any other
+            kind needs a non-blank `issuer`: protected APIs pin token validation
+            to it, so a patch without one answers 400 `validation_failed` at
+            `body.idp` and writes no section.
           properties:
             issuer:
               type: string

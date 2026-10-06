@@ -181,3 +181,57 @@ func TestDeploy_UnreadableIDPProfileFailsRetryablyAndWritesNothing(t *testing.T)
 		t.Fatalf("%d component specs written; want none", n)
 	}
 }
+
+// The issuer read comes before governance, so a deploy refused on it does not
+// re-register the wave's agents with Agent Manager on every retry.
+func TestDeploy_UnreadableIDPProfileRefusesBeforeGovernance(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		spec.DesignRootFile:          traitRootMd(),
+		"components/api/design.json": endUserServiceMd("api"),
+	}
+	svc := newTestDeploymentService(ocDeployments(map[string]string{}), traitStoreWith(files))
+	g := &stubGovernor{}
+	svc.SetGovernor(g)
+	rows := &profileRows{err: errors.New("connection refused")}
+	svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+
+	if _, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api")); err == nil {
+		t.Fatal("Deploy succeeded with an unreadable IDP profile; want the deploy refused")
+	}
+	if len(g.seen) != 0 {
+		t.Fatalf("governor saw %d targets; the issuer read must refuse the deploy first", len(g.seen))
+	}
+}
+
+// A saved BYO profile with no issuer has nothing to pin, and an unpinned trait
+// trusts every keymanager on the cluster. It is a configuration fault no retry
+// fixes, so the deploy fails permanently (visibly) and writes nothing.
+func TestDeploy_BYOProfileWithoutIssuerFailsPermanentlyAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, kind, issuer string }{
+		{"custom, empty issuer", "custom", ""},
+		{"custom, blank issuer", "custom", "   "},
+		{"asgardeo, empty issuer", "asgardeo", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				spec.DesignRootFile:          traitRootMd(),
+				"components/api/design.json": endUserServiceMd("api"),
+			}
+			oc := ocDeployments(map[string]string{})
+			svc := newTestDeploymentService(oc, traitStoreWith(files))
+			rows := &profileRows{profile: &organization.OrganizationIDPProfile{OrgID: "acme", Kind: tc.kind, Issuer: tc.issuer}}
+			svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+
+			_, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
+			if !errors.Is(err, delivery.ErrDeployPermanent) {
+				t.Fatalf("Deploy error = %v; want ErrDeployPermanent", err)
+			}
+			if n := len(oc.EnsureReleaseCalls()) + len(oc.ApplyReleaseBindingCalls()) + len(oc.ApplyComponentSpecCalls()); n != 0 {
+				t.Fatalf("%d OpenChoreo writes; want none", n)
+			}
+		})
+	}
+}

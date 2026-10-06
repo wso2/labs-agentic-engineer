@@ -307,7 +307,15 @@ func (s *DeploymentService) deploy(ctx context.Context, orgID, projectID, env st
 		return nil, nil
 	}
 
-	// Governance FIRST, for the whole wave, and before anything is composed:
+	// The issuers before anything else: a read that refuses the deploy must do
+	// so before governance registers the wave's agents and before any component
+	// is written, so a retried refusal repeats only the read.
+	issuers, err := s.resolveIssuers(ctx, orgID, projectID, design)
+	if err != nil {
+		return nil, err
+	}
+
+	// Governance next, for the whole wave, and before anything is composed:
 	// ai_agent_model_access.go reads the agent's stored credential while
 	// building the ReleaseBinding, so a key that arrives after composition has
 	// nowhere to go until the next version. A failure here fails the deploy —
@@ -320,12 +328,6 @@ func (s *DeploymentService) deploy(ctx context.Context, orgID, projectID, env st
 
 	// Resolved ONCE for the pass: both are (org, environment) facts, and asking
 	// per component would issue the same reads N times for the same answer.
-	// The issuers are read before any component is written, so a refused read
-	// leaves the whole wave untouched.
-	issuers, err := s.resolveIssuers(ctx, orgID, projectID, design)
-	if err != nil {
-		return nil, err
-	}
 	auth := envAuth{
 		Issuers:   issuers,
 		Assertion: s.resolveGatewayAssertion(ctx, orgID, env, design),
@@ -736,8 +738,10 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 // means any other tenant's IdP. So a failed read refuses the deploy rather
 // than composing an unpinned trait. The error is a plain one, not
 // ErrDeployPermanent: a read failure is transient, and the promote activity
-// retries until the profile reads. No profile at all is the platform-IdP org,
-// which has nothing to pin.
+// retries until the profile reads. A saved BYO profile with no issuer is the
+// opposite case: a configuration fault no retry fixes (PATCH /config refuses
+// it now; older rows may hold it), so it fails with ErrDeployPermanent. No
+// profile at all is the platform-IdP org, which has nothing to pin.
 func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID, projectID string, design *spec.DesignFile) ([]string, error) {
 	if s.idp == nil || !designHasProtectedAPI(design) {
 		return nil, nil
@@ -748,13 +752,16 @@ func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID, projectID
 			"orgID", orgID, "projectID", projectID)
 		return nil, fmt.Errorf("deployment: read org IdP profile: %w", err)
 	}
-	if profile == nil {
+	if profile == nil || profile.Kind == "" || profile.Kind == "platform" {
 		return nil, nil
 	}
-	if profile.Kind != "" && profile.Kind != "platform" && profile.Issuer != "" {
-		return []string{profile.Issuer}, nil
+	if strings.TrimSpace(profile.Issuer) == "" {
+		slog.ErrorContext(ctx, "deployment: org IdP profile has no issuer; the deploy is refused",
+			"orgID", orgID, "projectID", projectID, "kind", profile.Kind)
+		return nil, fmt.Errorf("%w: the org's %s IdP profile has no issuer to pin protected APIs to",
+			delivery.ErrDeployPermanent, profile.Kind)
 	}
-	return nil, nil
+	return []string{profile.Issuer}, nil
 }
 
 // resolveGatewayAssertion reads the environment gateway's verification half.

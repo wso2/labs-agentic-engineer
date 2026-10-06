@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
@@ -446,6 +447,17 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 	return after, nil
 }
 
+// validateIDPIssuer refuses a BYO IdP (any kind but platform) with no issuer.
+// A deploy pins the org's protected APIs to the profile's issuer; without one
+// they would trust every keymanager registered on the cluster, other tenants'
+// IdPs included. The platform kind takes the cluster's issuer, so it needs none.
+func validateIDPIssuer(kind, issuer string) error {
+	if kind != "platform" && strings.TrimSpace(issuer) == "" {
+		return &ValidationError{Message: "an issuer is required for an IdP of kind " + kind}
+	}
+	return nil
+}
+
 // SetProfile is the wholesale-replace write path behind PATCH /config {idp}.
 // See the IDPService interface doc: kind/issuer/jwksURL are all written as
 // given (no empty-means-keep), kind=platform restores cluster defaults, and a
@@ -461,6 +473,9 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 		// ok
 	default:
 		return nil, fmt.Errorf("invalid kind %q (must be platform|asgardeo|custom)", kind)
+	}
+	if err := validateIDPIssuer(kind, issuer); err != nil {
+		return nil, err
 	}
 	// A platform IDP's issuer/JWKS are cluster config — reset to the
 	// platform defaults regardless of anything the caller sent.

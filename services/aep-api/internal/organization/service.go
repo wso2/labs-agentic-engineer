@@ -304,6 +304,13 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			Message: `an org always has an IDP; reset it with {"kind":"platform"}`,
 		}
 	}
+	// SetProfile checks this too; checked here as well so a refused idp
+	// leaves the sections persisted before it unwritten.
+	if p.IDP.Sent && !p.IDP.Null {
+		if err := validateIDPIssuer(p.IDP.Value.Kind, p.IDP.Value.Issuer); err != nil {
+			return nil, sectionErrorFrom("idp", err)
+		}
+	}
 	card := p.LLM.Sent || p.Agents.Sent
 	if card && s.agentSettings == nil {
 		return nil, fmt.Errorf("orgconfig patch llm/agents: service not configured")
