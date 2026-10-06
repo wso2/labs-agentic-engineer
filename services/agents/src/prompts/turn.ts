@@ -369,8 +369,10 @@ export interface TurnModifiers {
  * turn has no scope either: it plans from the whole design.
  */
 export function composeInstruction(turn: TurnSpec, mods: TurnModifiers = {}): string {
-  const body =
-    turn.kind === "plan" ? planBody(turn) : specBody(turn) + (mods.view ? "" : SPEC_PATHS_RULE);
+  // A view's agent works on no spec: its text rides verbatim, with none of the
+  // spec-turn notes — and an answer card's text must stay the whole instruction.
+  if (mods.view && turn.kind !== "plan") return specBody(turn);
+  const body = turn.kind === "plan" ? planBody(turn) : specBody(turn) + SPEC_PATHS_RULE;
   const lead = mods.previousTurnFailed ? PREVIOUS_TURN_FAILED_NOTE + "\n\n" : "";
   const scope = turn.kind === "plan" ? "" : scopeNote(mods.scope);
   return lead + scope + aimNote(mods.aim) + body + (mods.headless ? HEADLESS_NOTE : "");

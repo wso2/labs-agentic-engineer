@@ -40,8 +40,10 @@ test("chat rides verbatim, with the spec-paths rule appended", () => {
   assert.match(out, /Spec sources live under specs\//);
 });
 
-test("a view's chat turn rides verbatim, without the spec-paths rule", () => {
+test("a view's chat turn rides verbatim: no spec-paths rule, no spec-turn notes", () => {
   assert.equal(composeInstruction({ kind: "chat", text: "the save button is broken" }, { view: "issues" }), "the save button is broken");
+  // An answer must stay the whole instruction — the filing gate reads it from the start.
+  assert.equal(composeInstruction({ kind: "chat", text: "Answer to \"File this issue?\": File it" }, { view: "issues", previousTurnFailed: true }), "Answer to \"File this issue?\": File it");
 });
 
 test("flow points at the skill, with the user's trailing text after a blank line", () => {

@@ -166,7 +166,9 @@ export function buildClassifyReportTool(
   return tool({
     description:
       "Classify a user's message as a bug, feature, improvement or question, with a confidence. " +
-      "Call it before filing an issue. When needsClarification is true, ask the user instead of filing.",
+      "Call it before filing an issue. A question is answered, not filed (do not ask which kind). Otherwise, when " +
+      "needsClarification is true (this includes kind unknown, when the classifier is unavailable), ask the user " +
+      "which kind it is instead of filing.",
     inputSchema: classifyReportInputSchema,
     execute: ({ message, recentMessages }) =>
       classifyReport(opts, { message, ...(recentMessages ? { recentMessages } : {}) }),

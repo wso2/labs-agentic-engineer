@@ -51,6 +51,7 @@ import { buildTaskPlanTools } from "../agents/main/tools/task-plan.js";
 import { TaskPlan } from "../agents/main/task-plan-accumulator.js";
 import { buildIssuesTools } from "../agents/issues/tools.js";
 import { buildIssuesInstructions } from "../agents/issues/prompt.js";
+import { filingConfirmed, gateCreateIssue } from "../agents/issues/filing-gate.js";
 import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSkillsBlock } from "../agents/main/prompt.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import type { UnreadableReference } from "./attachments.js";
@@ -336,6 +337,14 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       if (Object.keys(mcpTools).length > 0) {
         tools = { ...mcpTools, ...tools };
       }
+    }
+
+    // 3b''. The Issues agent files only on the user's own File it answer: until
+    //      then create_issue (an MCP tool, so merged just above) refuses. The
+    //      prompt asks for the same; this is what holds when text the model
+    //      read tries to talk it past the question.
+    if (toolset === "issues") {
+      tools = gateCreateIssue(tools, filingConfirmed(input.instruction));
     }
 
     // 3b'. Web search (#252), spread LAST: the same shadow-guard as the MCP

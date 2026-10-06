@@ -30,6 +30,7 @@ import { buildTaskPlanTools } from "../src/agents/main/tools/task-plan.js";
 import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 import { instructions, buildInstructions, taskPlanInstructions, buildTaskPlanInstructions } from "../src/agents/main/prompt.js";
 import { buildIssuesTools } from "../src/agents/issues/tools.js";
+import { FILE_IT, FILE_QUESTION } from "../src/agents/issues/filing-gate.js";
 import { buildIssuesInstructions } from "../src/agents/issues/prompt.js";
 import { testSkillSource } from "./skill-source.js";
 
@@ -115,6 +116,21 @@ test("issues instructions carry the procedure and keep the classifier unnamed to
   assert.equal(out.match(/Jev/g)?.length, 1);
   // Not the spec agent's prompt: no file-editing vocabulary.
   assert.equal(out.includes("addFile"), false);
+});
+
+test("issues instructions order the classifier outcomes: question, then ask the kind, and unknown means ask", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  const question = out.indexOf('kind is "question"');
+  const clarify = out.indexOf("needsClarification is true");
+  assert.ok(question > 0 && clarify > question, "a question is handled before the clarification rule");
+  assert.match(out, /"unknown"/);
+  assert.match(out, /could not tell/);
+});
+
+test("issues instructions use the gate's question and option wording", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  assert.ok(out.includes(`"${FILE_QUESTION}"`));
+  assert.ok(out.includes(FILE_IT));
 });
 
 test("issues instructions append the surface's narration policy", () => {
