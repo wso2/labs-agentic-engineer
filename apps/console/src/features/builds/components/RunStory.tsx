@@ -54,6 +54,7 @@ import { RunDelivered } from "./RunDelivered";
 import { RunGlanceStrip } from "./RunGlanceStrip";
 import { RunHoldNotice } from "./RunHoldNotice";
 import { RunNowPanel } from "./RunNowPanel";
+import { StartupWaitNotice } from "./StartupWaitNotice";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type TaskView = components["schemas"]["TaskView"];
@@ -155,7 +156,7 @@ export function RunStory({
         .length,
     },
   );
-  const reason = terminalReasonText(run.terminalReason ?? "");
+  const reason = terminalReasonText(run.terminalReason ?? "", run.cycles.at(-1));
   const spent = spentBudgets(run.budgets);
   const started = runStamp(run.startedAt ?? run.createdAt);
   const ended = runStamp(run.endedAt);
@@ -289,6 +290,11 @@ export function RunStory({
               body={hold.body}
             />
           ))}
+
+        {/* The current build session's agent the cluster has not started yet:
+            without this the session reads "Waiting for the agent's first line"
+            for the whole startup grace, with nothing naming why. */}
+        <StartupWaitNotice cycle={current} />
 
         {cancel.isError && (
           <Alert severity="error" sx={{ mt: 2 }}>

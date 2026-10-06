@@ -17,6 +17,7 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import { startupFailureCause, startupWaitNotice } from "./agentStart";
 import { buildOutcome, buildsAreSettled } from "./runView";
 import type { SpineStage } from "./stage";
 
@@ -123,6 +124,10 @@ function agentStage(cycle: RunCycleView): SpineStage {
     return { ...stage, state: "done", note: "Finished and opened its pull request." };
   }
   if (cycle.endedAt) {
+    // The watcher closed it before its pod ever ran: it did not "end", it
+    // never began, and the cause is the cluster's.
+    const cause = startupFailureCause(cycle.agentReason);
+    if (cause) return { ...stage, state: "failed", note: `Could not start. ${cause}` };
     return {
       ...stage,
       state: "failed",
@@ -135,6 +140,10 @@ function agentStage(cycle: RunCycleView): SpineStage {
   if (cycle.attempts === 0) {
     return { ...stage, state: "waiting", note: "Waiting for its runner Job to be dispatched." };
   }
+  // Dispatched, but the cluster has not started the pod: "writing code" would
+  // be false for the whole startup grace. The run card's notice says why.
+  const wait = startupWaitNotice(cycle);
+  if (wait) return { ...stage, state: "waiting", note: `${wait.title}.` };
   return stage;
 }
 

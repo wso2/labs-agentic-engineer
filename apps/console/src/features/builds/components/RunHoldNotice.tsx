@@ -62,6 +62,8 @@ export function RunHoldNotice({
   action,
   /** Detail the hold names, e.g. the gates it is held by. */
   children,
+  /** `status` for a notice that appears on its own while the reader watches. */
+  role,
 }: {
   tone: Exclude<StatusTone, "neutral">;
   title: string;
@@ -69,10 +71,12 @@ export function RunHoldNotice({
   busy?: boolean;
   action?: ReactNode;
   children?: ReactNode;
+  role?: "status";
 }) {
   const family = TONE_PALETTE[tone];
   return (
     <Box
+      {...(role ? { role } : {})}
       sx={(theme) => ({
         mt: 2,
         p: 1.75,

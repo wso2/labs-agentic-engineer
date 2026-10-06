@@ -78,7 +78,7 @@ function RunRow({ run }: { run: MilestoneRunView }) {
   const chip = runStateChip(run);
   const cycles = buildCycles(run.cycles);
   const merged = cycles.filter((c) => c.mergeSha).length;
-  const reason = terminalReasonText(run.terminalReason ?? "");
+  const reason = terminalReasonText(run.terminalReason ?? "", run.cycles.at(-1));
   const spent = spentBudgets(run.budgets);
 
   // What it left behind, in the platform's own terms: a run whose sessions

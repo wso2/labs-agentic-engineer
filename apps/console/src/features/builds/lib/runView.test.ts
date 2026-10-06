@@ -505,6 +505,37 @@ describe("terminalReasonText", () => {
   it("is empty for a run that has no reason", () => {
     expect(terminalReasonText("")).toBe("");
   });
+
+  // A cycle the pod-truth watcher closed is never re-dispatched, so a run can
+  // settle redispatch-budget on its FIRST launch. "Twice" described an attempt
+  // nobody made.
+  it("counts the dispatches the newest cycle actually had", () => {
+    const once = terminalReasonText("redispatch-budget", cycle({ attempts: 1 }));
+    expect(once).toBe(
+      "The coding agent stopped without opening a pull request after the platform dispatched it once.",
+    );
+    expect(once).not.toMatch(/twice|budget is spent/);
+    expect(terminalReasonText("redispatch-budget", cycle({ attempts: 2 }))).toMatch(
+      /dispatched it twice\.$/,
+    );
+    expect(terminalReasonText("redispatch-budget")).toMatch(/dispatched it once\.$/);
+  });
+
+  it("says which agent could not start, and why", () => {
+    expect(
+      terminalReasonText(
+        "agent-start-failed",
+        cycle({ agentReason: "startup_failed:Unschedulable: 0/1 nodes are available" }),
+      ),
+    ).toBe("The coding agent could not start. The cluster had no free CPU or memory for it.");
+    expect(
+      terminalReasonText(
+        "agent-start-failed",
+        cycle({ kind: "validation", agentReason: "startup_failed:ImagePullBackOff" }),
+      ),
+    ).toBe("The validation agent could not start. The cluster could not pull its container image.");
+    expect(terminalReasonText("agent-start-failed")).toBe("The agent could not start.");
+  });
 });
 
 describe("runKindLabel", () => {

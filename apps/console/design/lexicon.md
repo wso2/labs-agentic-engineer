@@ -212,6 +212,7 @@ help — in that order, in the platform's recorded words:
 | The planning turn failed | warning while retrying (*attempt N*, unbounded), error only once the run failed |
 | The repository is gone | error · *check the repository connection in Settings* |
 | A run failed before the record existed | error · the terminal reason in words · *The platform recorded no further details for this run.* |
+| The agent never started (`agent-start-failed`) | error · *The coding agent could not start* · the cause (see *An agent that has not started*) · *Nothing ran; no pull request was opened.* · *Retry this build once the cluster has room.* (*once that is fixed* for any other cause) · *The cluster reported: …* |
 | Cancelled | **no card** — a person stopping an increment is not a fault |
 | Blocked on the model provider's usage limit | warning · *ollama.com's usage limit was reached* · *The coding agent stopped when ollama.com refused further requests, and nothing from that build session was merged. Start the run again after it resets (14:05).* — the date joins the time when the reset is another day; with no reset stated, *Start the run again once it resets — the provider did not say when.* No host recorded: *The model provider's usage limit was reached* |
 | Blocked on quota or credentials | no card — the existing quota / credentials message is that surface |
@@ -502,6 +503,42 @@ explanation (*A failed run explains itself*) are unaffected and still show.
 **No retention number and no expiry date in copy.** "A few days" is the promise;
 the exact window is the platform's to change. Naming a number would make every
 change to it a copy change here.
+
+### An agent that has not started
+
+A coding or validation agent can wait for the cluster before its first line:
+no free CPU or memory, an image that does not pull, a secret not there yet.
+The platform gives it a startup grace, then closes the cycle and fails the run
+`agent-start-failed`. Both halves are said on the build page (the run card)
+and on the version's Validations page; `features/builds/lib/agentStart.ts`
+owns the words.
+
+| Situation | Says |
+|---|---|
+| Waiting, the cluster has no room (`Unschedulable`) | warning · **`Waiting for room in the cluster to start the agent`** · *The cluster has no free CPU or memory for the agent right now. If it has not started by 14:05, this run fails.* |
+| Waiting, any other cause | warning · **`Waiting to start the agent`** · the cause · the same deadline sentence |
+| Cause: image does not pull (`ImagePullBackOff`, `ErrImagePull`) | *The cluster cannot pull the agent's container image.* / after: *The cluster could not pull its container image.* |
+| Cause: secret or config missing (`CreateContainerConfigError`) | *A secret or setting the agent needs is not ready yet.* / after: *A secret or setting it needed was not ready.* |
+| Cause the console has no words for | *The cluster reports the agent as waiting: `<reason>`.* / after: *The cluster reported `<reason>`.* |
+| It never started, coding | **`The coding agent could not start`** · *Nothing ran; no pull request was opened.* |
+| It never started, validation | **`The validation agent could not start`** · *Nothing ran; the version was not validated.* · *Run validation again once the cluster has room.* · **Run validation** |
+| The short label | **`Failed · Agent could not start`** |
+| The run's reason line | *The coding agent could not start. The cluster had no free CPU or memory for it.* |
+| The build session's Coding agent stage | waiting · *Waiting for room in the cluster to start the agent.* (or *Waiting to start the agent.*) / failed · *Could not start.* + the cause |
+
+**The deadline is the platform's, never a guess.** It is the attempt's
+dispatch plus the startup grace, and the time gains its date only when it falls
+on another day, like a provider's reset time.
+
+**"Could not start", never "stopped" or "died".** Nothing ran, so there was no
+stop to describe and no dispatch count to give. The same rule fixed the
+*redispatch-budget* line: it counts the dispatches that happened (*…after the
+platform dispatched it once.*), because a cycle the watcher closed is never
+dispatched again and "twice" described an attempt nobody made.
+
+**A validation agent that never started leaves the build `Deployed`.** The
+version shipped; only its judging failed, so the failure is said on the
+Validations page, beside the button that asks again.
 
 ## The project overview
 

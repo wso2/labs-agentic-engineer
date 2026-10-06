@@ -19,6 +19,8 @@
 import type { StatusTone } from "../../../components/StatusChip";
 import type { components } from "../../../generated/aep-api";
 import { openGates } from "../../tasks/lib/issueRows";
+import { agentNoun, startupFailureCause } from "./agentStart";
+import { dispatchedTimes } from "./failure";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type TaskView = components["schemas"]["TaskView"];
@@ -352,8 +354,6 @@ export function runHold(
 // Each terminal reason names exactly ONE failure class (that is the point of
 // the vocabulary), so each gets a sentence rather than a re-worded enum.
 const TERMINAL_REASONS: Record<string, string> = {
-  "redispatch-budget":
-    "The coding agent died twice in the same build session — the per-session re-dispatch budget is spent.",
   "build-retrigger-budget":
     "A component's build stayed red after its automatic re-trigger, and no fix issue came back.",
   "fix-chain-budget": "The run spent both of its fix sessions.",
@@ -378,11 +378,27 @@ const TERMINAL_REASONS: Record<string, string> = {
     "The project's deployment pipeline names no environment to deploy into. Fix the pipeline, then build again.",
 };
 
-/** A sentence for the run's terminal reason; the raw value when unmapped, so
- *  a reason this console has not learned yet still reaches the user. */
-export function terminalReasonText(reason: string): string {
+/**
+ * A sentence for the run's terminal reason; the raw value when unmapped, so
+ * a reason this console has not learned yet still reaches the user.
+ *
+ * `cycle` is the run's newest cycle, the one whose agent ended it. Two reasons
+ * are about that agent and read it: how many times it was really dispatched
+ * (a cycle the watcher closed is never dispatched again, so the budget's
+ * "twice" can be false), and which agent never started and why.
+ */
+export function terminalReasonText(reason: string, cycle?: RunCycleView): string {
   if (!reason) return "";
-  return TERMINAL_REASONS[reason] ?? reason;
+  switch (reason) {
+    case "redispatch-budget":
+      return `The coding agent stopped without opening a pull request after the platform dispatched it ${dispatchedTimes(cycle?.attempts)}.`;
+    case "agent-start-failed": {
+      const cause = startupFailureCause(cycle?.agentReason);
+      return `The ${agentNoun(cycle)} could not start.${cause ? ` ${cause}` : ""}`;
+    }
+    default:
+      return TERMINAL_REASONS[reason] ?? reason;
+  }
 }
 
 /**

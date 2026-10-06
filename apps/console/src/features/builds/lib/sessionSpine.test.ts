@@ -237,6 +237,33 @@ describe("sessionStages", () => {
     expect(noteOf(facts, "pr")).toMatch(/landed nothing/);
   });
 
+  // F1: the stage must not claim the agent is writing code while the cluster
+  // has not started it, nor that it "ended" when it never began.
+  it("says the agent is waiting to start while its pod is stuck", () => {
+    const facts = {
+      cycle: cycle({
+        startupWait: { reason: "Unschedulable", since: "2026-07-10T09:05:30Z", failsAt: "2026-07-10T09:15:00Z" },
+      }),
+      work: [],
+      builds: undefined,
+    };
+    expect(stateOf(facts)).toMatchObject({ agent: "waiting" });
+    expect(noteOf(facts, "agent")).toBe("Waiting for room in the cluster to start the agent.");
+  });
+
+  it("says the agent could not start once the watcher closed it", () => {
+    const facts = {
+      cycle: cycle({
+        endedAt: "2026-07-10T09:15:00Z",
+        agentReason: "startup_failed:Unschedulable: 0/1 nodes are available",
+      }),
+      work: [],
+      builds: undefined,
+    };
+    expect(stateOf(facts)).toMatchObject({ agent: "failed" });
+    expect(noteOf(facts, "agent")).toBe("Could not start. The cluster had no free CPU or memory for it.");
+  });
+
   // The cluster writes WorkflowSucceeded / WorkflowFailed, not the bare words.
   // Recognising only the bare ones made a real red build read as green here.
   it("reads the cluster's own reason strings, not just the bare ones", () => {

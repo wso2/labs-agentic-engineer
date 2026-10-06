@@ -18,9 +18,11 @@
 
 import type { components } from "../../../generated/aep-api";
 import { resetStamp } from "../../../lib/resetStamp";
+import { agentNoun, clusterReport, isRoomShortage, startupFailureCause } from "./agentStart";
 
 type MilestoneRunView = components["schemas"]["MilestoneRunView"];
 type RunFailure = components["schemas"]["RunFailure"];
+type RunCycleView = components["schemas"]["RunCycleView"];
 
 /**
  * The one place a run's failure is put into words.
@@ -83,6 +85,7 @@ const SHORT_LABELS: Record<string, string> = {
   // Terminal reasons, for a run with no record.
   "plan-failed": "Planning failed",
   "redispatch-budget": "Coding agent stopped",
+  "agent-start-failed": "Agent could not start",
   "build-retrigger-budget": "Component build failed",
   "deploy-budget": "Deployment did not become ready",
   "version-incomplete": "Version incomplete",
@@ -236,18 +239,48 @@ function providerLimitCopy(f: RunFailure | undefined, now: Date): Omit<FailureCo
   };
 }
 
-/** A run that failed before the record existed, or in a phase no producer records yet. */
 // How many times the agent was actually launched. Not always the whole budget:
 // a cycle the pod-truth watcher has CLOSED cannot be re-dispatched, so a death
 // it recorded settles the run on the first attempt.
 function dispatchesPhrase(attempts: number | undefined): string {
-  if (attempts === undefined || attempts <= 1) {
-    return "The platform dispatched it once and it stopped without opening one.";
-  }
-  if (attempts === 2) return "The platform dispatched it twice and it stopped both times.";
-  return `The platform dispatched it ${attempts} times and it stopped every time.`;
+  const times = dispatchedTimes(attempts);
+  if (times === "once") return "The platform dispatched it once and it stopped without opening one.";
+  if (times === "twice") return "The platform dispatched it twice and it stopped both times.";
+  return `The platform dispatched it ${times} and it stopped every time.`;
 }
 
+/** `once` / `twice` / `N times`: the count every dispatch sentence is built on. */
+export function dispatchedTimes(attempts: number | undefined): string {
+  if (attempts === undefined || attempts <= 1) return "once";
+  if (attempts === 2) return "twice";
+  return `${attempts} times`;
+}
+
+/**
+ * An agent the cluster never started: the watcher closed its cycle once the
+ * startup grace ran out, so nothing ran and no dispatch count applies. The
+ * cause decides the way forward: room frees up on its own, anything else needs
+ * fixing first. A validation cycle's agent is retried from the Validation
+ * page, everything else by retrying the build.
+ */
+function agentStartFailedCopy(cycle: RunCycleView | undefined): Omit<FailureCopy, "tone" | "details"> {
+  const validating = cycle?.kind === "validation";
+  const cause = startupFailureCause(cycle?.agentReason);
+  const notDone = validating
+    ? "Nothing ran; the version was not validated."
+    : "Nothing ran; no pull request was opened.";
+  const retry = validating ? "Run validation again" : "Retry this build";
+  const when = isRoomShortage(cycle?.agentReason) ? "once the cluster has room" : "once that is fixed";
+  const reported = clusterReport(cycle?.agentReason);
+  return {
+    title: `The ${agentNoun(cycle)} could not start`,
+    body: [cause, notDone, `${retry} ${when}.`, reported ? `The cluster reported: ${reported}.` : undefined]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+
+/** A run that failed before the record existed, or in a phase no producer records yet. */
 function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"> {
   const reason = run.terminalReason;
   const newest = run.cycles.at(-1);
@@ -263,6 +296,8 @@ function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"
         title: "The coding agent stopped without opening a pull request",
         body: `${dispatchesPhrase(newest?.attempts)}${agentReason} Open the coding agent log for what it did before it stopped.`,
       };
+    case "agent-start-failed":
+      return agentStartFailedCopy(newest);
     case "fix-chain-budget":
     case "cycle-ceiling":
     case "no-progress":

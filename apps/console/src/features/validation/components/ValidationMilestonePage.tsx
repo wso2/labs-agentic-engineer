@@ -45,6 +45,9 @@ import { SectionCaption } from "../../../components/SectionCaption";
 import type { components } from "../../../generated/aep-api";
 import { useCancelRun } from "../../builds/api/queries";
 import { RunFeed } from "../../builds/components/RunFeed";
+import { RunHoldNotice } from "../../builds/components/RunHoldNotice";
+import { StartupWaitNotice } from "../../builds/components/StartupWaitNotice";
+import { failureCopy } from "../../builds/lib/failure";
 import { useTicker } from "../../builds/hooks/useTicker";
 import { useTask } from "../../tasks/api/queries";
 import { statusLine } from "../../tasks/lib/statusLine";
@@ -109,6 +112,9 @@ export function ValidationMilestonePage({
 }) {
   const detail = useValidation(projectName, tag);
   const data = detail.data;
+  // One mutation for the page: the actions menu and the "could not start"
+  // notice offer the same trigger, so they share its pending state.
+  const start = useStartValidation(projectName, tag);
 
   // Attempts, newest first, flattened out of the runs and numbered from the
   // OLDEST across the whole version, so the numbers descend down the page
@@ -212,6 +218,7 @@ export function ValidationMilestonePage({
       projectName={projectName}
       tag={tag}
       detail={data}
+      start={start}
       hasVerdict={attempts.some((a) => Boolean(a.cycle.validationVerdict))}
       issueUrl={issue.data?.issueUrl}
       runId={newest?.runId}
@@ -247,6 +254,17 @@ export function ValidationMilestonePage({
     <>
       {header(actions)}
       <Stack spacing={2}>
+        <StartupWaitNotice cycle={newest?.cycle} />
+        <AgentStartFailedNotice
+          run={newestRun}
+          canStart={!data.live && data.deployed}
+          starting={start.isPending}
+          onStart={() =>
+            start.mutate(undefined, {
+              onError: (e) => setActionError(e instanceof Error ? e.message : String(e)),
+            })
+          }
+        />
         <ValidationSummaryCard
           state={state}
           verdict={newest?.cycle.validationVerdict ?? ""}
@@ -354,10 +372,52 @@ function attemptsBefore(runs: readonly MilestoneRunView[], index: number): numbe
   return runs.slice(index + 1).reduce((n, run) => n + (run.cycles ?? []).length, 0);
 }
 
+/**
+ * The newest run failed because its validation agent never started: say so,
+ * with the cause, and put the trigger beside it. Without this the page read as
+ * "not validated" with no reason, and the way forward sat behind the menu.
+ *
+ * The button follows the menu's own refusals (a run already working the
+ * version, or a version that is not the deployed one): it is absent rather
+ * than disabled, because the menu already explains a refusal.
+ */
+function AgentStartFailedNotice({
+  run,
+  canStart,
+  starting,
+  onStart,
+}: {
+  run: MilestoneRunView | undefined;
+  canStart: boolean;
+  starting: boolean;
+  onStart: () => void;
+}) {
+  if (!run || run.state !== "failed" || run.terminalReason !== "agent-start-failed") return null;
+  const copy = failureCopy(run);
+  if (!copy) return null;
+  return (
+    <RunHoldNotice
+      tone="error"
+      title={copy.title}
+      body={copy.body}
+      {...(canStart
+        ? {
+            action: (
+              <Button size="small" variant="outlined" color="inherit" disabled={starting} onClick={onStart}>
+                Run validation
+              </Button>
+            ),
+          }
+        : {})}
+    />
+  );
+}
+
 function ValidationActions({
   projectName,
   tag,
   detail,
+  start,
   hasVerdict,
   issueUrl,
   runId,
@@ -366,6 +426,7 @@ function ValidationActions({
   projectName: string;
   tag: string;
   detail: ValidationDetail;
+  start: ReturnType<typeof useStartValidation>;
   /** Has any attempt on this version ever produced a verdict? */
   hasVerdict: boolean;
   issueUrl: string | undefined;
@@ -373,7 +434,6 @@ function ValidationActions({
   onError: (message: string) => void;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const start = useStartValidation(projectName, tag);
   const cancel = useCancelRun(projectName, tag);
   const close = () => setAnchor(null);
 

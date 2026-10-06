@@ -222,6 +222,86 @@ describe("ValidationMilestonePage", () => {
     });
   });
 
+  // F1: a validation agent the cluster has no room for. While it waits the page
+  // says so and when the run will give up; once the run fails `agent-start-failed`
+  // it says the agent never started and offers the way forward in place.
+  describe("an agent that has not started", () => {
+    it("shows the wait on a live attempt whose pod is stuck", () => {
+      mockDetail = detail({
+        state: "running",
+        live: true,
+        runs: [
+          run({
+            state: "running",
+            cycles: [
+              {
+                ...runningCycle("c1"),
+                startupWait: {
+                  reason: "Unschedulable",
+                  since: "2026-08-14T17:00:30Z",
+                  failsAt: "2026-08-14T17:10:00Z",
+                },
+              },
+            ],
+          }),
+        ],
+      });
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      expect(screen.getByText("Waiting for room in the cluster to start the agent")).toBeInTheDocument();
+      expect(screen.getByText(/If it has not started by .+, this run fails\./)).toBeInTheDocument();
+    });
+
+    const startFailed = () =>
+      detail({
+        state: "none",
+        live: false,
+        deployed: true,
+        runs: [
+          run({
+            state: "failed",
+            terminalReason: "agent-start-failed",
+            validation: {},
+            cycles: [
+              // Ended with no commit and no verdict: the agent never ran.
+              {
+                id: "c1",
+                kind: "validation",
+                attempts: 1,
+                createdAt: "2026-08-14T17:00:00Z",
+                endedAt: "2026-08-14T17:10:00Z",
+                mergeSha: "",
+                validationIssue: 7,
+                recording: "kept",
+                agentReason: "startup_failed:Unschedulable: 0/1 nodes are available",
+              } as RunCycleView,
+            ],
+          }),
+        ],
+      });
+
+    it("says the validation agent could not start, and offers Run validation", () => {
+      mockDetail = startFailed();
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      expect(screen.getByText("The validation agent could not start")).toBeInTheDocument();
+      expect(screen.getByText(/Nothing ran; the version was not validated\./)).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Run validation" }));
+      expect(startMutate).toHaveBeenCalledOnce();
+    });
+
+    it("offers no button while another run is working the version", () => {
+      mockDetail = { ...startFailed(), live: true };
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      expect(screen.getByText("The validation agent could not start")).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Run validation" })).not.toBeInTheDocument();
+    });
+
+    it("says nothing about starting on an ordinary settled attempt", () => {
+      render(<ValidationMilestonePage projectName="p" tag="v1" />);
+      expect(screen.queryByText(/could not start/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Waiting .*to start the agent/)).not.toBeInTheDocument();
+    });
+  });
+
   describe("the history boundary", () => {
     const twoAttempts = () =>
       detail({

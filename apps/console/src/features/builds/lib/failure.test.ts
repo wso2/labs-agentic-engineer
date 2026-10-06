@@ -206,6 +206,57 @@ describe("failureCopy — runs with no record", () => {
   });
 });
 
+describe("failureCopy — an agent that could not start", () => {
+  const startFailed = (kind: string, agentReason?: string) =>
+    run({
+      terminalReason: "agent-start-failed",
+      cycles: [
+        {
+          id: "c1",
+          kind,
+          attempts: 1,
+          createdAt: "2026-09-11T07:40:00Z",
+          endedAt: "2026-09-11T07:50:00Z",
+          ...(agentReason ? { agentReason } : {}),
+          recording: "kept",
+        },
+      ] as MilestoneRunView["cycles"],
+    });
+
+  it("says the coding agent never started, why, and that nothing ran", () => {
+    const copy = failureCopy(
+      startFailed("coding", "startup_failed:Unschedulable: 0/1 nodes are available: 1 Insufficient memory."),
+    );
+    expect(copy?.tone).toBe("error");
+    expect(copy?.title).toBe("The coding agent could not start");
+    expect(copy?.body).toContain("The cluster had no free CPU or memory for it.");
+    expect(copy?.body).toContain("Nothing ran; no pull request was opened.");
+    expect(copy?.body).toContain("Retry this build once the cluster has room.");
+    expect(copy?.body).toContain("The cluster reported: Unschedulable: 0/1 nodes are available: 1 Insufficient memory.");
+    // It was never a stop: no dispatch count, no "stopped" verb.
+    expect(copy?.body).not.toMatch(/stopped|dispatched/);
+    expect(copy?.details.code).toBe("agent-start-failed");
+  });
+
+  it("names the validation agent on a validation cycle, and its own way to try again", () => {
+    const copy = failureCopy(startFailed("validation", "startup_failed:Unschedulable: no room"));
+    expect(copy?.title).toBe("The validation agent could not start");
+    expect(copy?.body).toContain("Nothing ran; the version was not validated.");
+    expect(copy?.body).toContain("Run validation again once the cluster has room.");
+    expect(copy?.body).not.toContain("pull request");
+  });
+
+  it("asks for the cause to be fixed when it is not a matter of room", () => {
+    const copy = failureCopy(startFailed("coding", "startup_failed:ImagePullBackOff"));
+    expect(copy?.body).toContain("The cluster could not pull its container image.");
+    expect(copy?.body).toContain("Retry this build once that is fixed.");
+  });
+
+  it("labels the outcome after the middot", () => {
+    expect(failureLabel("agent-start-failed")).toBe("Agent could not start");
+  });
+});
+
 describe("failureCopy — a project with no environment to deploy into", () => {
   const noTarget = (): RunFailure => ({
     code: "no-write-target",
