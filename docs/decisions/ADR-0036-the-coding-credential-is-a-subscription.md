@@ -141,11 +141,10 @@ The rules above hold with these changed facts:
 Decision 4's unit of work no longer writes credential bytes to Postgres or
 mirrors them after commit. The subscription token and the connection key are
 the org secrets `coding-agent-key` and `default-key`, whose values live only in
-vault ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)). A
-save writes each key it carries to vault first, as a new reference, under the
-card's lock; the row transaction runs inside the last write. A vault failure
-saves nothing (502 `secret_store_write_failed`), a failed transaction undoes
-the new references, and a replaced reference is retired only after the commit
-that moved its row off it. Dispatch mounts the recorded reference, so a
-failed write can never mount the previous credential. The rest of decision 4,
-and decisions 3 and 5, stand.
+vault ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)); the
+save's write order is in
+[ADR-0038](ADR-0038-an-organization-has-one-model-connection.md)'s 2026-10-06
+amendment. A save that succeeds has already written its reference, so
+dispatch never mounts a credential older than the last successful save; a
+failed save leaves the previous credential in place and answers 502. The rest
+of decision 4, and decisions 3 and 5, stand.

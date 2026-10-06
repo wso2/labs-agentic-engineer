@@ -50,7 +50,8 @@ ledger, the replay and the sweeps.**
 4. **`aep-api` persists, then runs.** It stores the delivery (deduped on
    GitHub's delivery id), takes a lease, answers 202 (200 for a duplicate) and
    runs the handlers detached. The `Replayer` re-runs an
-   unprocessed delivery up to 5 attempts within 15 minutes of receipt
+   unprocessed delivery until it has had 5 runs in all (the first included),
+   within 15 minutes of receipt
    (backoff from 30 s, doubling); past that the delivery is abandoned and the
    reconcile sweeps recover from ground truth.
 

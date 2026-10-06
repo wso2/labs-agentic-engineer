@@ -56,8 +56,9 @@ Resource in the org's dataplane, installed and kept current by `aep-api`.**
    no path rewrites.
 
 5. **The pod is disposable.** The Deployment is `Recreate`. It rolls on every
-   org-secret write, every model-connection edit and every release, because
-   each changes a pinned parameter. `studio-data` is a disk emptyDir and a
+   write of an org secret the pod mounts (all but `coding-agent-key`, which
+   only coding Jobs read), every model-connection edit and every release,
+   because each changes a pinned parameter. `studio-data` is a disk emptyDir and a
    cache of GitHub: a roll empties it and the next read re-clones.
 
 6. **The Room commits a turn's edits.** Every file-writing turn edits the
@@ -65,8 +66,10 @@ Resource in the org's dataplane, installed and kept current by `aep-api`.**
    git through `ae-studio-tools`. Nothing in `aep-api` replays a turn's
    stream, and the agentfold package is deleted.
 
-7. **gVisor is off, and `runtimeClassName` is the switch.** Both installs set
-   `runtimeClassName: ""`, so the pod runs on the default runtime. The
+7. **gVisor is off, and `AE_STUDIO_RUNTIME_CLASS_NAME` is the switch.**
+   `aep-api` passes that setting to the pod as its `runtimeClassName`; it is
+   empty on both installs (the chart's `aeStudio.runtimeClassName`, unset on
+   Cloud), so the pod runs on the default runtime. The
    containers talk over Unix socket files on shared emptyDirs, and the mount
    is the gate (ADR-0041). Under Cloud gVisor a socket file does not cross
    containers. Turning gVisor on therefore needs one of: runsc honouring the

@@ -47,7 +47,8 @@ a feed.**
    observer switch sees no duplicate and no hole.
 
 4. **The feed says what it is.** `RunCycleView.recording` is
-   `live`, `kept`, `expired` or `unavailable`, derived from the cycle row alone:
+   `live`, `kept`, `expired` or `unavailable`, derived from the cycle row and the outcome of the
+   last observer read (no log is read to answer it):
    `live` while running, `kept` while the pod or the observer still holds it,
    `expired` past the observer's retention (`OBSERVER_LOG_RETENTION`, code
    default 72 h; the local chart sets 720 h) or for a cycle with no UID,
@@ -62,9 +63,11 @@ a feed.**
    suspended (`ErrSuspendUnsupported`), and its settle rests on the pod reads
    alone. The Job's TTL is 600 s (`CODING_AGENT_JOB_TTL`), so the
    finished pod goes about ten minutes after the Job completes. The settle
-   sweep then deletes the Component, by the stored UID, once two "no pod"
-   reads at least `CODING_AGENT_SETTLE_GRACE` (5 min) apart follow the
-   suspend. Usage is captured from the pod's log while the pod exists, so "no
+   sweep then deletes the Component by its name (the cycle's own) once a
+   first "no pod" read is noted and a second comes at least
+   `CODING_AGENT_SETTLE_GRACE` (5 min) after the later of that note and the
+   suspend; any read that sees a pod clears the note. The stored UID serves
+   the observer reads. Usage is captured from the pod's log while the pod exists, so "no
    pod" also means capture is done. The cycle's settle facts are
    `job_suspended_at`, `pod_gone_at`, `component_deleted_at`,
    `settle_checked_at` and `dispatched_at` (the current attempt's dispatch).

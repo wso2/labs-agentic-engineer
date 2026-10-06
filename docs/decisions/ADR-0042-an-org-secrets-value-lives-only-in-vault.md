@@ -73,8 +73,8 @@ the name of the SecretReference that holds it, and a recorded name means
 - The platform cannot read a value back. Agent Manager's copy and the client
   heal both rely on a user re-entering, or the platform regenerating, the
   value.
-- A save rolls the org's pod (ADR-0040), so a secret change interrupts turns
-  and Room sessions in flight.
+- A write of any org secret but `coding-agent-key` rolls the org's pod
+  (ADR-0040), so it interrupts turns and Room sessions in flight.
 - An AI-gateway binding created after the key save needs the key saved again
   before governed agents deploy there.
 - `ColumnCipher` remains for one column, the published test-user passwords

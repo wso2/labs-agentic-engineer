@@ -55,12 +55,13 @@ group, and the org is the only claim it checks.**
      lookups, dependency completion, turn usage and the webhook forward.
      `aep-api` binds the org recorded for that client.
    - The org's publisher client (org secret `ae-publisher-client`, the
-     pod's `AE_PUBLISHER_CLIENT_ID`) opens `/internal/v1/mcp` only. The
-     same client is what a coding Job holds for `runs/`.
+     pod's `AE_PUBLISHER_CLIENT_ID`) is what the pod uses for
+     `/internal/v1/mcp`.
 
-   Neither credential clears the other's group: an `ae-studio-<org>` token
-   on `/internal/v1/mcp` is 401, and a publisher token on `ae-studio/` is
-   401.
+   The invariant: a publisher token opens `mcp` and the org's own `runs/`
+   ops (fenced to cycles of its org) and nothing else, and every
+   `ae-studio/` op accepts only the `ae-studio-<org>` client, so each token
+   is 401 on the other's group.
 
 6. **The issuer is checked exactly; the key set may live elsewhere.** Each
    container takes the issuer (`AE_IDP_ISSUER`) and the key-set URL
