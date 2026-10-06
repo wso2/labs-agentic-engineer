@@ -7,7 +7,7 @@
 # ADR-0029 — A failed run carries its failure record; the console owns the words
 
 **Status:** Accepted · **Exposed by:** `RunFailure`, `BuildSummary.failureCode`,
-`BuildStage.failureCode`, `ActivityEvent.run_failed` in
+`BuildStage.failureCode` in
 `packages/contracts/api/v1/openapi.yaml` · **Detail:**
 [`services/aep-api/design/run-failure-record.md`](../../services/aep-api/design/run-failure-record.md),
 console [ADR-0031](../../apps/console/design/decisions/ADR-0031-a-failed-run-explains-itself.md)

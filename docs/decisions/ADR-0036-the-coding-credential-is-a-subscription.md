@@ -135,3 +135,17 @@ The rules above hold with these changed facts:
 - **Decision 6 records a disconnected connection.** `llm_disconnected_at` is
   set when the connection is removed, and the onboarding alert names the model
   connection.
+
+## Amendment 2026-10-06 — the vault write is the write
+
+Decision 4's unit of work no longer writes credential bytes to Postgres or
+mirrors them after commit. The subscription token and the connection key are
+the org secrets `coding-agent-key` and `default-key`, whose values live only in
+vault ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)). A
+save writes each key it carries to vault first, as a new reference, under the
+card's lock; the row transaction runs inside the last write. A vault failure
+saves nothing (502 `secret_store_write_failed`), a failed transaction undoes
+the new references, and a replaced reference is retired only after the commit
+that moved its row off it. Dispatch mounts the recorded reference, so a
+failed write can never mount the previous credential. The rest of decision 4,
+and decisions 3 and 5, stand.

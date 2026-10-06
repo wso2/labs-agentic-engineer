@@ -181,3 +181,23 @@ format, and the console card no longer names it.
 - **Build evaluation** mounts the connection key as `AEP_EVAL_MODEL_API_KEY`,
   with `AEP_EVAL_MODEL_FORMAT`, `AEP_EVAL_MODEL_BASE_URL`, `AEP_EVAL_MODEL_NAME`
   and `AEP_EVAL_MODEL_AUTH_SCHEME` beside it: all five or none.
+
+## Amendment 2026-10-06 — AE Studio and the key's write order
+
+- **The design agent reads the connection from its pod.** The connection's
+  non-secret fields reach `ae-design-agent` as `AE_MODEL_CONNECTION` and the
+  key as the pod's `ANTHROPIC_API_KEY` secret, both rendered by `aep-api` into
+  the org's AE Studio
+  ([ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+  A save that changes either rolls the pod. `aep-api` sends no per-turn key,
+  so decision 6's `X-Model-Key` header is gone; `createModel` keeps one branch
+  per format, and the OpenAI-compatible path stands.
+- **The key lives only in vault.** It is the org secret `default-key`
+  ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)), not
+  `org_secrets` bytes under `model/key`. The vault write is the write: under
+  the card's lock the request's key goes to vault as a new reference, and the
+  row transaction runs inside that write. A vault failure saves nothing (502
+  `secret_store_write_failed`). A failed commit undoes the new reference.
+  After the commit, still under the lock, the key's consumers repoint, Agent
+  Manager's provider gets the request's key, the AE Studio pod converges, and
+  the old reference is retired. Nothing is mirrored after commit.

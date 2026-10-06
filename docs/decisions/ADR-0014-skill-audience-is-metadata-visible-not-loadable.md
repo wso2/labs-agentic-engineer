@@ -89,3 +89,10 @@ frontend and a backend component together.
 - A dual-audience skill's body is read by both agents, so it must stay useful to
   both. Splitting audience-specific detail into per-audience `references/*.md`
   remains available and is unaffected by this decision.
+
+## Amendment 2026-10-06 — AE Studio
+
+The design side is now `ae-design-agent`, a container of the organization's AE
+Studio pod ([ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+Read "the agents service" above as `ae-design-agent`. The audience rule is
+unchanged: it still knows it is the design side at compile time.

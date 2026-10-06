@@ -1,6 +1,6 @@
 # ADR-0021 — The fold applies accepted writes only
 
-**Status:** Accepted · **Refines:** the D14 fold-parity contract (`services/aep-api/internal/platform/agentfold`)
+**Status:** Superseded by [ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md) — the fold is deleted; the Room's committer commits a turn's edits · **Refined:** the D14 fold-parity contract (the former agentfold package)
 
 ## Context
 
