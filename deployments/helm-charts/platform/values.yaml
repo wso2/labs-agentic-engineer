@@ -50,6 +50,12 @@ aepAgents:
   # default; the reasoning is in services/agents/src/shared/config.ts.
   maxSteps: 60
   bodyLimit: "10mb"
+  # Jev (TypeSafe) classifier for the Issues agent. Off: the agent asks the
+  # user whether a report is a bug, feature request or improvement. On: the key
+  # is read from OpenBao aep/jev-api-key — import it with
+  #   aectl platform secret import --path aep/jev-api-key --value-file <file>
+  jev:
+    enabled: false
   resources:
     requests:
       cpu: "100m"

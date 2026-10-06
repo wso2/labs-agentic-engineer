@@ -60,6 +60,15 @@ spec:
                 secretKeyRef:
                   name: aep-agents-secrets
                   key: AGENTS_JWT_SECRET
+            {{- if (.Values.aepAgents.jev | default dict).enabled }}
+            # Optional: absent => the Issues agent asks the issue kind itself.
+            - name: JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aep-jev-secrets
+                  key: JEV_API_KEY
+                  optional: true
+            {{- end }}
 
           volumeMounts:
             - name: workspaces
