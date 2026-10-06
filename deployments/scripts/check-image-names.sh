@@ -21,6 +21,11 @@
 # build) are not chart images: skaffold/ae-studio.yaml builds them and the
 # Makefile's `ae-studio-refs-check` verifies each has a built ref in the
 # ae-studio images JSON.
+#
+# It also checks that release.yml's build matrix and images.yml's IMAGES array
+# name the same images: images.yml says it mirrors the release matrix, and
+# nothing else makes that true. RELEASE_WORKFLOW / IMAGES_WORKFLOW override the
+# two paths (a test seam, so a differing pair can be shown to fail).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 want=(aep-api aep-mcp-server console tryit)
@@ -37,4 +42,14 @@ for name in skaffold imports sets values; do
     fail=1
   fi
 done
+
+release_wf=${RELEASE_WORKFLOW:-.github/workflows/release.yml}
+images_wf=${IMAGES_WORKFLOW:-.github/workflows/images.yml}
+matrix_names=$(yq '.jobs."build-push-images".strategy.matrix.include[].name' "$release_wf" | sort -u)
+images_names=$(sed -n '/^[[:space:]]*IMAGES=(/,/^[[:space:]]*)/p' "$images_wf" | grep -oE '^[[:space:]]*"[a-z0-9-]+\|' | tr -d ' "|' | sort -u)
+if [ -z "$matrix_names" ] || [ "$matrix_names" != "$images_names" ]; then
+  echo "release.yml matrix names differ from images.yml IMAGES names:"
+  diff <(echo "$matrix_names") <(echo "$images_names") || true
+  fail=1
+fi
 exit $fail
