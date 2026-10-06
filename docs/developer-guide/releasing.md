@@ -8,16 +8,29 @@ Releases are cut by dispatching the **Release** workflow
 | Input | Meaning |
 |---|---|
 | `version` | No leading `v` — e.g. `0.6.0`. Becomes the image tag, the chart version, and the release tag. |
-| `component` | `platform` (images + charts), `ctl` (the `aep` CLI binaries), or `all`. |
+| `component` | `platform` (images + charts), `ctl` (the `aectl` CLI binaries), or `all`. |
 
 ## What it produces
 
 **`platform`** — one multi-arch image per entry in the `build-push-images`
 matrix at `ghcr.io/wso2/aep/<name>:<version>` (and `:latest`); then the
-`bootstrap` and `platform` Helm charts, version-stamped and pushed to
-`oci://ghcr.io/wso2/aep/charts`; then a `platform/v<version>` GitHub release.
+`platform` Helm chart, version-stamped and pushed to
+`oci://ghcr.io/wso2/aep/charts`, and the `thunder-app-operator` chart, pushed to
+`oci://ghcr.io/wso2`; then a `platform/v<version>` GitHub release.
 
-**`ctl`** — `aep` binaries for five GOOS/GOARCH pairs, attached to a
+The chart stamps every image it deploys with the release version. That includes
+the AE Studio images (`ae-design-agent`, `ae-collab`, `ae-studio-tools`), which
+land in `aeStudio.images.*`. `aep-api` copies them into each org's `ae-studio`
+Resource, so an install upgrades every org's pod: `GET /ae-studio` starts a
+converge when the Resource differs from the chart (`Status` in
+`services/aep-api/internal/organization/aestudio/state.go`), which means on the
+org's next console visit (upgrade on visit).
+
+The `webhook-relay` image (`aeStudio.webhookRelay.image`) is third-party and is
+never built here. `values.yaml` pins it by digest; bump it by digest in a
+reviewed PR.
+
+**`ctl`** — `aectl` binaries for five GOOS/GOARCH pairs, attached to a
 `ctl/v<version>` GitHub release.
 
 Images are built for `linux/amd64` and `linux/arm64`. Builder stages that can be
@@ -34,6 +47,9 @@ launch nowhere; native arm64 builds (every Apple-silicon bring-up) do. The
 emulated arm64 build itself is exercised before a release by the `Images`
 workflow, which builds both runner images for both platforms on its PR.
 
+**Dispatch only from `main`.** A dispatch from a branch moves `:latest` and
+`buildcache/*:main` for everyone, and makes the branch's release the Latest one.
+
 **Deploy `remote-worker`, `remote-worker-opencode` and `aep-api` from one
 version, never from `latest`.** The runners and aep-api speak a private contract
 (`packages/contracts/api/internal/v1`) that is versioned with this repo and
@@ -41,7 +57,11 @@ deliberately not kept backward compatible, so a runner older than the aep-api
 dispatching it can reject the payload in its preflight and kill the validation
 run before it starts.
 
-The release cannot order them for you: all eight images are one matrix with no
+**Deploy `aep-api` and the three AE Studio images from one version too.**
+`aep-api` and `ae-studio-tools` speak `api/ae-studio-tools/internal/v1`
+(`packages/contracts/`), which is not kept backward compatible.
+
+The release cannot order them for you: every image is one matrix entry with no
 `max-parallel` and no `needs` between the legs, so `aep-api` may well publish
 first. What protects you is the chart — it is packaged after every image job and
 pins `aepApi.image.tag`, `codingAgentRunner.image` and
@@ -51,6 +71,11 @@ chart once the release has completed. The exposure is the floating
 a new caller meet an old image, and which a partial release splits (see the tags
 note below). Guaranteeing runner-first publication would be a change to
 `release.yml`, not a step someone can take at release time.
+
+**New ghcr packages need a visibility check.** The first release creates
+`ae-design-agent`, `ae-collab` and `ae-studio-tools`. Dataplanes pull without a
+secret, so confirm each is public:
+`docker logout ghcr.io; docker manifest inspect ghcr.io/wso2/aep/ae-studio-tools:<version>`.
 
 Layer cache lives in GHCR under `ghcr.io/wso2/aep/buildcache/<image>` rather than
 the Actions cache, which is capped at 10 GB per repository and which CI's own
