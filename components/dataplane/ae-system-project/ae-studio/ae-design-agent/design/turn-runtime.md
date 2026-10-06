@@ -112,6 +112,15 @@ usage outbox once (`TurnRecord` in
 `packages/contracts/sockets/ae-studio/mcp/openapi.yaml`). A marketplace
 turn's record has no `project`.
 
+- The record's tokens are the run's whole-turn usage. A turn the desk ends
+  itself (shutdown on a roll, the 30-minute cap) or whose run reports none
+  carries the sum of its finished model steps instead (`StepUsageTally` in
+  `src/conversation/turn-usage.ts`, fed by the `finish-step` frames). A step
+  cut mid-flight never reports, so its tokens are missing. A turn cut before
+  any step finished records zeros (the contract has no "unknown"): `aep-api`'s
+  usage roll-up treats a 0-token row as nothing spent, and its status and
+  reason still say how it ended.
+
 - The outbox posts each record to `ae-studio-tools` (`POST /turn-usage` on
   the MCP socket), in order, retrying every 2 s while the socket is down. It
   holds at most 200; past that the oldest is dropped, and a record the socket

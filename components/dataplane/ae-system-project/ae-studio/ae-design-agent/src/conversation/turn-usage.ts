@@ -22,7 +22,7 @@
  */
 
 import type { LanguageModelUsage } from "ai";
-import type { TurnUsage } from "@aep/agent-stream";
+import type { StreamPart, TurnUsage } from "@aep/agent-stream";
 
 /**
  * Project the AI SDK's whole-turn `LanguageModelUsage` onto the pinned
@@ -49,4 +49,38 @@ export function toTurnUsage(usage: LanguageModelUsage, model: string): TurnUsage
     cacheCreationTokens,
     model,
   };
+}
+
+/**
+ * The usage a turn's finished model steps reported, summed as they stream:
+ * what a turn cut before its run returned (shutdown, the cap) had spent by
+ * then. A step cut mid-flight never reports, so its tokens are not in the sum.
+ */
+export class StepUsageTally {
+  private sum: TurnUsage | undefined;
+
+  constructor(private readonly model: string) {}
+
+  /** Add a `finish-step` part's usage; any other part, or a step without usage, adds nothing. */
+  observe(part: StreamPart): void {
+    if (part.type !== "finish-step" || !part.usage) return;
+    // The SDK's finish-step carries that ONE step's LanguageModelUsage, not
+    // the wire TurnUsage the StreamPart type names for its `usage` field.
+    const step = toTurnUsage(part.usage as unknown as LanguageModelUsage, this.model);
+    const sum = this.sum;
+    this.sum = sum
+      ? {
+          inputTokens: sum.inputTokens + step.inputTokens,
+          outputTokens: sum.outputTokens + step.outputTokens,
+          cacheReadTokens: sum.cacheReadTokens + step.cacheReadTokens,
+          cacheCreationTokens: sum.cacheCreationTokens + step.cacheCreationTokens,
+          model: this.model,
+        }
+      : step;
+  }
+
+  /** The sum so far; `undefined` when no step has reported usage. */
+  total(): TurnUsage | undefined {
+    return this.sum;
+  }
 }

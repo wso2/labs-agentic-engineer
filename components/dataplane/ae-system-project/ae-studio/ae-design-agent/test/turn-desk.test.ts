@@ -473,6 +473,74 @@ test("abortAll ends every running turn with shutdown, hands over records, frees 
   assert.equal(desk.active(proj), null);
 });
 
+/** A `finish-step` as the SDK streams it: that ONE step's LanguageModelUsage. */
+const finishStep = (noCache: number, cacheRead: number, cacheWrite: number, output: number) =>
+  ({
+    type: "finish-step",
+    finishReason: "tool-calls",
+    usage: {
+      inputTokens: noCache + cacheRead + cacheWrite,
+      inputTokenDetails: { noCacheTokens: noCache, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite },
+      outputTokens: output,
+    },
+  }) as unknown as Parameters<Parameters<TurnRun>[0]>[0];
+
+test("a turn cut by abortAll records the usage its finished steps reported", async () => {
+  const records: TurnRecord[] = [];
+  const desk = new TurnDesk({ onFinished: (r) => records.push(r), log: () => {} });
+  desk.start(proj, meta(), (emit, signal) => {
+    emit(finishStep(100, 1000, 200, 50));
+    emit(text(0));
+    emit(finishStep(10, 1300, 0, 7));
+    return untilAborted(emit, signal);
+  });
+  await desk.abortAll("shutdown");
+  assert.equal(records.length, 1);
+  const r = records[0]!;
+  assert.equal(r.reason, "shutdown");
+  assert.deepEqual(
+    [r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreationTokens, r.model],
+    [110, 57, 2300, 200, "claude-sonnet-5"],
+  );
+});
+
+test("a turn cut by the cap records the usage its finished steps reported", async () => {
+  const clock = fakeClock();
+  const records: TurnRecord[] = [];
+  const desk = new TurnDesk({ now: clock.now, onFinished: (r) => records.push(r), log: () => {} });
+  desk.start(proj, meta(), (emit) => {
+    emit(finishStep(5, 0, 0, 3));
+    return new Promise(() => {});
+  });
+  clock.advance(TURN_CAP_MS + 1);
+  await settle();
+  assert.deepEqual([records[0]!.reason, records[0]!.inputTokens, records[0]!.outputTokens], ["stream-died", 5, 3]);
+});
+
+test("the run's own whole-turn usage wins over the step sum", async () => {
+  const records: TurnRecord[] = [];
+  const desk = new TurnDesk({ onFinished: (r) => records.push(r), log: () => {} });
+  desk.start(proj, meta(), async (emit) => {
+    emit(finishStep(5, 0, 0, 3));
+    return done({ usage: { inputTokens: 9, outputTokens: 4, cacheReadTokens: 0, cacheCreationTokens: 0, model: "claude-sonnet-5" } });
+  });
+  await settle();
+  assert.deepEqual([records[0]!.inputTokens, records[0]!.outputTokens], [9, 4]);
+});
+
+test("a turn cut by abortAll before any step reported usage records no tokens (none were reported)", async () => {
+  const records: TurnRecord[] = [];
+  const desk = new TurnDesk({ onFinished: (r) => records.push(r), log: () => {} });
+  desk.start(proj, meta(), (emit, signal) => {
+    emit(text(0));
+    emit({ type: "finish-step" });
+    return untilAborted(emit, signal);
+  });
+  await desk.abortAll("shutdown");
+  const r = records[0]!;
+  assert.deepEqual([r.inputTokens, r.outputTokens, r.cacheReadTokens, r.cacheCreationTokens], [0, 0, 0, 0]);
+});
+
 test("after abortAll the desk starts no new turn, but a known turn id still reattaches (R2-I1)", async () => {
   const desk = new TurnDesk({ onFinished: () => {}, log: () => {} });
   const before = desk.start(proj, meta(), untilAborted, KICKOFF_ID);

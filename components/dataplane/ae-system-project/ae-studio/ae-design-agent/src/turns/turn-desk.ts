@@ -32,7 +32,8 @@
  * abort the run's signal; whatever the run does afterwards is ignored.
  *
  * Each finished turn hands its whole record (the §7 `TurnRecord`) to
- * `onFinished` exactly once. Retention: a buffer stays attachable
+ * `onFinished` exactly once; its usage is the run's own, else the sum of what
+ * its finished model steps streamed (a turn the cap or shutdown cut). Retention: a buffer stays attachable
  * `REPLAY_RETENTION_MS` after the end; a `TurnStatus` is kept for the last
  * `STATUS_KEEP_PER_SCOPE` finished turns of its scope or `STATUS_KEEP_MS`
  * after it finished, whichever is shorter; the last terminal facts per scope
@@ -42,6 +43,7 @@
 import { randomUUID } from "node:crypto";
 import type { StreamPart, TurnUsage } from "@aep/agent-stream";
 import type { components as ApiComponents } from "../generated/api.js";
+import { StepUsageTally } from "../conversation/turn-usage.js";
 import type { TurnRecord } from "../tools-socket/client.js";
 import {
   REPLAY_RETENTION_MS,
@@ -161,6 +163,8 @@ interface Turn {
   status: TurnStatus;
   controller: AbortController;
   capTimer: ReturnType<typeof setTimeout>;
+  /** The usage the run's finished steps streamed: the record's usage when the run reports none. */
+  steps: StepUsageTally;
   finishedAtMs?: number;
   /** Settles (never rejects) once the run has. */
   settled: Promise<void>;
@@ -239,6 +243,7 @@ export class TurnDesk {
         this.finish(turn, { status: "failed", reason: "stream-died", message: "the turn ran past the 30-minute cap", ...refsOf(meta) });
         controller.abort();
       }, this.capMs),
+      steps: new StepUsageTally(meta.model),
       settled: Promise.resolve(),
     };
     this.turns.set(id, turn);
@@ -249,7 +254,11 @@ export class TurnDesk {
     // returns); a runner that throws synchronously ends like one that rejects.
     let outcome: Promise<TurnOutcome>;
     try {
-      outcome = Promise.resolve(run((part) => buffer.append(part), controller.signal));
+      const emit = (part: StreamPart): void => {
+        turn.steps.observe(part);
+        buffer.append(part);
+      };
+      outcome = Promise.resolve(run(emit, controller.signal));
     } catch (err) {
       outcome = Promise.reject(err);
     }
@@ -353,7 +362,9 @@ export class TurnDesk {
 
   private record(turn: Turn, ending: Ending, reason: TurnFailReason | undefined): TurnRecord {
     const { meta, status } = turn;
-    const usage = ending.usage;
+    // A turn the desk ended itself (the cap, shutdown) or whose run reported
+    // no usage keeps what its finished steps reported; none reported → zeros.
+    const usage = ending.usage ?? turn.steps.total();
     return {
       turnId: status.turnId,
       ...(status.project !== undefined ? { project: status.project } : {}),
