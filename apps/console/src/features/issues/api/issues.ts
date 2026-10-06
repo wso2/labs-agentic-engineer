@@ -29,8 +29,11 @@ import type { IssueInfo } from "../model/issues";
 
 const ISSUES_STALE_MS = 30_000;
 
+/** The project's issue list in the query cache: the Issues agent's turn ends by reading it again. */
+export const issuesListKey = (projectName: string) => ["projects", projectName, "issues"] as const;
+
 const issueKeys = {
-  list: (projectName: string) => ["projects", projectName, "issues"] as const,
+  list: issuesListKey,
   detail: (projectName: string, issueNumber: number) => ["projects", projectName, "issues", issueNumber] as const,
   reports: () => ["rca-agent", "reports"] as const,
 };

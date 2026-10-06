@@ -24,12 +24,14 @@ import { projectLabel, useProject } from "../../projects/api/queries";
 import { cardTitle, chatTopic, pageTitle, type ProjectCard, type ProjectPage } from "../../shell/scope";
 import { useSpecFeature } from "../../spec/useSpecWorkspace";
 import { turnScopeFor, type TurnScope } from "../turnScope";
-import { canSend, chatStore, useProjectChat } from "../useProjectChat";
+import { chatViewFor, type ChatView } from "../chatView";
+import { canSend, chatStoreFor, useProjectChat } from "../useProjectChat";
 import { Thread } from "./Thread";
 
-// The project's one conversation, beside the main area: where the user is
-// (the breadcrumb), the thread, and the composer. What a message is about
-// follows from where the user is, and goes with every turn sent from here.
+// The project's conversation, beside the main area: where the user is (the
+// breadcrumb), the thread, and the composer. The Issues Page has its own agent
+// and thread; everywhere else is the project's main chat. What a message is
+// about follows from where the user is, and goes with every turn sent from here.
 
 function ScopeCrumb({
   projectName,
@@ -94,13 +96,15 @@ function Composer({
   topic,
   note,
   scope,
+  view,
 }: {
   projectName: string;
   topic: string;
   note: string | null;
   scope: TurnScope;
+  view: ChatView;
 }) {
-  const chat = useProjectChat(projectName);
+  const chat = useProjectChat(projectName, view);
   const [draft, setDraft] = useState("");
   const ready = canSend(chat);
   const status = composerNote(chat);
@@ -109,7 +113,7 @@ function Composer({
     const text = draft.trim();
     if (!text || !ready) return;
     setDraft("");
-    void chatStore.send(projectName, text, scope).then((sent) => {
+    void chatStoreFor(view).send(projectName, text, scope).then((sent) => {
       // Refused: the words come back, unless the user has typed again.
       if (!sent) setDraft((current) => current || text);
     });
@@ -197,7 +201,8 @@ export function ChatPanel({
 }) {
   const feature = useSpecFeature(projectName, card === "spec" ? specFile : null);
   const scope = turnScopeFor(card, feature);
-  const { topic, note } = chatTopic(card, feature ? `${feature.id} ${feature.name}` : null);
+  const view = chatViewFor(page, card);
+  const { topic, note } = chatTopic(card, feature ? `${feature.id} ${feature.name}` : null, view);
   return (
     <Box
       component="aside"
@@ -223,8 +228,8 @@ export function ChatPanel({
           </IconButton>
         </Tooltip>
       </Box>
-      <Thread projectName={projectName} scope={scope} />
-      <Composer projectName={projectName} topic={topic} note={note} scope={scope} />
+      <Thread projectName={projectName} scope={scope} view={view} />
+      <Composer projectName={projectName} topic={topic} note={note} scope={scope} view={view} />
     </Box>
   );
 }

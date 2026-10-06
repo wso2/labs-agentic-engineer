@@ -24,6 +24,7 @@
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
+import { wireView, type ChatView } from "../chatView";
 import type { TurnBody } from "../turnScope";
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
@@ -74,10 +75,11 @@ export async function startTurn(projectName: string, conversationId: string, bod
   return data.turnId;
 }
 
-/** The project's running turn, or null (204, or the read failed). */
-export async function getActiveTurn(projectName: string): Promise<TurnStatus | null> {
+/** The project's running turn in a view (the main chat's by default), or null (204, or the read failed). */
+export async function getActiveTurn(projectName: string, view?: ChatView): Promise<TurnStatus | null> {
+  const wire = wireView(view);
   const { data, error, response } = await client.GET("/projects/{projectName}/turns/active", {
-    params: { path: { projectName } },
+    params: { path: { projectName }, ...(wire ? { query: { view: wire } } : {}) },
   });
   if (response.status === 204 || error || data === undefined) return null;
   return data;

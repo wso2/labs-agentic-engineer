@@ -23,16 +23,19 @@
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
+import { wireView, type ChatView } from "../chatView";
 
 export type ConversationMessage = components["schemas"]["ConversationMessage"];
 
 /**
  * The project's CURRENT thread id (#430): server-minted and stored against the
- * project, so every member resolves the same one.
+ * project, so every member resolves the same one. Each view has its own: the
+ * Issues Page's agent talks on a thread of its own.
  */
-export async function fetchCurrentConversationId(projectName: string): Promise<string> {
+export async function fetchCurrentConversationId(projectName: string, view?: ChatView): Promise<string> {
+  const wire = wireView(view);
   const { data, error } = await client.GET("/projects/{projectName}/agents/conversations", {
-    params: { path: { projectName } },
+    params: { path: { projectName }, ...(wire ? { query: { view: wire } } : {}) },
   });
   if (error || data === undefined) {
     throw new Error(apiErrorMessage(error, "Couldn't open the project conversation"));

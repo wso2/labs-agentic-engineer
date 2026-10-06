@@ -152,6 +152,11 @@ describe("chatTopic", () => {
     });
   });
 
+  it("talks about the project's issues on the Issues Page, where the Issues agent is", () => {
+    expect(chatTopic(null, null, "issues")).toEqual({ topic: "the project's issues", note: null });
+    expect(chatTopic(null, null, "main")).toEqual(product);
+  });
+
   it("talks about the whole product on the product page, product-wide, the overview, a build and a validation", () => {
     expect(chatTopic("spec", null)).toEqual(product);
     expect(chatTopic(null, null)).toEqual(product);

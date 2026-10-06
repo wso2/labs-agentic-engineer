@@ -24,7 +24,8 @@ import { usePrototypeRequestsText } from "../../prototype/usePrototypeRequestsTe
 import { useSpecModel } from "../../spec/useSpecWorkspace";
 import { answerableQuestionId, interviewWriteUp, userLineText, type ChatItem } from "../chatLog";
 import type { PrototypeFeedback, TurnScope } from "../turnScope";
-import { chatStore, useProjectChat } from "../useProjectChat";
+import type { ChatView } from "../chatView";
+import { chatStoreFor, useProjectChat } from "../useProjectChat";
 import { ActivityLine } from "./ActivityLine";
 import { InterviewFollowUp } from "./InterviewFollowUp";
 import { NoteActions } from "./NoteActions";
@@ -189,8 +190,18 @@ function useStickToBottom() {
   return setNode;
 }
 
-export function Thread({ projectName, scope }: { projectName: string; scope: TurnScope }) {
-  const chat = useProjectChat(projectName);
+export function Thread({
+  projectName,
+  scope,
+  view = "main",
+}: {
+  projectName: string;
+  scope: TurnScope;
+  /** The view whose chat this is: its answers and retries go to that view's agent. */
+  view?: ChatView;
+}) {
+  const chat = useProjectChat(projectName, view);
+  const store = chatStoreFor(view);
   const features = useSpecModel(projectName).data?.features;
   const { items, turn } = chat;
   const running = turn.phase !== "idle";
@@ -219,7 +230,7 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
           <Typography variant="body2" color="text.secondary">
             {chat.error}
           </Typography>
-          <Button size="small" variant="outlined" onClick={() => chatStore.retry(projectName)}>
+          <Button size="small" variant="outlined" onClick={() => store.retry(projectName)}>
             Try again
           </Button>
         </Box>
@@ -230,7 +241,9 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
     return (
       <Centered>
         <Typography variant="body2" color="text.secondary">
-          No messages yet. The conversation about this project shows here.
+          {view === "issues"
+            ? "Tell me what's broken or what you need, and I'll draft an issue."
+            : "No messages yet. The conversation about this project shows here."}
         </Typography>
       </Centered>
     );
@@ -270,7 +283,7 @@ export function Thread({ projectName, scope }: { projectName: string; scope: Tur
                 item={item}
                 answerable={item.id === answerable}
                 sending={turn.phase === "starting"}
-                onAnswer={(answers) => void chatStore.answer(projectName, item.id, answers, scope)}
+                onAnswer={(answers) => void store.answer(projectName, item.id, answers, scope)}
               />
             </Box>
           )}

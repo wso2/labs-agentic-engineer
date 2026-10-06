@@ -22,11 +22,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // after the old console's api/turns.transport.test.ts.
 
 const post = vi.fn<(path: string, init: Record<string, unknown>) => Promise<unknown>>();
+
+const get = vi.fn<(path: string, init: Record<string, unknown>) => Promise<unknown>>();
 vi.mock("../../../api/client", () => ({
-  client: { POST: (path: string, init: Record<string, unknown>) => post(path, init) },
+  client: {
+    POST: (path: string, init: Record<string, unknown>) => post(path, init),
+    GET: (path: string, init: Record<string, unknown>) => get(path, init),
+  },
 }));
 
-const { ConversationRotatedError, TurnInProgressError, startTurn } = await import("./turns");
+const { ConversationRotatedError, TurnInProgressError, getActiveTurn, startTurn } = await import("./turns");
 
 function refused(status: number, error: unknown) {
   post.mockResolvedValueOnce({ data: undefined, error, response: { status } });
@@ -60,5 +65,26 @@ describe("startTurn", () => {
   it("carries the server's message for any other refusal", async () => {
     refused(400, { code: "invalid_request", message: "instruction is required" });
     await expect(startTurn("shop", "conv-1", { instruction: " " })).rejects.toThrow("instruction is required");
+  });
+});
+
+describe("getActiveTurn", () => {
+  beforeEach(() => get.mockReset());
+
+  it("asks for the main chat's running turn without a view", async () => {
+    get.mockResolvedValueOnce({ data: undefined, error: undefined, response: { status: 204 } });
+    expect(await getActiveTurn("shop")).toBeNull();
+    expect(get).toHaveBeenCalledWith("/projects/{projectName}/turns/active", {
+      params: { path: { projectName: "shop" } },
+    });
+  });
+
+  it("asks for the issues chat's running turn in the issues view", async () => {
+    const turn = { turnId: "t-2" };
+    get.mockResolvedValueOnce({ data: turn, error: undefined, response: { status: 200 } });
+    expect(await getActiveTurn("shop", "issues")).toBe(turn);
+    expect(get).toHaveBeenCalledWith("/projects/{projectName}/turns/active", {
+      params: { path: { projectName: "shop" }, query: { view: "issues" } },
+    });
   });
 });

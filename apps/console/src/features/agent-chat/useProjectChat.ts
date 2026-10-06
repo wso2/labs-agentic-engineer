@@ -25,10 +25,14 @@ import { applyAgentWrite } from "../spec/collab/specDoc";
 import { flushSpecRoom } from "../spec/collab/specRoom";
 import { fetchConversationMessages, fetchCurrentConversationId } from "./api/conversation";
 import { getActiveTurn, getTurn, openTurnStream, startTurn } from "./api/turns";
+import { issuesListKey } from "../issues/api/issues";
 import { createChatStore, type ProjectChat } from "./chatStore";
+import { viewTurnBody, type ChatView } from "./chatView";
 
-// The app's one chat store, on the real transport, and the React side of it.
+// The app's chat stores, on the real transport, and the React side of them:
+// the project's main chat, and one more per view of the main panel.
 
+/** The project's main chat: it writes the spec room, so a turn flushes the room first. */
 export const chatStore = createChatStore({
   api: {
     conversationId: fetchCurrentConversationId,
@@ -42,11 +46,33 @@ export const chatStore = createChatStore({
   beforeTurn: flushSpecRoom,
 });
 
-/** A project's chat, kept current while the caller is mounted. */
-export function useProjectChat(projectName: string): ProjectChat {
-  const subscribe = useCallback((fn: () => void) => chatStore.subscribe(projectName, fn), [projectName]);
-  const chat = useSyncExternalStore(subscribe, () => chatStore.get(projectName));
-  useEffect(() => chatStore.watch(projectName), [projectName]);
+/**
+ * The Issues Page's chat: its own thread, running turn and turns, all in the
+ * issues view. The Issues agent writes no spec, so there is nothing to apply
+ * or to flush, and its turns carry no room or scope.
+ */
+const issuesChatStore = createChatStore({
+  api: {
+    conversationId: (projectName) => fetchCurrentConversationId(projectName, "issues"),
+    history: fetchConversationMessages,
+    startTurn: (projectName, conversationId, body) => startTurn(projectName, conversationId, viewTurnBody("issues", body)),
+    activeTurn: (projectName) => getActiveTurn(projectName, "issues"),
+    turn: getTurn,
+    openStream: openTurnStream,
+  },
+});
+
+/** The chat store of a view of the main panel; "main" is the project's main chat. */
+export function chatStoreFor(view: ChatView): typeof chatStore {
+  return view === "issues" ? issuesChatStore : chatStore;
+}
+
+/** A project's chat in a view (the main chat by default), kept current while the caller is mounted. */
+export function useProjectChat(projectName: string, view: ChatView = "main"): ProjectChat {
+  const store = chatStoreFor(view);
+  const subscribe = useCallback((fn: () => void) => store.subscribe(projectName, fn), [store, projectName]);
+  const chat = useSyncExternalStore(subscribe, () => store.get(projectName));
+  useEffect(() => store.watch(projectName), [store, projectName]);
   return chat;
 }
 
@@ -65,19 +91,25 @@ export function canSend(chat: ProjectChat): boolean {
  * When a turn ends, read again what the agent may have changed. The spec
  * model holds each feature's stage, which an interview moves on; the design
  * model, what a design turn wrote and replied (the overview's track is worked
- * out from both). Mounted once, in the shell, so a turn that ends with the
+ * out from both); the Issues agent files issues, so its turn ends on the
+ * issue list. Mounted once, in the shell, so a turn that ends with the
  * chat closed still refreshes.
  */
 export function useRefreshOnTurnEnd(): void {
   const queryClient = useQueryClient();
-  useEffect(
-    () =>
-      chatStore.onTurnEnd((projectName) => {
-        void queryClient.invalidateQueries({ queryKey: specKey(projectName) });
-        void queryClient.invalidateQueries({ queryKey: designKey(projectName) });
-      }),
-    [queryClient],
-  );
+  useEffect(() => {
+    const stopMain = chatStore.onTurnEnd((projectName) => {
+      void queryClient.invalidateQueries({ queryKey: specKey(projectName) });
+      void queryClient.invalidateQueries({ queryKey: designKey(projectName) });
+    });
+    const stopIssues = issuesChatStore.onTurnEnd((projectName) => {
+      void queryClient.invalidateQueries({ queryKey: issuesListKey(projectName) });
+    });
+    return () => {
+      stopMain();
+      stopIssues();
+    };
+  }, [queryClient]);
 }
 
 /**

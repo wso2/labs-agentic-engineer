@@ -23,19 +23,27 @@ import { cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { designKey } from "../design/api/designModel";
+import { issuesListKey } from "../issues/api/issues";
 import { specKey } from "../spec/api/specModel";
 
 // When a turn ends, the shell reads again what the agent may have changed:
 // the spec and the design. A `/prototype` turn is one of them: its prototype
 // lands in the design card's Prototype tab.
 
-let ended: ((projectName: string, outcome: "completed" | "failed") => void) | null = null;
+// The main store writes the spec (it has an onAgentWrite); the issues store
+// writes nothing the console holds, but files issues.
+type Ended = ((projectName: string, outcome: "completed" | "failed") => void) | null;
+let ended: Ended = null;
+let issuesEnded: Ended = null;
 vi.mock("./chatStore", () => ({
-  createChatStore: () => ({
-    onTurnEnd: (fn: typeof ended) => {
-      ended = fn;
+  createChatStore: (options: { onAgentWrite?: unknown }) => ({
+    onTurnEnd: (fn: Ended) => {
+      const main = options.onAgentWrite !== undefined;
+      if (main) ended = fn;
+      else issuesEnded = fn;
       return () => {
-        ended = null;
+        if (main) ended = null;
+        else issuesEnded = null;
       };
     },
   }),
@@ -56,5 +64,17 @@ describe("useRefreshOnTurnEnd", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: specKey("acme-expenses") });
     unmount();
     expect(ended).toBeNull();
+    expect(issuesEnded).toBeNull();
+  });
+
+  it("reads the issues again, and not the spec, when the Issues agent's turn ends", () => {
+    const queryClient = new QueryClient();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+    renderHook(() => useRefreshOnTurnEnd(), { wrapper });
+    issuesEnded!("acme-expenses", "completed");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: issuesListKey("acme-expenses") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: specKey("acme-expenses") });
+    expect(invalidate).not.toHaveBeenCalledWith({ queryKey: designKey("acme-expenses") });
   });
 });

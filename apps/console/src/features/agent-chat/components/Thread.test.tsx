@@ -40,6 +40,7 @@ const written = (...components: string[]) =>
 let chat: ProjectChat;
 vi.mock("../useProjectChat", () => ({
   useProjectChat: () => chat,
+  chatStoreFor: () => ({}),
   chatStore: {},
   canSend: () => true,
 }));

@@ -46,3 +46,13 @@ for console turns, and a disagreement is settled here.
 | **Request** | one change asked of the prototype: the selected elements and the text | comment, note, ticket |
 | **Send all (N)** | send the queued requests to the agent in one turn | submit |
 | **Reset data** | restore the prototype's mock data | clear |
+
+## Chat
+
+What the chat panel says above the composer and in an empty thread, by where
+the user is. The Issues Page has its own agent.
+
+| Say | Where | Means |
+|---|---|---|
+| **Talking about the project's issues** | the composer's line on the Issues Page | the chat there is about the project's issues, not the whole product |
+| **Tell me what's broken or what you need, and I'll draft an issue.** | an empty thread on the Issues Page | invites a report; the agent drafts, and files once the user confirms |

@@ -27,6 +27,8 @@
 // the Page each Card is over, are this module's tables
 // (design/pages-and-cards.md).
 
+import type { ChatView } from "../agent-chat/chatView";
+
 /** The org's Pages; "other" is an org-level address that is none of them. */
 export type OrgPage = "dashboard" | "projects" | "new" | "skills" | "resources" | "other";
 
@@ -165,18 +167,21 @@ export function cardTitle(card: ProjectCard): string {
 
 /**
  * What a message sent from here would be about, for the line above the
- * composer: the design card talks about the design review; a feature open in
+ * composer: the Issues Page (the issues view) talks about the project's
+ * issues, with the Issues agent; the design card talks about the design review; a feature open in
  * the spec card narrows it to that feature, and a change reaching past it is
  * made there too; everywhere else in a project, the whole product. That
  * includes a Build or Validation card, the Deploy Page, an environment's
  * Configure card and an Issue card: no agent works on one build, one
  * validation, one environment or one issue yet, so they set no Turn scope of
- * their own.
+ * their own (the Issue card stays in the main chat).
  */
 export function chatTopic(
   card: ProjectCard | null,
   openFeature: string | null,
+  view?: ChatView,
 ): { topic: string; note: string | null } {
+  if (view === "issues") return { topic: "the project's issues", note: null };
   if (card === "design" || card === "prototype") return { topic: "the design review", note: null };
   if (card === "spec" && openFeature) {
     return { topic: openFeature, note: "A change that reaches other features is made there too." };

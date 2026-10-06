@@ -87,8 +87,15 @@ opened from the rail (the Settings icon above the user menu), not from the
 Dashboard, and keeps its section in the address (`?section=github|ai|usage`).
 
 The Issues Page lists the project's GitHub issues (incidents the SRE agent
-filed, the platform's own, people's), those that need attention first; an
-Issue card is over it and sets no Turn scope either. The Dashboard's Alerts
+filed, the platform's own, people's), those that need attention first. It
+has a chat of its own: with no card open, the panel talks to the Issues agent
+(`chatViewFor` reads the Page and Card as the `issues` view), on a thread and
+a running turn that are the Issues Page's alone and about "the project's
+issues", with no spec room and no Turn scope (the composer's scope is not
+sent; `viewTurnBody` sends the words and the view). The Issues agent files
+issues, so its turn ending re-reads the issue list. An Issue card is over the
+Page and stays in the main chat, setting no Turn scope: no agent works on one
+issue yet. The Dashboard's Alerts
 link straight to Issue cards: they are every project's issues that need
 attention (`features/issues/useAlerts.ts` asks each project, as no read
 answers for the org), and the rail's logo counts those that need a person.
