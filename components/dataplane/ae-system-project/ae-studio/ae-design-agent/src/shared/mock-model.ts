@@ -45,7 +45,7 @@ export type MockStep =
   | { kind: "text"; text: string }
   | { kind: "toolCall"; toolCallId: string; toolName: string; input: unknown; text?: string };
 
-function streamForStep(step: MockStep, i: number, delayMs?: number): StreamResult {
+function streamForStep(step: MockStep, i: number, opts: MockModelOptions): StreamResult {
   const parts: StreamPartV4[] = [{ type: "stream-start", warnings: [] }];
   const textId = `t${i}`;
   const pushText = (text: string): void => {
@@ -72,11 +72,38 @@ function streamForStep(step: MockStep, i: number, delayMs?: number): StreamResul
     parts.push({ type: "finish", finishReason: { unified: "stop", raw: "stop" }, usage: USAGE });
   }
 
-  // delayMs keeps the turn in-flight (the HTTP 409 concurrency test relies on it).
-  const stream = delayMs
-    ? simulateReadableStream({ chunks: parts, initialDelayInMs: delayMs, chunkDelayInMs: 0 })
+  // delayMs keeps the turn in-flight for a while; hold keeps it in flight
+  // until the test releases it (a test that asserts on a running turn).
+  const stream = opts.delayMs
+    ? simulateReadableStream({ chunks: parts, initialDelayInMs: opts.delayMs, chunkDelayInMs: 0 })
     : convertArrayToReadableStream(parts);
-  return { stream };
+  return { stream: opts.hold ? heldUntil(opts.hold, stream) : stream };
+}
+
+/** `stream`'s parts, none of them before `hold` settles. */
+function heldUntil(hold: Promise<void>, stream: ReadableStream<StreamPartV4>): ReadableStream<StreamPartV4> {
+  const reader = stream.getReader();
+  let released = false;
+  return new ReadableStream<StreamPartV4>({
+    async pull(controller) {
+      if (!released) {
+        await hold;
+        released = true;
+      }
+      const { done, value } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel: (reason) => reader.cancel(reason),
+  });
+}
+
+interface MockModelOptions {
+  /** Wait this long before the first part of each step. */
+  delayMs?: number;
+  /** Send no part of any step until this settles. */
+  hold?: Promise<void>;
+  provider?: string;
 }
 
 /**
@@ -92,13 +119,13 @@ function streamForStep(step: MockStep, i: number, delayMs?: number): StreamResul
  */
 export function mockModel(
   steps: MockStep[],
-  opts: { delayMs?: number; provider?: string } = {},
+  opts: MockModelOptions = {},
 ): MockLanguageModelV4 {
   return new MockLanguageModelV4({
     // `provider` is the SDK provider string the model reports. Nothing may
     // decide on it (an Anthropic-format model on another host reports
     // "anthropic.messages" too); tests pass it to prove nothing does.
     ...(opts.provider ? { provider: opts.provider } : {}),
-    doStream: steps.map((s, i) => streamForStep(s, i, opts.delayMs)),
+    doStream: steps.map((s, i) => streamForStep(s, i, opts)),
   });
 }

@@ -310,7 +310,11 @@ test("the credit parameter names the user id when the credit has no name (the Ro
 });
 
 test("the same turnId reattaches (one turn), a different one is 409, and a finished turn answers its result again", () => {
-  const models: LanguageModel[] = [mockModel([{ kind: "text", text: "slow" }], { delayMs: 300 })];
+  // The turn stays running until the test releases it, so the 409 below is
+  // asserted against a running turn however slow the host is.
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => (release = resolve));
+  const models: LanguageModel[] = [mockModel([{ kind: "text", text: "slow" }], { hold })];
   let built = 0;
   return withEdge(
     {
@@ -333,6 +337,7 @@ test("the same turnId reattaches (one turn), a different one is 409, and a finis
       assert.equal(other.contentType?.startsWith("application/json"), true);
       assert.deepEqual(await other.json(), { code: "turn_in_progress", activeTurnId: turnId });
 
+      release();
       const [a, b] = await Promise.all([first.rest(), second.rest()]);
       assert.deepEqual(withoutKeepAlives(a), [{ type: "result", status: "completed" }]);
       assert.deepEqual(withoutKeepAlives(b), [{ type: "result", status: "completed" }]);
