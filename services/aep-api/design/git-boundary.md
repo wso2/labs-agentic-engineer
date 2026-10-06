@@ -75,7 +75,7 @@ caller branches on them with `errors.Is`.
 |---|---|---|---|---|
 | `ErrAEStudioAbsent` | no AE Studio for the org: GitHub is not connected | 409 `github_not_connected` | permanent: non-retryable | skip the org |
 | `ErrAEStudioUnavailable` | provisioning, failed, unreachable, out of disk, its IdP down, or its call to `aep-api` failed | 503 `ae_studio_unavailable`, `Retry-After: 5` | retried under the activity's policy, which waits out a roll | skip the org this pass |
-| `ErrAEStudioMisconfigured` | the pod refused `aep-api`'s AE-only token after one refresh, or `aep-api` has no AE-only credentials | 503 `ae_studio_misconfigured`, no `Retry-After` | permanent: an operator fixes it, no retry does | skip the row |
+| `ErrAEStudioMisconfigured` | the pod refused `aep-api`'s AE-only token after one refresh, the IdP refused the AE-only client, or `aep-api` has no AE-only credentials | 503 `ae_studio_misconfigured`, no `Retry-After` | permanent: an operator fixes it, no retry does | skip the row |
 
 `ErrAEStudioMisconfigured` logs one of:
 
@@ -111,7 +111,8 @@ them](../../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/
 | Skills library, org resource docs | reads and `Commit` on the `_skills` and docs repositories | user 503 |
 | Skills mirror (`spec`) | `MirrorSkills` | warn and continue |
 | Reference upload (`spec/files`) | `PutReferences`, streamed | user 503 (`disk_full`), 400 `reference_rejected` |
-| Kickoff (`spec`) and Plan (`delivery/task`) | `StartTurn` | `ErrTurnInProgress` and unavailable retry in Temporal; the kickoff never fails the create |
+| Kickoff (`spec`) | `StartTurn`, inline from project create and the references upload | any error is logged and the kickoff left un-started; it never fails the create, and the spec view offers the user Retry (same uuidv5 turn id) |
+| Plan (`delivery/task`) | `StartTurn` in a Temporal activity | `ErrTurnInProgress` and unavailable are retried, each attempt with a fresh turn id; misconfigured is non-retryable |
 | Run supervisor and validation (`delivery`) | issues, milestones, pull requests, reads at a sha | `sourceControlErr`: unavailable retries, absent fails permanent |
 | Eventcore handlers and sweeps (`delivery/eventcore`) | issues, milestone counts, pull requests, design reads, hook repair | a handler 5xx is replayed, then swept; the hook repair skips an org whose pod is absent or unavailable this pass |
 | SRE issue writes (`/internal/v1/sre/…`) | issues | 503 or 409 to the SRE caller, no fallback |

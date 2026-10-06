@@ -67,8 +67,8 @@ a feed.**
    first "no pod" read is noted and a second comes at least
    `CODING_AGENT_SETTLE_GRACE` (5 min) after the later of that note and the
    suspend; any read that sees a pod clears the note. The stored UID serves
-   the observer reads. Usage is captured from the pod's log while the pod exists, so "no
-   pod" also means capture is done. The cycle's settle facts are
+   the observer reads. Usage is read from the pod's log while the pod exists,
+   at the first terminal pod, so by "no pod" the capture has been attempted. The cycle's settle facts are
    `job_suspended_at`, `pod_gone_at`, `component_deleted_at`,
    `settle_checked_at` and `dispatched_at` (the current attempt's dispatch).
 

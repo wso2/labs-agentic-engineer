@@ -53,9 +53,9 @@ request: a closed tab does not stop it. Watchers attach to its replay buffer.
 | Op (`/v1`) | Answer |
 |---|---|
 | `GET /projects/{p}/conversations/current` | the project's current thread, created lazily |
-| `POST /projects/{p}/conversations` | rotate: `201` with the new thread |
+| `POST /projects/{p}/conversations` | rotate: `201` with the new thread, or `409 turn_in_progress` while a turn runs |
 | `GET /projects/{p}/conversations/{c}/messages` | rehydrate; `[]` for the current id before its first turn |
-| `POST /projects/{p}/conversations/{c}/turns` | `202 {turnId}`, or `409` (below) |
+| `POST /projects/{p}/conversations/{c}/turns` | `202 {turnId}`; `409 turn_in_progress` or `409 conversation_rotated` (below); `409 no_default_key` when the org has no model key |
 | `GET /projects/{p}/turns/active` | `200 TurnStatus` or `204` |
 | `GET /projects/{p}/turns/{t}` | `TurnStatus`, `404` past retention |
 | `GET /projects/{p}/turns/{t}/stream?from=N` | SSE replay from frame `N`, then the live tail |
@@ -83,27 +83,34 @@ changing underneath it would plan the wrong Tasks.
 
 - A busy scope answers `409 turn_in_progress` with `activeTurnId`: in the
   `TurnConflict` body on `/v1`, and on the Turn socket, where `aep-api` reads
-  it as `ErrTurnInProgress` and Temporal retries.
+  it as `ErrTurnInProgress`. The Plan's Temporal activity retries it; a
+  kickoff gives up (below).
 - A send to a thread that is no longer current answers `409
   conversation_rotated`. The thread also rotates itself before a send once
   its context passes 80 % of the connection's declared window.
 - **Reattach, never restart.** A server-started turn carries the caller's
   `turnId`. An id the desk still knows (running, or finished and retained)
-  reattaches and starts nothing. `aep-api` derives the kickoff's id as a
-  uuidv5 of `org/project` (`services/aep-api/internal/spec/kickoff.go`), so a
-  retried kickoff reattaches; once the pod has forgotten it, `aep-api`'s
-  finished-turn ledger check refuses a second kickoff.
+  reattaches and starts nothing.
+  - **Kickoff.** `aep-api` fires it inline, from project create and from the
+    references upload, never from Temporal
+    (`services/aep-api/internal/spec/kickoff.go`). Its id is a uuidv5 of
+    `org/project`, so a second fire for the same project reattaches; once the
+    pod has forgotten it, `aep-api`'s finished-turn ledger check refuses a
+    second kickoff. A kickoff that fails is logged and left un-started, and
+    the spec view offers the user Retry, which fires it again with the same
+    id.
+  - **Plan.** A Temporal activity in `aep-api` starts it with a fresh id per
+    attempt (`services/aep-api/internal/delivery/task/plan.go`): a Plan is
+    one-shot, never resumed, so a retried activity starts a new Plan.
 - The lock lives and dies with the process. `ae-studio`'s `Recreate` rollout
   keeps one pod per org, so there is never a second desk to disagree with.
 
 ## The usage record
 
 Every finished turn, Plan turns included, hands its whole record to the
-usage outbox once: `turnId`, `project` (absent on a marketplace turn),
-`conversationId`, `kind`, `flow`, `status`, `reason`, `code`, `baseRef`,
-`skillsRef`, `startedAt`, `finishedAt`, `author`, `model`, `modelHost`, the
-four token counts and `contextTokens`. The schema is `TurnRecord` in
-`packages/contracts/sockets/ae-studio/mcp/openapi.yaml`.
+usage outbox once (`TurnRecord` in
+`packages/contracts/sockets/ae-studio/mcp/openapi.yaml`). A marketplace
+turn's record has no `project`.
 
 - The outbox posts each record to `ae-studio-tools` (`POST /turn-usage` on
   the MCP socket), in order, retrying every 2 s while the socket is down. It
@@ -124,9 +131,10 @@ Kubernetes signals the pod's three containers at once, and the pod's
 
 1. Refuses new turns: `/v1` and the Turn socket answer `503 shutting_down`.
 2. Ends every running turn at once: browsers read `turn-failed {reason:
-   shutdown}`, the Turn socket `result {status: failed, code: shutdown}`, and
-   Temporal retries the same `turnId` on the new pod. This returns within 2 s
-   even when a run ignores its abort.
+   shutdown}`, and the Turn socket `result {status: failed, code: shutdown}`.
+   A Plan is retried by its Temporal activity with a new turn id; a kickoff
+   is left un-started for the user's Retry. This returns within 2 s even when
+   a run ignores its abort.
 3. Drains the usage outbox. Steps 2 and 3 end at most 8 s after SIGTERM,
    inside the 10 s that `ae-studio-tools` keeps its MCP socket open after its
    own SIGTERM.

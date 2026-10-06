@@ -29,7 +29,7 @@ client cannot set that name, so it is what decides who a connection is.
 | Listener | Where | Caller | Admission | Participant |
 |---|---|---|---|---|
 | public | `0.0.0.0:8081` (`AE_LISTEN_PORT`), upgrades only on `/v1/rooms` | the browser | `Origin` in `AE_ALLOWED_ORIGINS`, then a Platform IdP user token of the pod's org (`userRule` from `@aep/platform-idp-auth`) | the token's user; a `credit` parameter is ignored |
-| local | the Room socket (`AE_ROOM_SOCKET`), a Unix socket, mode 0660, on an emptyDir mounted only into `ae-design-agent` | the design agent | the mount; no token is read | the user the `credit` parameter `{name, email}` names, for whom the agent runs the turn |
+| local | the Room socket (`AE_ROOM_SOCKET`), a Unix socket, mode 0660, on an emptyDir shared by `ae-collab` and `ae-design-agent` only | the design agent | the mount; no token is read | the user the `credit` parameter `{name, email}` names, for whom the agent runs the turn |
 
 Then the room: its prefix must be `spec-<AE_ORG_HANDLE>-`, and its project
 must pass the Files socket lookup once per connection.

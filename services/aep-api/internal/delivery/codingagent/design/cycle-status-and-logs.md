@@ -53,8 +53,11 @@ attempt; the Job held; a second no-pod read at least
 suspend), the backstop's rules, fair paging and the cancel fence are in
 [oc-job-dispatch.md](oc-job-dispatch.md#settle-the-component-is-deleted-once-no-pod-is-left).
 The settle waits on pod reads only, never on the observer: the grace covers
-the observer's indexing lag. Usage is captured from the pod's log while the
-pod exists, so "no pod" also means capture is done.
+the observer's indexing lag. The watcher reads usage from the pod's log at
+the first terminal pod, before it suspends, so by "no pod" the capture has
+been attempted and none is possible any more. A failed usage write is
+logged (`record cycle usage failed`) and not retried: the suspend goes ahead
+and that cycle has no usage on its row.
 
 A release cut before the `suspend` environmentConfig cannot be suspended
 (`ErrSuspendUnsupported`, logged `codingagent.job_suspend_unsupported`); its

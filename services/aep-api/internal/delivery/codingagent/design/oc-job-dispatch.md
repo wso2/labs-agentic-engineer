@@ -323,8 +323,9 @@ delete waits for all of:
 Then `DeleteComponent` by name (404 is success; a pre-UID row has no UID) and
 `codingagent.component_deleted {cycle, component, componentUid}`. A finished
 run's Component goes about TTL + grace + one pass after its pod finished; a
-cancelled run's about grace + 30 s after the cancel. Usage capture is done by
-construction: the watcher reads the pod's log while the pod exists.
+cancelled run's about grace + 30 s after the cancel. The settle does not wait
+on usage: the watcher attempts the capture from the pod's log at the first
+terminal pod, and a failed usage write is logged, not retried.
 
 **The backstop** suspends a closed cycle's Job nobody suspended
 (`codingagent.job_suspended`, `cause` = `backstop`): on sight for a terminal
