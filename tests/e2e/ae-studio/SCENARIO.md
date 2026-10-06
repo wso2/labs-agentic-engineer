@@ -77,7 +77,7 @@ Not in `run.env`, set in the script's environment: `VALUES_FILE` (the values fil
 | 0.2 | you | GitHub: throwaway org `GH_ORG`; fine-grained PATs `E2E_GITHUB_PAT` and `E2E_GITHUB_PAT_2` scoped to it (administration, hooks, contents, issues, pull requests; **no** `delete_repo`); repo `e2e-reference` with a short `CONVENTIONS.md`. Values into `.env.e2e`. | `gh api orgs/$GH_ORG/repos` lists `e2e-reference`; no repo named `$P` |
 | 0.3 | k (local write) | Create a second Thunder OU `e2e-other` with one user, through the Thunder admin API (`ae-install-client`). Password into a scratchpad `0600` file. | user can sign in (checked in P4) |
 | 0.4 | k | Temporal CLI reachable inside the Temporal pod: `kubectl -n wso2-aep exec deploy/temporal-frontend -c temporal -- temporal --address temporal-frontend:7233 workflow list --namespace default`. No local CLI install. | the command answers |
-| 0.5 | k + sql | Baseline: no `ae-studio` objects, no `org_secrets` rows. | **check** `p0-baseline.sh`: `k get resourcetype,resource -A -o name \| grep -c ae-studio` = 0; `select count(*) from org_secrets` = 0 |
+| 0.5 | k + sql | Baseline: no `ae-studio` objects, no `github-pat`, `github-webhook-secret`, `default-key` or `coding-agent-key` `org_secrets` rows (a disconnect keeps `ae-publisher-client` and `ae-studio-client`, so those two may remain). | **check** `p0-baseline.sh`: `k get resourcetype,resource -A -o name \| grep -c ae-studio` = 0; `select count(*) from org_secrets where secret in (…those four…)` = 0; the kept client rows are printed as info |
 
 Checkpoint: `run.env` has `P`, `GH_ORG`, `ORG`, `CONSOLE`, `AEP`.
 

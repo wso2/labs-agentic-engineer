@@ -16,7 +16,7 @@
 # under the License.
 
 # P0 baseline (scenario 0.1, 0.5). Read-only.
-# 0.5 asserts a fresh org; FRESH_ORG=0 skips it on a cluster that has one.
+# 0.5 asserts a fresh org (the two kept client rows may remain); FRESH_ORG=0 skips it on a cluster that has one.
 # shellcheck source=tests/e2e/ae-studio/checks/lib.sh
 . "$(dirname "$0")/lib.sh"
 
@@ -35,10 +35,17 @@ if fresh_org_only 0.5; then
   else
     fail 0.5 "kubectl get resourcetype,resource failed"
   fi
-  if rows=$(psql_q "select count(*) from org_secrets" 2>/dev/null); then
-    expect_eq 0.5 0 "$rows" "org_secrets rows"
+  # The disconnect cascade never deletes ae-publisher-client and ae-studio-client
+  # (kept by design), so a reset org still holds those two: the count is info.
+  where=""
+  [ -z "${OC_ORG_ID:-}" ] || where="and oc_org_id = '${OC_ORG_ID//\'/}'"
+  if rows=$(psql_q "select count(*) from org_secrets where secret in ('github-pat', 'github-webhook-secret', 'default-key', 'coding-agent-key') $where" 2>/dev/null); then
+    expect_eq 0.5 0 "$rows" "org_secrets rows for github-pat, github-webhook-secret, default-key, coding-agent-key"
   else
     fail 0.5 "psql on postgres-0 failed"
+  fi
+  if kept=$(psql_q "select count(*) from org_secrets where secret in ('ae-publisher-client', 'ae-studio-client') $where" 2>/dev/null); then
+    echo "INFO 0.5 kept client rows (ae-publisher-client, ae-studio-client): $kept (allowed)"
   fi
 fi
 
