@@ -61,9 +61,11 @@ reaper: [`design/clone-storage.md`](design/clone-storage.md).
   35 min budget (`internal/turns/relay.go`), which sits above the design
   agent's 30 min turn cap and equals the gateway route's allowance.
 - **Log events are a contract** the on-call reads. The
-  [log events table](design/route-groups.md#log-events) has one row per event
-  in the code (level, fields, when), and the rules above it say what a line may
-  carry. A new or changed event goes in that table in the same commit.
+  [log events tables](design/route-groups.md#log-events) have one row per
+  structured `<area>.<event>` event in the code (level, fields, when), a list
+  of the startup and shutdown messages, and the rules on what a line may carry
+  (rows with raw error text are marked). A new or changed `<area>.<event>` goes
+  in a table in the same commit.
 - **Shutdown** keeps both sockets accepting for one 10 s window (ae-collab's
   8 s flush budget and the design agent's 8 s outbox drain fit inside it),
   then shuts down the listeners (15 s for requests in flight) beside the
