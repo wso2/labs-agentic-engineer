@@ -37,7 +37,7 @@ import (
 // so each prefix tells the truth about its audience and auth regime, with the
 // version in a fixed slot right after the audience root. These routes mount on the outer
 // mux, escaping the /api/ user-JWT wrapper, and authenticate via their own
-// Task-JWT / publisher-cc posture inside the handler. Never gateway-advertised.
+// publisher-cc (or ae-studio client) posture inside the handler. Never gateway-advertised.
 const internalV1 = "/internal/v1"
 
 // AppParams holds all dependencies needed to build the HTTP handler.

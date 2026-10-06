@@ -217,8 +217,8 @@ type RunCycle struct {
 	Environment string `gorm:"type:text" json:"-"`
 
 	// ComponentUID is the UID of the OpenChoreo Component the cycle's Job runs
-	// as, copied at launch (NoteLaunch). The settler deletes exactly this
-	// Component, so a same-named replacement is never touched. Empty on a cycle
+	// as, copied at launch (NoteLaunch). Observer reads address the
+	// Component by this UID; the settler deletes by NAME. Empty on a cycle
 	// not yet dispatched or one that predates the column.
 	ComponentUID string `gorm:"type:text;not null;default:''" json:"-"`
 	// JobSuspendedAt, PodGoneAt and ComponentDeletedAt are the settle facts:

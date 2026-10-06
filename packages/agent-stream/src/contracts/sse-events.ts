@@ -758,7 +758,7 @@ function isPlanContextOrAbsent(v: unknown): boolean {
   });
 }
 
-// --- The terminal manifest (shared-workspace-volume D14) --------------------
+// --- The terminal manifest (D14) --------------------
 
 /**
  * Per-turn token usage carried on the terminal manifest (#249). Field names are
@@ -780,13 +780,13 @@ export interface TurnUsage {
 /**
  * The terminal manifest frame — ALWAYS emitted (possibly empty) after a turn
  * completes successfully, before `[DONE]`; a severed/failed stream carries NO
- * manifest, which is exactly what lets the consumer (the aep-api fold) treat
+ * manifest, which is exactly what lets the consumer treat
  * its absence as "do not commit". Covers ONLY the paths mutated THIS turn:
  * `files` maps each still-present touched path to the sha256 (lowercase hex,
  * over the UTF-8 bytes) of its final content; `deleted` lists the touched
  * paths no longer present. A chat-only or task-plan turn emits
  * `{files: {}, deleted: []}`. Structurally a `StreamPart` (open type), named
- * here so both fold sides hash-check against ONE definition.
+ * here so producer and consumer hash-check against ONE definition.
  */
 export interface ManifestPart {
   type: "manifest";

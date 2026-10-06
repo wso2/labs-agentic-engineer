@@ -179,12 +179,9 @@ test("keepInTurnSnapshot admits the project security design, by exact path only"
 });
 
 /**
- * The FIXED accept/reject table the two implementations of this one rule are
- * pinned to. Its twin lives in aep-api
- * (`internal/platform/agentfold/snapshot_filter_test.go`, `keepParity` /
- * `TestKeepInTurnSnapshot_ParityTable`): the same paths, the same verdicts. A
- * change made on one side only shows up as a failing row here rather than as a
- * turn that can read a file on one side and gets NO_SUCH_FILE on the other.
+ * The FIXED accept/reject table the filter is pinned to: a change to the rule
+ * shows up as a failing row here rather than as a turn that cannot read a
+ * file it should.
  */
 const KEEP_PARITY: Record<string, boolean> = {
   // Agent-authored sources.

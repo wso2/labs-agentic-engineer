@@ -16,8 +16,7 @@
  * under the License.
  */
 
-// The step-context measure (port of aep-api's `agentfold.StepContextOf`,
-// A/platform/agentfold/step_context.go), the input of auto-rotation.
+// The step-context measure, the input of auto-rotation.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

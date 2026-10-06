@@ -203,8 +203,9 @@ func (f *CycleFeed) Events(ctx context.Context, run *delivery.MilestoneRun, cycl
 	return evs, attempt, next, nil
 }
 
-// State is RunCycleView.recording for the cycle, from the row alone: no log is
-// read to answer it.
+// State is RunCycleView.recording for the cycle: the row's facts plus the
+// outcome of the last observer read (a recent failure reads as unavailable).
+// It never reads a log itself.
 func (f *CycleFeed) State(cycle *delivery.RunCycle) gen.RunCycleViewRecording {
 	if f == nil || cycle == nil {
 		return gen.RunCycleViewRecordingUnavailable

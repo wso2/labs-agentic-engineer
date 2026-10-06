@@ -26,13 +26,11 @@
  *
  * In the AE Studio pod the organization's one connection comes from the
  * pod env (`connection-env.ts`: `AE_MODEL_CONNECTION` and the
- * `ANTHROPIC_API_KEY` secret, both rendered by aep-api). The legacy server
- * still takes it per turn: the key in the `X-Model-Key` header, the rest in
- * the turn body's `connection` and `model`. Both build it with
- * `connectionFromWire`. What a connection supports is aep-api's
+ * `ANTHROPIC_API_KEY` secret, both rendered by aep-api), and
+ * `connectionFromWire` builds it from the wire shape plus that key. What a connection supports is aep-api's
  * `capabilities`, read here and never re-derived from the host.
- * `config.model` (`AGENT_MODEL`) is only the default for a legacy caller that
- * sends no model. Every provider request goes out through `guardedFetch`,
+ * `config.model` (`AGENT_MODEL`) is only the default for a caller that sends
+ * no model. Every provider request goes out through `guardedFetch`,
  * which refuses a host that resolves to a non-public address.
  */
 

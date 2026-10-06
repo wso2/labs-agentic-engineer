@@ -19,7 +19,7 @@
 /**
  * `@aep/agent-stream` — the single client-side consumption surface for the spec
  * agent's turn stream. Zero server-side dependencies (no Express, no AI SDK), so
- * the console, the evals, the playground, and the agents service all fold the
+ * the console, the evals, the playground, and the agents service all consume the
  * wire through ONE definition. Moving `FileBundle` here brings the component
  * `design.json` write-gate with it, so any fold enforces the same schema for
  * free (§3/§12.4 of the migration decision record).

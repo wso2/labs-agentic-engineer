@@ -31,13 +31,13 @@ import (
 // object DB against concurrent fetch/gc corruption; write CORRECTNESS is
 // arbitrated by origin push-CAS, not by this lock.
 //
-// The default implementation is POSIX flock(2). Under the shipped RWO +
-// co-located placement (services/aep-api/design/shared-workspace-volume.md)
-// every holder shares one node, so flock is local — no cross-node flock
-// requirement and no Postgres advisory-lock fallback.
+// The default implementation is POSIX flock(2). The mirror lives on one pod's
+// disk emptyDir (design/clone-storage.md), so every holder shares one node and
+// flock is local — no cross-node flock requirement and no Postgres
+// advisory-lock fallback.
 //
 // flock has no fairness: continuous back-to-back SHARED holders can starve
-// an EXCLUSIVE acquirer. That risk is real under the shared volume —
+// an EXCLUSIVE acquirer. That risk is real on the shared mirror —
 // ReadBundle holds SHARED across its N-blob cat-file loop, which is not
 // bounded to sub-second. Mitigation today: git maintenance acquires EX with a
 // ~2s timeout and skips the mirror on contention (see reaper maintainRepos)

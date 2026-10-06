@@ -17,7 +17,7 @@
  */
 
 /**
- * The skill-supply seam (ADR-0002 + shared-workspace-volume): ONE interface
+ * The skill-supply seam (ADR-0002): ONE interface
  * the catalog builder (`prompt.ts`) and the skill loaders
  * (`tools/skill-tools.ts`) consume. The one production implementation is
  * `SnapshotSkillSource` (`conversation/load-workspace.ts`): the catalog is

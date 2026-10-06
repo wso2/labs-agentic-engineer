@@ -47,7 +47,8 @@ type TokenClaims struct {
 	Email      string `json:"email,omitempty"`
 	GivenName  string `json:"given_name,omitempty"`
 	FamilyName string `json:"family_name,omitempty"`
-	// Task JWT–specific custom claims. Empty for User and Service JWTs.
+	// Custom claims a token may carry beyond the standard set. Thunder user and
+	// client_credentials tokens leave them empty.
 	OcOrgID   string `json:"ocOrgId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`

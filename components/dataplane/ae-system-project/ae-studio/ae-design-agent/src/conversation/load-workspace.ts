@@ -17,17 +17,17 @@
  */
 
 /**
- * Workspace-shape input loading (shared-workspace-volume, D4): the ONLY module
- * that reads the shared mount. All three readers take a directory that
- * `snapshot-path.ts` (the pod) or `legacy-workspace.ts` derived and
- * stat-checked — nothing here touches untrusted paths, and nothing here
+ * Workspace-shape input loading (D4): the ONLY module that reads the
+ * read-only `snapshots/` mount `ae-studio-tools` writes (see its
+ * `design/clone-storage.md`). All three readers take a directory that
+ * `snapshot-path.ts` derived and stat-checked — nothing here touches untrusted paths, and nothing here
  * writes.
  *
  *  - `readSnapshot(dir)` walks an immutable per-SHA repo snapshot into the
  *    in-memory `files` map a turn runs against (adapted from the proven
  *    playground `threads.ts` walk — POSIX-relative keys, dot-entries and binary
  *    skipped),
- *    with the aep-api `genai.keepInSnapshot` filter mirrored on top so the turn
+ *    with the `keepInTurnSnapshot` filter applied on top so the turn
  *    input stays a pure function of the sha while derived artifacts stay out.
  *  - `loadSkillsFromSnapshot(dir)` scans the `_skills` snapshot's
  *    `skills/<kind>/<name>/SKILL.md` catalog (frontmatter only — bodies are NOT
@@ -150,8 +150,7 @@ function isAdmittedSpecPath(path: string): boolean {
 const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
 /**
- * The turn-snapshot filter — mirrors aep-api `agentfold.KeepInTurnSnapshot`:
- * keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, `*.feature`,
+ * The turn-snapshot filter: keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, `*.feature`,
  * component `design.json`, the project security design
  * `specs/design/security.json`, the two OpenAPI contract shapes above) and drop
  * everything else (derived `.excalidraw`/`*.gen.json` projections, code,
@@ -164,11 +163,8 @@ const SECURITY_DESIGN_PATH = "specs/design/security.json";
  * existing file name and the rules that still hold, rather than being renamed
  * into a second file stating the same rules twice.
  *
- * The two filters are ONE rule implemented twice: a change here that is not
- * made in `snapshot_filter.go` silently changes what a turn can read on one
- * side only (the agents-side FileBundle and the Go fold then disagree about
- * whether a path exists). `test/load-workspace.test.ts` and
- * `snapshot_filter_test.go` pin the same fixed accept/reject table.
+ * This is the one place the rule lives: `test/load-workspace.test.ts` pins its
+ * fixed accept/reject table.
  */
 export function keepInTurnSnapshot(path: string): boolean {
   if (path.endsWith(".md") || path.endsWith(".dsl") || path.endsWith(".cell") || path.endsWith(".feature"))

@@ -22,8 +22,7 @@
  * document alone lives here and hard-fails the write; the cross-file checks
  * (does `.component` name a declared dependency, is every `allow` entry a real
  * operationId) run at design-save instead, because writes have no guaranteed
- * order. Mirrored by the Go fold gate in agentfold/afmgate.go — the two must
- * agree.
+ * order.
  */
 import { z } from "zod";
 import { parse as parseYaml } from "yaml";

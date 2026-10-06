@@ -151,8 +151,9 @@ type validationEndpointResolver struct {
 
 func (r validationEndpointResolver) ResolveEndpoints(ctx context.Context, orgHandle, projectID string) ([]validation.ComponentEndpoint, error) {
 	// This runs inside the runner's validation-context request, whose ctx carries
-	// the runner's inbound task JWT (aud git-service). Without this marker the OC
-	// transport would forward that token to OpenChoreo, which rejects it (401) —
+	// the runner's inbound publisher client_credentials token. Without this
+	// marker the OC transport would forward that token to OpenChoreo, which
+	// rejects it (401) —
 	// so every ListDeployments below would fail and we'd resolve zero endpoints.
 	// Act as the BFF's own service identity (org resolved via namespace), exactly
 	// like the MCP handler and the async watchers.
