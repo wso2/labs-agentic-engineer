@@ -17,11 +17,12 @@ compile error, not a runtime surprise.
 |---|---|---|
 | `apps/` | React webapps (Vite + Oxygen UI) | yes |
 | `services/` | long-lived deployables (Go + TS) | yes |
+| `components/` | deployables arranged as they are deployed: `dataplane/ae-system-project/ae-studio/` is the per-org AE Studio; `controlplane/` and `dataplane/user-project/` are placeholders | yes (`ae-studio`: per org, by `aep-api`) |
 | `runners/` | one-shot / job images | as jobs |
 | `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette` | no |
 | `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
 | `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
-| `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real agents service; see its README) | no — never in CI |
+| `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real design agent; see its README) | no — never in CI |
 | `deployments/` | canonical local setup (k3d + OpenChoreo; a legacy docker-compose path); resource types that ship a reference operator keep it under `resource-types/<type>/operator/` (e.g. `thunder-app-operator`) | n/a (operator subdirs: yes, in-cluster) |
 
 ## Data & contract ownership
@@ -31,14 +32,24 @@ compile error, not a runtime surprise.
   - `api/v1/openapi.yaml` — the public BFF contract the console is generated from.
   - `api/internal/v1/openapi.yaml` — the service-to-service surface.
   - `workflows/v1/openapi.yaml` — the workflow/runner surface.
+  - `api/ae-studio-tools/{v1,internal/v1}/openapi.yaml` — the AE Studio tools
+    container: `/v1` for the console, `/internal/v1` for `aep-api`.
+  - `api/ae-design-agent/v1/openapi.yaml` — the design agent's console surface.
+  - `sockets/ae-studio/{files,mcp,turn}/openapi.yaml` — one spec per Unix
+    socket inside the AE Studio pod.
 - Artifacts the agents produce are JSON Schema under `packages/contracts/schemas/`
   (`component-design`, `plan-task`, `update-task`), consumed by `@aep/agent-stream`
   and the design views.
-- Generated clients/servers are never hand-edited. Whether they are committed
-  differs by consumer: aep-api's contract codegen (`internal/gen/`, `internal/igen/`)
-  and the OpenChoreo client are **committed**, with `make gen-api-check` as the CI
-  freshness gate; the console's `apps/console/src/generated/` is gitignored and
-  regenerated as a build prestep.
+- Both sides of every boundary are generated from its spec, and generated
+  clients/servers are never hand-edited. Whether they are committed differs by
+  consumer: Go codegen is **committed** (aep-api's `internal/gen/`,
+  `internal/igen/`, its `ae-studio-tools` client and the OpenChoreo client;
+  `ae-studio-tools`' `internal/gen/`), and each Go module's `make gen-api-check`
+  is its CI freshness gate; TypeScript `src/generated/` (console, design agent,
+  collab) is gitignored and regenerated as a build prestep.
+- An org secret's value lives only in the vault; Postgres keeps the name of
+  the reference that holds it
+  ([ADR-0042](decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
 
 ## Identity and gateways
 
@@ -61,6 +72,42 @@ decisions
 [ADR-0028](decisions/ADR-0028-the-platform-idp-is-neutral-infrastructure.md),
 [ADR-0029](decisions/ADR-0029-environment-identity-is-bound-by-a-record.md).
 
+The org's AE Studio does not sit behind `aep-api`: each of its containers
+verifies Platform IdP tokens itself, one gate per route group, and the only
+claim it checks is the org. `aep-api` calls the pod as an install-wide AE-only
+client naming the org; the pod calls `aep-api` back with its org's own clients
+([ADR-0041](decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+
+## Design work: the organization's AE Studio
+
+```
+console ──/v1──────────────> ae-design-agent ┐ one pod per org: Resource `ae-studio`
+        ──/v1/rooms (ws)───> ae-collab       │ of Project `ae-system`, in the org's
+        ──/v1──────────────> ae-studio-tools │ dataplane namespace; one host each
+aep-api ──/internal/v1─────> ae-studio-tools │
+GitHub  ──/webhooks/github─> ae-studio-tools ┘ ──> aep-api /internal/v1/ae-studio/webhook-events
+inside the pod: Unix sockets files · mcp · turn · room, each mounted into the pair that talks
+```
+
+Every turn, the live spec Room and every git and GitHub operation of an
+organization run in that organization's AE Studio: one pod with three
+containers, the design agent, the collaboration server and `ae-studio-tools`
+(git, GitHub, the skills mirror, the webhook route). `aep-api` installs the
+ResourceType per org and keeps the Resource current (a new release reaches an
+org the next time someone opens its console); the pod holds the org's GitHub token and webhook secret, and
+`aep-api` holds neither
+([ADR-0040](decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+
+The console calls the three hosts directly. `aep-api` reaches the pod only
+through `ae-studio-tools` `/internal/v1`, for every git operation it needs.
+GitHub delivers each repository's webhooks to the pod, which verifies the
+signature and forwards the delivery to `aep-api`; `aep-api` persists it,
+replays it and runs the sweeps
+([ADR-0043](decisions/ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md)).
+Inside the pod the containers talk over Unix sockets, and the mount is the
+gate. Resources, routes, env and converge:
+[`ae-studio/design/README.md`](../components/dataplane/ae-system-project/ae-studio/design/README.md).
+
 ## Codegen pipeline
 
 ```
@@ -74,10 +121,15 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 
 ## Service map
 
-- [`aep-api`](../services/aep-api/README.md) — Go BFF + GitHub webhook receiver
-  (git ops folded in); domain-oriented modules + vertical slices.
-- `agents` — TS interactive spec agents (Vercel AI SDK).
-- `collab` — TS Yjs collaboration server.
+- [`aep-api`](../services/aep-api/README.md) — Go BFF; persists and replays
+  webhook deliveries the org's AE Studio forwards; calls `ae-studio-tools` for
+  every git operation; domain-oriented modules + vertical slices.
+- [`ae-design-agent`](../components/dataplane/ae-system-project/ae-studio/ae-design-agent/AGENTS.md)
+  — TS interactive spec agent (Vercel AI SDK), in the org's AE Studio.
+- [`ae-collab`](../components/dataplane/ae-system-project/ae-studio/ae-collab/AGENTS.md)
+  — TS Yjs collaboration server (the Room), in the org's AE Studio.
+- [`ae-studio-tools`](../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/AGENTS.md)
+  — Go git, GitHub and webhook container, in the org's AE Studio.
 - `aep-mcp-server` — MCP surface for the SRE/RCA handoff.
 - `runners/` (job image) — TS Claude Agent SDK one-shot pod; one Debian image serves
   both task kinds (ADR-0012).
@@ -102,20 +154,22 @@ decisions and their costs are
 mechanism is
 [`internal/delivery/README.md`](../services/aep-api/internal/delivery/README.md).
 
-**What the agent did** is read from wherever the cycle's log still is, never
-from a platform copy. While the cycle's pod exists the feed is the pod's own
-log, read whole through OpenChoreo; once the pod is gone it is the
-observability plane's, filtered on the Component UID the cycle stored at
-dispatch (component scope while the Component exists, project scope after the
-settler deletes it). Both sources keep the runner's own `seq`, so a viewer
-connected across the switch sees no duplicate and no hole, and a reload
-replays the cycle from its first event. The log is **observability, not
-ledger** — `run_cycles` in Postgres stays the record of what happened to a
+**What the agent did** is read from wherever the cycle's log still is;
+nothing in the platform stores a feed. A live cycle's feed is its pod's own
+log, read whole through OpenChoreo; a finished cycle's is the observer's,
+filtered on the Component UID the cycle stored at dispatch (component scope
+while the Component exists, project scope after the settle sweep deletes it).
+Both sources keep the runner's own `seq`, so a viewer connected across the
+switch sees no duplicate and no hole, and a reload replays the cycle from its
+first event. The coding Job is suspended when its pod is first seen terminal
+and its Component is deleted at settle. The log is **observability, not
+ledger**: `run_cycles` in Postgres stays the record of what happened to a
 version, and `RunCycleView.recording` (`live | kept | expired | unavailable`)
-says what can be served: kept until `OBSERVER_LOG_RETENTION`, then expired.
-The workspace-volume NDJSON recording of
+says what can be served, kept until `OBSERVER_LOG_RETENTION`, then expired
+([ADR-0044](decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+which supersedes
 [ADR-0027](decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)
-is superseded.
+on where a feed is kept).
 
 **Mock verification** is that browser step, and it sits inside the coding cycle
 rather than after a deployment. Once a `web-application` builds clean the cycle
