@@ -106,14 +106,15 @@ platform fallback. aep-api writes it into the org's AE Studio pod env
 converges the pod, and hands it to each coding run at dispatch.
 
 `make dev-update` is one-shot, not a watch loop — run it again after every
-edit you want reflected in the cluster. It runs `make dev-images` (two
-`skaffold build`s, `skaffold.yaml` and `skaffold/ae-studio.yaml`, which only
-rebuild images whose dependencies changed), checks the AE Studio refs
-(`make ae-studio-refs-check`), re-creates aep-api's OpenBao role, then calls
-`aectl platform update`, a `helm upgrade` that re-points the already-installed
-`aep-platform` release at the new images. It does not re-derive any of aectl's
-own settings (Thunder/OpenBao URLs), which is why that upgrade passes
-`--reset-then-reuse-values` (helm >= 3.14): the values the install set are
+edit you want reflected in the cluster. Its steps are the `dev-update` target
+in the `Makefile`: build the images (only those whose dependencies changed),
+check the AE Studio refs, re-create aep-api's OpenBao role, upgrade the
+`aep-platform` release with `aectl platform update`, run
+`aectl platform sync-clients`, and restart the platform Deployments (never the
+`ae-studio` pod, below). The upgrade does not re-derive aectl's install
+settings (Thunder/OpenBao URLs), which is why it passes
+`--reset-then-reuse-values` (helm >= 3.14); it does re-apply the `aeStudio.*`
+values aectl derives from its config. The values the install set are
 kept, and the current chart's defaults apply. Plain `--reuse-values`
 would render on the defaults of the chart the release was installed with, so a
 new default (for example `aeStudio.webhookRelay.image`) would never arrive.

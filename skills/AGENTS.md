@@ -11,7 +11,8 @@ live store everything else reads:
 
 | Reader | How it gets a skill |
 |---|---|
-| the design-time agents + the console | the org's `org-skills` repo, via the BFF |
+| the design agent | a snapshot of the org's `org-skills` repo at its tip, written on the pod by `ae-studio-tools` (`internal/files/snapshots.go`); `aep-api` only names the repository (`GetAeStudioSkillsRepository`) |
+| the console | the org's `org-skills` repo, via `aep-api` |
 | the coding runner | the `.claude/skills/` **mirror** the BFF writes into each project repo — `(audience ∋ coding AND enabled) OR pinned`. The runner reads its own clone and fetches nothing |
 
 So a skill's path to a coding session runs entirely through the org's library,

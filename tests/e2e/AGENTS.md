@@ -6,8 +6,8 @@ in [`apps/console/PRD.md`](../../apps/console/PRD.md).
 ## What is here
 
 - `ae-studio/`: the AE Studio dataplane scenario, fresh org to merged PR. It is a
-  manual agent-browser run plus read-only check scripts. There is no Playwright
-  spec yet.
+  manual agent-browser run plus read-only check scripts; its checks are shell
+  scripts, not Playwright specs.
   - `ae-studio/SCENARIO.md`: the steps, pass checks, run variables and Cloud
     deltas. Read it before any run.
   - `ae-studio/checks/`: one script per scenario phase (`p0-…` to `p10-…`),
@@ -46,7 +46,7 @@ in [`apps/console/PRD.md`](../../apps/console/PRD.md).
   token file holds a random stub token; `grep -c -F -f <token file> <trace>` must
   print `0`.
 
-## Playwright conventions (for later specs)
+## Playwright conventions (for Playwright specs)
 
 - Run against the cluster from `deployments/` (`make dev-env` once, `make
   dev-update` after each source edit); no mocked infra.

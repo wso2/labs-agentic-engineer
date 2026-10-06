@@ -8,7 +8,7 @@ pod is
 the token rules are
 [ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md).
 This note records the shape of the Room and why. Commands, env and the
-committer's cadence are in [`../AGENTS.md`](../AGENTS.md).
+modes are in [`../AGENTS.md`](../AGENTS.md).
 
 | Piece | Code |
 |---|---|
@@ -78,23 +78,53 @@ repository through `aep-api` on every call, with no cache.
 - The commit author is the gitpat identity `ae-studio-tools` resolves; each
   Room participant rides as a `Co-authored-by` trailer.
 
-## A failed save keeps the doc
+## How a Room saves
 
-`FilesUnavailableError` covers every outage the pod reports, `disk_full`
-and `aep_api_unavailable` included. On an outage the committer keeps the doc
-and its baseline as they were, so the next debounced flush retries the same
-diff, and the Room hears `flush-error` ("AE Studio is restarting"). A
-last-leave flush that fails this way keeps the Room loaded and retries on a
-backoff until it lands. A conflict (a stale `baseSha`) re-reads the bundle
-and the doc wins over the paths the Room changed.
+The committer (`src/committer.ts`, hooks in `src/pod/commits.ts`) makes one
+commit per flush through the Files socket's `apply`. It sends no token (the
+socket is pod-local); `ae-studio-tools` sets the author and the message
+carries a `Co-authored-by` trailer per Room participant.
 
-After every successful commit the Room hears `flush-warnings` as a stateless
-message: the pod's warnings plus any path saved over a commit made outside
-the Room. An empty list clears the console's alert.
-
-## Shutdown
-
-On SIGTERM both Room listeners stop accepting, the open Room sockets end, and
-every loaded Room is force-flushed through the Files socket. That runs inside
-one 8 s budget, within the 10 s `ae-studio-tools` keeps its sockets open
-after the pod's SIGTERM. The health listener closes last.
+- **Cadence.** A quiet period of 60 s commits and 300 s caps continuous
+  editing. The last leave forces a flush, and a stateless `{type:"flush", id}`
+  forces one and is acked `flushed` or `flush-error` (the console's
+  flush-before-build). Interim flushes hold markdown with pending agent marks;
+  forced ones commit it. The baseline is the seed as the doc serializes it, so
+  an unedited file never flushes.
+- **One flush per Room at a time.** The debounced store, `flush`, the last
+  leave, a retry and shutdown queue on the Room (`RoomState.flushing`), so a
+  later flush diffs against the baseline the earlier one left.
+- **An outage keeps the doc.** `FilesUnavailableError` covers every outage the
+  pod reports: 5xx including `disk_full` and `aep_api_unavailable`,
+  408/425/429, `not_fast_forward`, an unreachable socket, and a request past
+  its 45 s deadline (longer than the pod's own 40 s budget, so the pod answers
+  first). The committer keeps the doc and its baseline as they were, so the
+  next flush retries the same diff, and the Room hears `flush-error` ("AE
+  Studio is restarting — your edits are kept and will save shortly."). A
+  last-leave flush that fails this way keeps the Room loaded and retries every
+  5 s, doubling to 60 s, while nobody is in it, until it lands (the Room then
+  unloads), someone rejoins, the Room unloads, or shutdown flushes it itself.
+- **A verdict is reported.** `FilesDeniedError` surfaces with its message,
+  except a write-rule refusal of one path (the pod's `path_invalid`: outside
+  `specs/`, over 5 MiB). That change is set aside (not resent until the file
+  changes), the rest of the flush is saved, and every `flush-warnings`
+  restates the path as unsaved while it stays so. A Room whose only unsaved
+  changes are refused ones may unload; it logs how many
+  (`room_unloaded_with_refused {count}`), never which.
+- **Conflicts** (a stale `baseSha`) refetch the bundle; the doc wins over the
+  paths the Room changed, with at most 2 retries. Every path saved over a
+  commit made outside the Room is reported (not a blob this Room committed
+  itself). A path the Room undid while the bundle was read is re-seeded. Files
+  changed outside the Room and unedited in it are re-seeded into the doc; files
+  git gained outside the Room are never deleted.
+- **`flush-warnings`.** After every successful apply the Room hears the
+  stateless `{type:"flush-warnings", warnings:[{path, message}]}`: the pod's
+  warnings plus the saved-over paths. An empty list clears the console's
+  alert.
+- **Shutdown.** On SIGTERM both Room listeners stop accepting, the Room
+  sockets end and every update they delivered is applied (an edit typed after
+  the sockets close is not saved: the console discards its doc on teardown and
+  builds a fresh one for the next Room). Every loaded Room is then
+  force-flushed, 8 at a time, and Rooms whose edits landed unload. All of it
+  runs inside one 8 s budget, within the 10 s `ae-studio-tools` keeps its
+  sockets open. The health listener closes last, then the process exits.

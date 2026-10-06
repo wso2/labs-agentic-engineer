@@ -10,9 +10,9 @@ Skills are **authored in `<repo>/skills/`, not here** (`skills/AGENTS.md` has
 the authoring rules) and **delivered by the BFF, not here either**: a run reads
 the `.claude/skills/` mirror in its own clone. What this package owns is
 consuming that mirror correctly — the always-on workflow, the allowlist, and the
-playground's stand-in for the BFF write. The dev flow bind-mounts the library
-into the runner pod at `/app/skills` for live skill edits (see
-`deployments/scripts/setup-k3d.sh`), which is what the playground mirrors from.
+playground's stand-in for the BFF write. The runner image bakes the library
+at `/app/skills` (`deployments/scripts/build-runner.sh` passes the `skills`
+build context), which is what the playground mirrors from.
 
 ## Conventions
 

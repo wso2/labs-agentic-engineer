@@ -29,7 +29,7 @@ missing key.
   dev mode can never run there. The
   public port (`AE_LISTEN_PORT`, 8081) gates `/v1` HTTP (any casing) with
   `@aep/platform-idp-auth` (M2M → 401, another org → 403, IdP keys
-  unreachable → 503 `idp_unavailable`, all before route matching; no `/v1` operation yet, so an admitted request is a 404 problem).
+  unreachable → 503 `idp_unavailable`, all before route matching; the group has no operation, so an admitted request is a 404 problem).
   A room upgrade there must pass `originAllowed`: the `Origin` must be
   present and listed in `AE_ALLOWED_ORIGINS` (403 otherwise); the in-pod
   agent joins on the Room socket, which has no Origin check. Rooms seed from and
@@ -71,54 +71,20 @@ the document: no other connection holds a room whose load failed.
 
 ## Persistence + ops
 
-- **Committer** (`committer.ts`, hooks in `pod/commits.ts`): one commit per
-  flush through the Files socket's `apply`, no token (the socket is
-  pod-local; ae-studio-tools sets the author, the message carries a
-  `Co-authored-by` trailer per room participant). A quiet period of 60 s
-  commits, 300 s caps continuous editing, the last leave forces a flush, and
-  a stateless `{type:"flush", id}` forces one and is acked `flushed` or
-  `flush-error` (the console's flush-before-build). Interim flushes hold
-  markdown with pending agent marks; forced ones commit it. The baseline is
-  the seed as the doc serializes it, so an unedited file never flushes.
-- **Failure classes**: an outage (`FilesUnavailableError`: 5xx incl.
-  `disk_full` and `aep_api_unavailable`, 408/425/429, `not_fast_forward`, an
-  unreachable socket, a request past its 45 s deadline, which is longer
-  than the pod's own 40 s per-request budget so the pod answers first) keeps the doc and the
-  baseline as they were, so the next flush retries; the room hears
-  `flush-error` "AE Studio is restarting — your edits are kept and will save
-  shortly." A last-leave flush that fails with anything but a verdict keeps
-  the room loaded (no unload) and retries it every 5 s doubling to 60 s while
-  nobody is in it, until it lands (then the room unloads), a rejoin or an
-  unload, or shutdown, which flushes it itself. A verdict
-  (`FilesDeniedError`) is reported with its message, except a write-rule
-  refusal of one path (the pod names it on its `path_invalid`: outside
-  `specs/`, over 5 MiB): that change is set aside (not resent until the file
-  changes), the rest of the flush is saved, and every `flush-warnings` restates
-  the path as unsaved while it stays so. A room whose only unsaved changes are
-  refused ones may unload; it logs how many it unloaded with
-  (`room_unloaded_with_refused {count}`), never which.
-- **One flush per room at a time**: the debounced store, `flush`, the last
-  leave, a retry and shutdown queue on the room (`RoomState.flushing`), so a
-  later one diffs against the baseline the earlier one left.
-- **Conflicts** (a stale `baseSha`): refetch the bundle, then doc wins over
-  the paths the room changed, at most 2 retries, and every path saved over a
-  commit made outside the room is reported (not a blob this room committed
-  itself). A path the room undid while the bundle was read is re-seeded. Files changed outside the room and
-  unedited in it are re-seeded into the doc; files git gained outside the room
-  are never deleted.
-- **`flush-warnings`**: after every successful apply the room hears
-  `{type:"flush-warnings", warnings:[{path, message}]}` (the pod's warnings plus
-  the saved-over paths); an empty list clears the console's Alert.
-- **Shutdown** (SIGTERM), inside one 8 s budget that ends inside
-  ae-studio-tools' 10 s Files socket drain window: both room listeners stop
-  accepting, the room sockets end and every update they delivered is applied
-  (so no edit reaches a room after its flush read it; an edit typed after
-  the room's sockets close is not saved: the console discards its doc on
-  teardown and builds a fresh one for the next room), every loaded room
-  is force-flushed (8 at a time), and rooms whose edits landed unload (the
-  last-leave unloads the closed sockets started are awaited, not repeated).
-  Then the health listener closes, and only then does the process exit.
-- **Health**: `/healthz` and `/readyz` on the health port.
+How a Room saves (committer cadence, failure classes, conflicts,
+`flush-warnings`, shutdown budget) is one note:
+[`design/room.md`](design/room.md#how-a-room-saves). Code: `committer.ts`,
+`pod/commits.ts`. Keep these in step with it:
+
+- The stateless messages `flush` / `flushed` / `flush-error` /
+  `flush-warnings` and the reasons `upstream-unavailable`, `token-expired`,
+  `permission-denied` are spelled on the console side too (`useCollabSpec.ts`)
+  and the agent's (`room-peer.ts`).
+- Shutdown's 8 s budget ends inside ae-studio-tools' 10 s Files socket drain.
+- One flush per room at a time (`RoomState.flushing`): the debounced store,
+  `flush`, the last leave, a retry and shutdown queue on the room, so a later
+  flush diffs against the baseline the earlier one left.
+- `/healthz` and `/readyz` are on the health port.
 
 ## Env
 
@@ -131,4 +97,6 @@ ports, an optional `AE_ALLOWED_ORIGINS` and an optional `AE_ROOM_SOCKET`
 (default `<tmpdir>/ae-collab-room.sock`).
 
 Commands: uniform verbs via the root `Makefile`; locally
-`pnpm --filter @aep/ae-collab dev|test|lint|typecheck`.
+`pnpm --filter @aep/ae-collab dev|test|lint|typecheck`. `pnpm --filter
+@aep/ae-collab gen` regenerates `src/generated/files-socket.d.ts` from the
+Files socket contract (`packages/contracts/sockets/ae-studio/files/openapi.yaml`).

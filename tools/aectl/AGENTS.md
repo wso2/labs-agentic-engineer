@@ -12,16 +12,16 @@ go build -o aectl .  # build CLI
 
 | Package | Purpose |
 |---------|---------|
-| `cmd/` | Cobra commands for the CLI (init, sre, uninstall) |
+| `cmd/` | Cobra commands for the CLI (`platform`, `config`, `secret`, `sre`, `uninstall`) |
 | `internal/openbao/` | HTTP client for OpenBao API |
 | `internal/thunder/` | Thunder admin client (OAuth app registration over HTTP), port-forward |
 | `internal/kubernetes/` | k8s client helpers (Job runner, port-forward) |
 | `internal/config/` | Viper config defaults and init |
-| `internal/envidp/` | Installs the environment (T2) Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
+| `internal/envidp/` | Installs the environment-tier Thunder + its binding record + the environment's API Platform gateway — see deployments/design/two-tier-thunder.md. Org/env come from oc.default_org_namespace/oc.pipeline_source_environment (cmd.ocOrgNamespace/ocPipelineSourceEnvironment); no runtime dependency on Agent Manager |
 
 ## Config
 
-CLI has no local config file. After `aectl init` runs, it writes non-sensitive config to the
+CLI has no local config file. After `aectl platform install` runs, it writes non-sensitive config to the
 `aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
 via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
 `aep-thunder-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
@@ -42,6 +42,6 @@ via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the E
   or `https`/`https`/`:19443`); `consoleOrigins` is `[console public URL,
   http://localhost:8090]`.
 - The only non-Thunder seed aectl writes is `aep/webhook-relay-seed`
-  (create-only, only with `ae_studio.webhook_relay.enabled`); a store without
+  (create-only, only with `ae_studio.webhook_relay.enabled`, or the legacy `webhook.local_smee.enabled` while the new key is unset); a store without
   it is topped up on `update`. `aep/agents-jwt-secret`, `aep/task-signing-key`,
   `aep/webhook-secret` and `aep/openbao-token` are no longer seeded or required.

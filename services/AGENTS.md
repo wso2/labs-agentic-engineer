@@ -2,7 +2,8 @@
 
 | Folder | Tech |
 |---|---|
-| `aep-api/`| Go BFF + GitHub webhooks (git ops folded in) |
+| `aep-api/` | Go BFF + GitHub webhooks (git ops folded in) |
+| `aep-mcp-server/` | TS MCP server for the SRE handoff issue endpoints |
 
 The design agent, the Room and the AE Studio tools run in each organization's
 pod, not here: see [`../components/AGENTS.md`](../components/AGENTS.md).
@@ -25,11 +26,7 @@ pod, not here: see [`../components/AGENTS.md`](../components/AGENTS.md).
 
 ## Practices
 
-- Test driven developement is preferred. Write tests first, then implement the feature. Define the contrract first, then write the test case for that contract, then implement the feature. You can tweak along the way.
-- API changes are contract-first: edit `packages/contracts/api/`, run `make gen-api`, and let the strict-server compile errors drive the handler updates.
-- Before making changes, think on the code stucture and where does the change belong. 
-- Dead code is gated (`aep-api`): `make -C aep-api deadcode-check` fails on any function unreachable from the `cmd/aep-api` main — tests do **not** count as callers. Keep an intentional test seam or unwired infra with a `//deadcode:keep <reason>` marker; rationale is inline in `aep-api/scripts/deadcode.sh`.
-  The gate pins the Go toolchain to `go.mod`'s `go` directive (an older one cannot load the
-  packages) and hard-fails if `deadcode` itself does not run, so it can never pass by analysing nothing.
-
-
+- Test driven development is preferred. Write tests first, then implement the feature. Define the contract first, then write the test case for that contract, then implement the feature. You can tweak along the way.
+- API changes are contract-first: edit `packages/contracts/api/`, regenerate every consumer ([`packages/contracts/AGENTS.md`](../packages/contracts/AGENTS.md)), and let the strict-server compile errors drive the handler updates.
+- Before making changes, think on the code structure and where does the change belong. 
+- Dead code: the gate is in the root `AGENTS.md`; `make -C aep-api deadcode-check` treats tests as non-callers, and its marker policy is inline in `aep-api/scripts/deadcode.sh`.

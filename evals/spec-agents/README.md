@@ -3,8 +3,7 @@
 Evaluation framework for the spec-flow agents: each SDLC section —
 **requirements**, **design**, **task generation** — evaluable separately and in
 combination (a **chain**), against the *real* design agent (`@aep/ae-design-agent`) booted in-process
-through the playground's production-parity waist. Scenarios, drivers and scoring are
-described below.
+through the playground's production-parity waist.
 
 ## How a run works
 

@@ -16,12 +16,14 @@ The client-side consumption surface — wire types (SSE events, `OpResult`,
 round trip), the SSE reader
 (`startAndStreamTurn`), and the published JSON Schema — lives in the workspace package
 **`@aep/agent-stream`** (moved there so the console/playground fold one
-definition). This service imports it; `tool.ts`'s Zod schemas are drift-guarded
+definition). This service imports it; the Zod schemas in `src/agents/main/tools/` are drift-guarded
 against the wire `*Input` types there. Design notes in `design/`:
-`agent-loop.md` (the loop and its locked decisions), `turn-runtime.md` (a
-turn's lifecycle), `pod-memory-bounds.md`, `narration-policy.md`, and the ADRs.
+[`agent-loop.md`](design/agent-loop.md) (the loop and its locked decisions),
+[`turn-runtime.md`](design/turn-runtime.md) (a turn's lifecycle),
+[`pod-memory-bounds.md`](design/pod-memory-bounds.md),
+[`narration-policy.md`](design/narration-policy.md), and the ADRs.
 
-**Prompt wording lives HERE** (`src/prompts/`, ADR-0003): callers state facts on
+**Prompt wording lives HERE** (`src/prompts/`, [ADR-0003](design/ADR-0003-turn-composition-lives-here.md)): callers state facts on
 a `TurnSpec` and this service composes the instruction. Nothing outside this
 service holds prompt text — see `src/prompts/README.md`.
 
@@ -30,10 +32,10 @@ at the end of the system prompt, and the agent pulls a body on demand via the
 **`loadSkill`** tool — both built over the `SkillSource` seam
 (`src/agents/main/skill-source.ts`). One supply: skills load lazily from the
 turn's `_skills` snapshot on the mount (`src/conversation/load-workspace.ts`);
-they never travel in the turn payload. No skills → no catalog, behaves as today.
-See ADR-0002 and [`ae-studio-tools/design/clone-storage.md`](../ae-studio-tools/design/clone-storage.md).
+they never travel in the turn payload. No skills, no catalog.
+See [ADR-0002](design/ADR-0002-skills-progressive-disclosure.md) and [`ae-studio-tools/design/clone-storage.md`](../ae-studio-tools/design/clone-storage.md).
 
-**Audience** (ADR-0013): a skill's `metadata.aep.audience` names the agents its
+**Audience** ([ADR-0014](../../../../../docs/decisions/ADR-0014-skill-audience-is-metadata-visible-not-loadable.md)): a skill's `metadata.aep.audience` names the agents its
 guidance is for. This service is always the **design** side
 (`SERVICE_AUDIENCE`), so nothing is passed per request. Coding-audience skills
 are listed in a pin-only block (the agent pins them onto a component's
@@ -105,17 +107,15 @@ side is in [`design/task-planner-contract-parity.md`](design/task-planner-contra
   `<AE_SNAPSHOTS_DIR>/projects/<project>/<headSha>` and
   `<AE_SNAPSHOTS_DIR>/skills/<skillsSha>` from the lookup's shas (project a
   DNS label, sha full hex, dir stat-checked); a marketplace turn reads only
-  the skills snapshot. `turns/start-spec.ts` (`turnSpecFor`, port of
-  aep-api's `start_command.go`) classifies the raw instruction: `/<token>
+  the skills snapshot. `turns/start-spec.ts` (`turnSpecFor`) classifies the raw instruction: `/<token>
   [text]` is a flow, `/start` takes the idea typed inline, else the lookup's
   `idea`; `/start` and flow turns list the lookup's references.
 - **Conversations**: `conversations/thread-book.ts` (one current thread per
-  project, rotation, auto-rotation past 80 % of the declared window or, with
-  none declared, past 8 MiB stored) and `conversations/marketplace-book.ts`
-  (per-user marketplace conversations, evicted after 2 h unused, 5 per user;
-  `design/pod-memory-bounds.md` lists every in-process bound), messages behind the
-  `ConversationStore` port (in memory; a restart starts every thread fresh;
-  the playground has a file adapter). The messages read is a DISPLAY
+  project) and `conversations/marketplace-book.ts` (per-user marketplace
+  conversations); every in-process bound (rotation, eviction, caps) is in
+  [`design/pod-memory-bounds.md`](design/pod-memory-bounds.md). Messages sit
+  behind the `ConversationStore` port (in memory; a restart starts every thread
+  fresh; the playground has a file adapter). The messages read is a DISPLAY
   projection: user rows carry the journal text + author; each journal entry
   records the connection that wrote the turn, and
   `conversation/history-for.ts` drops what another connection cannot replay.
