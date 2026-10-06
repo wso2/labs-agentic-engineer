@@ -27,16 +27,38 @@ need P 5.x "the project name" || finish
 safe_ident 5.x P "$P" || finish
 safe_ident 5.x GH_ORG "$GH_ORG" || finish
 
-# 5.2
+# 5.2. The hook's config.url is a capability (locally a smee channel anyone
+# can read): the hooks are read and the URL compared with xtrace off, and only
+# the count, the id and "matches" leave that block.
+xtrace_off
+hooks_ok=0 hook_count="" hook_id="" hook_url_state=unset
 if hooks=$(gh api "repos/$GH_ORG/$P/hooks" 2>/dev/null); then
-  expect_eq 5.2 1 "$(printf '%s' "$hooks" | jq 'length' 2>/dev/null || true)" "hooks on $GH_ORG/$P"
+  hooks_ok=1
+  hook_count=$(printf '%s' "$hooks" | jq 'length' 2>/dev/null || true)
   hook_id=$(printf '%s' "$hooks" | jq -r '.[0].id // empty' 2>/dev/null || true)
-  if need HOOK_URL 5.2 "the hook URL"; then
-    expect_eq 5.2 "$HOOK_URL" "$(printf '%s' "$hooks" | jq -r '.[0].config.url // empty' 2>/dev/null || true)" "hook URL"
+  if [ -n "${HOOK_URL:-}" ]; then
+    github_hook_url=$(printf '%s' "$hooks" | jq -r '.[0].config.url // empty' 2>/dev/null || true)
+    if [ -z "$github_hook_url" ]; then
+      hook_url_state="is empty on GitHub"
+    elif [ "$github_hook_url" = "$HOOK_URL" ]; then
+      hook_url_state=matches
+    else
+      hook_url_state="does not match HOOK_URL"
+    fi
+    github_hook_url=""
   fi
+fi
+hooks=""
+xtrace_on_again
+if [ "$hooks_ok" = 1 ]; then
+  expect_eq 5.2 1 "$hook_count" "hooks on $GH_ORG/$P"
+  case $hook_url_state in
+    unset) skip 5.2 "the hook URL (HOOK_URL is not set)" ;;
+    matches) pass 5.2 "hook URL matches HOOK_URL" ;;
+    *) fail 5.2 "hook URL $hook_url_state" ;;
+  esac
 else
   fail 5.2 "gh api repos/$GH_ORG/$P/hooks failed"
-  hook_id=""
 fi
 expect_eq 5.2 main "$(gh api "repos/$GH_ORG/$P" --jq .default_branch 2>/dev/null || true)" "default branch"
 expect_eq 5.2 specs/.agentic-engineer.toml "$(gh api "repos/$GH_ORG/$P/contents/specs/.agentic-engineer.toml" --jq .path 2>/dev/null || true)" "descriptor path"
@@ -83,8 +105,11 @@ if need KICKOFF_TURN_ID 5.5 "the kickoff turn id"; then
   fi
 fi
 
-# 5.8: the ledger row of the kickoff turn (ledger kind kickoff).
-if row=$(psql_q "select kind || '|' || status || '|' || (input_tokens + output_tokens) || '|' || (cost_usd is not null) || '|' || coalesce(author_id, '') || '|' || coalesce(round(extract(epoch from (created_at - finished_at)))::text, '') from agent_turns where project_id = '$P' and kind = 'kickoff'" 2>/dev/null); then
+# 5.8: the ledger row of the kickoff turn (ledger kind kickoff). The row is
+# written once and never updated, so updated_at is when aep-api stored it;
+# created_at is the turn's START (the ledger orders by it), not the write.
+# The pod coalesces finished turns for about 5 s before it sends them.
+if row=$(psql_q "select kind || '|' || status || '|' || (input_tokens + output_tokens) || '|' || (cost_usd is not null) || '|' || coalesce(author_id, '') || '|' || coalesce(round(extract(epoch from (updated_at - finished_at)))::text, '') from agent_turns where project_id = '$P' and kind = 'kickoff'" 2>/dev/null); then
   expect_eq 5.8 1 "$(printf '%s\n' "$row" | n_lines)" "agent_turns kickoff rows for $P"
   IFS='|' read -r _ status tokens costed author lag <<<"$row"
   expect_eq 5.8 completed "$status" "kickoff status"

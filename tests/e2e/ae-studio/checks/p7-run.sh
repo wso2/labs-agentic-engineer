@@ -30,6 +30,14 @@ safe_ident 7.x CYCLE_ID "$CYCLE_ID" || finish
 job=${JOB_REF:-}
 [ -z "$job" ] || safe_ident 7.x JOB_REF "$job" || finish
 
+# history_names JQ_EVENT_TYPE JQ_NAME_PATH: the names in the workflow history
+# ($history, `temporal workflow show --output json`) of the events of one type,
+# one per line. The default text output lists event types only, never the
+# activity or signal names.
+history_names() {
+  printf '%s' "$history" | jq -r --arg t "$1" ".events[] | select(.eventType == \$t) | $2 // empty" 2>/dev/null || true
+}
+
 # 7.3: the DevRunWorkflow and its planning activity.
 history=""
 if need WORKFLOW_ID 7.3 "the Temporal workflow id"; then
@@ -39,22 +47,23 @@ if need WORKFLOW_ID 7.3 "the Temporal workflow id"; then
   else
     fail 7.3 "temporal workflow describe $WORKFLOW_ID failed"
   fi
-  if history=$(temporal workflow show --namespace default --workflow-id "$WORKFLOW_ID" 2>/dev/null); then
-    expect_ge 7.3 1 "$(printf '%s\n' "$history" | grep -c -F PlanMilestone || true)" "PlanMilestone events in the history"
+  if history=$(temporal workflow show --namespace default --workflow-id "$WORKFLOW_ID" --output json 2>/dev/null) && printf '%s' "$history" | jq -e '.events | length > 0' >/dev/null 2>&1; then
+    expect_ge 7.3 1 "$(history_names EVENT_TYPE_ACTIVITY_TASK_SCHEDULED .activityTaskScheduledEventAttributes.activityType.name | grep -c -x -F PlanMilestone || true)" "PlanMilestone activities scheduled in the history"
   else
-    fail 7.3 "temporal workflow show $WORKFLOW_ID failed"
+    history=""
+    fail 7.3 "temporal workflow show $WORKFLOW_ID --output json failed or held no events"
   fi
 fi
 
 # The cycle row.
 cycle=""
-if cycle=$(psql_q "select coalesce(component_uid, '') || '|' || coalesce(merge_sha, '') || '|' || coalesce(pr_number::text, '') || '|' || (component_deleted_at is not null) || '|' || coalesce(job_ref, '') from run_cycles where id::text = '$CYCLE_ID'" 2>/dev/null); then
-  IFS='|' read -r component_uid merge_sha pr_number deleted row_job <<<"$cycle"
+if cycle=$(psql_q "select coalesce(component_uid, '') || '|' || coalesce(merge_sha, '') || '|' || coalesce(pr_number::text, '') || '|' || (component_deleted_at is not null) || '|' || coalesce(job_ref, '') || '|' || coalesce(to_char(component_deleted_at at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') from run_cycles where id::text = '$CYCLE_ID'" 2>/dev/null); then
+  IFS='|' read -r component_uid merge_sha pr_number deleted row_job deleted_at <<<"$cycle"
   [ -n "$job" ] || job=$row_job
   expect_eq 7.8 1 "$(printf '%s\n' "$cycle" | n_lines)" "run_cycles rows for $CYCLE_ID"
 else
   fail 7.8 "psql on postgres-0 failed (run_cycles)"
-  component_uid="" merge_sha="" pr_number="" deleted="" row_job=""
+  component_uid="" merge_sha="" pr_number="" deleted="" row_job="" deleted_at=""
 fi
 
 # 7.8: the Component was dispatched with its uid recorded; while it exists its
@@ -124,9 +133,9 @@ if need PR_NUMBER 7.12 "the PR number" && need GH_ORG 7.12 "the GitHub org" && s
   if [ -n "$merge_sha" ]; then pass 7.12 "run_cycles.merge_sha is set"; else fail 7.12 "run_cycles.merge_sha is empty"; fi
   expect_eq 7.12 "$PR_NUMBER" "$pr_number" "run_cycles.pr_number"
   if [ -n "$history" ]; then
-    expect_ge 7.12 1 "$(printf '%s\n' "$history" | grep -c -F run-pr-merged || true)" "run-pr-merged events in the workflow history"
+    expect_ge 7.12 1 "$(history_names EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED .workflowExecutionSignaledEventAttributes.signalName | grep -c -x -F run-pr-merged || true)" "run-pr-merged signals in the workflow history"
   else
-    skip 7.12 "no workflow history read (WORKFLOW_ID)"
+    skip 7.12 "no workflow history read (WORKFLOW_ID unset or the read failed)"
   fi
 fi
 
@@ -175,8 +184,26 @@ if [ "$deleted" = true ] && [ -n "$job" ]; then
     runs=$(http_body GET "$AEP/api/v1/projects/$P/builds/$TAG/runs" "$TOK_USER_FILE")
     expect_eq 7b kept "$(printf '%s' "$runs" | jq -r --arg c "$CYCLE_ID" '[.runs[].cycles[] | select(.id == $c) | .recording] | first // "none"' 2>/dev/null || true)" "RunCycleView.recording"
   fi
+  # observer.read is logged when a request reads the settled cycle's feed.
+  # The log check reads the running container's log only: when every aep-api
+  # container started after the settle, that read may predate the log, so
+  # no line is a SKIP; a container that saw the whole post-settle window
+  # and holds no line is a FAIL.
   if alogs=$(aep_logs 2>/dev/null); then
-    expect_ge 7b 1 "$(printf '%s\n' "$alogs" | log_hits '"msg":"observer.read"' '"scope":"project"' "\"componentUid\":\"$component_uid\"")" "observer.read lines (scope project) for the Component uid"
+    reads=$(printf '%s\n' "$alogs" | log_hits '"msg":"observer.read"' '"scope":"project"' "\"componentUid\":\"$component_uid\"")
+    if [ "$reads" -ge 1 ]; then
+      pass 7b "observer.read lines (scope project) for the Component uid = $reads (>= 1)"
+    else
+      started=$(kubectl -n "$NS_AEP" get pods -l app=aep-api -o json 2>/dev/null |
+        jq -r '[.items[].status.containerStatuses[]? | select(.name == "aep-api") | .state.running.startedAt // empty] | min // empty' 2>/dev/null || true)
+      if [ -z "$started" ] || [ -z "$deleted_at" ]; then
+        fail 7b "no observer.read line (scope project) for the Component uid, and the aep-api start or component_deleted_at could not be read"
+      elif [[ "$started" > "$deleted_at" ]]; then
+        skip 7b "no observer.read line: the aep-api container started $started, after the settle at $deleted_at (log lost)"
+      else
+        fail 7b "observer.read lines (scope project) for the Component uid: got 0, and the aep-api log covers the settle at $deleted_at"
+      fi
+    fi
   else
     fail 7b "could not read the aep-api log"
   fi

@@ -37,8 +37,23 @@ if [ ! -r "$RUN_DIR/run.env" ]; then
   echo "FAIL setup $RUN_DIR/run.env is not readable"
   exit 2
 fi
+# xtrace_off / xtrace_on_again: keep a capability (the hook URL) out of a
+# `bash -x` trace. xtrace_off notes whether xtrace was on; xtrace_on_again
+# turns it back on only then.
+XTRACE_WAS_ON=0
+xtrace_off() {
+  case $- in *x*) XTRACE_WAS_ON=1 ;; *) XTRACE_WAS_ON=0 ;; esac
+  { set +x; } 2>/dev/null
+}
+xtrace_on_again() {
+  if [ "$XTRACE_WAS_ON" = 1 ]; then set -x; fi
+}
+
+# run.env sources the hook URL (a capability): no trace while it is read.
+xtrace_off
 # shellcheck source=/dev/null
 . "$RUN_DIR/run.env"
+xtrace_on_again
 
 NS_AEP="${NS_AEP:-wso2-aep}"
 ORG="${ORG:-default}"
