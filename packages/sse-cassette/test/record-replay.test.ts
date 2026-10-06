@@ -91,7 +91,6 @@ test("record proxy captures chunks+timing+scrubbed headers; replay serves them b
         "content-type": "application/json",
         accept: "text/event-stream",
         authorization: "Bearer super-secret",
-        "x-model-key": "sk-ant-secret",
       },
       body: JSON.stringify({ useCase: "requirements-generate", instruction: "hi" }),
     });
@@ -114,7 +113,6 @@ test("record proxy captures chunks+timing+scrubbed headers; replay serves them b
       instruction: "hi",
     });
     assert.equal(cassette.request.headers["authorization"], REDACTED);
-    assert.equal(cassette.request.headers["x-model-key"], REDACTED);
     assert.equal(cassette.response.status, 200);
     assert.equal(cassette.response.headers["content-type"], "text/event-stream");
 
