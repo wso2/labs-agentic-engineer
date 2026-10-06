@@ -20,7 +20,7 @@
  * Write-gate behavior for the `agent.afm.md` structural schema — the
  * self-contained half checkable from the document alone (parse, required
  * fields, enum values, body sections, and the no-literal-credentials rule).
- * */
+ */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

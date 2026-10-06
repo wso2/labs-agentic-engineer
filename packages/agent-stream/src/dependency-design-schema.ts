@@ -376,7 +376,7 @@ function platformFieldChanged(next: unknown, prior: string | undefined, pick: (b
   return canonical(pick(before as PriorShape)) !== canonical(next);
 }
 
-/** JSON with sorted object keys — so a re-ordered echo reads equal to the original. */
+/** JSON with sorted object keys, so a re-ordered echo reads equal. */
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (typeof value === "object" && value !== null) {

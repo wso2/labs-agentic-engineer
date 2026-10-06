@@ -104,8 +104,8 @@ const endpointSchema = z.strictObject({
 // term). The agent habitually writes "webapp"/"web-app", which silently breaks
 // deployment + runtime-config (both key on the exact string). Reject the known
 // wrong aliases with a self-correct message — this normalizes NOTHING, it forces
-// the agent to emit the canonical value. Mirrored in the architecture skill. NB: a zod
-// `.refine` does not serialize to JSON Schema, so the generated
+// the agent to emit the canonical value. Mirrored in the architecture skill.
+// NB: a zod `.refine` does not serialize to JSON Schema, so the generated
 // component-design.schema.json is intentionally more permissive on `type` (a
 // bare non-empty string); the alias rule is enforced by this gate.
 const WEB_APPLICATION_ALIASES = new Set(["webapp", "web-app", "webapplication", "web application"]);
@@ -130,7 +130,8 @@ export const componentDesignSchema = z.strictObject({
   // buildpack stays a bare string in the schema; the "docker"-only rule is a
   // post-parse check in checkComponentDesign (like name==dir) so it does NOT
   // serialize to the shared JSON Schema — the tools pod's soft validation and
-  // the save gate stay permissive/untouched while the agent write-gate still self-corrects in-turn.
+  // the save gate stay permissive/untouched while the agent write-gate still
+  // self-corrects in-turn.
   buildpack: z.string().min(1),
   appPath: z.string().min(1),
   entrypoint: z.string().min(1),
@@ -208,8 +209,8 @@ export function checkComponentDesign(path: string, content: string): ComponentDe
   // buildpack is effectively closed: the platform builds every component with the
   // "docker" buildpack. Enforced here (post-parse, like name==dir) rather than in
   // the zod schema so it does NOT serialize to the shared JSON Schema — the tools
-  // pod's soft validation and the save gate stay permissive/untouched; the agent (the sole writer)
-  // self-corrects in-turn. Mirrored in the architecture skill.
+  // pod's soft validation and the save gate stay permissive/untouched; the
+  // agent (the sole writer) self-corrects in-turn. Mirrored in the architecture skill.
   if (res.data.buildpack !== "docker") {
     return {
       code: "SCHEMA_VIOLATION",

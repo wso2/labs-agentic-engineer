@@ -20,8 +20,8 @@
  * Workspace-shape input loading (D4): the ONLY module that reads the
  * read-only `snapshots/` mount `ae-studio-tools` writes (see its
  * `design/clone-storage.md`). All three readers take a directory that
- * `snapshot-path.ts` derived and stat-checked — nothing here touches untrusted paths, and nothing here
- * writes.
+ * `snapshot-path.ts` derived and stat-checked — nothing here touches
+ * untrusted paths, and nothing here writes.
  *
  *  - `readSnapshot(dir)` walks an immutable per-SHA repo snapshot into the
  *    in-memory `files` map a turn runs against (adapted from the proven
@@ -150,8 +150,8 @@ function isAdmittedSpecPath(path: string): boolean {
 const SECURITY_DESIGN_PATH = "specs/design/security.json";
 
 /**
- * The turn-snapshot filter: keep agent-authored sources (`*.md`, `*.dsl`, `*.cell`, `*.feature`,
- * component `design.json`, the project security design
+ * The turn-snapshot filter: keep agent-authored sources (`*.md`, `*.dsl`,
+ * `*.cell`, `*.feature`, component `design.json`, the project security design
  * `specs/design/security.json`, the two OpenAPI contract shapes above) and drop
  * everything else (derived `.excalidraw`/`*.gen.json` projections, code,
  * arbitrary `*.yaml` such as `workload.yaml`, …). `*.cell` is the

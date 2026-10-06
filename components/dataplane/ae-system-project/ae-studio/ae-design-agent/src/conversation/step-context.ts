@@ -18,7 +18,7 @@
 
 /**
  * How much context a conversation held when one model step ended, read off
- * that step's `finish-step` part :
+ * that step's `finish-step` part:
  * the step's whole prompt, cached or not, plus what it generated, which joins
  * the history the next step reads. A turn's last measure is its closing
  * context size, which auto-rotation reads on the next send

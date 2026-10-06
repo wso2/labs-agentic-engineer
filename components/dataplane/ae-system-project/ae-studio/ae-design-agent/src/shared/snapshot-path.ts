@@ -18,9 +18,9 @@
 
 /**
  * Where a turn's snapshots are (07 §12): the one place the lookup's answer
- * becomes paths. ae-studio-tools writes the snapshots on the shared
- * studio-data volume and answers their shas on the project lookup; this
- * container mounts that volume's `snapshots` dir read-only at
+ * becomes paths. ae-studio-tools writes the snapshots on its `studio-data`
+ * disk volume and answers their shas on the project lookup; this container
+ * mounts that volume's `snapshots` dir read-only at
  * `AE_SNAPSHOTS_DIR`:
  *
  *   project: <AE_SNAPSHOTS_DIR>/projects/<project>/<headSha>/

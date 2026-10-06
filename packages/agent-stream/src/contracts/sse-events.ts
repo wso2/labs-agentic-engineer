@@ -555,10 +555,11 @@ export interface ModelCapabilities {
 }
 
 /**
- * The organization's model connection for one turn, beside the turn's `model`:
- * which API format, which URL, how the key authenticates, the limits aep-api
- * resolved, and what it supports. The key itself rides the `X-Model-Key`
- * header, never the body.
+ * The organization's model connection, beside the turn's `model`: which API
+ * format, which URL, how the key authenticates, the limits aep-api resolved,
+ * and what it supports. The key is not part of this shape: the pod reads it
+ * from the `ANTHROPIC_API_KEY` secret and `connectionFromWire`
+ * (ae-design-agent `shared/model.ts`) pairs it with this connection.
  */
 export interface TurnConnection {
   format: ModelFormat;
