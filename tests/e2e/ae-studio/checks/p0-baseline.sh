@@ -37,15 +37,17 @@ if fresh_org_only 0.5; then
   fi
   # The disconnect cascade never deletes ae-publisher-client and ae-studio-client
   # (kept by design), so a reset org still holds those two: the count is info.
-  where=""
-  [ -z "${OC_ORG_ID:-}" ] || where="and oc_org_id = '${OC_ORG_ID//\'/}'"
-  if rows=$(psql_q "select count(*) from org_secrets where secret in ('github-pat', 'github-webhook-secret', 'default-key', 'coding-agent-key') $where" 2>/dev/null); then
-    expect_eq 0.5 0 "$rows" "org_secrets rows for github-pat, github-webhook-secret, default-key, coding-agent-key"
-  else
-    fail 0.5 "psql on postgres-0 failed"
-  fi
-  if kept=$(psql_q "select count(*) from org_secrets where secret in ('ae-publisher-client', 'ae-studio-client') $where" 2>/dev/null); then
-    echo "INFO 0.5 kept client rows (ae-publisher-client, ae-studio-client): $kept (allowed)"
+  if org_secrets_scope 0.5; then
+    if rows=$(psql_q "select count(*) from org_secrets where secret in ('github-pat', 'github-webhook-secret', 'default-key', 'coding-agent-key') $OC_AND" 2>/dev/null); then
+      expect_eq 0.5 0 "$rows" "org_secrets rows for github-pat, github-webhook-secret, default-key, coding-agent-key"
+    else
+      fail 0.5 "psql on postgres-0 failed"
+    fi
+    if kept=$(psql_q "select count(*) from org_secrets where secret in ('ae-publisher-client', 'ae-studio-client') $OC_AND" 2>/dev/null); then
+      pass 0.5 "kept client rows (ae-publisher-client, ae-studio-client): $kept (allowed, information)"
+    else
+      fail 0.5 "psql on postgres-0 failed (kept client rows)"
+    fi
   fi
 fi
 

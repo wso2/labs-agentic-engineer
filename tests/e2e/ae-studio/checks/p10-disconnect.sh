@@ -56,17 +56,17 @@ else
   fail 10.2 "kubectl get secretreference failed"
 fi
 
-where=""
-[ -z "${OC_ORG_ID:-}" ] || where="where oc_org_id = '${OC_ORG_ID//\'/}'"
-if rows=$(psql_q "select secret from org_secrets $where order by secret" 2>/dev/null); then
-  for s in github-pat github-webhook-secret; do
-    expect_eq 10.2 0 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s"
-  done
-  for s in ae-publisher-client ae-studio-client; do
-    expect_eq 10.2 1 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s kept"
-  done
-else
-  fail 10.2 "psql on postgres-0 failed"
+if org_secrets_scope 10.2; then
+  if rows=$(psql_q "select secret from org_secrets $OC_WHERE order by secret" 2>/dev/null); then
+    for s in github-pat github-webhook-secret; do
+      expect_eq 10.2 0 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s"
+    done
+    for s in ae-publisher-client ae-studio-client; do
+      expect_eq 10.2 1 "$(printf '%s\n' "$rows" | grep -c -x -F "$s" || true)" "org_secrets rows $s kept"
+    done
+  else
+    fail 10.2 "psql on postgres-0 failed"
+  fi
 fi
 
 finish

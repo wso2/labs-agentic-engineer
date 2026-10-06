@@ -29,7 +29,8 @@
 # travel through environment variables into jq and over stdin to curl, and the
 # token is written to a 0600 file that the caller's curl reads with -H @file.
 #
-# Inputs (all defaulted): THUNDER_URL, CONSOLE_URL (whose /callback is a
+# Inputs (all defaulted, THUNDER_URL to http://thunder.openchoreo.localhost:8080
+# when sourced alone): THUNDER_URL, CONSOLE_URL (whose /callback is a
 # redirect URI registered on the client; nothing is served there),
 # CONSOLE_CLIENT_ID, AEP_USER, AEP_PASSWORD. Requires curl, jq and openssl.
 
@@ -45,7 +46,8 @@ _local_admin() {
 # <file> (mode 0600). Returns non-zero with a reason on stderr on any failure.
 thunder_user_auth_header() {
     local out="$1"
-    local thunder="${THUNDER_URL%/}"
+    local thunder="${THUNDER_URL:-http://thunder.openchoreo.localhost:8080}"
+    thunder="${thunder%/}"
     local client="${CONSOLE_CLIENT_ID:-aep-console-client}"
     local redirect="${CONSOLE_URL:-http://console.ae.localhost:8080}"
     redirect="${redirect%/}/callback"

@@ -70,19 +70,24 @@ fi
 # inside the turn: from T_START to the turn-completed frame (open-ended when
 # the stream log is missing). The log also holds the kickoff and later turns.
 if need GH_ORG 6.8 "the GitHub org" && safe_ident 6.8 GH_ORG "$GH_ORG"; then
-  if need T_START 6.8 "the turn start time (YYYY-MM-DDTHH:MM:SSZ)" && [[ "$T_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && logs=$(tools_logs 2>/dev/null); then
-    pod=0
+  if need T_START 6.8 "the turn start time (YYYY-MM-DDTHH:MM:SSZ)"; then
     turn_end=""
-    [ -z "$completed_at" ] || turn_end=$(epoch_to_utc "$completed_at")
-    for tool in get_remote_git_file_contents search_remote_git_code; do
-      n=$(printf '%s\n' "$logs" | log_hits_between "$T_START" "$turn_end" '"msg":"mcp.tools_call"' "\"tool\":\"$tool\"" "\"repo\":\"$GH_ORG/e2e-reference\"" '"upstream":"pod"')
-      pod=$((pod + n))
-      expect_eq 6.8 0 "$(printf '%s\n' "$logs" | log_hits '"msg":"mcp.tools_call"' "\"tool\":\"$tool\"" '"upstream":"aep-api"')" "$tool lines forwarded to aep-api"
-    done
-    expect_ge 6.8 1 "$pod" "remote-git tool calls served in the pod between $T_START and ${turn_end:-the end of the log}"
-    pass 6.8 "$(printf '%s\n' "$logs" | log_hits '"msg":"mcp.tools_call"' '"upstream":"aep-api"') call(s) of other tools forwarded to aep-api (information)"
-  elif [ -n "${T_START:-}" ]; then
-    fail 6.8 "could not read the ae-studio-tools log, or T_START is not YYYY-MM-DDTHH:MM:SSZ"
+    if ! [[ "$T_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+      fail 6.8 "T_START is not YYYY-MM-DDTHH:MM:SSZ"
+    elif [ -n "$completed_at" ] && ! turn_end=$(epoch_to_utc "$completed_at"); then
+      fail 6.8 "the turn-completed frame time is not an epoch second"
+    elif ! logs=$(tools_logs 2>/dev/null); then
+      fail 6.8 "could not read the ae-studio-tools log"
+    else
+      pod=0
+      for tool in get_remote_git_file_contents search_remote_git_code; do
+        n=$(printf '%s\n' "$logs" | log_hits_between "$T_START" "$turn_end" '"msg":"mcp.tools_call"' "\"tool\":\"$tool\"" "\"repo\":\"$GH_ORG/e2e-reference\"" '"upstream":"pod"')
+        pod=$((pod + n))
+        expect_eq 6.8 0 "$(printf '%s\n' "$logs" | log_hits '"msg":"mcp.tools_call"' "\"tool\":\"$tool\"" '"upstream":"aep-api"')" "$tool lines forwarded to aep-api"
+      done
+      expect_ge 6.8 1 "$pod" "remote-git tool calls served in the pod between $T_START and ${turn_end:-the end of the log}"
+      pass 6.8 "$(printf '%s\n' "$logs" | log_hits '"msg":"mcp.tools_call"' '"upstream":"aep-api"') call(s) of other tools forwarded to aep-api (information)"
+    fi
   fi
 
   # 6.9: the turn-end commit.

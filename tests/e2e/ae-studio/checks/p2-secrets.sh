@@ -32,22 +32,22 @@ else
 fi
 
 # 2.5: the six org_secrets rows, each naming a live SecretReference.
-where=""
-[ -z "${OC_ORG_ID:-}" ] || where="where oc_org_id = '${OC_ORG_ID//\'/}'"
-if rows=$(psql_q "select secret, secret_ref_name from org_secrets $where order by secret" 2>/dev/null); then
-  expect_eq 2.5 "ae-publisher-client ae-studio-client coding-agent-key default-key github-pat github-webhook-secret" \
-    "$(printf '%s\n' "$rows" | awk -F'|' 'NF { printf "%s%s", sep, $1; sep = " " }')" "org_secrets.secret values"
-  missing=0
-  while IFS='|' read -r secret ref; do
-    [ -n "$secret" ] || continue
-    if ! printf '%s\n' "$refs" | grep -q -E "/$ref\$"; then
-      missing=$((missing + 1))
-      fail 2.5 "$secret: secret_ref_name $ref is not a SecretReference in $ORG"
-    fi
-  done <<<"$rows"
-  [ "$missing" -gt 0 ] || pass 2.5 "every secret_ref_name is a live SecretReference"
-else
-  fail 2.5 "psql on postgres-0 failed"
+if org_secrets_scope 2.5; then
+  if rows=$(psql_q "select secret, secret_ref_name from org_secrets $OC_WHERE order by secret" 2>/dev/null); then
+    expect_eq 2.5 "ae-publisher-client ae-studio-client coding-agent-key default-key github-pat github-webhook-secret" \
+      "$(printf '%s\n' "$rows" | awk -F'|' 'NF { printf "%s%s", sep, $1; sep = " " }')" "org_secrets.secret values"
+    missing=0
+    while IFS='|' read -r secret ref; do
+      [ -n "$secret" ] || continue
+      if ! printf '%s\n' "$refs" | grep -q -E "/$ref\$"; then
+        missing=$((missing + 1))
+        fail 2.5 "$secret: secret_ref_name $ref is not a SecretReference in $ORG"
+      fi
+    done <<<"$rows"
+    [ "$missing" -gt 0 ] || pass 2.5 "every secret_ref_name is a live SecretReference"
+  else
+    fail 2.5 "psql on postgres-0 failed"
+  fi
 fi
 
 # 2.6: the column shape. org_secrets is exactly four columns; the only
