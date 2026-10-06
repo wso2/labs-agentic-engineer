@@ -320,8 +320,14 @@ func (s *DeploymentService) deploy(ctx context.Context, orgID, projectID, env st
 
 	// Resolved ONCE for the pass: both are (org, environment) facts, and asking
 	// per component would issue the same reads N times for the same answer.
+	// The issuers are read before any component is written, so a refused read
+	// leaves the whole wave untouched.
+	issuers, err := s.resolveIssuers(ctx, orgID, projectID, design)
+	if err != nil {
+		return nil, err
+	}
 	auth := envAuth{
-		Issuers:   s.resolveIssuers(ctx, orgID, design),
+		Issuers:   issuers,
 		Assertion: s.resolveGatewayAssertion(ctx, orgID, env, design),
 	}
 
@@ -725,29 +731,38 @@ func (s *DeploymentService) DeleteComponentCascade(ctx context.Context, orgID, p
 // platform IDP). It only reads the profile (06 §3): the publisher app is the
 // gitpat submit's to create, and a deploy never creates or heals it.
 //
-// Best-effort by contract: the API stays reachable without a pinned issuer,
-// so a failed read composes an unpinned trait rather than failing the
-// deployment of a whole version.
-func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID string, design *spec.DesignFile) []string {
+// Fails closed: an empty list leaves the api-configuration trait accepting
+// tokens from every keymanager registered on the cluster, which for a BYO org
+// means any other tenant's IdP. So a failed read refuses the deploy rather
+// than composing an unpinned trait. The error is a plain one, not
+// ErrDeployPermanent: a read failure is transient, and the promote activity
+// retries until the profile reads. No profile at all is the platform-IdP org,
+// which has nothing to pin.
+func (s *DeploymentService) resolveIssuers(ctx context.Context, orgID, projectID string, design *spec.DesignFile) ([]string, error) {
 	if s.idp == nil || !designHasProtectedAPI(design) {
-		return nil
+		return nil, nil
 	}
 	profile, err := s.idp.GetProfile(ctx, orgID)
-	if err != nil || profile == nil {
-		return nil
+	if err != nil {
+		slog.ErrorContext(ctx, "deployment: org IdP profile unreadable; the deploy is refused",
+			"orgID", orgID, "projectID", projectID)
+		return nil, fmt.Errorf("deployment: read org IdP profile: %w", err)
+	}
+	if profile == nil {
+		return nil, nil
 	}
 	if profile.Kind != "" && profile.Kind != "platform" && profile.Issuer != "" {
-		return []string{profile.Issuer}
+		return []string{profile.Issuer}, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // resolveGatewayAssertion reads the environment gateway's verification half.
 //
-// Best-effort by the same contract as resolveIssuers, and for a stronger
-// reason: an environment whose gateway publishes no key is the NORMAL state of
-// every environment provisioned before assertions existed, and refusing to
-// deploy into one would make the feature a breaking change. A failure here logs
+// Best-effort, unlike resolveIssuers: an environment whose gateway publishes
+// no key is the NORMAL state of every environment provisioned before
+// assertions existed, and refusing to deploy into one would make the feature a
+// breaking change. A failure here logs
 // and composes a binding with no verification half, which is exactly what such
 // an environment gets anyway.
 func (s *DeploymentService) resolveGatewayAssertion(ctx context.Context, orgID, env string, design *spec.DesignFile) openchoreo.GatewayAssertion {

@@ -23,10 +23,12 @@ package projects
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -59,14 +61,15 @@ func (c *countingThunder) DeletePublisherApp(context.Context, string, string) (b
 }
 
 // profileRows is an IDPRepository holding at most one profile; writes are
-// counted, never applied.
+// counted, never applied. A set err fails every read.
 type profileRows struct {
 	profile *organization.OrganizationIDPProfile
+	err     error
 	writes  atomic.Int32
 }
 
 func (r *profileRows) GetProfileByOrgID(context.Context, string) (*organization.OrganizationIDPProfile, error) {
-	return r.profile, nil
+	return r.profile, r.err
 }
 
 func (r *profileRows) CreateProfile(context.Context, *organization.OrganizationIDPProfile) error {
@@ -134,11 +137,47 @@ func TestResolveIssuers_ReadsTheProfileIssuer(t *testing.T) {
 	rows := &profileRows{profile: &organization.OrganizationIDPProfile{OrgID: "acme", Kind: "custom", Issuer: "https://idp.byo.example"}}
 	svc.SetIDPService(organization.NewIDPService(rows, nil, thunder, organization.PlatformIDPConfig{}))
 
-	got := svc.resolveIssuers(context.Background(), "acme", design)
+	got, err := svc.resolveIssuers(context.Background(), "acme", "proj", design)
+	if err != nil {
+		t.Fatalf("resolveIssuers: %v", err)
+	}
 	if len(got) != 1 || got[0] != "https://idp.byo.example" {
 		t.Fatalf("issuers = %v, want the profile's issuer", got)
 	}
 	if thunder.calls.Load() != 0 || rows.writes.Load() != 0 {
 		t.Fatalf("thunder calls %d, profile writes %d; want none", thunder.calls.Load(), rows.writes.Load())
+	}
+}
+
+// An unreadable profile fails the deploy closed: an unpinned trait would let
+// any cluster-registered keymanager mint a token the API honours. The error is
+// a plain one, so Temporal retries the promote until the profile reads, and
+// nothing is written in the meantime.
+func TestDeploy_UnreadableIDPProfileFailsRetryablyAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		spec.DesignRootFile:          traitRootMd(),
+		"components/api/design.json": endUserServiceMd("api"),
+	}
+	oc := ocDeployments(map[string]string{})
+	svc := newTestDeploymentService(oc, traitStoreWith(files))
+	rows := &profileRows{err: errors.New("connection refused")}
+	svc.SetIDPService(organization.NewIDPService(rows, nil, &countingThunder{}, organization.PlatformIDPConfig{}))
+
+	_, err := svc.Deploy(context.Background(), "acme", "proj", promoting("abc123def456", "api"))
+	if err == nil {
+		t.Fatal("Deploy succeeded with an unreadable IDP profile; want the deploy refused")
+	}
+	if errors.Is(err, delivery.ErrDeployPermanent) {
+		t.Fatalf("Deploy error is permanent (%v); a profile read failure must be retried", err)
+	}
+	if n := len(oc.EnsureReleaseCalls()); n != 0 {
+		t.Fatalf("%d releases cut; want none before the issuer is known", n)
+	}
+	if n := len(oc.ApplyReleaseBindingCalls()); n != 0 {
+		t.Fatalf("%d bindings written; want none (an unpinned trait trusts every keymanager)", n)
+	}
+	if n := len(oc.ApplyComponentSpecCalls()); n != 0 {
+		t.Fatalf("%d component specs written; want none", n)
 	}
 }

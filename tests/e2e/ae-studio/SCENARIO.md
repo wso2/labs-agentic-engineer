@@ -259,7 +259,7 @@ The checks read these events. All are JSON slog lines (`"msg":"<event>"`, then t
 
 ## What the E2E does not cover (unit or component tests instead)
 
-`disk_full`, a Room closed at its token expiry, the remote-git owner-must-match-org guard, the 409 `conflict` on apply, `expired` run history locally, `flush-warnings`, the marketplace chat, the SRE and Agent Manager paths (compile and fail safely only).
+`disk_full`, a Room closed at its token expiry, the remote-git owner-must-match-org guard, the 409 `conflict` on apply, `expired` run history locally, `flush-warnings`, the marketplace chat, the SRE and Agent Manager paths (compile and fail safely only), a BYO-IdP org whose IdP profile cannot be read (the deploy is refused and retried, `deployment: org IdP profile unreadable; the deploy is refused`; local orgs use the platform IdP).
 
 ## Cloud deltas (same scenario, these rows change)
 
