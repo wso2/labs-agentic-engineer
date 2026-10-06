@@ -348,8 +348,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			Resource:     cfg.AgentManager.Resource,
 			HostHeader:   cfg.AgentManager.HostHeader,
 		}},
-		bindings: environmentClient,
-		targets:  writeTargets,
+		bindings:     environmentClient,
+		environments: environmentClient,
 	})
 	validatorProbes := organization.NewValidatorProbes(credService, studioTools)
 	credValidator := secrets.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)

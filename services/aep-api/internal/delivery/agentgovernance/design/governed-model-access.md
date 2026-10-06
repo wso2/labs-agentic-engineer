@@ -115,6 +115,12 @@ it on a deploy. So:
   the provider when the org has none. A failed push answers `502
   agent_manager_not_updated` with the key still saved; saving it again retries.
   A model-only change writes nothing: the provider does not carry the model.
+- The publish covers every environment of the org that has an AI gateway
+  binding, whether or not a project deploys there yet, so a key saved at
+  onboarding is published before the first project exists. Known gap: an
+  environment or binding added after the save has no provider until the
+  Default key is saved again; the deploy fails with `ErrProviderMissing`,
+  whose message says so.
 - A disconnect overwrites the provider's key with a value that authenticates
   nowhere, once, under the last connection's header. The provider itself stays:
   there is no delete scope.

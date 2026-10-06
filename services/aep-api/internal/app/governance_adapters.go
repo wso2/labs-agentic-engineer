@@ -174,9 +174,10 @@ func (k ampComponentKinds) ComponentKinds(ctx context.Context, orgID, projectID 
 	return kinds, nil
 }
 
-// orgWriteTargets lists the write targets of every project in an org.
-type orgWriteTargets interface {
-	OrgWriteTargets(ctx context.Context, org string) ([]string, map[string]error, error)
+// orgEnvironments lists the org's environments, whether or not any project
+// deploys to them yet.
+type orgEnvironments interface {
+	List(ctx context.Context, org string) ([]openchoreo.EnvironmentInfo, error)
 }
 
 // projectWriteTarget resolves the environment one project's deploy writes to.
@@ -187,39 +188,39 @@ type projectWriteTarget interface {
 // ampModelProviderPublisher writes the org's model connection onto its Agent
 // Manager provider when a save changes it, on any format.
 //
-// The org has no single environment, so the publish goes to every governed
-// write target of the org's projects. It resolves each environment's binding
-// itself rather than taking an address: an environment with no binding has
-// nothing to publish to, and that is a no-op rather than an error. Two
-// environments bound to the same gateway are written once.
+// The org has no single environment, so the publish goes to EVERY environment
+// of the org, not only the ones its projects deploy to: an org saves its key at
+// onboarding, before it has a project, and its first governed deploy only looks
+// the provider up (agentgovernance.ErrProviderMissing). It resolves each
+// environment's binding itself rather than taking an address: an environment
+// with no binding has nothing to publish to, and that is a no-op rather than an
+// error. Two environments bound to the same gateway are written once.
+//
+// Known gap: an environment (or a binding) added AFTER the save has no provider
+// until the Default key is saved again; the deploy's ErrProviderMissing says so.
 type ampModelProviderPublisher struct {
-	amp      agentgovernance.ClientFactory
-	bindings agentgovernance.BindingReader
-	targets  orgWriteTargets
+	amp          agentgovernance.ClientFactory
+	bindings     agentgovernance.BindingReader
+	environments orgEnvironments
 }
 
 // forEachBinding runs fn once per distinct AI gateway binding among the org's
-// write targets and joins the failures, so one broken environment does not stop
+// environments and joins the failures, so one broken environment does not stop
 // the others from being written.
-func (p ampModelProviderPublisher) forEachBinding(ctx context.Context, ocOrgID, what string, fn func(binding openchoreo.AIGatewayBinding) error) error {
-	envs, unresolved, err := p.targets.OrgWriteTargets(ctx, ocOrgID)
+func (p ampModelProviderPublisher) forEachBinding(ctx context.Context, ocOrgID string, fn func(binding openchoreo.AIGatewayBinding) error) error {
+	envs, err := p.environments.List(ctx, ocOrgID)
 	if err != nil {
-		return fmt.Errorf("resolve the org's write targets: %w", err)
-	}
-	// One project with a broken pipeline must not block the rest of the org.
-	for project, cause := range unresolved {
-		slog.WarnContext(ctx, "governance: project skipped for the "+what+" because it has no write target",
-			"org", ocOrgID, "project", project, "error", cause)
+		return fmt.Errorf("list the org's environments: %w", err)
 	}
 	var failures []error
 	seen := map[string]bool{}
 	for _, env := range envs {
-		binding, err := p.bindings.GetAIGatewayBinding(ctx, ocOrgID, env)
+		binding, err := p.bindings.GetAIGatewayBinding(ctx, ocOrgID, env.Name)
 		if errors.Is(err, openchoreo.ErrNoAIGatewayBinding) {
 			continue // nothing governed here
 		}
 		if err != nil {
-			failures = append(failures, fmt.Errorf("resolve AI gateway binding for %q: %w", env, err))
+			failures = append(failures, fmt.Errorf("resolve AI gateway binding for %q: %w", env.Name, err))
 			continue
 		}
 		key := binding.AdminURL + "|" + binding.GatewayID
@@ -235,10 +236,10 @@ func (p ampModelProviderPublisher) forEachBinding(ctx context.Context, ocOrgID, 
 }
 
 func (p ampModelProviderPublisher) PublishOrgModelConnection(ctx context.Context, ocOrgID string, conn modelconn.Connection, apiKey string) error {
-	if p.amp == nil || p.bindings == nil || p.targets == nil || strings.TrimSpace(apiKey) == "" {
+	if p.amp == nil || p.bindings == nil || p.environments == nil || strings.TrimSpace(apiKey) == "" {
 		return nil
 	}
-	return p.forEachBinding(ctx, ocOrgID, "model connection publish", func(binding openchoreo.AIGatewayBinding) error {
+	return p.forEachBinding(ctx, ocOrgID, func(binding openchoreo.AIGatewayBinding) error {
 		return p.publishTo(ctx, ocOrgID, binding, conn, apiKey)
 	})
 }
@@ -266,12 +267,12 @@ func (p ampModelProviderPublisher) publishTo(ctx context.Context, ocOrgID string
 // whole provider, so it keeps that connection's template, upstream and header
 // and changes only the value. It never creates a provider: an org no deploy
 // ever governed has no copy to clear. Like the publish, it covers every
-// governed write target of the org's projects.
+// environment of the org that has an AI gateway binding.
 func (p ampModelProviderPublisher) ClearOrgModelKey(ctx context.Context, ocOrgID string, last modelconn.Connection) error {
-	if p.amp == nil || p.bindings == nil || p.targets == nil {
+	if p.amp == nil || p.bindings == nil || p.environments == nil {
 		return nil
 	}
-	return p.forEachBinding(ctx, ocOrgID, "model key clear", func(binding openchoreo.AIGatewayBinding) error {
+	return p.forEachBinding(ctx, ocOrgID, func(binding openchoreo.AIGatewayBinding) error {
 		providerIn, err := agentgovernance.ProviderInputFor(ocOrgID, last, clearedProviderCredential, binding.GatewayID)
 		if err != nil {
 			return err
