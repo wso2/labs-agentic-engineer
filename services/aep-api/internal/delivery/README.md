@@ -466,8 +466,9 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   without committing a report at all, which proves nothing about the software and is a breach of the
   runner contract. `ValidationVerdictFailsRun` / `IsValidationTerminalReason` are the executable copy of
   that pair. `EndedInValidation(kind, reason)` widens it for READERS of the build: that pair on any run,
-  plus `agent-start-failed` on a validation run, leave a deployed version Deployed, in the overview's
-  build stage and the version ledger alike. A run that settles for a reason outside this list is a bug in the loop, not a new state.
+  plus `agent-start-failed` on a validation run. The overview's build stage applies it to the newest dev
+  run; the version ledger applies it to validation runs only, so a validation run that never started (or
+  failed its verdict) leaves the deployed version's row Deployed. A run that settles for a reason outside this list is a bug in the loop, not a new state.
 - **The deploy set is the VERSION's, not the cycle's** (ADR-0026). `desired(c)` is the release
   `c`'s newest SUCCEEDED build would cut; `actual(c)` is what its binding pins and whether that is
   Ready; the difference classifies every design component as `serving`, `behind`, `converging`,

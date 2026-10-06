@@ -764,13 +764,13 @@ func TestListBuilds_FailedVersionCarriesItsTerminalReason(t *testing.T) {
 	}
 }
 
-// A validation run that ended on judging the version — its verdict failed, it
+// A VALIDATION run that ended on judging the version — its verdict failed, it
 // never reported, or its agent could not start — leaves the deployed version's
 // row Deployed: the build delivered, and the validation board carries the
-// failure. The same rule as the overview's build stage
-// (delivery.EndedInValidation), so the two views agree. Any other ending of a
-// validation run, and an agent that could not start on a DEV run (the coding
-// agent: the build did fail), still fails the row.
+// failure (delivery.EndedInValidation, the overview's rule too). Any other
+// ending of a validation run, and every ending of a DEV run (an agent that
+// could not start there is the coding agent: the build did fail), keeps the
+// row's status as before.
 func TestListBuilds_ValidationEndingLeavesTheVersionDeployed(t *testing.T) {
 	t0 := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 	cases := []struct {
@@ -783,6 +783,10 @@ func TestListBuilds_ValidationEndingLeavesTheVersionDeployed(t *testing.T) {
 		{"validation unreported", delivery.RunKindValidation, delivery.RunReasonValidationUnreported, "completed", ""},
 		{"validation agent died", delivery.RunKindValidation, delivery.RunReasonRedispatchBudget, "failed", delivery.RunReasonRedispatchBudget},
 		{"coding agent could not start", delivery.RunKindDev, delivery.RunReasonAgentStartFailed, "failed", delivery.RunReasonAgentStartFailed},
+		// The exemption is a VALIDATION run's: a dev run's row keeps its own
+		// ending, as it always has.
+		{"dev run validation failed", delivery.RunKindDev, delivery.RunReasonValidationFailed, "failed", delivery.RunReasonValidationFailed},
+		{"dev run validation unreported", delivery.RunKindDev, delivery.RunReasonValidationUnreported, "failed", delivery.RunReasonValidationUnreported},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

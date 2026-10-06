@@ -299,24 +299,6 @@ func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 	}
 }
 
-// A validation agent that could not start leaves the deployed version's build
-// succeeded, as the version ledger's row stays Deployed for the same run.
-func TestBuildStage_ValidationAgentStartFailedLeavesTheBuildSucceeded(t *testing.T) {
-	t.Parallel()
-	build := devRun("v3", delivery.RunStateSucceeded)
-	validation := devRun("v3", delivery.RunStateFailed)
-	validation.Kind, validation.Origin = delivery.RunKindValidation, delivery.RunOriginRevalidate
-	validation.TerminalReason = delivery.RunReasonAgentStartFailed
-
-	st := mustStatus(t, statusFixture{
-		runs:   []delivery.MilestoneRun{validation, build},
-		counts: map[string]int{"v3": 4},
-	})
-	if st.Build.Version != "v3" || st.Build.Status != "succeeded" {
-		t.Errorf("build = %s/%s, want v3/succeeded", st.Build.Version, st.Build.Status)
-	}
-}
-
 // TestDeployStage_ConditionMatrix pins the condition-driven status: failed >
 // deploying > deployed, none without bindings; undeploy-state and non-dev
 // bindings excluded; unknown reasons read as deploying, never failed.

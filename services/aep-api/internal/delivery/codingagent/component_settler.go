@@ -42,14 +42,15 @@ package codingagent
 // possible.
 //
 // The BACKSTOP suspends a closed cycle whose Job nobody suspended. A cycle can
-// close on the merge webhook before its pod exits, so a Running or Pending pod
-// is left to the watcher (which suspends at terminal, after the usage line)
-// until backstopCeiling past the close, and "no pod" counts only once an
-// earlier pass noted it too: one empty tree read must not kill a Running pod.
-// A terminal pod is suspended on sight. A cancelled cycle has no line to
-// protect: its failed cancel-time suspend is retried at once. Nor has a
-// startup_failed one, whose agent never started: suspended at once too, so its
-// pod cannot start later on the closed cycle.
+// close on the merge webhook before its pod exits, so a MERGE-closed cycle's
+// Running or Pending pod is left to the watcher (which suspends at terminal,
+// after the usage line) until backstopCeiling past the close, and "no pod"
+// counts only once an earlier pass noted it too: one empty tree read must not
+// kill a Running pod. A terminal pod is suspended on sight. Every other close
+// has no line to protect and is suspended at once whatever its pod is doing:
+// a cancel (its cancel-time suspend failed), a startup_failed close (its agent
+// never started), and a cycle the run closed with nothing merged; so no pod can
+// start later on the closed cycle.
 
 import (
 	"context"
@@ -70,11 +71,10 @@ const (
 	// defaultSettleGrace is the minimum distance between the two "no pod" reads
 	// (CODING_AGENT_SETTLE_GRACE).
 	defaultSettleGrace = 5 * time.Minute
-	// backstopCeiling is how long after the close the backstop leaves a closed
-	// cycle's Running or Pending pod alone (a merge-closed cycle's pod may still
-	// be writing its usage line; cancelled and startup_failed cycles are not
-	// held): the schema's deadline ceiling, past which Kubernetes has killed the
-	// pod anyway, plus a margin.
+	// backstopCeiling is how long after a merge-closed cycle the backstop leaves
+	// a Running or Pending pod alone (it may still be writing its usage line;
+	// no other close is held): the schema's deadline ceiling, past which
+	// Kubernetes has killed the pod anyway, plus a margin.
 	backstopCeiling = time.Duration(openchoreo.CodingAgentDeadlineCeilingSeconds)*time.Second + 10*time.Minute
 )
 
@@ -352,13 +352,15 @@ func (s *ComponentSettler) jobHeld(ctx context.Context, cycle *delivery.RunCycle
 }
 
 // backstopDue reports whether the backstop may suspend the cycle's Job now: a
-// cancelled or startup_failed cycle at once, whatever its pod is doing (neither
-// has a last line to protect, and a startup_failed cycle's Pending pod would
-// start an agent on a closed cycle once the cluster has room); a terminal pod
-// on sight; no pod only when an earlier pass saw none either (pod_gone_at),
-// because one empty tree read can hide a Running pod; any other closed cycle's
-// Running or Pending pod — a merge-closed one still writing its usage line —
-// only past backstopCeiling after the close.
+// cancelled or startup_failed cycle at once, whatever its pod is doing; a
+// terminal pod on sight; no pod only when an earlier pass saw none either
+// (pod_gone_at), because one empty tree read can hide a Running pod; a
+// Running or Pending pod at once unless the cycle MERGED. Only a merge-closed
+// cycle's agent may still be writing a result line worth keeping, so only its
+// live pod is held, until backstopCeiling past the close. Any other close (a
+// spent budget, a conflict, no work, a landing timeout: Finish with no merge
+// SHA) has nothing to wait for, and its Pending pod would start an agent on
+// the closed cycle once the cluster has room.
 func backstopDue(cycle *delivery.RunCycle, pod openchoreo.RuntimePod, now time.Time) bool {
 	if cycle.AgentReason == delivery.CycleReasonCancelled || delivery.IsStartupFailure(cycle.AgentReason) {
 		return true
@@ -369,6 +371,9 @@ func backstopDue(cycle *delivery.RunCycle, pod openchoreo.RuntimePod, now time.T
 	}
 	if !pod.Found {
 		return cycle.PodGoneAt != nil
+	}
+	if cycle.MergeSHA == "" {
+		return true
 	}
 	return cycle.EndedAt != nil && now.Sub(*cycle.EndedAt) > backstopCeiling
 }

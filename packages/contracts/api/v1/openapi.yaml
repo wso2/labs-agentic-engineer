@@ -3423,8 +3423,8 @@ components:
             A validation run that ended on judging the version — `validation-failed`,
             `validation-unreported`, or `agent-start-failed` (its validation agent never started) —
             does not fail the version's row: the version was built and deployed, so the row reads
-            `completed` with no reason, and the validation board carries the failure. The
-            overview's build stage applies the same rule.
+            `completed` with no reason, and the validation board carries the failure. A dev run's
+            row keeps its own ending.
           enum:
           - started
           - in_progress

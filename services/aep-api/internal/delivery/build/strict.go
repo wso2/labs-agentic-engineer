@@ -62,13 +62,15 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 		}
 		seen[tag] = true
 		state, reason := row.State, row.TerminalReason
-		// A run that ended on JUDGING the version — a validation verdict, or a
+		// A VALIDATION run that ended on judging the version — a verdict, or a
 		// validation agent that never started — does not make the version a
 		// failed build: it was built and deployed, and the validation board
-		// carries the failure. The overview's build stage reads the same rule
-		// (delivery.EndedInValidation), so the two views agree. Read as
-		// succeeded, so the reason and failure code a failed row carries go too.
-		if state == delivery.RunStateFailed && delivery.EndedInValidation(row.Kind, reason) {
+		// carries the failure. The overview never reads a validation run for its
+		// build stage, so on these rows the two views agree. Read as succeeded,
+		// so the reason and failure code a failed row carries go too. A dev run's
+		// row keeps its own ending.
+		if state == delivery.RunStateFailed && row.Kind == delivery.RunKindValidation &&
+			delivery.EndedInValidation(row.Kind, reason) {
 			state, reason = delivery.RunStateSucceeded, ""
 		}
 		builds = append(builds, BuildSummary{

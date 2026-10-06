@@ -1548,7 +1548,7 @@ type BuildSummary struct {
 	StartedAt time.Time `json:"startedAt"`
 
 	// Status What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
-	// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. The overview's build stage applies the same rule.
+	// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. A dev run's row keeps its own ending.
 	Status BuildSummaryStatus `json:"status"`
 	Tag    string             `json:"tag"`
 
@@ -1557,7 +1557,7 @@ type BuildSummary struct {
 }
 
 // BuildSummaryStatus What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
-// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. The overview's build stage applies the same rule.
+// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. A dev run's row keeps its own ending.
 type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.

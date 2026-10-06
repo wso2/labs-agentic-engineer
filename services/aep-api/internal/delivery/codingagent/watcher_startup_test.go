@@ -301,3 +301,23 @@ func TestTick_NoStuckReasonWritesNoStartupWait(t *testing.T) {
 		})
 	}
 }
+
+// A legacy release cannot suspend at all. The watcher learns that once per
+// attempt, as the settler does: the catch-up for a closed startup_failed cycle
+// whose Pending pod never goes away asks once and warns once, not every tick.
+func TestTick_SuspendUnsupportedIsAskedOncePerAttempt(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: unschedulablePod()}
+	cycles := newWatchedCycles(closedStartupFailed(dispatchedCycle("c1", 20*time.Minute)))
+	jobs := &fakeJobs{err: fmt.Errorf("suspend: %w", openchoreo.ErrSuspendUnsupported)}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil)
+	for i := 0; i < 3; i++ {
+		w.Tick(context.Background())
+	}
+	if len(jobs.suspends) != 1 || cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v: an unsupported release is asked once and never marked", jobs.suspends, cycles.suspended)
+	}
+	if n := len(logsNamed(*logs, "codingagent.job_suspend_unsupported")); n != 1 {
+		t.Fatalf("job_suspend_unsupported logged %d times, want once", n)
+	}
+}

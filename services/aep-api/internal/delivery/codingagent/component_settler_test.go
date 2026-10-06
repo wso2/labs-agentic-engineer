@@ -151,11 +151,11 @@ func (f *fakeDeleter) DeleteComponent(_ context.Context, _, _, name string) erro
 	return f.err
 }
 
-// settled is a cycle that closed an hour ago, optionally with its Job already
-// suspended.
+// settled is a cycle that merged and closed an hour ago (the ordinary close),
+// optionally with its Job already suspended.
 func settled(id string, suspended bool) delivery.RunCycle {
 	now := time.Now().Add(-time.Hour)
-	c := delivery.RunCycle{ID: id, OrgID: "acme", ProjectID: "shop", JobRef: "ca-" + id, Environment: "development", EndedAt: &now, ComponentUID: "uid-" + id}
+	c := delivery.RunCycle{ID: id, OrgID: "acme", ProjectID: "shop", JobRef: "ca-" + id, Environment: "development", EndedAt: &now, ComponentUID: "uid-" + id, MergeSHA: "sha-" + id}
 	if suspended {
 		c.JobSuspendedAt = &now
 	}
@@ -528,8 +528,24 @@ func TestSettler_BackstopSuspendsAStartupFailedCycleAtOnce(t *testing.T) {
 	}
 }
 
-// The hold stays for every other close: a merge-closed cycle's Running pod a
-// minute after the merge is still writing its usage line.
+// Only a MERGE-closed cycle's live pod is held: a cycle the workflow closed
+// with nothing merged (Finish(id, ""): a spent budget, a conflict, no work, a
+// landing timeout) has no result line worth waiting for, and a Pending pod
+// left alone would start an agent on the closed cycle once the cluster has
+// room. Due at once, Pending or Running.
+func TestBackstopDue_ANonMergeCloseWithALivePodIsDueAtOnce(t *testing.T) {
+	now := time.Now()
+	ended := now.Add(-time.Minute)
+	closed := delivery.RunCycle{EndedAt: &ended} // Finish(id, ""): no merge sha, no agent reason
+	for _, phase := range []string{"Pending", "Running"} {
+		if !backstopDue(&closed, openchoreo.RuntimePod{Found: true, Phase: phase}, now) {
+			t.Fatalf("%s pod of a cycle closed with nothing merged must be due at once", phase)
+		}
+	}
+}
+
+// The hold stays for a merge-closed cycle: its Running pod a minute after the
+// merge is still writing its usage line.
 func TestBackstopDue_HoldsAMergeClosedLivePodInsideTheCeiling(t *testing.T) {
 	now := time.Now()
 	ended := now.Add(-time.Minute)

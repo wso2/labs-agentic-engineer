@@ -155,6 +155,13 @@ type JobWatcher struct {
 	absent map[string]int
 	seen   map[string]bool
 
+	// unsupported records the attempts (attemptKey) whose release cannot render
+	// suspend, learnt from the first ErrSuspendUnsupported: a release does not
+	// change under an attempt, so the suspend is not asked again and the
+	// warning is logged once (the settler keeps the same memo). In memory: a
+	// restart re-learns it with one call.
+	unsupported map[string]bool
+
 	once sync.Once
 }
 
@@ -176,6 +183,7 @@ func NewJobWatcher(runtime openchoreo.RuntimeClient, cycles cycleWatchStore, tar
 		missing:      map[string]int{},
 		absent:       map[string]int{},
 		seen:         map[string]bool{},
+		unsupported:  map[string]bool{},
 	}
 }
 
@@ -269,6 +277,11 @@ func (w *JobWatcher) Tick(ctx context.Context) {
 	for id := range w.seen {
 		if !live[id] {
 			delete(w.seen, id)
+		}
+	}
+	for id := range w.unsupported {
+		if !live[id] {
+			delete(w.unsupported, id)
 		}
 	}
 }
@@ -401,10 +414,10 @@ const (
 //     marked so it is not re-asked, not announced;
 //   - ErrSuspendUnsupported: a legacy release with no suspend schema; the Job is
 //     left to its TTL and NOT marked, which is how the settler knows suspend
-//     did not apply;
+//     did not apply; remembered per attempt, so it is asked and warned once;
 //   - anything else: not marked, so the next tick retries.
 func (w *JobWatcher) suspendJob(ctx context.Context, cycle *delivery.RunCycle, cause string) {
-	if w.jobs == nil || cycle.JobSuspendedAt != nil {
+	if w.jobs == nil || cycle.JobSuspendedAt != nil || w.unsupported[attemptKey(cycle)] {
 		return
 	}
 	err := w.jobs.SuspendJobBinding(ctx, cycle.OrgID, cycle.ProjectID, cycle.JobRef, cycle.Environment)
@@ -427,6 +440,7 @@ func (w *JobWatcher) suspendJob(ctx context.Context, cycle *delivery.RunCycle, c
 				"cycle", cycle.ID, "error", err)
 		}
 	case errors.Is(err, openchoreo.ErrSuspendUnsupported):
+		w.unsupported[attemptKey(cycle)] = true
 		slog.WarnContext(ctx, "codingagent.job_suspend_unsupported", "cycle", cycle.ID, "component", cycle.JobRef)
 	default:
 		slog.WarnContext(ctx, "codingagent.JobWatcher: suspend job failed (retried next tick)",

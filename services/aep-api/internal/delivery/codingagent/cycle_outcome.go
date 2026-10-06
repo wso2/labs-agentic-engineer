@@ -29,6 +29,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // CycleOutcome is what one tick concluded about a cycle's pod.
@@ -93,18 +94,19 @@ func FailureReason(pod openchoreo.RuntimePod) string {
 // falls back to the first Warning event, because a pod that was never created
 // has no status to read and its events are the only account of why.
 func StartupFailureReason(pod openchoreo.RuntimePod, events []openchoreo.RuntimeEvent) string {
+	const prefix = delivery.CycleReasonStartupFailedPrefix
 	if pod.Found && pod.WaitingReason != "" {
-		return "startup_failed:" + withMessage(pod.WaitingReason, pod.Message)
+		return prefix + withMessage(pod.WaitingReason, pod.Message)
 	}
 	for _, e := range events {
 		if e.Type == "Warning" && e.Reason != "" {
-			return "startup_failed:" + withMessage(e.Reason, e.Message)
+			return prefix + withMessage(e.Reason, e.Message)
 		}
 	}
 	if pod.Found {
-		return "startup_failed:pod_not_running"
+		return prefix + "pod_not_running"
 	}
-	return "startup_failed:no_pod_scheduled"
+	return prefix + "no_pod_scheduled"
 }
 
 // withMessage joins a reason with its human sentence, trimmed so a multi-line

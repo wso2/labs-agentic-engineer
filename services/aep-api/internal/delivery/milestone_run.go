@@ -240,8 +240,9 @@ func IsValidationTerminalReason(reason string) bool {
 // RunReasonAgentStartFailed on a validation run (its agent is the validation
 // agent; on a dev or task run it is the coding agent, a build failure).
 //
-// The overview's build stage and the build ledger both read it, so the two can
-// never disagree about which endings leave a deployed version Deployed.
+// The overview's build stage reads it for the newest dev run; the build ledger
+// reads it for validation runs only (a dev run's ledger row keeps its own
+// ending), which is where the overview never looks.
 func EndedInValidation(kind, reason string) bool {
 	return IsValidationTerminalReason(reason) ||
 		(kind == RunKindValidation && reason == RunReasonAgentStartFailed)
