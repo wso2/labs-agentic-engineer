@@ -78,11 +78,15 @@ export class Script {
 
   /** One question card (ask_question); the turn ends waiting for its answer. */
   ask(toolCallId: string, input: AskQuestionInput): this {
-    this.emit({ type: "tool-call", toolCallId, toolName: ASK_QUESTION_TOOL, input }, 200);
-    const output = { status: "awaiting_user_response" };
-    this.emit({ type: "tool-result", toolCallId, toolName: ASK_QUESTION_TOOL, input, output }, 30);
-    this.parts.push({ type: "tool-call", toolCallId, toolName: ASK_QUESTION_TOOL, input });
-    this.results.push({ type: "tool-result", toolCallId, toolName: ASK_QUESTION_TOOL, output: { type: "json", value: output } });
+    return this.call(toolCallId, ASK_QUESTION_TOOL, input, { status: "awaiting_user_response" });
+  }
+
+  /** A tool call with its result, as the wire carries one that needs no streamed input. */
+  call(toolCallId: string, toolName: string, input: unknown, output: unknown): this {
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 200);
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output }, 30);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "json", value: output } });
     this.lastWasText = false;
     return this;
   }

@@ -16,9 +16,14 @@
  * under the License.
  */
 
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildAnswerInstruction } from "@aep/agent-stream";
 import type { TurnBody } from "../../features/agent-chat/turnScope";
-import { prototypeFeedbackProblem } from "./conversation";
+import { conversationIdFor, runningTurn } from "../chatServer";
+import { prototypeFeedbackProblem, startMockTurn } from "./conversation";
+import { issuesOf } from "./issues";
 
 // The mock refuses a turn's prototypeFeedback where aep-api does (400).
 
@@ -44,5 +49,73 @@ describe("prototypeFeedbackProblem", () => {
     ["a malformed batch", { instruction: "/prototype", collab: true, prototypeFeedback: { ...feedback, requests: [] } }],
   ])("refuses %s", (_, body) => {
     expect(prototypeFeedbackProblem(body)).not.toBeNull();
+  });
+});
+
+// The Issues Page's chat is a second thread on the project, with its own agent.
+
+describe("a turn for the Issues view", () => {
+  const PROJECT = "acme-expenses";
+  const REPORT = "The Save button on the expense form does nothing";
+  const classifies = (turn: { frames: { part: { type: string; toolName?: string } }[] }) =>
+    turn.frames.some((f) => f.part.type === "tool-call" && f.part.toolName === "classify_report");
+
+  beforeEach(() => {
+    sessionStorage.clear();
+    vi.useFakeTimers({ now: new Date("2026-10-06T10:00:00Z") });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("goes to the Issues agent, on its own conversation", () => {
+    const turn = startMockTurn(PROJECT, { instruction: REPORT, view: "issues" });
+    expect(turn.conversationId).toBe("conv-acme-expenses-issues");
+    expect(turn.conversationId).toBe(conversationIdFor(PROJECT, "issues"));
+    expect(turn.view).toBe("issues");
+    expect(classifies(turn)).toBe(true);
+  });
+
+  it("is not what a main turn goes to", () => {
+    const turn = startMockTurn(PROJECT, { instruction: REPORT });
+    expect(turn.conversationId).toBe(conversationIdFor(PROJECT));
+    expect(turn.view).toBeUndefined();
+    expect(classifies(turn)).toBe(false);
+  });
+
+  it("is seen as running only by its own view", () => {
+    const main = startMockTurn(PROJECT, { instruction: "Hello" });
+    expect(runningTurn(PROJECT, "issues")).toBeUndefined();
+    expect(runningTurn(PROJECT)?.turnId).toBe(main.turnId);
+    vi.setSystemTime(Date.now() + 60_000);
+
+    const issues = startMockTurn(PROJECT, { instruction: REPORT, view: "issues" });
+    expect(runningTurn(PROJECT)).toBeUndefined();
+    expect(runningTurn(PROJECT, "issues")?.turnId).toBe(issues.turnId);
+  });
+
+  it("files the issue the user's report drafted, shown in the list once the turn ends", () => {
+    startMockTurn(PROJECT, { instruction: REPORT, view: "issues" });
+    vi.setSystemTime(Date.now() + 60_000);
+    const filing = startMockTurn(PROJECT, { instruction: buildAnswerInstruction("File this issue?", ["File it"]), view: "issues" });
+    expect(issuesOf(PROJECT).some((i) => i.Number === 15)).toBe(false);
+
+    vi.setSystemTime(Date.now() + 60_000);
+    expect(runningTurn(PROJECT, "issues")).toBeUndefined();
+    const filed = issuesOf(PROJECT).find((i) => i.Number === 15);
+    expect(filed).toMatchObject({ State: "open", Labels: ["bug", "src/user"] });
+    expect(filed!.Title).toContain("Save button");
+    expect(filing.reply).toBeDefined();
+  });
+
+  it("keeps a filed issue across a reload, and numbers the next after it", async () => {
+    startMockTurn(PROJECT, { instruction: REPORT, view: "issues" });
+    vi.setSystemTime(Date.now() + 60_000);
+    startMockTurn(PROJECT, { instruction: buildAnswerInstruction("File this issue?", ["File it"]), view: "issues" });
+    vi.setSystemTime(Date.now() + 60_000);
+
+    vi.resetModules();
+    const reloaded = await import("./issues");
+    expect(reloaded.issuesOf(PROJECT).map((i) => i.Number)).toEqual([15, 14, 12, 11, 9, 4]);
+    expect(reloaded.nextIssueNumber(PROJECT)).toBe(16);
+    expect(reloaded.issuesOf("other-project")).toEqual([]);
   });
 });

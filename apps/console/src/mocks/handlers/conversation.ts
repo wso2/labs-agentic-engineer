@@ -19,6 +19,7 @@
 import { http, HttpResponse } from "msw";
 import { SSE_DONE, isPrototypeFeedback } from "@aep/agent-stream";
 import { parsePrototypeCommand } from "@aep/contracts/commands";
+import type { ChatView } from "../../features/agent-chat/chatView";
 import { scopeOfBody, type TurnBody } from "../../features/agent-chat/turnScope";
 import { webApplications } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";
@@ -40,9 +41,11 @@ import { createdProjects } from "../createdProjects";
 import { liveDesign } from "../designState";
 import { acmeExpensesHistory } from "../fixtures/conversation";
 import { scriptDesignTurn } from "../fixtures/designTurns";
+import { scriptIssuesTurn } from "../fixtures/issuesAgent";
 import { scriptTurn } from "../fixtures/interview";
 import { scriptPrototypeTurn } from "../fixtures/prototype";
 import { specView } from "../specState";
+import { fileMockIssue, nextIssueNumber } from "./issues";
 
 type ProjectConversationList = components["schemas"]["ProjectConversationList"];
 type GetConversationOutputBody = components["schemas"]["GetConversationOutputBody"];
@@ -65,6 +68,10 @@ type ApiError = components["schemas"]["Error"];
 // Acme Expenses starts with a conversation; a project made through New
 // project starts with the platform's kickoff (handlers/projects.ts); every
 // other project's is empty, which the real server answers the same way.
+//
+// The Issues Page's chat is a second conversation (`view=issues`) with its own
+// agent (fixtures/issuesAgent.ts): a turn with `view: "issues"` goes to it, and
+// the running turn is looked up per view, so the two chats never block each other.
 
 const AUTHOR = { id: "u-developer", displayName: MOCK_USER.name };
 
@@ -84,12 +91,14 @@ function historyFor(conversationId: string): ConversationMessage[] {
   ];
 }
 
+const viewOf = (view: string | null | undefined): ChatView => (view === "issues" ? "issues" : "main");
+
 function statusOf(turn: MockTurn): TurnStatus {
   const running = isRunning(turn);
   return {
     turnId: turn.turnId,
     conversationId: turn.conversationId,
-    useCase: "general",
+    useCase: turn.view === "issues" ? "issues" : "general",
     status: running ? "running" : "completed",
     instruction: turn.instruction,
     authorId: AUTHOR.id,
@@ -116,8 +125,19 @@ export function prototypeFeedbackProblem(body: TurnBody): string | null {
   return null;
 }
 
+/** A turn for the Issues view: the Issues agent's, filing the issue it drafted once the user says so. */
+function startIssuesTurn(projectName: string, body: TurnBody): MockTurn {
+  const conversationId = conversationIdFor(projectName, "issues");
+  const history = finishedTurns(conversationId).map((t) => t.instruction);
+  const scripted = scriptIssuesTurn(body.instruction, nextIssueNumber(projectName), history);
+  const frames = scripted.frames;
+  if (scripted.filed) fileMockIssue(projectName, scripted.filed, Date.now() + (frames.at(-1)?.at ?? 0));
+  return recordTurn({ projectName, conversationId, view: "issues", instruction: scripted.display, frames, reply: scripted.reply });
+}
+
 /** Start a turn: what the mock agent does with the message, scheduled from now. */
 export function startMockTurn(projectName: string, body: TurnBody): MockTurn {
+  if (body.view === "issues") return startIssuesTurn(projectName, body);
   const scope = scopeOfBody(body);
   const turnKey = `t${Date.now().toString(36)}`;
   const prototypeTurn = parsePrototypeCommand(body.instruction)
@@ -204,11 +224,11 @@ function notFound(what: string): Response {
 }
 
 export const conversationHandlers = [
-  http.get("*/api/v1/projects/:projectName/agents/conversations", ({ params }) =>
+  http.get("*/api/v1/projects/:projectName/agents/conversations", ({ params, request }) =>
     HttpResponse.json<ProjectConversationList>({
       conversations: [
         {
-          conversationId: conversationIdFor(String(params.projectName)),
+          conversationId: conversationIdFor(String(params.projectName), viewOf(new URL(request.url).searchParams.get("view"))),
           createdAt: "2026-09-29T09:00:00Z",
           createdBy: "Developer",
           current: true,
@@ -231,10 +251,11 @@ export const conversationHandlers = [
     if (feedbackProblem) {
       return HttpResponse.json<ApiError>({ code: "invalid_request", message: feedbackProblem }, { status: 400 });
     }
-    if (String(params.conversationId) !== conversationIdFor(projectName)) {
+    const view = viewOf(body.view);
+    if (String(params.conversationId) !== conversationIdFor(projectName, view)) {
       return HttpResponse.json<TurnConflict>({ code: "conversation_rotated" }, { status: 409 });
     }
-    const running = runningTurn(projectName);
+    const running = runningTurn(projectName, view);
     if (running) {
       return HttpResponse.json<TurnConflict>({ code: "turn_in_progress", activeTurnId: running.turnId }, { status: 409 });
     }
@@ -242,8 +263,8 @@ export const conversationHandlers = [
     return HttpResponse.json<TurnOutputBody>({ turnId: turn.turnId }, { status: 202 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/active", ({ params }): Response => {
-    const running = runningTurn(String(params.projectName));
+  http.get("*/api/v1/projects/:projectName/turns/active", ({ params, request }): Response => {
+    const running = runningTurn(String(params.projectName), viewOf(new URL(request.url).searchParams.get("view")));
     return running ? HttpResponse.json<TurnStatus>(statusOf(running)) : new HttpResponse(null, { status: 204 });
   }),
 

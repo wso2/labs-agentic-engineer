@@ -16,6 +16,7 @@
  * under the License.
  */
 
+import type { ChatView } from "../features/agent-chat/chatView";
 import type { PrototypeFeedback } from "../features/agent-chat/turnScope";
 import type { StreamPart } from "@aep/agent-stream";
 import type { components } from "../generated/aep-api";
@@ -63,6 +64,8 @@ export interface MockTurn {
   turnId: string;
   projectName: string;
   conversationId: string;
+  /** The view whose chat this turn belongs to; absent is the project's main chat. */
+  view?: ChatView;
   /** The display record: the message that started it. */
   instruction: string;
   startedAt: number;
@@ -103,8 +106,9 @@ function write(state: State): void {
   }
 }
 
-export function conversationIdFor(projectName: string): string {
-  return `conv-${projectName}`;
+/** A project's conversation in a view: the main chat's, or the Issues Page's own. */
+export function conversationIdFor(projectName: string, view: ChatView = "main"): string {
+  return view === "main" ? `conv-${projectName}` : `conv-${projectName}-${view}`;
 }
 
 function duration(turn: MockTurn): number {
@@ -115,8 +119,9 @@ export function isRunning(turn: MockTurn, now = Date.now()): boolean {
   return now < turn.startedAt + duration(turn);
 }
 
-export function runningTurn(projectName: string): MockTurn | undefined {
-  return read().turns.find((t) => t.projectName === projectName && isRunning(t));
+/** The turn running in a view's chat (the main chat's by default): one at a time per conversation. */
+export function runningTurn(projectName: string, view: ChatView = "main"): MockTurn | undefined {
+  return read().turns.find((t) => t.projectName === projectName && (t.view ?? "main") === view && isRunning(t));
 }
 
 export function findTurn(turnId: string): MockTurn | undefined {

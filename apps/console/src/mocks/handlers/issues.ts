@@ -18,6 +18,7 @@
 
 import { http, HttpResponse } from "msw";
 import type { components } from "../../generated/aep-api";
+import type { FiledIssue } from "../fixtures/issuesAgent";
 
 type IssueInfo = components["schemas"]["IssueInfo"];
 type TaskDetail = components["schemas"]["TaskDetail"];
@@ -116,8 +117,64 @@ function taskLog(): string {
   return [...frames, "data: [DONE]\n\n"].join("");
 }
 
-function issuesOf(projectName: string): IssueInfo[] {
-  return ISSUES[projectName] ?? [];
+/** An issue the Issues agent filed: the issue, and when the turn that filed it ends and the list may show it. */
+interface FiledRecord {
+  issue: IssueInfo;
+  visibleAt: number;
+}
+
+const FILED_KEY = "aep:mock:issues";
+
+function readFiled(): Record<string, FiledRecord[]> {
+  try {
+    const raw = sessionStorage.getItem(FILED_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, FiledRecord[]>;
+  } catch {
+    // unreadable: start over
+  }
+  return {};
+}
+
+function writeFiled(filed: Record<string, FiledRecord[]>): void {
+  try {
+    sessionStorage.setItem(FILED_KEY, JSON.stringify(filed));
+  } catch {
+    /* quota: non-fatal in mock mode */
+  }
+}
+
+/** The number the next filed issue takes: after the highest the project has, filed ones included. */
+export function nextIssueNumber(projectName: string): number {
+  const numbers = [...(ISSUES[projectName] ?? []), ...(readFiled()[projectName] ?? []).map((f) => f.issue)].map((i) => i.Number);
+  return Math.max(0, ...numbers) + 1;
+}
+
+/**
+ * File an issue as the Issues agent would, labelled with its kind and as the
+ * user's. Kept in sessionStorage, so it survives a reload as the chat does.
+ * `visibleAt` holds it out of the list until the turn that files it has ended,
+ * as the chat only says "Filed" then.
+ */
+export function fileMockIssue(projectName: string, filed: FiledIssue, visibleAt = Date.now()): IssueInfo {
+  const number = nextIssueNumber(projectName);
+  const issue: IssueInfo = {
+    Number: number,
+    Title: filed.title,
+    Body: filed.body,
+    URL: `https://github.com/acme/${projectName}/issues/${number}`,
+    State: "open",
+    Labels: [filed.kind, "src/user"],
+  };
+  const all = readFiled();
+  all[projectName] = [...(all[projectName] ?? []), { issue, visibleAt }];
+  writeFiled(all);
+  return issue;
+}
+
+/** The project's issues: those the agent has filed (newest first), then the fixtures. */
+export function issuesOf(projectName: string, now = Date.now()): IssueInfo[] {
+  const filed = (readFiled()[projectName] ?? []).filter((f) => f.visibleAt <= now).map((f) => f.issue);
+  return [...filed.reverse(), ...(ISSUES[projectName] ?? [])];
 }
 
 export const issuesHandlers = [
