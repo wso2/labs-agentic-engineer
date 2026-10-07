@@ -267,13 +267,20 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	}
 }
 
-// The plan turn reads the version it plans, not main's tip (B2): an edit made
-// to the spec after the version was cut never reaches the planner.
-//
-// TODO(main-sync Task 47): API-13/API-29: main's case ran on its workspace
-// rig (seed design.md, cut v2, edit main, plan milestone 7, assert the turn's
-// workspace ref is v2's commit). Rewrite it on newPlanRig/aestudiotest once the
-// plan turn pins scope.Tag.
+// The plan turn reads the version it plans, not main's tip (B2): the turn
+// names the version's tag as the commit the planner reads, so an edit made to
+// the spec after the version was cut never reaches it. It pins the tag with
+// or without a story scope (a scope-less first pass still plans the version).
 func TestPlanIntoMilestone_ReadsTheVersionNotMain(t *testing.T) {
-	t.Skip("TODO(main-sync Task 47, API-13): the plan turn does not pin the version's tag yet")
+	r := newPlanRig(t, planVersions{specTag: "v2"})
+	if req := r.plan(t).Request; req.At != "tags/v2" || req.Scope != nil {
+		t.Errorf("scope-less plan: at = %q, scope = %+v, want tags/v2 and no scope", req.At, req.Scope)
+	}
+
+	r = newPlanRig(t, planVersions{specTag: "v3", scope: spec.BuildScope{
+		Tag: "v3", InScope: []string{"F1.1"}, StoryTitles: map[string]string{"F1.1": "As a user, I want A."},
+	}})
+	if req := r.plan(t).Request; req.At != "tags/v3" || req.Scope == nil || req.Scope.Tag != "v3" {
+		t.Errorf("scoped plan: at = %q, scope = %+v, want tags/v3 with the v3 scope", req.At, req.Scope)
+	}
 }

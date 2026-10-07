@@ -146,12 +146,16 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 	defer cancel()
 	// A fresh turn id per plan: a Plan is one-shot, never resumed. No credit:
 	// no run row records who asked for the build (C7).
-	// TODO(main-sync Task 47): API-13 (B2): the pod must plan against the
-	// version's tag (scope.Tag), not main's tip.
+	//
+	// The planner reads the version's TAG, not main's tip (B2): the plan is
+	// for the spec that was versioned, and an edit made to the requirements
+	// or the design since must not leak into it. The scope above reads the
+	// same tag.
 	events, err := s.turns.StartTurn(streamCtx, ref, aestudiotools.TurnRequest{
 		TurnID:      uuid.NewString(),
 		Project:     projectID,
 		Kind:        aestudiotools.TurnKindPlan,
+		At:          "tags/" + versions.Latest,
 		Scope:       planScopeFor(scope, covered),
 		TaskContext: planContextFor(contextFiles),
 	})
@@ -241,9 +245,6 @@ func (s *PlanService) assembleMilestoneTasks(ctx context.Context, orgID, project
 // Platform-computed — the model never decides coverage, and never sees this as
 // anything but the section the design agent renders from it. nil when the
 // tag carries no readable stories.
-//
-// TODO(main-sync Task 47): API-13: the client sends ID, Features and
-// ProductWide only once the ae-studio-tools contract has them (turns.go).
 func planScopeFor(scope spec.BuildScope, covered map[string]bool) *aestudiotools.PlanScope {
 	if len(scope.InScope) == 0 {
 		return nil
