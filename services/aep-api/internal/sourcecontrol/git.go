@@ -90,6 +90,11 @@ type TagInfo struct {
 	Name       string `json:"name"`
 	CommitHash string `json:"commitHash"`
 	Message    string `json:"message,omitempty"`
+	// Body is the annotation after its subject line (trimmed), empty for a
+	// lightweight tag. A spec version records its build scope there.
+	// TODO(Task 47, API-8): the pod's list-tags does not return the body yet,
+	// so the adapter leaves it empty and every version reads as unscoped.
+	Body string `json:"body,omitempty"`
 	// CreatedAt is git's `creatordate`: the tag's own date for an annotated
 	// tag, the commit's for a lightweight one. It orders versions, whose
 	// names are the user's (spec ADR-0030) and carry no sequence. Zero when

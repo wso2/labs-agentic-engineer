@@ -45,11 +45,9 @@ func (s *artifactService) SpecState(ctx context.Context, orgID, projectID string
 	if err != nil {
 		return out, err
 	}
-	names, err := s.git.Workspace().ListReferences(ctx, ref)
-	if err != nil {
-		return out, fmt.Errorf("list references: %w", err)
-	}
-	out.Documents = names
+	// TODO(Task 47, API-10): list the attached documents' names through the
+	// pod (list-repo-references); until then Documents stays empty.
+	out.Documents = []string{}
 	if s.designRuns == nil {
 		return out, nil
 	}
@@ -60,7 +58,7 @@ func (s *artifactService) SpecState(ctx context.Context, orgID, projectID string
 	if len(runs) == 0 {
 		return out, nil
 	}
-	reqFiles, err := s.readBundleAt(ctx, ref, "", requirementsPrefix, requirementsBundleFilter)
+	reqFiles, err := s.readBundleAt(ctx, ref, "", requirementsBundle)
 	if err != nil {
 		return out, fmt.Errorf("read requirements: %w", err)
 	}
@@ -69,7 +67,7 @@ func (s *artifactService) SpecState(ctx context.Context, orgID, projectID string
 		if files, ok := read[commit]; ok {
 			return files
 		}
-		files, rerr := s.readBundleAtCommit(ctx, ref, commit, requirementsPrefix, requirementsBundleFilter)
+		files, rerr := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
 		if rerr != nil {
 			slog.WarnContext(ctx, "spec state: a design run's commit is unreadable", "project", projectID, "base", commit, "error", rerr)
 			files = nil

@@ -114,7 +114,7 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return nil, err
 	}
-	acceptanceFiles, err := s.readBundleAtCommit(ctx, ref, commit, acceptancePrefix, acceptanceBundleFilter)
+	acceptanceFiles, err := s.readBundleAtCommit(ctx, ref, commit, acceptanceBundle)
 	if err != nil {
 		return nil, err
 	}
@@ -310,7 +310,7 @@ func (s *artifactService) staleFeatures(
 		if files, ok := read[commit]; ok {
 			return files
 		}
-		files, err := s.readBundleAtCommit(ctx, ref, commit, requirementsPrefix, requirementsBundleFilter)
+		files, err := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
 		if err != nil {
 			slog.WarnContext(ctx, "spec save: a design run's commit is unreadable; its features' staleness unchecked",
 				"project", projectID, "base", commit, "error", err)

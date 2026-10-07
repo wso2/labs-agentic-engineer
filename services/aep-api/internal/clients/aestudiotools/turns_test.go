@@ -136,7 +136,7 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 	req := TurnRequest{
 		TurnID: turnID, Project: "greeter", Kind: "plan",
-		Scope:       &PlanScope{Tag: "m1", Stories: []PlanStory{{Number: 1, Title: "Greet", Covered: true}, {Number: 2}}},
+		Scope:       &PlanScope{Tag: "m1", Stories: []PlanStory{{ID: "F1.1", Title: "Greet", Covered: true}, {ID: "F1.2"}}},
 		TaskContext: []PlanContextFile{{Path: "tasks/1.md", Body: "# one"}},
 	}
 	seq, err := a.StartTurn(context.Background(), acmeGreeter, req)
@@ -148,7 +148,9 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	}
 	raw, _ := json.Marshal(body)
 	for _, want := range []string{
-		`"scope":{"stories":[{"covered":true,"number":1,"title":"Greet"},{"covered":false,"number":2}],"tag":"m1"}`,
+		// TODO(Task 47, API-13): the wire carries no story ID yet; assert
+		// "id":"F1.1" once the ae-studio-tools contract has it.
+		`"scope":{"stories":[{"covered":true,"number":0,"title":"Greet"},{"covered":false,"number":0}],"tag":"m1"}`,
 		`"taskContext":[{"body":"# one","path":"tasks/1.md"}]`,
 	} {
 		if !strings.Contains(string(raw), want) {

@@ -242,8 +242,8 @@ func (s *PlanService) assembleMilestoneTasks(ctx context.Context, orgID, project
 // anything but the section the design agent renders from it. nil when the
 // tag carries no readable stories.
 //
-// TODO(main-sync Task 47): API-13: aestudiotools.PlanStory.ID (string),
-// PlanFeature and PlanItem need the ae-studio-tools contract change + regen.
+// TODO(main-sync Task 47): API-13: the client sends ID, Features and
+// ProductWide only once the ae-studio-tools contract has them (turns.go).
 func planScopeFor(scope spec.BuildScope, covered map[string]bool) *aestudiotools.PlanScope {
 	if len(scope.InScope) == 0 {
 		return nil

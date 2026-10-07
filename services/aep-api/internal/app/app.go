@@ -476,9 +476,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		runs := make([]spec.DesignRun, 0, len(turns))
 		for _, t := range turns {
 			// TODO(main-sync Task 48): API-11 (1b): Summary holds the design
-			// feature IDs the pod reports; spec.DesignedFeatures lived in the
-			// deleted start_command.go and read a `/design F1 F2` line.
-			runs = append(runs, spec.DesignRun{BaseRef: t.BaseRef, Features: spec.DesignedFeatures(t.Summary)})
+			// feature IDs the pod reports; read them here. Until then a run
+			// names no features (nil = every feature designable at its commit).
+			runs = append(runs, spec.DesignRun{BaseRef: t.BaseRef})
 		}
 		return runs, nil
 	})
