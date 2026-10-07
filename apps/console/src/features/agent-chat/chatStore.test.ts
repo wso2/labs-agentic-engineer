@@ -19,7 +19,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StreamPart } from "@aep/agent-stream";
 import type { ConversationMessage } from "./api/conversation";
-import { ConversationRotatedError, TurnInProgressError, type TurnStatus } from "./api/turns";
+import { ConversationRotatedError, TurnInProgressError, TurnStreamAttachError, type TurnStatus } from "./api/turns";
 import { createChatStore, type ChatApi } from "./chatStore";
 import type { TurnBody, TurnScope } from "./turnScope";
 
@@ -289,6 +289,38 @@ describe("the scope on every turn", () => {
 });
 
 describe("reattaching after a reload", () => {
+  // A long turn overflowed its replay buffer: the pod refuses the replay
+  // (409 replay_truncated) and the fold waits on the turn's status. Nothing
+  // of the turn was folded, so its reply comes from the persisted history.
+  it("shows the persisted reply of a turn it could only watch through its status", async () => {
+    const reply: ConversationMessage[] = [
+      { role: "user", content: "Earlier" },
+      { role: "user", content: "Design everything." },
+      { role: "assistant", content: [{ type: "text", text: "Designed five components." }] },
+    ];
+    const history = vi.fn<ChatApi["history"]>().mockResolvedValueOnce([{ role: "user", content: "Earlier" }]).mockResolvedValue(reply);
+    const { store, chat, ended } = setup({
+      active: running("t7", "Design everything."),
+      api: {
+        history,
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t7", "Design everything."), status: "completed" }),
+      },
+    });
+    await store.open(PROJECT);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(chat().items.map((i) => (i.kind === "agent" ? i.text : i.kind))).toContain("Designed five components."));
+    expect(chat().turn).toEqual({ phase: "idle" });
+  });
+
+  it("does not read the history again for a turn whose stream it folded to the end", async () => {
+    const { store, api, streams, ended } = setup({ active: running("t7", "Hi") });
+    streams.set("t7", sse([{ type: "text-delta", delta: "Hello." }, { type: "turn-completed" }]));
+    await store.open(PROJECT);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    expect(api.history).toHaveBeenCalledTimes(1);
+  });
+
   it("finds the running turn, shows the message that started it, and folds it from the start", async () => {
     const { store, streams, chat, ended } = setup({
       history: [{ role: "user", content: "Earlier" }],

@@ -203,7 +203,7 @@ export function createChatStore(options: ChatStoreOptions) {
     own(projectName, turn.turnId);
   }
 
-  function sinkFor(projectName: string, turnId: string, onEnded: (outcome: TurnOutcome) => void): TurnSink {
+  function sinkFor(projectName: string, turnId: string, onEnded: TurnSink["ended"]): TurnSink {
     const e = entry(projectName);
     return {
       text: (delta) => setItems(projectName, (items) => appendAgentText(items, turnId, delta)),
@@ -252,20 +252,38 @@ export function createChatStore(options: ChatStoreOptions) {
       };
     });
     takeClaimedKickoff(projectName);
+    const shownBefore = new Set(entry(projectName).state.items.map((i) => i.id));
     let outcome: TurnOutcome | null = null;
+    let endedFrom: "stream" | "status" | null = null;
     try {
       await foldTurn({
         api,
         projectName,
         turnId,
         signal: new AbortController().signal,
-        sink: sinkFor(projectName, turnId, (o) => (outcome = o)),
+        sink: sinkFor(projectName, turnId, (o, from) => {
+          outcome = o;
+          endedFrom = from;
+        }),
       });
     } catch {
       setItems(projectName, (items) => [
         ...items,
         { kind: "error", id: localId("e"), text: "Lost the agent's stream. It picks up again when the chat reopens." },
       ]);
+    }
+    // An end learned from the turn's status (a replay the pod refused as
+    // truncated, or a turn already over when attached) leaves what the turn
+    // said unfolded: it is in the persisted history now. The errors this
+    // attach raised stay after it.
+    if (endedFrom === "status") {
+      const raised = entry(projectName).state.items.filter((i) => i.kind === "error" && !shownBefore.has(i.id));
+      try {
+        await readHistory(projectName);
+        setItems(projectName, (items) => [...items, ...raised]);
+      } catch {
+        // The history stays as it was; the next open reads it again.
+      }
     }
     update(projectName, () => ({ turn: { phase: "idle" } }));
     if (outcome) for (const fn of turnEndListeners) fn(projectName, outcome);

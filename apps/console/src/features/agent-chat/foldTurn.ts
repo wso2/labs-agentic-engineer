@@ -57,8 +57,13 @@ export interface TurnSink {
   /** A file write the bundle accepted: its `tool-result`, carrying the call's input. */
   wrote: (part: StreamPart) => void;
   error: (text: string) => void;
-  /** The turn reached its terminal. Called at most once, never on a detach. */
-  ended: (outcome: "completed" | "failed") => void;
+  /**
+   * The turn reached its terminal. Called at most once, never on a detach.
+   * `from` says how the end was learned: its terminal frame (`stream`), or a
+   * status read (`status`), after which what the turn said is in the
+   * persisted history, not necessarily in what was folded.
+   */
+  ended: (outcome: "completed" | "failed", from: "stream" | "status") => void;
 }
 
 /** The two calls the fold makes: the stream, and the status that settles a severed one. */
@@ -115,21 +120,21 @@ export async function foldTurn(input: {
 }): Promise<void> {
   const { api, projectName, turnId, signal, sink } = input;
   let ended = false;
-  const end = (outcome: "completed" | "failed") => {
+  const end = (outcome: "completed" | "failed", from: "stream" | "status") => {
     if (ended) return;
     ended = true;
-    sink.ended(outcome);
+    sink.ended(outcome, from);
   };
   const settle = (read: TurnRead | ({ status?: string } & TurnFailure)): boolean => {
     if (read === null || read === "gone") return false;
     const status = read;
     if (status.status === "completed") {
-      end("completed");
+      end("completed", "status");
       return true;
     }
     if (status.status === "failed") {
       sink.error(turnFailureText(status));
-      end("failed");
+      end("failed", "status");
       return true;
     }
     return false;
@@ -220,11 +225,11 @@ export async function foldTurn(input: {
         sink.error(typeof part.error === "string" ? part.error : "The agent hit an error.");
         break;
       case "turn-completed":
-        end("completed");
+        end("completed", "stream");
         break;
       case "turn-failed":
         sink.error(turnFailureText(part as TurnFailure));
-        end("failed");
+        end("failed", "stream");
         break;
       default:
         break; // start/finish plumbing: nothing to show
