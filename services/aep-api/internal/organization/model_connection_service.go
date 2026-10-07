@@ -274,10 +274,12 @@ func (s *ModelConnectionService) connectionRow(ctx context.Context, ocOrgID stri
 // the subscription is not consulted at all (the save rule keeps one from being
 // stored alongside OpenCode; this keeps a stray row from ever reaching a run).
 //
-// Fails closed. A subscription that exists but has no usable reference is an
-// error, never a silent fall-through to the connection's key: the org chose to
-// bill its plan, and quietly billing API credits instead defeats that choice
-// while leaving no trace the org can see.
+// A subscription whose token was never recorded in vault (its credential row
+// has no coding-agent-key reference row: saved before the token lived there)
+// cannot be mounted, so the run bills the connection's key, with a WARN; GET
+// /config shows that subscription flagged tokenMissing so the org can save the
+// token again. A subscription that is not active is still an error: its token
+// was recorded and refused, which the org has to fix.
 func (s *ModelConnectionService) ResolveCodingCredential(ctx context.Context, ocOrgID string, runtime orgconfig.AgentRuntime) (CodingCredential, error) {
 	row, err := s.conns.GetByOrg(ctx, ocOrgID)
 	if err != nil {
@@ -303,7 +305,8 @@ func (s *ModelConnectionService) ResolveCodingCredential(ctx context.Context, oc
 }
 
 // subscriptionRef is the Claude subscription's reference, ok=false when the
-// org has none; an unusable one is an error (see ResolveCodingCredential).
+// org has none or its token was never recorded; one that is not active is an
+// error (see ResolveCodingCredential).
 func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID string) (SecretRefTriplet, bool, error) {
 	sub, err := s.subs.GetByOrg(ctx, ocOrgID, AnthropicRoleCoding)
 	if err != nil {
@@ -318,10 +321,13 @@ func (s *ModelConnectionService) subscriptionRef(ctx context.Context, ocOrgID st
 				"or remove the subscription so coding bills the connection's key", ocOrgID, sub.Status)
 	}
 	ref, err := s.recordedRef(ctx, ocOrgID, OrgSecretCodingAgentKey)
-	if err != nil {
-		return SecretRefTriplet{}, false, fmt.Errorf(
-			"the Claude subscription for org %q is configured but %w — save its token again in Settings, "+
-				"or remove the subscription so coding bills the connection's key", ocOrgID, err)
+	switch {
+	case errors.Is(err, errRefNotRecorded):
+		slog.WarnContext(ctx, "coding: Claude subscription token not recorded; using the model connection's key",
+			"ocOrgId", ocOrgID)
+		return SecretRefTriplet{}, false, nil
+	case err != nil:
+		return SecretRefTriplet{}, false, fmt.Errorf("resolve coding credential: subscription: %w", err)
 	}
 	return ref, true, nil
 }
@@ -338,10 +344,14 @@ func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string
 		return SecretRefTriplet{}, fmt.Errorf("read the %s row: %w", sec, err)
 	}
 	if row == nil || row.Name == "" {
-		return SecretRefTriplet{}, fmt.Errorf("the %s reference is not recorded", sec)
+		return SecretRefTriplet{}, fmt.Errorf("the %s %w", sec, errRefNotRecorded)
 	}
 	return SecretRefTriplet{Name: row.Name, Property: sec.ValueKey()}, nil
 }
+
+// errRefNotRecorded is recordedRef's "no row": the secret was never written to
+// vault, as opposed to a failed read.
+var errRefNotRecorded = errors.New("reference is not recorded")
 
 // keySet reports whether the org's default-key reference row exists: the
 // record that the connection's key was written to vault.

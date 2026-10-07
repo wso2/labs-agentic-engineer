@@ -92,7 +92,8 @@ func (s *AgentSettingsService) WithStudioConverger(c StudioConverger) *AgentSett
 
 // Effective returns how the org's agents run: its chosen runtime (or the
 // platform default when nobody chose), the runtimes this installation can run,
-// and its Claude subscription, masked, when it has one. Never an error for
+// and its Claude subscription, masked, when it has one (flagged TokenMissing
+// when its token was never recorded in vault). Never an error for
 // "not set": the default IS the answer. A chosen runtime the installation can
 // no longer run is returned as chosen, never substituted: dispatch fails naming
 // the missing image, and the projection is what lets a client say why.
@@ -108,22 +109,24 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 		out.Runtime = row.Runtime
 		out.UpdatedAt, out.UpdatedBy = &updatedAt, &updatedBy
 	}
-	// A row means set: a credential row whose coding-agent-key reference row is
-	// missing (saved before the token lived in vault) has no usable token.
+	// The credential row is the subscription, the same predicate coding
+	// dispatch keys on (ResolveCodingCredential). One whose coding-agent-key
+	// reference row is missing (saved before the token lived in vault) is
+	// still projected, flagged TokenMissing: dispatch bills the connection's
+	// key instead, so the card offers it for Replace or Remove.
+	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
+	switch {
+	case isNotFound(err):
+		return out, nil
+	case err != nil:
+		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
+	}
 	set, err := s.conns.CodingKeySet(ctx, ocOrgID)
 	if err != nil {
 		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
 	}
-	if !set {
-		return out, nil
-	}
-	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
-	switch {
-	case err == nil:
-		out.Subscription = subscriptionProjectionFrom(sub)
-	case !isNotFound(err):
-		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
-	}
+	out.Subscription = subscriptionProjectionFrom(sub)
+	out.Subscription.TokenMissing = !set
 	return out, nil
 }
 

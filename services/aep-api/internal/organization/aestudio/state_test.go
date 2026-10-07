@@ -230,6 +230,9 @@ func TestStatus_StuckBindingFails(t *testing.T) {
 		{"progressing, inside the bound", func(f *fixture) {
 			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound - time.Second)
 		}, StateProvisioning},
+		{"progressing for 15 min, a first Cloud install still applying", func(f *fixture) {
+			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(15 * time.Minute)
+		}, StateProvisioning},
 		{"progressing, past the bound", func(f *fixture) {
 			f.withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound + time.Second)
 		}, StateFailed},

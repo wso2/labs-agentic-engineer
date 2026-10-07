@@ -3095,9 +3095,12 @@ components:
           allOf:
           - $ref: '#/components/schemas/SubscriptionProjection'
           description: >-
-            The stored Claude subscription token, masked, or null when coding
-            bills the connection's key. Only possible while the connection has
+            The stored Claude subscription, masked, or null when coding bills
+            the connection's key. Only possible while the connection has
             `capabilities.claudeSubscription` and the runtime is `claude-code`.
+            Present whenever the subscription exists, also when its token was
+            never recorded (`tokenMissing`): coding dispatch reads the same
+            fact.
           nullable: true
         updatedAt:
           format: date-time
@@ -3138,6 +3141,14 @@ components:
           type: string
         validationError:
           type: string
+        tokenMissing:
+          description: >-
+            True when the token was never recorded in the vault (a
+            subscription saved before the vault held it). Coding then bills
+            the connection's API key until the token is saved again; removing
+            the subscription (`agents.subscription: null`) clears the flag.
+            Absent while the token is recorded.
+          type: boolean
       required:
       - kind
       - status

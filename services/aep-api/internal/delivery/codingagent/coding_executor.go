@@ -448,9 +448,9 @@ type runnerCredentials struct {
 // runtime bills — its Claude subscription when it has one and the runtime is
 // Claude Code, the connection's key otherwise — and which connection it is
 // for. The domain answers in its own terms (a kind, never a variable name);
-// modelEnv maps that to the runner's env contract. The resolver fails closed
-// on a configured-but-unusable subscription, so a run never silently bills API
-// credits an org chose to replace with its plan.
+// modelEnv maps that to the runner's env contract. A subscription whose token
+// was never recorded resolves to the connection's key (logged); one that is not
+// active is an error.
 //
 // The GitHub side is the github-pat reference (githubSecretRef) and the org's
 // GitHub owner (githubOwner).

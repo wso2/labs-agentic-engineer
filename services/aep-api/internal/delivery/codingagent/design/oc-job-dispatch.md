@@ -250,7 +250,9 @@ onto every cycle, beside the credential ref. The runtime is read FIRST, because
 it decides the credential: `ResolveCodingCredential(org, runtime)` returns the org's Claude
 subscription only when the runtime is Claude Code, and its connection key
 otherwise, with the connection that key is for; exactly one credential reaches
-the run (ADR-0036). The organization domain answers with a KIND, never a
+the run (ADR-0036). A subscription whose token was never recorded in vault
+resolves to the connection's key, with a WARN, rather than failing the
+dispatch. The organization domain answers with a KIND, never a
 variable name: `modelEnv` (`model_env.go`) is the one mapping onto the runner's
 contract. The connection rides as plain env (`AEP_MODEL_FORMAT`,
 `AEP_MODEL_BASE_URL`, `AEP_MODEL_AUTH_SCHEME`, `AEP_MODEL_WEB_SEARCH`, and

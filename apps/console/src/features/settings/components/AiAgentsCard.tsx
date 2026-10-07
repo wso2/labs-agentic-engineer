@@ -356,9 +356,19 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
               Remove
             </Button>
           </CredentialField>
-          <Typography variant="body2" color="text.secondary">
-            Coding bills your Claude plan. Other agents use the API key.
-          </Typography>
+          {/* A token never recorded in the vault: dispatch cannot mount it,
+              so coding bills the connection's key until it is replaced. */}
+          {stored.tokenMissing ? (
+            <Alert severity="warning">
+              The Claude subscription token was never saved, so coding uses the
+              API key. Replace the token to bill your Claude plan, or remove the
+              subscription.
+            </Alert>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Coding bills your Claude plan. Other agents use the API key.
+            </Typography>
+          )}
           {stored.validationError && (
             <Alert severity="warning">{stored.validationError}</Alert>
           )}

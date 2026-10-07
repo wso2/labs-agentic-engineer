@@ -35,7 +35,7 @@ const AeStudioRestartingContext = createContext(false);
 
 // How long the first-visit hold may cover the console before it gives way to
 // the console with the restarting banner. Above the pod's startup budget
-// (200 s for its slowest container), below the backend's own not-Ready bound (10 min), so a pod that
+// (200 s for its slowest container), below the backend's own not-Ready bound (20 min), so a pod that
 // is merely slow still lands inside the hold and one that is stuck never
 // locks the console for longer than this.
 export const AE_STUDIO_HOLD_CAP_MS = 5 * 60_000;

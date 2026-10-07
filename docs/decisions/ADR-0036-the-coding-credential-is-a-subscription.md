@@ -1,7 +1,8 @@
 # ADR-0036 — The coding credential is a Claude subscription, and the AI agents card saves as one unit
 
 **Status:** Accepted · 2026-09-24 · Amended 2026-09-26 (the connection replaces
-the org's API key, last section)
+the org's API key), 2026-10-06 (the vault write is the write), 2026-10-07 (a
+subscription with no recorded token bills the connection's key)
 **Supersedes:** [ADR-0016](ADR-0016-coding-agent-key-is-an-override-not-a-peer.md)
 (the coding-agent key is an override on the org's key). Its reasons for one
 credential variable per run, for persisting `credential_kind`, for the kind-aware
@@ -148,3 +149,19 @@ amendment. A save that succeeds has already written its reference, so
 dispatch never mounts a credential older than the last successful save; a
 failed save leaves the previous credential in place and answers 502. The rest
 of decision 4, and decisions 3 and 5, stand.
+
+## Amendment 2026-10-07 — a subscription with no recorded token bills the connection's key
+
+A subscription saved before its token lived in vault has a credential row and
+no `coding-agent-key` reference row: there is nothing to mount. Decision 5 now
+treats it as no subscription. `ResolveCodingCredential` returns the
+connection's key and logs a value-free WARN naming the org, so the run
+proceeds instead of failing every dispatch. A subscription row whose status is
+not `active` still fails the dispatch: its token was recorded and refused.
+
+GET /config reads the subscription off the same fact, the credential row, so
+Settings and dispatch never disagree. Such a subscription is projected with
+`tokenMissing: true`, and the AI agents card shows it set with **Replace** and
+**Remove** and a warning that coding uses the API key until the token is saved
+again. Saving the token records the reference; Remove (`agents.subscription:
+null`) deletes the row. No backfill: the org acts on the warning.

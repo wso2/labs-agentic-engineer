@@ -146,3 +146,4 @@ end with exactly one period.
 | A stored key (API key, subscription token) | exactly **Set ••••••••**; no key: **Not set**. Never a prefix, a last four or any other part of the key: the server returns none. **Replace** swaps in the key input |
 | Key refused by the secret store (`secret_store_write_failed`) | the server's message on the key field |
 | Saved, but a follow-up step failed (`agent_manager_not_updated`) | beside **Test connection**; the key is saved |
+| A Claude subscription whose token was never recorded (`tokenMissing`) | shown set (**Set ••••••••**, **Replace**, **Remove**) with a warning: *The Claude subscription token was never saved, so coding uses the API key. Replace the token to bill your Claude plan, or remove the subscription.* Never hidden: the org chose its plan and is billed API credits until it acts |
