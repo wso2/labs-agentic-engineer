@@ -66,9 +66,9 @@ type Server struct {
 	mu       sync.Mutex
 	started  int
 	requests []json.RawMessage // every start request's body, refused or not
-	turns   map[string]*turn  // by turnId, kept after the turn ends
-	active  map[string]string // project → its running turnId
-	running sync.WaitGroup
+	turns    map[string]*turn  // by turnId, kept after the turn ends
+	active   map[string]string // project → its running turnId
+	running  sync.WaitGroup
 }
 
 // turn is one turn's frames so far. changed is closed and replaced on every

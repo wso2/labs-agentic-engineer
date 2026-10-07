@@ -50,10 +50,11 @@ type TurnRelay interface {
 }
 
 // startRepoTurn checks that the project is this repository's, resolves a
-// plan turn's at to its commit, then hands the turn to the relay. The project resolves through aep-api, in this pod's
-// org; owner/repo must be its repository (GitHub names, compared
-// case-insensitively), else 404 project_unknown: a caller cannot run a turn
-// for a project against another repository.
+// plan turn's at to its commit, then hands the turn to the relay. The
+// project resolves through aep-api, in this pod's org; owner/repo must be its
+// repository (GitHub names, compared case-insensitively), else 404
+// project_unknown: a caller cannot run a turn for a project against another
+// repository.
 func (s internalServer) startRepoTurn(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -86,11 +87,12 @@ func (s internalServer) startRepoTurn(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.At != "" {
 		sha, err := s.ResolveAt(r.Context(), owner, name, rep.DefaultBranch, req.At)
-		if err == nil {
-			body, err = pinTurnAt(body, sha)
-		}
 		if err != nil {
 			writeGitProblem(w, r, owner, name, err)
+			return
+		}
+		if body, err = pinTurnAt(body, sha); err != nil {
+			writeResponseError(w, r, err)
 			return
 		}
 	}
