@@ -33,11 +33,12 @@ test("web search: the design flow, or any turn writing through the Room", () => 
 });
 
 test("MCP catalog: every web-search turn plus the requirements flows anywhere", () => {
-  for (const flow of ["start", "amend", "settle"]) {
+  // Main's catalogTurn (#878): the requirements loop is /start, /interview F<n> and refine's branches.
+  for (const flow of ["start", "interview", "refine", "feature", "actor", "amend", "settle"]) {
     assert.equal(catalogTurn({ flow, roomScoped: false }), true, flow);
   }
   assert.equal(catalogTurn({ flow: "design", roomScoped: false }), true);
   assert.equal(catalogTurn({ flow: "", roomScoped: true }), true);
   assert.equal(catalogTurn({ flow: "", roomScoped: false }), false);
-  assert.equal(catalogTurn({ flow: "feature", roomScoped: false }), false);
+  assert.equal(catalogTurn({ flow: "prototype", roomScoped: false }), false);
 });
