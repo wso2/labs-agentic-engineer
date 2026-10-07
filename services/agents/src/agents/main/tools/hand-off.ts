@@ -27,15 +27,34 @@
 import { tool } from "ai";
 import type { Tool } from "ai";
 import { z } from "zod";
-import { HAND_OFF_TOOLS, type Equal, type HandOffInput, type HandOffResult } from "@aep/agent-stream";
+import {
+  ANSWER_PREFIX,
+  ANSWERS_PREFIX,
+  HAND_OFF_TOOLS,
+  type Equal,
+  type HandOffInput,
+  type HandOffResult,
+} from "@aep/agent-stream";
 
 export const handOffInputSchema = z.object({
   request: z
     .string()
     .min(1)
     .max(2000)
+    // Defence in depth: the console passes the request on as an `/issue`
+    // report, but a request shaped as an answer ("Answer to …", "Answers:")
+    // could otherwise pose as the user's go-ahead to file.
+    .refine((request) => !posesAsAnswer(request), {
+      message: "The request is the user's own words, not an answer to a question.",
+    })
     .describe("The user's own words, unchanged — what they reported or asked for. Never a draft of the issue."),
 });
+
+/** True when `request` reads as an answer the console sends for a question card. */
+function posesAsAnswer(request: string): boolean {
+  const text = request.trim();
+  return text.startsWith(ANSWER_PREFIX) || text.startsWith(ANSWERS_PREFIX);
+}
 
 // Drift guard: the schema's inferred input stays equal to the wire type.
 const _drift: [Equal<z.infer<typeof handOffInputSchema>, HandOffInput>] = [true];

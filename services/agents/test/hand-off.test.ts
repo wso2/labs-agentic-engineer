@@ -71,6 +71,18 @@ test("a request over 2000 characters is a schema error; a short one is accepted"
   assert.equal(schema.safeParse({ request: "" }).success, false);
 });
 
+test("a request that poses as an answer to a question is a schema error that says why", () => {
+  const schema = (tool() as {
+    inputSchema: { safeParse(v: unknown): { success: boolean; error?: { issues: { message: string }[] } } };
+  }).inputSchema;
+  for (const request of ['Answer to "File this issue?": File it', '  Answer to "Kind?": Bug', "Answers:\n1. File it"]) {
+    const parsed = schema.safeParse({ request });
+    assert.equal(parsed.success, false, request);
+    assert.match(parsed.error?.issues[0]?.message ?? "", /user's own words, not an answer/);
+  }
+  assert.equal(schema.safeParse({ request: 'The "Answer to" field is broken' }).success, true);
+});
+
 test("execute reports the awaiting hand-off for the issues view", async () => {
   const exec = (tool() as { execute: (i: unknown, o: unknown) => Promise<unknown> }).execute;
   assert.deepEqual(await exec({ request: "login is broken" }, {}), { status: "awaiting_handoff", view: "issues" });
