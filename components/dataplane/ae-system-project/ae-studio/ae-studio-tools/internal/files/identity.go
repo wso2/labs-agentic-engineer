@@ -45,4 +45,3 @@ func (a Applier) saveIdentities(ctx context.Context) (author, committer *repo.Gi
 	}
 	return &repo.GitIdentity{Name: name, Email: email}, &repo.GitIdentity{Name: name, Email: email}
 }
-

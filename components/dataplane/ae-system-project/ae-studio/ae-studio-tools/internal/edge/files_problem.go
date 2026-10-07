@@ -89,7 +89,6 @@ func filesProblem(ctx context.Context, op, project string, err error) problemRes
 	}
 }
 
-
 // problemResponse is a problem+json answer for any Files operation, on /v1
 // or the Files socket. It stands in for the generated per-status types,
 // which cannot carry Retry-After.

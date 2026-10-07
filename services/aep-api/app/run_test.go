@@ -23,7 +23,7 @@ import (
 // Compile-time smoke: Options nil-semantics and seam interface satisfaction.
 // A zero Options value is a valid "all features off" input — never panic.
 var (
-	_ Options                  = Options{}
+	_ Options                    = Options{}
 	_ ocauth.RequestAuthStrategy = DirectOCStrategy{}
 	_ ocauth.AuthProvider        = (ocauth.AuthProvider)(nil)
 )

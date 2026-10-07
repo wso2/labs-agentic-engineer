@@ -24,7 +24,7 @@ import (
 )
 
 // RunPhase30RunCycleStartupWait adds the durable startup wait to run_cycles:
-// startup_wait_reason (the stuck pod's waiting reason, '' when none) and
+// startup_wait_reason (the stuck pod's waiting reason, empty when none) and
 // startup_wait_since (when the watcher first saw the attempt stuck). The
 // JobWatcher writes them on an open cycle and the run view reads them, so the
 // console can show "waiting to start" without a cluster read.
