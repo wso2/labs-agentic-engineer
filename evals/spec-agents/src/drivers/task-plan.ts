@@ -53,10 +53,9 @@ export async function runTaskPlanSection(projectDir: string, scope?: PlanScope):
     const rec = newTurnRecord("tasks", 1, "task-plan (one-shot)");
     const start = Date.now();
     // A Plan turn on the Turn socket, as aep-api starts one in production.
-    // TODO(Task 50, AGT-22/AGT-13): pass `scope` on the Turn socket request once
-    // runPlanTurn and the socket's PlanScope contract take main's shape.
     const result = await runPlanTurn(session, store.planContext(), {
       onPart: (part) => collectPart(rec, part),
+      ...(scope ? { scope } : {}),
     });
     rec.ms = Date.now() - start;
     reportTurnTrace(rec, start);
