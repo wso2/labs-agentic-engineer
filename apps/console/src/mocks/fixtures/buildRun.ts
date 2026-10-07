@@ -325,7 +325,7 @@ function cycleRecord(input: RunInput, span: CycleSpan, now: number): RunCycleVie
     attempts: 1,
     createdAt: iso(input, span.created),
     endedAt: ended ? iso(input, span.ended) : null,
-    recording: ended ? "complete" : "recording",
+    recording: ended ? "kept" : "live",
     ...(ended ? { mergeSha: `${span.id}-merge`, prNumber: span.kind === "validation" ? 12 : 11 } : {}),
     ...(ended && span.kind === "validation" ? { validationVerdict: verdict } : {}),
   };
