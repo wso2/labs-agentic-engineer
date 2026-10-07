@@ -88,9 +88,54 @@ test("gateCreateIssue: unconfirmed, create_issue refuses with a tool error that 
   );
 });
 
-test("gateCreateIssue: confirmed, or no create_issue, returns the tools unchanged", () => {
-  const tools: ToolSet = { create_issue: createIssue };
-  assert.equal(gateCreateIssue(tools, true), tools);
+test("gateCreateIssue: no create_issue returns the tools unchanged", () => {
   const bare: ToolSet = {};
   assert.equal(gateCreateIssue(bare, false), bare);
+  assert.equal(gateCreateIssue(bare, true), bare);
+});
+
+test("gateCreateIssue: confirmed, only the first create_issue call of the turn executes", async () => {
+  let runs = 0;
+  const counting = tool({
+    description: "file an issue",
+    inputSchema: z.object({ title: z.string() }),
+    execute: async () => {
+      runs += 1;
+      return "FILED";
+    },
+  });
+  const gated = gateCreateIssue({ create_issue: counting }, true);
+  assert.equal(gated.create_issue!.description, "file an issue");
+  assert.equal(gated.create_issue!.inputSchema, counting.inputSchema);
+  assert.equal(await (gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
+  await assert.rejects(
+    () => gated.create_issue!.execute!({ title: "y" }, {} as never) as Promise<unknown>,
+    /A filing was already attempted in this turn; tell the user the result and ask before trying again\./,
+  );
+  assert.equal(runs, 1, "the second call never reached the inner tool");
+});
+
+test("gateCreateIssue: a first call that throws still uses up the turn's one filing", async () => {
+  let runs = 0;
+  const failing = tool({
+    inputSchema: z.object({ title: z.string() }),
+    execute: async (): Promise<string> => {
+      runs += 1;
+      throw new Error("timeout");
+    },
+  });
+  const gated = gateCreateIssue({ create_issue: failing }, true);
+  await assert.rejects(() => gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>, /timeout/);
+  await assert.rejects(
+    () => gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>,
+    /already attempted/,
+  );
+  assert.equal(runs, 1);
+});
+
+test("gateCreateIssue: each turn's gate has its own one filing", async () => {
+  const a = gateCreateIssue({ create_issue: createIssue }, true);
+  const b = gateCreateIssue({ create_issue: createIssue }, true);
+  assert.equal(await (a.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
+  assert.equal(await (b.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
 });

@@ -134,6 +134,14 @@ test("issues instructions use the gate's question and option wording", () => {
   assert.match(out, /never ask_questions/);
 });
 
+test("issues instructions pin the exact question and labels, with recommended as a flag not label text", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  assert.ok(out.includes(`question exactly "${FILE_QUESTION}"`));
+  assert.ok(out.includes(`"${FILE_IT}"`) && out.includes('"Change it"'));
+  assert.match(out, /recommended: true/);
+  assert.equal(out.includes("(recommended)"), false, "never a label that carries the word");
+});
+
 test("issues instructions append the surface's narration policy", () => {
   const skills = testSkillSource([{ name: "console", description: "how to speak", content: "Say issue, not ticket." }]);
   assert.match(buildIssuesInstructions(skills, "console"), /# Narration policy\n\nSay issue, not ticket\./);

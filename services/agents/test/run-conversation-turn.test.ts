@@ -1265,6 +1265,30 @@ test("toolset issues: a File it question ends the turn awaiting-human; no spec b
   assert.equal(prompt.includes("Existing files:"), false);
 });
 
+test("toolset issues: the files-diverged note is not added (the prompt has no files)", async () => {
+  const store = new InMemoryConversationStore();
+  const guard = new TurnGuard();
+  const { onEvent } = collector();
+  const model = textModel("ok");
+
+  await runConversationTurn({
+    id: "issues-note",
+    instruction: "the save button is not working",
+    files: SEED_FILES,
+    filesChangedExternally: true,
+    toolset: "issues",
+    model,
+    store,
+    guard,
+    onEvent,
+  });
+
+  const prompt = JSON.stringify(model.doStreamCalls[0]!.prompt);
+  assert.match(prompt, /the save button is not working/);
+  assert.equal(prompt.includes("files were changed outside"), false);
+  assert.equal(prompt.includes("Existing files"), false);
+});
+
 test("issues: create_issue reaches the MCP server only when the instruction is the File it answer", async () => {
   const calls: string[] = [];
   const server = createServer((req, res: ServerResponse) => {

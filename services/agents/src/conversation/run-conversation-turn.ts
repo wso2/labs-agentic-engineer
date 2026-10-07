@@ -382,7 +382,8 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 4. one generic turn. The instructions append the skill catalog at the END
     //    of the system prompt; buildPrompt inlines CURRENT STATE; prepend a one-line
     //    divergence note ONLY when the FE flagged an external edit (append-only).
-    const note = input.filesChangedExternally ? DIVERGENCE_NOTE : "";
+    // The issues agent has no "Existing files:" block for the note to refer to.
+    const note = input.filesChangedExternally && toolset !== "issues" ? DIVERGENCE_NOTE : "";
     // Eager skills (#335): resolve the requested bodies and inline them ahead
     // of the instruction — the model applies them in its FIRST step instead of
     // spending a whole model call on loadSkill. Unknown names skip silently

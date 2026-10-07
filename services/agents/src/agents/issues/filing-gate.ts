@@ -57,22 +57,46 @@ export function filingConfirmed(instruction: string): boolean {
 }
 
 /**
- * Withhold `create_issue` until the user has confirmed: unconfirmed, it keeps
- * its description and schema but refuses with a tool error telling the model
- * what to do. Confirmed, or when the set has no create_issue, `tools` comes
+ * Guard `create_issue`. Unconfirmed, it keeps its description and schema but
+ * refuses with a tool error telling the model what to do. Confirmed, it runs at
+ * most ONCE per turn: the user's go-ahead covers one filing, and injected text
+ * in an earlier tool result (or a retry after a timeout that did create the
+ * issue) must not file a second. A failed first attempt counts, so the agent
+ * tells the user and asks again. Call it once per turn: the one-filing state
+ * lives in the returned tools. When the set has no create_issue, `tools` comes
  * back unchanged.
  */
 export function gateCreateIssue(tools: ToolSet, confirmed: boolean): ToolSet {
   const create = tools[CREATE_ISSUE];
-  if (confirmed || create === undefined) return tools;
+  if (create === undefined) return tools;
+  if (!confirmed) {
+    return {
+      ...tools,
+      [CREATE_ISSUE]: {
+        ...create,
+        execute: async () => {
+          throw new Error(
+            `Not filed. Ask the user "${FILE_QUESTION}" with ask_question (options ${FILE_IT} / Change it) and file only after they answer ${FILE_IT}.`,
+          );
+        },
+      },
+    } as ToolSet;
+  }
+  const execute = create.execute;
+  if (execute === undefined) return tools;
+  let attempted = false;
   return {
     ...tools,
     [CREATE_ISSUE]: {
       ...create,
-      execute: async () => {
-        throw new Error(
-          `Not filed. Ask the user "${FILE_QUESTION}" with ask_question (options ${FILE_IT} / Change it) and file only after they answer ${FILE_IT}.`,
-        );
+      execute: async (...args: Parameters<typeof execute>) => {
+        if (attempted) {
+          throw new Error(
+            "A filing was already attempted in this turn; tell the user the result and ask before trying again.",
+          );
+        }
+        attempted = true;
+        return await execute(...args);
       },
     },
   } as ToolSet;

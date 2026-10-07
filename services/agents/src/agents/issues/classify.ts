@@ -115,6 +115,7 @@ async function ask(
         state: {
           message: input.message,
           recent_messages: input.recentMessages ?? [],
+          // No project name on purpose: the tool has none, and it keeps the project's name from a third party.
           where_the_user_is: { page: "issues" },
         },
         questions: { kind: { type: "choice", instructions: INSTRUCTIONS, criteria: CRITERIA } },
