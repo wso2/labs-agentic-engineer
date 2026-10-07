@@ -57,6 +57,13 @@ test("the description tells the agent when to hand off, mentions /issue and forb
   assert.match(d, /never draft or file/i);
 });
 
+test("the description and the prompt both fence spec changes off from hand-offs", async () => {
+  const boundary = /Not for changes the user wants made to the spec or design — make those yourself/;
+  assert.match((tool() as { description?: string }).description ?? "", boundary);
+  const { instructions } = await import("../src/agents/main/prompt.js");
+  assert.match(instructions.replace(/\s+/g, " "), boundary);
+});
+
 test("a request over 2000 characters is a schema error; a short one is accepted", () => {
   const schema = (tool() as { inputSchema: { safeParse(v: unknown): { success: boolean } } }).inputSchema;
   assert.equal(schema.safeParse({ request: "x".repeat(2001) }).success, false);
@@ -91,6 +98,14 @@ test("a files turn offers hand_off_to_issues and never the issue tools", async (
 test("a task-plan turn does not offer the hand-off", async () => {
   const model = mockModel([{ kind: "text", text: "ok" }]);
   await run({ model, toolset: "task-plan" }).done;
+  const offered = offeredTo(model);
+  assert.ok(offered.length > 0);
+  assert.equal(offered.includes(TOOL), false);
+});
+
+test("an issues turn does not offer the hand-off", async () => {
+  const model = mockModel([{ kind: "text", text: "ok" }]);
+  await run({ model, toolset: "issues" }).done;
   const offered = offeredTo(model);
   assert.ok(offered.length > 0);
   assert.equal(offered.includes(TOOL), false);

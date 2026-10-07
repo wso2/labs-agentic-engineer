@@ -44,9 +44,11 @@ void _drift;
 const HAND_OFF_DESCRIPTIONS: Record<keyof typeof HAND_OFF_TOOLS, string> = {
   issues:
     "Hand the user's message to the Issues chat. Use it when the user reports something broken in the app, " +
-    "asks for a capability, wants an issue filed or found, or starts a message with `/issue`. Pass their own " +
-    "words as `request`. Never draft or file an issue yourself, and do not search for issues. Ends your turn; " +
-    "the user decides whether to continue in Issues.",
+    "asks for a capability the app lacks, as a work item, wants an issue filed or found, or starts a message " +
+    "with `/issue`. Not for changes the user wants made to the spec or design — make those yourself; hand off " +
+    "only to record or find a work item (a bug, a missing capability, an improvement) in the Issues chat. " +
+    "Pass their own words as `request`. Never draft or file an issue yourself, and do not search for issues. " +
+    "Ends your turn; the user decides whether to continue in Issues.",
 };
 
 /** The hand-off tools, one per view, keyed by wire tool name. */
