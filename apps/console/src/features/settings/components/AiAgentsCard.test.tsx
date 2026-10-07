@@ -229,6 +229,35 @@ describe("AiAgentsCard on Anthropic's API", () => {
     expect(lastPatch()).toEqual({ agents: { subscription: null } });
   });
 
+  it("shows a subscription whose token was never recorded as set, with Replace, Remove and a warning", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, tokenMissing: true } } }));
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Save the Claude subscription token again: coding runs fail until you replace it. Or remove the subscription to bill coding to the API key.",
+    );
+    // Not billing the plan while the token is missing, so the card does not say it is.
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Replace" })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(saveButton());
+    expect(lastPatch()).toEqual({ agents: { subscription: null } });
+  });
+
+  it("replaces a subscription whose token was never recorded", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, tokenMissing: true } } }));
+    // The second Replace is the token's (the first is the connection key's).
+    fireEvent.click(screen.getAllByRole("button", { name: "Replace" })[1]!);
+    type("New subscription token", "sk-ant-oat01-new-token-abcd");
+    fireEvent.click(saveButton());
+    expect(lastPatch()).toEqual({ agents: { subscription: { kind: "claude", token: "sk-ant-oat01-new-token-abcd" } } });
+  });
+
+  it("does not warn about a recorded token", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription } }));
+    expect(screen.queryByText(/Save the Claude subscription token again/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Coding bills your Claude plan/)).toBeInTheDocument();
+  });
+
   it("disconnects on its own, naming the subscription it takes along", () => {
     renderCard(config({ agents: { ...defaultAgents, subscription } }));
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
