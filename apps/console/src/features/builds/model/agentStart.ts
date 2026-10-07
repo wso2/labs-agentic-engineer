@@ -130,3 +130,50 @@ export function agentNoun(cycle: RunCycleView | undefined): string {
   if (!cycle) return "agent";
   return cycle.kind === "validation" ? "validation agent" : "coding agent";
 }
+
+/** Is this the reason the platform gives a cycle whose agent never started? */
+export function isStartupFailure(agentReason: string | undefined): boolean {
+  return startupFailureReason(agentReason) !== undefined;
+}
+
+/**
+ * "<who>: <text>." as one sentence. The text is the cluster's or the runner's
+ * own words, which may already end the sentence (a scheduler message ends in
+ * "."), so a period is added only when it does not.
+ */
+export function reportSentence(who: string, text: string): string {
+  const said = text.trim();
+  return `${who}: ${said}${/[.!?]$/.test(said) ? "" : "."}`;
+}
+
+/** What a coding agent that never started did not do, naming a pull request an earlier session of the run opened. */
+function noPullRequestSentence(earlier: readonly RunCycleView[]): string {
+  const opened = [...earlier].reverse().find((c) => c.prNumber !== undefined);
+  if (!opened) return "Nothing ran; no pull request was opened.";
+  return `Nothing ran this time, so no new pull request was opened; #${opened.prNumber}, opened earlier in this build, is unchanged.`;
+}
+
+/**
+ * Why the newest cycle's agent never started, what that left undone, and when
+ * trying again can help, in the words of the button that does it (the build
+ * card's Retry, the validation card's Revalidate). `earlier` are the run's
+ * cycles before it.
+ */
+export function agentStartFailedCopy(
+  cycle: RunCycleView | undefined,
+  earlier: readonly RunCycleView[],
+): StartupWaitCopy {
+  const validating = cycle?.kind === "validation";
+  const cause = startupFailureCause(cycle?.agentReason);
+  const notDone = validating ? "Nothing ran; the version was not validated." : noPullRequestSentence(earlier);
+  const retry = validating ? "Revalidate" : "Retry";
+  const when = isRoomShortage(cycle?.agentReason) ? "once the cluster has room" : "once that is fixed";
+  const reported = clusterReport(cycle?.agentReason);
+  return {
+    title: `The ${agentNoun(cycle)} could not start`,
+    body: [cause, notDone, `${retry} ${when}.`, reported ? reportSentence("The cluster reported", reported) : undefined]
+      .filter(Boolean)
+      .join(" "),
+  };
+}
+

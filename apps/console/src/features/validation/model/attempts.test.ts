@@ -83,3 +83,23 @@ describe("validating a version again", () => {
     expect(noAttemptsReason("none", false)).toMatch(/Revalidate/);
   });
 });
+
+// F1: an attempt whose agent the cluster has not started is waiting, not
+// validating; one it never started could not start, not "did not land".
+describe("an attempt whose agent has not started", () => {
+  const base = { id: "c1", kind: "validation", attempts: 1, createdAt: "2026-10-06T13:58:00Z", recording: "live" } as const;
+
+  it("is waiting to start while the cluster holds it", () => {
+    expect(
+      attemptResult({ ...base, startupWait: { reason: "Unschedulable", since: "2026-10-06T13:58:30Z", failsAt: "2026-10-06T14:08:00Z" } }),
+    ).toEqual({ label: "Waiting to start", tone: "warning" });
+  });
+
+  it("could not start once the platform closed it unstarted", () => {
+    expect(attemptResult({ ...base, endedAt: "2026-10-06T14:08:00Z", agentReason: "startup_failed:Unschedulable: no room" })).toEqual({
+      label: "Agent could not start",
+      tone: "error",
+    });
+  });
+});
+

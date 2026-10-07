@@ -18,6 +18,7 @@
 
 import type { components } from "../../../generated/aep-api";
 import { resetStamp } from "../../../lib/stamp";
+import { agentStartFailedCopy, reportSentence } from "./agentStart";
 import { externalValuesPark } from "./run";
 import { orderedTasks, taskNote, taskState, type RunClaims } from "./taskRow";
 
@@ -76,6 +77,7 @@ const SHORT_LABELS: Record<string, string> = {
   "validation-unreported": "Validation not reported",
   "agent-quota-blocked": "Agent quota reached",
   "publisher-credentials-missing": "Publisher credentials missing",
+  "agent-start-failed": "Agent could not start",
 };
 
 function subject(f: RunFailure): string {
@@ -176,13 +178,15 @@ function dispatchesPhrase(attempts: number | undefined): string {
 function reasonCopy(run: MilestoneRunView): Copy {
   const reason = run.terminalReason;
   const newest = run.cycles.at(-1);
-  const agentReason = newest?.agentReason ? ` The runner reported: ${newest.agentReason}.` : "";
+  const agentReason = newest?.agentReason ? ` ${reportSentence("The runner reported", newest.agentReason)}` : "";
   switch (reason) {
     case "plan-failed":
       return {
         title: "The build failed while preparing the version",
         body: `The platform could not provision the version's connections or plan its tasks. ${NOTHING_HAPPENED}`,
       };
+    case "agent-start-failed":
+      return agentStartFailedCopy(newest, run.cycles.slice(0, -1));
     case "redispatch-budget":
       return {
         title: "The coding agent stopped without opening a pull request",

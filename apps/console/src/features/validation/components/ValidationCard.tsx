@@ -18,14 +18,16 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { AcceptanceView } from "@aep/ui-acceptance-view";
-import { Alert, Box, Button, ButtonBase, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Alert, AlertTitle, Box, Button, ButtonBase, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { stamp } from "../../../lib/stamp";
 import { useBuilds } from "../../builds/api/builds";
 import { useValidationSnapshot, useVersionLedger } from "../../builds/api/runs";
 import { NextStepsBar } from "../../builds/components/NextStepsBar";
+import { StartupWaitNotice } from "../../builds/components/StartupWaitNotice";
 import { LogLines } from "../../builds/components/CardSection";
 import { useNextInterview } from "../../builds/hooks/useNextInterview";
 import { useRunProgress } from "../../builds/hooks/useRunProgress";
+import { agentStartFailedCopy, isStartupFailure } from "../../builds/model/agentStart";
 import { fixedBy, isBuilding, versionRows } from "../../builds/model/ledger";
 import { nextSteps } from "../../builds/model/nextSteps";
 import { agentLogLines } from "../../builds/model/run";
@@ -173,7 +175,17 @@ function AttemptView({ projectName, version, attempt, newest }: { projectName: s
   const toggle = (which: "report" | "log") => setShown((s) => (s === which ? null : which));
 
   let body: ReactNode;
-  if (!landed) {
+  if (cycle.startupWait && !settled) {
+    body = <StartupWaitNotice cycle={cycle} />;
+  } else if (settled && isStartupFailure(cycle.agentReason)) {
+    const copy = agentStartFailedCopy(cycle, []);
+    body = (
+      <Alert severity="error" role="status">
+        <AlertTitle>{copy.title}</AlertTitle>
+        <Typography variant="body2">{copy.body}</Typography>
+      </Alert>
+    );
+  } else if (!landed) {
     body = <Typography variant="body2" color="text.secondary">This attempt never landed, so it has no report.</Typography>;
   } else if (snapshot.isError) {
     body = <Alert severity="info">This attempt produced no report: it reached no usable results.</Alert>;

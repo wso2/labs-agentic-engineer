@@ -43,6 +43,7 @@ import { BuildLogs } from "./BuildLogs";
 import { BuildTasks } from "./BuildTasks";
 import { CardSection } from "./CardSection";
 import { ExplanationNotice } from "./ExplanationNotice";
+import { StartupWaitNotice } from "./StartupWaitNotice";
 import { NextStepsBar } from "./NextStepsBar";
 import { PhaseStrip } from "./PhaseStrip";
 
@@ -238,6 +239,7 @@ function BuildBody({ projectName, version, data }: { projectName: string; versio
       <Summary data={data} version={version} outcome={result.outcome} />
       <PhaseStrip steps={data.steps} loading={data.replaying} />
       {data.explanation && <ExplanationNotice projectName={projectName} explanation={data.explanation} />}
+      <StartupWaitNotice cycle={data.current?.cycles.at(-1)} />
       <TasksSection projectName={projectName} data={data} />
       <CardSection title="Coding agent's log" meta={agentMeta ?? "newest first"} defaultOpen={streaming}>
         <AgentLog projectName={projectName} runs={data.runs} progress={data.progress} />

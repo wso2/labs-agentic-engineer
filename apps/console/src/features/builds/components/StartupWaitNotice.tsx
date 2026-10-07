@@ -16,15 +16,15 @@
  * under the License.
  */
 
+import { Alert, AlertTitle, Typography } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { startupWaitNotice } from "../model/agentStart";
-import { RunHoldNotice } from "./RunHoldNotice";
 
 type RunCycleView = components["schemas"]["RunCycleView"];
 
 /**
  * An open cycle whose agent the cluster has not started: why, and when the run
- * gives up. Shared by the build page and the validation page, because a coding
+ * gives up. Shared by the Build card and the Validation card, because a coding
  * and a validation agent wait for the cluster the same way.
  *
  * Warning, not info: the run fails at the deadline unless the cause clears,
@@ -35,5 +35,10 @@ type RunCycleView = components["schemas"]["RunCycleView"];
 export function StartupWaitNotice({ cycle }: { cycle: RunCycleView | undefined }) {
   const notice = startupWaitNotice(cycle);
   if (!notice) return null;
-  return <RunHoldNotice role="status" tone="warning" title={notice.title} body={notice.body} />;
+  return (
+    <Alert severity="warning" role="status">
+      <AlertTitle>{notice.title}</AlertTitle>
+      <Typography variant="body2">{notice.body}</Typography>
+    </Alert>
+  );
 }
