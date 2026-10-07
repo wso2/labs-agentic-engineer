@@ -23,8 +23,8 @@
  * stream is unambiguously "do not commit" to the aep-api fold.
  */
 
-import type { LanguageModelUsage } from "ai";
-import type { FileBundle, ManifestPart, TurnUsage } from "@aep/agent-stream";
+import type { LanguageModelUsage, ModelMessage } from "ai";
+import { OUTCOME_MAX_CHARS, type FileBundle, type ManifestPart, type TurnUsage } from "@aep/agent-stream";
 import { sha256Hex } from "../shared/hash.js";
 
 /**
@@ -63,8 +63,9 @@ export function toTurnUsage(usage: LanguageModelUsage, model: string): TurnUsage
  * bundle (chat-only or task-plan turn) → the empty manifest. `usage` (#249)
  * rides the manifest because it is the one frame every successful turn emits;
  * a failed turn emits no manifest and therefore reports no usage (v1).
+ * `outcome` (an Issues turn's, see `turnOutcome`) rides it for the same reason.
  */
-export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage): ManifestPart {
+export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage, outcome?: string): ManifestPart {
   const files: Record<string, string> = {};
   const deleted: string[] = [];
   if (bundle) {
@@ -74,5 +75,20 @@ export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage): Manif
       else files[path] = sha256Hex(content);
     }
   }
-  return { type: "manifest", files, deleted, ...(usage ? { usage } : {}) };
+  return { type: "manifest", files, deleted, ...(usage ? { usage } : {}), ...(outcome ? { outcome } : {}) };
+}
+
+/**
+ * What a turn came to (`ManifestPart.outcome`): the last text part of the
+ * assistant messages it appended, trimmed, and cut to `OUTCOME_MAX_CHARS`
+ * ending in `…` when longer. A turn that never replied in text has none.
+ */
+export function turnOutcome(messages: readonly ModelMessage[]): string | undefined {
+  const texts = messages.flatMap((m) => {
+    if (m.role !== "assistant") return [];
+    return typeof m.content === "string" ? [m.content] : m.content.flatMap((p) => (p.type === "text" ? [p.text] : []));
+  });
+  const last = texts.map((t) => t.trim()).filter((t) => t !== "").pop();
+  if (last === undefined) return undefined;
+  return last.length > OUTCOME_MAX_CHARS ? `${last.slice(0, OUTCOME_MAX_CHARS - 1)}…` : last;
 }

@@ -32,6 +32,7 @@
 import type { FilePart, LanguageModel, ToolSet } from "ai";
 import {
   FileBundle,
+  type BranchNote,
   type McpConfig,
   type StreamPart,
   type Surface,
@@ -54,9 +55,9 @@ import { buildInstructions, buildTaskPlanInstructions, buildPrompt, buildEagerSk
 import type { SkillSource } from "../agents/main/skill-source.js";
 import type { UnreadableReference } from "./attachments.js";
 import { historyFor } from "./history-for.js";
-import { buildManifestPart, toTurnUsage } from "./manifest.js";
+import { buildManifestPart, toTurnUsage, turnOutcome } from "./manifest.js";
 import { OutputTruncatedError, TruncationWatch } from "./truncation.js";
-import { attachmentsNote, unreadableReferencesNote } from "../prompts/turn.js";
+import { attachmentsNote, branchNotesNote, unreadableReferencesNote } from "../prompts/turn.js";
 import { config } from "../shared/config.js";
 import { guardedFetch } from "../shared/guarded-fetch.js";
 import {
@@ -203,6 +204,13 @@ export interface RunConversationTurnInput {
    * byte-identical to today.
    */
   surface?: Surface;
+  /**
+   * What the other views' chats did since this conversation's previous turn
+   * (`TurnRequest.branchNotes`). A main-agent turn's prompt opens with one
+   * `Meanwhile in <view> (N messages): <outcome>` line per note; an Issues turn
+   * ignores them. Absent/empty → the prompt is byte-identical to a turn without.
+   */
+  branchNotes?: BranchNote[];
   /** The turn's model, built by the caller from `connection` (`createModel`). */
   model: LanguageModel;
   /**
@@ -348,6 +356,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    divergence note ONLY when the FE flagged an external edit (append-only).
     // The issues agent has no "Existing files:" block for the note to refer to.
     const note = input.filesChangedExternally && toolset !== "issues" ? DIVERGENCE_NOTE : "";
+    // What the Issues chat did meanwhile reaches the main agent, never the
+    // Issues agent itself (it was there).
+    const branchNote = toolset === "issues" ? "" : branchNotesNote(input.branchNotes);
     // Eager skills (#335): resolve the requested bodies and inline them ahead
     // of the instruction — the model applies them in its FIRST step instead of
     // spending a whole model call on loadSkill. Unknown names skip silently
@@ -396,6 +407,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       model: input.model,
       agentFor,
       prompt:
+        branchNote +
         note +
         attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
         unreadableReferencesNote(input.unreadableReferences) +
@@ -475,8 +487,11 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    throw above skips it, so a severed/failed stream carries no manifest
     //    and the aep-api fold refuses to commit). Mutated-paths-only from the
     //    turn's bundle; empty for chat-only and task-plan turns. Carries the
-    //    turn's token usage (#249) — failed turns report none (v1).
-    input.onEvent(buildManifestPart(bundle, usage));
+    //    turn's token usage (#249) — failed turns report none (v1) — and, for
+    //    an Issues turn, its outcome: the last reply, which the main chat's
+    //    next turn is told about (branch notes).
+    const outcome = toolset === "issues" ? turnOutcome(conv.messages.slice(startLen)) : undefined;
+    input.onEvent(buildManifestPart(bundle, usage, outcome));
     return conv;
   } finally {
     // Drain the live-preview writer and undo any addFile body we streamed but that

@@ -56,12 +56,15 @@ import {
   isCollabConfig,
   isSurface,
   isView,
+  isBranchNotes,
   isTurnAim,
   isTurnScope,
   isTurnAttachmentsOrAbsent,
   isTurnConnection,
   SURFACES,
   VIEWS,
+  OUTCOME_MAX_CHARS,
+  type BranchNote,
   type CollabConfig,
   type McpConfig,
   type ProviderWaitPart,
@@ -232,6 +235,7 @@ export function createApp(deps: CreateAppDeps): Express {
       webSearch?: unknown;
       surface?: unknown;
       view?: unknown;
+      branchNotes?: unknown;
       eagerSkills?: unknown;
       model?: unknown;
       connection?: unknown;
@@ -305,6 +309,20 @@ export function createApp(deps: CreateAppDeps): Express {
         return;
       }
       view = body.view;
+    }
+    // What the other views' chats did since the previous turn (aep-api reads
+    // it from its turn rows). Bounded on the way in: it lands in the prompt.
+    let branchNotes: BranchNote[] | undefined;
+    if (body.branchNotes !== undefined) {
+      if (!isBranchNotes(body.branchNotes)) {
+        res.status(400).json({
+          error:
+            "branchNotes must be an array of at most one { view, turns, outcome } per view: a known view, " +
+            `a positive integer turns, an outcome of at most ${OUTCOME_MAX_CHARS} characters`,
+        });
+        return;
+      }
+      branchNotes = body.branchNotes;
     }
     // aim (#666): what the user pointed at, and what for. Parsed BEFORE the
     // instruction because it leads the wording, and reused for the journal
@@ -634,6 +652,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(eagerSkills ? { eagerSkills } : {}),
         webSearch: body.webSearch === true,
         ...(surface ? { surface } : {}),
+        ...(branchNotes?.length ? { branchNotes } : {}),
         ...(roomPeer ? { collabPeer: roomPeer } : {}),
         model,
         connection: conn,

@@ -81,6 +81,7 @@ export type {
   Toolset,
   Surface,
   View,
+  BranchNote,
   AgentSseEventType,
 } from "./contracts/sse-events.js";
 export {
@@ -106,6 +107,8 @@ export {
   isToolset,
   isSurface,
   isView,
+  isBranchNotes,
+  OUTCOME_MAX_CHARS,
   isTurnSpec,
   isPrototypeFeedback,
   PROTOTYPE_FLOW_SKILL,

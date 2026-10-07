@@ -986,6 +986,24 @@ export interface TurnRequest {
    * spec agent.
    */
   view?: View;
+  /**
+   * What happened in the other views' chats since this conversation's previous
+   * turn (at most one note per view). The service prepends each to a main-agent
+   * turn's prompt so the main agent knows; an Issues turn ignores them.
+   */
+  branchNotes?: BranchNote[];
+}
+
+/**
+ * What another view's chat did since the main chat's previous turn: how many
+ * turns ran there and the newest one's `outcome` (see `ManifestPart.outcome`).
+ */
+export interface BranchNote {
+  view: View;
+  /** Turns that view's chat completed since then (a positive integer). */
+  turns: number;
+  /** The newest of those turns' outcome (at most `OUTCOME_MAX_CHARS`). */
+  outcome: string;
 }
 
 /**
@@ -1015,6 +1033,32 @@ export type View = (typeof VIEWS)[number];
 /** Runtime guard for a `View` value. */
 export function isView(v: unknown): v is View {
   return (VIEWS as readonly unknown[]).includes(v);
+}
+
+/** The longest a turn's `outcome` (and so a branch note's) may be. */
+export const OUTCOME_MAX_CHARS = 400;
+
+/**
+ * Runtime guard for `TurnRequest.branchNotes`: an array of at most one note per
+ * view, each naming a known view, a positive integer turn count and an outcome
+ * of at most `OUTCOME_MAX_CHARS`.
+ */
+export function isBranchNotes(v: unknown): v is BranchNote[] {
+  if (!Array.isArray(v) || v.length > VIEWS.length) return false;
+  const views = new Set(v.map((note) => (note as { view?: unknown } | null)?.view));
+  if (views.size !== v.length) return false;
+  return v.every((note) => {
+    if (note === null || typeof note !== "object") return false;
+    const n = note as Record<string, unknown>;
+    return (
+      isView(n.view) &&
+      typeof n.turns === "number" &&
+      Number.isInteger(n.turns) &&
+      n.turns > 0 &&
+      typeof n.outcome === "string" &&
+      n.outcome.length <= OUTCOME_MAX_CHARS
+    );
+  });
 }
 
 // --- hand_off_to_issues (the main agent hands a report to another view's agent) ---
@@ -1200,6 +1244,13 @@ export interface ManifestPart {
    * valid. Manifest-only ⇒ a failed/severed turn carries no usage (v1).
    */
   usage?: TurnUsage;
+  /**
+   * What an Issues turn came to: its last reply, trimmed and cut to
+   * `OUTCOME_MAX_CHARS` (ending in `…` when cut). Set only for Issues turns
+   * that replied in text; aep-api stores it so the main chat's next turn can
+   * be told (`TurnRequest.branchNotes`).
+   */
+  outcome?: string;
 }
 
 /**

@@ -75,6 +75,12 @@ search/file tools merged under them from the turn's `mcp` block. `createIssuesAg
 (`prompt.ts`); no spec bundle, no file or skill tools, no web search; the user's message is
 the whole prompt. An unknown `view` is a 400, and a view turn cannot join a collab room.
 
+An Issues turn's terminal manifest carries its `outcome` (its last reply, ≤ 400 chars;
+`conversation/manifest.ts` `turnOutcome`). aep-api stores it and sends the main chat's
+next turn `branchNotes`; a main-agent turn's prompt then opens with one line per note,
+`Meanwhile in Issues (N messages): <outcome>` (`prompts/turn.ts` `branchNotesNote`, the
+label from `src/agents/views.ts` `VIEW_AGENTS`). Malformed `branchNotes` are a 400.
+
 Filing is gated in code (`filing-gate.ts`), not only by the prompt. The agent drafts the
 issue, then asks ONE `ask_question` whose question is exactly `FILE_QUESTION` ("File this
 issue?") and whose option is exactly `FILE_IT` ("File it", `recommended: true`, with

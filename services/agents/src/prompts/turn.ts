@@ -35,6 +35,7 @@
  */
 
 import type {
+  BranchNote,
   PlanContextFile,
   PlanScope,
   PrototypeFeedback,
@@ -44,6 +45,7 @@ import type {
   TurnSpec,
   View,
 } from "@aep/agent-stream";
+import { VIEW_AGENTS } from "../agents/views.js";
 
 // --- Wording -----------------------------------------------------------------
 
@@ -586,6 +588,21 @@ export function attachmentsNote(names: string[] | undefined): string {
     listed.map((n) => `- ${n}`).join("\n") +
     "\n\n"
   );
+}
+
+/**
+ * What happened in the other views' chats since the main chat's previous turn
+ * (`TurnRequest.branchNotes`), one line per view ahead of the main agent's
+ * prompt: `Meanwhile in Issues (2 messages): <outcome>`. No notes → "".
+ */
+export function branchNotesNote(notes: readonly BranchNote[] | undefined): string {
+  return (notes ?? [])
+    .map(
+      (n) =>
+        `Meanwhile in ${VIEW_AGENTS[n.view].label} (${n.turns} ${n.turns === 1 ? "message" : "messages"}): ` +
+        `${n.outcome}\n\n`,
+    )
+    .join("");
 }
 
 /**

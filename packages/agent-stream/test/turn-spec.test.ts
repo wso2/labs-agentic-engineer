@@ -25,7 +25,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPrototypeFeedback, isTurnSpec, isView, VIEWS } from "../src/contracts/sse-events.js";
+import { isBranchNotes, isPrototypeFeedback, isTurnSpec, isView, OUTCOME_MAX_CHARS, VIEWS } from "../src/contracts/sse-events.js";
 // The feedback table the kit and the Go BFF assert too (prototype-kit/test/fixtures/feedback-cases.json).
 import { feedbackBatch, feedbackTable } from "../../prototype-kit/test/feedback-cases.js";
 
@@ -133,4 +133,30 @@ test("isView accepts exactly the known views", () => {
   assert.deepEqual([...VIEWS], ["issues"]);
   assert.ok(isView("issues"));
   for (const v of ["boards", "", "Issues", undefined, null, 1, {}]) assert.equal(isView(v), false, String(v));
+});
+
+test("isBranchNotes accepts at most one note per view with a positive turn count and a bounded outcome", () => {
+  assert.equal(OUTCOME_MAX_CHARS, 400);
+  assert.ok(isBranchNotes([]));
+  assert.ok(isBranchNotes([{ view: "issues", turns: 2, outcome: "Filed #12." }]));
+  assert.ok(isBranchNotes([{ view: "issues", turns: 1, outcome: "x".repeat(400) }]));
+  const bad: unknown[] = [
+    undefined,
+    null,
+    "issues",
+    {},
+    [null],
+    [{ view: "boards", turns: 1, outcome: "x" }],
+    [{ view: "issues", turns: 0, outcome: "x" }],
+    [{ view: "issues", turns: 1.5, outcome: "x" }],
+    [{ view: "issues", turns: "2", outcome: "x" }],
+    [{ view: "issues", turns: 1 }],
+    [{ view: "issues", turns: 1, outcome: "x".repeat(401) }],
+    // More notes than there are views.
+    [
+      { view: "issues", turns: 1, outcome: "a" },
+      { view: "issues", turns: 1, outcome: "b" },
+    ],
+  ];
+  for (const v of bad) assert.equal(isBranchNotes(v), false, JSON.stringify(v));
 });

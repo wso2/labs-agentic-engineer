@@ -361,6 +361,42 @@ test("an unknown view is a 400; an issues-view turn cannot join a collab room", 
   }
 });
 
+test("malformed branchNotes are a 400; well-formed ones reach the main agent's prompt", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const model = mockModel([{ kind: "text", text: "ok" }]);
+  const { baseUrl, close } = await boot(model, root);
+  try {
+    const token = await mintToken();
+    const post = (body: unknown) => fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(body, { token, org: WS_ORG }));
+    const error =
+      "branchNotes must be an array of at most one { view, turns, outcome } per view: a known view, " +
+      "a positive integer turns, an outcome of at most 400 characters";
+    for (const branchNotes of [
+      "issues",
+      [{ view: "boards", turns: 1, outcome: "x" }],
+      [{ view: "issues", turns: 0, outcome: "x" }],
+      [{ view: "issues", turns: 1, outcome: "x".repeat(401) }],
+      [
+        { view: "issues", turns: 1, outcome: "a" },
+        { view: "issues", turns: 2, outcome: "b" },
+      ],
+    ]) {
+      const res = await post(wsBody({ branchNotes }));
+      assert.equal(res.status, 400, JSON.stringify(branchNotes));
+      assert.deepEqual(await res.json(), { error });
+    }
+    assert.equal(model.doStreamCalls.length, 0, "no rejected turn reaches the model");
+
+    const ok = await post(wsBody({ branchNotes: [{ view: "issues", turns: 2, outcome: "Filed #12." }] }));
+    assert.equal(ok.status, 200);
+    await ok.text();
+    assert.match(JSON.stringify(model.doStreamCalls[0]!.prompt), /Meanwhile in Issues \(2 messages\): Filed #12\./);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a view: issues turn runs the issues tool set, not the spec agent's", async () => {
   const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
   // Step 1 calls classify_report (executes: no JEV key in tests -> kind "unknown");

@@ -1344,3 +1344,93 @@ test("issues: create_issue reaches the MCP server only when the instruction is t
     await close();
   }
 });
+
+// --- The Issues outcome reaches the main agent --------------------------------
+
+test("an issues turn's manifest carries its last reply as the outcome; a files turn's carries none", async () => {
+  const guard = new TurnGuard();
+  const issues = collector();
+  await runConversationTurn({
+    id: "issues-outcome",
+    instruction: "the save button is broken",
+    files: SEED_FILES,
+    toolset: "issues",
+    model: textModel("  Filed #12: Save button does nothing.  "),
+    store: new InMemoryConversationStore(),
+    guard,
+    onEvent: issues.onEvent,
+  });
+  const issuesManifest = issues.events.at(-1) as { type: string; outcome?: string };
+  assert.equal(issuesManifest.type, "manifest");
+  assert.equal(issuesManifest.outcome, "Filed #12: Save button does nothing.");
+
+  const files = collector();
+  await runConversationTurn({
+    id: "files-outcome",
+    instruction: "rename the hello message",
+    files: SEED_FILES,
+    model: textModel("done"),
+    store: new InMemoryConversationStore(),
+    guard,
+    onEvent: files.onEvent,
+  });
+  const filesManifest = files.events.at(-1) as { type: string; outcome?: string };
+  assert.equal(filesManifest.type, "manifest");
+  assert.equal("outcome" in filesManifest, false);
+});
+
+test("a main turn with a branch note gets exactly one Meanwhile prefix; an issues turn gets none", async () => {
+  const guard = new TurnGuard();
+  const branchNotes = [{ view: "issues" as const, turns: 2, outcome: "Filed #12: Save button does nothing." }];
+  const prefix = "Meanwhile in Issues (2 messages): Filed #12: Save button does nothing.\n\n";
+
+  const main = textModel("ok");
+  await runConversationTurn({
+    id: "main-notes",
+    instruction: "rename the hello message",
+    files: SEED_FILES,
+    branchNotes,
+    model: main,
+    store: new InMemoryConversationStore(),
+    guard,
+    onEvent: () => {},
+  });
+  const prompt = userText(main);
+  assert.ok(prompt.startsWith(prefix), prompt.slice(0, 200));
+  assert.equal(prompt.split("Meanwhile in Issues").length - 1, 1);
+
+  const one = textModel("ok");
+  await runConversationTurn({
+    id: "main-note-one",
+    instruction: "rename the hello message",
+    files: SEED_FILES,
+    branchNotes: [{ view: "issues", turns: 1, outcome: "Which page?" }],
+    model: one,
+    store: new InMemoryConversationStore(),
+    guard,
+    onEvent: () => {},
+  });
+  assert.ok(userText(one).startsWith("Meanwhile in Issues (1 message): Which page?\n\n"));
+
+  const issues = textModel("ok");
+  await runConversationTurn({
+    id: "issues-notes",
+    instruction: "the save button is broken",
+    files: SEED_FILES,
+    toolset: "issues",
+    branchNotes,
+    model: issues,
+    store: new InMemoryConversationStore(),
+    guard,
+    onEvent: () => {},
+  });
+  assert.equal(userText(issues).includes("Meanwhile in"), false);
+});
+
+/** The text of the last user message the model received on its first call. */
+function userText(model: ReturnType<typeof mockModel>): string {
+  const prompt = model.doStreamCalls[0]!.prompt;
+  const last = [...prompt].reverse().find((m) => m.role === "user");
+  const content = last?.content ?? [];
+  return content.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("");
+}
