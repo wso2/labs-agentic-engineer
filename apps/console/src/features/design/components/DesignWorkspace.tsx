@@ -24,7 +24,7 @@ import { MakePrototypeButton } from "../../prototype/components/MakePrototypeBut
 import { PHONE } from "../../shell/layout";
 import { useSpecWorkspace } from "../../spec/useSpecWorkspace";
 import { useDesignModel } from "../useDesignModel";
-import { blockingDependencies, openArtifact } from "../model/artifacts";
+import { blockingDependencies, isDesigned, openArtifact } from "../model/artifacts";
 import { openComments } from "../model/comments";
 import { useDepthFilter } from "../useDepthFilter";
 import { useDesignTurns } from "../useDesignTurns";
@@ -64,8 +64,7 @@ function Note({ children }: { children: ReactNode }) {
  * The design card's header actions: Address comments, the design turn when
  * there is something to design and a design exists (before the first one,
  * the card's body offers it), Make prototype once the design has a web
- * application, and Build once something is designed. "A design exists" is
- * read from its artifacts: the platform model has no revision counter.
+ * application, and Build once something is designed.
  */
 export function DesignActions({ projectName }: { projectName: string }) {
   const design = useDesignModel(projectName).data;
@@ -88,7 +87,7 @@ export function DesignActions({ projectName }: { projectName: string }) {
           {design.running?.kind === "address" ? "Addressing comments…" : `Address comments · ${open}`}
         </Button>
       )}
-      {label && design.artifacts.length > 0 && (
+      {label && isDesigned(design) && (
         <Button size="small" variant="outlined" disabled={!turns.ready || running} onClick={() => turns.design()}>
           {design.running?.kind === "design" ? "Designing…" : label}
         </Button>
@@ -144,7 +143,7 @@ export function DesignWorkspace({ projectName, art }: { projectName: string; art
   const featureName = (id: string) => features.find((f) => f.id === id)?.name ?? id;
   const label = workspace.design.label;
 
-  if (model.artifacts.length === 0) {
+  if (!isDesigned(model)) {
     return (
       <Box sx={scrollSx}>
         <Note>

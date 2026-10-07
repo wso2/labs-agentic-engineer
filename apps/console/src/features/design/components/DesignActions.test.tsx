@@ -24,9 +24,9 @@ import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { DesignArtifact, DesignModel } from "../api/designModel";
 
 // The design card's header offers the design turn once something is designed
-// (before that, the card's body offers it). The platform's design model has
-// no revision counter (useDesignModel: `revision: 0`), so "designed" is read
-// from what both the platform and the mock have: the design's artifacts.
+// (before that, the card's body offers it). The platform's design model
+// tracks no revisions (useDesignModel: `revision: null`), so "designed" is
+// read from what both the platform and the mock have: the design's artifacts.
 
 let model: DesignModel;
 vi.mock("../useDesignModel", () => ({ useDesignModel: () => ({ data: model }) }));
@@ -55,9 +55,9 @@ const contract: DesignArtifact = {
   source: { kind: "acceptance", path: "specs/validation/acceptance/F1.feature", content: "" },
 };
 
-/** The model as the platform builds it (useDesignModel), never a revision. */
+/** The model as the platform builds it (useDesignModel): no revisions. */
 function platformModel(artifacts: DesignArtifact[]): DesignModel {
-  return { revision: 0, running: null, artifacts, dependencies: [], comments: [], taught: false, commenting: false };
+  return { revision: null, running: null, artifacts, dependencies: [], comments: [], taught: false, commenting: false };
 }
 
 function renderActions() {

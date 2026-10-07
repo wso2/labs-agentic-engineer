@@ -93,7 +93,7 @@ export function useDesignModel(projectName: string) {
     const design = instruction ? parseDesignCommand(instruction) : null;
     const running: DesignRun | null = design ? { kind: "design", features: design.featureIds } : null;
     return {
-      revision: 0,
+      revision: null,
       running,
       artifacts,
       dependencies: dependenciesOf(preflight.data?.items ?? [], componentFeatures),
