@@ -185,8 +185,8 @@ per org, both installs.
   that failed in the last 30 s on the same desired state, a terminal Ready
   reason (`RenderingFailed`, `InvalidReleaseConfiguration`,
   `ReleaseOwnershipConflict`) after a 1 min settle, or a binding not Ready for
-  10 min (above the 200 s startup budget, equal to the Deployment's progress
-  deadline).
+  20 min (OpenChoreo's render and apply of the release plus the 200 s startup
+  budget; a first install on Cloud takes about 15 min).
 - **Two views.** `GET /ae-studio` and the edge 503 `ae_studio_unavailable` are
   separate reads. `ready` is a fresh read of the OpenChoreo binding's Ready
   condition on every call; the 503 is the outcome of a call to the pod, so it

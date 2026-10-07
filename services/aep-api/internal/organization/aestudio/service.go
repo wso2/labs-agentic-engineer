@@ -74,12 +74,13 @@ const (
 	failureBackoff = 30 * time.Second
 	// notReadyBound is how long a binding may stay not Ready, counted from
 	// the later of its Ready condition's last transition and this replica's
-	// last successful converge, before Status answers failed. It is above
-	// the ResourceType's startup budget (the slowest container's
-	// startupProbe allows 40 x 5 s = 200 s) and equals the Deployment's
-	// default progress deadline, so a pod still pulling or starting is
-	// never called failed.
-	notReadyBound = 10 * time.Minute
+	// last successful converge, before Status answers failed. The clock
+	// starts before the pod exists: OpenChoreo first renders and applies
+	// the release (8 to 12 min per release on Cloud), then the pod starts
+	// (the slowest container's startupProbe allows 40 x 5 s = 200 s). A
+	// first install on Cloud takes about 15 min (ADR-0040), so a release
+	// still applying or a pod still starting is never called failed.
+	notReadyBound = 20 * time.Minute
 	// settleGrace is how long after a successful converge a terminal Ready
 	// reason is still taken as the previous release's, which OC has not yet
 	// re-evaluated against the new pin.

@@ -226,8 +226,8 @@ model-connection / idp services.*
   Ready answers `provisioning` until it is stuck, then `failed` (logged value-free as
   `ae_studio.status_failed` with an OC reason code): a terminal Ready reason (`RenderingFailed`,
   `InvalidReleaseConfiguration` or `ReleaseOwnershipConflict`: a release OC cannot render or own) once a minute has passed since this replica's
-  last successful converge, or not Ready for longer than `notReadyBound` (10 min, above the pod's
-  200 s startup budget; this is how a stuck pod, CrashLoopBackOff, ImagePullBackOff or unschedulable, reaches `failed`, as OC reports no distinct reason for it) counted from the later of that converge and the Ready condition's last
+  last successful converge, or not Ready for longer than `notReadyBound` (20 min, above OpenChoreo's
+  render and apply of the release plus the pod's 200 s startup budget, about 15 min on a first Cloud install; this is how a stuck pod, CrashLoopBackOff, ImagePullBackOff or unschedulable, reaches `failed`, as OC reports no distinct reason for it) counted from the later of that converge and the Ready condition's last
   transition. Nothing is converged for it; a save that changes the desired state starts the clock
   again.
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`): a created app is
