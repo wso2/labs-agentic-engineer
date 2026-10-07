@@ -95,6 +95,9 @@ describe("ChatPanel", () => {
     expect(new Set(viewsRead)).toEqual(new Set(["issues"]));
     expect(screen.getByText(/Talking about/).textContent).toBe("Talking about the project's issues.");
     expect(screen.getByText("Tell me what's broken or what you need, and I'll draft an issue.")).toBeTruthy();
+    expect(screen.getByLabelText("Message the agent").getAttribute("placeholder")).toBe(
+      "Describe what's broken, or what you need…",
+    );
   });
 
   it("on the Issues Page, sends to the issues store", () => {
@@ -108,6 +111,7 @@ describe("ChatPanel", () => {
     renderPanel("overview");
     expect(new Set(viewsRead)).toEqual(new Set(["main"]));
     expect(screen.getByText(/Talking about/).textContent).toBe("Talking about the whole product.");
+    expect(screen.getByLabelText("Message the agent").getAttribute("placeholder")).toBe("Tell the agent what to change…");
     typeAndSend("Add approvals");
     expect(mainSend).toHaveBeenCalledWith("shop", "Add approvals", { kind: "product" });
     expect(issuesSend).not.toHaveBeenCalled();

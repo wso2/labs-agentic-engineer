@@ -156,7 +156,7 @@ function Composer({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={chat.status !== "ready"}
-          placeholder="Tell the agent what to change…"
+          placeholder={view === "issues" ? "Describe what's broken, or what you need…" : "Tell the agent what to change…"}
           inputProps={{
             "aria-label": "Message the agent",
             ...(status ? { "aria-describedby": "composer-status" } : {}),
