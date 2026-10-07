@@ -3,7 +3,7 @@
 `aep-api` holds no git state and no GitHub credential. Every git read, commit,
 tag and GitHub call goes to the org's AE Studio pod, which holds the org's
 gitpat and its clones
-([ADR-0040](../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([ADR-0045](../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 This note is `aep-api`'s side of that hop: the credential, the ports, what
 each failure means to each caller. The pod's side (its gates, its problem
 codes, its clones) is in

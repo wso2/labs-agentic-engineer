@@ -1,11 +1,11 @@
-# ADR-0043 — GitHub delivers each repository's webhooks to the org's AE Studio
+# ADR-0048 — GitHub delivers each repository's webhooks to the org's AE Studio
 
 **Status:** Accepted · 2026-10-06
-**Related:** [ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)
+**Related:** [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)
 (the org's AE Studio) ·
-[ADR-0041](ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md) (the
+[ADR-0046](ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md) (the
 credential the forward carries) ·
-[ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md) (the webhook
+[ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md) (the webhook
 secret)
 **Detail:** [`components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/route-groups.md`](../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/design/route-groups.md)
 
@@ -14,7 +14,7 @@ secret)
 GitHub delivered every repository's events to one install-wide route on
 `aep-api`, which verified the signature with a secret it read from Postgres.
 Once the org's GitHub token and webhook secret live only in the org's pod
-(ADR-0040, ADR-0042), `aep-api` holds neither, and a control-plane route that
+(ADR-0045, ADR-0047), `aep-api` holds neither, and a control-plane route that
 anyone on the internet can post to is one more surface on the control plane.
 `aep-api` still owns what a delivery means: the delivery ledger, its replay
 and the run state the events move.

@@ -107,7 +107,7 @@ transient input.
 ## Amendment (2026-10-06): references live in AE Studio
 
 Design work moved into the organization's AE Studio
-([root ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)),
+([root ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)),
 and the shared `/workspaces` volume is gone. Decisions 1 and 4 to 6 stand.
 
 - **Decision 2 now reads:** bytes live on the org's AE Studio `studio-data`

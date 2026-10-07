@@ -290,7 +290,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, orgSecretRepo, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter).
 		WithSecretReferences(modelAccessSecretRefClient)
-	// Each org's AE Studio (ADR-0040): its status reads and its converge go
+	// Each org's AE Studio (ADR-0045): its status reads and its converge go
 	// out as aep-api's own identity wherever the install impersonates orgs
 	// (aeStudioOC).
 	aeStudio := aestudio.New(aestudio.Deps{

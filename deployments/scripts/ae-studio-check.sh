@@ -146,7 +146,7 @@ if [ "$ndeploy" = 1 ]; then
       check "Secret has key $k" grep -qx "$k" <<<"$keys"
     done
     # The pod holds only its own aep-api client: the org's publisher client
-    # stays with the coding Jobs (ADR-0041 decision 5).
+    # stays with the coding Jobs (ADR-0046 decision 5).
     pub_keys=$(grep -c '^AE_PUBLISHER_' <<<"$keys" || true)
     check "Secret has no AE_PUBLISHER_* key" test "$pub_keys" = 0
     read_into rev_b64 "Secret $dpns/$secret AE_SECRET_REV" kdp get secret "$secret" -n "$dpns" -o jsonpath='{.data.AE_SECRET_REV}'

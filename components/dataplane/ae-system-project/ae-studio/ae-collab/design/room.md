@@ -4,9 +4,9 @@
 (room `spec-<orgHandle>-<project>`), shared live by the project's users and
 the design agent, and saved to git by a committer. Why it runs in the org's
 pod is
-[ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md);
+[ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md);
 the token rules are
-[ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md).
+[ADR-0046](../../../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md).
 This note records the shape of the Room and why. Commands, env and the
 modes are in [`../AGENTS.md`](../AGENTS.md).
 

@@ -5,9 +5,9 @@
 - **Builds on:** [ADR-0003](./ADR-0003-contract-and-codegen.md) (contract-first
   codegen, which holds: each new client is generated from a committed spec),
   [ADR-0004](./ADR-0004-mock-layer.md) (the mock layer),
-  [root ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)
+  [root ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)
   (design work runs in the org's AE Studio),
-  [root ADR-0041](../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)
+  [root ADR-0046](../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md)
   (AE Studio checks the user's token itself).
 
 ## Context
@@ -104,7 +104,7 @@ not ready, and to talk to two more APIs whose error bodies differ from
 - **Proxy the pods through `aep-api`.** One origin and one error shape, but a
   second hop on every SSE frame and Room message, and `aep-api` holding the
   user's session for calls it does not own. Checking the user's token in the
-  pod is what lets the console call it directly (root ADR-0041).
+  pod is what lets the console call it directly (root ADR-0046).
 - **One client for all three containers.** They have different specs on
   different hosts, so one client would need hand-written types or a merged
   spec, which breaks ADR-0003's one-contract-one-client codegen.

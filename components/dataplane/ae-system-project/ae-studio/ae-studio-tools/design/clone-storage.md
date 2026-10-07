@@ -92,7 +92,7 @@ Passes that do not exist, and why:
   ([route-groups.md](route-groups.md#how-a-request-names-its-repository)).
   Eviction takes it under pressure, and the next roll wipes it.
 - **Recordings.** Run feeds are read from the observer
-  ([ADR-0044](../../../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md)).
+  ([ADR-0049](../../../../../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md)).
 - **Leader flock.** `Recreate` means one pod, so one reaper.
 
 ## Clone

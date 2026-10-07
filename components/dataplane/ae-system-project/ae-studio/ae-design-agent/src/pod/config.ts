@@ -21,7 +21,7 @@
  * pod serves, the Platform IdP that signs its users' tokens, the user
  * audiences, the public and health ports, the tools socket, the Turn socket,
  * ae-collab's Room socket, the snapshot mount, and the secret revisions
- * (ADR-0042). The model connection is read
+ * (ADR-0047). The model connection is read
  * apart (`shared/connection-env.ts`): the pod boots without a key.
  */
 

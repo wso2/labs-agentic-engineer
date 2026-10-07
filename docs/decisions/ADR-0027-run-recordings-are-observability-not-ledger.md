@@ -1,6 +1,6 @@
 # ADR-0027 — Run recordings are observability, not ledger
 
-**Status:** Superseded by [ADR-0044](ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md) for where a feed is kept (commitment 1, Postgres is the ledger, stands) · **Constrained:** the former `/workspaces` volume
+**Status:** Superseded by [ADR-0049](ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md) for where a feed is kept (commitment 1, Postgres is the ledger, stands) · **Constrained:** the former `/workspaces` volume
 · **Exposed by:** `RunCycleView.recording` in `packages/contracts/api/v1/openapi.yaml`
 
 **Why here and not in a package `design/` note.** A package note describes how one slice works. This

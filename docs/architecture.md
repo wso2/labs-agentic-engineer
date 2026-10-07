@@ -50,7 +50,7 @@ compile error, not a runtime surprise.
   agent, collab) is gitignored and regenerated as a build prestep.
 - An org secret's value lives only in the vault; Postgres keeps the name of
   the reference that holds it
-  ([ADR-0042](decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
+  ([ADR-0047](decisions/ADR-0047-an-org-secrets-value-lives-only-in-vault.md)).
 
 ## Identity and gateways
 
@@ -77,7 +77,7 @@ The org's AE Studio does not sit behind `aep-api`: each of its containers
 verifies Platform IdP tokens itself, one gate per route group, and the only
 claim it checks is the org. `aep-api` calls the pod as an install-wide AE-only
 client naming the org; the pod calls `aep-api` back with its org's own clients
-([ADR-0041](decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+([ADR-0046](decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md)).
 
 ## Design work: the organization's AE Studio
 
@@ -97,14 +97,14 @@ containers, the design agent, the collaboration server and `ae-studio-tools`
 ResourceType per org and keeps the Resource current (a new release reaches an
 org the next time someone opens its console); the pod holds the org's GitHub
 token and webhook secret, and `aep-api` holds neither
-([ADR-0040](decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([ADR-0045](decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 
 The console calls the three hosts directly. `aep-api` reaches the pod only
 through `ae-studio-tools` `/internal/v1`, for every git operation it needs.
 GitHub delivers each repository's webhooks to the pod, which verifies the
 signature and forwards the delivery to `aep-api`; `aep-api` persists it,
 replays it and runs the sweeps
-([ADR-0043](decisions/ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md)).
+([ADR-0048](decisions/ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md)).
 Inside the pod the containers talk over Unix sockets, and the mount is the
 gate. Resources, routes, env and converge:
 [`ae-studio/design/README.md`](../components/dataplane/ae-system-project/ae-studio/design/README.md).
@@ -159,7 +159,7 @@ mechanism is
 pod's own log while the cycle's pod exists, the observer by the cycle's
 Component UID once the pod is gone. The log is **observability, not ledger**:
 `run_cycles` stays the record, and `RunCycleView.recording` says what can be
-served ([ADR-0044](decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+served ([ADR-0049](decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md),
 which supersedes
 [ADR-0027](decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)
 on where a feed is kept).

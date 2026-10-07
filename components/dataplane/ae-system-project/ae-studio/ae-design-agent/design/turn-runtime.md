@@ -2,9 +2,9 @@
 
 Every design-agent turn runs in this container, in memory, on behalf of the
 org's AE Studio pod. Why the work lives in the org's pod is
-[ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md);
+[ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md);
 who may call it is
-[ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md).
+[ADR-0046](../../../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md).
 This note is the turn's lifecycle: how it starts, who may watch it, what it
 leaves behind and how it ends. The memory bound of every collection named
 here is in [pod-memory-bounds.md](pod-memory-bounds.md).

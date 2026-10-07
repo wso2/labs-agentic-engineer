@@ -132,7 +132,7 @@ type Deps struct {
 	OC OC
 }
 
-// Service installs and converges each org's AE Studio (ADR-0040).
+// Service installs and converges each org's AE Studio (ADR-0045).
 type Service struct {
 	cfg        config.AEStudioConfig
 	orgSecrets interface {

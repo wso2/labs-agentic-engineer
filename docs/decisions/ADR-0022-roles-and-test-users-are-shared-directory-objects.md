@@ -273,6 +273,6 @@ is out of this decision.
 The comparison above to `publisher_client_secret` is history: that column is
 dropped, and the publisher client's secret is the org secret
 `ae-publisher-client`, held only in vault
-([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)). Test-user
+([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)). Test-user
 passwords are still sealed with `secrets.ColumnCipher` under
 `credential-encryption-key`; they are the one sealed column left.

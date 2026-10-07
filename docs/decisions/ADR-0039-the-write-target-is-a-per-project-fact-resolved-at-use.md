@@ -120,4 +120,4 @@ broken environment does not stop the others. The last consequence above (a
 connection reaches only environments that have a project) no longer holds.
 The org's AE Studio binds to its `ae-system` project's write target through
 `Resolve`, like any project
-([ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).

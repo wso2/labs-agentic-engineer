@@ -81,6 +81,6 @@ tools) and the FE is mock-complete by design.
 
 Read "the agents service" above as the design agent, `ae-design-agent`, in the
 organization's AE Studio
-([root ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([root ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 It registers `ask_question` / `ask_questions` and the stop condition
 (`src/agents/main/tools/files.ts`, `src/conversation/run-conversation-turn.ts`).

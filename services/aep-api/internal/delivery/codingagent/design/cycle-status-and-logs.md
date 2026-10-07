@@ -2,7 +2,7 @@
 
 How the platform knows what a coding-agent run cycle did, where its output is
 read from, and how its Job and Component are wound down. The decision is
-[ADR-0044](../../../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md);
+[ADR-0049](../../../../../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md);
 this note is the mechanics. How a cycle is dispatched and settled in
 OpenChoreo is [oc-job-dispatch.md](oc-job-dispatch.md).
 

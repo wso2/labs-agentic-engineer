@@ -16,7 +16,7 @@
 
 package organization
 
-// ae_studio.go — the ports an org's AE Studio (ADR-0040) is reached
+// ae_studio.go — the ports an org's AE Studio (ADR-0045) is reached
 // through. The aestudio sub-package implements both; the root and its
 // slices only ever hold the ports, so no slice imports aestudio.
 

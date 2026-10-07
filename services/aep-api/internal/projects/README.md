@@ -181,7 +181,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
-- **A create needs the org's AE Studio serving before the OC project exists** ([ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md),
+- **A create needs the org's AE Studio serving before the OC project exists** ([ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md),
   `SetAEStudioReady`, served by the `aestudiotools` adapter's endpoint resolve): absent answers 409
   `github_not_connected`, not serving 503 `ae_studio_unavailable`, and nothing is half-made.
 - **Everything after the OC project + repo is best-effort; the repo is not.** Skills provisioning, the

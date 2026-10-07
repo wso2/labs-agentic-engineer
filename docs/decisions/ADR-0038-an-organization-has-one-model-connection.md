@@ -188,12 +188,12 @@ format, and the console card no longer names it.
   non-secret fields reach `ae-design-agent` as `AE_MODEL_CONNECTION` and the
   key as the pod's `ANTHROPIC_API_KEY` secret, both rendered by `aep-api` into
   the org's AE Studio
-  ([ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+  ([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
   A save that changes either rolls the pod. `aep-api` sends no per-turn key,
   so decision 6's `X-Model-Key` header is gone; `createModel` keeps one branch
   per format, and the OpenAI-compatible path stands.
 - **The key lives only in vault.** It is the org secret `default-key`
-  ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)), not
+  ([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)), not
   `org_secrets` bytes under `model/key`. The vault write is the write: under
   the card's lock the request's key goes to vault as a new reference, and the
   row transaction runs inside that write. A vault failure saves nothing (502

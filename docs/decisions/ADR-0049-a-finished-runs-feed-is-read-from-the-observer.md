@@ -1,4 +1,4 @@
-# ADR-0044 — A finished run's feed is read from the observer
+# ADR-0049 — A finished run's feed is read from the observer
 
 **Status:** Accepted · 2026-10-06
 **Supersedes:** [ADR-0027](ADR-0027-run-recordings-are-observability-not-ledger.md)
@@ -12,7 +12,7 @@ record for what happened to a version, and a feed is observability.
 ADR-0027 made a coding cycle's feed replayable by recording it to files on
 `aep-api`'s ReadWriteOnce workspaces volume. That volume was the last thing
 pinning `aep-api` to one replica, and with git moved into each org's AE Studio
-(ADR-0040) the recordings were the only data left on it. The observability
+(ADR-0045) the recordings were the only data left on it. The observability
 plane already indexes every coding pod's output, by Component, for as long as
 its log retention.
 

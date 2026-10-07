@@ -18,7 +18,7 @@ package aestudio
 
 // desired.go — what an org's AE Studio should be: the Resource's
 // parameters (a change cuts a ResourceRelease and re-pins) and the binding's
-// environment configs (an RRB PUT only), ADR-0040. Secret values never
+// environment configs (an RRB PUT only), ADR-0045. Secret values never
 // pass through here: the parameters carry reference names, vault keys and
 // properties only.
 

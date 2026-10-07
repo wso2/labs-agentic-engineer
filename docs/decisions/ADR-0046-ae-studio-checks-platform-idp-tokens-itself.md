@@ -1,7 +1,7 @@
-# ADR-0041 — AE Studio checks Platform IdP tokens itself
+# ADR-0046 — AE Studio checks Platform IdP tokens itself
 
 **Status:** Accepted · 2026-10-06
-**Related:** [ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)
+**Related:** [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)
 (the org's AE Studio) ·
 [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md) (the
 Platform IdP)
@@ -14,7 +14,7 @@ Platform IdP)
 
 ## Context
 
-With design work in the org's own pod (ADR-0040), the console calls that pod
+With design work in the org's own pod (ADR-0045), the console calls that pod
 directly: turn streams, the Room and file reads go browser → pod, not through
 `aep-api`. `aep-api` calls the pod too, for git and GitHub work, and the pod
 calls `aep-api` back for a project's repository, usage records and webhook
@@ -49,7 +49,7 @@ group, and the org is the only claim it checks.**
    containers' Unix sockets sit on emptyDirs mounted only into the two
    containers that talk over each, so any process that can reach a socket is
    trusted by it. `/webhooks/github` verifies GitHub's signature with the
-   org's webhook secret (ADR-0043).
+   org's webhook secret (ADR-0048).
 
 4. **`aep-api` never forwards a user's token to the pod.** Every `aep-api` →
    pod call is AE-only M2M on `/internal/v1`. A user's request to `aep-api`

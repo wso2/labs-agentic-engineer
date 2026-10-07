@@ -1,8 +1,8 @@
-# ADR-0042 — An org secret's value lives only in vault
+# ADR-0047 — An org secret's value lives only in vault
 
 **Status:** Accepted · 2026-10-06
 **Related:** [CONTEXT.md](../../CONTEXT.md) **Org secret** ·
-[ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md) (the
+[ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md) (the
 pod that reads them) ·
 [ADR-0036](ADR-0036-the-coding-credential-is-a-subscription.md) and
 [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md) (the card
@@ -74,7 +74,7 @@ the name of the SecretReference that holds it, and a recorded name means
   heal both rely on a user re-entering, or the platform regenerating, the
   value.
 - A write of any org secret but `coding-agent-key` rolls the org's pod
-  (ADR-0040), so it interrupts turns and Room sessions in flight.
+  (ADR-0045), so it interrupts turns and Room sessions in flight.
 - An AI-gateway binding created after the key save needs the key saved again
   before governed agents deploy there.
 - `ColumnCipher` remains for one column, the published test-user passwords

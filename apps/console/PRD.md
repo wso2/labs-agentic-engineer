@@ -109,8 +109,8 @@ here: they're the open `console` + `feature` issues.
   no longer kept*) or `unavailable` (*Couldn't load this run's log right
   now*). Credentials show only `Set` or `Not set`
   ([ADR-0034](design/decisions/ADR-0034-the-console-calls-the-orgs-ae-studio-directly.md),
-  [root ADR-0040](../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md),
-  [root ADR-0044](../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md))
+  [root ADR-0045](../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md),
+  [root ADR-0049](../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md))
 - Settings → AI agents and the welcome onboarding — **one model connection**
   for every agent: API format (Anthropic Messages · OpenAI-compatible), base
   URL (the format's default prefilled, still editable), key and a free-text

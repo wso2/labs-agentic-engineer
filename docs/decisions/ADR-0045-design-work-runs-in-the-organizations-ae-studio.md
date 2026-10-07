@@ -1,14 +1,14 @@
-# ADR-0040 — Design work runs in the organization's AE Studio
+# ADR-0045 — Design work runs in the organization's AE Studio
 
 **Status:** Accepted · 2026-10-06
 **Supersedes:** [ADR-0021](ADR-0021-the-fold-applies-accepted-writes-only.md)
 (the fold is deleted; the Room's committer commits a turn's edits)
 **Related:** [ADR-0039](ADR-0039-the-write-target-is-a-per-project-fact-resolved-at-use.md)
 (the write target) ·
-[ADR-0041](ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md) (who checks
-tokens) · [ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)
+[ADR-0046](ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md) (who checks
+tokens) · [ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)
 (where its secrets come from) ·
-[ADR-0043](ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md)
+[ADR-0048](ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md)
 (its webhook route)
 **Detail:** [`components/dataplane/ae-system-project/ae-studio/design/README.md`](../../components/dataplane/ae-system-project/ae-studio/design/README.md)
 
@@ -34,7 +34,7 @@ Resource in the org's dataplane, installed and kept current by `aep-api`.**
    containers: `ae-design-agent` (turns and conversations), `ae-collab` (the
    Room) and `ae-studio-tools` (git, GitHub, the skills mirror, the webhook
    route). A local install adds the optional `webhook-relay` container
-   (ADR-0043).
+   (ADR-0048).
 
 2. **`aep-api` installs the ResourceType per org.** The `ae-studio`
    ResourceType is created in each org's namespace, because the Cloud
@@ -72,7 +72,7 @@ Resource in the org's dataplane, installed and kept current by `aep-api`.**
    empty on both installs (the chart's `aeStudio.runtimeClassName`, unset on
    Cloud), so the pod runs on the default runtime. The
    containers talk over Unix socket files on shared emptyDirs, and the mount
-   is the gate (ADR-0041). Under Cloud gVisor a socket file does not cross
+   is the gate (ADR-0046). Under Cloud gVisor a socket file does not cross
    containers. Turning gVisor on therefore needs one of: runsc honouring the
    pod's `dev.gvisor.spec.mount` annotations (the Cloud runsc setting
    pod_annotations must admit dev.gvisor.* keys), which keeps the file

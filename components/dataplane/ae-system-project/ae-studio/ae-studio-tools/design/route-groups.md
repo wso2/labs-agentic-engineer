@@ -3,9 +3,9 @@
 One rule shapes the container: **one prefix per caller, one gate per
 prefix.** A Unix socket counts as a prefix: it has one client container and
 one gate, the mount. The trust model is
-[ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md);
+[ADR-0046](../../../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md);
 the webhook route is
-[ADR-0043](../../../../../../docs/decisions/ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md).
+[ADR-0048](../../../../../../docs/decisions/ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md).
 The mount tables are `internal/edge/routes.go` (`Routes`,
 `FilesSocketRoutes`, `MCPSocketRoutes`); the gates are `internal/auth/verify.go`.
 
@@ -70,7 +70,7 @@ ref. A user's write goes to `aep-api`, which uses `/internal/v1`.
 
 The container holds one `aep-api` credential, the org's `ae-studio-<org>`
 client (`AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`), minted at
-`AE_IDP_TOKEN_URL` (ADR-0041 decision 5). It is used for:
+`AE_IDP_TOKEN_URL` (ADR-0046 decision 5). It is used for:
 
 - `/internal/v1/ae-studio/*`: project and skills repository lookups,
   dependency completions, turn usage, the webhook forward;

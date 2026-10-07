@@ -26,7 +26,7 @@ import (
 	"strings"
 )
 
-// Config is what ae-studio-tools reads from its pod env (ADR-0040). Each
+// Config is what ae-studio-tools reads from its pod env (ADR-0045). Each
 // later phase adds the keys its feature reads; nothing is read before it is used.
 type Config struct {
 	OrgID, OrgHandle      string

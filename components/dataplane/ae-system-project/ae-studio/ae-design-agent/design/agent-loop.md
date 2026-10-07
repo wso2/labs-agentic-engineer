@@ -9,7 +9,7 @@ rationale is [ADR-0001](./ADR-0001-anchored-file-edits.md); tool *semantics* liv
 A user sends a natural-language instruction; the agent **streams proposed changes**
 token-by-token (markdown + YAML + OpenAPI). The agent writes its file edits into the
 project's Room as a live peer (`src/collab/room-peer.ts`); the Room's committer is the
-only writer to the repo ([root ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+only writer to the repo ([root ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 
 **A turn starts detached and is watched over a replayable stream.** Start, watch,
 retention and the per-project lock: [turn-runtime.md](turn-runtime.md). A follow-up
@@ -30,7 +30,7 @@ reviewable change, and `applyToolCall` folds the streamed calls through the cano
 | **Whole-aggregate save, last-write-wins** | history is append-only, so the saved array only grows |
 | **Caller-supplied id + lazy create** | the caller owns its id namespace; resume is free |
 | **Raw `StreamPart` on the wire** (no envelope) | FE+BE ship together; `tool-result` already carries everything `toChange` needs |
-| **Snapshot read per turn from `AE_SNAPSHOTS_DIR`** (read-only; the Room's live files win for a Room turn, references always from the snapshot) | the agent writes no repo and no disk; the Room's committer saves ([root ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)) |
+| **Snapshot read per turn from `AE_SNAPSHOTS_DIR`** (read-only; the Room's live files win for a Room turn, references always from the snapshot) | the agent writes no repo and no disk; the Room's committer saves ([root ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)) |
 | **Human-between-turns** (`stopWhen` only, no approval pause) | restart-safe, persistence-aligned, no long-lived per-human promises |
 | **The model is built per turn from the org's connection** (`AE_MODEL_CONNECTION` + `ANTHROPIC_API_KEY` in the pod env, read once at boot; none → `no_default_key`; the playground and local dev fall back to Anthropic's own API on `AGENT_MODEL`) | the organization has one connection (format, URL, key, model) for every agent ([root ADR-0038](../../../../../../docs/decisions/ADR-0038-an-organization-has-one-model-connection.md)), and a change reaches the pod when `aep-api` converges the pod's env (capabilities computed there, `modelconn.CapabilitiesOf`); each turn builds the model from the connection (`createModel`, one branch per format). The service checks a model id's shape only; whether the host serves it is the host's answer. `AGENT_MODEL` is only the default for a caller that names none (the playground, local dev) |
 | **OpenCode Go requests carry the conversation ID** (`x-opencode-session`) | Go uses a stable session header for routing and prompt caching. The provider seam adds it and an AEP user agent only for the OpenAI-compatible `https://opencode.ai/zen/go/v1` endpoint; other connections keep their existing headers. |
