@@ -19,6 +19,8 @@
 import { useEffect, useRef, type RefObject } from "react";
 import { Box, Button, Skeleton } from "@wso2/oxygen-ui";
 import { EmptyState } from "../../../components/EmptyState";
+import { AeStudioUnavailableNotice } from "../../ae-studio/components/AeStudioUnavailableNotice";
+import { aeStudioUnavailable } from "../../ae-studio/model/unavailable";
 import { PHONE } from "../../shell/layout";
 import { useSeeDesignChanges } from "../api/specModel";
 import { useSpecSaveWarnings } from "../collab/specDoc";
@@ -108,6 +110,14 @@ export function SpecWorkspace({
     if (unseen && !marking && !markFailed) markSeen();
   }, [unseen, marking, markFailed, markSeen]);
 
+  const unavailable = aeStudioUnavailable(model.error);
+  if (unavailable) {
+    return (
+      <Box sx={{ p: 3.5, maxWidth: "72ch" }}>
+        <AeStudioUnavailableNotice kind={unavailable} />
+      </Box>
+    );
+  }
   if (model.isError) {
     return (
       <Box sx={{ p: 3.5 }}>

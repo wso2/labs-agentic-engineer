@@ -19,6 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
 import { ApiRequestError, retryAfterMs } from "../../../api/errors";
+import { refetchWhileAeStudioRestarts } from "../../ae-studio/model/unavailable";
 import { env } from "../../../config/env";
 import type { components } from "../../../generated/aep-api";
 
@@ -124,6 +125,8 @@ export function useSpecState(projectName: string) {
       if (error || data === undefined) throw new ApiRequestError(error, "Couldn't load the spec", { retryAfterMs: retryAfterMs(response) });
       return data;
     },
+    // aep-api reads it through AE Studio: "retrying…" while AE Studio restarts.
+    refetchInterval: (query) => refetchWhileAeStudioRestarts(query.state.error),
   });
 }
 

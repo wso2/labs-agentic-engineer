@@ -24,6 +24,7 @@ import type { components } from "../../../generated/aep-api";
 import { useSpecFlush } from "../../spec/collab/specDoc";
 import { buildBody, fixBody, type BuildSelection } from "../buildSelection";
 import { runKeys, useVersionLedger } from "./runs";
+import { refetchWhileAeStudioRestarts } from "../../ae-studio/model/unavailable";
 
 // The builds so far, as the picker, the track and the Builds card read them:
 // each version, what it built (list-project-versions: the features it
@@ -108,6 +109,8 @@ export function useBuilds(projectName: string) {
       return data.versions;
     },
     staleTime: Infinity,
+    // aep-api reads the tags through AE Studio: "retrying…" while AE Studio restarts.
+    refetchInterval: (query) => refetchWhileAeStudioRestarts(query.state.error),
   });
   const ledger = useVersionLedger(projectName);
   const data = useMemo(

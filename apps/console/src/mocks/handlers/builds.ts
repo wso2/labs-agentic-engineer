@@ -29,6 +29,7 @@ import { addBuild, elapsed, mockBuilds, projectBuilds, scriptOf, type MockBuild 
 import { designView } from "../designState";
 import { framesUntil, runAt, snapshotAt, summaryAt } from "../fixtures/buildRun";
 import { specView } from "../specState";
+import { aeStudioReadRefusal } from "./aeStudio";
 
 type BuildResponse = components["schemas"]["BuildResponse"];
 type BuildList = components["schemas"]["BuildList"];
@@ -161,6 +162,7 @@ function progressStream(build: MockBuild, signal: AbortSignal): ReadableStream<U
 
 export const buildsHandlers = [
   http.get("*/api/v1/projects/:projectName/versions", ({ params }) =>
+    aeStudioReadRefusal() ??
     HttpResponse.json<SpecVersionList>({
       versions: mockBuilds(String(params.projectName)).map(({ build }) => ({
         name: build.version,
