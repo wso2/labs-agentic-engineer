@@ -86,3 +86,22 @@ test("startTurnSummary appends the resolved idea to a bare /start only", () => {
   assert.equal(startTurnSummary("/design x", { kind: "flow", skill: "design", text: "x" }), "/design x");
   assert.equal(startTurnSummary("hi", { kind: "chat", text: "hi" }), "hi");
 });
+
+test("/interview F<n> (main's interview command shape) is the interview flow with the feature as its text", () => {
+  assert.deepEqual(turnSpecFor("/interview F3", REFS), {
+    spec: { kind: "flow", skill: "interview", text: "F3", references: PATHS },
+    flow: "interview",
+  });
+});
+
+test("a review batch rides the /prototype flow it was sent with", () => {
+  const batch = {
+    prototypeHash: "0".repeat(64),
+    component: "web",
+    requests: [{ screenId: "s", roleId: "r", stateId: "st", elementIds: [], text: "t" }],
+  };
+  assert.deepEqual(turnSpecFor("/prototype web", { references: [] }, batch), {
+    spec: { kind: "flow", skill: "prototype", text: "web", prototypeFeedback: batch },
+    flow: "prototype",
+  });
+});

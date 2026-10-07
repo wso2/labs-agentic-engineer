@@ -28,15 +28,18 @@
  * lines carry neither and are skipped.
  */
 
-import { SSE_DONE, type TurnAim } from "./contracts/sse-events.js";
+import { SSE_DONE, type TurnAimIntent, type TurnAnchor, type TurnScope } from "./contracts/sse-events.js";
 import type { StreamPart } from "./stream-types.js";
 
 /** A `/v1` turn start body (the design agent's `CreateTurnRequest`, JSON form). */
 export interface TurnStartBody {
   /** Verbatim: `/<command>` lines are parsed by the design agent. */
   instruction: string;
-  target?: string;
-  aim?: TurnAim;
+  /** What the user was looking at (S6); absent = the whole product. */
+  scope?: TurnScope;
+  /** An aimed turn (#666): both `anchor` and `intent`, or neither. */
+  anchor?: TurnAnchor;
+  intent?: TurnAimIntent;
 }
 
 /**

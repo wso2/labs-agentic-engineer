@@ -32,7 +32,7 @@
  * whose answers are ordinary chat turns in the same conversation.
  */
 
-import type { TurnSpec } from "@aep/agent-stream";
+import { PROTOTYPE_FLOW_SKILL, type PrototypeFeedback, type TurnSpec } from "@aep/agent-stream";
 import { REFERENCES_PREFIX } from "../conversation/load-workspace.js";
 
 /** The one token carrying lookup state beyond the token. */
@@ -63,9 +63,14 @@ export interface TurnLookupInputs {
  * the reference documents as their snapshot paths, so a flow's
  * artifacts are grounded in what the user attached. `/start` also carries
  * the idea: typed inline wins, else the lookup's; none, and the start skill
- * asks the user.
+ * asks the user. A review batch rides the `/prototype` flow it was sent with
+ * (`edge/turn-input.ts` checked that the instruction is that command).
  */
-export function turnSpecFor(raw: string, lookup: TurnLookupInputs): { spec: TurnSpec; flow: string } {
+export function turnSpecFor(
+  raw: string,
+  lookup: TurnLookupInputs,
+  prototypeFeedback?: PrototypeFeedback,
+): { spec: TurnSpec; flow: string } {
   const m = SLASH_COMMAND_PATTERN.exec(raw.trim());
   if (m === null) return { spec: { kind: "chat", text: raw }, flow: "" };
   const token = m[1] as string;
@@ -79,8 +84,9 @@ export function turnSpecFor(raw: string, lookup: TurnLookupInputs): { spec: Turn
       flow: token,
     };
   }
+  const feedback = prototypeFeedback && token === PROTOTYPE_FLOW_SKILL ? { prototypeFeedback } : {};
   return {
-    spec: { kind: "flow", skill: token, ...(rest !== "" ? { text: rest } : {}), ...(references ? { references } : {}) },
+    spec: { kind: "flow", skill: token, ...(rest !== "" ? { text: rest } : {}), ...(references ? { references } : {}), ...feedback },
     flow: token,
   };
 }
