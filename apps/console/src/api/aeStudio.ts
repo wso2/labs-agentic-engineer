@@ -133,7 +133,8 @@ export function onPodOutage(listener: () => void): () => void {
   return () => outageListeners.delete(listener);
 }
 
-function reportPodOutage(): void {
+/** Tell the outage listeners that AE Studio did not serve: a pod 503, no answer, or the Room's upstream down. */
+export function reportPodOutage(): void {
   for (const listener of outageListeners) listener();
 }
 
