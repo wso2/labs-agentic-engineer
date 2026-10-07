@@ -499,23 +499,22 @@ func TestModelConnectionSave_DoesNotPublishTheSubscription_DB(t *testing.T) {
 	}
 }
 
-// --- a row means set ---------------------------------------------------------
+// --- one predicate: the credential row ------------------------------------------
 
-// The subscription is projected only while the org's coding-agent-key
-// reference row exists: a credential row with no reference (saved before the
-// token lived in vault) has no usable token, so it reads as not set.
-func TestAgentSettings_SubscriptionProjectedOnlyWithItsReferenceRow_DB(t *testing.T) {
-	t.Parallel()
-	c := newCardDB(t, http.StatusOK)
+// removeSubscriptionPatch is the card's Remove: agents.subscription null.
+func removeSubscriptionPatch() orgconfig.ConfigPatch {
+	return orgconfig.ConfigPatch{Agents: patch.Field[orgconfig.AgentsWrite]{Sent: true, Value: orgconfig.AgentsWrite{
+		Subscription: patch.Field[orgconfig.SubscriptionWrite]{Sent: true, Null: true},
+	}}}
+}
 
+// legacySubscription leaves acme with a connection and the legacy subscription
+// shape: the credential row stays, its coding-agent-key reference row is gone
+// (saved before the token lived in vault).
+func legacySubscription(t *testing.T, c *cardDB) {
+	t.Helper()
 	c.patch(t, "acme", keyPatch(anthropicUnitKey))
 	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
-	got, err := c.settings.Effective(context.Background(), "acme")
-	if err != nil || got.Subscription == nil {
-		t.Fatalf("with its reference row: subscription = %+v (%v), want projected", got.Subscription, err)
-	}
-
-	// The legacy shape: the credential row stays, the reference row is gone.
 	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -525,8 +524,72 @@ func TestAgentSettings_SubscriptionProjectedOnlyWithItsReferenceRow_DB(t *testin
 	if row, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding); err != nil || row == nil {
 		t.Fatalf("test setup: the credential row must remain: %+v (%v)", row, err)
 	}
+}
+
+// GET /config and coding dispatch answer "does the org have a Claude
+// subscription" with the same predicate, the credential row: dispatch fails a
+// run on a subscription whose token was never recorded, so Settings must show
+// that subscription (to replace or remove), flagged tokenMissing.
+func TestAgentSettings_SubscriptionWithoutItsReferenceRow_ProjectsTokenMissing_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+
+	c.patch(t, "acme", keyPatch(anthropicUnitKey))
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil || got.Subscription.TokenMissing {
+		t.Fatalf("with its reference row: subscription = %+v (%v), want projected, token recorded", got.Subscription, err)
+	}
+
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`).Error; err != nil {
+		t.Fatal(err)
+	}
 	got, err = c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil {
+		t.Fatalf("without its reference row: subscription = %+v (%v), want projected", got.Subscription, err)
+	}
+	if !got.Subscription.TokenMissing {
+		t.Fatalf("without its reference row: tokenMissing = false, want true (%+v)", got.Subscription)
+	}
+}
+
+// The card's Remove clears the legacy shape: the credential row goes, so the
+// subscription reads as none and a Claude Code run bills the connection's key.
+func TestAgentSettings_RemoveClearsASubscriptionWithoutItsReferenceRow_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+
+	c.patch(t, "acme", removeSubscriptionPatch())
+
+	if row, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding); err != nil || row != nil {
+		t.Fatalf("Remove must delete the credential row: %+v (%v)", row, err)
+	}
+	got, err := c.settings.Effective(context.Background(), "acme")
 	if err != nil || got.Subscription != nil {
-		t.Fatalf("without its reference row: subscription = %+v (%v), want null", got.Subscription, err)
+		t.Fatalf("after Remove: subscription = %+v (%v), want null", got.Subscription, err)
+	}
+	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err != nil || cred.Kind != organization.CodingCredentialConnectionKey {
+		t.Fatalf("after Remove a Claude Code run must bill the connection's key: cred=%+v err=%v", cred, err)
+	}
+}
+
+// Saving the token again over the legacy shape records its reference: the
+// projection is clean and dispatch mounts the subscription.
+func TestAgentSettings_ReplaceRecordsAMissingSubscriptionToken_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil || got.Subscription.TokenMissing {
+		t.Fatalf("after Replace: subscription = %+v (%v), want projected, token recorded", got.Subscription, err)
+	}
+	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err != nil || cred.Kind != organization.CodingCredentialClaudeSubscription {
+		t.Fatalf("after Replace a Claude Code run must mount the subscription: cred=%+v err=%v", cred, err)
 	}
 }

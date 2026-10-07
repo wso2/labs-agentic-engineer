@@ -199,6 +199,11 @@ type SubscriptionProjection struct {
 	ConnectedAt     time.Time  `json:"connectedAt"`
 	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
 	ValidationError *string    `json:"validationError,omitempty"`
+	// TokenMissing is a subscription whose token was never recorded in vault
+	// (saved before the token lived there): coding dispatch fails every Claude
+	// Code run on it until the token is saved again or the subscription is
+	// removed. Omitted (false) while the token is recorded.
+	TokenMissing bool `json:"tokenMissing,omitempty"`
 }
 
 // SubscriptionKindClaude is the only subscription kind: a Claude plan, billed
