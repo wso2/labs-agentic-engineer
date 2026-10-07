@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildAnswerInstruction } from "@aep/agent-stream";
+import { buildAnswerInstruction, buildAnswersInstruction } from "@aep/agent-stream";
 import { scriptIssuesTurn } from "./issuesAgent";
 
 // The mock Issues agent: it classifies a report, drafts the issue, asks "File
@@ -122,5 +122,71 @@ describe("the answers to the mock Issues agent's questions", () => {
     const turn = scriptIssuesTurn(REPORT, 15);
     const assistant = turn.reply[0]!.content as { type: string; toolName?: string }[];
     expect(assistant.filter((p) => p.type === "tool-call").map((p) => p.toolName)).toEqual(["classify_report", "search_issues", "ask_question"]);
+  });
+});
+
+describe("/issue to the mock Issues agent", () => {
+  const BATCH = buildAnswersInstruction([
+    { question: "What happened?", selected: [], freeText: "It does nothing" },
+    { question: "What did you expect?", selected: [], freeText: "It exports" },
+  ]);
+
+  it("classifies the text without the /issue prefix", () => {
+    const turn = scriptIssuesTurn("/issue the export button is broken", 15);
+    const classified = calls(turn, "classify_report");
+    expect(classified).toHaveLength(1);
+    expect((classified[0]!.input as { message: string }).message).toBe("the export button is broken");
+    expect(turn.display).toBe("/issue the export button is broken");
+  });
+
+  it("asks one batch of at most 4 before any draft, for a feature", () => {
+    const turn = scriptIssuesTurn("/issue add dark mode", 15);
+    const batches = calls(turn, "ask_questions");
+    expect(batches).toHaveLength(1);
+    const questions = (batches[0]!.input as { questions: { question: string; options: unknown[] }[] }).questions;
+    expect(questions.length).toBeGreaterThan(0);
+    expect(questions.length).toBeLessThanOrEqual(4);
+    expect(questions.some((q) => q.question === "File this issue?")).toBe(false);
+    expect(calls(turn, "search_issues")).toHaveLength(0);
+    expect(calls(turn, "ask_question")).toHaveLength(0);
+    expect(turn.filed).toBeUndefined();
+  });
+
+  it("asks only what is missing for a bug (at most 4, no filing question)", () => {
+    const turn = scriptIssuesTurn("/issue the export button is broken", 15);
+    const questions = (calls(turn, "ask_questions")[0]!.input as { questions: { question: string }[] }).questions;
+    expect(questions.length).toBeLessThanOrEqual(4);
+    expect(questions.some((q) => q.question === "File this issue?")).toBe(false);
+  });
+
+  it("asks one free-text question for a bare /issue", () => {
+    const turn = scriptIssuesTurn("/issue", 15);
+    const asks = calls(turn, "ask_question");
+    expect(asks).toHaveLength(1);
+    const input = asks[0]!.input as { question: string; options: unknown[] };
+    expect(input.question).toBe("What should the issue be about?");
+    expect(input.options).toEqual([]);
+    expect(calls(turn, "classify_report")).toHaveLength(0);
+  });
+
+  it("drafts and asks to file once the batch is answered", () => {
+    const turn = scriptIssuesTurn(BATCH, 15, ["/issue the export button is broken"]);
+    expect(calls(turn, "search_issues")).toHaveLength(1);
+    const asks = calls(turn, "ask_question");
+    expect(asks).toHaveLength(1);
+    expect((asks[0]!.input as { question: string }).question).toBe("File this issue?");
+    expect(calls(turn, "ask_questions")).toHaveLength(0);
+  });
+
+  it("files the /issue report's text, without the prefix, after the batch", () => {
+    const turn = scriptIssuesTurn(FILE_IT, 15, ["/issue the export button is broken", BATCH]);
+    expect(turn.filed).toMatchObject({ kind: "bug", title: "Export button is broken" });
+    expect(turn.filed!.body).toContain("export button is broken");
+    expect(turn.filed!.body).not.toContain("/issue");
+  });
+
+  it("treats the answer to a bare /issue as the report", () => {
+    const answer = buildAnswerInstruction("What should the issue be about?", [], "add dark mode");
+    expect(calls(scriptIssuesTurn(answer, 15, ["/issue"]), "classify_report")).toHaveLength(1);
   });
 });

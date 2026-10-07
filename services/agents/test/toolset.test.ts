@@ -147,3 +147,17 @@ test("issues instructions append the surface's narration policy", () => {
   assert.match(buildIssuesInstructions(skills, "console"), /# Narration policy\n\nSay issue, not ticket\./);
   assert.equal(buildIssuesInstructions(skills, undefined), buildIssuesInstructions(undefined, undefined));
 });
+
+test("issues instructions treat /issue as a decision to file: classify without the prefix, ask what is missing in one batch", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  assert.ok(out.includes("When the message starts with /issue"));
+  assert.ok(out.includes("What should the issue be about?"));
+  assert.ok(out.includes("ask_questions"));
+  assert.match(out, /at most 4/);
+  assert.match(out, /without the \/issue prefix/);
+  assert.match(out, /never take the question branch/i);
+  // The clarifying batch never carries the filing question.
+  assert.match(out, /never include "File this issue\?"/i);
+  // Filing is still the single ask_question.
+  assert.equal(out.split(`question exactly "${FILE_QUESTION}"`).length, 2);
+});

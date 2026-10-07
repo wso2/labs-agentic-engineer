@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { ANSWER_PREFIX, ANSWERS_PREFIX } from "@aep/agent-stream";
+import { ANSWER_PREFIX, ANSWERS_PREFIX, type AskQuestionInput } from "@aep/agent-stream";
 import type { ScriptedTurn } from "./interview";
 import { Script } from "./interview";
 
@@ -42,6 +42,7 @@ const FILE_QUESTION = "File this issue?";
 const FILE_IT = "File it";
 const CHANGE_IT = "Change it";
 const KIND_QUESTION = "What kind of issue is this?";
+const ABOUT_QUESTION = "What should the issue be about?";
 const KIND_LABELS: Record<string, IssueKind> = { Bug: "bug", "Feature request": "feature", Improvement: "improvement" };
 const KIND_NAMES: Record<IssueKind, string> = { bug: "bug", feature: "feature request", improvement: "improvement" };
 
@@ -65,16 +66,42 @@ function answerTo(question: string, message: string): string | null {
   return message.startsWith(prefix) ? message.slice(prefix.length).split(" — ")[0]!.trim() : null;
 }
 
-/** The report being worked on and the kind it stands as, from the user's earlier messages in this conversation. */
-function draftContext(history: string[]): { report?: string; kind?: IssueKind } {
+/** An answer's text in a batch (`Answers:` lines), or null when the batch does not answer the question. */
+function batchAnswerTo(question: string, message: string): string | null {
+  if (!message.startsWith(ANSWERS_PREFIX)) return null;
+  const prefix = `- "${question}": `;
+  const line = message.split("\n").find((l) => l.startsWith(prefix));
+  return line ? line.slice(prefix.length).split(" — ")[0]!.trim() : null;
+}
+
+/** What follows /issue ("" for a bare /issue), or null when the message is not the command. */
+function issueText(message: string): string | null {
+  const match = /^\/issue(?:\s+([\s\S]*))?$/.exec(message.trim());
+  return match ? (match[1] ?? "").trim() : null;
+}
+
+/** The kind the user chose in an answer, from the kind question alone or in a batch. */
+function chosenKind(message: string): IssueKind | undefined {
+  return KIND_LABELS[answerTo(KIND_QUESTION, message) ?? batchAnswerTo(KIND_QUESTION, message) ?? ""];
+}
+
+/**
+ * The report being worked on and the kind it stands as, from the user's earlier
+ * messages in this conversation. A /issue report is the text after the command
+ * (or the answer to what the issue should be about); `viaIssue` marks it.
+ */
+function draftContext(history: string[]): { report?: string; kind?: IssueKind; viaIssue?: boolean } {
   let chosen: IssueKind | undefined;
+  let about: string | undefined;
   for (let i = history.length - 1; i >= 0; i--) {
     const message = history[i]!.trim();
     if (!isAnswer(message)) {
-      return { report: message, kind: chosen ?? classify(message).kind };
+      const command = issueText(message);
+      const report = command === null ? message : command || about;
+      return report ? { report, kind: chosen ?? classify(report).kind, viaIssue: command !== null } : {};
     }
-    const label = answerTo(KIND_QUESTION, message);
-    if (label && chosen === undefined) chosen = KIND_LABELS[label];
+    chosen ??= chosenKind(message);
+    about ??= answerTo(ABOUT_QUESTION, message) ?? undefined;
   }
   return chosen ? { kind: chosen } : {};
 }
@@ -139,9 +166,29 @@ export function scriptIssuesTurn(instruction: string, nextNumber: number, histor
     return { display: text, ...draftAndAsk(new Script().pause(300), id, report ?? text, chosen).end(), progress };
   }
 
-  if (isAnswer(text)) {
-    return { display: text, ...new Script().pause(300).say("Got it.").end(), progress };
+  // The answers to a /issue's clarifying batch: draft the report with them.
+  if (text.startsWith(ANSWERS_PREFIX)) {
+    const { report, kind, viaIssue } = draftContext(history);
+    if (report && viaIssue) {
+      return { display: text, ...draftAndAsk(new Script().pause(300), id, report, chosenKind(text) ?? kind ?? "bug").end(), progress };
+    }
   }
+
+  if (isAnswer(text)) {
+    // The answer to a bare /issue's question is the report itself.
+    const about = answerTo(ABOUT_QUESTION, text);
+    if (!about) return { display: text, ...new Script().pause(300).say("Got it.").end(), progress };
+    return { display: text, ...issueReport(id, about).end(), progress };
+  }
+
+  // /issue: the user has decided to file. A bare one asks what it is about; otherwise
+  // classify the text without the command, and ask only what is missing, in one batch.
+  const command = issueText(text);
+  if (command === "") {
+    const s = new Script().pause(300).ask(id("about"), { question: ABOUT_QUESTION, options: [] });
+    return { display: text, ...s.end(), progress };
+  }
+  if (command !== null) return { display: text, ...issueReport(id, command).end(), progress };
 
   // A report: place it, then draft it or ask what kind it is.
   const { kind, confidence } = classify(text);
@@ -163,6 +210,42 @@ export function scriptIssuesTurn(instruction: string, nextNumber: number, histor
     return { display: text, ...s.end(), progress };
   }
   return { display: text, ...draftAndAsk(s, id, text, kind).end(), progress };
+}
+
+/** The questions a /issue report leaves open: what was not said, free-text, at most 4. */
+function missingQuestions(kind: IssueKind, needsKind: boolean): AskQuestionInput[] {
+  const free = (question: string, detail?: string): AskQuestionInput => ({ question, ...(detail ? { detail } : {}), options: [] });
+  const asked: AskQuestionInput[] =
+    kind === "bug"
+      ? [
+          free("What did you expect to happen?"),
+          free("Where does it happen?", "The page or screen."),
+          free("What are the steps to reproduce it?"),
+        ]
+      : [free("What is the need behind this?"), free("What outcome do you want?")];
+  if (!needsKind) return asked;
+  const kindQuestion: AskQuestionInput = {
+    question: KIND_QUESTION,
+    detail: "It decides how I write the issue up.",
+    options: [
+      { label: "Bug", description: "Something that should work does not." },
+      { label: "Feature request", description: "Something new the product should do." },
+      { label: "Improvement", description: "Something that works but could be better." },
+    ],
+  };
+  return [kindQuestion, free("What outcome do you want?")];
+}
+
+/** A /issue report: classify its text (without the command), then the one batch of what is missing. */
+function issueReport(id: (step: string) => string, report: string): Script {
+  const { kind, confidence } = classify(report);
+  const needsClarification = confidence < CLARIFY_BELOW;
+  const alternatives = (["bug", "feature", "improvement"] as const).filter((k) => k !== kind).map((k) => ({ kind: k, confidence: Number(((1 - confidence) / 2).toFixed(2)) }));
+  return new Script()
+    .pause(500)
+    .call(id("classify"), "classify_report", { message: report }, { kind, confidence, alternatives, needsClarification })
+    .say("A few questions, so the issue is complete.")
+    .askAll(id("missing"), missingQuestions(kind, needsClarification).slice(0, 4));
 }
 
 /** Look for a duplicate, show the draft, and ask to file it. */

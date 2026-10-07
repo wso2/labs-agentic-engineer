@@ -80,6 +80,11 @@ most once per turn: a second call, including a retry after a failed first attemp
 refused so the agent reports the result and asks again. The batch (`ask_questions`) form is
 never accepted as a go-ahead.
 
+A message that starts with `/issue` (the Create Issue button's composer prefill) is the user's decision to
+file: the prompt classifies the text without the prefix (never the question branch), asks what is missing in
+ONE `ask_questions` batch of at most 4 (skipped when nothing is missing; a bare `/issue` gets the free-text
+"What should the issue be about?"), then drafts and asks `FILE_QUESTION` as above.
+
 `classify_report` degrades to asking. It files only on a bug, feature or improvement at
 confidence 0.8 or above; below that, or for a `question`, `needsClarification` is true. A
 missing `JEV_API_KEY`, a non-2xx, a malformed body, a network error or the 5 s timeout all
