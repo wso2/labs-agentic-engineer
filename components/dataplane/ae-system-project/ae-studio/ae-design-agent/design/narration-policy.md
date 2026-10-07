@@ -11,7 +11,7 @@ for someone standing in the repository with a terminal open; on a console screen
 it names nothing, and once the artifacts are labelled *Product requirements* and
 *Validation criteria* it names things that are demonstrably not there.
 
-The same flow skills — `start`, `design`, `amend` — have to run on both. So
+The same flow skills — `start`, `design`, `refine` — have to run on both. So
 nothing is stripped from the trunk: the difference rides one extra skill, and the
 caller says which surface its turn is for.
 
