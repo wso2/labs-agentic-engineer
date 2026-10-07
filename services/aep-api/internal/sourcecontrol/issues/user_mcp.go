@@ -48,6 +48,12 @@ var userIssueStates = []string{"open", "closed", "all"}
 // userSearchBodyRunes caps each hit's body so a search stays a summary.
 const userSearchBodyRunes = 500
 
+// userSearchMaxHits caps one search_issues answer, with or without a query:
+// RankIssuesByQuery returns every issue for an empty query, and the repo list
+// can run to a thousand. Without a query the hits keep the service's order,
+// newest first.
+const userSearchMaxHits = 25
+
 // NewUserMCPHandler serves the Issues agent's search_issues and create_issue
 // tools. A request without the verifier's scope answers 401; a nil issues
 // service answers 503.
@@ -124,6 +130,9 @@ func callUserTool(w http.ResponseWriter, r *http.Request, issues sourcecontrol.I
 			}
 		}
 		ranked := sourcecontrol.RankIssuesByQuery(inState, args.Query)
+		if len(ranked) > userSearchMaxHits {
+			ranked = ranked[:userSearchMaxHits]
+		}
 		out := make([]userIssueHit, 0, len(ranked))
 		for _, iss := range ranked {
 			out = append(out, userIssueHit{

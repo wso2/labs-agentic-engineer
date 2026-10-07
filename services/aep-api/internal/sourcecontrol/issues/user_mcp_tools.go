@@ -33,11 +33,11 @@ func userTools() []mcprpc.Tool {
 			Description: "Search the GitHub issues of this session's project to find an existing report before filing a new one. " +
 				"The project is fixed by the session; you cannot search another. " +
 				"Keyword-ranked: pass space-separated keywords (feature name + symptom terms), not a sentence. " +
-				"Each hit carries number, title, state, labels, url and the first 500 characters of its body.",
+				"Returns at most 25 issues; each hit carries number, title, state, labels, url and the first 500 characters of its body.",
 			InputSchema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"query": str("Space-separated keywords (e.g. 'expense save button'), NOT a natural-language phrase. Omit to list issues unranked."),
+					"query": str("Space-separated keywords (e.g. 'expense save button'), NOT a natural-language phrase. Omit to list the most recent issues (up to 25)."),
 					"state": enum("Which issues to search: open (default), closed, or all.", userIssueStates...),
 				},
 			},

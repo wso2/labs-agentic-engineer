@@ -259,3 +259,28 @@ func TestUserMCPWithoutScopeIs401(t *testing.T) {
 		t.Fatalf("status = %d calls = %d, want 401 and no call", w.Code, len(fake.creates))
 	}
 }
+
+// An empty query must not pour the whole repo into the agent's context: it
+// lists the most recent issues (the service's newest-first order), at most 25.
+func TestUserMCPSearchCapsResultsWithoutAQuery(t *testing.T) {
+	fake := &recordingIssues{}
+	for n := 40; n >= 1; n-- { // newest first, as the GitHub list answers
+		fake.listed = append(fake.listed, sourcecontrol.IssueInfo{Number: n, Title: "issue", State: "open"})
+	}
+	text, isErr := callUserTool(t, issues.NewUserMCPHandler(fake), "search_issues", map[string]any{})
+	if isErr {
+		t.Fatalf("search failed: %s", text)
+	}
+	var hits []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal([]byte(text), &hits); err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 25 {
+		t.Fatalf("hits = %d, want 25", len(hits))
+	}
+	if hits[0].Number != 40 || hits[24].Number != 16 {
+		t.Errorf("hits run #%d..#%d, want the 25 most recent (#40..#16)", hits[0].Number, hits[24].Number)
+	}
+}
