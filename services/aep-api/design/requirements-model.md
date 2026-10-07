@@ -14,6 +14,12 @@ feature. Decisions: ADR-0039, ADR-0040, ADR-0041. Terms: `CONTEXT.md`
   unavailable)` — what a selection carries and what it refuses.
 - Held to `packages/contracts/requirements/acme-expenses` (`expected.json`,
   `feature-lines.json`, `basis.json`), which the console's reader shares.
+- Every line reads as the console reads it from the collab room, where inline
+  markup is a mark and not text (`inline.go`): code spans, emphasis, strong,
+  strikethrough, links and autolinks read as their words, escapes and
+  entities as their characters. A closing `*assumed*`/`*blocking*` is kept for
+  `parseLine`. The console's text is canonical: it has no markdown source to
+  re-derive markup from, and the basis is compared by string equality.
 
 ## The save gate — `internal/spec`
 
