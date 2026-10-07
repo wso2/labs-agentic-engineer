@@ -580,10 +580,15 @@ const (
 	testMCPToken   = "mcp-stub-token"
 )
 
-// stubMinter is an MCPTokenMinter that always returns a fixed token.
+// stubMinter is an MCPTokenMinter that always returns a fixed discovery token,
+// and an issues token naming the org + project it was minted for.
 type stubMinter struct{ token string }
 
 func (m stubMinter) IssueMCPToken(string) (string, error) { return m.token, nil }
+
+func (m stubMinter) IssueIssuesMCPToken(org, project string) (string, error) {
+	return "issues:" + org + "/" + project, nil
+}
 
 // withMCP wires the MCP discovery deps (a fixed-token minter + a base URL) so a
 // dispatched turn's MCP block can be asserted.
@@ -1290,6 +1295,49 @@ func TestMCPGate_AttachAndLeak(t *testing.T) {
 			t.Errorf("MCP token = %q, want %q", sent.req.MCP.Token, testMCPToken)
 		}
 	})
+}
+
+// TestMCPGate_IssuesTurn pins the Issues turn's dispatch: it names its view and
+// carries the project-fenced issues MCP block (not discovery), whatever its
+// flow; a main-chat turn names no view and never gets the issues block.
+func TestMCPGate_IssuesTurn(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withMCP())
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	main := listConversations(t, r)[0].ConversationID
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+
+	issuesTurn := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{
+		"instruction": "the save button does nothing", "view": "issues",
+	}))
+	r.waitTerminal(t, issuesTurn)
+	sent := r.fake.sentTurn(t, 0)
+	if sent.req.View != "issues" {
+		t.Errorf("view = %q, want issues", sent.req.View)
+	}
+	if sent.req.MCP == nil {
+		t.Fatal("issues turn dispatched without an MCP block")
+	}
+	if want := testMCPBaseURL + "/internal/v1/issues/mcp"; sent.req.MCP.URL != want {
+		t.Errorf("MCP url = %q, want %q", sent.req.MCP.URL, want)
+	}
+	if want := "issues:" + testOrg + "/" + testProj; sent.req.MCP.Token != want {
+		t.Errorf("MCP token = %q, want the issues token %q", sent.req.MCP.Token, want)
+	}
+	if sent.req.WebSearch || sent.req.Collab != nil || sent.req.Turn.Kind != agentsvc.TurnKindChat {
+		t.Errorf("issues turn = webSearch %v collab %+v kind %q, want false/nil/chat", sent.req.WebSearch, sent.req.Collab, sent.req.Turn.Kind)
+	}
+
+	generalTurn := r.startTurn(t, main, "general", "hello")
+	r.waitTerminal(t, generalTurn)
+	sent = r.fake.sentTurn(t, 1)
+	if sent.req.View != "" {
+		t.Errorf("main-chat view = %q, want empty", sent.req.View)
+	}
+	if sent.req.MCP != nil && strings.Contains(sent.req.MCP.URL, "/issues/") {
+		t.Errorf("main-chat turn carried the issues MCP block: %+v", sent.req.MCP)
+	}
 }
 
 // TestWebSearchGate_AttachAndLeak pins the WebSearch flag's gate (external-

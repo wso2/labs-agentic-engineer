@@ -579,6 +579,10 @@ func labelColor(name string) string {
 		return "7057ff" // purple — planned work from the spec
 	case "bug":
 		return "d73a4a" // red — a defect (GitHub's own default for this name)
+	case "feature":
+		return "a2eeef" // cyan — something new a user asked for
+	case "improvement":
+		return "84b6eb" // light blue — something existing a user would make better
 	case "conflict":
 		return "b60205" // dark red — a pull request that will not merge
 	case "validation":

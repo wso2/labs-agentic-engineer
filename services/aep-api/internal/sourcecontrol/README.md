@@ -26,6 +26,7 @@ flowchart LR
 | Slice | Use-case | Entry |
 |---|---|---|
 | `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
+| `issues` (Issues agent) | the console Issues view's agent searches / files issues on its one project | `POST /internal/v1/issues/mcp` (`search_issues`, `create_issue`; `user_mcp.go`) |
 
 *In the domain root rather than a slice: repo lifecycle, workspace, webhook register/receive (including
 the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
@@ -47,6 +48,11 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 - The bare-mirror workspace handle, and the GitHub host connection state.
 
 ## Invariants — don't break
+- **The Issues agent is fenced to one project.** `user_mcp.go` takes org + project only from the
+  `auth.IssuesMCPScope` bound from a per-turn token (aud `aep-api-issues-mcp`, claims `ocOrgId` +
+  `projectId`); no tool schema declares a project, org or labels, and unknown arguments are ignored.
+  Labels are server-set: `[kind, src/user]` with kind `bug | feature | improvement`. The tool names are
+  a contract with the agents service's filing gate, which keys on `create_issue`.
 - **SRE creation owns incident identity and outcomes.** A trusted transport binds the opaque incident
   identity with `WithIncidentContext`. Creation combines it with tenant/project and normalized component,
   ignoring the client dedupe key. `ops.ClassifyActions` determines classification; config-only ledger

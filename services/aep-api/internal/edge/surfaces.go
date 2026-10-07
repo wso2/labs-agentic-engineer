@@ -41,6 +41,9 @@ import (
 //	internal MCP   /internal/v1/mcp     BFF JWT aud=aep-api-mcp or Thunder          dependencies/mcp_server.go ·
 //	               (POST, JSON-RPC)     publisher CC (org from ocOrgId or           auth.AgentsScopedVerifier (no spec — JSON-RPC)
 //	                                    PublisherClaims.OrgHandle, never request)
+//	               /issues/mcp          BFF JWT aud=aep-api-issues-mcp (org +       sourcecontrol/issues/user_mcp.go ·
+//	               (POST, JSON-RPC)     project from ocOrgId + projectId — the      auth.IssuesMCPVerifier (Issues agent;
+//	                                    Issues view's one project, never request)   no publisher fallback)
 //	               /sre-handoff/mcp     the install-time SRE handoff key           sourcecontrol/issues/sre_mcp.go ·
 //	               (POST, JSON-RPC)     (org from the call, verified against the    auth.SREHandoffVerifier (mounted only
 //	                                    observer's alerts before use)               when SRE_HANDOFF_TOKEN is set)
@@ -170,6 +173,16 @@ func mountSurfaces(params AppParams) *http.ServeMux {
 			params.MCPSpecValidator, params.MCPSpecNormalizer, params.MCPSpecFetcher, params.MCPSpecSlicer,
 			params.MCPGuardrailCatalog)
 		mux.Handle("POST "+internalV1+"/mcp", mcpVerifier.Middleware(mcpHandler))
+
+		// ── Issues agent tools (POST /internal/v1/issues/mcp) ────────────────
+		// search_issues + create_issue for the console Issues view's agent,
+		// fenced to the ONE project its turn was sent from: the verifier binds
+		// org + project from a BFF-signed token (aud aep-api-issues-mcp) minted
+		// per turn; nothing in the request names either (issues/user_mcp.go).
+		if params.IssuesMCP != nil {
+			mux.Handle("POST "+internalV1+"/issues/mcp",
+				auth.NewIssuesMCPVerifier(params.Deps.TaskTokens).Middleware(params.IssuesMCP))
+		}
 
 		// ── playground-token mint (POST /internal/v1/mcp/playground-token) ────
 		// LOCAL DEV ONLY, and only when explicitly opted in via

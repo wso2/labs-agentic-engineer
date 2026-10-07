@@ -142,6 +142,20 @@ func (m *TaskTokenManager) IssueMCPToken(orgID string) (string, error) {
 	return m.IssueServiceToken(AudienceMCP, orgID, mcpTokenTTL)
 }
 
+// AudienceIssuesMCP is the aud claim on BFF-signed tokens that authenticate the
+// Issues agent to the project-fenced issue tools (POST /internal/v1/issues/mcp).
+// It is distinct from AudienceMCP so an issues token cannot open the org-wide
+// discovery surface, and a discovery token cannot reach the issue tools.
+const AudienceIssuesMCP = "aep-api-issues-mcp"
+
+// IssueIssuesMCPToken mints a short-lived identity JWT (aud AudienceIssuesMCP)
+// carrying orgID in ocOrgId and projectID in projectId — the one project the
+// Issues view was opened on. IssuesMCPVerifier binds both from these claims, so
+// the agent can never choose the project it files into.
+func (m *TaskTokenManager) IssueIssuesMCPToken(orgID, projectID string) (string, error) {
+	return m.signServiceToken(AudienceIssuesMCP, orgID, projectID, mcpTokenTTL)
+}
+
 // IssueServiceToken mints a short-lived BFF-signed JWT that authenticates an
 // outbound BFF→service call (e.g. BFF→agents-service, design-agent MCP) and
 // carries the acting org in the ocOrgId claim. Verifiers use the same
@@ -154,6 +168,12 @@ func (m *TaskTokenManager) IssueMCPToken(orgID string) (string, error) {
 // signature+aud without requiring org. ttl is short (minutes); a non-positive
 // ttl falls back to the manager's configured task TTL.
 func (m *TaskTokenManager) IssueServiceToken(audience, ocOrgID string, ttl time.Duration) (string, error) {
+	return m.signServiceToken(audience, ocOrgID, "", ttl)
+}
+
+// signServiceToken signs a service token; projectID is set only by
+// IssueIssuesMCPToken (empty omits the claim, as on every other service token).
+func (m *TaskTokenManager) signServiceToken(audience, ocOrgID, projectID string, ttl time.Duration) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("audience is required")
 	}
@@ -169,7 +189,8 @@ func (m *TaskTokenManager) IssueServiceToken(audience, ocOrgID string, ttl time.
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
-		OcOrgID: ocOrgID,
+		OcOrgID:   ocOrgID,
+		ProjectID: projectID,
 	}
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)

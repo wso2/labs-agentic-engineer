@@ -260,6 +260,10 @@ type TurnRequest struct {
 	// byte-identical to a surface-free turn. Pinned by @aep/agent-stream's
 	// Surface.
 	Surface string `json:"surface,omitempty"`
+	// View names the console view the turn was sent from: "issues" for the
+	// Issues page's agent, omitted for the main chat. The agents service picks
+	// that view's agent (prompt + tools). Pinned by @aep/agent-stream's View.
+	View string `json:"view,omitempty"`
 }
 
 // TurnConnection is the turn's model connection on the wire: everything the

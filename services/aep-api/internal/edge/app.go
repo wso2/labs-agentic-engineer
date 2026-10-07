@@ -93,6 +93,11 @@ type AppParams struct {
 	SREHandoffAuth *auth.SREHandoffVerifier
 	SREHandoffMCP  http.Handler
 
+	// IssuesMCP serves the console Issues agent's project-fenced issue tools
+	// (issues.NewUserMCPHandler). Mounted behind auth.IssuesMCPVerifier when
+	// both it and Deps.TaskTokens are set; nil leaves the surface unmounted.
+	IssuesMCP http.Handler
+
 	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
 	// artifacts packages in-process. CredService + AnthropicCredService +
 	// ModelConnections + DB also back the local-dev in-process secret resync

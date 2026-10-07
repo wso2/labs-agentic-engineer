@@ -400,3 +400,32 @@ func TestParseOwnerRepo(t *testing.T) {
 		}
 	}
 }
+
+// The Issues agent files feature and improvement issues; each kind gets its own
+// colour rather than the grey reserved for dynamic labels.
+func TestCreateIssue_UserIssueKindsHaveTheirOwnColours(t *testing.T) {
+	t.Parallel()
+	stub := gittest.NewStub(t)
+	stub.On(http.MethodPost, "/repos/acme/widgets/labels", http.StatusCreated, `{}`)
+	stub.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated,
+		`{"number":8,"html_url":"https://github.com/acme/widgets/issues/8","node_id":"NODE8"}`)
+	svc := newIssueSvcOnStub(t, stub)
+
+	if _, err := svc.CreateIssue(testContext(), "org1", "proj1", sourcecontrol.CreateIssueRequest{
+		Title: "Export to CSV", Body: "please", Labels: []string{"feature", "improvement"},
+	}); err != nil {
+		t.Fatalf("CreateIssue: %v", err)
+	}
+	want := map[string]string{"feature": "a2eeef", "improvement": "84b6eb"}
+	for _, lr := range requestsMatching(stub.Requests(), http.MethodPost, "/repos/acme/widgets/labels") {
+		var l struct{ Name, Color string }
+		decodeBody(t, lr.Body, &l)
+		if want[l.Name] != l.Color {
+			t.Errorf("label %q color = %q, want %q", l.Name, l.Color, want[l.Name])
+		}
+		delete(want, l.Name)
+	}
+	if len(want) != 0 {
+		t.Errorf("labels not ensured: %v", want)
+	}
+}

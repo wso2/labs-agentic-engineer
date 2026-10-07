@@ -246,10 +246,14 @@ func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
 // the agents service calls back into. Returns nil (no MCP block) when the minter
 // / base URL are not wired, when the turn is none of those, or when minting
 // fails — a turn without MCP is
-// byte-identical to today, so this is best-effort.
+// byte-identical to today, so this is best-effort. An Issues-view turn gets the
+// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow.
 func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
+	}
+	if job.view == ChatViewIssues {
+		return s.issuesMCPForTurn(ctx, job)
 	}
 	if !catalogTurn(job) {
 		return nil
@@ -262,6 +266,24 @@ func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBloc
 	}
 	return &agentsvc.MCPBlock{
 		URL:   strings.TrimRight(s.mcpBaseURL, "/") + "/internal/v1/mcp",
+		Token: token,
+	}
+}
+
+// issuesMCPForTurn mints the Issues turn's MCP block: a token (aud
+// aep-api-issues-mcp) fenced to the turn's org AND project, plus the BFF's
+// issue-tools endpoint. The agent can search and file issues on that one
+// project only. Best-effort like the discovery block: a mint failure dispatches
+// the turn without tools.
+func (s *Service) issuesMCPForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
+	token, err := s.mcpTokens.IssueIssuesMCPToken(job.orgID, job.projectID)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: issues MCP token mint failed — dispatching turn without issue tools",
+			"turn", job.turnID, "error", err)
+		return nil
+	}
+	return &agentsvc.MCPBlock{
+		URL:   strings.TrimRight(s.mcpBaseURL, "/") + "/internal/v1/issues/mcp",
 		Token: token,
 	}
 }
@@ -338,6 +360,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		Collab:                 collab,
 		Journal:                journalFor(job),
 		Surface:                agentsvc.SurfaceConsole,
+		View:                   string(job.view),
 		// The attachments themselves, not just their names on the journal. Both
 		// are needed and they are NOT the same thing: the journal drives the
 		// chips a reader sees, this is what the MODEL reads. Omitting it made a
