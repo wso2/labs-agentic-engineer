@@ -25,7 +25,7 @@
  * it answer, which only the console's question card produces.
  */
 
-import type { ToolSet } from "ai";
+import type { ModelMessage, ToolSet } from "ai";
 import { buildAnswerInstruction } from "@aep/agent-stream";
 
 /** The confirmation question the agent asks, and the option that files. */
@@ -100,4 +100,46 @@ export function gateCreateIssue(tools: ToolSet, confirmed: boolean): ToolSet {
       },
     },
   } as ToolSet;
+}
+
+/**
+ * The issue this turn filed, as `Filed #<number>: <title>`: the last
+ * `create_issue` call whose result names the new issue's number, with the
+ * title the call filed. Read defensively — the result is the MCP server's text
+ * (`{"number":15,"url":…}`) and a refused, failed or unreadable call is no
+ * filing. Undefined when the turn filed nothing.
+ */
+export function filedIssue(messages: readonly ModelMessage[]): string | undefined {
+  const titles = new Map<string, string>();
+  let filed: string | undefined;
+  for (const m of messages) {
+    if (typeof m.content === "string") continue;
+    for (const part of m.content) {
+      if (part.type === "tool-call" && part.toolName === CREATE_ISSUE) {
+        const title = (part.input as { title?: unknown } | null)?.title;
+        if (typeof title === "string" && title.trim() !== "") titles.set(part.toolCallId, title.trim());
+      } else if (part.type === "tool-result" && part.toolName === CREATE_ISSUE) {
+        const number = issueNumber(part.output);
+        const title = titles.get(part.toolCallId);
+        if (number !== undefined && title !== undefined) filed = `Filed #${number}: ${title}`;
+      }
+    }
+  }
+  return filed;
+}
+
+/** The `number` a create_issue result names, when it is a positive integer. */
+function issueNumber(output: unknown): number | undefined {
+  const o = output as { type?: unknown; value?: unknown } | null;
+  let value: unknown;
+  if (o?.type === "json") value = o.value;
+  else if (o?.type === "text" && typeof o.value === "string") {
+    try {
+      value = JSON.parse(o.value);
+    } catch {
+      return undefined;
+    }
+  } else return undefined;
+  const number = (value as { number?: unknown } | null)?.number;
+  return typeof number === "number" && Number.isInteger(number) && number > 0 ? number : undefined;
 }

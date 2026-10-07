@@ -26,6 +26,7 @@
 import type { LanguageModelUsage, ModelMessage } from "ai";
 import { OUTCOME_MAX_CHARS, type FileBundle, type ManifestPart, type TurnUsage } from "@aep/agent-stream";
 import { sha256Hex } from "../shared/hash.js";
+import { filedIssue } from "../agents/issues/filing-gate.js";
 
 /**
  * Project the AI SDK's whole-turn `LanguageModelUsage` onto the pinned
@@ -79,16 +80,18 @@ export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage, outcom
 }
 
 /**
- * What a turn came to (`ManifestPart.outcome`): the last text part of the
- * assistant messages it appended, trimmed, and cut to `OUTCOME_MAX_CHARS`
- * ending in `…` when longer. A turn that never replied in text has none.
+ * What an Issues turn came to (`ManifestPart.outcome`), from the messages it
+ * appended: `Filed #<number>: <title>` when it filed an issue (`filedIssue`),
+ * which is built from the filing itself rather than from prose; otherwise the
+ * last text part of its replies, trimmed. Cut to `OUTCOME_MAX_CHARS` ending in
+ * `…` when longer. A turn that neither filed nor replied in text has none.
  */
 export function turnOutcome(messages: readonly ModelMessage[]): string | undefined {
   const texts = messages.flatMap((m) => {
     if (m.role !== "assistant") return [];
     return typeof m.content === "string" ? [m.content] : m.content.flatMap((p) => (p.type === "text" ? [p.text] : []));
   });
-  const last = texts.map((t) => t.trim()).filter((t) => t !== "").pop();
-  if (last === undefined) return undefined;
-  return last.length > OUTCOME_MAX_CHARS ? `${last.slice(0, OUTCOME_MAX_CHARS - 1)}…` : last;
+  const outcome = filedIssue(messages) ?? texts.map((t) => t.trim()).filter((t) => t !== "").pop();
+  if (outcome === undefined) return undefined;
+  return outcome.length > OUTCOME_MAX_CHARS ? `${outcome.slice(0, OUTCOME_MAX_CHARS - 1)}…` : outcome;
 }
