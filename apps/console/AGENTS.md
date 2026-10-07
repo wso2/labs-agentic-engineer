@@ -50,6 +50,9 @@ an area before changing it.
   nginx serves the SPA and forwards `/aep-api-service/` to aep-api (nothing
   else: the Room and GitHub callbacks no longer go through it); the
   entrypoint writes `env-config.js` (`window._env_`) from the pod's env.
-- Chat turns and the spec Room go to the org's AE Studio, not `aep-api`, each
-  through its own generated client
-  ([ADR-0034](design/decisions/ADR-0034-the-console-calls-the-orgs-ae-studio-directly.md)).
+- Chat turns go to the org's AE Studio (its design agent's `/v1`, through
+  `designAgent()` in `src/api/aeStudio.ts`), and the spec Room is AE Studio's
+  Room (`src/features/spec/collab/specRoom.ts`), not `aep-api`; the
+  `AeStudioGate` holds the console, or shows the restart banner or the failed
+  page, by AE Studio's state
+  ([ADR-0003](design/decisions/ADR-0003-the-console-calls-the-orgs-ae-studio-directly.md)).
