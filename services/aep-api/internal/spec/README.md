@@ -145,15 +145,22 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   by `platform/officetext` and streamed as `<name>.md`. One over the limit or that does not convert is
   a 400 that aborts the upload, so the pod stores nothing. The held kickoff fires only on the pod's
   `2xx`.
-- **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
-  design was written?" is answered by reading the requirements at the commit the newest successful
-  `/design` turn recorded reading the project at, and comparing that reduction against today's —
-  `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
-  stamped, so nothing falls out of sync, and the question is answerable for projects predating the
-  check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
-  the project's Room and the Room's committer (`ae-collab`) commits them later, carrying no turn id and no author — there
-  is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
-  refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
+- **Design staleness is derived per feature, never stored** (#575, E1). A feature's design is out
+  of date when its basis (`reqspec.Basis`: its file plus the product-wide items that reach it) differs
+  between today and the commit the run that last designed it read. That run is the newest completed
+  design run (`CompletedFlows`, latest-finished first, the last 50) that covered the feature: one
+  that named it (`/design F1 F2`, the IDs in the run's ledger `Summary`), or a bare `/design`, which
+  covered every feature designable at its commit (`designedFrom`). `SaveSpec` (`staleFeatures`)
+  marks each such feature unavailable: a build that carries or needs it (no pick carries every
+  designable feature) is refused `FEATURE_NOT_BUILDABLE` ("update the design for F<n> first"); a
+  pick that leaves it out builds without it. `GET /spec/state` (`SpecState.DesignedFrom`) reports the same per-feature basis, so the
+  console's "out of date" and the gate's agree. A run whose commit is unreadable is skipped. The
+  status poll's `designOutdated` flag is coarser and display-only: the whole requirements tree
+  (`RequirementsFingerprint`, path + blob sha) now versus at the newest completed design run
+  (`NewestCompletedFlow`). Nothing is stamped because a turn NEVER commits: its file changes stream
+  to the project's Room and the Room's committer (`ae-collab`) commits them later with no turn id
+  and no author, so there is no moment the platform controls and no way to tell that flush from a
+  hand edit. Only the run's base commit and the feature IDs it named are recorded.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
   read and written through the org's AE Studio pod (`sourcecontrol.Git`). aep-api's own writes are
@@ -165,7 +172,10 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
   writes each record once (`ON CONFLICT (org_id, id) DO NOTHING`, so a resent batch changes nothing) with
   its `kind` (`browser | kickoff | plan`), `started_at`/`finished_at`, and `cost_usd` stamped at
-  ingest from the `(host, model)` rate then in force. `created_at` is the turn's start, so
+  ingest from the `(host, model)` rate then in force. `summary` holds a design turn's feature IDs
+  (the record's `designFeatures`, space-joined: `F1 F2`; empty = every designable feature, read back
+  by `DesignedFeatures`) and is empty on every other turn: the field is ignored off a design turn,
+  and the line the user typed never reaches aep-api. `created_at` is the turn's start, so
   `Newest`/`NewestCompletedFlow` order ledger rows by when the turn ran, whatever order they
   arrive in. The edge refuses the whole batch with 404 when any record names a project outside
   the token's org; a record with no project (a marketplace turn) is stored under

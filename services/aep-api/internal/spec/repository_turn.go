@@ -77,6 +77,10 @@ type TurnRecord struct {
 	ModelHost     string
 	Usage         contracts.TokenUsage
 	ContextTokens *int64
+	// DesignFeatures are the feature IDs a design turn named (`/design F1
+	// F2`); none means every feature designable at BaseRef. Stored for a
+	// design turn only (designSummary); ignored on any other flow.
+	DesignFeatures []string
 }
 
 // TurnRepository is the finished-turn ledger. Lookups miss with (nil, nil),
@@ -101,8 +105,9 @@ type TurnRepository interface {
 	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error)
 
 	// CompletedFlows returns up to `limit` of the project's COMPLETED turns of
-	// one flow, newest first. The build gate reads the design runs this way to
-	// find, per feature, the run that last designed it (E1).
+	// one flow, the latest-finished first (finished_at; created_at for a row
+	// with none). The build gate reads the design runs this way to find, per
+	// feature, the run whose design of it landed last (E1).
 	CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error)
 
 	// Newest returns the project's most recent turn row across every
@@ -152,7 +157,8 @@ func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []
 // a batch's order or a late delivery never makes an older turn the newest.
 // It is clamped to now: the start is the pod's clock, and a pod running ahead
 // would otherwise pin its row as Newest (the kickoff guard, spec.agent) until
-// real time caught up. started_at keeps the pod's own value.
+// real time caught up. started_at keeps the pod's own value. Summary holds a
+// design turn's feature IDs (designSummary) and is empty for any other turn.
 func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
 	finished := rec.FinishedAt
 	created := rec.StartedAt
@@ -171,6 +177,7 @@ func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
 		Status:              rec.Status,
 		Reason:              rec.Reason,
 		Code:                rec.Code,
+		Summary:             designSummary(rec.Flow, rec.DesignFeatures),
 		AuthorID:            rec.AuthorID,
 		AuthorDisplayName:   rec.AuthorName,
 		InputTokens:         rec.Usage.InputTokens,
@@ -235,14 +242,16 @@ func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, project
 	return &t, nil
 }
 
-// CompletedFlows reads the newest completed runs of one flow off the
-// (org_id, project_id) index.
+// CompletedFlows reads the completed runs of one flow off the
+// (org_id, project_id) index and orders them by when each finished: two runs
+// can overlap, and the one that finished last wrote last. Rows the in-process
+// engine wrote have no finished_at and fall back to created_at.
 func (r *turnRepository) CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error) {
 	var turns []AgentTurn
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
 			orgID, projectID, flow, turnStatusCompleted).
-		Order("created_at DESC").
+		Order("COALESCE(finished_at, created_at) DESC").
 		Limit(limit).
 		Find(&turns).Error
 	return turns, err

@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -559,11 +560,26 @@ func TestSaveSpec_DesignOutOfDatePerFeature(t *testing.T) {
 	}
 }
 
-// TODO(main-sync Task 48, API-11): main's TestDesignedFeatures parsed a
-// `/design F1 F2` command line (spec.DesignedFeatures, deleted with
-// start_command.go). Under Q3 (1b) the pod reports the IDs and aep-api keeps
-// them in agent_turns.Summary: test that reader (dedupe, F-pattern only, empty
-// = nil = every designable feature) where it lands.
+// A design turn's ledger Summary holds the feature IDs it designed ("F1 F2").
+// Rows the in-process engine wrote hold the `/design F1 F2` line instead, which
+// reads the same. No IDs is nil: every feature designable at the run's commit.
+func TestDesignedFeatures(t *testing.T) {
+	for summary, want := range map[string][]string{
+		"":                        nil,
+		"F1 F2":                   {"F1", "F2"},
+		"F2 F10 F2":               {"F2", "F10"},
+		"  F3  ":                  {"F3"},
+		"/design":                 nil,
+		"/design F1 F2":           {"F1", "F2"},
+		"/design F2, F10 and F2":  {"F2", "F10"},
+		"/design the whole thing": nil,
+		"F1x Fo":                  nil,
+	} {
+		if got := DesignedFeatures(summary); !reflect.DeepEqual(got, want) {
+			t.Errorf("DesignedFeatures(%q) = %v, want %v", summary, got, want)
+		}
+	}
+}
 
 // A version is a selection (B1): a pick builds what it carries, records it in
 // the tag, and the version's scope is exactly those stories. A stale feature

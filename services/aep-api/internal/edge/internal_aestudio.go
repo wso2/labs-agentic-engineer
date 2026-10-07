@@ -352,6 +352,7 @@ func toTurnRecord(r igen.AEStudioTurnRecord) spec.TurnRecord {
 		Code:           r.Code,
 		BaseRef:        r.BaseRef,
 		SkillsRef:      r.SkillsRef,
+		DesignFeatures: r.DesignFeatures,
 		StartedAt:      r.StartedAt,
 		FinishedAt:     r.FinishedAt,
 		ModelHost:      r.ModelHost,

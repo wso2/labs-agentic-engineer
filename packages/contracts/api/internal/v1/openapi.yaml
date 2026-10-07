@@ -570,6 +570,19 @@ components:
         contextTokens:
           type: integer
           format: int64
+        designFeatures:
+          type: array
+          maxItems: 200
+          description: |-
+            The features a `design` turn designed, as the `/design F1 F2`
+            line named them. Absent or empty means every feature designable
+            at baseRef (a bare `/design`). Send it only on a `design` turn:
+            on any other flow it is ignored, not refused, so one record never
+            costs the batch. The ledger stores the IDs only, never the line.
+          items:
+            type: string
+            pattern: '^F[0-9]+$'
+            maxLength: 16
     AEStudioTurnRecordAuthor:
       type: object
       additionalProperties: false

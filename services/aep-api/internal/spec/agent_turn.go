@@ -70,9 +70,11 @@ type AgentTurn struct {
 	ResetAt *time.Time `json:"-"`
 
 	// Who sent the turn: the pod's credit (the verified caller's subject and
-	// display name). Summary is the transcript line the in-process engine
-	// stored for its turns; ledger rows leave it empty. All empty for a turn
-	// nobody sent (a kickoff with no credit, a marketplace turn).
+	// display name); both empty for a turn nobody sent (a kickoff with no
+	// credit, a marketplace turn). Summary holds a design turn's feature IDs,
+	// space-joined ("F1 F2"; empty = every designable feature), read back by
+	// DesignedFeatures; empty on every other ledger row. Rows the in-process
+	// engine wrote hold the transcript line there instead.
 	Summary           string `gorm:"type:text" json:"-"`
 	AuthorID          string `gorm:"type:text" json:"-"`
 	AuthorDisplayName string `gorm:"type:text" json:"-"`

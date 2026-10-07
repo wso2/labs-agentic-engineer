@@ -24,6 +24,7 @@ package spec_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -343,5 +344,89 @@ func TestRecordFinished_MarketplaceTurnHasNoProject(t *testing.T) {
 	row := getTurn(t, db, "o1", "", rec.TurnID)
 	if row == nil || row.ProjectID != "" {
 		t.Fatalf("marketplace row = %+v, want project_id ''", row)
+	}
+}
+
+// A design turn's feature scope is stored as its IDs only, space-joined and
+// deduplicated, in Summary, and reads back through DesignedFeatures. Any other
+// flow stores none, even when a record carries some (the contract says they
+// are ignored there, so a stray field never costs the batch).
+func TestRecordFinished_StoresADesignTurnsFeatures(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
+	ctx := context.Background()
+	design := finishedTurn("p1")
+	design.DesignFeatures = []string{"F2", "F1", "F2"}
+	bare := finishedTurn("p1")
+	chat := finishedTurn("p1")
+	chat.Flow = "interview"
+	chat.DesignFeatures = []string{"F3"}
+
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{design, bare, chat}); err != nil {
+		t.Fatalf("RecordFinished: %v", err)
+	}
+	if row := getTurn(t, db, "o1", "p1", design.TurnID); row == nil || row.Summary != "F2 F1" {
+		t.Fatalf("design row summary = %+v, want \"F2 F1\"", row)
+	} else if got := spec.DesignedFeatures(row.Summary); len(got) != 2 || got[0] != "F2" || got[1] != "F1" {
+		t.Fatalf("DesignedFeatures(%q) = %v, want [F2 F1]", row.Summary, got)
+	}
+	if row := getTurn(t, db, "o1", "p1", bare.TurnID); row == nil || row.Summary != "" || spec.DesignedFeatures(row.Summary) != nil {
+		t.Fatalf("bare /design row = %+v, want an empty summary (every feature)", row)
+	}
+	if row := getTurn(t, db, "o1", "p1", chat.TurnID); row == nil || row.Summary != "" {
+		t.Fatalf("non-design row = %+v, want an empty summary", row)
+	}
+}
+
+// CompletedFlows lists one project's completed runs of one flow, the
+// latest-FINISHED first: the run that last designed a feature is the one whose
+// work landed last, whatever order the runs started in or arrived. Failed
+// runs, other flows and other projects are left out, and limit caps the list.
+func TestCompletedFlows_LatestFinishedFirst(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	at := func(rec spec.TurnRecord, start, finish time.Duration) spec.TurnRecord {
+		rec.StartedAt, rec.FinishedAt = base.Add(start), base.Add(finish)
+		return rec
+	}
+	long := at(finishedTurn("p1"), 0, 30*time.Minute)              // started first, finished last
+	short := at(finishedTurn("p1"), 5*time.Minute, 10*time.Minute) // started later, finished first
+	oldest := at(finishedTurn("p1"), -time.Hour, -50*time.Minute)
+	failed := at(finishedTurn("p1"), 0, time.Hour)
+	failed.Status = "failed"
+	other := at(finishedTurn("p1"), 0, time.Hour)
+	other.Flow = "start"
+	elsewhere := at(finishedTurn("p2"), 0, time.Hour)
+
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{short, failed, oldest, long, other, elsewhere}); err != nil {
+		t.Fatalf("RecordFinished: %v", err)
+	}
+	// A row the in-process engine wrote has no finished_at: it sorts by
+	// created_at, here between the two runs above.
+	legacy := spec.AgentTurn{
+		ID: uuid.NewString(), OrgID: "o1", ProjectID: "p1", ConversationID: uuid.NewString(),
+		Flow: "design", BaseRef: "cccccccccccccccccccccccccccccccccccccccc", Status: "completed",
+		StartedAt: base.Add(20 * time.Minute), CreatedAt: base.Add(20 * time.Minute),
+	}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	runs, err := repo.CompletedFlows(ctx, "o1", "p1", "design", 10)
+	if err != nil {
+		t.Fatalf("CompletedFlows: %v", err)
+	}
+	var ids []string
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	if want := []string{long.TurnID, legacy.ID, short.TurnID, oldest.TurnID}; !slices.Equal(ids, want) {
+		t.Fatalf("CompletedFlows = %v, want %v (long, legacy, short, oldest)", ids, want)
+	}
+	if runs, err := repo.CompletedFlows(ctx, "o1", "p1", "design", 1); err != nil || len(runs) != 1 || runs[0].ID != long.TurnID {
+		t.Fatalf("CompletedFlows limit 1 = (%v, %v), want the latest-finished run", runs, err)
 	}
 }
