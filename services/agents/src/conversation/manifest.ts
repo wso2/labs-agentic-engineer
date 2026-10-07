@@ -83,15 +83,43 @@ export function buildManifestPart(bundle?: FileBundle, usage?: TurnUsage, outcom
  * What an Issues turn came to (`ManifestPart.outcome`), from the messages it
  * appended: `Filed #<number>: <title>` when it filed an issue (`filedIssue`),
  * which is built from the filing itself rather than from prose; otherwise the
- * last text part of its replies, trimmed. Cut to `OUTCOME_MAX_CHARS` ending in
- * `…` when longer. A turn that neither filed nor replied in text has none.
+ * last non-blank text part of its replies. Both are model or user text, so the
+ * title and the reply are sanitised (`oneLine`) BEFORE the cap: a NUL would
+ * make Postgres refuse the turn row's update, a line break would start a line
+ * of its own in the main agent's prompt. Cut to `OUTCOME_MAX_CHARS` UTF-16
+ * units ending in `…`, never splitting a surrogate pair. A turn that neither
+ * filed nor replied in text has none.
  */
 export function turnOutcome(messages: readonly ModelMessage[]): string | undefined {
-  const texts = messages.flatMap((m) => {
-    if (m.role !== "assistant") return [];
-    return typeof m.content === "string" ? [m.content] : m.content.flatMap((p) => (p.type === "text" ? [p.text] : []));
-  });
-  const outcome = filedIssue(messages) ?? texts.map((t) => t.trim()).filter((t) => t !== "").pop();
-  if (outcome === undefined) return undefined;
-  return outcome.length > OUTCOME_MAX_CHARS ? `${outcome.slice(0, OUTCOME_MAX_CHARS - 1)}…` : outcome;
+  const filed = filedIssue(messages);
+  const title = filed ? oneLine(filed.title) : "";
+  const outcome =
+    filed && title !== ""
+      ? `Filed #${filed.number}: ${title}`
+      : messages
+          .flatMap((m) => {
+            if (m.role !== "assistant") return [];
+            return typeof m.content === "string"
+              ? [m.content]
+              : m.content.flatMap((p) => (p.type === "text" ? [p.text] : []));
+          })
+          .map(oneLine)
+          .filter((t) => t !== "")
+          .pop();
+  if (outcome === undefined || outcome.length <= OUTCOME_MAX_CHARS) return outcome;
+  let cut = outcome.slice(0, OUTCOME_MAX_CHARS - 1);
+  if (/[\uD800-\uDBFF]$/.test(cut)) cut = cut.slice(0, -1);
+  return `${cut}…`;
+}
+
+/**
+ * Text made one line: control characters other than whitespace removed, every
+ * run of whitespace (line breaks, U+2028/U+2029, NEL and tabs included)
+ * collapsed to one space, trimmed.
+ */
+function oneLine(text: string): string {
+  return text
+    .replace(/\p{Cc}/gu, (c) => (/[\s\u0085]/.test(c) ? " " : ""))
+    .replace(/\s+/g, " ")
+    .trim();
 }

@@ -103,25 +103,25 @@ export function gateCreateIssue(tools: ToolSet, confirmed: boolean): ToolSet {
 }
 
 /**
- * The issue this turn filed, as `Filed #<number>: <title>`: the last
- * `create_issue` call whose result names the new issue's number, with the
- * title the call filed. Read defensively — the result is the MCP server's text
+ * The issue this turn filed: the last `create_issue` call whose result names
+ * the new issue's number, with the title the call filed (raw: the caller
+ * sanitises it). Read defensively — the result is the MCP server's text
  * (`{"number":15,"url":…}`) and a refused, failed or unreadable call is no
  * filing. Undefined when the turn filed nothing.
  */
-export function filedIssue(messages: readonly ModelMessage[]): string | undefined {
+export function filedIssue(messages: readonly ModelMessage[]): { number: number; title: string } | undefined {
   const titles = new Map<string, string>();
-  let filed: string | undefined;
+  let filed: { number: number; title: string } | undefined;
   for (const m of messages) {
     if (typeof m.content === "string") continue;
     for (const part of m.content) {
       if (part.type === "tool-call" && part.toolName === CREATE_ISSUE) {
         const title = (part.input as { title?: unknown } | null)?.title;
-        if (typeof title === "string" && title.trim() !== "") titles.set(part.toolCallId, title.trim());
+        if (typeof title === "string") titles.set(part.toolCallId, title);
       } else if (part.type === "tool-result" && part.toolName === CREATE_ISSUE) {
         const number = issueNumber(part.output);
         const title = titles.get(part.toolCallId);
-        if (number !== undefined && title !== undefined) filed = `Filed #${number}: ${title}`;
+        if (number !== undefined && title !== undefined) filed = { number, title };
       }
     }
   }
