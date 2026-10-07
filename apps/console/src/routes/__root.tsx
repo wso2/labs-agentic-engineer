@@ -17,19 +17,12 @@
  */
 
 import { createRootRoute } from "@tanstack/react-router";
-import { AuthGuard } from "../auth/AuthGuard";
-import { AeStudioGate } from "../features/ae-studio/components/AeStudioGate";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { NotFoundPage } from "../components/NotFoundPage";
-import { OnboardingGate } from "../features/onboarding/components/OnboardingGate";
-import { Shell } from "../features/shell/components/Shell";
+import { GatedShell } from "../features/shell/components/GatedShell";
 
-// Everything renders behind the auth gate, then the onboarding gate: routes
-// only ever see a signed-in session in an org with GitHub and a model
-// connected. Inside them, the AE Studio gate holds every route while the
-// org's AE Studio upgrades on a first visit, or has failed to start
-// (Settings excepted). Inside it, the shell: rail, chat panel, and the main
-// outlet.
+// Everything renders behind the gates (GatedShell: auth, onboarding, AE
+// Studio), then the shell: rail, chat panel, and the main outlet.
 //
 // The app-level boundary is the last one the app owns. The shell's main
 // outlet and the chat panel have their own, so what reaches this one is a
@@ -46,13 +39,7 @@ export const Route = createRootRoute({
       offerReload
       fallbackSx={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center" }}
     >
-      <AuthGuard>
-        <OnboardingGate>
-          <AeStudioGate>
-            <Shell />
-          </AeStudioGate>
-        </OnboardingGate>
-      </AuthGuard>
+      <GatedShell />
     </ErrorBoundary>
   ),
 });

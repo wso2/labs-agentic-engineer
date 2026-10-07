@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Outlet, useMatches, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { Box } from "@wso2/oxygen-ui";
 import { ErrorBoundary } from "../../../components/ErrorBoundary";
+import { AeStudioBanner } from "../../ae-studio/components/AeStudioBanner";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
@@ -146,14 +147,18 @@ export function Shell() {
         )}
         <Box
           component="main"
-          sx={{ flex: 1, minWidth: 0, position: "relative", overflow: "hidden" }}
+          sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
         >
-          {/* A page that throws is contained here: the rail and the chat stay
-              up. Routes carry no error component of their own, so every route's
-              throw lands in this one; navigating clears it. */}
-          <ErrorBoundary label="This page" resetKey={pathname} fill fallbackSx={{ height: "100%" }}>
-            <Outlet />
-          </ErrorBoundary>
+          {/* While AE Studio restarts, a notice above the page; the console stays usable. */}
+          <AeStudioBanner />
+          <Box sx={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
+            {/* A page that throws is contained here: the rail and the chat stay
+                up. Routes carry no error component of their own, so every route's
+                throw lands in this one; navigating clears it. */}
+            <ErrorBoundary label="This page" resetKey={pathname} fill fallbackSx={{ height: "100%" }}>
+              <Outlet />
+            </ErrorBoundary>
+          </Box>
         </Box>
       </Box>
     </ChatPanelContext.Provider>
