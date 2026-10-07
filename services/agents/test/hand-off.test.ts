@@ -58,7 +58,7 @@ test("the description tells the agent when to hand off, mentions /issue and forb
 });
 
 test("the description and the prompt both fence spec changes off from hand-offs", async () => {
-  const boundary = /Not for changes the user wants made to the spec or design — make those yourself/;
+  const boundary = /Not for changes the user wants made to the spec, the design or the prototype — make those yourself/;
   assert.match((tool() as { description?: string }).description ?? "", boundary);
   const { instructions } = await import("../src/agents/main/prompt.js");
   assert.match(instructions.replace(/\s+/g, " "), boundary);

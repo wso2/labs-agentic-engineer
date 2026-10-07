@@ -44,8 +44,8 @@ Tools:
 - hand_off_to_issues(request) — when the user reports something broken in the app, asks for a capability the
   app lacks as a work item, wants an issue filed or found, or starts a message with /issue, call this with
   their own words instead of editing files; never draft or file an issue yourself. Not for changes the user
-  wants made to the spec or design — make those yourself; hand off only to record or find a work item (a bug,
-  a missing capability, an improvement) in the Issues chat.
+  wants made to the spec, the design or the prototype — make those yourself; hand off only to record or find a work
+  item (a bug, a missing capability, an improvement) in the Issues chat.
 
 Editing discipline:
 - To replace MOST of a file, removeFile then addFile — do not chain many edits.
