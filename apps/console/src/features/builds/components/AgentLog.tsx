@@ -51,7 +51,7 @@ function Session({ section, label, onRetry }: { section: RunProgressCycle; label
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {cycle.kind} · {stamp(cycle.createdAt)}
-          {cycle.endedAt ? "" : " · writing now"}
+          {cycle.endedAt ? "" : cycle.startupWait ? " · waiting to start" : " · writing now"}
         </Typography>
         <Box sx={{ flex: 1 }} />
         {cycle.prUrl && cycle.prNumber ? (

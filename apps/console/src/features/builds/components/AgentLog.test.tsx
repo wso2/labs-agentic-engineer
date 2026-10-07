@@ -81,3 +81,28 @@ describe("a build session's log", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+describe("a build session's header", () => {
+  function renderOpen(over: Partial<RunCycleView>) {
+    const open = { ...cycle("live"), endedAt: undefined, ...over } as RunCycleView;
+    const progress: RunProgressState = { cycles: [{ cycle: open, events: [] }], settledState: undefined, phase: "live", reconnect: vi.fn() };
+    const run = { id: "r1", state: "running", createdAt: "2026-10-01T09:00:00Z", cycles: [open] } as unknown as MilestoneRunView;
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <AgentLog projectName="shop" runs={[run]} progress={progress} />
+      </OxygenUIThemeProvider>,
+    );
+  }
+
+  it("says writing now while the agent runs", () => {
+    renderOpen({});
+    expect(screen.getByText(/writing now/)).toBeInTheDocument();
+  });
+
+  it("says waiting to start while the cluster holds the agent", () => {
+    renderOpen({ startupWait: { reason: "Unschedulable", since: "2026-10-01T09:00:30Z", failsAt: "2026-10-01T09:10:00Z" } });
+    expect(screen.getByText(/waiting to start/)).toBeInTheDocument();
+    expect(screen.queryByText(/writing now/)).not.toBeInTheDocument();
+  });
+});
+
