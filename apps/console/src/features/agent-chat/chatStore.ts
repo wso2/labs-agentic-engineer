@@ -29,6 +29,7 @@ import {
   historyItems,
   setAnswers,
   upsertActivity,
+  upsertHandOff,
   upsertQuestion,
   type ChatItem,
   type NoteAction,
@@ -213,6 +214,7 @@ export function createChatStore(options: ChatStoreOptions) {
         announceQuestions(projectName, turnId);
       },
       withdrawQuestion: (toolCallId) => setItems(projectName, (items) => dropQuestion(items, turnId, toolCallId)),
+      handoff: (handOff) => setItems(projectName, (items) => upsertHandOff(items, turnId, handOff)),
       wrote: (part) => {
         const key = `${turnId}:${part.toolCallId ?? ""}`;
         if (e.applied.has(key)) return;

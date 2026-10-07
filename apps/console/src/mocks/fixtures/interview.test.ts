@@ -42,3 +42,43 @@ describe("the mock agent's interview", () => {
     expect(turn(interviewCommand("F4"), "F2").effect).toBeUndefined();
   });
 });
+
+describe("the mock main agent's hand-off", () => {
+  const product = (instruction: string) =>
+    scriptTurn({
+      instruction,
+      scope: { kind: "product" },
+      model: acmeExpensesSpec,
+      lines: new Map(),
+      progress: undefined,
+      prompt: undefined,
+      turnKey: "t1",
+    });
+  const handOffs = (instruction: string) =>
+    product(instruction).frames.filter((f) => f.part.type === "tool-call" && f.part.toolName === "hand_off_to_issues");
+
+  it("hands a report of something broken to Issues, in the user's words, and ends there", () => {
+    const report = "The Save button on the expense form does nothing";
+    const turn = product(report);
+    expect(handOffs(report).map((f) => f.part.input)).toEqual([{ request: report }]);
+    expect(turn.frames.find((f) => f.part.type === "tool-result")?.part.output).toEqual({
+      status: "awaiting_handoff",
+      view: "issues",
+    });
+    expect(turn.frames.at(-1)?.part.type).toBe("turn-committed");
+    expect(turn.frames.filter((f) => f.part.type === "text-delta").length).toBeGreaterThan(0);
+    expect(turn.reply[0]?.content).toContainEqual({
+      type: "tool-call",
+      toolCallId: "t1-handoff",
+      toolName: "hand_off_to_issues",
+      input: { request: report },
+    });
+  });
+
+  it("hands off a crash or an error too, but not a question about the product", () => {
+    expect(handOffs("The app crashes when I upload a receipt")).toHaveLength(1);
+    expect(handOffs("I get an error on the reports page")).toHaveLength(1);
+    expect(handOffs("Export is not working")).toHaveLength(1);
+    expect(handOffs("What is left to do?")).toHaveLength(0);
+  });
+});

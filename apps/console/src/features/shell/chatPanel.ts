@@ -28,8 +28,16 @@ export interface ChatPanelControls {
   /**
    * Open the chat and put `text` in the composer of the view in focus, focused
    * with the cursor at the end. Nothing is sent: the user finishes the message.
+   * A caller that is moving the user names the chat it means (`target`): the
+   * view in focus is still the old page's until the move has rendered.
    */
-  compose: (text: string) => void;
+  compose: (text: string, target?: ComposeTarget) => void;
+}
+
+/** One chat: a view's in a project. */
+export interface ComposeTarget {
+  view: ChatView;
+  projectName: string;
 }
 
 /**
@@ -37,10 +45,8 @@ export interface ChatPanelControls {
  * else's. Single-use: the composer that applies it reports the nonce and the
  * shell clears it, so it is not re-applied when the chat is reopened.
  */
-export interface ComposeRequest {
+export interface ComposeRequest extends ComposeTarget {
   text: string;
-  view: ChatView;
-  projectName: string;
   nonce: number;
 }
 

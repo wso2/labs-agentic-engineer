@@ -147,6 +147,30 @@ describe("a turn's lifecycle", () => {
     expect(ended).toHaveBeenCalledWith(PROJECT, "completed");
   });
 
+  it("shows a hand-off the turn ends on as its announcement", async () => {
+    const { store, streams, chat } = setup();
+    await store.open(PROJECT);
+    const input = { request: "Save does nothing" };
+    streams.set(
+      "t1",
+      sse([
+        { type: "tool-call", toolCallId: "c1", toolName: "hand_off_to_issues", input },
+        { type: "tool-result", toolCallId: "c1", toolName: "hand_off_to_issues", input, output: { status: "awaiting_handoff", view: "issues" } },
+        { type: "turn-committed" },
+      ]),
+    );
+    await store.send(PROJECT, "Save does nothing", PRODUCT);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    expect(chat().items.at(-1)).toEqual({
+      kind: "handoff",
+      id: "t1:h:c1",
+      turnId: "t1",
+      toolCallId: "c1",
+      view: "issues",
+      request: "Save does nothing",
+    });
+  });
+
   it("keeps a prototype review's batch on its row, and sends it typed", async () => {
     const { store, streams, chat, started } = setup();
     await store.open(PROJECT);

@@ -18,6 +18,7 @@
 
 import {
   ANSWER_PREFIX,
+  handOffView,
   isErrorToolOutput,
   isFileMutationTool,
   isQuestionTool,
@@ -25,6 +26,7 @@ import {
   type AskQuestionInput,
   type Op,
   type QuestionAnswer,
+  type View,
 } from "@aep/agent-stream";
 import { parseDesignCommand, parseInterviewCommand, parsePrototypeCommand, START_COMMAND } from "@aep/contracts/commands";
 import type { ConversationMessage } from "./api/conversation";
@@ -99,10 +101,24 @@ export type ChatItem =
       /** Set once answered from this card; the card is then read-only. */
       answers?: QuestionAnswer[];
     }
+  | {
+      /**
+       * The agent handing the user's request to another view's chat: the turn
+       * ends on it, waiting for the user to go there or stay.
+       */
+      kind: "handoff";
+      id: string;
+      turnId: string;
+      toolCallId: string;
+      view: View;
+      /** The user's words, passed on unchanged. */
+      request: string;
+    }
   | { kind: "error"; id: string; text: string };
 
 export type ActivityItem = Extract<ChatItem, { kind: "activity" }>;
 export type QuestionItem = Extract<ChatItem, { kind: "question" }>;
+export type HandOffItem = Extract<ChatItem, { kind: "handoff" }>;
 
 /** Append streamed narration to the turn's current text row, or start one after anything else. */
 export function appendAgentText(items: ChatItem[], turnId: string, delta: string): ChatItem[] {
@@ -138,6 +154,20 @@ export function upsertQuestion(
   question: Pick<QuestionItem, "toolCallId" | "questions" | "streaming">,
 ): ChatItem[] {
   return upsert(items, { kind: "question", id: `${turnId}:q:${question.toolCallId}`, turnId, ...question });
+}
+
+export function upsertHandOff(
+  items: ChatItem[],
+  turnId: string,
+  handOff: Pick<HandOffItem, "toolCallId" | "view" | "request">,
+): ChatItem[] {
+  return upsert(items, { kind: "handoff", id: `${turnId}:h:${handOff.toolCallId}`, turnId, ...handOff });
+}
+
+/** The request a hand-off call carries; null when it carries none. */
+export function handOffRequest(input: unknown): string | null {
+  const request = (input as { request?: unknown } | undefined)?.request;
+  return typeof request === "string" && request.trim() ? request : null;
 }
 
 /** Record a card's answers (read-only from then on), or clear them (answerable again). */
@@ -310,9 +340,10 @@ function failedToolCalls(history: ConversationMessage[]): Set<string> {
 
 /**
  * The server's history as chat items, in order: user rows, the agent's prose,
- * a line for each file it wrote, and a card for each question it asked (so a
- * question still waiting survives a reload and stays answerable). A question
- * the SDK rejected, and a write the bundle refused, drop out.
+ * a line for each file it wrote, a card for each question it asked (so a
+ * question still waiting survives a reload and stays answerable), and the
+ * announcement of a hand-off to another view. A call the SDK rejected, and a
+ * write the bundle refused, drop out; any other tool call shows nothing.
  *
  * Ids are position-stable (`h<n>`), so the same history projects to the same
  * ids every time.
@@ -369,6 +400,12 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
           path,
           state: "done",
         });
+      } else {
+        const view = handOffView(p.toolName);
+        const request = handOffRequest(p.input);
+        if (!view || request === null) continue;
+        flush();
+        out.push({ kind: "handoff", id: `h${out.length}`, turnId: "history", toolCallId, view, request });
       }
     }
     flush();

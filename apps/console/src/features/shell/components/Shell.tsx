@@ -22,9 +22,9 @@ import { Box } from "@wso2/oxygen-ui";
 import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
-import { chatViewFor, type ChatView } from "../../agent-chat/chatView";
+import { chatViewFor } from "../../agent-chat/chatView";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
-import { ChatPanelContext, type ChatPanelControls, type ComposeRequest } from "../chatPanel";
+import { ChatPanelContext, type ChatPanelControls, type ComposeRequest, type ComposeTarget } from "../chatPanel";
 import { shellScope } from "../scope";
 import { CHAT_OVERLAY_WIDTH, PHONE, PHONE_QUERY, RAIL_WIDTH } from "../layout";
 import { useChatWidth } from "../useChatWidth";
@@ -68,13 +68,13 @@ export function Shell() {
   // project in focus when asked, and is cleared once a composer applies it.
   const [composeRequest, setComposeRequest] = useState<ComposeRequest | null>(null);
   const composeNonce = useRef(0);
-  const composeTarget = useRef<{ projectName: string; view: ChatView } | null>(null);
+  const composeTarget = useRef<ComposeTarget | null>(null);
   composeTarget.current = project ? { projectName: project.projectName, view: chatViewFor(project.page, project.card) } : null;
   const chatControls = useMemo<ChatPanelControls>(
     () => ({
       open: () => setChatOpen(true),
-      compose: (text) => {
-        const target = composeTarget.current;
+      compose: (text, explicit) => {
+        const target = explicit ?? composeTarget.current;
         if (target) setComposeRequest({ text, ...target, nonce: ++composeNonce.current });
         setChatOpen(true);
       },

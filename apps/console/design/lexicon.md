@@ -58,6 +58,11 @@ the user is. The Issues Page has its own agent.
 | **Tell me what's broken or what you need, and I'll draft an issue.** | an empty thread on the Issues Page | invites a report; the agent drafts, and files once the user confirms |
 | **Describe what's broken, or what you need…** | the composer's placeholder on the Issues Page (elsewhere it stays "Tell the agent what to change…") | the box takes a report, not an edit instruction |
 | **Create Issue** | a button in the Issues Page's header | starts an issue in the Issues chat: puts `/issue ` in the composer and focuses it; nothing is sent until you send |
+| **This belongs in Issues. I'll open it and draft the issue, in its own chat on top of this one.** | the main chat, when the agent hands a request on to Issues (the turn ends there) | the request is a problem report or an issue to file; the Issues chat drafts it, not this one |
+| **New Issue** | a button under that announcement | opens the Issues page and sends the user's request to its chat (into its composer instead while a turn runs there) |
+| **Stay here** | a button under that announcement | keeps the conversation where it is; nothing is sent to Issues |
+| **Continued in Issues · Open** | the announcement once New Issue was chosen, or once the request is a message on the Issues thread | the request went on to Issues; Open goes to the Issues page |
+| **Stayed here instead of opening Issues** | the announcement once Stay here was chosen | the user kept the request in this chat |
 
 ## The agent's questions
 

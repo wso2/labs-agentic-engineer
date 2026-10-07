@@ -28,14 +28,16 @@ import type { PrototypeFeedback } from "../turnScope";
 import type { ChatView } from "../chatView";
 import { chatStoreFor, useProjectChat } from "../useProjectChat";
 import { ActivityLine } from "./ActivityLine";
+import { HandOffCard } from "./HandOffCard";
 import { InterviewFollowUp } from "./InterviewFollowUp";
 import { NoteActions } from "./NoteActions";
 import { QuestionsPointer } from "./QuestionsPointer";
 
 // The conversation, oldest first: what the user said, what the agent said,
-// a compact line for each file it wrote, and its questions as cards. After an
-// interview has written its feature, the walk and the next feature follow;
-// after a prototype turn has written a valid prototype, Open prototype.
+// a compact line for each file it wrote, its questions as cards, and its
+// announcement when it hands a request to Issues. After an interview has
+// written its feature, the walk and the next feature follow; after a
+// prototype turn has written a valid prototype, Open prototype.
 
 function AgentMark() {
   return (
@@ -264,6 +266,7 @@ export function Thread({
           {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
           {item.kind === "note" && item.actions && <NoteActions projectName={projectName} actions={item.actions} />}
           {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
+          {item.kind === "handoff" && <HandOffCard projectName={projectName} item={item} />}
           {item.kind === "error" && <ErrorRow text={item.text} />}
           {item.kind === "question" && (
             <Box sx={{ pl: 4 }}>

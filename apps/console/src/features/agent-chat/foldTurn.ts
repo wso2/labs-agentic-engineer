@@ -17,6 +17,7 @@
  */
 
 import {
+  handOffView,
   isFileMutationTool,
   isQuestionTool,
   opForTool,
@@ -26,9 +27,11 @@ import {
   type AskQuestionInput,
   type Op,
   type StreamPart,
+  type View,
 } from "@aep/agent-stream";
 import type { TurnStatus } from "./api/turns";
 import { isTurnStreamNotFound } from "./api/turns";
+import { handOffRequest } from "./chatLog";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure";
 import { extractStreamingQuestions, parseQuestionsInput } from "./questionCards";
 
@@ -52,6 +55,8 @@ export interface TurnSink {
   }) => void;
   question: (question: { toolCallId: string; questions: AskQuestionInput[]; streaming: boolean }) => void;
   withdrawQuestion: (toolCallId: string) => void;
+  /** The agent handed the user's request to another view's chat: the turn ends waiting for the user. */
+  handoff: (handOff: { toolCallId: string; view: View; request: string }) => void;
   /** A file write the bundle accepted: its `tool-result`, carrying the call's input. */
   wrote: (part: StreamPart) => void;
   error: (text: string) => void;
@@ -168,6 +173,13 @@ export async function foldTurn(input: {
         break;
       }
       case "tool-call": {
+        // A hand-off: its complete call is the announcement.
+        const view = handOffView(part.toolName);
+        if (view) {
+          const request = handOffRequest(part.input);
+          if (part.toolCallId && !part.invalid && request !== null) sink.handoff({ toolCallId: part.toolCallId, view, request });
+          break;
+        }
         // ask_question / ask_questions (ADR-0012): the complete call is the
         // card, replacing whatever prefix streamed.
         if (!isQuestionTool(part.toolName) || !part.toolCallId) break;

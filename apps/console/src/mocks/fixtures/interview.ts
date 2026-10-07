@@ -21,7 +21,10 @@ import {
   ANSWERS_PREFIX,
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
+  HAND_OFF_TO_ISSUES,
   type AskQuestionInput,
+  type HandOffInput,
+  type HandOffResult,
   type StreamPart,
 } from "@aep/agent-stream";
 import { parseInterviewCommand, START_COMMAND } from "@aep/contracts/commands";
@@ -44,8 +47,9 @@ type ConversationMessage = components["schemas"]["ConversationMessage"];
 // feature's file (stub → interviewed, one `*assumed*` line) with an editFile
 // the client applies to its local doc. Spending reports and Mileage claims
 // have their own questions; any other feature gets a generic pair. Besides
-// the interview: the kickoff (`/start`), a short answer on the product, and a
-// short acknowledgement anywhere else.
+// the interview: the kickoff (`/start`), a hand-off to Issues for a report of
+// something broken, a short answer on the product, and a short
+// acknowledgement anywhere else.
 
 /** Builds one turn: its frames on a clock, and the messages it persists. */
 export class Script {
@@ -403,6 +407,15 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/**
+ * A message in the user's own words that says something is broken. An answer
+ * to a card or a command is the conversation's own business, never a report.
+ */
+function readsBroken(text: string): boolean {
+  if (text.startsWith("/") || text.startsWith(ANSWER_PREFIX) || text.startsWith(ANSWERS_PREFIX)) return false;
+  return /\b(broken|not working|doesn'?t work|does nothing|errors?|crash\w*)\b/i.test(text);
+}
+
 /** What the mock agent does with a message. */
 export function scriptTurn(req: TurnRequest): ScriptedTurn {
   const { instruction, scope, model, progress, turnKey } = req;
@@ -465,6 +478,18 @@ export function scriptTurn(req: TurnRequest): ScriptedTurn {
       effect: { featureId: interviewed.id, stage: "Interviewed", file: { path: interviewed.path, content: up.content } },
       progress: undefined,
     };
+  }
+
+  // A report of something broken belongs in Issues: the agent hands it over,
+  // in the user's words, and the turn ends waiting for the user to go there.
+  if (readsBroken(text)) {
+    const input: HandOffInput = { request: text.slice(0, 2000) };
+    const output: HandOffResult = { status: "awaiting_handoff", view: "issues" };
+    const s = new Script()
+      .pause(500)
+      .say("That sounds like a problem report.")
+      .call(`${turnKey}-handoff`, HAND_OFF_TO_ISSUES, input, output);
+    return { display: text, ...s.end(), progress };
   }
 
   // Anything else: a short answer, about what the scope is about.

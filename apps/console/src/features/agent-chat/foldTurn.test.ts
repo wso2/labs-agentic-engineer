@@ -43,6 +43,7 @@ function recordingSink() {
     activity: (a) => calls.push(["activity", a]),
     question: (q) => calls.push(["question", q]),
     withdrawQuestion: (id) => calls.push(["withdraw", id]),
+    handoff: (h) => calls.push(["handoff", h]),
     wrote: (p) => calls.push(["wrote", p.toolCallId]),
     error: (t) => calls.push(["error", t]),
     ended: (o) => calls.push(["ended", o]),
@@ -115,6 +116,33 @@ describe("foldTurn", () => {
       { toolCallId: "q1", questions: input.questions, streaming: true },
       { toolCallId: "q1", questions: input.questions, streaming: false },
     ]);
+  });
+
+  it("announces a hand-off from its complete call, and nothing for another tool it does not know", async () => {
+    const { of, calls } = await fold([
+      { type: "tool-input-start", id: "h1", toolName: "hand_off_to_issues" },
+      { type: "tool-input-delta", id: "h1", delta: '{"request":"Save does nothing"}' },
+      { type: "tool-input-end", id: "h1" },
+      { type: "tool-call", toolCallId: "h1", toolName: "hand_off_to_issues", input: { request: "Save does nothing" } },
+      {
+        type: "tool-result",
+        toolCallId: "h1",
+        toolName: "hand_off_to_issues",
+        input: { request: "Save does nothing" },
+        output: { status: "awaiting_handoff", view: "issues" },
+      },
+      { type: "tool-call", toolCallId: "x1", toolName: "some_other_tool", input: { request: "no" } },
+      { type: "turn-committed" },
+    ]);
+    expect(of("handoff")).toEqual([{ toolCallId: "h1", view: "issues", request: "Save does nothing" }]);
+    expect(calls.map(([k]) => k)).toEqual(["handoff", "ended"]);
+  });
+
+  it("announces no hand-off the SDK rejected", async () => {
+    const { of } = await fold([
+      { type: "tool-call", toolCallId: "h1", toolName: "hand_off_to_issues", input: { request: "x" }, invalid: true },
+    ]);
+    expect(of("handoff")).toEqual([]);
   });
 
   it("withdraws a question the SDK rejected", async () => {
