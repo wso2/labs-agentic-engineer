@@ -17,3 +17,6 @@ smaller part (1 / (1 + φ) ≈ 38.2%), the page the larger. The rule is
   live golden share.
 - **Phone width:** the chat is an overlay at a fixed `CHAT_OVERLAY_WIDTH`, with
   no handle; nothing sits beside it to split with.
+- **Branch sheet:** the Issues chat, stacked on the main chat, is drawn inside
+  the panel, so it takes the panel's width and never one of its own: inset a
+  little from the panel's sides, and filling the overlay at phone width.

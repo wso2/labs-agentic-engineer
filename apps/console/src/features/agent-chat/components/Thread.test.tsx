@@ -17,7 +17,7 @@
  */
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { SAMPLE_COMPONENT, SAMPLE_MANIFEST, SAMPLE_SOURCE } from "../../../mocks/fixtures/prototype";
@@ -48,6 +48,8 @@ vi.mock("../../spec/useSpecWorkspace", () => ({ useSpecModel: () => ({ data: { f
 vi.mock("../useStartInterview", () => ({ useStartInterview: () => ({ start: vi.fn(), ready: true, waiting: false }) }));
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
+const startBranch = vi.fn();
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: vi.fn(), compose: vi.fn(), startBranch }) }));
 
 // jsdom has no ResizeObserver, which the thread uses to follow its growth.
 vi.stubGlobal(
@@ -147,11 +149,12 @@ describe("a prototype review in the conversation", () => {
 });
 
 describe("a From Issues note in the conversation", () => {
-  it("offers Reopen, which goes back to the Issues page", () => {
+  it("offers Reopen, which goes back to the Issues page and opens its chat there", async () => {
     chat = ready([{ kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] }]);
     renderThread();
-    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reopen" })));
     expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "acme" } });
+    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
   });
 });
 

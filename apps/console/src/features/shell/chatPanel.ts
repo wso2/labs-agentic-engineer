@@ -29,10 +29,20 @@ export interface ChatPanelControls {
    * Open the chat and put `text` in the composer of the view in focus, focused
    * with the cursor at the end. Nothing is sent: the user finishes the message.
    * A caller that is moving the user names the chat it means (`target`): the
-   * view in focus is still the old page's until the move has rendered.
+   * view in focus is still the old page's until the move has rendered. A
+   * request for the Issues chat starts that branch first, so it lands in sight.
    */
   compose: (text: string, target?: ComposeTarget) => void;
+  /**
+   * Start a view's chat, the branch stacked on the main chat, and show it (a
+   * minimised one comes back up). It is the project in focus's, unless the
+   * caller is moving the user and names the project.
+   */
+  startBranch: (view: BranchView, projectName?: string) => void;
 }
+
+/** The views whose chat is a branch of the main chat. */
+export type BranchView = Exclude<ChatView, "main">;
 
 /** One chat: a view's in a project. */
 export interface ComposeTarget {

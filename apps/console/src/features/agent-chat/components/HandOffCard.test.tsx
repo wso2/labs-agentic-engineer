@@ -47,7 +47,8 @@ const navigate = vi.fn(async (): Promise<void> => undefined);
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 const open = vi.fn();
 const compose = vi.fn();
-vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open, compose }) }));
+const startBranch = vi.fn();
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open, compose, startBranch }) }));
 
 const { HandOffCard } = await import("./HandOffCard");
 
@@ -122,6 +123,7 @@ describe("the hand-off announcement", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "New Issue" })));
     expect(store.send).not.toHaveBeenCalled();
     expect(compose).not.toHaveBeenCalled();
+    expect(startBranch).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "New Issue" })).toBeTruthy();
     expect(localStorage.getItem("aep:handoff:acme:c1")).toBeNull();
   });
@@ -134,11 +136,12 @@ describe("the hand-off announcement", () => {
     expect(useProjectChat).not.toHaveBeenCalled();
   });
 
-  it("New Issue opens Issues and sends the request to its chat", async () => {
+  it("New Issue opens Issues, starts its chat over the main one, and sends the request to it", async () => {
     issues = idleIssues();
     renderCard();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "New Issue" })));
     expect(navigate).toHaveBeenCalledWith(ISSUES_PAGE);
+    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
     expect(open).toHaveBeenCalled();
     expect(store.send).toHaveBeenCalledWith("acme", `/issue ${REQUEST}`, { kind: "product" });
     expect(compose).not.toHaveBeenCalled();
@@ -174,13 +177,14 @@ describe("the hand-off announcement", () => {
     expect(screen.queryByRole("button", { name: "New Issue" })).toBeNull();
   });
 
-  it("reads as continued once the request is a message on the Issues thread, and Open goes there", () => {
+  it("reads as continued once the request is a message on the Issues thread, and Open goes to its chat", async () => {
     issues = idleIssues([{ kind: "user", id: "h0", text: `/issue ${REQUEST}`, state: "sent" }]);
     renderCard();
     expect(document.body.textContent).toContain("Continued in Issues · Open");
     expect(screen.queryByRole("button", { name: "New Issue" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Open" })));
     expect(navigate).toHaveBeenCalledWith(ISSUES_PAGE);
+    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
     expect(store.send).not.toHaveBeenCalled();
   });
 });

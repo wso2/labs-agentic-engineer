@@ -90,14 +90,21 @@ Dashboard, and keeps its section in the address (`?section=github|ai|usage`).
 
 The Issues Page lists the project's GitHub issues (incidents the SRE agent
 filed, the platform's own, people's), those that need attention first. It
-has a chat of its own: with no card open, the panel talks to the Issues agent
-(`chatViewFor` reads the Page and Card as the `issues` view), on a thread and
-a running turn that are the Issues Page's alone and about "the project's
-issues", with no spec room and no Turn scope (the composer's scope is not
-sent; `viewTurnBody` sends the words and the view). The Issues agent files
+has a chat of its own, a branch of the project's main chat: the panel keeps
+the main chat and, with no card open (`chatViewFor` reads the Page and Card as
+the `issues` view), stacks the Issues agent's chat on it. Until it is started
+a **Work on Issues here · Start** row sits above the main composer; started
+(Start, Create Issue, a hand-off's New Issue, Reopen, the threads menu, or a
+turn running there) it is a sheet over the main chat inside the panel, with
+a **↑ Main chat** strip that minimises it to a link at the end of the main
+thread. The shell keeps that state per project (`useChatControls`) and drops
+it when the user leaves the Issues page; the main chat then gets its From
+Issues note. The Issues chat's thread and running turn are its alone, about
+"the project's issues", with no spec room and no Turn scope (the composer's
+scope is not sent; `viewTurnBody` sends the words and the view). The Issues agent files
 issues, so its turn ending re-reads the issue list. An Issue card is over the
-Page and stays in the main chat, setting no Turn scope: no agent works on one
-issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
+Page and shows the main chat alone (the branch waits, unchanged, for the card to
+close), setting no Turn scope: no agent works on one issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
 card of their own over this Page (`issues/questions`, `chatViewFor` reads it as
 the `issues` view), so a question asked here never points to the overview or
 answers the main chat; a send closes back to the Issues Page. The Dashboard's Alerts

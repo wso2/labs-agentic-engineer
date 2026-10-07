@@ -19,12 +19,12 @@
 import { useEffect, useRef } from "react";
 import type { ShellScope } from "../shell/scope";
 import type { ChatItem } from "./chatLog";
-import { chatViewFor } from "./chatView";
 import { chatStore, chatStoreFor } from "./useProjectChat";
 
-// The Issues page has a chat of its own, on top of the main one. When the user
-// leaves it after talking there, the main chat sums the visit up, so the
-// conversation they come back to knows what happened in between.
+// The Issues page has a chat of its own, a branch stacked on the main one. When
+// the user leaves the page after talking there, the main chat sums the visit
+// up, so the conversation they come back to knows what happened in between.
+// Minimising the branch is not leaving: the user is still on the page.
 
 /** The last line, as one line, cut to this many characters. */
 const LINE_MAX = 140;
@@ -37,9 +37,12 @@ function oneLine(text: string): string {
   return line.length > LINE_MAX ? `${line.slice(0, LINE_MAX - 1)}…` : line;
 }
 
-/** The project whose Issues chat is in front, if any. */
+/**
+ * The project whose Issues page the user is on, if any, whatever card is over
+ * it: its Questions card and an issue's card keep the user on the page.
+ */
 function issuesProject(scope: ShellScope): string | null {
-  return scope.kind === "project" && chatViewFor(scope.page, scope.card) === "issues" ? scope.projectName : null;
+  return scope.kind === "project" && scope.page === "issues" ? scope.projectName : null;
 }
 
 /** A summary note posted, by project: its id, and the messages it sums up. */
@@ -67,9 +70,9 @@ async function summarise(posted: Posted, projectName: string, spoken: number, li
 }
 
 /**
- * Mounted once, in the shell. While the Issues chat is in front it notes how
- * many messages the thread had when the user arrived; when the user leaves for
- * the main chat (or another project), a "From Issues · N messages · <the
+ * Mounted once, in the shell. While the user is on the Issues page it notes how
+ * many messages the Issues thread had when they arrived; when they leave the
+ * page (for another page, or another project), a "From Issues · N messages · <the
  * agent's last line>" note with a Reopen goes into that project's main chat.
  * A visit that said nothing leaves nothing. The next visit rewords the note
  * while it is still the last thing in the main chat, adding its messages,

@@ -16,18 +16,18 @@
  * under the License.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Outlet, useMatches, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 import { Box } from "@wso2/oxygen-ui";
 import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
-import { chatViewFor } from "../../agent-chat/chatView";
 import { useBranchSummary } from "../../agent-chat/useBranchSummary";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
-import { ChatPanelContext, type ChatPanelControls, type ComposeRequest, type ComposeTarget } from "../chatPanel";
+import { ChatPanelContext } from "../chatPanel";
 import { shellScope } from "../scope";
 import { CHAT_OVERLAY_WIDTH, PHONE, PHONE_QUERY, RAIL_WIDTH } from "../layout";
+import { useChatControls } from "../useChatControls";
 import { useChatWidth } from "../useChatWidth";
 import { ActivityRail } from "./ActivityRail";
 import { ChatResizeHandle } from "./ChatResizeHandle";
@@ -41,8 +41,9 @@ function atPhoneWidth(): boolean {
  * area where the routes draw (a base page, and a card over it).
  *
  * The chat follows the entity in view: inside a project it is the project's
- * conversation; on an org Page it is the organization's, which is not available
- * yet and shows as such. It starts open on a wide screen, beside the page in
+ * main conversation, with the Issues chat stacked on it as a branch on the
+ * Issues page (`useChatControls`); on an org Page it is the organization's,
+ * which is not available yet and shows as such. It starts open on a wide screen, beside the page in
  * the golden ratio and resizable (`useChatWidth`), and closed at phone width,
  * where it opens as an overlay beside the rail.
  */
@@ -64,29 +65,9 @@ export function Shell() {
   const chatShown = chatOpen && !onNewProject;
 
   const chatWidth = useChatWidth();
-  // The request lives here, not in the composer: the composer mounts when the
-  // chat opens, after `compose` has been asked. It targets the chat the caller
-  // names (a move to another page names where it is going), else the view and
-  // project in focus when asked, and is cleared once a composer applies it.
-  const [composeRequest, setComposeRequest] = useState<ComposeRequest | null>(null);
-  const composeNonce = useRef(0);
-  const composeTarget = useRef<ComposeTarget | null>(null);
-  composeTarget.current = project ? { projectName: project.projectName, view: chatViewFor(project.page, project.card) } : null;
-  const chatControls = useMemo<ChatPanelControls>(
-    () => ({
-      open: () => setChatOpen(true),
-      compose: (text, explicit) => {
-        const target = explicit ?? composeTarget.current;
-        if (target) setComposeRequest({ text, ...target, nonce: ++composeNonce.current });
-        setChatOpen(true);
-      },
-    }),
-    [],
-  );
-  const clearComposeRequest = useCallback(
-    (nonce: number) => setComposeRequest((current) => (current?.nonce === nonce ? null : current)),
-    [],
-  );
+  const openChat = useCallback(() => setChatOpen(true), []);
+  const { controls: chatControls, composeRequest, clearComposeRequest, branch, startBranch, minimiseBranch } =
+    useChatControls(scope, openChat);
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
   useBranchSummary(scope);
@@ -162,6 +143,9 @@ export function Shell() {
                   specFile={project.specFile}
                   composeRequest={composeRequest}
                   onComposeApplied={clearComposeRequest}
+                  branch={branch}
+                  onStartBranch={startBranch}
+                  onMinimiseBranch={minimiseBranch}
                   onClose={() => setChatOpen(false)}
                 />
               ) : (

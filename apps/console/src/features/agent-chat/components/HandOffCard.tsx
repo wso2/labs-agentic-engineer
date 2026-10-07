@@ -17,11 +17,11 @@
  */
 
 import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
 import { Box, Button, Link, Typography } from "@wso2/oxygen-ui";
 import { useChatPanel } from "../../shell/chatPanel";
 import type { HandOffItem } from "../chatLog";
 import { continueInIssues, getHandOff, issueReport, setHandOff, type HandOffState } from "../handOffState";
+import { useOpenIssuesChat } from "../useOpenIssuesChat";
 import { chatStoreFor, useProjectChat } from "../useProjectChat";
 
 /** How much of the request the card shows before New Issue is chosen. */
@@ -34,19 +34,18 @@ function preview(request: string): string {
 
 /**
  * The main chat's announcement that a request belongs in Issues. New Issue
- * opens the Issues page and takes the request on to its chat as an `/issue`
- * report (`continueInIssues`); Stay here keeps the user where they are, and
+ * opens the Issues page, starts its chat over the main one, and takes the
+ * request on to it as an `/issue` report (`continueInIssues`); Stay here keeps the user where they are, and
  * nothing is sent. Once chosen, the card reads as what was chosen, here and
  * after a reload.
  */
 export function HandOffCard({ projectName, item }: { projectName: string; item: HandOffItem }) {
-  const navigate = useNavigate();
   const [chosen, setChosen] = useState<HandOffState>(() => getHandOff(projectName, item.toolCallId));
   const choose = (next: HandOffState) => {
     setHandOff(projectName, item.toolCallId, next);
     setChosen(next);
   };
-  const openIssues = () => navigate({ to: "/projects/$projectName/issues", params: { projectName } });
+  const openIssuesChat = useOpenIssuesChat(projectName);
 
   if (chosen === "stayed") {
     return (
@@ -55,8 +54,8 @@ export function HandOffCard({ projectName, item }: { projectName: string; item: 
       </Typography>
     );
   }
-  if (chosen === "continued") return <Continued onOpen={() => void openIssues()} />;
-  return <Pending projectName={projectName} item={item} openIssues={openIssues} choose={choose} />;
+  if (chosen === "continued") return <Continued onOpen={() => void openIssuesChat()} />;
+  return <Pending projectName={projectName} item={item} openIssuesChat={openIssuesChat} choose={choose} />;
 }
 
 function Continued({ onOpen }: { onOpen: () => void }) {
@@ -78,12 +77,12 @@ function Continued({ onOpen }: { onOpen: () => void }) {
 function Pending({
   projectName,
   item,
-  openIssues,
+  openIssuesChat,
   choose,
 }: {
   projectName: string;
   item: HandOffItem;
-  openIssues: () => Promise<void>;
+  openIssuesChat: () => Promise<void>;
   choose: (next: HandOffState) => void;
 }) {
   const chatPanel = useChatPanel();
@@ -91,13 +90,15 @@ function Pending({
   const [moving, setMoving] = useState(false);
   const report = issueReport(item.request);
   if (issues.items.some((i) => i.kind === "user" && i.text.trim() === report.trim())) {
-    return <Continued onOpen={() => void openIssues()} />;
+    return <Continued onOpen={() => void openIssuesChat()} />;
   }
 
   const newIssue = async () => {
     setMoving(true);
     try {
-      await openIssues();
+      // The Issues chat comes up over the main one, so the request is seen
+      // going there (sent, or waiting in its composer).
+      await openIssuesChat();
     } catch {
       // The move did not happen: nothing was sent, and the choice is offered again.
       setMoving(false);

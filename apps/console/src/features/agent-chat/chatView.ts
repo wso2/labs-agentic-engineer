@@ -21,17 +21,18 @@ import type { ProjectCard, ProjectPage } from "../shell/scope";
 import type { TurnBody } from "./turnScope";
 
 // A project has a chat per view of the main panel. The Issues Page has its
-// own agent on its own thread; everywhere else, the Issue card over it
-// included, is the project's main chat. The contract names only the issues
+// own agent on its own thread, a branch the chat panel stacks on the main chat
+// (which the panel always holds); everywhere else, the Issue card over it
+// included, is the project's main chat alone. The contract names only the issues
 // view (`ChatView`): the main chat is the absence of one, so "main" is never
 // sent on the wire.
 
 export type ChatView = "main" | components["schemas"]["ChatView"];
 
 /**
- * The view whose chat the user is talking to from here: the Issues Page with
- * no card open, or with its own Questions card open (the card answers this
- * chat's questions).
+ * The view whose own chat this page has: the Issues Page with no card open,
+ * or with its own Questions card open (the card answers this chat's
+ * questions). The panel draws it over the main chat once it is started.
  */
 export function chatViewFor(page: ProjectPage, card: ProjectCard | null): ChatView {
   return page === "issues" && (card === null || card === "questions") ? "issues" : "main";

@@ -24,8 +24,8 @@ import type { StreamPart } from "@aep/agent-stream";
 import type { ShellScope } from "../shell/scope";
 import { createChatStore, type ChatApi } from "./chatStore";
 
-// When the user leaves the Issues page after talking there, the main chat sums
-// the visit up: "From Issues · N messages · <the agent's last line>" with a
+// When the user leaves the Issues page after talking in its chat (the branch
+// stacked on the main chat), the main chat sums the visit up: "From Issues · N messages · <the agent's last line>" with a
 // Reopen. A second visit rewords that card instead of stacking another.
 
 const PROJECT = "acme";
@@ -146,14 +146,27 @@ describe("useBranchSummary", () => {
     expect(notes(main.store)).toEqual([]);
   });
 
-  it("stays in Issues for its Questions card, and leaves it for an issue's card, which is the main chat's", async () => {
+  it("stays on the Issues page for its Questions card and an issue's card, and leaves it for another page", async () => {
     const view = visit(onIssues);
     await issues.talk("One", "Two.");
     view.go(onQuestions);
     await settle();
-    expect(notes(main.store)).toEqual([]);
     view.go(onIssueCard);
+    await settle();
+    view.go(onIssues);
+    await settle();
+    expect(notes(main.store)).toEqual([]);
+    view.go(onOverview);
     await vi.waitFor(() => expect(notes(main.store)).toHaveLength(1));
+  });
+
+  it("arriving on an issue's card counts as arriving on the Issues page", async () => {
+    const view = visit(onIssueCard);
+    await vi.waitFor(() => expect(issues.store.get(PROJECT).status).toBe("ready"));
+    view.go(onIssues);
+    await issues.talk("Save does nothing", "Drafted it.");
+    view.go(onOverview);
+    await vi.waitFor(() => expect(notes(main.store)[0]).toMatchObject({ text: "From Issues · 2 messages · Drafted it." }));
   });
 
   it("counts a single message in the singular, with no line when the agent said nothing", async () => {
