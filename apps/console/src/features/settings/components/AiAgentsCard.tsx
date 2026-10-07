@@ -356,13 +356,13 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
               Remove
             </Button>
           </CredentialField>
-          {/* A token never recorded in the vault: every Claude Code run fails
-              at dispatch until it is replaced or the subscription removed. */}
+          {/* A token never recorded in the vault: dispatch cannot mount it,
+              so coding bills the connection's key until it is replaced. */}
           {stored.tokenMissing ? (
             <Alert severity="warning">
-              Save the Claude subscription token again: coding runs fail until
-              you replace it. Or remove the subscription to bill coding to the
-              API key.
+              The Claude subscription token was never saved, so coding uses the
+              API key. Replace the token to bill your Claude plan, or remove the
+              subscription.
             </Alert>
           ) : (
             <Typography variant="body2" color="text.secondary">

@@ -1619,7 +1619,7 @@ internal adapter or port name.
 | A runtime the connection's format cannot run | shown, disabled, *Needs the Anthropic Messages format.* |
 | A format change moved the runtime | *Coding moved to OpenCode: Claude Code speaks only the Anthropic Messages format.* |
 | Claude subscription | an optional **Claude subscription token** field inside the Claude Code tile, never a switch; *A Claude subscription token works only on Anthropic's own API.* elsewhere |
-| A subscription whose token was never recorded (`tokenMissing`) | shown set (**Set ••••••••**, **Replace**, **Remove**) with a warning: *Save the Claude subscription token again: coding runs fail until you replace it. Or remove the subscription to bill coding to the API key.* — never hidden, since every Claude Code run fails on it |
+| A subscription whose token was never recorded (`tokenMissing`) | shown set (**Set ••••••••**, **Replace**, **Remove**) with a warning: *The Claude subscription token was never saved, so coding uses the API key. Replace the token to bill your Claude plan, or remove the subscription.* — never hidden: the org chose its plan and is billed API credits until it acts |
 
 ## The model connection
 

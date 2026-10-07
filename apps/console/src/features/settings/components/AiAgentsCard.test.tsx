@@ -233,7 +233,7 @@ describe("AiAgentsCard on Anthropic's API", () => {
     renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, tokenMissing: true } } }));
     expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Save the Claude subscription token again: coding runs fail until you replace it. Or remove the subscription to bill coding to the API key.",
+      "The Claude subscription token was never saved, so coding uses the API key. Replace the token to bill your Claude plan, or remove the subscription.",
     );
     // Not billing the plan while the token is missing, so the card does not say it is.
     expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
@@ -254,7 +254,7 @@ describe("AiAgentsCard on Anthropic's API", () => {
 
   it("does not warn about a recorded token", () => {
     renderCard(config({ agents: { ...defaultAgents, subscription } }));
-    expect(screen.queryByText(/Save the Claude subscription token again/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/token was never saved/)).not.toBeInTheDocument();
     expect(screen.getByText(/Coding bills your Claude plan/)).toBeInTheDocument();
   });
 
