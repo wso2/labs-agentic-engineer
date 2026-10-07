@@ -129,10 +129,12 @@ export function useComponentsDeployments(projectName: string, componentNames: st
 }
 
 async function readReadiness(projectName: string, environment: string): Promise<DependencyReadiness> {
-  const { data, error } = await client.GET("/projects/{projectName}/dependencies/readiness", {
+  const { data, error, response } = await client.GET("/projects/{projectName}/dependencies/readiness", {
     params: { path: { projectName }, query: { environment } },
   });
-  if (error || data === undefined) throw new Error(apiErrorMessage(error, "Couldn't load the dependencies' values"));
+  if (error || data === undefined) {
+    throw new ApiRequestError(error, "Couldn't load the dependencies' values", { retryAfterMs: retryAfterMs(response) });
+  }
   return data;
 }
 
@@ -205,10 +207,10 @@ export function useComponentOpenApi(projectName: string, componentName: string, 
     queryKey: deployKeys.openapi(projectName, componentName),
     enabled,
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/components/{componentName}/openapi", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/components/{componentName}/openapi", {
         params: { path: { projectName, componentName } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Couldn't load the API"));
+      if (error || data === undefined) throw new ApiRequestError(error, "Couldn't load the API", { retryAfterMs: retryAfterMs(response) });
       return data.spec;
     },
     staleTime: 30_000,

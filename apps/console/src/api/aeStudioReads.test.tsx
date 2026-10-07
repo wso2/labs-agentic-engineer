@@ -39,7 +39,7 @@ vi.mock("./client", async () => {
 });
 
 const { useValidationSnapshot } = await import("../features/builds/api/runs");
-const { useDesignDependencies } = await import("../features/deploy/api/deploy");
+const { useComponentOpenApi, useDesignDependencies, useReadiness } = await import("../features/deploy/api/deploy");
 const { useSpecState } = await import("../features/spec/api/specModel");
 const { useBuilds } = await import("../features/builds/api/builds");
 const { useVersionTasks } = await import("../features/builds/api/tasks");
@@ -67,6 +67,8 @@ const reads: [string, () => { error: unknown }][] = [
   // Retried while AE Studio restarts (below), so its first failure is the reason.
   ["a validation attempt's report", () => ({ error: useValidationSnapshot("shop", "v1", "c1", true, true).failureReason })],
   ["the design's dependencies", () => useDesignDependencies("shop")],
+  ["an environment's dependency readiness", () => useReadiness("shop", "development")],
+  ["a component's OpenAPI document", () => useComponentOpenApi("shop", "orders", true)],
   ["the spec state", () => useSpecState("shop")],
   ["the builds (versions)", () => useBuilds("shop")],
   ["a version's tasks", () => useVersionTasks("shop", "v1", false)],
