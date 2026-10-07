@@ -22,7 +22,7 @@ import type { SpecFile } from "./files-client.js";
 
 // Doc model (#86 decision 2 + phase 6): one Y.Doc per project — the model
 // itself (Y.Map('files') + md fragments) lives in @aep/collab-doc, shared
-// with the agents service's live-peer path (#86 phase 4).
+// with the design agent's live-peer path (#86 phase 4).
 //
 // KEY SCHEME INVARIANT: doc keys are the FULL repo-relative path, verbatim
 // (specs/requirements/prd.md). The console's spec feature, the committer, and

@@ -22,7 +22,7 @@
  * against. Peer of `sse-events.ts`: this module owns the TYPES (inputs, results,
  * error codes, tool names, the `tasks/<issueNumber>.md` rendering shape); the Zod
  * `inputSchema`s live in `../task-tools-schema.ts` (drift-guarded against these
- * types) and the runtime parser in `../task-context.ts`. The agents service, its
+ * types) and the runtime parser in `../task-context.ts`. The design agent, its
  * evals, the console, and the Go BFF plan tap all speak this one definition.
  *
  * ## The task-plan turn's `files` = READ-ONLY context (a §13 default)

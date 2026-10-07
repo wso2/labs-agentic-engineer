@@ -20,7 +20,7 @@
  * The prototype write gate: the manifest and the source are judged by the kit's
  * rules, the manifest first, and every refusal is INVALID_PROTOTYPE carrying
  * the kit's findings. The render check is the host's, so it is a stub here; the
- * agents service tests the real one. A manifest written beside an existing
+ * design agent tests the real one. A manifest written beside an existing
  * source is judged against that source too.
  */
 

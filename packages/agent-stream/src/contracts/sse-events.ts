@@ -28,9 +28,9 @@
  * projection, and the turn facts (`TurnSpec`, `TurnAim`, `TurnAttachment`).
  *
  * Ownership: this module is the leaf source of truth for the wire, published by
- * the `@aep/agent-stream` package so the producer (the agents service SSE
- * route), the fold consumers (evals, playground, console), and the BFF share ONE
- * definition. The domain (`bundle.ts`) and the agents-service `tool.ts` import
+ * the `@aep/agent-stream` package so the producer (the design agent's `/v1`
+ * edge) and the fold consumers (evals, playground, console) share ONE
+ * definition. The domain (`bundle.ts`) and the design agent's `tool.ts` import
  * these types and their Zod schemas carry a compile-time drift guard asserting
  * they stay assignable to the `*Input` types here — so there is no
  * hand-maintained parallel copy. This stream is NOT part of the generated
@@ -208,7 +208,7 @@ export interface AskQuestionOption {
 
 /**
  * The `ask_question` tool input — a single structured question. WIRE source of
- * truth; drift-guarded against the agents-service Zod schema.
+ * truth; drift-guarded against the design agent's Zod schema.
  */
 export interface AskQuestionInput {
   question: string;
@@ -305,7 +305,7 @@ export const DECLARE_PLAN_TOOL = "declare_plan" as const;
  * The `declare_plan` tool input. WIRE source of truth.
  *
  * NOT yet drift-guarded: the tool is registered — with the Zod schema and the
- * `Equal<>` assert every other input here carries — when the agents-service
+ * `Equal<>` assert every other input here carries — when the design agent's
  * half lands via the handshake. Until then the console renders this shape from
  * typed mocks and no producer emits it.
  */
@@ -402,15 +402,15 @@ export interface Change {
 /**
  * What a turn is FOR, as facts rather than prose. The caller states the intent
  * and the values only it can know (the captured idea, the milestone scope);
- * the agents service turns that into instruction text. No caller composes
+ * the design agent turns that into instruction text. No caller composes
  * prompt wording — that is the whole point of this type.
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
  *  - `flow`  — a `/<command>`: load a skill and follow it, with the user's
  *              trailing text (if any) riding along. `skill` carries the
  *              command's TOKEN as typed; most tokens are the skill name, and
- *              the few that name a branch of one instead resolve in the agents
- *              service, which is where wording lives. `references` names the
+ *              the few that name a branch of one instead resolve in the design
+ *              agent, which is where wording lives. `references` names the
  *              attached reference documents exactly as on `start` — a flow
  *              generates artifacts (wireframes above all) that must be
  *              grounded in an attached sketch or spec.
@@ -448,7 +448,7 @@ export type PrototypeFeedbackRequest = FeedbackRequest;
 /**
  * A batch of review requests on ONE web-application prototype, revised in a
  * single `/prototype` turn: the kit's feedback submission plus the `component`
- * the batch is about. The caller forwards it as facts; the agents service alone
+ * the batch is about. The caller forwards it as facts; the design agent alone
  * words it.
  */
 export interface PrototypeFeedback extends FeedbackSubmission {
@@ -775,7 +775,7 @@ export function isSurface(v: unknown): v is Surface {
 }
 
 /**
- * The registrable tool sets. NOT a wire field: the agents service derives the
+ * The registrable tool sets. NOT a wire field: the design agent derives the
  * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files), so a
  * caller cannot ask for a tool set that disagrees with what its turn is for.
  */
@@ -914,8 +914,8 @@ export interface ManifestPart {
   /** Paths mutated this turn that are no longer present at turn end. */
   deleted: string[];
   /**
-   * The turn's token spend (#249). Present on every manifest the agents
-   * service emits today; optional so older producers/recorded streams stay
+   * The turn's token spend (#249). Present on every manifest the design
+   * agent emits today; optional so older producers/recorded streams stay
    * valid. Manifest-only ⇒ a failed/severed turn carries no usage (v1).
    */
   usage?: TurnUsage;

@@ -14,7 +14,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# NEW file-mutation agents service (components/dataplane/ae-system-project/ae-studio/ae-design-agent). Built from the REPO ROOT
+# The design agent (components/dataplane/ae-system-project/ae-studio/ae-design-agent). Built from the REPO ROOT
 # context (docker-compose sets `context: ..`) because @aep/ae-design-agent imports the
 # workspace package @aep/agent-stream — pnpm must see the whole workspace to
 # resolve it. @aep/agent-stream in turn depends on @aep/excalidraw-dsl (the

@@ -70,7 +70,7 @@ targets, isolated render.
   `Function.prototype` before the module runs, so prototype pollution throws.
   `RENDER_TIMEOUT_MS` is 15 s. The child is spawned asynchronously, so
   `checkPrototypeFiles` and `checkPrototype` return promises and a host keeps
-  its event loop while a prototype renders (the agents service serves other
+  its event loop while a prototype renders (the design agent serves other
   conversations; the CLI preview keeps answering).
 - Limits of the render check: see ADR-0042, Consequences.
 

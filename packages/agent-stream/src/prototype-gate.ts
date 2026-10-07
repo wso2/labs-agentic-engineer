@@ -28,7 +28,7 @@
  * (`checkPrototype`).
  *
  * Drawing every screen executes the generated module, so this package does not:
- * the host passes a `PrototypeRenderCheck` (the agents service passes the kit's
+ * the host passes a `PrototypeRenderCheck` (the design agent passes the kit's
  * isolated one) to `writeWithRenderCheck`, which runs it asynchronously, off
  * the host's event loop, before the write is made. Without one the files get
  * their static checks only (the console's mock replay).
