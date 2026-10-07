@@ -65,7 +65,7 @@ const ready = (items: ProjectChat["items"]): ProjectChat => ({ status: "ready", 
 function renderThread() {
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
-      <Thread projectName="acme" scope={{ kind: "design" }} />
+      <Thread projectName="acme" />
     </OxygenUIThemeProvider>,
   );
 }

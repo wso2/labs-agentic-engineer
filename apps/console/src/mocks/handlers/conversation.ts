@@ -85,7 +85,13 @@ function historyFor(conversationId: string): ConversationMessage[] {
   return [
     ...(seeded[conversationId] ?? []),
     ...turns.flatMap((t): ConversationMessage[] => [
-      { role: "user", author: AUTHOR, content: t.instruction, ...(t.prototypeFeedback ? { prototypeFeedback: t.prototypeFeedback } : {}) },
+      {
+        role: "user",
+        author: AUTHOR,
+        content: t.instruction,
+        ...(t.scope ? { scope: t.scope } : {}),
+        ...(t.prototypeFeedback ? { prototypeFeedback: t.prototypeFeedback } : {}),
+      },
       ...t.reply,
     ]),
   ];
@@ -192,6 +198,7 @@ export function startMockTurn(projectName: string, body: TurnBody): MockTurn {
     instruction: scripted.display,
     frames: scripted.frames,
     reply: scripted.reply,
+    ...(body.scope ? { scope: body.scope } : {}),
     ...(scripted.effect ? { effect: scripted.effect } : {}),
   });
 }

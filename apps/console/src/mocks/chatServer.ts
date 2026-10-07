@@ -68,6 +68,8 @@ export interface MockTurn {
   view?: ChatView;
   /** The display record: the message that started it. */
   instruction: string;
+  /** The scope it was sent with, which the history carries back as the platform's does. */
+  scope?: components["schemas"]["TurnScope"];
   startedAt: number;
   frames: ScriptFrame[];
   /** Its messages, persisted to the history when it ends. */

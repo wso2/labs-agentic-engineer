@@ -22,7 +22,7 @@ import { Box } from "@wso2/oxygen-ui";
 import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
-import { useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
+import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
 import { ChatPanelContext, type ChatPanelControls } from "../chatPanel";
 import { shellScope } from "../scope";
 import { CHAT_OVERLAY_WIDTH, PHONE, PHONE_QUERY, RAIL_WIDTH } from "../layout";
@@ -64,6 +64,7 @@ export function Shell() {
   const chatWidth = useChatWidth();
   const chatControls = useMemo<ChatPanelControls>(() => ({ open: () => setChatOpen(true) }), []);
   useRefreshOnTurnEnd();
+  useOpenQuestionsWhenAsked();
 
   // Arriving from New project (`?chat=open` on the overview): the kickoff is
   // already running, so the chat opens, at phone width too, to show it. The
@@ -77,6 +78,9 @@ export function Shell() {
   useEffect(() => {
     if (!arrivingProject) return;
     setChatOpen(true);
+    // This browser created the project, so its kickoff is the user's own
+    // turn: the questions it asks open the Questions card.
+    chatStore.claimKickoff(arrivingProject);
     void navigate({
       to: "/projects/$projectName",
       params: { projectName: arrivingProject },

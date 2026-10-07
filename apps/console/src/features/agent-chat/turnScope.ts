@@ -41,7 +41,7 @@ export type PrototypeFeedback = components["schemas"]["PrototypeFeedbackInput"];
 /** What one turn is about. */
 export type TurnScope =
   | { kind: "product" }
-  | { kind: "feature"; featureId: string; name: string; path: string }
+  | { kind: "feature"; featureId: string }
   | { kind: "design" }
   | { kind: "prototype"; feedback?: PrototypeFeedback };
 
@@ -51,15 +51,15 @@ export type TurnBody = TurnInputBody;
 /** The scope of a turn sent from here: the open card, and the feature open in the spec card. */
 export function turnScopeFor(
   card: ProjectCard | null,
-  feature: Pick<SpecFeature, "id" | "name" | "path"> | null,
+  feature: Pick<SpecFeature, "id"> | null,
 ): TurnScope {
   if (card === "design" || card === "prototype") return { kind: "design" };
   if (card === "spec" && feature) return featureScope(feature);
   return { kind: "product" };
 }
 
-export function featureScope(feature: Pick<SpecFeature, "id" | "name" | "path">): TurnScope {
-  return { kind: "feature", featureId: feature.id, name: feature.name, path: feature.path };
+export function featureScope(feature: Pick<SpecFeature, "id">): TurnScope {
+  return { kind: "feature", featureId: feature.id };
 }
 
 /**
@@ -78,7 +78,12 @@ export function turnBody(instruction: string, scope: TurnScope): TurnBody {
 export type WireScope = { kind: "product" } | { kind: "feature"; featureId: string } | { kind: "design" };
 
 export function scopeOfBody(body: TurnBody): WireScope {
-  if (body.scope?.kind === "feature" && body.scope.feature) return { kind: "feature", featureId: body.scope.feature };
-  if (body.scope?.kind === "design-review") return { kind: "design" };
+  return wireScope(body.scope);
+}
+
+/** The contract's scope, as a body or a history message carries it, read as a WireScope. */
+export function wireScope(scope: components["schemas"]["TurnScope"] | undefined): WireScope {
+  if (scope?.kind === "feature" && scope.feature) return { kind: "feature", featureId: scope.feature };
+  if (scope?.kind === "design-review") return { kind: "design" };
   return { kind: "product" };
 }

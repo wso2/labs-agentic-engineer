@@ -28,7 +28,7 @@ import {
 } from "@aep/agent-stream";
 import { parseDesignCommand, parseInterviewCommand, parsePrototypeCommand, START_COMMAND } from "@aep/contracts/commands";
 import type { ConversationMessage } from "./api/conversation";
-import type { PrototypeFeedback } from "./turnScope";
+import { wireScope, type PrototypeFeedback, type WireScope } from "./turnScope";
 import { parseQuestionsInput } from "./questionCards";
 
 // The project conversation as the chat shows it: a list of items, and the
@@ -57,6 +57,12 @@ export type ChatItem =
        * (the turn journals it), so a reload and a teammate read the same.
        */
       prototypeFeedback?: PrototypeFeedback;
+      /**
+       * The scope the message was sent with, where known (sent from here, or
+       * read back from the history). A question its turn asks is answered in
+       * the same scope (`askedScope`).
+       */
+      scope?: WireScope;
       /** `sending` until the server accepts the turn; `failed` when it refused it. */
       state: "sending" | "sent" | "failed";
       turnId?: string;
@@ -169,6 +175,37 @@ export function answerableQuestionId(items: ChatItem[]): string | null {
     if (item.kind === "question") return item.streaming || item.answers ? null : item.id;
   }
   return null;
+}
+
+/**
+ * The question the conversation is waiting on or still being asked: the
+ * answerable one (`answerableQuestionId`), or the newest one still streaming,
+ * whose questions can be answered as they land though not yet sent. Null once
+ * it is answered or a later message superseded it.
+ */
+export function openQuestionId(items: ChatItem[]): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!;
+    if (item.kind === "user" && item.state !== "failed") return null;
+    if (item.kind === "question") return item.answers ? null : item.id;
+  }
+  return null;
+}
+
+/**
+ * The scope the turn that asked question `id` was sent in: that of the
+ * message before it that reached the agent. The answer goes back in the same
+ * scope wherever the user gives it, so a feature's interview carries on in
+ * that feature. A turn nobody sent from here with a known scope (the
+ * platform's kickoff) is about the whole product.
+ */
+export function askedScope(items: ChatItem[], id: string): WireScope {
+  const at = items.findIndex((i) => i.id === id);
+  for (let i = at - 1; i >= 0; i--) {
+    const item = items[i]!;
+    if (item.kind === "user" && item.state !== "failed") return item.scope ?? { kind: "product" };
+  }
+  return { kind: "product" };
 }
 
 /**
@@ -294,6 +331,7 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
         state: "sent",
         ...(m.author ? { author: m.author.displayName } : {}),
         ...(m.prototypeFeedback ? { prototypeFeedback: m.prototypeFeedback } : {}),
+        scope: wireScope(m.scope),
       });
       continue;
     }

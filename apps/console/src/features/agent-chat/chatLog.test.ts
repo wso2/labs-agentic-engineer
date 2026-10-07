@@ -20,9 +20,11 @@ import { describe, expect, it } from "vitest";
 import {
   answerableQuestionId,
   appendAgentText,
+  askedScope,
   dropTurnOutput,
   historyItems,
   interviewWriteUp,
+  openQuestionId,
   setAnswers,
   userLineText,
   type ChatItem,
@@ -39,7 +41,7 @@ describe("historyItems", () => {
         { role: "assistant", content: [{ type: "text", text: "Who approves them?" }] },
       ]),
     ).toEqual([
-      { kind: "user", id: "h0", text: "Staff submit expenses", state: "sent", author: "Mark" },
+      { kind: "user", id: "h0", text: "Staff submit expenses", state: "sent", author: "Mark", scope: { kind: "product" } },
       { kind: "agent", id: "h1", turnId: "history", text: "Who approves them?" },
     ]);
   });
@@ -51,7 +53,7 @@ describe("historyItems", () => {
       requests: [{ screenId: "screen.pending", roleId: "manager", stateId: "state.default", elementIds: [], text: "Wider" }],
     };
     expect(historyItems([{ role: "user", content: "/prototype expense-web", prototypeFeedback }])).toEqual([
-      { kind: "user", id: "h0", text: "/prototype expense-web", state: "sent", prototypeFeedback },
+      { kind: "user", id: "h0", text: "/prototype expense-web", state: "sent", prototypeFeedback, scope: { kind: "product" } },
     ]);
   });
 
@@ -62,7 +64,7 @@ describe("historyItems", () => {
         { role: "tool", content: [{ type: "tool-result", output: "ok" }] },
         { role: "user", content: "Go on" },
       ]),
-    ).toEqual([{ kind: "user", id: "h0", text: "Go on", state: "sent" }]);
+    ).toEqual([{ kind: "user", id: "h0", text: "Go on", state: "sent", scope: { kind: "product" } }]);
   });
 
   it("shows the agent's prose, its file writes and its questions in the order it made them", () => {
@@ -158,6 +160,50 @@ describe("answerableQuestionId", () => {
   it("clears a card's answers again, so it can be answered", () => {
     const answered = setAnswers([card("a")], "a", [{ selected: ["Finance only"] }]);
     expect(answerableQuestionId(setAnswers(answered, "a", null))).toBe("a");
+  });
+});
+
+describe("a question's place in the log (the Questions card)", () => {
+  const card = (id: string, extra: Partial<Extract<ChatItem, { kind: "question" }>> = {}): ChatItem => ({
+    kind: "question",
+    id,
+    turnId: "t1",
+    toolCallId: id,
+    questions: [Q],
+    streaming: false,
+    ...extra,
+  });
+  const said = (id: string, scope?: Extract<ChatItem, { kind: "user" }>["scope"], state: "sent" | "failed" = "sent"): ChatItem => ({
+    kind: "user",
+    id,
+    text: "x",
+    state,
+    ...(scope ? { scope } : {}),
+  });
+
+  it("is open while it streams, so it can be answered as it lands, and until answered or superseded", () => {
+    expect(openQuestionId([card("a", { streaming: true })])).toBe("a");
+    expect(openQuestionId([card("a")])).toBe("a");
+    expect(openQuestionId(setAnswers([card("a")], "a", [{ selected: ["Finance only"] }]))).toBeNull();
+    expect(openQuestionId([card("a"), said("u")])).toBeNull();
+    expect(openQuestionId([card("a"), said("u", undefined, "failed")])).toBe("a");
+  });
+
+  it("is answered in the scope of the message that started the turn that asked it", () => {
+    const f4 = { kind: "feature" as const, featureId: "F4" };
+    expect(askedScope([said("u1"), said("u2", f4), card("a")], "a")).toEqual(f4);
+    expect(askedScope([said("u1", f4), said("u2", undefined, "failed"), card("a")], "a")).toEqual(f4);
+  });
+
+  it("is about the whole product when nothing sent from here started its turn (the kickoff)", () => {
+    expect(askedScope([card("a")], "a")).toEqual({ kind: "product" });
+    expect(askedScope([said("u1"), card("a")], "a")).toEqual({ kind: "product" });
+  });
+
+  it("reads a message's scope back from the history", () => {
+    expect(historyItems([{ role: "user", content: "Interview F4", scope: { kind: "feature", feature: "F4" } }])).toEqual([
+      { kind: "user", id: "h0", text: "Interview F4", state: "sent", scope: { kind: "feature", featureId: "F4" } },
+    ]);
   });
 });
 

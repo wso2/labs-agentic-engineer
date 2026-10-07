@@ -22,6 +22,7 @@ routes/projects/$projectName/
     index.tsx                  /projects/$p            no card
     spec.tsx                   /projects/$p/spec       Spec card
     design.tsx                 /projects/$p/design     Design card
+    questions.tsx              /projects/$p/questions  Questions card
   builds/route.tsx           build history           /projects/$p/builds
     $version.tsx               /projects/$p/builds/v2  Build card
   validations/route.tsx      the Validation ledger   /projects/$p/validations

@@ -20,6 +20,7 @@ import {
   ANSWER_PREFIX,
   ANSWERS_PREFIX,
   ASK_QUESTION_TOOL,
+  ASK_QUESTIONS_TOOL,
   type AskQuestionInput,
   type StreamPart,
 } from "@aep/agent-stream";
@@ -91,6 +92,30 @@ export class Script {
     return this;
   }
 
+  /**
+   * A batch of questions (ask_questions), its input streamed as the provider
+   * streams it, so the card fills question by question; the turn ends waiting
+   * for the answers.
+   */
+  askAll(toolCallId: string, questions: AskQuestionInput[]): this {
+    const toolName = ASK_QUESTIONS_TOOL;
+    const input = { questions };
+    this.emit({ type: "tool-input-start", id: toolCallId, toolName }, 250);
+    const json = JSON.stringify(input);
+    // Paced so each question lands a beat after the last: long enough to see
+    // the card say "Still asking…", short enough not to wait on it.
+    const chunk = Math.max(24, Math.ceil(json.length / 30));
+    for (let i = 0; i < json.length; i += chunk) this.emit({ type: "tool-input-delta", id: toolCallId, delta: json.slice(i, i + chunk) }, 80);
+    this.emit({ type: "tool-input-end", id: toolCallId }, 60);
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 30);
+    const output = { status: "awaiting_user_response" };
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output }, 30);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "json", value: output } });
+    this.lastWasText = false;
+    return this;
+  }
+
   /** An editFile, its input streamed as the provider streams it, then its verdict. */
   edit(toolCallId: string, path: string, oldString: string, newString: string): this {
     const input = { path, oldString, newString };
@@ -129,6 +154,58 @@ export class Script {
     return { frames: this.frames, reply };
   }
 }
+
+/** The kickoff's batch: the product map to confirm, and what the brief leaves open. */
+export const KICKOFF_QUESTIONS: AskQuestionInput[] = [
+  {
+    question:
+      "Here is the product map I'd propose: actors Employee, Manager and Finance; features Submit expenses, Approvals " +
+      "and Payroll export. Does this match what you have in mind?",
+    options: [
+      {
+        label: "Matches: proceed with these actors and features",
+        description: "I'll write the product page with these three actors and three features.",
+        recommended: true,
+      },
+      {
+        label: "Something is missing or should be split",
+        description: "Type what to add, remove, rename or split, such as a separate Notifications feature.",
+        freeText: true,
+      },
+    ],
+  },
+  {
+    question: "Should an AI agent read uploaded receipts and pre-fill the expense claim for the employee to review?",
+    detail: "Optional work an agent could do in Submit expenses. If you decline, employees enter every field by hand.",
+    options: [
+      {
+        label: "Yes, suggest fields from the receipt",
+        description: "The agent proposes amount, date, merchant and category; the employee can correct them.",
+        recommended: true,
+      },
+      { label: "No, manual entry only", description: "Simpler to build; no agent component in the design." },
+    ],
+  },
+  {
+    question: "How are people told that a claim needs them, or that its status changed?",
+    detail: "This decides whether Notifications is its own feature or a product-wide rule.",
+    options: [
+      { label: "In-app only", description: "A badge and a list in the app; no email.", recommended: true },
+      { label: "In-app and email", description: "Adds an email channel the design has to provision." },
+    ],
+  },
+  {
+    question: "Which expense categories does a claim use?",
+    detail: "Pick every category the first release needs.",
+    options: [
+      { label: "Travel" },
+      { label: "Meals" },
+      { label: "Accommodation" },
+      { label: "Equipment" },
+    ],
+    multiSelect: true,
+  },
+];
 
 /** A feature's two questions, and what the answers become in its file. */
 interface FeatureInterview {
@@ -337,8 +414,8 @@ export function scriptTurn(req: TurnRequest): ScriptedTurn {
     const brief = text.slice(START_COMMAND.length).trim() || req.prompt || "";
     const s = new Script()
       .pause(600)
-      .say("I've read your brief. Next I'll propose the features it describes and write each one into the spec.")
-      .say("Tell me anything the brief leaves out, such as who uses it first.");
+      .say("I've read your brief. A few questions before I propose the features it describes.")
+      .askAll(`${turnKey}-kickoff`, KICKOFF_QUESTIONS);
     return { display: brief ? `${START_COMMAND} ${brief}` : START_COMMAND, ...s.end(), progress };
   }
 

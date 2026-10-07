@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { parseInterviewCommand, START_COMMAND } from "@aep/contracts/commands";
 import { designKey } from "../design/api/designModel";
 import { specKey } from "../spec/api/specModel";
@@ -28,6 +29,8 @@ import { getActiveTurn, getTurn, openTurnStream, startTurn } from "./api/turns";
 import { issuesListKey } from "../issues/api/issues";
 import { createChatStore, type ProjectChat } from "./chatStore";
 import { viewTurnBody, type ChatView } from "./chatView";
+import { opensQuestionsCard } from "./openQuestions";
+import { shellScope } from "../shell/scope";
 
 // The app's chat stores, on the real transport, and the React side of them:
 // the project's main chat, and one more per view of the main panel.
@@ -110,6 +113,30 @@ export function useRefreshOnTurnEnd(): void {
       stopIssues();
     };
   }, [queryClient]);
+}
+
+/**
+ * Open the Questions card when a turn this browser started asks questions
+ * (ADR-0002), as the first of them lands, where `opensQuestionsCard` allows
+ * it; elsewhere the chat's pointer is all. Each batch opens it once: closing
+ * the card leaves it closed until the agent asks again. Mounted once, in the
+ * shell, so it holds with the chat closed.
+ */
+export function useOpenQuestionsWhenAsked(): void {
+  const router = useRouter();
+  useEffect(
+    () =>
+      chatStore.onQuestionsAsked((projectName) => {
+        const leaf = router.state.matches.at(-1);
+        const scope = shellScope({
+          routeId: leaf?.routeId ?? "",
+          params: (leaf?.params ?? {}) as { projectName?: string },
+        });
+        if (!opensQuestionsCard(scope, projectName)) return;
+        void router.navigate({ to: "/projects/$projectName/questions", params: { projectName } });
+      }),
+    [router],
+  );
 }
 
 /**

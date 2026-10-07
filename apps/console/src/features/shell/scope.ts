@@ -39,7 +39,15 @@ export type OrgCard = "settings" | "skill" | "resource";
 export type ProjectPage = "overview" | "builds" | "validations" | "deploy" | "issues";
 
 /** The Cards drawn over a project's Pages, each a route of its own. */
-export type ProjectCard = "spec" | "design" | "prototype" | "build" | "validation" | "configure" | "issue";
+export type ProjectCard =
+  | "spec"
+  | "design"
+  | "prototype"
+  | "questions"
+  | "build"
+  | "validation"
+  | "configure"
+  | "issue";
 
 export type ShellScope =
   | { kind: "org"; page: OrgPage; card: OrgCard | null }
@@ -87,6 +95,7 @@ const CARD_ROUTES: Record<string, ProjectCard> = {
   "/projects/$projectName/_overview/spec": "spec",
   "/projects/$projectName/_overview/design": "design",
   "/projects/$projectName/_overview/prototype": "prototype",
+  "/projects/$projectName/_overview/questions": "questions",
   "/projects/$projectName/builds/$version": "build",
   "/projects/$projectName/validations/$version": "validation",
   "/projects/$projectName/deploy/$env/configure": "configure",
@@ -98,6 +107,7 @@ const CARD_PAGE: Record<ProjectCard, ProjectPage> = {
   spec: "overview",
   design: "overview",
   prototype: "overview",
+  questions: "overview",
   build: "builds",
   validation: "validations",
   configure: "deploy",
@@ -155,6 +165,7 @@ const CARD_TITLE: Record<ProjectCard, string> = {
   spec: "Spec",
   design: "Design",
   prototype: "Prototype",
+  questions: "Questions",
   build: "Build",
   validation: "Validation",
   configure: "Configure",

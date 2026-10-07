@@ -29,7 +29,7 @@ import type { TurnBody, TurnScope } from "./turnScope";
 // real parser.
 
 const PROJECT = "acme";
-const F4: TurnScope = { kind: "feature", featureId: "F4", name: "Spending reports", path: "specs/requirements/features/F4-spending-reports.md" };
+const F4: TurnScope = { kind: "feature", featureId: "F4" };
 const PRODUCT: TurnScope = { kind: "product" };
 
 /** A stream the test feeds frame by frame, and ends when it chooses. */
@@ -339,19 +339,19 @@ describe("answering a question card", () => {
     input: { question: "Who reads the reports?", options: [{ label: "Finance only" }, { label: "Everyone" }] },
   };
 
-  async function asked() {
+  async function asked(scope: TurnScope = F4) {
     const t = setup();
     await t.store.open(PROJECT);
     t.streams.set("t1", sse([ask, { type: "turn-committed" }]));
-    await t.store.send(PROJECT, "Interview Spending reports.", F4);
+    await t.store.send(PROJECT, "Interview Spending reports.", scope);
     await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
     const card = t.chat().items.find((i) => i.kind === "question")!;
     return { ...t, card };
   }
 
-  it("sends the answer as the next turn, scoped, and turns the card read-only", async () => {
+  it("sends the answer as the next turn, in the asking turn's scope, and keeps it on the item", async () => {
     const { store, started, chat, card } = await asked();
-    expect(await store.answer(PROJECT, card.id, [{ selected: ["Finance only"] }], F4)).toBe(true);
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Finance only"] }])).toBe(true);
     expect(started[1]).toMatchObject({
       instruction: 'Answer to "Who reads the reports?": Finance only',
       scope: { kind: "feature", feature: "F4" },
@@ -359,16 +359,22 @@ describe("answering a question card", () => {
     expect(chat().items.find((i) => i.id === card.id)).toMatchObject({ answers: [{ selected: ["Finance only"] }] });
   });
 
+  it("answers a question the whole product's turn asked with no scope", async () => {
+    const { store, started, card } = await asked(PRODUCT);
+    await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }]);
+    expect(started[1]).not.toHaveProperty("scope");
+  });
+
   it("carries a free answer typed into the card", async () => {
     const { store, started, card } = await asked();
-    await store.answer(PROJECT, card.id, [{ selected: [], freeText: "Finance and the board" }], F4);
+    await store.answer(PROJECT, card.id, [{ selected: [], freeText: "Finance and the board" }]);
     expect(started[1]?.instruction).toBe('Answer to "Who reads the reports?": Finance and the board');
   });
 
   it("leaves the card answerable when the answer could not be sent", async () => {
     const { store, api, chat, card } = await asked();
     vi.mocked(api.startTurn).mockRejectedValueOnce(new Error("Network down"));
-    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }], F4)).toBe(false);
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }])).toBe(false);
     expect(chat().items.find((i) => i.id === card.id)).not.toHaveProperty("answers");
   });
 
@@ -376,8 +382,51 @@ describe("answering a question card", () => {
     const { store, api, chat, card } = await asked();
     await store.send(PROJECT, "Finance only, please", F4);
     await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
-    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }], F4)).toBe(false);
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }])).toBe(false);
     expect(api.startTurn).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("announcing the questions a turn asks (the Questions card opens on them)", () => {
+  const ask: StreamPart = {
+    type: "tool-call",
+    toolCallId: "q1",
+    toolName: "ask_question",
+    input: { question: "Who reads the reports?", options: [{ label: "Finance only" }, { label: "Everyone" }] },
+  };
+
+  it("announces a question a turn sent from here asked, once", async () => {
+    const t = setup();
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    await t.store.open(PROJECT);
+    t.streams.set("t1", sse([ask, ask, { type: "turn-committed" }]));
+    await t.store.send(PROJECT, "Interview Spending reports.", F4);
+    await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledWith(PROJECT, "t1:q:q1");
+  });
+
+  it("announces nothing for a turn found running that this browser did not start", async () => {
+    const t = setup({ active: running("t7", "Interview Spending reports.") });
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    t.streams.set("t7", sse([ask, { type: "turn-committed" }]));
+    await t.store.open(PROJECT);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
+    expect(t.chat().items.some((i) => i.kind === "question")).toBe(true);
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it("announces the kickoff's questions once this browser claimed it (it created the project)", async () => {
+    const t = setup({ active: running("t7", "/start") });
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    t.store.claimKickoff(PROJECT);
+    t.streams.set("t7", sse([ask, { type: "turn-committed" }]));
+    await t.store.open(PROJECT);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
+    expect(asked).toHaveBeenCalledWith(PROJECT, "t7:q:q1");
   });
 });
 

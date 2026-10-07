@@ -23,7 +23,7 @@ const approvals = { id: "F2", name: "Approvals", path: "specs/requirements/featu
 
 describe("turnScopeFor (where the user is)", () => {
   it("is the feature open in the spec card", () => {
-    expect(turnScopeFor("spec", approvals)).toEqual({ kind: "feature", featureId: "F2", name: "Approvals", path: approvals.path });
+    expect(turnScopeFor("spec", approvals)).toEqual({ kind: "feature", featureId: "F2" });
   });
 
   it("is the design review on the design card, and on the prototypes beside it", () => {
