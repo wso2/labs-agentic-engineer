@@ -279,10 +279,20 @@ function agentStartFailedCopy(
   const reported = clusterReport(cycle?.agentReason);
   return {
     title: `The ${agentNoun(cycle)} could not start`,
-    body: [cause, notDone, `${retry} ${when}.`, reported ? `The cluster reported: ${reported}.` : undefined]
+    body: [cause, notDone, `${retry} ${when}.`, reported ? reportSentence("The cluster reported", reported) : undefined]
       .filter(Boolean)
       .join(" "),
   };
+}
+
+/**
+ * "<who>: <text>." as one sentence. The text is the cluster's or runner's own
+ * words, which may already end the sentence (a scheduler message ends in "."),
+ * so a period is added only when it does not.
+ */
+function reportSentence(who: string, text: string): string {
+  const said = text.trim();
+  return `${who}: ${said}${/[.!?]$/.test(said) ? "" : "."}`;
 }
 
 /** What a coding agent that never started did not do, true whether or not an
@@ -297,7 +307,7 @@ function noPullRequestSentence(earlier: readonly RunCycleView[]): string {
 function reasonCopy(run: MilestoneRunView): Omit<FailureCopy, "tone" | "details"> {
   const reason = run.terminalReason;
   const newest = run.cycles.at(-1);
-  const agentReason = newest?.agentReason ? ` The runner reported: ${newest.agentReason}.` : "";
+  const agentReason = newest?.agentReason ? ` ${reportSentence("The runner reported", newest.agentReason)}` : "";
   switch (reason) {
     case "plan-failed":
       return {

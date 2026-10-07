@@ -171,7 +171,17 @@ describe("failureCopy — runs with no record", () => {
       }),
     );
     expect(copy?.title).toBe("The coding agent stopped without opening a pull request");
-    expect(copy?.body).toContain("The runner reported: timed_out");
+    expect(copy?.body).toContain("The runner reported: timed_out.");
+  });
+
+  it("does not double the period of a runner reason that brought its own", () => {
+    const copy = failureCopy(
+      run({
+        terminalReason: "redispatch-budget",
+        cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", agentReason: "the agent exited.", recording: "kept" }] as MilestoneRunView["cycles"],
+      }),
+    );
+    expect(copy?.body).toContain("The runner reported: the agent exited. Open");
   });
 
   it("counts the dispatches that actually happened, not the budget", () => {
@@ -285,6 +295,18 @@ describe("failureCopy — an agent that could not start", () => {
     const copy = failureCopy(startFailed("coding", "startup_failed:ImagePullBackOff"));
     expect(copy?.body).toContain("The cluster could not pull its container image.");
     expect(copy?.body).toContain("Retry this build once that is fixed.");
+  });
+
+  it("ends the cluster's report with exactly one period, whether or not it brought its own", () => {
+    // The scheduler's own message already ends in "."; a reason alone does not.
+    const punctuated = failureCopy(
+      startFailed("validation", "startup_failed:Unschedulable: 0/1 nodes are available: preemption is not helpful for scheduling. "),
+    );
+    expect(punctuated?.body).toMatch(/The cluster reported: Unschedulable: 0\/1 nodes are available: preemption is not helpful for scheduling\.$/);
+    const bare = failureCopy(startFailed("coding", "startup_failed:Unschedulable: no room"));
+    expect(bare?.body).toMatch(/The cluster reported: Unschedulable: no room\.$/);
+    const exclaimed = failureCopy(startFailed("coding", "startup_failed:Unschedulable: no room!"));
+    expect(exclaimed?.body).toMatch(/The cluster reported: Unschedulable: no room!$/);
   });
 
   it("labels the outcome after the middot", () => {
