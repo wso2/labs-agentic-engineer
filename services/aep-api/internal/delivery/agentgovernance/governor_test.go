@@ -44,14 +44,14 @@ type fakeAMP struct {
 	creates          int
 	credentialWrites int
 	agentIn          agentmanager.EnsureAgentInput
-	configIn agentmanager.EnsureModelConfigInput
-	keyRef   agentmanager.ModelKeyRef
-	proxyURL string
-	keys     []string
-	issued   bool
-	rotated  bool
-	calls    int
-	err      error
+	configIn         agentmanager.EnsureModelConfigInput
+	keyRef           agentmanager.ModelKeyRef
+	proxyURL         string
+	keys             []string
+	issued           bool
+	rotated          bool
+	calls            int
+	err              error
 
 	tracingRef    agentmanager.TracingTokenRef
 	tracingMints  int
@@ -60,14 +60,14 @@ type fakeAMP struct {
 
 	// Guardrails: the catalog the gateway offers, the binding as stored, and
 	// every policies write that reached Agent Manager.
-	catalog        []agentmanager.PolicyDefinition
-	catalogErr     error
+	catalog    []agentmanager.PolicyDefinition
+	catalogErr error
+	// catalogOf is the provider UUID the last catalog read named.
+	catalogOf      string
 	binding        agentmanager.Binding
 	bindingErr     error
 	policyWrites   [][]agentmanager.BindingPolicy
 	policyWriteErr error
-	// providerUUID is the provider a find-only lookup answers; "" is none.
-	providerUUID string
 }
 
 // newFakeAMP is an Agent Manager that answers the way the real one does.
@@ -1001,7 +1001,8 @@ func TestGovernSurvivesATracingTokenFailure(t *testing.T) {
 	}
 }
 
-func (f *fakeAMP) ListPolicies(context.Context, string, string) ([]agentmanager.PolicyDefinition, error) {
+func (f *fakeAMP) ListPolicies(_ context.Context, _, providerUUID string) ([]agentmanager.PolicyDefinition, error) {
+	f.catalogOf = providerUUID
 	return f.catalog, f.catalogErr
 }
 
@@ -1016,8 +1017,4 @@ func (f *fakeAMP) WriteBindingPolicies(_ context.Context, _ agentmanager.Binding
 	f.policyWrites = append(f.policyWrites, policies)
 	f.binding.Policies = policies
 	return nil
-}
-
-func (f *fakeAMP) FindProvider(context.Context, string, string) (string, bool, error) {
-	return f.providerUUID, f.providerUUID != "", nil
 }

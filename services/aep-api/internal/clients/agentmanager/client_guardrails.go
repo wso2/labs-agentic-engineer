@@ -96,17 +96,6 @@ type Binding struct {
 	item map[string]any
 }
 
-// FindProvider looks the org's provider up by handle without creating it:
-// reading the guardrail catalog must never write the provider, whose every
-// update redeploys each proxy bound to it.
-func (c *client) FindProvider(ctx context.Context, org, id string) (string, bool, error) {
-	tok, err := c.token(ctx, scopeProvider)
-	if err != nil {
-		return "", false, err
-	}
-	return c.findProvider(ctx, tok, org, id)
-}
-
 // ListPolicies reads the policies the gateways a provider is deployed to offer.
 func (c *client) ListPolicies(ctx context.Context, org, providerUUID string) ([]PolicyDefinition, error) {
 	tok, err := c.token(ctx, scopeProvider)
