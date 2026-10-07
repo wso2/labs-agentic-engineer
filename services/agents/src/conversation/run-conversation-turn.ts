@@ -207,7 +207,7 @@ export interface RunConversationTurnInput {
   /**
    * What the other views' chats did since this conversation's previous turn
    * (`TurnRequest.branchNotes`). A main-agent turn's prompt opens with one
-   * `Meanwhile in <view> (N messages): <outcome>` line per note; an Issues turn
+   * `Meanwhile in <view> (N turns): <outcome>` line per note; an Issues turn
    * ignores them. Absent/empty → the prompt is byte-identical to a turn without.
    */
   branchNotes?: BranchNote[];
