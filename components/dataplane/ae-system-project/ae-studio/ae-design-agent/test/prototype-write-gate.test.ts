@@ -27,7 +27,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { OpErr, OpResult, StreamPart } from "@aep/agent-stream";
-import { runConversationTurn, TurnGuard } from "../src/conversation/run-conversation-turn.js";
+import { runConversationTurn } from "../src/conversation/run-conversation-turn.js";
 import { checkPrototypeRender } from "../src/prototype/render-check.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
 import { mockModel, type MockStep } from "../src/shared/mock-model.js";
@@ -88,7 +88,6 @@ async function writes(...contents: Write[]): Promise<{ results: OpResult[] }> {
     files: {},
     model: mockModel(steps),
     store: new InMemoryConversationStore(),
-    guard: new TurnGuard(),
     onEvent: (p) => events.push(p),
   });
   const results = events.filter((e) => e.type === "tool-result").map((e) => (e as unknown as { output: OpResult }).output);
