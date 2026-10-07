@@ -18,7 +18,7 @@
 
 // The in-process ToolsSocket: what a test (or the playground) drives a turn
 // with instead of ae-studio-tools. It answers the MCP JSON-RPC surface with
-// the eleven design tools, records every tool call and usage record, serves
+// the twelve design tools, records every tool call and usage record, serves
 // lookups from a fixed project table (recording each, and answering
 // ref_not_found for a listed missing `at`), and can be told to fail or hold the
 // next usage hand-overs so the outbox's retry paths are testable.
@@ -27,7 +27,7 @@ import type { ProjectSnapshot, SkillsSnapshot, ToolsSocket, TurnRecord } from ".
 import { ToolsSocketError } from "./client.js";
 
 /**
- * The eleven design tools ae-studio-tools answers on `tools/list`, whatever
+ * The twelve design tools ae-studio-tools answers on `tools/list`, whatever
  * aep-api serves (aep-api `mcpdiscovery/mcp_tools.go`, pinned in
  * ae-studio-tools `internal/mcp`).
  */
@@ -38,6 +38,7 @@ export const DESIGN_TOOL_NAMES = [
   "list_org_component_endpoints",
   "list_platform_resource_types",
   "list_groups",
+  "list_guardrail_policies",
   "get_remote_git_file_contents",
   "search_remote_git_code",
   "validate_openapi_spec",

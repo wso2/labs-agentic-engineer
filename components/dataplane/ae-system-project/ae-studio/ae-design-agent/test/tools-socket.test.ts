@@ -34,14 +34,15 @@ import { DESIGN_TOOL_NAMES, FakeToolsSocket } from "../src/tools-socket/fake.js"
 import { loadMcpTools } from "../src/shared/mcp-client.js";
 import type { TurnRecord } from "../src/tools-socket/client.js";
 
-/** The eleven design tools (phase 3 exact values, `mcp_tools.go:188-312`). */
-const ELEVEN = [
+/** The twelve design tools: ae-studio-tools' pinned `AllowedTools` (`internal/mcp/tools.go`). */
+const TWELVE = [
   "list_external_resources",
   "get_external_resource_schema",
   "list_org_endpoints",
   "list_org_component_endpoints",
   "list_platform_resource_types",
   "list_groups",
+  "list_guardrail_policies",
   "get_remote_git_file_contents",
   "search_remote_git_code",
   "validate_openapi_spec",
@@ -99,12 +100,12 @@ function send(res: ServerResponse, reply: Reply): void {
   res.end(JSON.stringify(reply.body));
 }
 
-/** The JSON-RPC side of the fake ae-studio-tools: the eleven tools and an echoing call. */
+/** The JSON-RPC side of the fake ae-studio-tools: the twelve tools and an echoing call. */
 function mcpRoute(body: unknown): Reply {
   const { id, method, params } = body as { id?: unknown; method: string; params?: { name?: string } };
   if (id === undefined) return { status: 202 };
   if (method === "tools/list") {
-    const tools = ELEVEN.map((name) => ({ name, description: name, inputSchema: { type: "object", properties: {} } }));
+    const tools = TWELVE.map((name) => ({ name, description: name, inputSchema: { type: "object", properties: {} } }));
     return { status: 200, body: { jsonrpc: "2.0", id, result: { tools } } };
   }
   if (method === "tools/call") {
@@ -236,10 +237,10 @@ test("skills: GET /skills, answers the sha", async () => {
   );
 });
 
-test("loadMcpTools(socket) lists the eleven tools over the socket and calls one, no bearer", async () => {
+test("loadMcpTools(socket) lists the twelve tools over the socket and calls one, no bearer", async () => {
   reset(() => ({ status: 404 }));
   const tools = await loadMcpTools(createToolsSocket(socketPath));
-  assert.deepEqual(Object.keys(tools).sort(), [...ELEVEN].sort());
+  assert.deepEqual(Object.keys(tools).sort(), [...TWELVE].sort());
   const out = await tools.list_groups!.execute!({}, {} as never);
   assert.equal(out, "called list_groups");
   assert.ok(seen.length >= 2 && seen.every((s) => s.method === "POST" && s.url === "/mcp"));
@@ -273,14 +274,14 @@ test("a socket that never answers times out as a transient error", async () => {
   }
 });
 
-test("fake: loadMcpTools lists the eleven tools; tool calls and usage are recorded", async () => {
-  assert.deepEqual([...DESIGN_TOOL_NAMES].sort(), [...ELEVEN].sort());
+test("fake: loadMcpTools lists the twelve tools; tool calls and usage are recorded", async () => {
+  assert.deepEqual([...DESIGN_TOOL_NAMES].sort(), [...TWELVE].sort());
   const fake = new FakeToolsSocket({
     projects: { greeter: { headSha: "h1", skillsSha: "s1", references: ["a.md"] } },
     skillsSha: "s1",
   });
   const tools = await loadMcpTools(fake);
-  assert.deepEqual(Object.keys(tools).sort(), [...ELEVEN].sort());
+  assert.deepEqual(Object.keys(tools).sort(), [...TWELVE].sort());
   await tools.fetch_openapi_spec!.execute!({ url: "https://x" }, {} as never);
   assert.deepEqual(fake.toolCalls, [{ name: "fetch_openapi_spec", arguments: { url: "https://x" } }]);
 
