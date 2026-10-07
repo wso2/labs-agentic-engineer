@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
+	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
@@ -64,6 +65,22 @@ func (s internalServer) PutRepoReferences(ctx context.Context, request gen.PutRe
 		return referencesProblem(ctx, store, err)
 	}
 	return gen.PutRepoReferences204Response{}, nil
+}
+
+// ListRepoReferences answers 501 not_implemented until the store's list is
+// served. TODO(main-sync Task 49): answer repo.Engine.ListReferences as the
+// contract's ReferenceList (names sorted, empty when none are stored; disk
+// errors 503 disk_full as PutRepoReferences maps them).
+func (s internalServer) ListRepoReferences(context.Context, gen.ListRepoReferencesRequestObject) (gen.ListRepoReferencesResponseObject, error) {
+	return listReferencesNotImplemented{}, nil
+}
+
+// listReferencesNotImplemented is list-repo-references' interim answer.
+type listReferencesNotImplemented struct{}
+
+func (listReferencesNotImplemented) VisitListRepoReferencesResponse(w http.ResponseWriter) error {
+	problem.Write(w, http.StatusNotImplemented, "not_implemented", "list-repo-references is not served yet")
+	return nil
 }
 
 // referencesProblem maps an upload failure to its answer. Anything not listed

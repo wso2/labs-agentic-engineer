@@ -123,7 +123,7 @@ func TestStartTurn_StreamsEventsInOrderKeepAlivesIncluded(t *testing.T) {
 	if c, _ := body["credit"].(map[string]any); c["userId"] != "u-1" || c["name"] != "Ada" || c["email"] != "ada@example.com" {
 		t.Fatalf("credit = %v", body["credit"])
 	}
-	for _, absent := range []string{"scope", "taskContext"} {
+	for _, absent := range []string{"scope", "taskContext", "at"} {
 		if _, ok := body[absent]; ok {
 			t.Fatalf("a start turn must not send %q (the spec refuses an empty scope): %v", absent, body)
 		}
@@ -135,8 +135,13 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	srv := ndjsonServer(t, &body, `{"type":"result","status":"completed"}`)
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 	req := TurnRequest{
-		TurnID: turnID, Project: "greeter", Kind: "plan",
-		Scope:       &PlanScope{Tag: "m1", Stories: []PlanStory{{ID: "F1.1", Title: "Greet", Covered: true}, {ID: "F1.2"}}},
+		TurnID: turnID, Project: "greeter", Kind: "plan", At: "tags/m1",
+		Scope: &PlanScope{
+			Tag:         "m1",
+			Stories:     []PlanStory{{ID: "F1.1", Title: "Greet", Covered: true}, {ID: "F2.1"}},
+			Features:    []PlanFeature{{ID: "F1", Name: "Greeting"}, {ID: "F2", Needs: []string{"F1"}}},
+			ProductWide: []PlanItem{{ID: "P1", Text: "Log in", AppliesTo: []string{"all"}}},
+		},
 		TaskContext: []PlanContextFile{{Path: "tasks/1.md", Body: "# one"}},
 	}
 	seq, err := a.StartTurn(context.Background(), acmeGreeter, req)
@@ -148,9 +153,10 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	}
 	raw, _ := json.Marshal(body)
 	for _, want := range []string{
-		// TODO(Task 47, API-13): the wire carries no story ID yet; assert
-		// "id":"F1.1" once the ae-studio-tools contract has it.
-		`"scope":{"stories":[{"covered":true,"number":0,"title":"Greet"},{"covered":false,"number":0}],"tag":"m1"}`,
+		`"at":"tags/m1"`,
+		`"scope":{"features":[{"id":"F1","name":"Greeting"},{"id":"F2","needs":["F1"]}],` +
+			`"productWide":[{"appliesTo":["all"],"id":"P1","text":"Log in"}],` +
+			`"stories":[{"covered":true,"id":"F1.1","title":"Greet"},{"covered":false,"id":"F2.1"}],"tag":"m1"}`,
 		`"taskContext":[{"body":"# one","path":"tasks/1.md"}]`,
 	} {
 		if !strings.Contains(string(raw), want) {

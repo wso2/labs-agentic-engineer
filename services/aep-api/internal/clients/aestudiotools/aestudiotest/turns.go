@@ -20,11 +20,72 @@ package aestudiotest
 
 import (
 	"context"
+	"fmt"
 	"iter"
+	"regexp"
 	"slices"
+
+	"github.com/google/uuid"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 )
+
+// The start-repo-turn body's patterns (ae-studio-tools internal/v1
+// openapi.yaml, TurnRequest and PlanScope).
+var (
+	scopeTagPattern  = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,200}$`)
+	storyIDPattern   = regexp.MustCompile(`^F[0-9]+\.[0-9]+$`)
+	featureIDPattern = regexp.MustCompile(`^F[0-9]+$`)
+	itemIDPattern    = regexp.MustCompile(`^P[0-9]+$`)
+	appliesToPattern = regexp.MustCompile(`^(F[0-9]+|all)$`)
+)
+
+// validTurn refuses what the adapter refuses before sending (a turnId that
+// is not a UUID, an unknown kind: plain errors) and what the pod's validator
+// and handler answer 400 validation_failed to.
+func validTurn(req aestudiotools.TurnRequest) error {
+	if _, err := uuid.Parse(req.TurnID); err != nil {
+		return fmt.Errorf("ae studio: turnId %q is not a UUID", req.TurnID)
+	}
+	if req.Kind != aestudiotools.TurnKindStart && req.Kind != aestudiotools.TurnKindPlan {
+		return fmt.Errorf("ae studio: unknown turn kind %q", req.Kind)
+	}
+	if req.At != "" && (!atPattern.MatchString(req.At) || req.Kind != aestudiotools.TurnKindPlan) {
+		return podRefusal(OpStartTurn, "at must be tags/<name> or a full sha, on a plan turn")
+	}
+	if req.Scope == nil {
+		return nil
+	}
+	sc := req.Scope
+	if !scopeTagPattern.MatchString(sc.Tag) {
+		return podRefusal(OpStartTurn, "scope.tag is not a tag name")
+	}
+	for _, s := range sc.Stories {
+		if !storyIDPattern.MatchString(s.ID) {
+			return podRefusal(OpStartTurn, "scope.stories[].id must be F<n>.<m>")
+		}
+	}
+	for _, f := range sc.Features {
+		if !featureIDPattern.MatchString(f.ID) || !allMatch(featureIDPattern, f.Needs) {
+			return podRefusal(OpStartTurn, "scope.features[] ids must be F<n>")
+		}
+	}
+	for _, it := range sc.ProductWide {
+		if !itemIDPattern.MatchString(it.ID) || !allMatch(appliesToPattern, it.AppliesTo) {
+			return podRefusal(OpStartTurn, "scope.productWide[] must be P<n> applying to F<n> or all")
+		}
+	}
+	return nil
+}
+
+func allMatch(re *regexp.Regexp, values []string) bool {
+	for _, v := range values {
+		if !re.MatchString(v) {
+			return false
+		}
+	}
+	return true
+}
 
 // ScriptTurn sets the events every later turn streams. Without a result
 // event, the stream ends with {result, completed}.
@@ -42,9 +103,13 @@ func (f *Fake) TurnCalls() []TurnCall {
 	return slices.Clone(f.turns)
 }
 
-// StartTurn records the call and streams the scripted events.
+// StartTurn records the call and streams the scripted events. A request the
+// adapter or the pod refuses (validTurn) is refused, and not recorded.
 func (f *Fake) StartTurn(_ context.Context, ref aestudiotools.RepoRef, req aestudiotools.TurnRequest) (iter.Seq2[aestudiotools.TurnEvent, error], error) {
 	if err := f.begin(Call{Op: OpStartTurn, Ref: ref}); err != nil {
+		return nil, err
+	}
+	if err := validTurn(req); err != nil {
 		return nil, err
 	}
 	f.mu.Lock()

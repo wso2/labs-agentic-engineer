@@ -49,6 +49,7 @@ const (
 	OpTrashRepo      = "trash-repo"
 	OpMirrorSkills   = "mirror-skills"
 	OpPutReferences  = "put-references"
+	OpListReferences = "list-references"
 	OpGitHubIdentity = "github-identity"
 	OpStartTurn      = "start-turn"
 
@@ -131,12 +132,13 @@ type Fake struct {
 }
 
 var (
-	_ sourcecontrol.Git             = (*Fake)(nil)
-	_ sourcecontrol.TrashOps        = (*Fake)(nil)
-	_ sourcecontrol.SkillsMirrorOps = (*Fake)(nil)
-	_ sourcecontrol.ReferencesOps   = (*Fake)(nil)
-	_ sourcecontrol.IdentityOps     = (*Fake)(nil)
-	_ aestudiotools.Turns           = (*Fake)(nil)
+	_ sourcecontrol.Git              = (*Fake)(nil)
+	_ sourcecontrol.TrashOps         = (*Fake)(nil)
+	_ sourcecontrol.SkillsMirrorOps  = (*Fake)(nil)
+	_ sourcecontrol.ReferencesOps    = (*Fake)(nil)
+	_ sourcecontrol.ReferenceListOps = (*Fake)(nil)
+	_ sourcecontrol.IdentityOps      = (*Fake)(nil)
+	_ aestudiotools.Turns            = (*Fake)(nil)
 )
 
 // New is an empty pod: no repositories, turns complete at once, no

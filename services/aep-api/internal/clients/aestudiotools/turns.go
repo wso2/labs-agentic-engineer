@@ -56,8 +56,8 @@ const maxTurnLine = 16 << 20
 // Credit is who the turn's commits and records are credited to.
 type Credit struct{ UserID, Name, Email string }
 
-// PlanScope is the milestone a plan turn covers and which of its stories
-// already have Tasks.
+// PlanScope is the spec version a plan turn covers (Tag, its name) and which
+// of its stories already have Tasks.
 type PlanScope struct {
 	Tag     string
 	Stories []PlanStory
@@ -92,10 +92,13 @@ type PlanItem struct {
 type PlanContextFile struct{ Path, Body string }
 
 // TurnRequest starts one turn. TurnID (a UUID) makes it idempotent: the same
-// id reattaches to the running or finished turn.
+// id reattaches to the running or finished turn. At, on a plan turn only, is
+// the commit the planner reads the repository at, as a git read's `at` names
+// one ("tags/<version>"); "" is the default-branch tip.
 type TurnRequest struct {
 	TurnID, Project, Kind string
 	Credit                Credit
+	At                    string
 	Scope                 *PlanScope
 	TaskContext           []PlanContextFile
 	Text                  string
@@ -154,21 +157,32 @@ func turnBody(req TurnRequest) (gen.TurnRequest, error) {
 		Project: req.Project,
 		Kind:    gen.TurnRequestKind(req.Kind),
 		Credit:  gen.TurnCredit{UserID: req.Credit.UserID, Name: req.Credit.Name, Email: req.Credit.Email},
+		At:      req.At,
 		Text:    req.Text,
 	}
 	if req.Scope != nil {
-		b.Scope = gen.PlanScope{Tag: req.Scope.Tag, Stories: make([]gen.PlanStory, 0, len(req.Scope.Stories))}
-		// TODO(Task 47, API-13): the wire still carries a story NUMBER and no
-		// features or product-wide items; send the string ID, Features and
-		// ProductWide once the ae-studio-tools contract has them.
-		for _, s := range req.Scope.Stories {
-			b.Scope.Stories = append(b.Scope.Stories, gen.PlanStory{Title: s.Title, Covered: s.Covered})
-		}
+		b.Scope = planScopeBody(*req.Scope)
 	}
 	for _, f := range req.TaskContext {
 		b.TaskContext = append(b.TaskContext, gen.PlanContextFile{Path: f.Path, Body: f.Body})
 	}
 	return b, nil
+}
+
+// planScopeBody is the scope on the wire. Stories is never null: the
+// contract requires the array.
+func planScopeBody(sc PlanScope) gen.PlanScope {
+	out := gen.PlanScope{Tag: sc.Tag, Stories: make([]gen.PlanStory, 0, len(sc.Stories))}
+	for _, s := range sc.Stories {
+		out.Stories = append(out.Stories, gen.PlanStory{ID: s.ID, Title: s.Title, Covered: s.Covered})
+	}
+	for _, f := range sc.Features {
+		out.Features = append(out.Features, gen.PlanFeature{ID: f.ID, Name: f.Name, Needs: f.Needs})
+	}
+	for _, it := range sc.ProductWide {
+		out.ProductWide = append(out.ProductWide, gen.PlanItem{ID: it.ID, Text: it.Text, AppliesTo: it.AppliesTo})
+	}
+	return out
 }
 
 // turnEvents reads the NDJSON stream, one event per non-empty line, until

@@ -173,7 +173,7 @@ func (a *Adapter) ListTags(ctx context.Context, ref RepoRef, prefix string, opts
 	}
 	var tags []sourcecontrol.TagInfo
 	for _, t := range body.Tags {
-		info := sourcecontrol.TagInfo{Name: t.Name, CommitHash: t.CommitHash, Message: t.Message}
+		info := sourcecontrol.TagInfo{Name: t.Name, CommitHash: t.CommitHash, Message: t.Message, Body: t.Body}
 		if t.CreatedAt != nil {
 			info.CreatedAt = *t.CreatedAt
 		}

@@ -522,18 +522,46 @@ type PlanContextFile struct {
 	Path string `json:"path"`
 }
 
-// PlanScope The milestone a plan turn covers and which of its stories already have Tasks.
+// PlanFeature defines model for PlanFeature.
+type PlanFeature struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty,omitzero"`
+
+	// Needs The carried features this one is built after, in ID order (one an earlier version built is left out).
+	Needs []string `json:"needs,omitempty,omitzero"`
+}
+
+// PlanItem One product-wide item.
+type PlanItem struct {
+	// AppliesTo The feature IDs the item applies to, or the single entry `all`.
+	AppliesTo []string `json:"appliesTo,omitempty,omitzero"`
+	ID        string   `json:"id"`
+	Text      string   `json:"text,omitempty,omitzero"`
+}
+
+// PlanScope The spec version a plan turn covers, its stories and which of them already have Tasks, the features it carries and its product-wide items.
 type PlanScope struct {
+	// Features The features the version carries, in ID order, each with the carried features it is built after; the planner cuts one Task per feature per component.
+	Features []PlanFeature `json:"features,omitempty,omitzero"`
+
+	// ProductWide The product-wide items the version carries, in ID order; each component's Foundation Task builds them.
+	ProductWide []PlanItem `json:"productWide,omitempty,omitzero"`
+
+	// Stories Each story the version builds, in ID order.
 	Stories []PlanStory `json:"stories"`
-	Tag     string      `json:"tag"`
+
+	// Tag The version's tag name (the turn's `at` is `tags/<tag>`).
+	Tag string `json:"tag"`
 }
 
 // PlanStory defines model for PlanStory.
 type PlanStory struct {
 	// Covered The story already has Tasks, the planner leaves it alone.
-	Covered bool   `json:"covered"`
-	Number  int    `json:"number"`
-	Title   string `json:"title,omitempty,omitzero"`
+	Covered bool `json:"covered"`
+
+	// ID The story's ID, F<feature>.<story>.
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty,omitzero"`
 }
 
 // Problem defines model for Problem.
@@ -561,6 +589,12 @@ type PullRequestState struct {
 
 	// State open or closed
 	State string `json:"state"`
+}
+
+// ReferenceList defines model for ReferenceList.
+type ReferenceList struct {
+	// Names The stored documents' bare, lower-case file names, sorted (at most 10).
+	Names []string `json:"names"`
 }
 
 // ReferenceUpload defines model for ReferenceUpload.
@@ -622,6 +656,9 @@ type SkillsRepo struct {
 
 // Tag defines model for Tag.
 type Tag struct {
+	// Body The annotated tag's message after its subject (git's contents:body), trimmed; absent for a lightweight tag or an annotation that is a subject alone. A spec version records its build selection here.
+	Body string `json:"body,omitempty,omitzero"`
+
 	// CommitHash The commit the tag points at (annotated tags peeled)
 	CommitHash string `json:"commitHash"`
 
@@ -696,6 +733,9 @@ type TurnInProgressCode string
 
 // TurnRequest Starts one turn that is not a browser chat turn, a kickoff (`start`) or a plan. Idempotent on turnId, a retry reattaches to the running turn. A different turnId while a turn runs is 409.
 type TurnRequest struct {
+	// At A plan turn only, the commit the planner reads the repository at, as the git reads' `at` names one; aep-api sends `tags/<version>` so an edit made after the version is not planned. Omitted, the default-branch tip. A start turn that sends it is refused (400 validation_failed).
+	At string `json:"at,omitempty,omitzero"`
+
 	// Credit Who the turn's commits and records are credited to.
 	Credit TurnCredit      `json:"credit"`
 	Kind   TurnRequestKind `json:"kind"`
@@ -703,7 +743,7 @@ type TurnRequest struct {
 	// Project Project name (DNS-label slug)
 	Project string `json:"project"`
 
-	// Scope The milestone a plan turn covers and which of its stories already have Tasks.
+	// Scope The spec version a plan turn covers, its stories and which of them already have Tasks, the features it carries and its product-wide items.
 	Scope PlanScope `json:"scope,omitempty,omitzero"`
 
 	// TaskContext The existing-Task renders of a plan turn. Platform state, not repository files.
@@ -1023,6 +1063,12 @@ type MergePullParams struct {
 	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
 }
 
+// ListRepoReferencesParams defines parameters for ListRepoReferences.
+type ListRepoReferencesParams struct {
+	// XImpersonateOrg The org the call acts for; must be the pod's org id.
+	XImpersonateOrg ImpersonateOrg `json:"X-Impersonate-Org"`
+}
+
 // PutRepoReferencesParams defines parameters for PutRepoReferences.
 type PutRepoReferencesParams struct {
 	// XImpersonateOrg The org the call acts for; must be the pod's org id.
@@ -1332,6 +1378,9 @@ type ClientInterface interface {
 
 	// MergePull request
 	MergePull(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRepoReferences request
+	ListRepoReferences(ctx context.Context, owner Owner, repo Repo, params *ListRepoReferencesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// PutRepoReferencesWithBody request with any body
 	PutRepoReferencesWithBody(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1881,6 +1930,18 @@ func (c *Client) ListPullFiles(ctx context.Context, owner Owner, repo Repo, numb
 
 func (c *Client) MergePull(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewMergePullRequest(c.Server, owner, repo, number, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListRepoReferences(ctx context.Context, owner Owner, repo Repo, params *ListRepoReferencesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRepoReferencesRequest(c.Server, owner, repo, params)
 	if err != nil {
 		return nil, err
 	}
@@ -4376,6 +4437,60 @@ func NewMergePullRequest(server string, owner Owner, repo Repo, number Number, p
 	return req, nil
 }
 
+// NewListRepoReferencesRequest generates requests for ListRepoReferences
+func NewListRepoReferencesRequest(server string, owner Owner, repo Repo, params *ListRepoReferencesParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "owner", owner, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "repo", repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/repos/%s/%s/references", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Impersonate-Org", params.XImpersonateOrg, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("X-Impersonate-Org", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewPutRepoReferencesRequestWithBody generates requests for PutRepoReferences with any type of body
 func NewPutRepoReferencesRequestWithBody(server string, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
@@ -5108,6 +5223,9 @@ type ClientWithResponsesInterface interface {
 
 	// MergePullWithResponse request
 	MergePullWithResponse(ctx context.Context, owner Owner, repo Repo, number Number, params *MergePullParams, reqEditors ...RequestEditorFn) (*MergePullResponse, error)
+
+	// ListRepoReferencesWithResponse request
+	ListRepoReferencesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListRepoReferencesParams, reqEditors ...RequestEditorFn) (*ListRepoReferencesResponse, error)
 
 	// PutRepoReferencesWithBodyWithResponse request with any body
 	PutRepoReferencesWithBodyWithResponse(ctx context.Context, owner Owner, repo Repo, params *PutRepoReferencesParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutRepoReferencesResponse, error)
@@ -6284,6 +6402,40 @@ func (r MergePullResponse) ContentType() string {
 	return ""
 }
 
+type ListRepoReferencesResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReferenceList
+	ApplicationProblemJSON400 *Problem
+	ApplicationProblemJSON401 *Problem
+	ApplicationProblemJSON403 *Problem
+	ApplicationProblemJSON503 *Problem
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRepoReferencesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRepoReferencesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRepoReferencesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type PutRepoReferencesResponse struct {
 	Body                      []byte
 	HTTPResponse              *http.Response
@@ -6918,6 +7070,15 @@ func (c *ClientWithResponses) MergePullWithResponse(ctx context.Context, owner O
 		return nil, err
 	}
 	return ParseMergePullResponse(rsp)
+}
+
+// ListRepoReferencesWithResponse request returning *ListRepoReferencesResponse
+func (c *ClientWithResponses) ListRepoReferencesWithResponse(ctx context.Context, owner Owner, repo Repo, params *ListRepoReferencesParams, reqEditors ...RequestEditorFn) (*ListRepoReferencesResponse, error) {
+	rsp, err := c.ListRepoReferences(ctx, owner, repo, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRepoReferencesResponse(rsp)
 }
 
 // PutRepoReferencesWithBodyWithResponse request with arbitrary body returning *PutRepoReferencesResponse
@@ -9129,6 +9290,60 @@ func ParseMergePullResponse(rsp *http.Response) (*MergePullResponse, error) {
 			return nil, err
 		}
 		response.ApplicationProblemJSON502 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRepoReferencesResponse parses an HTTP response from a ListRepoReferencesWithResponse call
+func ParseListRepoReferencesResponse(rsp *http.Response) (*ListRepoReferencesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRepoReferencesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReferenceList
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationProblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem

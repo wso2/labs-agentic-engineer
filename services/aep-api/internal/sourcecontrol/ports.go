@@ -211,6 +211,13 @@ type ReferencesOps interface {
 	PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error
 }
 
+// ReferenceListOps lists the names of a project's stored reference
+// documents (bare, lower-case, sorted; empty, never nil, when none are
+// stored).
+type ReferenceListOps interface {
+	ListReferences(ctx context.Context, ref RepoRef) ([]string, error)
+}
+
 // IdentityOps reads the GitHub user the org's gitpat belongs to.
 type IdentityOps interface {
 	GitHubIdentity(ctx context.Context, org string) (*GitHubUser, error)

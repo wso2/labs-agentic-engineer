@@ -109,6 +109,14 @@ components:
           - plan
         credit:
           $ref: '#/components/schemas/TurnCredit'
+        at:
+          type: string
+          description: A plan turn only, the commit the planner reads the
+            repository at, as the git reads' `at` names one; aep-api sends
+            `tags/<version>` so an edit made after the version is not planned.
+            Omitted, the default-branch tip. A start turn that sends it is
+            refused (400 validation_failed).
+          pattern: ^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$
         scope:
           $ref: '#/components/schemas/PlanScope'
         taskContext:
@@ -138,32 +146,89 @@ components:
     PlanScope:
       type: object
       additionalProperties: false
-      description: The milestone a plan turn covers and which of its stories
-        already have Tasks.
+      description: The spec version a plan turn covers, its stories and which
+        of them already have Tasks, the features it carries and its
+        product-wide items.
       required:
       - tag
       - stories
       properties:
         tag:
           type: string
+          description: The version's tag name (the turn's `at` is
+            `tags/<tag>`).
+          pattern: ^[A-Za-z0-9._/-]{1,200}$
         stories:
           type: array
+          description: Each story the version builds, in ID order.
           items:
             $ref: '#/components/schemas/PlanStory'
+        features:
+          type: array
+          description: The features the version carries, in ID order, each
+            with the carried features it is built after; the planner cuts one
+            Task per feature per component.
+          items:
+            $ref: '#/components/schemas/PlanFeature'
+        productWide:
+          type: array
+          description: The product-wide items the version carries, in ID
+            order; each component's Foundation Task builds them.
+          items:
+            $ref: '#/components/schemas/PlanItem'
     PlanStory:
       type: object
       additionalProperties: false
       required:
-      - number
+      - id
       - covered
       properties:
-        number:
-          type: integer
+        id:
+          type: string
+          description: The story's ID, F<feature>.<story>.
+          pattern: ^F[0-9]+\.[0-9]+$
         title:
           type: string
         covered:
           type: boolean
           description: The story already has Tasks, the planner leaves it alone.
+    PlanFeature:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          pattern: ^F[0-9]+$
+        name:
+          type: string
+        needs:
+          type: array
+          description: The carried features this one is built after, in ID
+            order (one an earlier version built is left out).
+          items:
+            type: string
+            pattern: ^F[0-9]+$
+    PlanItem:
+      type: object
+      additionalProperties: false
+      description: One product-wide item.
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          pattern: ^P[0-9]+$
+        text:
+          type: string
+        appliesTo:
+          type: array
+          description: The feature IDs the item applies to, or the single
+            entry `all`.
+          items:
+            type: string
+            pattern: ^(F[0-9]+|all)$
     PlanContextFile:
       type: object
       additionalProperties: false

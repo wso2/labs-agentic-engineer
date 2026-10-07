@@ -62,6 +62,26 @@ func (a *Adapter) PutReferences(ctx context.Context, ref RepoRef, contentType st
 	return resp.Body.Close()
 }
 
+// ListReferences lists the names of ref's stored reference documents, read
+// from the pod's store (list-repo-references). 403 owner_not_allowed is
+// ErrOwnerNotAllowed, 503 (disk_full) ErrAEStudioUnavailable.
+func (a *Adapter) ListReferences(ctx context.Context, ref RepoRef) ([]string, error) {
+	if err := validRef(ref); err != nil {
+		return nil, err
+	}
+	var body gen.ReferenceList
+	err := a.do(ctx, ref.Org, "list-repo-references", &body, func(ctx context.Context, c *gen.Client, org string, auth gen.RequestEditorFn) (*http.Response, error) {
+		return c.ListRepoReferences(ctx, ref.Owner, ref.Repo, &gen.ListRepoReferencesParams{XImpersonateOrg: org}, auth)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if body.Names == nil {
+		return []string{}, nil
+	}
+	return body.Names, nil
+}
+
 // expectContinue makes the transport wait for the pod's 100 Continue (or its
 // refusal) before it sends the upload.
 func expectContinue(_ context.Context, req *http.Request) error {

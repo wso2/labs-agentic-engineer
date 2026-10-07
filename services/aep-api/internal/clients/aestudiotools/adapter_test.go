@@ -32,15 +32,16 @@ import (
 )
 
 var (
-	_ sourcecontrol.Git             = (*Adapter)(nil)
-	_ sourcecontrol.TrashOps        = (*Adapter)(nil)
-	_ sourcecontrol.SkillsMirrorOps = (*Adapter)(nil)
-	_ sourcecontrol.ReferencesOps   = (*Adapter)(nil)
-	_ sourcecontrol.IdentityOps     = (*Adapter)(nil)
-	_ Turns                         = (*Adapter)(nil)
-	_ sourcecontrol.RepoAdmin       = (*Adapter)(nil)
-	_ sourcecontrol.IssueOps        = (*Adapter)(nil)
-	_ sourcecontrol.WebhookOps      = (*Adapter)(nil)
+	_ sourcecontrol.Git              = (*Adapter)(nil)
+	_ sourcecontrol.TrashOps         = (*Adapter)(nil)
+	_ sourcecontrol.SkillsMirrorOps  = (*Adapter)(nil)
+	_ sourcecontrol.ReferencesOps    = (*Adapter)(nil)
+	_ sourcecontrol.ReferenceListOps = (*Adapter)(nil)
+	_ sourcecontrol.IdentityOps      = (*Adapter)(nil)
+	_ Turns                          = (*Adapter)(nil)
+	_ sourcecontrol.RepoAdmin        = (*Adapter)(nil)
+	_ sourcecontrol.IssueOps         = (*Adapter)(nil)
+	_ sourcecontrol.WebhookOps       = (*Adapter)(nil)
 )
 
 // countingEndpoints resolves every org to url and counts the lookups.
