@@ -26,8 +26,9 @@ an area before changing it.
   extracted into a new shared package.
 - **Tests:** unit tests with Vitest (node; `// @vitest-environment jsdom` per
   file for components). The live end-to-end walk lives in `tests/e2e`.
-- Request and response types come from the generated client
-  (`src/generated/aep-api.d.ts`, from `pnpm gen`); never redefine them.
+- Request and response types come from the generated clients
+  (`src/generated/aep-api.d.ts`, and `ae-design-agent.d.ts` for the AE Studio
+  pod, from `pnpm gen`); never redefine them.
 - **Adding a `@aep/*` dep whose `types` resolves to `./dist` means adding a
   `RUN pnpm --filter … build` line to the `Dockerfile`.** The list is
   hand-maintained, host builds hide the omission, and the image build fails
@@ -36,9 +37,12 @@ an area before changing it.
 ## Layout
 
 - `src/auth/`: OIDC sign-in, the session and token handling, copied from the
-  old console. `src/api/`: the `openapi-fetch` client and its 401 handler.
+  old console. `src/api/`: the `openapi-fetch` clients (aep-api, and the AE
+  Studio design agent built from `GET /ae-studio`), their shared 401 handler,
+  error reading, and the query retry that paces an AE Studio restart.
 - `src/features/<feature>/{components,api}`: one folder per area. `shell` is
-  the frame (rail, chat slot, main outlet) and the route→scope mapping the
+  the frame (rail, chat slot, main outlet), the gates in front of it
+  (`GatedShell`: auth, onboarding, AE Studio), and the route→scope mapping the
   rail and chat read.
 - `src/components/`: app-wide primitives copied from the old console
   (`ErrorBoundary`, `EmptyState`). `src/lib/`: small app-wide helpers with no
