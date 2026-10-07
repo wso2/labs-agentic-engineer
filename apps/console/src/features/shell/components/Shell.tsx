@@ -23,6 +23,7 @@ import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
 import { chatViewFor } from "../../agent-chat/chatView";
+import { useBranchSummary } from "../../agent-chat/useBranchSummary";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
 import { ChatPanelContext, type ChatPanelControls, type ComposeRequest, type ComposeTarget } from "../chatPanel";
 import { shellScope } from "../scope";
@@ -88,6 +89,7 @@ export function Shell() {
   );
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
+  useBranchSummary(scope);
 
   // Arriving from New project (`?chat=open` on the overview): the kickoff is
   // already running, so the chat opens, at phone width too, to show it. The

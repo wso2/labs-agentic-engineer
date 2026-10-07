@@ -210,6 +210,19 @@ describe("a line posted from outside the chat", () => {
     store.post(PROJECT, "v1 is building. Watch it here.", [{ kind: "open-build", label: "Open v1", version: "v1" }]);
     expect(chat().items.at(-1)).toMatchObject({ actions: [{ kind: "open-build", version: "v1" }] });
   });
+
+  it("can be reworded in place, keeping its row", async () => {
+    const { store, chat } = setup();
+    await store.open(PROJECT);
+    store.post(PROJECT, "From Issues · 1 message", [{ kind: "open-issues", label: "Reopen" }]);
+    store.post(PROJECT, "Another line");
+    const [first] = chat().items;
+    store.replaceNote(PROJECT, first!.id, "From Issues · 3 messages", [{ kind: "open-issues", label: "Reopen" }]);
+    expect(chat().items).toEqual([
+      { kind: "note", id: first!.id, text: "From Issues · 3 messages", actions: [{ kind: "open-issues", label: "Reopen" }] },
+      { kind: "note", id: expect.any(String), text: "Another line" },
+    ]);
+  });
 });
 
 describe("one turn at a time", () => {

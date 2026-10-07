@@ -145,3 +145,13 @@ describe("a prototype review in the conversation", () => {
     expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/prototype", params: { projectName: "acme" }, search: {} });
   });
 });
+
+describe("a From Issues note in the conversation", () => {
+  it("offers Reopen, which goes back to the Issues page", () => {
+    chat = ready([{ kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] }]);
+    renderThread();
+    fireEvent.click(screen.getByRole("button", { name: "Reopen" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "acme" } });
+  });
+});
+

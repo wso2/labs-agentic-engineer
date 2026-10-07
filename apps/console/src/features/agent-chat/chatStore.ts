@@ -478,6 +478,15 @@ export function createChatStore(options: ChatStoreOptions) {
       ]);
     },
 
+    /** Reword a posted line where it stands: the card that sums up a visit, updated by the next one. */
+    replaceNote(projectName: string, id: string, text: string, actions: NoteAction[] = []): void {
+      setItems(projectName, (items) =>
+        items.map((i) =>
+          i.kind === "note" && i.id === id ? { kind: "note", id, text, ...(actions.length > 0 ? { actions } : {}) } : i,
+        ),
+      );
+    },
+
     /**
      * Answer the questions the conversation waits on: the item keeps the
      * answers and reads as answered, and they go to the agent as the next

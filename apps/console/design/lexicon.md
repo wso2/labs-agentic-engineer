@@ -64,6 +64,8 @@ the user is. The Issues Page has its own agent.
 | **Stay here** | a button under that announcement | keeps the conversation where it is; nothing is sent to Issues |
 | **Continued in Issues · Open** | the announcement once New Issue was chosen, or once the request is a message on the Issues thread | the request went on to Issues; Open goes to the Issues page |
 | **Stayed here instead of opening Issues** | the announcement once Stay here was chosen | the user kept the request in this chat |
+| **From Issues · N messages · …** | a note in the main chat, after the user leaves the Issues page having talked in its chat | sums up the visit: the number of messages said there since arriving (a later visit adds to it, replacing the note while it is the chat's last line) and the agent's last line, on one line of at most 140 characters; nothing is posted for a visit that said nothing |
+| **Reopen** | a button under that note | goes back to the Issues page |
 
 ## The agent's questions
 
