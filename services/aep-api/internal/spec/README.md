@@ -142,8 +142,9 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   that breaks off aborts the pod's upload. The one exception is an Office document (`.docx`, `.xlsx`,
   `.pptx`, `officetext.Extensions`): the models do not read it and the pod does not store it, so it is
   held whole up to the pod's per-document limit (`sourcecontrol.MaxReferenceBytes`, 5 MiB), converted
-  by `platform/officetext` and streamed as `<name>.md`. One over the limit or that does not convert is
-  a 400 that aborts the upload, so the pod stores nothing. The held kickoff fires only on the pod's
+  by `platform/officetext` and streamed as `<name>.md`. The markdown is held to the same limit while it
+  is built, since a small zip can expand into far more text. One over the limit, one whose markdown
+  would be, or one that does not convert is a 400 that aborts the upload, so the pod stores nothing. The held kickoff fires only on the pod's
   `2xx`.
 - **Design staleness is derived per feature, never stored** (#575, E1). A feature's design is out
   of date when its basis (`reqspec.Basis`: its file plus the product-wide items that reach it) differs

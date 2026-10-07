@@ -139,20 +139,26 @@ func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 // which is what the agent cites it by. It is the one part aep-api holds whole,
 // and only up to the pod's per-document limit, read one byte past it because
 // io.LimitReader ends a capped read with io.EOF and a truncated document would
-// convert to the wrong words. A part over the limit or one that does not
-// convert is a refusedPartError, returned before any byte of the part is
-// written.
+// convert to the wrong words. A part over the limit, one whose markdown would
+// be, or one that does not convert is a refusedPartError, returned before any
+// byte of the part is written.
 func copyOfficePart(part *multipart.Part, ext string, out *multipart.Writer) error {
 	name := part.FileName()
 	content, err := io.ReadAll(io.LimitReader(part, sourcecontrol.MaxReferenceBytes+1))
 	if err != nil {
 		return err
 	}
+	tooLarge := refusedPartError(fmt.Sprintf("%q exceeds the %d MiB per-document limit", name, sourcecontrol.MaxReferenceBytes>>20))
 	if len(content) > sourcecontrol.MaxReferenceBytes {
-		return refusedPartError(fmt.Sprintf("%q exceeds the %d MiB per-document limit", name, sourcecontrol.MaxReferenceBytes>>20))
+		return tooLarge
 	}
-	text, err := officetext.Markdown(ext, content)
-	if err != nil {
+	// The markdown is what the pod stores, so it is held to the same limit,
+	// while it is built: a small zip can expand into far more text.
+	text, err := officetext.Markdown(ext, content, sourcecontrol.MaxReferenceBytes)
+	switch {
+	case errors.Is(err, officetext.ErrTooLarge):
+		return tooLarge
+	case err != nil:
 		return refusedPartError(fmt.Sprintf("%q could not be read as a %s file", name, ext))
 	}
 	header := textproto.MIMEHeader{}
