@@ -152,11 +152,12 @@ describe("/issue to the mock Issues agent", () => {
     expect(turn.filed).toBeUndefined();
   });
 
-  it("asks only what is missing for a bug (at most 4, no filing question)", () => {
+  it("asks a bug batch of at most 4 with no filing question, and does not re-ask what happened", () => {
     const turn = scriptIssuesTurn("/issue the export button is broken", 15);
     const questions = (calls(turn, "ask_questions")[0]!.input as { questions: { question: string }[] }).questions;
     expect(questions.length).toBeLessThanOrEqual(4);
     expect(questions.some((q) => q.question === "File this issue?")).toBe(false);
+    expect(questions.some((q) => /what happened/i.test(q.question))).toBe(false);
   });
 
   it("asks one free-text question for a bare /issue", () => {

@@ -151,7 +151,7 @@ test("issues instructions append the surface's narration policy", () => {
 });
 
 test("issues instructions treat /issue as a decision to file: classify without the prefix, ask what is missing in one batch", () => {
-  const out = buildIssuesInstructions(undefined, undefined);
+  const out = buildIssuesInstructions(undefined, undefined).replace(/\s+/g, " ");
   assert.ok(out.includes("When the message starts with /issue"));
   assert.ok(out.includes("What should the issue be about?"));
   assert.ok(out.includes("ask_questions"));
@@ -162,4 +162,13 @@ test("issues instructions treat /issue as a decision to file: classify without t
   assert.match(out, /never include "File this issue\?"/i);
   // Filing is still the single ask_question.
   assert.equal(out.split(`question exactly "${FILE_QUESTION}"`).length, 2);
+});
+
+test("issues instructions send a bare /issue's answer down the /issue path, with the kind question's follow-ups", () => {
+  const out = buildIssuesInstructions(undefined, undefined).replace(/\s+/g, " ");
+  assert.ok(
+    /treat it as the text of an \/issue message and follow this section from the classify step \(including the batch\)/.test(out),
+  );
+  assert.match(out, /each question except the kind question/);
+  assert.match(out, /then the questions common to all kinds \(the need and the outcome\)/);
 });

@@ -236,7 +236,10 @@ function missingQuestions(kind: IssueKind, needsKind: boolean): AskQuestionInput
   return [kindQuestion, free("What outcome do you want?")];
 }
 
-/** A /issue report: classify its text (without the command), then the one batch of what is missing. */
+/**
+ * A /issue report: classify its text (without the command), then the one batch of what is missing.
+ * The mock simplifies: it always asks its batch, where the real agent skips what the report already answers.
+ */
 function issueReport(id: (step: string) => string, report: string): Script {
   const { kind, confidence } = classify(report);
   const needsClarification = confidence < CLARIFY_BELOW;

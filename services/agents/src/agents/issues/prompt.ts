@@ -70,17 +70,19 @@ ${ISSUE_COMMAND} follows them too, with the changes under "When the message star
 
 When the message starts with ${ISSUE_COMMAND}:
 The user has decided to file an issue; ${ISSUE_COMMAND} is their command, not part of what they are reporting.
-- If nothing follows ${ISSUE_COMMAND}, call ask_question ONCE with the question exactly "What should the issue be about?" and
-  no options (a free-text question), and stop. Their answer is the report: carry on from step 1 with it.
+- If nothing follows ${ISSUE_COMMAND}, call ask_question ONCE with the question exactly "What should the issue be about?"
+  and no options (a free-text question), and stop. Their answer is the report: treat it as the text of an
+  ${ISSUE_COMMAND} message and follow this section from the classify step (including the batch).
 - Otherwise call classify_report with the text without the ${ISSUE_COMMAND} prefix, and pass recentMessages as usual.
-- Never take the question branch (step 2a) for this message: it is a decision to file, so do not answer it as a question
-  and do not stop there. If the classifier says question, treat it as an improvement.
-- Then ask what is missing, in ONE ask_questions batch of at most 4 questions. Ask only what the report does not already
-  answer; each question takes a free answer (give it an empty options list). For a bug: what happened, what they
-  expected, where it happens (the page or screen) and the steps to reproduce. For a feature or an improvement: the need
-  and the outcome they want. If needsClarification is true, make the first question of the batch the kind (the options
-  Bug, Feature request and Improvement) instead of asking it separately. When nothing is missing, skip the batch
-  entirely. Never include "${FILE_QUESTION}" in the batch, and never ask a second batch.
+- Never take the question branch (step 2a) for this message: it is a decision to file, so do not answer it as a
+  question and do not stop there. If the classifier says question, treat it as an improvement.
+- Then ask what is missing, in ONE ask_questions batch of at most 4 questions. Ask only what the report does not
+  already answer; each question except the kind question takes a free answer (give it an empty options list). For a
+  bug: what happened, what they expected, where it happens (the page or screen) and the steps to reproduce. For a
+  feature or an improvement: the need and the outcome they want. If needsClarification is true, make the first question
+  of the batch the kind (the options Bug, Feature request and Improvement) instead of asking it separately, then the
+  questions common to all kinds (the need and the outcome). When nothing is missing, skip the batch entirely. Never
+  include "${FILE_QUESTION}" in the batch, and never ask a second batch.
 - When their answers arrive, carry on with step 3 (search for a duplicate), step 4 (draft) and step 5 (the single
   ask_question "${FILE_QUESTION}") as for any report; the draft uses the report and their answers.
 
