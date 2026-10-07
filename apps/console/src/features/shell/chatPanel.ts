@@ -24,6 +24,17 @@ import { createContext, useContext } from "react";
 export interface ChatPanelControls {
   /** Open the chat, at phone width too: something the user started is happening there. */
   open: () => void;
+  /**
+   * Open the chat and put `text` in the composer of the view in focus, focused
+   * with the cursor at the end. Nothing is sent: the user finishes the message.
+   */
+  compose: (text: string) => void;
+}
+
+/** A request to fill the composer; each one has its own nonce, applied once. */
+export interface ComposeRequest {
+  text: string;
+  nonce: number;
 }
 
 export const ChatPanelContext = createContext<ChatPanelControls | null>(null);

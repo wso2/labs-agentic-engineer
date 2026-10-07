@@ -17,7 +17,7 @@
  */
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { ProjectChat } from "../chatStore";
@@ -69,12 +69,23 @@ vi.stubGlobal(
 
 const { ChatPanel } = await import("./ChatPanel");
 
-function renderPanel(page: "issues" | "overview", card: "issue" | null = null) {
-  render(
+function panel(page: "issues" | "overview", card: "issue" | null, composeRequest?: { text: string; nonce: number } | null) {
+  return (
     <OxygenUIThemeProvider theme={OxygenTheme}>
-      <ChatPanel projectName="shop" page={page} card={card} specFile={null} onClose={() => {}} />
-    </OxygenUIThemeProvider>,
+      <ChatPanel
+        projectName="shop"
+        page={page}
+        card={card}
+        specFile={null}
+        composeRequest={composeRequest ?? null}
+        onClose={() => {}}
+      />
+    </OxygenUIThemeProvider>
   );
+}
+
+function renderPanel(page: "issues" | "overview", card: "issue" | null = null) {
+  return render(panel(page, card));
 }
 
 function typeAndSend(text: string) {
@@ -123,5 +134,44 @@ describe("ChatPanel", () => {
     typeAndSend("Look at this one");
     expect(mainSend).toHaveBeenCalled();
     expect(issuesSend).not.toHaveBeenCalled();
+  });
+
+  describe("a compose request", () => {
+    const input = () => screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+
+    it("fills the composer, focuses it with the cursor at the end, and sends nothing", async () => {
+      render(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+      expect(document.activeElement).toBe(input());
+      expect(input().selectionStart).toBe("/issue ".length);
+      expect(input().selectionEnd).toBe("/issue ".length);
+      expect(issuesSend).not.toHaveBeenCalled();
+      expect(mainSend).not.toHaveBeenCalled();
+    });
+
+    it("applies one request once: the same nonce again leaves what was typed", async () => {
+      const view = renderPanel("issues");
+      view.rerender(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+      fireEvent.change(input(), { target: { value: "/issue login is broken" } });
+      view.rerender(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      expect(input().value).toBe("/issue login is broken");
+    });
+
+    it("replaces a typed draft when the nonce is new", async () => {
+      const view = render(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+      fireEvent.change(input(), { target: { value: "half a thought" } });
+      view.rerender(panel("issues", null, { text: "/issue ", nonce: 2 }));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+    });
+
+    it("applies a request that was made before the chat mounted", async () => {
+      // The shell holds the request; a composer that mounts later still applies it.
+      const first = render(panel("issues", null, { text: "/issue ", nonce: 3 }));
+      first.unmount();
+      render(panel("issues", null, { text: "/issue ", nonce: 3 }));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+    });
   });
 });

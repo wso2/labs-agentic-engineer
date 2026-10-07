@@ -16,11 +16,12 @@
  * under the License.
  */
 
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { Box, Breadcrumbs, IconButton, InputBase, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { ArrowRight, PanelLeftClose } from "@wso2/oxygen-ui-icons-react";
 import { useSession } from "../../../auth/SessionContext";
 import { projectLabel, useProject } from "../../projects/api/queries";
+import type { ComposeRequest } from "../../shell/chatPanel";
 import { cardTitle, chatTopic, pageTitle, type ProjectCard, type ProjectPage } from "../../shell/scope";
 import { useSpecFeature } from "../../spec/useSpecWorkspace";
 import { turnScopeFor, type TurnScope } from "../turnScope";
@@ -97,15 +98,36 @@ function Composer({
   note,
   scope,
   view,
+  composeRequest,
 }: {
   projectName: string;
   topic: string;
   note: string | null;
   scope: TurnScope;
   view: ChatView;
+  composeRequest: ComposeRequest | null;
 }) {
   const chat = useProjectChat(projectName, view);
   const [draft, setDraft] = useState("");
+  const input = useRef<HTMLTextAreaElement | null>(null);
+  // Each request applies once, even when this composer mounts after it was made.
+  const appliedNonce = useRef(0);
+  const [pendingFocus, setPendingFocus] = useState(false);
+  useEffect(() => {
+    if (!composeRequest || composeRequest.nonce === appliedNonce.current) return;
+    appliedNonce.current = composeRequest.nonce;
+    setDraft(composeRequest.text);
+    setPendingFocus(true);
+  }, [composeRequest]);
+  // After the draft has committed, so the cursor lands past the new text.
+  useEffect(() => {
+    if (!pendingFocus) return;
+    setPendingFocus(false);
+    const el = input.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [pendingFocus]);
   const ready = canSend(chat);
   const status = composerNote(chat);
 
@@ -153,6 +175,7 @@ function Composer({
           multiline
           maxRows={5}
           value={draft}
+          inputRef={input}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={chat.status !== "ready"}
@@ -189,6 +212,7 @@ export function ChatPanel({
   page,
   card,
   specFile,
+  composeRequest,
   onClose,
 }: {
   projectName: string;
@@ -197,6 +221,8 @@ export function ChatPanel({
   card: ProjectCard | null;
   /** The spec card's open file; a feature narrows what the chat is about. */
   specFile: string | null;
+  /** The shell's pending ask to fill the composer, applied once per nonce. */
+  composeRequest: ComposeRequest | null;
   onClose: () => void;
 }) {
   const feature = useSpecFeature(projectName, card === "spec" ? specFile : null);
@@ -229,7 +255,7 @@ export function ChatPanel({
         </Tooltip>
       </Box>
       <Thread projectName={projectName} view={view} />
-      <Composer projectName={projectName} topic={topic} note={note} scope={scope} view={view} />
+      <Composer projectName={projectName} topic={topic} note={note} scope={scope} view={view} composeRequest={composeRequest} />
     </Box>
   );
 }

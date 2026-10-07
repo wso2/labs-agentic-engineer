@@ -57,6 +57,7 @@ the user is. The Issues Page has its own agent.
 | **Talking about the project's issues** | the composer's line on the Issues Page | the chat there is about the project's issues, not the whole product |
 | **Tell me what's broken or what you need, and I'll draft an issue.** | an empty thread on the Issues Page | invites a report; the agent drafts, and files once the user confirms |
 | **Describe what's broken, or what you need…** | the composer's placeholder on the Issues Page (elsewhere it stays "Tell the agent what to change…") | the box takes a report, not an edit instruction |
+| **Create Issue** | a button in the Issues Page's header | starts an issue in the Issues chat: puts `/issue ` in the composer and focuses it; nothing is sent until you send |
 
 ## The agent's questions
 

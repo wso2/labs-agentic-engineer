@@ -23,7 +23,7 @@ import { ErrorBoundary } from "../../../components/ErrorBoundary";
 import { ChatPanel } from "../../agent-chat/components/ChatPanel";
 import { OrgChatPanel } from "../../agent-chat/components/OrgChatPanel";
 import { chatStore, useOpenQuestionsWhenAsked, useRefreshOnTurnEnd } from "../../agent-chat/useProjectChat";
-import { ChatPanelContext, type ChatPanelControls } from "../chatPanel";
+import { ChatPanelContext, type ChatPanelControls, type ComposeRequest } from "../chatPanel";
 import { shellScope } from "../scope";
 import { CHAT_OVERLAY_WIDTH, PHONE, PHONE_QUERY, RAIL_WIDTH } from "../layout";
 import { useChatWidth } from "../useChatWidth";
@@ -62,7 +62,19 @@ export function Shell() {
   const chatShown = chatOpen && !onNewProject;
 
   const chatWidth = useChatWidth();
-  const chatControls = useMemo<ChatPanelControls>(() => ({ open: () => setChatOpen(true) }), []);
+  // The request lives here, not in the composer: the composer mounts when the
+  // chat opens, after `compose` has been asked.
+  const [composeRequest, setComposeRequest] = useState<ComposeRequest | null>(null);
+  const chatControls = useMemo<ChatPanelControls>(
+    () => ({
+      open: () => setChatOpen(true),
+      compose: (text) => {
+        setComposeRequest((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+        setChatOpen(true);
+      },
+    }),
+    [],
+  );
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
 
@@ -135,6 +147,7 @@ export function Shell() {
                   page={project.page}
                   card={project.card}
                   specFile={project.specFile}
+                  composeRequest={composeRequest}
                   onClose={() => setChatOpen(false)}
                 />
               ) : (

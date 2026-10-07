@@ -19,6 +19,7 @@
 import type { ReactNode } from "react";
 import { createLink } from "@tanstack/react-router";
 import { Alert, Box, Button, ButtonBase, Chip, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { useChatPanel } from "../../shell/chatPanel";
 import { projectLabel, useProject } from "../../projects/api/queries";
 import { useProjectIssues } from "../api/issues";
 import {
@@ -105,6 +106,7 @@ function Section({ title, projectName, issues }: { title: string; projectName: s
 export function IssuesPage({ projectName }: { projectName: string }) {
   const project = useProject(projectName);
   const issues = useProjectIssues(projectName);
+  const chatPanel = useChatPanel();
 
   let body: ReactNode;
   if (issues.isError) {
@@ -134,16 +136,21 @@ export function IssuesPage({ projectName }: { projectName: string }) {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3, maxWidth: 960 }}>
-      <Box>
-        <Typography variant="caption" color="text.secondary">
-          {project.data ? projectLabel(project.data) : projectName}
-        </Typography>
-        <Typography component="h1" variant="h4" sx={{ fontWeight: 600 }}>
-          Issues
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          The project&apos;s issues on GitHub: incidents, the platform&apos;s own work, and those people filed.
-        </Typography>
+      <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+        <Box>
+          <Typography variant="caption" color="text.secondary">
+            {project.data ? projectLabel(project.data) : projectName}
+          </Typography>
+          <Typography component="h1" variant="h4" sx={{ fontWeight: 600 }}>
+            Issues
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            The project&apos;s issues on GitHub: incidents, the platform&apos;s own work, and those people filed.
+          </Typography>
+        </Box>
+        <Button size="small" variant="contained" onClick={() => chatPanel.compose("/issue ")} sx={{ flexShrink: 0 }}>
+          Create Issue
+        </Button>
       </Box>
       {body}
     </Box>
