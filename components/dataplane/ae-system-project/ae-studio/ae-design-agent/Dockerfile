@@ -89,6 +89,7 @@ RUN chmod -R a+rX "$COREPACK_HOME"
 WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-design-agent
 
 USER 1000
-EXPOSE 4000
-# The service listens on PORT (default 4000) and serves GET /healthz.
+EXPOSE 8080 9080
+# The pod's /v1 edge listens on AE_LISTEN_PORT (8080) and /healthz, /readyz on
+# AE_HEALTH_PORT (9080), as src/pod/config.ts defaults them.
 CMD ["pnpm", "start"]
