@@ -21,14 +21,14 @@ Against a `make dev-env` cluster:
 
 ```sh
 API_PROXY_TARGET=http://console.ae.localhost:8080/aep-api-service \
-COLLAB_PROXY_TARGET=ws://console.ae.localhost:8080 \
 VITE_THUNDER_URL=http://thunder.openchoreo.localhost:8080 \
 pnpm --filter @aep/console dev
 ```
 
-The spec is the collab room: the app opens it at `/collab` on its own origin,
-and the dev server forwards that to `COLLAB_PROXY_TARGET` (the in-cluster
-console forwards its `/collab` to the collab server, so pointing at it works).
+Chat turns and the spec Room are not proxied: the browser calls the org's AE
+Studio (its design agent and its Room) at the URLs `GET /api/v1/ae-studio`
+names once AE Studio is ready. Its CORS allow-list (`consoleOrigins`) includes
+`http://localhost:8090`, so the dev server works against a cluster as is.
 
 aectl registers only the in-cluster console's `/callback` on
 `aep-console-client`, so sign-in from the dev server needs

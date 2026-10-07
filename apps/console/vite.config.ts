@@ -21,10 +21,10 @@ import react from "@vitejs/plugin-react-swc";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
 // The API through the port-forwarded aep-api, or any aep-api the variable names.
+// Only the API is proxied: chat turns and the spec Room go from the browser
+// straight to the org's AE Studio, at the URLs GET /api/v1/ae-studio names
+// (its CORS allow-list has http://localhost:8090).
 const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:9090";
-// The collab room's WebSocket, which the app opens same-origin at /collab as
-// the in-cluster console does (its nginx forwards /collab to the collab server).
-const collabTarget = process.env.COLLAB_PROXY_TARGET || "ws://localhost:3400";
 
 export default defineConfig({
   plugins: [
@@ -58,11 +58,6 @@ export default defineConfig({
         target: apiTarget,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/aep-api-service/, ""),
-      },
-      "/collab": {
-        target: collabTarget,
-        ws: true,
-        changeOrigin: true,
       },
     },
   },
