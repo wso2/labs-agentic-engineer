@@ -36,6 +36,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo/mocks"
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
+	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
@@ -276,6 +277,38 @@ func TestMCP_PublisherTokenListsTenToolsWithoutRemoteGit(t *testing.T) {
 	if len(names) != 10 || !slices.Contains(names, "list_guardrail_policies") ||
 		slices.Contains(names, "get_remote_git_file_contents") || slices.Contains(names, "search_remote_git_code") {
 		t.Fatalf("tools/list = %v, want the 10 non-remote-git tools incl. list_guardrail_policies", names)
+	}
+}
+
+// guardrailCatalogSpy serves one policy and records the org it was read for.
+type guardrailCatalogSpy struct{ org string }
+
+func (g *guardrailCatalogSpy) GuardrailCatalog(_ context.Context, org string) ([]mcpdiscovery.GuardrailPolicy, error) {
+	g.org = org
+	return []mcpdiscovery.GuardrailPolicy{{Name: "pii-masking-regex", Parameters: json.RawMessage(`{}`)}}, nil
+}
+
+// The AE Studio pod's design agent lists the guardrails its org's gateway
+// offers (#858) with the org's ae-studio client token: the tool is listed, and
+// the catalog is read for the token's org, never the org a tool argument names.
+func TestMCP_StudioTokenListsItsOrgsGuardrails(t *testing.T) {
+	spy := &guardrailCatalogSpy{}
+	s := newMCPSurface(t, func(p *AppParams) { p.MCPGuardrailCatalog = spy })
+	tok := s.idp.studioToken(t, "acme")
+
+	if names := toolNames(t, postMCP(t, s.srv, tok, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)); !slices.Contains(names, "list_guardrail_policies") {
+		t.Fatalf("tools/list = %v, want list_guardrail_policies", names)
+	}
+	body := `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_guardrail_policies","arguments":{"org":"evil"}}}`
+	content, _ := rpcResult(t, postMCP(t, s.srv, tok, body))["content"].([]any)
+	if len(content) == 0 {
+		t.Fatal("tools/call returned no content")
+	}
+	if text, _ := content[0].(map[string]any)["text"].(string); !strings.Contains(text, `"pii-masking-regex"`) {
+		t.Fatalf("tool payload = %q, want the org's policy", text)
+	}
+	if spy.org != "acme" {
+		t.Fatalf("catalog read for org %q, want the token's acme", spy.org)
 	}
 }
 
