@@ -292,6 +292,7 @@ func (s *Service) issuesMCPForTurn(ctx context.Context, job turnJob) *agentsvc.M
 func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	filesChangedExternally := false
 	previousTurnFailed := false
+	var branchNotes []agentsvc.BranchNote
 	// D20: both flags are server-derived — the last terminal turn of this
 	// conversation landed a ref different from the current base (an Apply,
 	// another conversation's turn, or an external push moved main), and/or it
@@ -300,13 +301,20 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 	if last, err := s.turns.LastTerminal(ctx, job.orgID, job.projectID, job.conversationID); err != nil {
 		slog.WarnContext(ctx, "genai: last-terminal lookup failed — dispatching without the D20 flags",
 			"turn", job.turnID, "error", err)
-	} else if last != nil {
-		landed := last.CommitSHA
-		if landed == "" {
-			landed = last.BaseRef
+	} else {
+		var since time.Time
+		if last != nil {
+			landed := last.CommitSHA
+			if landed == "" {
+				landed = last.BaseRef
+			}
+			filesChangedExternally = landed != job.baseRef
+			previousTurnFailed = last.Status == turnStatusFailed
+			since = last.CreatedAt
 		}
-		filesChangedExternally = landed != job.baseRef
-		previousTurnFailed = last.Status == turnStatusFailed
+		if job.view == ChatViewMain {
+			branchNotes = s.branchNotes(ctx, job, since)
+		}
 	}
 
 	// Heartbeat the row for the WHOLE run, starting BEFORE dispatch (D17).
@@ -361,6 +369,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		Journal:                journalFor(job),
 		Surface:                agentsvc.SurfaceConsole,
 		View:                   string(job.view),
+		BranchNotes:            branchNotes,
 		// The attachments themselves, not just their names on the journal. Both
 		// are needed and they are NOT the same thing: the journal drives the
 		// chips a reader sees, this is what the MODEL reads. Omitting it made a
@@ -539,16 +548,35 @@ func noManifestTerminal(end agentfold.StreamEnd, agentErr *agentfold.TurnError) 
 	return failedTerminal(turnReasonStreamDied, msg, nil)
 }
 
-// withUsage stamps the manifest's token spend (#249) and the turn's closing
-// context size onto a terminal. A nil manifest leaves both unset: without it
-// the agents service saved nothing into the conversation, so the context the
-// steps reached is not the history the next turn reads. A manifest without
-// usage (pre-capture agents) leaves the spend unset.
+// branchNotes reads what the Issues chat came to since the main chat's
+// previous turn (created after `since`): one note with its turn count and the
+// newest outcome, or none when no Issues turn completed with one. Best-effort:
+// a failed read dispatches without the note rather than failing the turn.
+func (s *Service) branchNotes(ctx context.Context, job turnJob, since time.Time) []agentsvc.BranchNote {
+	turns, latest, err := s.turns.BranchOutcomes(ctx, job.orgID, job.projectID, useCaseIssues, since)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: branch-outcomes lookup failed — dispatching without branch notes",
+			"turn", job.turnID, "error", err)
+		return nil
+	}
+	if turns == 0 {
+		return nil
+	}
+	return []agentsvc.BranchNote{{View: string(ChatViewIssues), Turns: turns, Outcome: latest}}
+}
+
+// withUsage stamps the manifest's token spend (#249), the turn's closing
+// context size and its outcome (an Issues turn's last reply) onto a terminal.
+// A nil manifest leaves all three unset: without it the agents service saved
+// nothing into the conversation, so the context the steps reached is not the
+// history the next turn reads. A manifest without usage (pre-capture agents)
+// leaves the spend unset.
 func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) TurnTerminal {
 	if m == nil {
 		return term
 	}
 	term.ContextTokens = contextTokens
+	term.Outcome = m.Outcome
 	if m.Usage == nil {
 		return term
 	}

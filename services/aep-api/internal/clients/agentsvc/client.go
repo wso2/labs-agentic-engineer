@@ -264,6 +264,19 @@ type TurnRequest struct {
 	// Issues page's agent, omitted for the main chat. The agents service picks
 	// that view's agent (prompt + tools). Pinned by @aep/agent-stream's View.
 	View string `json:"view,omitempty"`
+	// BranchNotes tell a main-chat turn what the other views' chats did since
+	// its conversation's previous turn: at most one per view, omitted when none
+	// ran. The agents service prepends each to the main agent's prompt. Pinned
+	// by @aep/agent-stream's BranchNote.
+	BranchNotes []BranchNote `json:"branchNotes,omitempty"`
+}
+
+// BranchNote is one view's chat since the main chat's previous turn: how many
+// turns completed there with an outcome, and the newest outcome (≤ 400 chars).
+type BranchNote struct {
+	View    string `json:"view"`
+	Turns   int    `json:"turns"`
+	Outcome string `json:"outcome"`
 }
 
 // TurnConnection is the turn's model connection on the wire: everything the

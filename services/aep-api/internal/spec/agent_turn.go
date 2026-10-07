@@ -131,6 +131,12 @@ type AgentTurn struct {
 	// other turn and on rows that predate it.
 	ContextTokens *int64 `json:"-"`
 
+	// Outcome is what an Issues turn came to: its last reply (at most 400
+	// characters), off the terminal manifest. The main chat's next turn is
+	// told it as a branch note (BranchOutcomes). Nullable, added by
+	// AutoMigrate: NULL on every other turn and on rows that predate it.
+	Outcome *string `gorm:"type:text" json:"-"`
+
 	// HeartbeatAt is bumped by the running replica (~15s); the sweep fails
 	// rows whose heartbeat went stale (~60s) and releases the D18 guard.
 	HeartbeatAt time.Time `gorm:"index" json:"-"`

@@ -167,6 +167,12 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   ignored), and a spec scope or prototype feedback is refused with 400. Rehydrate is addressed by
   thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
   and the status poll read the main chat's newest turn only.
+- **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
+  manifest carries its `outcome` (its last reply, ≤ 400 chars), stored on `agent_turns.outcome`.
+  A main-chat dispatch reads `BranchOutcomes` — the Issues turns completed with an outcome since
+  the main conversation's previous terminal turn was created — and, when there are any, sends one
+  `branchNotes` entry (`{view: "issues", turns, outcome}`, the newest outcome) so the agents service
+  can tell the main agent what happened there.
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`

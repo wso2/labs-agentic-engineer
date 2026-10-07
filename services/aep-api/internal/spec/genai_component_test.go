@@ -334,6 +334,10 @@ func (m *memTurnRepo) Finish(_ context.Context, id string, term spec.TurnTermina
 			r.Code = term.Code
 			r.ResetAt = term.ResetAt
 			r.ContextTokens = term.ContextTokens
+			if term.Outcome != "" {
+				outcome := term.Outcome
+				r.Outcome = &outcome
+			}
 			if len(term.Paths) > 0 {
 				b, _ := json.Marshal(term.Paths)
 				r.Paths = string(b)
@@ -442,6 +446,19 @@ func (m *memTurnRepo) LastContextTokens(_ context.Context, orgID, projectID, con
 		}
 	}
 	return last, nil
+}
+
+func (m *memTurnRepo) BranchOutcomes(_ context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	turns, latest := 0, ""
+	for _, r := range m.rows { // insertion order == creation order
+		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase && r.Status == "completed" &&
+			r.CreatedAt.After(since) && r.Outcome != nil {
+			turns, latest = turns+1, *r.Outcome
+		}
+	}
+	return turns, latest, nil
 }
 
 func (m *memTurnRepo) SweepStale(_ context.Context, olderThan time.Time) ([]spec.AgentTurn, error) {
@@ -1337,6 +1354,63 @@ func TestMCPGate_IssuesTurn(t *testing.T) {
 	}
 	if sent.req.MCP != nil && strings.Contains(sent.req.MCP.URL, "/issues/") {
 		t.Errorf("main-chat turn carried the issues MCP block: %+v", sent.req.MCP)
+	}
+}
+
+// TestBranchNotes_IssuesOutcomeReachesTheMainChat: an Issues turn's manifest
+// outcome lands on its row, and the main chat's next turn is dispatched with
+// one branch note — the Issues turns since its previous turn and the newest
+// outcome. A main turn with no Issues turns since carries none, and an Issues
+// turn never carries one.
+func TestBranchNotes_IssuesOutcomeReachesTheMainChat(t *testing.T) {
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withMCP())
+	setManifest := func(outcome string) {
+		b, _ := json.Marshal(map[string]any{"type": "manifest", "files": map[string]string{}, "deleted": []string{}, "outcome": outcome})
+		m := string(b)
+		r.fake.mu.Lock()
+		r.fake.manifest = &m
+		r.fake.mu.Unlock()
+	}
+	main := listConversations(t, r)[0].ConversationID
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+	issuesTurn := func(instruction, outcome string) string {
+		t.Helper()
+		setManifest(outcome)
+		id := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{"instruction": instruction, "view": "issues"}))
+		if st := r.waitTerminal(t, id); st.Status != "completed" {
+			t.Fatalf("issues turn = %+v, want completed", st)
+		}
+		return id
+	}
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "hello"))
+	if notes := r.fake.sentTurn(t, 0).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("first main turn branchNotes = %+v, want none", notes)
+	}
+
+	issuesTurn("the save button does nothing", "Which page is it on?")
+	second := issuesTurn("the settings page", "Filed #12: Save button does nothing.")
+	if row := r.turns.row(t, second); row.Outcome == nil || *row.Outcome != "Filed #12: Save button does nothing." {
+		t.Fatalf("issues row outcome = %v, want the manifest's", row.Outcome)
+	}
+	for i := 1; i <= 2; i++ {
+		if notes := r.fake.sentTurn(t, i).req.BranchNotes; len(notes) != 0 {
+			t.Fatalf("issues turn %d carried branchNotes %+v", i, notes)
+		}
+	}
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "what happened?"))
+	want := []agentsvc.BranchNote{{View: "issues", Turns: 2, Outcome: "Filed #12: Save button does nothing."}}
+	if got := r.fake.sentTurn(t, 3).req.BranchNotes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("main turn after two Issues turns: branchNotes = %+v, want %+v", got, want)
+	}
+
+	r.waitTerminal(t, r.startTurn(t, main, "general", "and now?"))
+	if notes := r.fake.sentTurn(t, 4).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("main turn with no Issues turns since: branchNotes = %+v, want none", notes)
 	}
 }
 

@@ -109,6 +109,9 @@ type TurnTerminal struct {
 	// ContextTokens is the conversation's context size at the turn's end
 	// (AgentTurn.ContextTokens); nil when the turn left no measure.
 	ContextTokens *int64
+	// Outcome is an Issues turn's last reply off its manifest
+	// (AgentTurn.Outcome); "" when there was none.
+	Outcome string
 	// SpecEdited is true when the turn authored real spec changes: a committed
 	// turn whose fold produced a net change, or a room-scoped turn whose agent
 	// edited the collab doc (issue #239 — the activity feed's agent-authorship
@@ -158,6 +161,13 @@ type TurnRepository interface {
 	// severed stream) left the saved history as it was, so it is skipped
 	// rather than read as an empty conversation.
 	LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error)
+
+	// BranchOutcomes counts the project's COMPLETED turns of one use case
+	// created after `since` that carry an outcome, and returns the newest
+	// one's outcome ("" when there are none). The main chat's dispatch reads
+	// the Issues chat this way to tell its agent what happened there since its
+	// own previous turn (agentsvc.BranchNote).
+	BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (turns int, latest string, err error)
 
 	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
 	// one flow ("design", "start", …), or (nil, nil) when it has run none.
@@ -259,6 +269,9 @@ func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTer
 	}
 	if terminal.ContextTokens != nil {
 		updates["context_tokens"] = *terminal.ContextTokens
+	}
+	if terminal.Outcome != "" {
+		updates["outcome"] = terminal.Outcome
 	}
 	if u := terminal.Usage; u != nil {
 		updates["input_tokens"] = u.InputTokens
@@ -371,6 +384,24 @@ func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID
 		return nil, err
 	}
 	return &tokens[0], nil
+}
+
+// BranchOutcomes reads the project's turns through
+// `ix_agent_turns_project_newest` (org_id, project_id, created_at DESC),
+// filtering the use case as it walks; it runs once per main-chat dispatch and
+// only over the window since that chat's previous turn.
+func (r *turnRepository) BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
+	var outcomes []string
+	err := r.db.WithContext(ctx).
+		Model(&AgentTurn{}).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ? AND created_at > ? AND outcome IS NOT NULL",
+			orgID, projectID, useCase, turnStatusCompleted, since).
+		Order("created_at DESC").
+		Pluck("outcome", &outcomes).Error
+	if err != nil || len(outcomes) == 0 {
+		return 0, "", err
+	}
+	return len(outcomes), outcomes[0], nil
 }
 
 // Newest reads one row off `ix_agent_turns_project_newest`

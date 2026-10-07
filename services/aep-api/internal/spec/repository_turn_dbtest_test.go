@@ -398,3 +398,82 @@ func TestTurnRepo_SumUsageByProjectHost(t *testing.T) {
 		t.Errorf("p-mixed host = %q, want \"\" (mixed hosts)", h)
 	}
 }
+
+// An Issues turn's outcome (its last reply) lands on its row; a turn without
+// one keeps the column NULL.
+func TestTurnRepo_FinishStoresTheOutcome(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+
+	withOutcome, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != nil {
+		t.Fatalf("TryStart: %v", err)
+	}
+	if ok, err := repo.Finish(ctx, withOutcome.ID, spec.TurnTerminal{Status: "completed", NoChanges: true, Outcome: "Filed #12."}); err != nil || !ok {
+		t.Fatalf("Finish = (%v, %v)", ok, err)
+	}
+	got, _ := repo.Get(ctx, "o1", "p1", withOutcome.ID)
+	if got.Outcome == nil || *got.Outcome != "Filed #12." {
+		t.Fatalf("row outcome = %v, want Filed #12.", got.Outcome)
+	}
+
+	without, err := repo.TryStart(ctx, newTurn("o1", "p1", "c-issues", "issues"))
+	if err != nil {
+		t.Fatalf("second TryStart: %v", err)
+	}
+	if ok, err := repo.Finish(ctx, without.ID, spec.TurnTerminal{Status: "completed", NoChanges: true}); err != nil || !ok {
+		t.Fatalf("Finish = (%v, %v)", ok, err)
+	}
+	got, _ = repo.Get(ctx, "o1", "p1", without.ID)
+	if got.Outcome != nil {
+		t.Fatalf("row outcome = %q, want NULL", *got.Outcome)
+	}
+}
+
+// BranchOutcomes counts the completed turns of one project's use case created
+// after `since` that carry an outcome, and returns the newest one's. An older
+// turn, another project's, another use case's, a failed one and one without an
+// outcome are not counted.
+func TestTurnRepo_BranchOutcomes(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewTurnRepository(dbtest.New(t), nil)
+	ctx := context.Background()
+	since := time.Now().UTC().Add(-time.Hour)
+
+	run := func(project, useCase string, at time.Time, term spec.TurnTerminal) {
+		t.Helper()
+		row := newTurn("o1", project, "c-"+useCase, useCase)
+		row.CreatedAt = at
+		started, err := repo.TryStart(ctx, row)
+		if err != nil {
+			t.Fatalf("TryStart: %v", err)
+		}
+		if ok, err := repo.Finish(ctx, started.ID, term); err != nil || !ok {
+			t.Fatalf("Finish = (%v, %v)", ok, err)
+		}
+	}
+	done := func(outcome string) spec.TurnTerminal {
+		return spec.TurnTerminal{Status: "completed", NoChanges: true, Outcome: outcome}
+	}
+
+	if turns, latest, err := repo.BranchOutcomes(ctx, "o1", "p1", "issues", since); err != nil || turns != 0 || latest != "" {
+		t.Fatalf("no turns: BranchOutcomes = (%d, %q, %v), want (0, \"\", nil)", turns, latest, err)
+	}
+
+	run("p1", "issues", since.Add(-time.Minute), done("older than since"))
+	run("p2", "issues", since.Add(time.Minute), done("another project"))
+	run("p1", "general", since.Add(2*time.Minute), done("another use case"))
+	run("p1", "issues", since.Add(3*time.Minute), done("Which page is it on?"))
+	run("p1", "issues", since.Add(4*time.Minute), spec.TurnTerminal{Status: "failed", Reason: "stream-died", Outcome: "failed"})
+	run("p1", "issues", since.Add(5*time.Minute), done(""))
+	run("p1", "issues", since.Add(6*time.Minute), done("Filed #12: Save button does nothing."))
+
+	turns, latest, err := repo.BranchOutcomes(ctx, "o1", "p1", "issues", since)
+	if err != nil || turns != 2 || latest != "Filed #12: Save button does nothing." {
+		t.Fatalf("BranchOutcomes = (%d, %q, %v), want (2, the newest outcome, nil)", turns, latest, err)
+	}
+	if turns, _, _ := repo.BranchOutcomes(ctx, "o1", "p1", "issues", time.Time{}); turns != 3 {
+		t.Fatalf("since zero: turns = %d, want 3 (the older row counts too)", turns)
+	}
+}
