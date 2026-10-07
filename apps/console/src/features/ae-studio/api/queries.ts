@@ -19,8 +19,8 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { isStudioToolsUnavailable, setAeStudioUrls, studioToolsRetryDelay } from "../../../api/aeStudio";
-import { apiErrorMessage } from "../../../api/errors";
+import { isPodUnavailable, onPodOutage, setAeStudioUrls } from "../../../api/aeStudio";
+import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
 
 export const aeStudioKeys = { all: ["ae-studio"] as const };
 
@@ -31,9 +31,9 @@ export const aeStudioKeys = { all: ["ae-studio"] as const };
 // focus, which matters beyond freshness — a GET is what starts a converge on
 // the backend.
 //
-// Each answer points the pod clients (api/aeStudio.ts) at its URLs, or drops
-// them, before any consumer sees it: a component that reads `ready` can call
-// studioTools() in the same render. A failed read leaves them as they were.
+// Each answer points the design-agent client (api/aeStudio.ts) at its URL, or
+// drops it, before any consumer sees it: a component that reads `ready` can
+// call designAgent() in the same render. A failed read leaves it as it was.
 export function useAeStudio() {
   return useQuery({
     queryKey: aeStudioKeys.all,
@@ -51,37 +51,35 @@ export function useAeStudio() {
 }
 
 /**
- * The options every pod-backed read spreads into its query, so a new one
- * cannot forget the gate: `enabled` only while AE Studio is `ready` (nothing
- * asks a pod that is not there; a read already answered keeps its data while
- * AE Studio restarts), and the pod's retry pacing (a 503 waits Retry-After).
- * A read with a condition of its own ANDs it in:
- * `{ ...pod, enabled: pod.enabled && cond }`.
+ * Whether a failure says AE Studio is not serving: the pod's 503 or no answer
+ * from it, or aep-api's 503 `ae_studio_unavailable` for a read it serves
+ * through AE Studio (spec state, versions, reports, issues, tasks, skills).
  */
-export function usePodQueryOptions(): {
-  enabled: boolean;
-  retryDelay: typeof studioToolsRetryDelay;
-} {
-  const ready = useAeStudio().data?.state === "ready";
-  return { enabled: ready, retryDelay: studioToolsRetryDelay };
+function isAeStudioOutage(error: unknown): boolean {
+  return isPodUnavailable(error) || apiErrorCode(error) === "ae_studio_unavailable";
 }
 
 /**
- * Re-read AE Studio whenever a pod read finds the pod not serving (a 503 or
- * no answer): a restart then shows as the banner, and the reads wait for
- * `ready` again instead of failing one by one. Mounted once, by the gate.
+ * Re-read AE Studio whenever a request finds it not serving: a failed query
+ * (isAeStudioOutage), or a design-agent call outside any query (the chat's,
+ * through the pod client's outage channel). A restart then shows as the
+ * banner, and the reads wait for `ready` again instead of failing one by one.
+ * Mounted once, by the gate.
  */
 export function useReReadAeStudioOnOutage(): void {
   const queryClient = useQueryClient();
-  useEffect(
-    () =>
-      queryClient.getQueryCache().subscribe((event) => {
-        if (event.type !== "updated") return;
-        const { action } = event;
-        if ((action.type === "failed" || action.type === "error") && isStudioToolsUnavailable(action.error)) {
-          void queryClient.invalidateQueries({ queryKey: aeStudioKeys.all }, { cancelRefetch: false });
-        }
-      }),
-    [queryClient],
-  );
+  useEffect(() => {
+    const reRead = () =>
+      void queryClient.invalidateQueries({ queryKey: aeStudioKeys.all }, { cancelRefetch: false });
+    const offQueries = queryClient.getQueryCache().subscribe((event) => {
+      if (event.type !== "updated") return;
+      const { action } = event;
+      if ((action.type === "failed" || action.type === "error") && isAeStudioOutage(action.error)) reRead();
+    });
+    const offPod = onPodOutage(reRead);
+    return () => {
+      offQueries();
+      offPod();
+    };
+  }, [queryClient]);
 }

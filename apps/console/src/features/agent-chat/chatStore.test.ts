@@ -55,15 +55,18 @@ function sse(parts: StreamPart[]): ReadableStream<Uint8Array> {
   return s.body;
 }
 
-function running(turnId: string, instruction?: string): TurnStatus {
+/** The design agent's status of a running turn; a platform turn names no author. */
+function running(turnId: string, instruction = ""): TurnStatus {
   return {
     turnId,
     conversationId: "conv-1",
-    useCase: "general",
+    kind: "browser",
+    flow: "",
     status: "running",
+    instruction,
+    authorId: "",
+    authorDisplayName: "",
     createdAt: "2026-09-30T09:00:00Z",
-    updatedAt: "2026-09-30T09:00:00Z",
-    ...(instruction ? { instruction } : {}),
   };
 }
 
@@ -87,7 +90,7 @@ function setup(
       return `t${++next}`;
     }),
     turn: vi.fn(async () => null),
-    openStream: vi.fn(async (_p: string, turnId: string) => streams.get(turnId) ?? sse([{ type: "turn-committed" }])),
+    openStream: vi.fn(async (_p: string, turnId: string) => streams.get(turnId) ?? sse([{ type: "turn-completed" }])),
     ...options.api,
   };
   const onAgentWrite = vi.fn();
@@ -140,7 +143,7 @@ describe("a turn's lifecycle", () => {
     stream.send({ type: "text-delta", delta: "Two features " });
     stream.send({ type: "text-delta", delta: "are left." });
     await vi.waitFor(() => expect(chat().items[1]).toMatchObject({ kind: "agent", text: "Two features are left." }));
-    stream.send({ type: "turn-committed" });
+    stream.send({ type: "turn-completed" });
     stream.end();
 
     await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
@@ -154,7 +157,7 @@ describe("a turn's lifecycle", () => {
     const feedback = { prototypeHash: "a".repeat(64), component: "expense-web", requests: [{ screenId: "s", roleId: "r", stateId: "d", elementIds: [], text: "Wider" }] };
     await store.send(PROJECT, "/prototype expense-web", { kind: "prototype", feedback });
     expect(chat().items[0]).toMatchObject({ kind: "user", text: "/prototype expense-web", prototypeFeedback: feedback });
-    expect(started[0]).toMatchObject({ instruction: "/prototype expense-web", collab: true, prototypeFeedback: feedback });
+    expect(started[0]).toMatchObject({ instruction: "/prototype expense-web", prototypeFeedback: feedback });
   });
 
   it("says why a turn failed, and ends it failed", async () => {
@@ -200,7 +203,7 @@ describe("one turn at a time", () => {
     expect(api.startTurn).toHaveBeenCalledTimes(1);
     expect(chat().items.filter((i) => i.kind === "user")).toHaveLength(1);
 
-    stream.send({ type: "turn-committed" });
+    stream.send({ type: "turn-completed" });
     stream.end();
     await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
     expect(await store.send(PROJECT, "Second", PRODUCT)).toBe(true);
@@ -278,11 +281,10 @@ describe("the scope on every turn", () => {
 
     expect(started[0]).toEqual({
       instruction: "Add a yearly view",
-      collab: true,
       scope: { kind: "feature", feature: "F4" },
     });
-    expect(started[1]).toEqual({ instruction: "Where are we?", collab: true });
-    expect(started[2]).toEqual({ instruction: "Tighten the layout", collab: true, scope: { kind: "design-review" } });
+    expect(started[1]).toEqual({ instruction: "Where are we?" });
+    expect(started[2]).toEqual({ instruction: "Tighten the layout", scope: { kind: "design-review" } });
   });
 });
 
@@ -292,7 +294,7 @@ describe("reattaching after a reload", () => {
       history: [{ role: "user", content: "Earlier" }],
       active: running("t7", "Interview Spending reports."),
     });
-    streams.set("t7", sse([{ type: "text-delta", delta: "Two questions." }, { type: "turn-committed" }]));
+    streams.set("t7", sse([{ type: "text-delta", delta: "Two questions." }, { type: "turn-completed" }]));
     await store.open(PROJECT);
 
     await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
@@ -321,7 +323,7 @@ describe("reattaching after a reload", () => {
     await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
 
     // A send meets the same turn, which is attached again and replayed from its start.
-    vi.mocked(api.openStream).mockImplementation(async () => sse([write, { type: "turn-committed" }]));
+    vi.mocked(api.openStream).mockImplementation(async () => sse([write, { type: "turn-completed" }]));
     await store.send(PROJECT, "Hello?", F4);
     await vi.waitFor(() => expect(api.openStream).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
@@ -342,7 +344,7 @@ describe("answering a question card", () => {
   async function asked(scope: TurnScope = F4) {
     const t = setup();
     await t.store.open(PROJECT);
-    t.streams.set("t1", sse([ask, { type: "turn-committed" }]));
+    t.streams.set("t1", sse([ask, { type: "turn-completed" }]));
     await t.store.send(PROJECT, "Interview Spending reports.", scope);
     await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
     const card = t.chat().items.find((i) => i.kind === "question")!;
@@ -400,7 +402,7 @@ describe("announcing the questions a turn asks (the Questions card opens on them
     const asked = vi.fn();
     t.store.onQuestionsAsked(asked);
     await t.store.open(PROJECT);
-    t.streams.set("t1", sse([ask, ask, { type: "turn-committed" }]));
+    t.streams.set("t1", sse([ask, ask, { type: "turn-completed" }]));
     await t.store.send(PROJECT, "Interview Spending reports.", F4);
     await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
     expect(asked).toHaveBeenCalledTimes(1);
@@ -411,7 +413,7 @@ describe("announcing the questions a turn asks (the Questions card opens on them
     const t = setup({ active: running("t7", "Interview Spending reports.") });
     const asked = vi.fn();
     t.store.onQuestionsAsked(asked);
-    t.streams.set("t7", sse([ask, { type: "turn-committed" }]));
+    t.streams.set("t7", sse([ask, { type: "turn-completed" }]));
     await t.store.open(PROJECT);
     await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
     expect(t.chat().items.some((i) => i.kind === "question")).toBe(true);
@@ -423,7 +425,7 @@ describe("announcing the questions a turn asks (the Questions card opens on them
     const asked = vi.fn();
     t.store.onQuestionsAsked(asked);
     t.store.claimKickoff(PROJECT);
-    t.streams.set("t7", sse([ask, { type: "turn-committed" }]));
+    t.streams.set("t7", sse([ask, { type: "turn-completed" }]));
     await t.store.open(PROJECT);
     await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
     expect(asked).toHaveBeenCalledWith(PROJECT, "t7:q:q1");
@@ -434,7 +436,7 @@ describe("the held kickoff", () => {
   it("is sent once the conversation turns out empty", async () => {
     const { store, started } = setup();
     store.seed(PROJECT, "/start");
-    await vi.waitFor(() => expect(started).toEqual([{ instruction: "/start", collab: true }]));
+    await vi.waitFor(() => expect(started).toEqual([{ instruction: "/start" }]));
   });
 
   it("is dropped when the conversation already started", async () => {

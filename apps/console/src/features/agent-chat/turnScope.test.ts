@@ -46,7 +46,7 @@ describe("the scope on the wire", () => {
     [{ kind: "design" }, { scope: { kind: "design-review" } }],
   ])("sends %o as %o, and reads it back", (scope, fields) => {
     const body = turnBody("Tighten this", scope);
-    expect(body).toEqual({ instruction: "Tighten this", collab: true, ...fields });
+    expect(body).toEqual({ instruction: "Tighten this", ...fields });
     const read = scopeOfBody(body);
     expect(read.kind).toBe(scope.kind);
     if (scope.kind === "feature") expect(read).toEqual({ kind: "feature", featureId: "F2" });
@@ -63,13 +63,12 @@ describe("a prototype turn on the wire", () => {
   it("sends no scope: the command says what it is about", () => {
     expect(turnBody("/prototype expense-web", { kind: "prototype" })).toEqual({
       instruction: "/prototype expense-web",
-      collab: true,
     });
   });
 
   it("carries a review's requests as prototypeFeedback, unchanged", () => {
     const body = turnBody("/prototype expense-web", { kind: "prototype", feedback });
-    expect(body).toEqual({ instruction: "/prototype expense-web", collab: true, prototypeFeedback: feedback });
+    expect(body).toEqual({ instruction: "/prototype expense-web", prototypeFeedback: feedback });
     expect(scopeOfBody(body)).toEqual({ kind: "product" });
   });
 });

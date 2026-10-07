@@ -20,7 +20,7 @@ import { describe, expect, it } from "vitest";
 import type { TurnBody } from "../../features/agent-chat/turnScope";
 import { prototypeFeedbackProblem } from "./conversation";
 
-// The mock refuses a turn's prototypeFeedback where aep-api does (400).
+// The mock refuses a turn's prototypeFeedback where the design agent does (400).
 
 const feedback = {
   prototypeHash: "a".repeat(64),
@@ -30,18 +30,18 @@ const feedback = {
 
 describe("prototypeFeedbackProblem", () => {
   it.each<[string, TurnBody]>([
-    ["a turn without feedback", { instruction: "Hello", collab: true }],
-    ["/prototype for the batch's component", { instruction: "/prototype expense-web", collab: true, prototypeFeedback: feedback }],
-    ["a bare /prototype", { instruction: "/prototype", collab: true, prototypeFeedback: feedback }],
+    ["a turn without feedback", { instruction: "Hello" }],
+    ["/prototype for the batch's component", { instruction: "/prototype expense-web", prototypeFeedback: feedback }],
+    ["a bare /prototype", { instruction: "/prototype", prototypeFeedback: feedback }],
   ])("takes %s", (_, body) => {
     expect(prototypeFeedbackProblem(body)).toBeNull();
   });
 
   it.each<[string, TurnBody]>([
-    ["another command", { instruction: "/design F1", collab: true, prototypeFeedback: feedback }],
-    ["another component", { instruction: "/prototype admin-web", collab: true, prototypeFeedback: feedback }],
-    ["a turn outside the room", { instruction: "/prototype", prototypeFeedback: feedback }],
-    ["a malformed batch", { instruction: "/prototype", collab: true, prototypeFeedback: { ...feedback, requests: [] } }],
+    ["another command", { instruction: "/design F1", prototypeFeedback: feedback }],
+    ["another component", { instruction: "/prototype admin-web", prototypeFeedback: feedback }],
+    ["a turn with an intent", { instruction: "/prototype", intent: "change", prototypeFeedback: feedback }],
+    ["a malformed batch", { instruction: "/prototype", prototypeFeedback: { ...feedback, requests: [] } }],
   ])("refuses %s", (_, body) => {
     expect(prototypeFeedbackProblem(body)).not.toBeNull();
   });

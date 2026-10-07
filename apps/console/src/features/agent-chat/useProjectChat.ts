@@ -20,6 +20,7 @@ import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { parseInterviewCommand, START_COMMAND } from "@aep/contracts/commands";
+import { isDesignAgentReady, subscribeDesignAgentReady } from "../../api/aeStudio";
 import { designKey } from "../design/api/designModel";
 import { specKey } from "../spec/api/specModel";
 import { applyAgentWrite } from "../spec/collab/specDoc";
@@ -30,7 +31,8 @@ import { createChatStore, type ProjectChat } from "./chatStore";
 import { opensQuestionsCard } from "./openQuestions";
 import { shellScope } from "../shell/scope";
 
-// The app's one chat store, on the real transport, and the React side of it.
+// The app's one chat store, on the real transport (the org's design agent in
+// its AE Studio pod), and the React side of it.
 
 export const chatStore = createChatStore({
   api: {
@@ -45,11 +47,17 @@ export const chatStore = createChatStore({
   beforeTurn: flushSpecRoom,
 });
 
-/** A project's chat, kept current while the caller is mounted. */
+/**
+ * A project's chat, kept current while the caller is mounted and AE Studio is
+ * ready: the conversation lives on the design agent, so nothing is asked of
+ * it before then (the chat stays loading), and a chat that failed while AE
+ * Studio restarted loads again once it is back.
+ */
 export function useProjectChat(projectName: string): ProjectChat {
   const subscribe = useCallback((fn: () => void) => chatStore.subscribe(projectName, fn), [projectName]);
   const chat = useSyncExternalStore(subscribe, () => chatStore.get(projectName));
-  useEffect(() => chatStore.watch(projectName), [projectName]);
+  const ready = useSyncExternalStore(subscribeDesignAgentReady, isDesignAgentReady);
+  useEffect(() => (ready ? chatStore.watch(projectName) : undefined), [projectName, ready]);
   return chat;
 }
 

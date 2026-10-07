@@ -30,7 +30,7 @@ import type { SpecFeature } from "../../features/spec/api/specModel";
 import type { MockSpecModel } from "./spec";
 import type { LineBlock } from "../../features/spec/model/ids";
 import { blockingQuestions } from "../../features/spec/model/questions";
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import type { InterviewEffect, InterviewProgress, ScriptFrame } from "../chatServer";
 
 type ConversationMessage = components["schemas"]["ConversationMessage"];
@@ -144,7 +144,7 @@ export class Script {
   }
 
   end(): { frames: ScriptFrame[]; reply: ConversationMessage[] } {
-    this.emit({ type: "turn-committed" }, 150);
+    this.emit({ type: "turn-completed" }, 150);
     const reply: ConversationMessage[] = [{ role: "assistant", content: this.parts }];
     if (this.results.length > 0) reply.push({ role: "tool", content: this.results });
     return { frames: this.frames, reply };

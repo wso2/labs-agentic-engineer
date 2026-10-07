@@ -58,9 +58,10 @@ vi.mock("@tanstack/react-router", () => ({
 const { AeStudioGate, AE_STUDIO_HOLD_CAP_MS } = await import("./AeStudioGate");
 const { AeStudioBanner } = await import("./AeStudioBanner");
 const { aeStudioKeys } = await import("../api/queries");
-const { AeStudioNotReadyError, StudioToolsError, setAeStudioUrls, studioTools } = await import(
+const { AeStudioNotReadyError, PodRequestError, designAgent, designAgentCall, setAeStudioUrls } = await import(
   "../../../api/aeStudio"
 );
+const { ApiRequestError } = await import("../../../api/errors");
 const { useConnectGitHubPat, useDisconnectGitProvider, useSaveAiSettings } = await import(
   "../../settings/api/queries"
 );
@@ -151,7 +152,7 @@ describe("AeStudioGate", () => {
   it("Settings stays reachable during the first-visit hold", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockAeStudio(["provisioning"]);
-    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings/credentials" });
+    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings" });
     await firstAnswer();
     expect(await screen.findByText("settings")).toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
@@ -284,53 +285,77 @@ describe("AeStudioGate", () => {
     expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.queryByText("console")).not.toBeInTheDocument();
     cleanup();
-    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings/credentials" });
+    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings" });
     expect(await screen.findByText("settings")).toBeInTheDocument();
   });
 });
 
-// Each org config write rolls AE Studio. The write must re-read its state, or
-// the cached `ready` stands for up to 30 s and the restart is never shown.
-// The studio-tools client exists only while the latest answer is `ready`: set
+// The design-agent client exists only while the latest answer is `ready`: set
 // from that answer before any consumer sees it, cleared by any other answer.
-describe("the studio-tools accessor", () => {
+describe("the design-agent accessor", () => {
   it("is set from a ready answer and cleared by a later provisioning one", async () => {
     mockAeStudio(["ready", "provisioning"]);
     renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
-    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+    expect(() => designAgent()).toThrow(AeStudioNotReadyError);
     await firstAnswer();
-    expect(() => studioTools()).not.toThrow();
+    expect(() => designAgent()).not.toThrow();
     await act(() => queryClient.refetchQueries({ queryKey: aeStudioKeys.all }));
-    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+    expect(() => designAgent()).toThrow(AeStudioNotReadyError);
   });
 
   it("is never set from a failed answer", async () => {
     mockAeStudio(["failed"]);
     renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
     await firstAnswer();
-    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
+    expect(() => designAgent()).toThrow(AeStudioNotReadyError);
   });
 });
 
-// A pod that stops answering is news about AE Studio: the gate re-reads its
-// state, so a restart shows as the banner instead of as broken panes.
-describe("a studio-tools outage", () => {
+// An AE Studio that stops answering is news about AE Studio, wherever the
+// request went: the gate re-reads its state, so a restart shows as the banner
+// instead of as broken panes.
+describe("an AE Studio outage", () => {
+  async function failARead(failure: unknown) {
+    await act(() =>
+      queryClient
+        .fetchQuery({ queryKey: ["a-read"], queryFn: () => Promise.reject(failure), retry: false })
+        .catch(() => undefined),
+    );
+  }
+
   it.each([
-    ["a 503", new StudioToolsError({ code: "disk_full", title: "Service Unavailable" }, "x", { status: 503 })],
-    ["a network failure", new StudioToolsError(undefined, "x", {})],
-  ])("%s from a pod read re-reads AE Studio", async (_, failure) => {
+    ["a pod 503", new PodRequestError({ code: "shutting_down", title: "Service Unavailable" }, "x", { status: 503 })],
+    ["no answer from the pod", new PodRequestError(undefined, "x", {})],
+    ["aep-api's 503 ae_studio_unavailable", new ApiRequestError({ code: "ae_studio_unavailable", message: "AE Studio is restarting" }, "x", { retryAfterMs: 5000 })],
+  ])("%s from a read re-reads AE Studio", async (_, failure) => {
     mockAeStudio(["ready", "provisioning"]);
     renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
     await firstAnswer();
+    await failARead(failure);
+    expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
+  });
+
+  // The chat's calls are not queries: they reach the gate through the pod
+  // client's outage channel.
+  it("a design-agent 503 outside any query re-reads AE Studio", async () => {
+    mockAeStudio(["ready", "provisioning"]);
+    server.use(
+      http.get("http://ae-design-agent.mock/v1/projects/p/turns/active", () =>
+        HttpResponse.json({ type: "about:blank", title: "Service Unavailable", status: 503, code: "shutting_down" }, { status: 503 }),
+      ),
+    );
+    renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
+    await firstAnswer();
     await act(() =>
-      queryClient
-        .fetchQuery({ queryKey: ["pod-read"], queryFn: () => Promise.reject(failure), retry: false })
-        .catch(() => undefined),
+      designAgentCall("x", (agent) => agent.GET("/projects/{projectName}/turns/active", { params: { path: { projectName: "p" } } })),
     );
     expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
   });
 
-  it("a 404 from a pod read does not", async () => {
+  it.each([
+    ["a pod 404", new PodRequestError({ code: "turn_unknown", title: "Not Found" }, "x", { status: 404 })],
+    ["any other aep-api refusal", new ApiRequestError({ code: "not_found", message: "no" }, "x")],
+  ])("%s does not", async (_, failure) => {
     let calls = 0;
     server.use(
       http.get(`${BASE}/ae-studio`, () => {
@@ -340,17 +365,14 @@ describe("a studio-tools outage", () => {
     );
     renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
     await firstAnswer();
-    const notFound = new StudioToolsError({ code: "path_not_found", title: "Not Found" }, "x", { status: 404 });
-    await act(() =>
-      queryClient
-        .fetchQuery({ queryKey: ["pod-read"], queryFn: () => Promise.reject(notFound), retry: false })
-        .catch(() => undefined),
-    );
+    await failARead(failure);
     expect(queryClient.getQueryState(aeStudioKeys.all)?.isInvalidated).toBe(false);
     expect(calls).toBe(1);
   });
 });
 
+// Each org config write rolls AE Studio. The write must re-read its state, or
+// the cached `ready` stands for up to 30 s and the restart is never shown.
 describe("after the user's own config write", () => {
   function SaveConnection() {
     const save = useSaveAiSettings();
