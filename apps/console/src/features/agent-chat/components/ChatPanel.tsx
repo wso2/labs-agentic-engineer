@@ -99,6 +99,7 @@ function Composer({
   scope,
   view,
   composeRequest,
+  onComposeApplied,
 }: {
   projectName: string;
   topic: string;
@@ -106,28 +107,34 @@ function Composer({
   scope: TurnScope;
   view: ChatView;
   composeRequest: ComposeRequest | null;
+  onComposeApplied: (nonce: number) => void;
 }) {
   const chat = useProjectChat(projectName, view);
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement | null>(null);
-  // Each request applies once, even when this composer mounts after it was made.
+  // Each request applies once, and only here if it is for this project's view.
   const appliedNonce = useRef(0);
   const [pendingFocus, setPendingFocus] = useState(false);
+  const request =
+    composeRequest && composeRequest.projectName === projectName && composeRequest.view === view ? composeRequest : null;
   useEffect(() => {
-    if (!composeRequest || composeRequest.nonce === appliedNonce.current) return;
-    appliedNonce.current = composeRequest.nonce;
-    setDraft(composeRequest.text);
+    if (!request || request.nonce === appliedNonce.current) return;
+    appliedNonce.current = request.nonce;
+    setDraft(request.text);
     setPendingFocus(true);
-  }, [composeRequest]);
-  // After the draft has committed, so the cursor lands past the new text.
+    onComposeApplied(request.nonce);
+  }, [request, onComposeApplied]);
+  // After the draft has committed, so the cursor lands past the new text, and
+  // once the input is enabled: a disabled field takes no focus.
+  const enabled = chat.status === "ready";
   useEffect(() => {
-    if (!pendingFocus) return;
-    setPendingFocus(false);
+    if (!pendingFocus || !enabled) return;
     const el = input.current;
     if (!el) return;
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
-  }, [pendingFocus]);
+    setPendingFocus(false);
+  }, [pendingFocus, enabled]);
   const ready = canSend(chat);
   const status = composerNote(chat);
 
@@ -178,7 +185,7 @@ function Composer({
           inputRef={input}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
-          disabled={chat.status !== "ready"}
+          disabled={!enabled}
           placeholder={view === "issues" ? "Describe what's broken, or what you need…" : "Tell the agent what to change…"}
           inputProps={{
             "aria-label": "Message the agent",
@@ -213,6 +220,7 @@ export function ChatPanel({
   card,
   specFile,
   composeRequest,
+  onComposeApplied,
   onClose,
 }: {
   projectName: string;
@@ -223,6 +231,8 @@ export function ChatPanel({
   specFile: string | null;
   /** The shell's pending ask to fill the composer, applied once per nonce. */
   composeRequest: ComposeRequest | null;
+  /** Called with the request's nonce once a composer has applied it; the shell clears it. */
+  onComposeApplied: (nonce: number) => void;
   onClose: () => void;
 }) {
   const feature = useSpecFeature(projectName, card === "spec" ? specFile : null);
@@ -255,7 +265,15 @@ export function ChatPanel({
         </Tooltip>
       </Box>
       <Thread projectName={projectName} view={view} />
-      <Composer projectName={projectName} topic={topic} note={note} scope={scope} view={view} composeRequest={composeRequest} />
+      <Composer
+        projectName={projectName}
+        topic={topic}
+        note={note}
+        scope={scope}
+        view={view}
+        composeRequest={composeRequest}
+        onComposeApplied={onComposeApplied}
+      />
     </Box>
   );
 }

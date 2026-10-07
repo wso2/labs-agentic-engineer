@@ -42,7 +42,7 @@ vi.mock("../../agent-chat/useProjectChat", async (importOriginal) => ({
 }));
 
 const openChat = vi.fn();
-vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: openChat }) }));
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: openChat, compose: vi.fn() }) }));
 
 const { MakePrototypeButton } = await import("./MakePrototypeButton");
 

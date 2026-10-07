@@ -51,7 +51,7 @@ vi.mock("../../agent-chat/useProjectChat", async (importOriginal) => ({
 }));
 
 const openChat = vi.fn();
-vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: openChat }) }));
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: openChat, compose: vi.fn() }) }));
 
 // The theme's 2 MB runtime is the kit's browser lane's to run; the frame here only needs one.
 vi.mock("../useReviewAssets", async (importOriginal) => ({

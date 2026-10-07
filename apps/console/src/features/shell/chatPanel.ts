@@ -17,6 +17,7 @@
  */
 
 import { createContext, useContext } from "react";
+import type { ChatView } from "../agent-chat/chatView";
 
 // What a page inside a project can ask of the chat panel beside it. The shell
 // owns whether the panel is open; a page only asks.
@@ -31,9 +32,15 @@ export interface ChatPanelControls {
   compose: (text: string) => void;
 }
 
-/** A request to fill the composer; each one has its own nonce, applied once. */
+/**
+ * A request to fill one composer: the chat of `view` in `projectName`, nobody
+ * else's. Single-use: the composer that applies it reports the nonce and the
+ * shell clears it, so it is not re-applied when the chat is reopened.
+ */
 export interface ComposeRequest {
   text: string;
+  view: ChatView;
+  projectName: string;
   nonce: number;
 }
 

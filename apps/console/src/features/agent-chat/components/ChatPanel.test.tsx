@@ -17,17 +17,19 @@
  */
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import type { ProjectChat } from "../chatStore";
 import type { ChatView } from "../chatView";
+import type { ComposeRequest } from "../../shell/chatPanel";
 
 // The chat panel talks to the agent of the view the user is on: the Issues
 // Page has its own, the rest of the project the main chat.
 
+let chatStatus: ProjectChat["status"] = "ready";
 const ready = (items: ProjectChat["items"] = []): ProjectChat => ({
-  status: "ready",
+  status: chatStatus,
   error: null,
   items,
   turn: { phase: "idle" },
@@ -69,7 +71,9 @@ vi.stubGlobal(
 
 const { ChatPanel } = await import("./ChatPanel");
 
-function panel(page: "issues" | "overview", card: "issue" | null, composeRequest?: { text: string; nonce: number } | null) {
+const onComposeApplied = vi.fn();
+
+function panel(page: "issues" | "overview", card: "issue" | null, composeRequest?: ComposeRequest | null) {
   return (
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <ChatPanel
@@ -78,6 +82,7 @@ function panel(page: "issues" | "overview", card: "issue" | null, composeRequest
         card={card}
         specFile={null}
         composeRequest={composeRequest ?? null}
+        onComposeApplied={onComposeApplied}
         onClose={() => {}}
       />
     </OxygenUIThemeProvider>
@@ -97,6 +102,8 @@ describe("ChatPanel", () => {
   beforeEach(() => {
     mainSend.mockClear();
     issuesSend.mockClear();
+    onComposeApplied.mockClear();
+    chatStatus = "ready";
     viewsRead.length = 0;
   });
   afterEach(cleanup);
@@ -138,40 +145,81 @@ describe("ChatPanel", () => {
 
   describe("a compose request", () => {
     const input = () => screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+    const issue = (nonce: number): ComposeRequest => ({ text: "/issue ", view: "issues", projectName: "shop", nonce });
 
     it("fills the composer, focuses it with the cursor at the end, and sends nothing", async () => {
-      render(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      render(panel("issues", null, issue(1)));
       await waitFor(() => expect(input().value).toBe("/issue "));
-      expect(document.activeElement).toBe(input());
+      await waitFor(() => expect(document.activeElement).toBe(input()));
       expect(input().selectionStart).toBe("/issue ".length);
       expect(input().selectionEnd).toBe("/issue ".length);
       expect(issuesSend).not.toHaveBeenCalled();
       expect(mainSend).not.toHaveBeenCalled();
     });
 
+    it("tells the shell it was applied, by nonce, so the request is single-use", async () => {
+      render(panel("issues", null, issue(4)));
+      await waitFor(() => expect(onComposeApplied).toHaveBeenCalledWith(4));
+      expect(onComposeApplied).toHaveBeenCalledTimes(1);
+    });
+
     it("applies one request once: the same nonce again leaves what was typed", async () => {
       const view = renderPanel("issues");
-      view.rerender(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      view.rerender(panel("issues", null, issue(1)));
       await waitFor(() => expect(input().value).toBe("/issue "));
       fireEvent.change(input(), { target: { value: "/issue login is broken" } });
-      view.rerender(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      view.rerender(panel("issues", null, issue(1)));
       expect(input().value).toBe("/issue login is broken");
+      expect(onComposeApplied).toHaveBeenCalledTimes(1);
     });
 
     it("replaces a typed draft when the nonce is new", async () => {
-      const view = render(panel("issues", null, { text: "/issue ", nonce: 1 }));
+      const view = render(panel("issues", null, issue(1)));
       await waitFor(() => expect(input().value).toBe("/issue "));
       fireEvent.change(input(), { target: { value: "half a thought" } });
-      view.rerender(panel("issues", null, { text: "/issue ", nonce: 2 }));
+      view.rerender(panel("issues", null, issue(2)));
       await waitFor(() => expect(input().value).toBe("/issue "));
     });
 
-    it("applies a request that was made before the chat mounted", async () => {
-      // The shell holds the request; a composer that mounts later still applies it.
-      const first = render(panel("issues", null, { text: "/issue ", nonce: 3 }));
-      first.unmount();
-      render(panel("issues", null, { text: "/issue ", nonce: 3 }));
+    it("applies a request made before the chat mounted, once, on first mount", async () => {
+      render(panel("issues", null, issue(3)));
       await waitFor(() => expect(input().value).toBe("/issue "));
+      expect(onComposeApplied).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not refill after the shell has cleared it: closing and reopening the chat leaves an empty draft", async () => {
+      const first = render(panel("issues", null, issue(1)));
+      await waitFor(() => expect(onComposeApplied).toHaveBeenCalledWith(1));
+      first.unmount();
+      // The shell cleared the request when it was applied; the chat reopens.
+      render(panel("issues", null, null));
+      expect(input().value).toBe("");
+    });
+
+    it("is not applied by the main chat's composer after leaving the Issues Page", async () => {
+      render(panel("overview", null, issue(1)));
+      await act(async () => {});
+      expect(input().value).toBe("");
+      expect(document.activeElement).not.toBe(input());
+      expect(onComposeApplied).not.toHaveBeenCalled();
+    });
+
+    it("is not applied to another project's composer", async () => {
+      render(panel("issues", null, { ...issue(1), projectName: "other" }));
+      await act(async () => {});
+      expect(input().value).toBe("");
+      expect(onComposeApplied).not.toHaveBeenCalled();
+    });
+
+    it("applied while the conversation loads, focuses once the input is enabled", async () => {
+      chatStatus = "loading";
+      const view = render(panel("issues", null, issue(1)));
+      await waitFor(() => expect(input().value).toBe("/issue "));
+      expect(document.activeElement).not.toBe(input());
+      chatStatus = "ready";
+      view.rerender(panel("issues", null, null));
+      await waitFor(() => expect(document.activeElement).toBe(input()));
+      expect(input().selectionStart).toBe("/issue ".length);
     });
   });
 });
