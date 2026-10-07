@@ -104,10 +104,10 @@ any other name is JSON-RPC `-32602`; a method other than `initialize`,
   (name and arguments only): `list_external_resources`,
   `get_external_resource_schema`, `list_org_endpoints`,
   `list_org_component_endpoints`, `list_platform_resource_types`,
-  `list_groups`, `validate_openapi_spec`, `fetch_openapi_spec`,
-  `slice_openapi_spec`.
+  `list_groups`, `list_guardrail_policies`, `validate_openapi_spec`,
+  `fetch_openapi_spec`, `slice_openapi_spec`.
 
-The nine forwarded descriptors match `aep-api`'s
+The ten forwarded descriptors match `aep-api`'s
 `internal/dependencies/mcpdiscovery/mcp_tools.go`; the two remote-git ones match the
 coding runner's `runners/remote-worker/src/lib/remote_git.ts`. A change to a
 tool changes all three.

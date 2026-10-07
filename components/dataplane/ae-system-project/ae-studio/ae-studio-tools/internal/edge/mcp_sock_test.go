@@ -87,12 +87,12 @@ func (u *fakeUpstream) count(name string) int {
 	return u.calls[name]
 }
 
-// nineAEPAPITools are the allowed tools aep-api serves for the pod.
-func nineAEPAPITools() []string {
+// aepAPITools are the ten allowed tools aep-api serves for the pod.
+func aepAPITools() []string {
 	return []string{
 		"list_external_resources", "get_external_resource_schema", "list_org_endpoints",
 		"list_org_component_endpoints", "list_platform_resource_types", "list_groups",
-		"validate_openapi_spec", "fetch_openapi_spec", "slice_openapi_spec",
+		"list_guardrail_policies", "validate_openapi_spec", "fetch_openapi_spec", "slice_openapi_spec",
 	}
 }
 
@@ -355,18 +355,18 @@ func sortedNames(list json.RawMessage) []string {
 	return names
 }
 
-// Tools/list answers exactly the eleven names whatever aep-api
+// Tools/list answers exactly the twelve names whatever aep-api
 // serves; tools/call of any other name is refused in the pod; the remote-git
 // tools run in the pod for AE_GITHUB_OWNER only (case-insensitive) and never
 // call GitHub for another owner; the rest are forwarded to aep-api.
 func TestMCP_AllowListPinnedAndEnforced(t *testing.T) {
-	up := &fakeUpstream{tools: append(nineAEPAPITools(), "drop_database")}
+	up := &fakeUpstream{tools: append(aepAPITools(), "drop_database")}
 	s := newMCPHarness(t, up, withOwner("Acme-GH"))
 	list := s.rpc(t, "tools/list", `{}`)
 	want := []string{
 		"fetch_openapi_spec", "get_external_resource_schema", "get_remote_git_file_contents", "list_external_resources",
-		"list_groups", "list_org_component_endpoints", "list_org_endpoints", "list_platform_resource_types",
-		"search_remote_git_code", "slice_openapi_spec", "validate_openapi_spec",
+		"list_groups", "list_guardrail_policies", "list_org_component_endpoints", "list_org_endpoints",
+		"list_platform_resource_types", "search_remote_git_code", "slice_openapi_spec", "validate_openapi_spec",
 	}
 	if got := sortedNames(list); !reflect.DeepEqual(got, want) {
 		t.Fatalf("tools/list = %v", got)
@@ -402,6 +402,10 @@ func TestMCP_AllowListPinnedAndEnforced(t *testing.T) {
 	}
 	if n := s.logCount(`"tool":"list_groups"`, `"upstream":"aep-api"`); n != 1 {
 		t.Fatalf("aep-api tools_call logs = %d\n%s", n, s.logs.String())
+	}
+	_ = s.rpc(t, "tools/call", `{"name":"list_guardrail_policies","arguments":{}}`)
+	if n := up.count("list_guardrail_policies"); n != 1 {
+		t.Fatalf("list_guardrail_policies reached aep-api %d times", n)
 	}
 	// The log line is value-free: no arguments, no GitHub token.
 	if logs := s.logs.String(); strings.Contains(logs, "CONVENTIONS.md") || strings.Contains(logs, "gh-test-token") {
