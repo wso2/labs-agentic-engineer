@@ -52,7 +52,6 @@ func TestFeatureOrder(t *testing.T) {
 // A repair version (B4) is a point release at the fixed version's commit,
 // carrying its features, recorded as fixing it, and taking no number of its own.
 func TestTagRepair(t *testing.T) {
-	t.Skip("TODO(main-sync Task 47, API-8): needs the tag annotation body back from the pod (list-tags body)")
 	t.Parallel()
 	seed := validSpecSeed()
 	r := newRig(t, seed)

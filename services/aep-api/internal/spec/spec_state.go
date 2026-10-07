@@ -45,9 +45,11 @@ func (s *artifactService) SpecState(ctx context.Context, orgID, projectID string
 	if err != nil {
 		return out, err
 	}
-	// TODO(Task 47, API-10): list the attached documents' names through the
-	// pod (list-repo-references); until then Documents stays empty.
-	out.Documents = []string{}
+	names, err := s.refs.ListReferences(ctx, ref)
+	if err != nil {
+		return out, fmt.Errorf("list references: %w", err)
+	}
+	out.Documents = names
 	if s.designRuns == nil {
 		return out, nil
 	}

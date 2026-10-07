@@ -114,7 +114,7 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 	pod := aestudiotest.New()
 	r := &rig{t: t, pod: pod, rec: rec, org: org, proj: proj}
 	pod.SeedRepo(r.repoRef(), seed)
-	r.svc = NewArtifactService(&stubRepoRepo{rec: rec}, pod)
+	r.svc = NewArtifactService(&stubRepoRepo{rec: rec}, pod, pod)
 	return r
 }
 

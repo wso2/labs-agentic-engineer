@@ -342,7 +342,7 @@ func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
 func TestCommitSHA_OnlyAFullLowercaseShaReachesThePod(t *testing.T) {
 	t.Parallel()
 	f := aestudiotest.New()
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, f)
 	ctx := context.Background()
 	full := strings.Repeat("a", 40)
 	for _, sha := range []string{full[:7], strings.ToUpper(full), full + "aa"} {
@@ -569,7 +569,6 @@ func TestSaveSpec_DesignOutOfDatePerFeature(t *testing.T) {
 // the pick does not touch stands aside; a new pick on the same tree is a new
 // version.
 func TestSaveSpec_ABuildIsASelection(t *testing.T) {
-	t.Skip("TODO(main-sync Task 47, API-8): needs the tag annotation body back from the pod (list-tags body)")
 	t.Parallel()
 	seed := validSpecSeed()
 	seed["specs/requirements/features/F2-notify.md"] = "# Notify\n\n## Purpose\n\nTells people.\n\nNeeds: F1.\n\n## User Stories\n\n- F2.1 As a user, I want S, so that s.\n"

@@ -201,6 +201,9 @@ type ArtifactService interface {
 type artifactService struct {
 	repo sourcecontrol.RepoRepository
 	git  sourcecontrol.Git
+	// refs lists the reference documents the user attached (the pod's
+	// store, outside git).
+	refs sourcecontrol.ReferenceListOps
 	// designRuns lists the project's completed design runs, newest first. The
 	// build gate needs them to refuse a feature whose requirements have moved
 	// past its design (#575, per feature since E1).
@@ -229,10 +232,11 @@ func (s *artifactService) SetDesignRunsResolver(
 }
 
 // NewArtifactService builds the ArtifactService. `repo` resolves the
-// project's repository row, and `git` serves every read and cuts the
-// version tag on save (the aestudiotools adapter).
-func NewArtifactService(repo sourcecontrol.RepoRepository, git sourcecontrol.Git) ArtifactService {
-	return &artifactService{repo: repo, git: git}
+// project's repository row, `git` serves every read and cuts the version tag
+// on save, and `refs` lists the attached reference documents (both the
+// aestudiotools adapter).
+func NewArtifactService(repo sourcecontrol.RepoRepository, git sourcecontrol.Git, refs sourcecontrol.ReferenceListOps) ArtifactService {
+	return &artifactService{repo: repo, git: git, refs: refs}
 }
 
 // ----- Allowed extensions -----

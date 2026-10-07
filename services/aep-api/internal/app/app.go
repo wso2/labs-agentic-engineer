@@ -312,7 +312,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// A project's repository content is read through its org's pod, and the
 	// version tag is cut there. aep-api's own commits and tags name no
 	// author, committer or tagger: the pod uses its gitpat identity.
-	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools)
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools, studioTools)
 	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
 	// hooks — goes to the org's pod through the same adapter; the project's

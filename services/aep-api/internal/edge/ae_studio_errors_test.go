@@ -144,7 +144,7 @@ func newEdgeWithFake(t *testing.T, arrange func(*aestudiotest.Fake)) *componentt
 	repoSvc := sourcecontrol.NewRepoService(rows, pod, pod, fixedOwner{}, "private")
 	issueSvc := sourcecontrol.NewIssueService(rows, pod)
 
-	artifacts := spec.NewArtifactService(rows, pod)
+	artifacts := spec.NewArtifactService(rows, pod, pod)
 	design := spec.NewDesignService(spec.NewArtifactStore(artifacts), artifacts)
 	design.SetFileCommitter(unusedCommitter{t: t})
 	skills := spec.NewSkillService(pod, pod, repoSvc, nil)
@@ -227,6 +227,8 @@ func TestGitBackedOps_MapAEStudioErrors(t *testing.T) {
 		name, method, path, body string
 	}{
 		{"tags", http.MethodGet, "/api/v1/projects/p/tags", ""},
+		{"versions", http.MethodGet, "/api/v1/projects/p/versions", ""},
+		{"spec-state", http.MethodGet, "/api/v1/projects/p/spec/state", ""},
 		{"create", http.MethodPost, "/api/v1/projects", `{"name":"p"}`},
 		{"references", http.MethodPost, "/api/v1/projects/p/references", "multipart"},
 		{"skills", http.MethodGet, "/api/v1/skills", ""},
@@ -280,6 +282,8 @@ func TestGitBackedOps_HealthyPodAnswers(t *testing.T) {
 		status     int
 	}{
 		{"tags", "/api/v1/projects/p/tags", http.StatusOK},
+		{"versions", "/api/v1/projects/p/versions", http.StatusOK},
+		{"spec-state", "/api/v1/projects/p/spec/state", http.StatusOK},
 		{"skills", "/api/v1/skills", http.StatusOK},
 		{"issues", "/api/v1/projects/p/issues", http.StatusOK},
 		{"task", "/api/v1/projects/p/tasks/1", http.StatusNotFound},

@@ -37,6 +37,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
 | Port | Dir | Peer · contract |
 |---|---|---|
 | `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`) — every read (bundles, trees, files, tags, the status snapshot: local head + local tags, then sha-addressed reads the adapter caches) and every write: the version tag (`Tag`), the skills library and the descriptor (`Commit` through `sourcecontrol.CommitRetrying`: each attempt reads the base, a conflict re-reads, 3 tries); no author or tagger is sent, the pod uses its gitpat identity |
+| `sourcecontrol.ReferenceListOps` | needs | the pod's list-repo-references — the attached documents' names `GET /projects/{p}/spec/state` lists (the pod's store, not git) |
 | `SkillMirrorPort` (= `sourcecontrol.SkillsMirrorOps`) · `RepoService` | needs | the pod's mirror-skills (the project `.claude/skills` copy; the copy rule is the pod's) · the skills repo row, provisioned on first use |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
