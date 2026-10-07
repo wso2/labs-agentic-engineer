@@ -33,11 +33,21 @@ function carriedRetryAfterMs(error: unknown): number | undefined {
 }
 
 /**
+ * Refusals a retry cannot change: GitHub is not connected (the user connects
+ * it) or AE Studio is misconfigured (an administrator fixes it).
+ */
+const NOT_RETRYABLE = new Set(["github_not_connected", "ae_studio_misconfigured"]);
+
+/**
  * Query `retry`: an AE Studio that is restarting gets more patience (six
- * tries, ~30 s at its pace) than an ordinary failure (TanStack's three).
+ * tries, ~30 s at its pace) than an ordinary failure (TanStack's three); a
+ * refusal only the user or an administrator can fix is not retried, so its
+ * notice shows at once.
  */
 export function queryRetry(failureCount: number, error: unknown): boolean {
-  return apiErrorCode(error) === AE_STUDIO_UNAVAILABLE ? failureCount < 6 : failureCount < 3;
+  const code = apiErrorCode(error);
+  if (code && NOT_RETRYABLE.has(code)) return false;
+  return code === AE_STUDIO_UNAVAILABLE ? failureCount < 6 : failureCount < 3;
 }
 
 /**
