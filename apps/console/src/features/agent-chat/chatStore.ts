@@ -21,6 +21,7 @@ import { START_COMMAND } from "@aep/contracts/commands";
 import type { ConversationMessage } from "./api/conversation";
 import { ConversationRotatedError, TurnInProgressError, type TurnStatus } from "./api/turns";
 import {
+  HISTORY_TURN,
   answerableQuestionId,
   appendAgentText,
   askedScope,
@@ -80,7 +81,7 @@ export type TurnOutcome = "completed" | "failed";
 
 export interface ChatStoreOptions {
   api: ChatApi;
-  /** A file write the agent made: the local spec doc applies it while the room is not wired. */
+  /** A file write the agent made: mock mode's local spec doc applies it; on the platform the agent writes into the Room. */
   onAgentWrite?: (projectName: string, part: StreamPart) => void;
   /** How long to wait before asking again whether someone else's turn is running. */
   pollDelay?: (chat: ProjectChat, pollsSoFar: number) => number;
@@ -135,6 +136,24 @@ interface Entry {
   kickoffClaimed: boolean;
   /** Question items already announced: a replay of the turn announces none again. */
   announced: Set<string>;
+}
+
+/**
+ * A row the server's history does not hold: a message that was not sent, an
+ * error, or a line posted from outside the chat. A history re-read keeps them.
+ */
+function isLocalOnly(item: ChatItem): boolean {
+  return item.kind === "error" || item.kind === "note" || (item.kind === "user" && item.state === "failed");
+}
+
+/**
+ * Name `turnId` on the question the conversation waits on, read back from the
+ * history (which carries no turn ids): the turn whose end was just read is the
+ * thread's last, so the open question is its own.
+ */
+function creditOpenQuestion(items: ChatItem[], turnId: string): ChatItem[] {
+  const open = answerableQuestionId(items);
+  return items.map((i) => (i.id === open && i.kind === "question" && i.turnId === HISTORY_TURN ? { ...i, turnId } : i));
 }
 
 export function createChatStore(options: ChatStoreOptions) {
@@ -252,7 +271,6 @@ export function createChatStore(options: ChatStoreOptions) {
       };
     });
     takeClaimedKickoff(projectName);
-    const shownBefore = new Set(entry(projectName).state.items.map((i) => i.id));
     let outcome: TurnOutcome | null = null;
     let endedFrom: "stream" | "status" | null = null;
     try {
@@ -274,13 +292,15 @@ export function createChatStore(options: ChatStoreOptions) {
     }
     // An end learned from the turn's status (a replay the pod refused as
     // truncated, or a turn already over when attached) leaves what the turn
-    // said unfolded: it is in the persisted history now. The errors this
-    // attach raised stay after it.
+    // said unfolded: it is in the persisted history now. The rows only this
+    // browser holds stay after it, and a question an own turn asked is
+    // announced as if it had been folded.
     if (endedFrom === "status") {
-      const raised = entry(projectName).state.items.filter((i) => i.kind === "error" && !shownBefore.has(i.id));
+      const local = entry(projectName).state.items.filter(isLocalOnly);
       try {
         await readHistory(projectName);
-        setItems(projectName, (items) => [...items, ...raised]);
+        setItems(projectName, (items) => creditOpenQuestion([...items, ...local], turnId));
+        announceQuestions(projectName, turnId);
       } catch {
         // The history stays as it was; the next open reads it again.
       }

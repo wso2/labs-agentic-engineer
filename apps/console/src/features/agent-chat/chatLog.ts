@@ -308,6 +308,9 @@ function failedToolCalls(history: ConversationMessage[]): Set<string> {
   return ids;
 }
 
+/** The turn id of an agent row read back from the history, which records none. */
+export const HISTORY_TURN = "history";
+
 /**
  * The server's history as chat items, in order: user rows, the agent's prose,
  * a line for each file it wrote, and a card for each question it asked (so a
@@ -339,7 +342,7 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
     // Prose and tool calls in the order the agent made them.
     let prose = "";
     const flush = () => {
-      if (prose.trim()) out.push({ kind: "agent", id: `h${out.length}`, turnId: "history", text: prose.trim() });
+      if (prose.trim()) out.push({ kind: "agent", id: `h${out.length}`, turnId: HISTORY_TURN, text: prose.trim() });
       prose = "";
     };
     if (typeof m.content === "string") prose = m.content;
@@ -355,7 +358,7 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
         const questions = parseQuestionsInput(p.toolName, p.input);
         if (!questions) continue;
         flush();
-        out.push({ kind: "question", id: `h${out.length}`, turnId: "history", toolCallId, questions, streaming: false });
+        out.push({ kind: "question", id: `h${out.length}`, turnId: HISTORY_TURN, toolCallId, questions, streaming: false });
       } else if (isFileMutationTool(p.toolName)) {
         const path = (p.input as { path?: unknown } | undefined)?.path;
         if (typeof path !== "string") continue;
@@ -363,7 +366,7 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
         out.push({
           kind: "activity",
           id: `h${out.length}`,
-          turnId: "history",
+          turnId: HISTORY_TURN,
           toolCallId,
           op: opForTool(p.toolName),
           path,

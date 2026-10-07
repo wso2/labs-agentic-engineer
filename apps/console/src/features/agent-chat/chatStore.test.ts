@@ -313,6 +313,34 @@ describe("reattaching after a reload", () => {
     expect(chat().turn).toEqual({ phase: "idle" });
   });
 
+  it("keeps this browser's own rows (the unsent message and why) across a status-learned end", async () => {
+    const theirs: ConversationMessage[] = [
+      { role: "user", content: "Design everything." },
+      { role: "assistant", content: [{ type: "text", text: "Designed five components." }] },
+    ];
+    const history = vi.fn<ChatApi["history"]>().mockResolvedValueOnce([]).mockResolvedValue(theirs);
+    const { store, chat, ended } = setup({
+      api: {
+        history,
+        startTurn: async () => Promise.reject(new TurnInProgressError("t9")),
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t9", "Design everything."), status: "completed" }),
+      },
+    });
+    await store.open(PROJECT);
+    store.post(PROJECT, "v1 is building.");
+    expect(await store.send(PROJECT, "Hello?", PRODUCT)).toBe(false);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(chat().items.map((i) => (i.kind === "agent" ? i.text : i.kind))).toContain("Designed five components."));
+    expect(chat().items).toMatchObject([
+      { kind: "user", text: "Design everything." },
+      { kind: "agent", text: "Designed five components." },
+      { kind: "note", text: "v1 is building." },
+      { kind: "user", text: "Hello?", state: "failed" },
+      { kind: "error" },
+    ]);
+  });
+
   it("does not read the history again for a turn whose stream it folded to the end", async () => {
     const { store, api, streams, ended } = setup({ active: running("t7", "Hi") });
     streams.set("t7", sse([{ type: "text-delta", delta: "Hello." }, { type: "turn-completed" }]));
@@ -439,6 +467,32 @@ describe("announcing the questions a turn asks (the Questions card opens on them
     await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
     expect(asked).toHaveBeenCalledTimes(1);
     expect(asked).toHaveBeenCalledWith(PROJECT, "t1:q:q1");
+  });
+
+  it("announces the question of a turn sent from here whose end it learned from the status", async () => {
+    const asked = vi.fn();
+    const history = vi
+      .fn<ChatApi["history"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { role: "user", content: "Interview Spending reports." },
+        { role: "assistant", content: [ask] },
+      ]);
+    const t = setup({
+      api: {
+        history,
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t1", "Interview Spending reports."), status: "completed" }),
+      },
+    });
+    t.store.onQuestionsAsked(asked);
+    await t.store.open(PROJECT);
+    await t.store.send(PROJECT, "Interview Spending reports.", F4);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    const card = t.chat().items.find((i) => i.kind === "question");
+    expect(card).toMatchObject({ turnId: "t1" });
+    expect(asked).toHaveBeenCalledWith(PROJECT, card!.id);
   });
 
   it("announces nothing for a turn found running that this browser did not start", async () => {
