@@ -125,9 +125,17 @@ model-connection / idp services.*
     connection's non-secret fields (`AE_MODEL_CONNECTION`). A subscription token never rolls the
     pod: the next coding Job reads its row.
   - Exactly one credential reaches a coding run. `ResolveCodingCredential(ctx, org, runtime)` is
-    the single statement of which: the subscription only on `claude-code`, else the connection key,
-    failing closed on an unusable subscription. It answers with a kind and the connection, never a
-    variable name; dispatch (`codingagent/model_env.go`) maps that to the runner's env.
+    the single statement of which: the subscription only on `claude-code`, else the connection key.
+    A subscription whose token was never recorded (credential row, no `coding-agent-key` row) counts
+    as none: the run bills the connection's key and logs a value-free WARN naming the org. One that
+    is not `active` is an error. It answers with a kind and the connection, never a variable name;
+    dispatch (`codingagent/model_env.go`) maps that to the runner's env.
+  - GET /config's `agents.subscription` keys on the same credential row (`Effective`), so Settings
+    and dispatch answer "has a subscription" with one predicate. Without its `coding-agent-key` row
+    it is projected with `tokenMissing: true`; the card then shows it set, with Replace and Remove,
+    and warns that coding uses the API key until the token is saved again. Remove
+    (`agents.subscription: null`) deletes the row because the save judges by `creds.Holds`, the
+    credential row too.
   - Generated agents run on the connection, on every format (`modelconn.CapabilitiesOf` says
     `GeneratedAgents` for all). The Agent Manager provider's copy follows it (`syncModelProvider`):
     republished after commit, with the request's key, on every save that carries a key (a failed
@@ -151,8 +159,9 @@ model-connection / idp services.*
   which points its own SecretReference at the key's vault path, reads `KeyPathRef` instead: the
   `default-key` row's name with the vault path that SecretReference's `spec.data` reads (names and
   paths, never a value), failing closed when either is missing. The model keys have no triplet
-  fallback: an org with no `default-key` / `coding-agent-key` row (saved before the rows existed)
-  resolves no key until it saves it again.
+  fallback: an org with no `default-key` row (saved before the rows existed) resolves no key until
+  it saves it again, and a subscription with no `coding-agent-key` row bills the connection's key
+  (above).
 - **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0042](../../../../docs/decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
   The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher app and its
   `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
