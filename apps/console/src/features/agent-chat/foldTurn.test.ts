@@ -216,6 +216,34 @@ describe("foldTurn on the design agent's stream", () => {
     }
   });
 
+  it("says the stream is lost when, after attaches that bring nothing new, the pod no longer holds the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi.fn<TurnStreamApi["openStream"]>().mockImplementation(async () => sse([]));
+      const turn = vi.fn<TurnStreamApi["turn"]>().mockResolvedValue("gone");
+      const folding = fold([], { openStream, turn });
+      const settled = expect(folding).rejects.toBeInstanceOf(TurnStreamAttachError);
+      await vi.runAllTimersAsync();
+      await settled;
+      expect(turn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the turn for the next attach when the final status read gets no answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi.fn<TurnStreamApi["openStream"]>().mockImplementation(async () => sse([]));
+      const folding = fold([], { openStream, turn: async () => null });
+      await vi.runAllTimersAsync();
+      const { of } = await folding;
+      expect(of("ended")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("waits out a replay refused as truncated, through failed status reads, then settles from the status", async () => {
     vi.useFakeTimers();
     try {

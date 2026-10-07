@@ -27,7 +27,7 @@ import {
   type Op,
   type StreamPart,
 } from "@aep/agent-stream";
-import { isTurnStreamNotFound, isTurnStreamReplayTruncated, type TurnRead } from "./api/turns";
+import { TurnStreamAttachError, isTurnStreamNotFound, isTurnStreamReplayTruncated, type TurnRead } from "./api/turns";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure";
 import { extractStreamingQuestions, parseQuestionsInput } from "./questionCards";
 
@@ -306,6 +306,9 @@ export async function foldTurn(input: {
 
   if (ended || signal.aborted) return;
   // Not resumable: one authoritative read settles it. A turn still running
-  // there is left running; the caller's next attach finds it.
-  settle(await api.turn(projectName, turnId));
+  // there, or a read with no answer, is left running; the caller's next
+  // attach finds it. A turn the pod no longer holds is a lost stream.
+  const read = await api.turn(projectName, turnId);
+  if (read === "gone") throw new TurnStreamAttachError(404, "turn_unknown");
+  settle(read);
 }
