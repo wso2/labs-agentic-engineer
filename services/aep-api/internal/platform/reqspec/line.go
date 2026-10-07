@@ -79,11 +79,16 @@ func parseLine(s string) line {
 	return l
 }
 
+// idList reads a Needs / Applies to clause's IDs. The clause is matched
+// case-blind, so each ID is normalised: "all", or an upper-case F-ID that
+// compares with the features' own.
 func idList(s string) []string {
 	ids := listIDRE.FindAllString(s, -1)
 	for i, id := range ids {
 		if strings.EqualFold(id, "all") {
 			ids[i] = "all"
+		} else {
+			ids[i] = strings.ToUpper(id)
 		}
 	}
 	return ids

@@ -93,6 +93,12 @@ func TestParseLine(t *testing.T) {
 			line{id: "P1", text: "Every user signs in via SSO.", appliesTo: []string{"all"}}},
 		{"underscore tag and trailing period", "P2 Amounts in cents. Applies to: F1, F3. _assumed_.",
 			line{id: "P2", text: "Amounts in cents.", appliesTo: []string{"F1", "F3"}, tag: tagAssumed}},
+		// The clauses are read case-blind; the IDs they name are F-IDs, so
+		// they compare with the features' own (and the plan turn's pattern).
+		{"lower-case IDs in the clauses", "P3 Audit trail. needs: f2. applies to: f1, f3.",
+			line{id: "P3", text: "Audit trail.", needs: []string{"F2"}, appliesTo: []string{"F1", "F3"}}},
+		{"applies to ALL", "P4 Logged. APPLIES TO: ALL.",
+			line{id: "P4", text: "Logged.", appliesTo: []string{"all"}}},
 		{"a tag mid-line is words", "The *assumed* default is kept.",
 			line{text: "The *assumed* default is kept."}},
 		{"a feature ID is not a line's ID", "F2 [Approvals](features/F2-approvals.md)",
