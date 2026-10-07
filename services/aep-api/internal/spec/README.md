@@ -144,7 +144,10 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   held whole up to the pod's per-document limit (`sourcecontrol.MaxReferenceBytes`, 5 MiB), converted
   by `platform/officetext` and streamed as `<name>.md`. The markdown is held to the same limit while it
   is built, since a small zip can expand into far more text. One over the limit, one whose markdown
-  would be, or one that does not convert is a 400 that aborts the upload, so the pod stores nothing. The held kickoff fires only on the pod's
+  would be, or one that does not convert is a 400 that aborts the upload, so the pod stores nothing.
+  The conversion runs on the copy goroutine, which net/http does not recover, so a converter panic is
+  recovered there as the "could not be read" 400 and logged as `references.office_conversion_panicked`
+  with the panic's class only (its value can carry document text). The held kickoff fires only on the pod's
   `2xx`.
 - **Design staleness is derived per feature, never stored** (#575, E1). A feature's design is out
   of date when its basis (`reqspec.Basis`: its file plus the product-wide items that reach it) differs

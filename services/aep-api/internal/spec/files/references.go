@@ -154,7 +154,7 @@ func copyOfficePart(part *multipart.Part, ext string, out *multipart.Writer) err
 	}
 	// The markdown is what the pod stores, so it is held to the same limit,
 	// while it is built: a small zip can expand into far more text.
-	text, err := officetext.Markdown(ext, content, sourcecontrol.MaxReferenceBytes)
+	text, err := convertOffice(ext, content)
 	switch {
 	case errors.Is(err, officetext.ErrTooLarge):
 		return tooLarge
@@ -170,6 +170,29 @@ func copyOfficePart(part *multipart.Part, ext string, out *multipart.Writer) err
 	}
 	_, err = io.WriteString(w, text)
 	return err
+}
+
+// officeMarkdown is the Office converter; a variable so a test can make it
+// panic.
+var officeMarkdown = officetext.Markdown
+
+// errConversionPanicked is a document the converter panicked on.
+var errConversionPanicked = errors.New("office conversion panicked")
+
+// convertOffice converts an Office document to markdown within the pod's
+// per-document limit. It runs on the copy goroutine, where net/http recovers
+// nothing, so a panic on a crafted document would end the process: it is
+// recovered here as errConversionPanicked (the "could not be read" 400). The
+// log names the panic's class only, never its value, which can carry the
+// document's text.
+func convertOffice(ext string, content []byte) (text string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Warn("references.office_conversion_panicked", "ext", ext, "class", fmt.Sprintf("%T", r))
+			text, err = "", errConversionPanicked
+		}
+	}()
+	return officeMarkdown(ext, content, sourcecontrol.MaxReferenceBytes)
 }
 
 // refusedPartError is a part aep-api itself refuses (an Office document it

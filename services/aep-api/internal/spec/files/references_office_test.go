@@ -20,6 +20,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -223,5 +224,44 @@ func TestPutReferences_AmplifyingOfficePartIs400(t *testing.T) {
 				t.Fatalf("the pod got %d parts, want none", len(rec.parts))
 			}
 		})
+	}
+}
+
+// A converter that panics on a crafted document never ends the process: the
+// conversion runs on the copy goroutine, which net/http does not recover. The
+// panic is the "could not be read" 400, no byte of the part reaches the pod,
+// and the log names the panic's class only, never its value (it can carry
+// document text).
+func TestPutReferences_AConverterPanicIsA400(t *testing.T) {
+	const secret = "document text from the upload"
+	real := officeMarkdown
+	officeMarkdown = func(string, []byte, int) (string, error) { panic(errors.New(secret)) }
+	t.Cleanup(func() { officeMarkdown = real })
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	rec := &recordingRefs{}
+	h := NewHandler(rec, memRepos(t, "default", "p", "https://github.com/acme/greeter"), nil)
+	_, err := h.PutProjectReferences(tenantCtx("default"), multipartRequest(t, map[string][]byte{
+		"policy.docx": wordDocument(t, "Receipts above $25."),
+	}))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) || ae.Status != http.StatusBadRequest {
+		t.Fatalf("err = %v, want 400", err)
+	}
+	if want := `"policy.docx" could not be read as a .docx file`; ae.Message != want {
+		t.Fatalf("message = %q, want %q", ae.Message, want)
+	}
+	if len(rec.parts) != 0 {
+		t.Fatalf("the pod got %d parts, want none", len(rec.parts))
+	}
+	if !strings.Contains(logs.String(), `"msg":"references.office_conversion_panicked"`) ||
+		!strings.Contains(logs.String(), `"class":"*errors.errorString"`) {
+		t.Fatalf("log = %s, want the event with the panic's class", logs.String())
+	}
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("log carries the panic's value: %s", logs.String())
 	}
 }
