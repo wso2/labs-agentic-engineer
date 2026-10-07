@@ -63,7 +63,7 @@ LOAD, so the room reloads and reseeds from git on the next attempt.
 **Transient failures are tagged** `reason: "upstream-unavailable"`; a verdict
 (any other 4xx, e.g. `project_unknown`) is not (why:
 [`design/room.md`](design/room.md)). Keep that string in step with
-`useCollabSpec.ts` and `room-peer.ts`, which spell it on their own side, as
+the console's `specRoom.ts` and `room-peer.ts`, which spell it on their own side, as
 the stateless message types already are.
 
 A refused load drops the room state (baseline and participants) and destroys
@@ -78,7 +78,7 @@ How a Room saves (committer cadence, failure classes, conflicts,
 
 - The stateless messages `flush` / `flushed` / `flush-error` /
   `flush-warnings` and the reason `upstream-unavailable` are spelled on the
-  console side too (`useCollabSpec.ts`); the agent's `room-peer.ts` spells
+  console side too (`apps/console/src/features/spec/collab/specRoom.ts`); the agent's `room-peer.ts` spells
   `upstream-unavailable`.
 - Shutdown's 8 s budget ends inside ae-studio-tools' 10 s Files socket drain.
 - `/healthz` and `/readyz` are on the health port.

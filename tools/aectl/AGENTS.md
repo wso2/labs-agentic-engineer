@@ -25,6 +25,10 @@ CLI has no local config file. After `aectl platform install` runs, it writes non
 `aep-cli-config` ConfigMap in `wso2-aep`. All subsequent commands read from it automatically
 via `PersistentPreRunE`. Sensitive values (Thunder admin secret) come from the ESO-synced
 `aep-thunder-secrets` Secret. CLI flags and `AEP_*` env vars always override the ConfigMap.
+`platform update` and `sre install` refuse to run without a valid loaded config
+(`requireAEStudioConfig`, `cmd/update.go`): both re-derive and re-apply the
+`aeStudio.*` values from it (`sre install` flips `sreAgent.*` through an
+in-process `platform update`).
 
 ## Thunder clients and seeds
 

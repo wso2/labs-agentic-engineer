@@ -35,8 +35,9 @@ with.
   at the shared `Error` schema
   (`{code, message, details?[{field, message}]}`, always `application/json`);
   validation failures are `400`.
-- The `path` parameter of `read-file` is a trailing wildcard (may contain
-  slashes); the server registers the extra catch-all route for it.
+- The `path` parameter of `ae-studio-tools`' two `read-file` ops (`v1` and
+  `internal/v1`) is a trailing wildcard (may contain slashes);
+  `ae-studio-tools` registers the extra catch-all route for each.
 - `commands/` holds the `/<command>` chat grammar and nothing else. **No prompt
   text lives in this package** — a command parses into FACTS (which token, which
   idea) that a caller puts on a `TurnSpec` (declared in `@aep/agent-stream`, `src/contracts/sse-events.ts`). The sentences those facts become —
