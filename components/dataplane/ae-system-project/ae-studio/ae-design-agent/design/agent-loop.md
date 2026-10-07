@@ -58,11 +58,11 @@ import with the kit's `resolveTheme`. A write that leaves a whole prototype pair
 (permission model, 15 s limit) asynchronously: the event loop serves other
 conversations meanwhile. The write ledger queues the turn's later writes behind
 a pending verdict, and `tapWrites` holds later frames, so call order and wire
-order are unchanged; the turn drains the tap before its manifest. The image
+order are unchanged; the turn drains the tap before it ends. The image
 therefore builds the kit and the theme (`dist` runtimes) and needs Node 22. The
 static stages and the `INVALID_PROTOTYPE` code with its `findings` are in
 `@aep/agent-stream` (its README, Write gates).
 
 Each child runs with a 384 MiB heap cap (`RENDER_HEAP_MB` in the kit), and that
-memory counts against the pod container's 1 Gi limit
-([pod-memory-bounds.md](./pod-memory-bounds.md)).
+memory counts against the pod container's 1 Gi limit, so the pod runs one check
+at a time (`MAX_RENDER_CHECKS`, [pod-memory-bounds.md](./pod-memory-bounds.md)).

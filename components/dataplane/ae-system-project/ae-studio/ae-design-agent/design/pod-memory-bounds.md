@@ -18,8 +18,14 @@ bound, and each bound is a named constant beside the code that applies it.
 | Replay buffers | 16 384 parts or 16 MiB per turn, kept 120 s after the turn ends. | `turns/replay-buffer.ts` |
 | Turn statuses | The last 20 per scope, or 1 h. | `turns/turn-desk.ts` |
 | Usage outbox | 200 records. Past the cap, the oldest is dropped. | `usage/outbox.ts` |
+| Prototype render checks | `MAX_RENDER_CHECKS` (1) at once in the pod, each a Node child with a 384 MiB heap (the kit's `RENDER_HEAP_MB`) and a 15 s limit. Later checks wait in call order; a turn's own writes already queue behind its pending verdict, so at most one check waits per running turn. | `prototype/render-check.ts` |
 
 ## Choices
+
+- **One render check at a time.** Two children would hold 768 MiB of heap
+  beside the agent's own in a 1 Gi container. A wait costs a turn at most a
+  few seconds per check ahead of it, which beats an OOM kill of every
+  project's threads.
 
 - **Rotation, not truncation.** A thread that grows past its bound rotates
   through the existing path. The console already handles

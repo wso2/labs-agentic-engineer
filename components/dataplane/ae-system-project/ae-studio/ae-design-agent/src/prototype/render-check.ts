@@ -26,6 +26,12 @@
  * Both packages are workspace dependencies whose `dist` the image builds; the
  * theme is resolved once, at import, so an image without its runtimes fails to
  * boot instead of failing every prototype write.
+ *
+ * Checks are bounded pod-wide (`MAX_RENDER_CHECKS`): each child has a 384 MiB
+ * heap inside the container's 1 Gi, and one pod runs every project's turns.
+ * A turn's own writes already queue behind its pending verdict (the write
+ * ledger), so the waiters are at most one per running turn
+ * (`design/pod-memory-bounds.md`).
  */
 
 import { dirname } from "node:path";
@@ -35,4 +41,34 @@ import { checkPrototypeFiles, resolveTheme } from "@wso2/prototype-kit/check";
 
 const THEME = resolveTheme("@wso2/prototype-theme-oxygen", [dirname(fileURLToPath(import.meta.url))]);
 
-export const checkPrototypeRender: PrototypeRenderCheck = (files) => checkPrototypeFiles(files, { theme: THEME });
+/**
+ * Render checks running at once in the pod. One: two children (768 MiB of
+ * heap) beside the agent's own heap would leave too little of the 1 Gi.
+ */
+export const MAX_RENDER_CHECKS = 1;
+
+/** `check`, letting at most `max` calls run at once; the rest wait in call order. */
+export function boundedRenderCheck(check: PrototypeRenderCheck, max: number): PrototypeRenderCheck {
+  let running = 0;
+  const waiting: Array<() => void> = [];
+  const release = (): void => {
+    const next = waiting.shift();
+    if (next) next();
+    else running--;
+  };
+  return async (files) => {
+    // A freed slot passes straight to the next waiter, so `running` never dips.
+    if (running < max) running++;
+    else await new Promise<void>((r) => waiting.push(r));
+    try {
+      return await check(files);
+    } finally {
+      release();
+    }
+  };
+}
+
+export const checkPrototypeRender: PrototypeRenderCheck = boundedRenderCheck(
+  (files) => checkPrototypeFiles(files, { theme: THEME }),
+  MAX_RENDER_CHECKS,
+);
