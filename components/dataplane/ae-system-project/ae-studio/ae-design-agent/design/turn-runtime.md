@@ -43,7 +43,19 @@ text ([ADR-0003](ADR-0003-turn-composition-lives-here.md)).
 - **Kickoff** is `/start` on the project's current thread, in the Room,
   credited to the user `aep-api` names.
 - **Plan** runs the task-plan toolset on a throwaway conversation (no Room, no
-  thread), dropped when the turn ends.
+  thread), dropped when the turn ends. It reads the repository at its `at`, a
+  40-hex sha `ae-studio-tools` resolved from the version tag; the pod passes
+  it to the project lookup and never resolves a ref. No `at`, the
+  default-branch tip. `at` on a start turn, or a sha that names no commit, is
+  `400 invalid_turn`.
+
+A `/v1` turn body (`src/edge/turn-input.ts`) carries the instruction and,
+optionally, `scope` (the feature or the design review the user was looking
+at), an aim (`anchor` + `intent`) and, JSON only, `prototypeFeedback`. A
+review batch rides only a `/prototype` turn (bare or naming the batch's
+component) that runs in the Room, never with an aim. The retired `target` is
+`400` in both body forms. The pod composes the scope into the instruction
+after the snapshot read and journals scope and batch on the message.
 
 ## Start and watch are separate
 

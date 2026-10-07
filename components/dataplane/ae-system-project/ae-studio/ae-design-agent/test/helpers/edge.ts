@@ -70,6 +70,8 @@ export interface EdgeOptions {
   /** The skills snapshot's files. */
   skillFiles?: Record<string, string>;
   keepAliveMs?: number;
+  /** Commits the fake tools socket's lookup answers 404 `ref_not_found` for. */
+  missingRefs?: string[];
   /** The starter's `headless` (no one answers questions in this run). */
   headless?: boolean;
   /** Replaces the local IdP's key set (an unreachable IdP). */
@@ -126,6 +128,7 @@ export async function startEdge(opts: EdgeOptions = {}): Promise<Edge> {
   const tools = new FakeToolsSocket({
     projects: { [PROJECT]: { headSha: HEAD, skillsSha: SKILLS, references: Object.keys(opts.references ?? {}).sort() } },
     skillsSha: SKILLS,
+    ...(opts.missingRefs ? { missingRefs: opts.missingRefs } : {}),
   });
   const store = new InMemoryConversationStore();
   const threads = new ThreadBook({ store });

@@ -113,6 +113,8 @@ export interface ServerTurnRequest {
   project: string;
   kind: "start" | "plan";
   credit: Credit;
+  /** Plan: the commit the planner reads the repository at (40-hex); absent, the default-branch tip. */
+  at?: string;
   /** Plan: the milestone and its stories' coverage. */
   scope?: PlanScope;
   /** Plan: the existing-Task renders. */
@@ -337,7 +339,9 @@ export class TurnStarter {
     };
     const input: TurnInput = { instruction: req.scope ? `${PLAN_SUMMARY} (${req.scope.tag})` : PLAN_SUMMARY, attachments: [] };
     const conn = this.admissible(input);
-    const lookup = await this.lookup(req.project);
+    // The pin is a resolved sha (`edge/turn-socket.ts`): the lookup snapshots
+    // that commit, so the planner reads the version it plans, not the tip.
+    const lookup = await this.lookup(req.project, req.at);
     const material = await this.material(input, spec, () => this.projectDirs(req.project, lookup), conn);
     const scope: Scope = { kind: "project", project: req.project };
     this.refuseBusy(scope, req.turnId);
@@ -406,18 +410,24 @@ export class TurnStarter {
     return conn;
   }
 
-  private async lookup(project: string): Promise<ProjectSnapshot> {
+  private async lookup(project: string, at?: string): Promise<ProjectSnapshot> {
     if (!isProjectName(project)) throw new TurnStartError(404, "project_unknown", "no such project");
-    const found = await this.toolsCall(() => this.deps.tools.lookup(project));
+    const found = await this.toolsCall(() => this.deps.tools.lookup(project, at));
     if (!found) throw new TurnStartError(404, "project_unknown", "no such project");
     return found;
   }
 
-  /** A tools socket call; a failure is the sidecar's, not the request's. */
+  /**
+   * A tools socket call; a failure is the sidecar's, not the request's, except
+   * `ref_not_found`: a plan's pin names no commit, which a retry will not change.
+   */
   private async toolsCall<T>(call: () => Promise<T>): Promise<T> {
     try {
       return await call();
     } catch (err) {
+      if (err instanceof ToolsSocketError && err.code === "ref_not_found") {
+        throw new TurnStartError(400, "invalid_turn", "at names no commit of the project's repository");
+      }
       if (err instanceof ToolsSocketError) {
         throw new TurnStartError(503, "tools_unavailable", "the studio's tools are not answering");
       }

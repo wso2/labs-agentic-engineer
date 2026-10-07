@@ -160,7 +160,7 @@ test("a Plan turn: two ok planTask results are two task-op lines, then result co
         project: PROJECT,
         kind: "plan",
         credit: NOBODY,
-        scope: { tag: "v1.0.0", stories: [{ number: 1, title: "Say hello", covered: false }] },
+        scope: { tag: "v1.0.0", stories: [{ id: "F1.1", title: "Say hello", covered: false }] },
         taskContext: [{ path: "tasks/7.md", body: "# Existing Task seven" }],
       });
       assert.equal(res.status, 200);
@@ -199,7 +199,12 @@ test("a Plan turn runs the task-plan toolset on the scope and the existing Tasks
       project: PROJECT,
       kind: "plan",
       credit: ANN,
-      scope: { tag: "v1.0.0", stories: [{ number: 1, title: "Say hello", covered: true }] },
+      scope: {
+        tag: "v1.0.0",
+        stories: [{ id: "F1.1", title: "Say hello", covered: true }],
+        features: [{ id: "F1", name: "Greeting", needs: [] }],
+        productWide: [{ id: "P1", text: "Every answer is JSON", appliesTo: ["all"] }],
+      },
       taskContext: [{ path: "tasks/7.md", body: "# Existing Task seven" }],
     });
     assert.deepEqual(withoutKeepAlives(await res.rest()), [{ type: "result", status: "completed" }]);
@@ -210,6 +215,46 @@ test("a Plan turn runs the task-plan toolset on the scope and the existing Tasks
     const prompt = JSON.stringify(call0.prompt);
     assert.match(prompt, /Existing Task seven/);
     assert.match(prompt, /v1\.0\.0/);
+    assert.match(prompt, /Story F1\.1: Say hello/);
+    assert.match(prompt, /one Task per feature per component that serves it:\\n\\n- F1 Greeting/);
+    assert.match(prompt, /- P1: Every answer is JSON \(applies to all\)/);
+    assert.deepEqual(edge.tools.lookups, [{ project: PROJECT }], "no at: the default-branch tip");
+  });
+});
+
+const SHA = "c".repeat(40);
+
+test("parseTurnRequest: at is a 40-hex commit sha, on a plan turn only", () => {
+  const plan = { turnId: randomUUID(), project: PROJECT, kind: "plan", credit: NOBODY };
+  assert.equal((parseTurnRequest({ ...plan, at: SHA }) as { at?: string }).at, SHA);
+  assert.equal("at" in (parseTurnRequest(plan) as object), false);
+  assert.equal(parseTurnRequest({ ...plan, kind: "start", at: SHA }), "at is only for a plan turn");
+  for (const at of ["tags/v1.0.0", "C".repeat(40), "c".repeat(39), "c".repeat(64), 7]) {
+    assert.equal(parseTurnRequest({ ...plan, at }), "at must be a 40-hex commit sha", String(at));
+  }
+});
+
+test("a plan turn reads the repository at its pinned sha; a start turn carrying at is 400 invalid_turn", async () => {
+  const model = mockModel([{ kind: "text", text: "nothing to plan" }]);
+  await withEdge({ files: SEED_FILES, models: [model] }, async (edge) => {
+    const plan = await postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "plan", credit: NOBODY, at: SHA });
+    assert.deepEqual(withoutKeepAlives(await plan.rest()), [{ type: "result", status: "completed" }]);
+    assert.deepEqual(edge.tools.lookups, [{ project: PROJECT, at: SHA }]);
+
+    const start = await postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "start", credit: ANN, at: SHA });
+    assert.equal(start.status, 400);
+    assert.equal((await start.json()).code, "invalid_turn");
+    assert.equal(edge.tools.lookups.length, 1, "a refused start resolves nothing");
+  });
+});
+
+test("a pinned sha that names no commit of the repository is 400 invalid_turn, not a tools outage", async () => {
+  await withEdge({ files: SEED_FILES, missingRefs: [SHA] }, async (edge) => {
+    const res = await postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "plan", credit: NOBODY, at: SHA });
+    assert.equal(res.status, 400);
+    const problem = await res.json();
+    assert.equal(problem.code, "invalid_turn");
+    assert.match(String(problem.detail), /names no commit/);
   });
 });
 

@@ -57,7 +57,9 @@ const TRUNCATED_RECHECK_MS = 1_000;
 export const SHUTDOWN_MESSAGE = "the studio is shutting down";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const REQUEST_KEYS = new Set(["turnId", "project", "kind", "credit", "scope", "taskContext", "text"]);
+const REQUEST_KEYS = new Set(["turnId", "project", "kind", "credit", "at", "scope", "taskContext", "text"]);
+/** A plan turn's pin: a resolved commit, never a ref (the studio resolves `tags/<version>`). */
+const SHA_RE = /^[0-9a-f]{40}$/;
 const CREDIT_KEYS = ["userId", "name", "email"] as const;
 
 export interface TurnSocketDeps {
@@ -133,7 +135,7 @@ export function parseTurnRequest(body: unknown): ServerTurnRequest | string {
   if (!isRecord(body)) return "the body must be a JSON object";
   const unknown = Object.keys(body).find((k) => !REQUEST_KEYS.has(k));
   if (unknown !== undefined) return `unknown field ${unknown}`;
-  const { turnId, project, kind, credit, scope, taskContext, text } = body;
+  const { turnId, project, kind, credit, at, scope, taskContext, text } = body;
   if (typeof turnId !== "string" || !UUID_RE.test(turnId)) return "turnId must be a uuid";
   if (typeof project !== "string" || project === "") return "project is required";
   if (kind !== "start" && kind !== "plan") return "kind must be start or plan";
@@ -142,12 +144,17 @@ export function parseTurnRequest(body: unknown): ServerTurnRequest | string {
   }
   if (!CREDIT_KEYS.every((k) => typeof credit[k] === "string")) return "credit must be {userId, name, email}";
   if (text !== undefined && typeof text !== "string") return "text must be a string";
+  if (at !== undefined) {
+    if (typeof at !== "string" || !SHA_RE.test(at)) return "at must be a 40-hex commit sha";
+    if (kind !== "plan") return "at is only for a plan turn";
+  }
   if (!isTurnSpec({ kind: "plan", scope, taskContext })) return "scope or taskContext is malformed";
   return {
     turnId: turnId.toLowerCase(),
     project,
     kind,
     credit: { userId: credit.userId as string, name: credit.name as string, email: credit.email as string },
+    ...(at !== undefined ? { at } : {}),
     ...(scope !== undefined ? { scope: scope as NonNullable<ServerTurnRequest["scope"]> } : {}),
     ...(taskContext !== undefined ? { taskContext: taskContext as NonNullable<ServerTurnRequest["taskContext"]> } : {}),
     ...(text !== undefined ? { text } : {}),
