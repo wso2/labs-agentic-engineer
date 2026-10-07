@@ -542,14 +542,15 @@ func TestPlanTap_PerFeatureTasksLinkInDependencyOrder(t *testing.T) {
 		},
 	})
 
-	tap.Stream(stream(
-		toolResult(planFeatureOK("api", "foundation", "Set up the API")),
-		toolResult(planFeatureOK("api", "F1", "Claims in the API")),
-		toolResult(planFeatureOK("api", "F2", "Approvals in the API")),
-		toolResult(planFeatureOK("web", "F1", "Claims in the web app", "api")),
-		toolResult(planFeatureOK("web", "F2", "Approvals in the web app", "api")),
-		"data: [DONE]\n\n",
-	), &bytes.Buffer{}, func() {})
+	if err := tap.Stream(turn(
+		taskOp(planFeatureOK("api", "foundation", "Set up the API")),
+		taskOp(planFeatureOK("api", "F1", "Claims in the API")),
+		taskOp(planFeatureOK("api", "F2", "Approvals in the API")),
+		taskOp(planFeatureOK("web", "F1", "Claims in the web app", "api")),
+		taskOp(planFeatureOK("web", "F2", "Approvals in the web app", "api")),
+	), noAbort); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(issues.created) != 5 {
 		t.Fatalf("expected 5 issues, got %d", len(issues.created))
