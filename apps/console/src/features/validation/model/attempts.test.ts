@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
-import { attemptResult, attemptsOf, noAttemptsReason, revalidateRefusal, validationIsLive, verdictView } from "./attempts";
+import { attemptResult, attemptsOf, noAttemptsReason, revalidateRefusal, validateLabel, validationIsLive, verdictView } from "./attempts";
 
 type RunCycleView = components["schemas"]["RunCycleView"];
 
@@ -100,6 +100,13 @@ describe("an attempt whose agent has not started", () => {
       label: "Agent could not start",
       tone: "error",
     });
+  });
+});
+
+describe("the ask-again button's label", () => {
+  it("is Validate until some attempt has a verdict, Revalidate after", () => {
+    expect(validateLabel(false)).toBe("Validate");
+    expect(validateLabel(true)).toBe("Revalidate");
   });
 });
 

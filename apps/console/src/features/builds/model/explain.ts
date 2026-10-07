@@ -186,7 +186,15 @@ function reasonCopy(run: MilestoneRunView): Copy {
         body: `The platform could not provision the version's connections or plan its tasks. ${NOTHING_HAPPENED}`,
       };
     case "agent-start-failed":
-      return agentStartFailedCopy(newest, run.cycles.slice(0, -1));
+      // The Build card's own button retries the build; a validation agent is
+      // asked again from its Validation card, whose button label depends on
+      // what that card shows.
+      return newest?.kind === "validation"
+        ? {
+            ...agentStartFailedCopy(newest, run.cycles.slice(0, -1), "Validate it again from its Validation card"),
+            next: { label: "Go to Validation", to: "/projects/$projectName/validations" },
+          }
+        : agentStartFailedCopy(newest, run.cycles.slice(0, -1), "Retry");
     case "redispatch-budget":
       return {
         title: "The coding agent stopped without opening a pull request",

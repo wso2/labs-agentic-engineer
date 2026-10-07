@@ -128,8 +128,10 @@ the words.
 | Cause the console has no words for | *The cluster reports the agent as waiting: `<reason>`.* / after: *The cluster reported `<reason>`.* |
 | It never started, coding | **The coding agent could not start** · the cause · *Nothing ran; no pull request was opened.* · *Retry once the cluster has room.* (or *once that is fixed*) · *The cluster reported: …* |
 | It never started, coding, after an earlier session of the build opened a pull request | *Nothing ran this time, so no new pull request was opened; #7, opened earlier in this build, is unchanged.* |
-| It never started, validation | **The validation agent could not start** · *Nothing ran; the version was not validated.* · *Revalidate once the cluster has room.* |
+| It never started, validation, on the Validation card | **The validation agent could not start** · *Nothing ran; the version was not validated.* · *Validate once the cluster has room.* before any attempt has a verdict, *Revalidate …* after one: the word on the card's button (`validateLabel`) |
+| It never started, validation, on the Build card | the same, with *Validate it again from its Validation card once the cluster has room.* and **Go to Validation** |
 | A validation attempt, waiting / never started | **Waiting to start** / **Agent could not start** |
+| A build session the cluster holds | its header reads **waiting to start**, never **writing now**; the Coding agent's log meta reads **newest first** |
 | The short label | **Agent could not start** |
 
 The deadline is the platform's, never a guess, and the time gains its date

@@ -104,6 +104,14 @@ export function attemptResult(
 }
 
 /**
+ * The Validation card's ask-again button: Validate until some attempt has a
+ * verdict, Revalidate after. Copy that names the button reads it from here.
+ */
+export function validateLabel(hasVerdict: boolean): "Validate" | "Revalidate" {
+  return hasVerdict ? "Revalidate" : "Validate";
+}
+
+/**
  * Why the version cannot be validated again now, or null when it can: a run
  * is already on it, or it is not the version deployed (validation drives what
  * runs, so asking an older version would judge code it never shipped). The

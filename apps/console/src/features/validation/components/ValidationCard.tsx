@@ -35,7 +35,15 @@ import { groupByFeature, validationOutcome } from "../../builds/model/validation
 import { CardOverlay } from "../../projects/components/CardOverlay";
 import { PHONE } from "../../shell/layout";
 import { useRevalidate, useValidation } from "../api/validations";
-import { attemptResult, attemptsOf, noAttemptsReason, revalidateRefusal, type Attempt, type VerdictTone } from "../model/attempts";
+import {
+  attemptResult,
+  attemptsOf,
+  noAttemptsReason,
+  revalidateRefusal,
+  validateLabel,
+  type Attempt,
+  type VerdictTone,
+} from "../model/attempts";
 import { ValidationByFeature } from "./ValidationByFeature";
 
 // A version's Validation card, over the Validation ledger: every attempt down
@@ -144,7 +152,20 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function AttemptView({ projectName, version, attempt, newest }: { projectName: string; version: string; attempt: Attempt; newest: boolean }) {
+function AttemptView({
+  projectName,
+  version,
+  attempt,
+  newest,
+  hasVerdict,
+}: {
+  projectName: string;
+  version: string;
+  attempt: Attempt;
+  newest: boolean;
+  /** Whether any attempt has a verdict: what the header's ask-again button reads. */
+  hasVerdict: boolean;
+}) {
   const { cycle } = attempt;
   const settled = Boolean(cycle.endedAt);
   const landed = !settled || Boolean(cycle.mergeSha);
@@ -178,7 +199,7 @@ function AttemptView({ projectName, version, attempt, newest }: { projectName: s
   if (cycle.startupWait && !settled) {
     body = <StartupWaitNotice cycle={cycle} />;
   } else if (settled && isStartupFailure(cycle.agentReason)) {
-    const copy = agentStartFailedCopy(cycle, []);
+    const copy = agentStartFailedCopy(cycle, [], validateLabel(hasVerdict));
     body = (
       <Alert severity="error" role="status">
         <AlertTitle>{copy.title}</AlertTitle>
@@ -266,7 +287,7 @@ function Revalidate({ detail, revalidate, hasVerdict }: {
       loading={revalidate.isPending}
       onClick={() => revalidate.mutate()}
     >
-      {hasVerdict ? "Revalidate" : "Validate"}
+      {validateLabel(hasVerdict)}
     </Button>
   );
   // A disabled button swallows the hover its tooltip needs; the span keeps the reason reachable.
@@ -314,7 +335,14 @@ export function ValidationCard({ projectName, version }: { projectName: string; 
       <Box sx={{ display: "flex", height: "100%", minHeight: 0, [PHONE]: { flexDirection: "column" } }}>
         <AttemptList attempts={attempts} chosen={attempt.number} onChoose={setPicked} />
         <Box sx={{ flex: 1, minWidth: 0, overflowY: "auto", px: 3.5, pt: 3, pb: 11, [PHONE]: { px: 2, pb: 17.5 } }}>
-          <AttemptView key={attempt.cycle.id} projectName={projectName} version={version} attempt={attempt} newest={attempt === newest} />
+          <AttemptView
+            key={attempt.cycle.id}
+            projectName={projectName}
+            version={version}
+            attempt={attempt}
+            newest={attempt === newest}
+            hasVerdict={hasVerdict}
+          />
         </Box>
       </Box>
     );

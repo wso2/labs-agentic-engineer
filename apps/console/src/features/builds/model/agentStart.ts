@@ -155,18 +155,19 @@ function noPullRequestSentence(earlier: readonly RunCycleView[]): string {
 
 /**
  * Why the newest cycle's agent never started, what that left undone, and when
- * trying again can help, in the words of the button that does it (the build
- * card's Retry, the validation card's Revalidate). `earlier` are the run's
- * cycles before it.
+ * trying again can help. `retry` names how, in the words of the button on the
+ * caller's screen (the Build card's Retry; the Validation card's label from
+ * `validateLabel`), so the copy never names a button that is not there.
+ * `earlier` are the run's cycles before it.
  */
 export function agentStartFailedCopy(
   cycle: RunCycleView | undefined,
   earlier: readonly RunCycleView[],
+  retry: string,
 ): StartupWaitCopy {
   const validating = cycle?.kind === "validation";
   const cause = startupFailureCause(cycle?.agentReason);
   const notDone = validating ? "Nothing ran; the version was not validated." : noPullRequestSentence(earlier);
-  const retry = validating ? "Revalidate" : "Retry";
   const when = isRoomShortage(cycle?.agentReason) ? "once the cluster has room" : "once that is fixed";
   const reported = clusterReport(cycle?.agentReason);
   return {

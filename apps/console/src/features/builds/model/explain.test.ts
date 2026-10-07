@@ -159,11 +159,12 @@ describe("an agent that could not start", () => {
     expect(e?.body).toContain("Nothing ran this time, so no new pull request was opened; #7, opened earlier in this build, is unchanged.");
   });
 
-  it("names the validation agent on a validation cycle, and Revalidate as the way to try again", () => {
+  it("names the validation agent on a validation cycle, and sends the reader to its Validation card to try again", () => {
     const e = startFailed(cycle("validation", "startup_failed:Unschedulable: no room"));
     expect(e?.title).toBe("The validation agent could not start");
     expect(e?.body).toContain("Nothing ran; the version was not validated.");
-    expect(e?.body).toContain("Revalidate once the cluster has room.");
+    expect(e?.body).toContain("Validate it again from its Validation card once the cluster has room.");
+    expect(e?.next).toEqual({ label: "Go to Validation", to: "/projects/$projectName/validations" });
   });
 
   it("asks for the cause to be fixed when it is not a matter of room", () => {
