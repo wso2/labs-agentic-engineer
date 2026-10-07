@@ -28,7 +28,6 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
-	"github.com/wso2/aep/ae-studio-tools/internal/problem"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 )
 
@@ -41,6 +40,7 @@ import (
 // ReferenceStore keeps a repository's reference documents (repo.Engine).
 type ReferenceStore interface {
 	PutReferences(ctx context.Context, r repo.OwnerRepo, docs []repo.ReferenceDoc) error
+	ListReferences(ctx context.Context, r repo.OwnerRepo) ([]string, error)
 }
 
 // referencesField is the multipart field repeated once per document.
@@ -67,20 +67,24 @@ func (s internalServer) PutRepoReferences(ctx context.Context, request gen.PutRe
 	return gen.PutRepoReferences204Response{}, nil
 }
 
-// ListRepoReferences answers 501 not_implemented until the store's list is
-// served. TODO(main-sync Task 49): answer repo.Engine.ListReferences as the
-// contract's ReferenceList (names sorted, empty when none are stored; disk
-// errors 503 disk_full as PutRepoReferences maps them).
-func (s internalServer) ListRepoReferences(context.Context, gen.ListRepoReferencesRequestObject) (gen.ListRepoReferencesResponseObject, error) {
-	return listReferencesNotImplemented{}, nil
-}
-
-// listReferencesNotImplemented is list-repo-references' interim answer.
-type listReferencesNotImplemented struct{}
-
-func (listReferencesNotImplemented) VisitListRepoReferencesResponse(w http.ResponseWriter) error {
-	problem.Write(w, http.StatusNotImplemented, "not_implemented", "list-repo-references is not served yet")
-	return nil
+// ListRepoReferences answers the stored set's names, sorted as the store
+// lists them; a repository with no store answers an empty list. The owner
+// guard already refused a foreign owner, as for the upload.
+func (s internalServer) ListRepoReferences(ctx context.Context, request gen.ListRepoReferencesRequestObject) (gen.ListRepoReferencesResponseObject, error) {
+	store := repo.OwnerRepo{Owner: request.Owner, Repo: request.Repo}
+	names, err := s.refs.ListReferences(ctx, store)
+	if err != nil {
+		if errors.Is(err, repo.ErrDiskFull) {
+			logDiskFull(ctx, "list-references", store)
+			return gen.ListRepoReferences503ApplicationProblemPlusJSONResponse(
+				newProblem(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full")), nil
+		}
+		return nil, err
+	}
+	if names == nil {
+		names = []string{}
+	}
+	return gen.ListRepoReferences200JSONResponse{Names: names}, nil
 }
 
 // referencesProblem maps an upload failure to its answer. Anything not listed
@@ -98,12 +102,17 @@ func referencesProblem(ctx context.Context, store repo.OwnerRepo, err error) (ge
 		return gen.PutRepoReferences413ApplicationProblemPlusJSONResponse(
 			newProblem(http.StatusRequestEntityTooLarge, "payload_too_large", "the request body exceeds the size limit")), nil
 	case errors.Is(err, repo.ErrDiskFull):
-		slog.WarnContext(ctx, "files.disk_full", "op", "put-references", "repo", strings.ToLower(store.Owner+"/"+store.Repo))
+		logDiskFull(ctx, "put-references", store)
 		return gen.PutRepoReferences503ApplicationProblemPlusJSONResponse(
 			newProblem(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full")), nil
 	default:
 		return nil, err
 	}
+}
+
+// logDiskFull logs a references op refused for a full disk.
+func logDiskFull(ctx context.Context, op string, store repo.OwnerRepo) {
+	slog.WarnContext(ctx, "files.disk_full", "op", op, "repo", strings.ToLower(store.Owner+"/"+store.Repo))
 }
 
 // readReferenceParts reads the upload part by part. Each document is read to

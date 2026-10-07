@@ -170,7 +170,7 @@ Levels: `I` info, `W` warn, `E` error.
 | `mcp.upstream_failed` | W | `method`, **raw `error`** (from the `aep-api` client) | `aep-api` could not answer a forwarded call (502 `aep_api_unavailable`) |
 | `repo.clone` | I | `repo`, `mode` (`bare`), `ms` | a cold clone finished |
 | `files.git_failed` | W | `op`, `project`, `repo`, `class` (git) | a Files op's git failure (502 `github_error`) |
-| `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload met a full disk (503 `disk_full`) |
+| `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload or list met a full disk (503 `disk_full`) |
 | `files.not_fast_forward` | W | `op`, `project` | a Files save lost every CAS retry to concurrent writers (409 `not_fast_forward`) |
 | `files.identity_unavailable` | W | `class` (`rate_limited`, `status`, `canceled`, `transport`), `status` | the gitpat identity could not be read for a save; the engine commits as its default identity |
 | `files.completions_unavailable` | W | `project`, `stubs`, `misconfigured` | `aep-api`'s dependency completions failed; the save carries a warning per stub |

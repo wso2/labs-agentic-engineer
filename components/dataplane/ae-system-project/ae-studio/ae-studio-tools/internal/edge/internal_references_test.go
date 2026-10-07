@@ -19,6 +19,8 @@ package edge
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -292,6 +294,89 @@ func TestReferencesUpload(t *testing.T) {
 			t.Fatal("a capped upload wrote to the store")
 		}
 	})
+}
+
+// listedReferences is a list-repo-references body.
+type listedReferences struct {
+	Names []string `json:"names"`
+}
+
+func TestReferencesList(t *testing.T) {
+	list := func(h *harness, path string) *httptest.ResponseRecorder {
+		return h.do(http.MethodGet, path, h.m2m(), "ou-1", nil)
+	}
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) []string {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+		var body listedReferences
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("body %q: %v", rec.Body.String(), err)
+		}
+		return body.Names
+	}
+
+	t.Run("the stored names come back sorted, as stored", func(t *testing.T) {
+		h := newHarness(t)
+		h.putReferences(referencesPath, h.m2m(), false,
+			refFile("notes.md", 10), refFile("Brief.PDF", 20), refFile("api.txt", 30))
+		// The store is keyed case-insensitively, like the mirror.
+		got := decode(t, list(h, "/internal/v1/repos/ACME-gh/Greeter/references"))
+		if want := []string{"api.txt", "brief.pdf", "notes.md"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("names = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no store is an empty list, never null", func(t *testing.T) {
+		h := newHarness(t)
+		rec := list(h, referencesPath)
+		if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"names":[]}` {
+			t.Fatalf("got %d %s, want 200 {\"names\":[]}", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("an owner other than the connected account is refused", func(t *testing.T) {
+		h := newHarness(t)
+		h.putReferences(referencesPath, h.m2m(), false, refFile("a.md", 1))
+		wantProblem(t, list(h, "/internal/v1/repos/someone-else/greeter/references"), http.StatusForbidden, "owner_not_allowed")
+	})
+
+	t.Run("a user JWT is 401", func(t *testing.T) {
+		h := newHarness(t)
+		if rec := h.do(http.MethodGet, referencesPath, h.user("default", "ou-1"), "ou-1", nil); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("a full disk is 503 disk_full", func(t *testing.T) {
+		h := newHarness(t)
+		h.handler = internalChain(internalBodyCaps, failingReferenceStore{err: &repo.DiskFullError{}}, "acme-gh")
+		wantProblem(t, list(h, referencesPath), http.StatusServiceUnavailable, "disk_full")
+		line := h.logLine("files.disk_full")
+		if line["op"] != "list-references" || line["repo"] != "acme-gh/greeter" {
+			t.Fatalf("log line = %v", line)
+		}
+	})
+
+	t.Run("any other store failure is the generic 500", func(t *testing.T) {
+		h := newHarness(t)
+		h.handler = internalChain(internalBodyCaps, failingReferenceStore{err: errors.New("boom")}, "acme-gh")
+		if rec := list(h, referencesPath); rec.Code != http.StatusInternalServerError {
+			t.Fatalf("got %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// failingReferenceStore fails every call with err.
+type failingReferenceStore struct{ err error }
+
+func (f failingReferenceStore) PutReferences(context.Context, repo.OwnerRepo, []repo.ReferenceDoc) error {
+	return f.err
+}
+
+func (f failingReferenceStore) ListReferences(context.Context, repo.OwnerRepo) ([]string, error) {
+	return nil, f.err
 }
 
 // TestInternalBodyCaps pins the per-op cap table: only the references upload,
