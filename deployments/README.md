@@ -61,7 +61,9 @@ handoff (`scripts/setup-sre.sh`, `aectl sre install`). The agent speaks
 OpenAI-compatible chat completions only, so it has a model of its own, set at
 install (`SRE_LLM_API_KEY_FILE`/`SRE_LLM_MODEL`, passed to `aectl sre install
 --llm-api-key-file/--llm-model`) and written into its Secret; without one it
-waits at 0 replicas.
+waits at 0 replicas. Run on its own, `setup-sre.sh` needs the aectl platform
+config `make dev-env` imports: `aectl sre install` refuses without it, because
+its platform update re-applies the AE Studio values from it.
 `WITH_OBSERVABILITY=0` skips the plane and the SRE agent; `WITH_SRE=0` skips
 only the agent; `WITH_AGENT_MANAGER=0` is the lean profile for SRE work. See
 `docs/developer-guide/sre-handoff-runbook.md`.

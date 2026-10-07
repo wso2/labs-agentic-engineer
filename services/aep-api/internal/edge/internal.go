@@ -323,7 +323,8 @@ func requireInternalGate(f igen.StrictHandlerFunc, operationID string) igen.Stri
 // internalValidator validates an authenticated request against the embedded
 // internal spec, using the route capInternalBody found. A route miss falls
 // through: the raw MCP routes are absent from the embedded spec (call-mcp-tool
-// is excluded from generation), so their bodies are capped, not validated.
+// and call-sre-handoff-mcp-tool are excluded from generation), so their bodies
+// are capped, not validated.
 func internalValidator(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := internalRouteFrom(r.Context())

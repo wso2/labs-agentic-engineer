@@ -44,7 +44,7 @@ must pass the Files socket lookup once per connection.
   with `reason: "upstream-unavailable"`, and the console and the agent retry
   it. A verdict (`permission-denied`, `project_unknown`) is not tagged, so a
   Room that can never load does not make every open tab reconnect forever.
-  The console's `useCollabSpec.ts` and the agent's `room-peer.ts` spell the
+  The console's `specRoom.ts` and the agent's `room-peer.ts` spell the
   same string on their side.
 
 ## Token expiry is enforced

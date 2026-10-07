@@ -140,7 +140,9 @@ the details.
 In AEP the Prototype stage follows Design. The console's Design card offers
 Make prototype, which sends `/prototype`; the `prototype` skill has the agent
 write `specs/design/components/<c>/prototype.{json,tsx}` into the Room (ae-collab),
-gated on write and again on save. The reviewer opens it full screen in the
+gated on write by the design agent's file tool (the manifest and source rules
+plus an isolated render check) and again when a build cuts the version
+(aep-api's save gate, `internal/spec/save_gate.go`). The reviewer opens it full screen in the
 console, annotates, and Send all returns the requests as a typed
 `prototypeFeedback` on the next `/prototype` turn
 ([console design note](../apps/console/design/prototype-review.md)).

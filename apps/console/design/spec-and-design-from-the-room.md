@@ -10,9 +10,11 @@ serves only what the documents cannot say.
 `features/spec/collab/specRoom.ts`: one Hocuspocus room per project
 (`spec-<org>-<project>`) on the org's AE Studio Room (`<collab>/v1/rooms`,
 from `GET /ae-studio`), for the whole app, counted by its users and closed a
-few seconds after the last lets go. Its lifecycle is the old console's
-`useCollabSpec` (rejoin fresh after a drop, back off, token sync, renew once
-and rejoin when the Room drops the bearer; see console
+few seconds after the last lets go. Its lifecycle is the classic console's
+`useCollabSpec` (rejoin fresh after a drop, back off) plus what AE Studio added
+to it: Hocuspocus token sync (`sendToken()`, in place of the classic
+stateless `{type:"token"}` push), and renew once and rejoin when the Room drops
+the bearer, where the classic console stayed offline (console
 [ADR-0003](decisions/ADR-0003-the-console-calls-the-orgs-ae-studio-directly.md)).
 Files are keyed by their repo paths (`specs/requirements/prd.md`).
 `useSpecDoc` returns its doc once synced; a build flushes it first, and a save

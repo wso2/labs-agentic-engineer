@@ -117,7 +117,7 @@ fails you fix the cause and re-run it.
 
 `make dev-update` is one-shot, not a watch loop: it rebuilds with `skaffold
 build` only the service images whose dependencies changed (console, tryit,
-BFF, MCP server, and the AE Studio's design agent, collab and tools), loads
+BFF, and the AE Studio's design agent, collab and tools), loads
 them into the cluster, then runs `aectl platform update` (helm) to re-point
 the installed platform release at them and `aectl platform sync-clients`. The
 AE Studio pod rolls on the org's next console visit. Run it again after every
@@ -160,7 +160,7 @@ Tear down with `k3d cluster delete openchoreo`, which drops all OpenChoreo state
 
 | Path | What it is |
 |---|---|
-| [`apps/console`](apps/console/README.md) | the human surface: React SPA over the BFF, its only backend |
+| [`apps/console`](apps/console/README.md) | the human surface: React SPA over the BFF and the org's AE Studio (the design agent's turns and the spec Room, called from the browser) |
 | [`apps/tryit`](apps/tryit/AGENTS.md) | the test app: a static SPA the console opens to sign in as a project's test user and talk to a deployed agent; no backend of its own |
 | [`services/aep-api`](services/aep-api/README.md) | the Go BFF — seven domains behind one tenant-gated edge; owns the milestone run supervisor (Temporal), provisioning, and the webhook ledger; every git operation goes through the org's `ae-studio-tools` |
 | [`components/dataplane/ae-system-project/ae-studio/ae-design-agent`](components/dataplane/ae-system-project/ae-studio/ae-design-agent/AGENTS.md) | design-time agent runtime (Vercel AI SDK) in the org's AE Studio pod. a turn starts with one POST and is watched over a replayable SSE stream; writes no files itself |

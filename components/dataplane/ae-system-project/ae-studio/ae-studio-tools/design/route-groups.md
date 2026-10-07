@@ -17,7 +17,7 @@ stable `code`; the MCP socket's tool and method refusals are JSON-RPC errors
 
 | Prefix | Caller | Check, in order | Refusals |
 |---|---|---|---|
-| `/v1/` (port 8082) | the browser (console) | Platform IdP user JWT: RS256, exact `iss` (`AE_IDP_ISSUER`), `exp`, `aud` in `AE_USER_AUDIENCES`, a `sub`, not a `client_credentials` token; then the org rule: `ouId` = `AE_ORG_ID` and `ouHandle` = `AE_ORG_HANDLE`. Then the contract validator. | 401 `unauthenticated` (with `WWW-Authenticate`), 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `path_invalid` |
+| `/v1/` (port 8082) | a signed-in user's browser client (the console has no caller: it reads spec files from the Room) | Platform IdP user JWT: RS256, exact `iss` (`AE_IDP_ISSUER`), `exp`, `aud` in `AE_USER_AUDIENCES`, a `sub`, not a `client_credentials` token; then the org rule: `ouId` = `AE_ORG_ID` and `ouHandle` = `AE_ORG_HANDLE`. Then the contract validator. | 401 `unauthenticated` (with `WWW-Authenticate`), 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `path_invalid` |
 | `/internal/v1/` (port 8082) | `aep-api` | Body cap per operation (1 MiB, `create-commit` 16 MiB, `start-repo-turn` 4 MiB, `put-repo-references` 80 MiB), ahead of the gate. AE-only M2M: `client_credentials`, `aud` contains and `client_id` equals `AE_M2M_CLIENT_ID`, no `ouId` claim; then `X-Impersonate-Org` = `AE_ORG_ID`. Then the validator, then the owner guard: a `/internal/v1/repos/{owner}/{repo}/…` owner must equal `AE_GITHUB_OWNER` (case-insensitive; unset refuses all). | 413 `payload_too_large`, 401 `unauthenticated`, 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `validation_failed`, 403 `owner_not_allowed` |
 | `POST /webhooks/github` (port 8082) | GitHub, or the local `webhook-relay` | 8 deliveries in flight, body 25 MiB, body read within 10 s, then `X-Hub-Signature-256` against `GITHUB_WEBHOOK_SECRET` (current secret only). No token. | 503 `busy`, 413 `payload_too_large`, 408 `request_timeout`, 400 `body_unreadable`, 401 `signature_invalid` |
 | Files socket `AE_FILES_SOCKET` | `ae-collab` | The mount. 40 s per request (inside `ae-collab`'s 45 s call deadline), 25 MiB body, then the validator. | 413 `payload_too_large`, 400 `path_invalid` |
@@ -93,7 +93,7 @@ not the delivery, so it reads as unavailable.
 ## MCP tool allow-list
 
 `AllowedTools` (`internal/mcp/tools.go`, pinned by `TestAllowedTools_Pinned`)
-holds 11 names. `tools/list` answers exactly these, locally. `tools/call` of
+holds 12 names. `tools/list` answers exactly these, locally. `tools/call` of
 any other name is JSON-RPC `-32602`; a method other than `initialize`,
 `tools/list` and `tools/call` is `-32601`.
 

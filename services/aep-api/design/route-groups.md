@@ -63,10 +63,11 @@ holds only its `ae-studio-<org>` client.
 4. **Backstop** (`requireInternalGate`): a generated op that reaches the
    strict handler without the gate's verdict is 401.
 
-`call-mcp-tool` is declared in the internal spec but excluded from
-generation, so `POST /internal/v1/mcp` is a route miss for the gate and the
-validator: its body is capped, not schema-validated, and its own gate
-verifies the caller. Any other path no row names is 404.
+`call-mcp-tool` and `call-sre-handoff-mcp-tool` are declared in the internal
+spec but excluded from generation (`internal/igen/oapi-codegen.yaml`), so
+`POST /internal/v1/mcp` and `POST /internal/v1/sre-handoff/mcp` are route
+misses for the gate and the validator: their bodies are capped, not
+schema-validated, and each route's own gate verifies the caller. Any other path no row names is 404.
 
 The internal spec is not advertised by the gateway, but the path is
 reachable through the console's `/aep-api-service/` route, which is why

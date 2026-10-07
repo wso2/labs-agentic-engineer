@@ -75,7 +75,7 @@ export type AuthConfig = Pick<PodConfig, "orgId" | "orgHandle" | "userAudiences"
 
 /** What the client is told, in `permission-denied` frames and close reasons. */
 export const PERMISSION_DENIED = "permission-denied";
-// Keep in step with useCollabSpec.ts and room-peer.ts, which spell it on their side.
+// Keep in step with the console's specRoom.ts and room-peer.ts, which spell it on their side.
 export const UPSTREAM_UNAVAILABLE = "upstream-unavailable";
 
 /** An error Hocuspocus forwards as `reason`; empty message, so nothing else is logged. */

@@ -51,7 +51,9 @@ The agent's thread of turns for one entity: a project, a Skill, a Resource, or t
 organization; the chat shows the Conversation of the entity in view. A project has
 one current Conversation, shared by everyone working on it; the user may rotate it,
 and it rotates by itself at 80 % of the model connection's context window (or past
-8 MiB of thread when the connection declares none). Conversations live only in the
+8 MiB of thread when the connection declares none). The design agent also serves
+marketplace Conversations: each belongs to the user who started it, and a user may
+hold several (no console page opens one today). Conversations live only in the
 design agent's memory, so a pod roll starts a new one.
 _Avoid_: session, chat (the chat is the panel that shows a Conversation, not the thread).
 
