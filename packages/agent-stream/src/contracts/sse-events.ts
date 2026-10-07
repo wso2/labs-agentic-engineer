@@ -1017,6 +1017,43 @@ export function isView(v: unknown): v is View {
   return (VIEWS as readonly unknown[]).includes(v);
 }
 
+// --- hand_off_to_issues (the main agent hands a report to another view's agent) ---
+//
+// The main chat's agent does not draft or file issues; when the user reports
+// something broken, asks for a capability, or starts a message with `/issue`,
+// it calls this tool with the user's own words. Like the question tools, the
+// call rides the ordinary `tool-call` frame and ENDS the turn at an ACCEPTED
+// call; it does NOT run the view's agent. The console renders it as an offer
+// to open that view's chat with `request` (or to stay in the main chat).
+
+/** The wire tool NAME that hands a request to the Issues view's agent. */
+export const HAND_OFF_TO_ISSUES = "hand_off_to_issues" as const;
+
+/** The hand-off tool for each view that can receive one. */
+export const HAND_OFF_TOOLS: Record<View, string> = { issues: HAND_OFF_TO_ISSUES };
+
+/** True when `toolName` is a hand-off tool. */
+export function isHandOffTool(toolName: string | undefined): boolean {
+  return handOffView(toolName) !== undefined;
+}
+
+/** The view a hand-off tool opens; absent when `toolName` is not a hand-off tool. */
+export function handOffView(toolName: string | undefined): View | undefined {
+  return VIEWS.find((view) => HAND_OFF_TOOLS[view] === toolName);
+}
+
+/** Input of a hand-off tool-call. */
+export interface HandOffInput {
+  /** The user's own words, passed on unchanged (at most 2 000 characters). */
+  request: string;
+}
+
+/** The result a hand-off tool resolves with: the turn now waits for the user. */
+export interface HandOffResult {
+  status: "awaiting_handoff";
+  view: View;
+}
+
 /**
  * The registrable tool sets. NOT a wire field: the agents service derives the
  * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files) and

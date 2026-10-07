@@ -38,7 +38,7 @@ import {
   type ToolLoopAgentSettings,
   type ToolSet,
 } from "ai";
-import { isErrorToolOutput, isQuestionTool } from "@aep/agent-stream";
+import { isErrorToolOutput, isHandOffTool, isQuestionTool } from "@aep/agent-stream";
 
 /** Provider-specific per-call options (`ai` doesn't export the type directly). */
 export type ProviderOptions = NonNullable<ToolLoopAgentSettings["providerOptions"]>;
@@ -82,8 +82,19 @@ export function questionStop(): StopCondition<ToolSet> {
 }
 
 /**
+ * Stop when the last step carries a hand-off tool-call the schema ACCEPTED
+ * (`hand_off_to_issues`): the turn waits for the user to take the hand-off or
+ * stay. An invalid call is skipped, as in `questionStop`, so the model can retry.
+ */
+export function handOffStop(): StopCondition<ToolSet> {
+  return ({ steps }) =>
+    steps[steps.length - 1]?.toolCalls.some((call) => !call.invalid && isHandOffTool(call.toolName)) ?? false;
+}
+
+/**
  * True when the turn ended on a HITL question tool-call (`ask_question` or
- * `ask_questions`, console ADR-0012 / #270) that RESOLVED — its placeholder
+ * `ask_questions`, console ADR-0012 / #270) or a hand-off tool-call
+ * (`hand_off_to_issues`) that RESOLVED — its placeholder
  * result is on the transcript and is not an error. Scans only the messages
  * appended THIS turn; `questionStop` guarantees an accepted call is the last
  * step, so a match means the turn is awaiting the user's answer. A call the
@@ -96,7 +107,7 @@ export function endedAwaitingHuman(appended: ModelMessage[]): boolean {
   for (const m of appended) {
     if (!Array.isArray(m.content)) continue;
     for (const part of m.content) {
-      if (m.role === "assistant" && part.type === "tool-call" && isQuestionTool(part.toolName)) {
+      if (m.role === "assistant" && part.type === "tool-call" && (isQuestionTool(part.toolName) || isHandOffTool(part.toolName))) {
         asked.add(part.toolCallId);
       } else if (m.role === "tool" && part.type === "tool-result" && asked.has(part.toolCallId)) {
         if (!isErrorToolOutput(part.output)) resolved.add(part.toolCallId);
@@ -108,8 +119,8 @@ export function endedAwaitingHuman(appended: ModelMessage[]): boolean {
 
 /**
  * The agent an agent module describes, under this turn's settings. Every agent
- * ends its turn at the step cap or on an accepted question call (an agent
- * without question tools simply never trips the second). Optional settings
+ * ends its turn at the step cap or on an accepted question or hand-off call
+ * (an agent without those tools simply never trips them). Optional settings
  * are left off entirely when absent, so the request is byte-identical to one
  * made without them.
  */
@@ -121,7 +132,7 @@ export function buildToolLoopAgent(
     model: run.model,
     instructions: run.instructionsWrap(agent.instructions),
     tools: agent.tools,
-    stopWhen: [isStepCount(run.maxSteps), questionStop()],
+    stopWhen: [isStepCount(run.maxSteps), questionStop(), handOffStop()],
     ...(run.maxOutputTokens ? { maxOutputTokens: run.maxOutputTokens } : {}),
     ...(run.maxRetries !== undefined ? { maxRetries: run.maxRetries } : {}),
     ...(run.providerOptions ? { providerOptions: run.providerOptions } : {}),

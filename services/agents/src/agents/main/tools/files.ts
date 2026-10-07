@@ -51,6 +51,7 @@ import {
   type PrototypeRenderCheck,
   type RemoveFileInput,
 } from "@aep/agent-stream";
+import { handOffTools } from "./hand-off.js";
 import { buildSkillTools } from "./skill-tools.js";
 import { WriteLedger, type WriteOp } from "./write-ledger.js";
 import type { SkillSource } from "../skill-source.js";
@@ -319,6 +320,10 @@ export function buildFileToolSet(
     // accepted call so it waits for the user's answer.
     [ASK_QUESTION_TOOL]: askQuestionTool,
     [ASK_QUESTIONS_TOOL]: askQuestionsTool,
+
+    // Issue reports go to the Issues agent (hand-off.ts): the call ends the
+    // turn awaiting the user, like the question tools.
+    ...handOffTools(),
 
     // Fire-and-forget UI (#576): deliberately NOT paired with a stop condition
     // at the call site — the agent declares and keeps working.

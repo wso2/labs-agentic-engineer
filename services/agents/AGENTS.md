@@ -48,8 +48,13 @@ byte-identically, preserving the cached instruction prefix.
 **Tool sets** (derived from `TurnSpec.kind`, tasks-github-native §9.3): the turn
 selects which domain tools the generic loop registers. `files` (default, and identical to
 an absent value) is the file-mutation set (`src/agents/main/tools/files.ts`) over a
-`FileBundle` — the generation flows. `task-plan`
-(`tools/task-plan.ts`) registers `planTask`/`updateTask` over a per-turn `TaskPlan`
+`FileBundle` — the generation flows. It also carries `hand_off_to_issues`
+(`tools/hand-off.ts`): the spec agent calls it with the user's own words when they report
+something broken, ask for a capability, want an issue filed or found, or start a message with
+`/issue`. It never drafts or files an issue itself, and the call does not run the Issues agent;
+it ends the turn awaiting the user (`handOffStop`, and `endedAwaitingHuman` counts it), and the
+console offers to open the Issues chat with the request. `task-plan` and `issues` do not carry it.
+`task-plan` (`tools/task-plan.ts`) registers `planTask`/`updateTask` over a per-turn `TaskPlan`
 accumulator (`task-plan-accumulator.ts`) and NO file tools; `files` then carries
 READ-ONLY context (the spec/design bundle + one `tasks/<issueNumber>.md` rendering
 per existing open Task) and nothing mutates it. `kind: "plan"` selects `task-plan`; every other kind selects `files`. Register
