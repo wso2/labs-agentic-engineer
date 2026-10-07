@@ -77,8 +77,7 @@ var (
 		keep:   designBundleFilter,
 	}
 	// acceptanceBundle: the Gherkin oracle the save gate checks stories
-	// against. TODO(Task 47, API-7): compile stub from the main sync; pin the
-	// pod's filter for it test-first.
+	// against, the .feature files directly under the acceptance directory.
 	acceptanceBundle = artifactBundle{
 		filter: sourcecontrol.BundleFilter{Prefix: acceptancePrefix, Exts: []string{".feature"}},
 		keep:   acceptanceBundleFilter,

@@ -24,6 +24,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -648,5 +649,45 @@ func TestScopeBodyRoundTrips(t *testing.T) {
 	}
 	if _, ok := parseScope("Build"); ok {
 		t.Fatal("a body with no scope parsed as one")
+	}
+}
+
+// The save gate reads the acceptance oracle through the pod (API-7): one
+// read-bundle of the Gherkin files under specs/validation/acceptance/, kept
+// flat. A rule set that leaves a story uncovered refuses the build; a
+// nested or non-Gherkin file in that directory is not the oracle.
+func TestSaveSpec_ReadsTheAcceptanceOracleThroughThePod(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/requirements/features/F1-core.md"] = "# Core\n\n## User Stories\n\n" +
+		"- F1.1 As a user, I want the thing, so that value.\n- F1.2 As a user, I want more, so that value.\n"
+	seed["specs/validation/acceptance/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F1.1\n  Rule: a\n"
+	seed["specs/validation/acceptance/old/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F9.9\n  Rule: x\n"
+	seed["specs/validation/acceptance/notes.md"] = "@story-F7.1\n"
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var ve *SpecValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want the uncovered story refused", err)
+	}
+	var got []string
+	for _, f := range ve.Files {
+		if strings.HasPrefix(f.Code, "ACCEPTANCE_") {
+			got = append(got, f.Path+" "+f.Code)
+		}
+	}
+	if want := []string{"specs/validation/acceptance/F1-core.feature " + codeAcceptanceUncoveredStory}; !slices.Equal(got, want) {
+		t.Fatalf("findings = %v, want %v (only the flat Gherkin file is the oracle)", got, want)
+	}
+
+	var reads []sourcecontrol.BundleFilter
+	for _, c := range r.pod.Calls() {
+		if c.Op == aestudiotest.OpReadBundle && c.Filter.Prefix == "specs/validation/acceptance/" {
+			reads = append(reads, c.Filter)
+		}
+	}
+	if len(reads) != 1 || !slices.Equal(reads[0].Exts, []string{".feature"}) || len(reads[0].Paths) != 0 {
+		t.Fatalf("acceptance reads = %+v, want one read of .feature under the acceptance prefix", reads)
 	}
 }
