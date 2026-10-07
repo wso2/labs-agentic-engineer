@@ -21,7 +21,7 @@
 // streamed every frame so far, then follows the turn, or gets the finished
 // stream whole); a different turnId while a turn runs for the project is 409
 // turn_in_progress {activeTurnId}; an `at` that is not a commit sha, or on a
-// turn that is not a plan, is 400 validation_failed.
+// turn that is not a plan, is 400 invalid_turn.
 //
 // The streams it plays are the golden lines kept beside the spec
 // (packages/contracts/sockets/ae-studio/turn/golden/*.ndjson, Golden), which
@@ -200,7 +200,7 @@ func (s *Server) startTurn(w http.ResponseWriter, r *http.Request) {
 	// The spec's `at`: a resolved sha (the agent never resolves a ref), and
 	// on a plan turn only.
 	if req.At != nil && (req.Kind != "plan" || !pinnedCommit.MatchString(*req.At)) {
-		writeProblem(w, http.StatusBadRequest, "validation_failed")
+		writeProblem(w, http.StatusBadRequest, "invalid_turn")
 		return
 	}
 	s.mu.Lock()

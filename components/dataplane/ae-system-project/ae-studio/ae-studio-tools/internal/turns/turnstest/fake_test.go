@@ -148,7 +148,7 @@ func TestFake_RefusesWhatTheSpecRefuses(t *testing.T) {
 		}
 		b, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if resp.StatusCode != c.status || (c.status == http.StatusBadRequest && !strings.Contains(string(b), `"code":"validation_failed"`)) {
+		if resp.StatusCode != c.status || (c.status == http.StatusBadRequest && !strings.Contains(string(b), `"code":"invalid_turn"`)) {
 			t.Fatalf("%s: %d %s", c.name, resp.StatusCode, b)
 		}
 	}
