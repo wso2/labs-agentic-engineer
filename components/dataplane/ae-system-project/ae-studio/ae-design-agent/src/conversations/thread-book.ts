@@ -33,6 +33,12 @@
  * instead: past `THREAD_FALLBACK_BYTES` (base64 attachments counted)
  * it rotates the same way. Without it, a thread on such a connection would
  * grow in the pod's memory until the pod's death.
+ *
+ * Opening a thread resolves nothing, so the threads no turn was admitted to
+ * are capped at `MAX_UNUSED_THREADS` pod-wide, least recently used evicted
+ * first. A thread with a turn belongs to a project the turn resolved, so
+ * those are bounded by the org's projects. An evicted thread holds no
+ * messages; a send to its id is `rotated` and its history is unknown.
  */
 
 import { randomUUID } from "node:crypto";
@@ -51,6 +57,13 @@ const ROTATE_AT_DEN = 5;
  * context window: 8 MiB of messages, base64 file parts included.
  */
 export const THREAD_FALLBACK_BYTES = 8 << 20;
+
+/**
+ * The most threads no turn was admitted to that the pod keeps. Opening one
+ * resolves nothing (a turn resolves its project), so any well-formed name
+ * mints an entry; past the cap the least recently used of them is evicted.
+ */
+export const MAX_UNUSED_THREADS = 1000;
 
 /**
  * The approximate stored size of `value`: string lengths (base64 and most
@@ -87,6 +100,8 @@ export interface ThreadBookDeps {
 
 export class ThreadBook {
   private readonly threads = new Map<string, Thread>();
+  /** Projects whose current thread no turn was admitted to, least recently used first. */
+  private readonly unused = new Set<string>();
   private readonly store: ConversationStore;
   private readonly now: () => Date;
 
@@ -97,7 +112,10 @@ export class ThreadBook {
 
   /** The project's current thread, opened (credited to `by`) when there is none. */
   current(project: string, by?: string): ThreadView {
-    return view(this.threads.get(project) ?? this.open(project, by));
+    const open = this.threads.get(project);
+    if (!open) return view(this.open(project, by));
+    if (this.unused.delete(project)) this.unused.add(project);
+    return view(open);
   }
 
   /**
@@ -150,8 +168,12 @@ export class ThreadBook {
   async admit(project: string, conversationId: string, contextWindow?: number): Promise<"ok" | "rotated"> {
     const thread = this.threads.get(project);
     if (thread?.id !== conversationId) return "rotated";
-    if (!(await this.full(thread, contextWindow))) return "ok";
+    if (!(await this.full(thread, contextWindow))) {
+      this.unused.delete(project);
+      return "ok";
+    }
     this.threads.delete(project);
+    this.unused.delete(project);
     await this.store.delete(thread.id);
     return "rotated";
   }
@@ -168,6 +190,13 @@ export class ThreadBook {
   private open(project: string, by?: string): Thread {
     const thread: Thread = { id: randomUUID(), createdAt: this.now(), ...(by ? { createdBy: by } : {}) };
     this.threads.set(project, thread);
+    this.unused.delete(project);
+    this.unused.add(project);
+    const oldest = this.unused.values().next();
+    if (this.unused.size > MAX_UNUSED_THREADS && !oldest.done) {
+      this.unused.delete(oldest.value);
+      this.threads.delete(oldest.value);
+    }
     return thread;
   }
 }
