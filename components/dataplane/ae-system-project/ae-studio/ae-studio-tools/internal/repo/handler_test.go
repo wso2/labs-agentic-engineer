@@ -453,7 +453,7 @@ func TestTags_CreateListAndRefusals(t *testing.T) {
 		}
 		return resp
 	}
-	status, _ := answer(t, create(gen.CreateTagRequest{Name: "v1.0.0", Message: "first", Tagger: gen.GitIdentity{Name: "Ada", Email: "ada@example.com"}}).VisitCreateTagResponse)
+	status, _ := answer(t, create(gen.CreateTagRequest{Name: "v1.0.0", Message: "first\n\nFeatures: F1 F2\nHeld back: F2.4", Tagger: gen.GitIdentity{Name: "Ada", Email: "ada@example.com"}}).VisitCreateTagResponse)
 	if status != http.StatusCreated {
 		t.Fatalf("create = %d", status)
 	}
@@ -476,7 +476,8 @@ func TestTags_CreateListAndRefusals(t *testing.T) {
 		return resp.(gen.ListTags200JSONResponse).Tags
 	}
 	local := list(gen.ListTagsParams{Local: true, Prefix: "v"})
-	if len(local) != 1 || local[0].Name != "v1.0.0" || local[0].CommitHash != origin.HeadSHA(t) || local[0].Message != "first" || local[0].CreatedAt == nil {
+	if len(local) != 1 || local[0].Name != "v1.0.0" || local[0].CommitHash != origin.HeadSHA(t) || local[0].Message != "first" ||
+		local[0].Body != "Features: F1 F2\nHeld back: F2.4" || local[0].CreatedAt == nil {
 		t.Fatalf("local tags = %+v, want only the studio's v1.0.0", local)
 	}
 	if fetched := list(gen.ListTagsParams{Prefix: "v2"}); len(fetched) != 1 || fetched[0].Name != "v2.0.0" {

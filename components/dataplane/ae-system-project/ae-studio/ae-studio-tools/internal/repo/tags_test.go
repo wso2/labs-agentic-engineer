@@ -296,7 +296,7 @@ func TestPortedMethodsMapENOSPCToDiskFull(t *testing.T) {
 // lines; the listing hands the body back whole, and a subject-only tag reads
 // an empty body.
 func TestListTagsBody(t *testing.T) {
-	fx := workspacetest.New(t, seedFiles())
+	fx := NewFixture(t, seedFiles())
 	ctx := context.Background()
 	fx.Origin.Tag(t, "v1", "Spec v1")
 	head := fx.Origin.HeadSHA(t)
@@ -306,7 +306,7 @@ func TestListTagsBody(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTags: %v", err)
 	}
-	byName := map[string]gitfs.TagInfo{}
+	byName := map[string]repo.TagInfo{}
 	for _, tag := range tags {
 		byName[tag.Name] = tag
 	}

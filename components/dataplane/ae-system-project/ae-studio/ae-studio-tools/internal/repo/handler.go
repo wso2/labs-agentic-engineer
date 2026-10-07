@@ -219,7 +219,7 @@ func (h Handler) ListTags(ctx context.Context, req gen.ListTagsRequestObject) (g
 		if err == nil {
 			out := make([]gen.Tag, 0, len(tags))
 			for _, t := range tags {
-				tag := gen.Tag{Name: t.Name, CommitHash: t.CommitHash, Message: t.Message}
+				tag := gen.Tag{Name: t.Name, CommitHash: t.CommitHash, Message: t.Message, Body: t.Body}
 				if !t.CreatedAt.IsZero() {
 					created := t.CreatedAt
 					tag.CreatedAt = &created
