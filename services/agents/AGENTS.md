@@ -65,9 +65,10 @@ off the stream. The plan tool contract (inputs, results, error codes, the
 A third set, `issues` (`src/agents/issues/`), is selected by the turn's `view: "issues"`
 (the console's Issues page) rather than by the turn's kind: `classify_report` (Jev, the
 report classifier; `classify.ts`) plus `ask_question`/`ask_questions`, with the
-search/file tools merged from the turn's `mcp` block. It has its own instructions
-(`prompt.ts`), no spec bundle and no file or skill tools; the user's message is the whole
-prompt. An unknown `view` is a 400, and a view turn cannot join a collab room.
+search/file tools merged under them from the turn's `mcp` block. `createIssuesAgent`
+(`agent.ts`) builds the agent: those tools, the filing gate, and its own instructions
+(`prompt.ts`); no spec bundle, no file or skill tools, no web search; the user's message is
+the whole prompt. An unknown `view` is a 400, and a view turn cannot join a collab room.
 
 Filing is gated in code (`filing-gate.ts`), not only by the prompt. The agent drafts the
 issue, then asks ONE `ask_question` whose question is exactly `FILE_QUESTION` ("File this
@@ -171,7 +172,11 @@ this service ships only the runtime + its unit tests.
 - Agent + SDK wiring (the `ToolLoopAgent` loop, tools, prompt, server) lives
   here; the client-safe fold + wire contracts live in `@aep/agent-stream`.
 - Latest Claude models by default (see the `claude-api` skill for model ids).
-- One agent per `src/agents/<name>/`; the loop (`run-turn.ts`) is shared.
+- One agent per `src/agents/<name>/`, each a `ToolLoopAgent` made by the factory in
+  its `agent.ts` (`createMainAgent`, `createIssuesAgent`) from its deps plus the
+  per-turn `AgentRunSettings` (`src/agents/run-settings.ts`). The loop
+  (`run-turn.ts`) is shared: it decides the settings and streams whatever agent the
+  caller's `agentFor` builds; `run-conversation-turn.ts` picks the factory.
 - `src/` writes no files **on the turn path**; its only filesystem READS are the
   §12 snapshot dirs (`load-workspace.ts`, paths derived solely by
   `snapshot-path.ts`). The one write is DevTools retention

@@ -22,6 +22,27 @@ requests.
 into a reviewable change, and `applyToolCall` folds the streamed calls through the
 canonical `FileBundle` ops to reconstruct file state — no second matcher.
 
+## Agents and the loop
+
+Each agent is a `ToolLoopAgent` built in its own module by a factory, following the AI
+SDK's building-agents guidance: `createMainAgent` (`src/agents/main/agent.ts`, the spec
+editor) and `createIssuesAgent` (`src/agents/issues/agent.ts`). A factory takes what
+the agent IS (its deps: tools, instructions, or for the Issues agent what it builds them
+from) and `AgentRunSettings` (`src/agents/run-settings.ts`), what `runTurn` decided for
+this turn: the model built from the org's connection, the step cap, the output ceiling,
+retries, provider options, `instructionsWrap` (the system prompt, with the cache
+breakpoint when caching is on) and `prepareStep` (the rolling breakpoint). Every agent
+is assembled by one helper, `buildToolLoopAgent`, which stops at the step cap or on an
+accepted question call (`questionStop`) and leaves an absent option off entirely.
+
+`runTurn` takes `agentFor(run)` rather than tools and instructions: it pushes the user
+message, which is what fixes the turn prompt's index for the rolling breakpoint, then
+calls `agentFor` once and streams the agent it returns. `runConversationTurn` picks the
+factory: the Issues view's turns get `createIssuesAgent`, which merges the turn's MCP
+tools under its own and gates `create_issue`; every other turn gets `createMainAgent`
+over the tool set it assembles (files or task-plan, then MCP, register draft and web
+search).
+
 ## Locked decisions
 
 | Decision | Why |
@@ -53,13 +74,14 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 
 A **view** is a main-panel view of the console that owns an agent of its own. The turn
 body's optional `view` (`VIEWS` in `@aep/agent-stream`; absent means the spec agent)
-selects that view's tool set and instructions in place of the spec editor's:
+selects that view's agent in place of the spec editor:
 `toolsetFor(turn, view)` returns `issues` for `view: "issues"` and otherwise derives
-`files`/`task-plan` from the turn as before. `runConversationTurn` dispatches the
-`issues` set to `src/agents/issues/` (the report classifier, the question tools,
-Issues-agent instructions, no spec bundle), and the question stop condition applies
-unchanged, so a "File this issue?" card ends the turn awaiting the user. Adding a view
-is one entry in `VIEWS`, one tool set, and one `src/agents/<view>/`.
+`files`/`task-plan` from the turn. `runConversationTurn` runs an `issues` turn on
+`createIssuesAgent` (`src/agents/issues/agent.ts`: the report classifier, the question
+tools, the turn's MCP tools under them, Issues-agent instructions, no spec bundle), and
+it stops on an accepted question call like every agent, so a "File this issue?" card
+ends the turn awaiting the user. Adding a view is one entry in `VIEWS`, one tool set,
+and one `src/agents/<view>/` with its `agent.ts` factory.
 
 The Issues agent files on one explicit answer. The prompt has it call a single
 `ask_question` with the exact question `FILE_QUESTION` and the exact options `FILE_IT`

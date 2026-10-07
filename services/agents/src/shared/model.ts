@@ -37,7 +37,7 @@ import type { LanguageModel } from "ai";
 import { anthropic, createAnthropic, type AnthropicLanguageModelOptions } from "@ai-sdk/anthropic";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ModelAuthScheme, ModelCapabilities, ModelFormat, TurnConnection } from "@aep/agent-stream";
-import type { ProviderOptions } from "../agents/main/run-turn.js";
+import type { ProviderOptions } from "../agents/run-settings.js";
 import { config } from "./config.js";
 import { guardedFetch } from "./guarded-fetch.js";
 import { watchProviderLimits, type ProviderLimitLog } from "./provider-limit.js";
