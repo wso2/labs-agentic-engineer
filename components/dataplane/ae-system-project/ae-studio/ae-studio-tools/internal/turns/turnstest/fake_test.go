@@ -119,3 +119,40 @@ func TestFake_TurnRulesOfTheSpec(t *testing.T) {
 		t.Fatalf("next turn: %d, started %d", resp.StatusCode, s.Started())
 	}
 }
+
+// TestFake_RefusesWhatTheSpecRefuses: the Turn socket's `at` is a resolved
+// sha on a plan turn only; the fake refuses anything else, so a caller that
+// relays an unresolved ref fails its own tests.
+func TestFake_RefusesWhatTheSpecRefuses(t *testing.T) {
+	s := New(t, Script{})
+	client := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", s.Path())
+	}}}
+	t.Cleanup(client.CloseIdleConnections)
+	sha := strings.Repeat("a1", 20)
+	for _, c := range []struct {
+		name, kind, at string
+		status         int
+	}{
+		{"a tag", "plan", `"tags/v1"`, http.StatusBadRequest},
+		{"a short sha", "plan", `"abc123"`, http.StatusBadRequest},
+		{"a start turn", "start", `"` + sha + `"`, http.StatusBadRequest},
+		{"a plan at a sha", "plan", `"` + sha + `"`, http.StatusOK},
+	} {
+		resp, err := client.Post("http://turn/turns", "application/json", strings.NewReader(
+			`{"turnId":"11111111-1111-5111-8111-111111111111","project":"greeter","kind":"`+c.kind+`","at":`+c.at+
+				`,"credit":{"userId":"u","name":"n","email":"e"}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != c.status || (c.status == http.StatusBadRequest && !strings.Contains(string(b), `"code":"validation_failed"`)) {
+			t.Fatalf("%s: %d %s", c.name, resp.StatusCode, b)
+		}
+	}
+	if s.Started() != 1 || len(s.Requests()) != 4 {
+		t.Fatalf("started = %d, requests = %d, want 1 and 4", s.Started(), len(s.Requests()))
+	}
+}

@@ -48,7 +48,11 @@ A user token never clears `/internal/v1`: the M2M gate needs a
   cache. 404 there is `project_unknown`. The Files socket contract has no
   owner or repo field at all, so a request naming one is refused before any
   lookup. The turns op names its project in the body and its owner/repo must
-  be that project's repository.
+  be that project's repository. A plan turn's `at` (`tags/<version>` or a
+  sha) is resolved there, before the turn starts, and the Turn socket gets
+  the commit sha in its place (404 `ref_not_found` when the repository lacks
+  it, nothing started); a start turn may not send one (400
+  `validation_failed`).
 - **Why the browser and the sockets cannot name a repository:** the gitpat
   reaches every repository its GitHub user can reach, including non-AE
   repositories under the same owner, personal ones and other GitHub orgs. A

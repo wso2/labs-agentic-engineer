@@ -98,6 +98,18 @@ func (h Handler) GetHead(ctx context.Context, req gen.GetHeadRequestObject) (gen
 	return h.problem(ctx, "get-head", req.Owner, req.Repo, err)
 }
 
+// ResolveAt resolves at (tags/<name> or a full sha) on owner/name to the
+// commit it names, as get-head does; branch is the repository's default
+// branch. A failure maps through Problem: an at the repository lacks is
+// ErrRefNotFound (404 ref_not_found), a malformed one 400 validation_failed.
+func (h Handler) ResolveAt(ctx context.Context, owner, name, branch, at string) (string, error) {
+	ref, err := h.ref(owner, name, branch)
+	if err != nil {
+		return "", err
+	}
+	return h.resolve(ctx, ref, at, false)
+}
+
 // ListTree lists every file of the commit at names, under prefix.
 func (h Handler) ListTree(ctx context.Context, req gen.ListTreeRequestObject) (gen.ListTreeResponseObject, error) {
 	ref, err := h.ref(req.Owner, req.Repo, req.Params.DefaultBranch)

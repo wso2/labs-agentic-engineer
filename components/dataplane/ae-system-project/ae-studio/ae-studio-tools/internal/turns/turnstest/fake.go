@@ -20,7 +20,8 @@
 // its stream; a request with a turnId the fake has seen reattaches (it is
 // streamed every frame so far, then follows the turn, or gets the finished
 // stream whole); a different turnId while a turn runs for the project is 409
-// turn_in_progress {activeTurnId}.
+// turn_in_progress {activeTurnId}; an `at` that is not a commit sha, or on a
+// turn that is not a plan, is 400 validation_failed.
 //
 // The streams it plays are the golden lines kept beside the spec
 // (packages/contracts/sockets/ae-studio/turn/golden/*.ndjson, Golden), which
@@ -30,11 +31,14 @@ package turnstest
 import (
 	"bufio"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -59,8 +63,9 @@ type Server struct {
 	path   string
 	script Script
 
-	mu      sync.Mutex
-	started int
+	mu       sync.Mutex
+	started  int
+	requests []json.RawMessage // every start request's body, refused or not
 	turns   map[string]*turn  // by turnId, kept after the turn ends
 	active  map[string]string // project → its running turnId
 	running sync.WaitGroup
@@ -97,6 +102,14 @@ func (s *Server) Started() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.started
+}
+
+// Requests answers the body of every start request the fake received, in
+// order (reattaches and refusals included).
+func (s *Server) Requests() []json.RawMessage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.requests)
 }
 
 // ServeHandler serves h on a fresh Unix socket until the test ends and
@@ -162,13 +175,32 @@ func GoldenScript(t *testing.T, name string, hold time.Duration) Script {
 	return Script{Events: lines[:len(lines)-1], Result: lines[len(lines)-1], Hold: hold}
 }
 
+// pinnedCommit is the Turn socket's `at`: a 40-hex commit sha.
+var pinnedCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 func (s *Server) startTurn(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		TurnID  string `json:"turnId"`
-		Project string `json:"project"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.TurnID == "" || req.Project == "" {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "invalid_turn")
+		return
+	}
+	s.mu.Lock()
+	s.requests = append(s.requests, body)
+	s.mu.Unlock()
+	var req struct {
+		TurnID  string  `json:"turnId"`
+		Project string  `json:"project"`
+		Kind    string  `json:"kind"`
+		At      *string `json:"at"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.TurnID == "" || req.Project == "" {
+		writeProblem(w, http.StatusBadRequest, "invalid_turn")
+		return
+	}
+	// The spec's `at`: a resolved sha (the agent never resolves a ref), and
+	// on a plan turn only.
+	if req.At != nil && (req.Kind != "plan" || !pinnedCommit.MatchString(*req.At)) {
+		writeProblem(w, http.StatusBadRequest, "validation_failed")
 		return
 	}
 	s.mu.Lock()
