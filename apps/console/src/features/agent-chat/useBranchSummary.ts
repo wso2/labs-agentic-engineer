@@ -42,6 +42,30 @@ function issuesProject(scope: ShellScope): string | null {
   return scope.kind === "project" && chatViewFor(scope.page, scope.card) === "issues" ? scope.projectName : null;
 }
 
+/** A summary note posted, by project: its id, and the messages it sums up. */
+type Posted = Map<string, { id: string; messages: number }>;
+
+/**
+ * Put the summary in the project's main chat. That chat may not be loaded yet
+ * (a reload or a link straight onto Issues): reading its history replaces its
+ * items, so the note waits for it, or the load would wipe it.
+ */
+async function summarise(posted: Posted, projectName: string, spoken: number, line: string): Promise<void> {
+  await chatStore.open(projectName);
+  const last = chatStore.get(projectName).items.at(-1);
+  const before = posted.get(projectName);
+  const reuse = last?.kind === "note" && before?.id === last.id ? before : null;
+  const messages = spoken + (reuse?.messages ?? 0);
+  const text = `From Issues · ${messages} ${messages === 1 ? "message" : "messages"}${line ? ` · ${line}` : ""}`;
+  const actions = [{ kind: "open-issues" as const, label: "Reopen" }];
+  if (reuse) {
+    chatStore.replaceNote(projectName, reuse.id, text, actions);
+    posted.set(projectName, { id: reuse.id, messages });
+    return;
+  }
+  posted.set(projectName, { id: chatStore.post(projectName, text, actions), messages });
+}
+
 /**
  * Mounted once, in the shell. While the Issues chat is in front it notes how
  * many messages the thread had when the user arrived; when the user leaves for
@@ -57,7 +81,7 @@ export function useBranchSummary(scope: ShellScope): void {
   /** How many messages each project's Issues thread had on arrival; set once the thread is read. */
   const arrival = useRef(new Map<string, number>());
   /** The summary note last posted per project, and the messages it sums up. */
-  const posted = useRef(new Map<string, { id: string; messages: number }>());
+  const posted = useRef<Posted>(new Map());
 
   useEffect(() => {
     if (!project) return;
@@ -82,19 +106,7 @@ export function useBranchSummary(scope: ShellScope): void {
     const replies = spoken.flatMap((i) => (i.kind === "agent" && i.text.trim() !== "" ? [i.text] : []));
     const line = replies.length > 0 ? oneLine(replies[replies.length - 1]!) : "";
 
-    const last = chatStore.get(left).items.at(-1);
-    const before = posted.current.get(left);
-    const reuse = last?.kind === "note" && before?.id === last.id ? before : null;
-    const messages = spoken.length + (reuse?.messages ?? 0);
-    const text = `From Issues · ${messages} ${messages === 1 ? "message" : "messages"}${line ? ` · ${line}` : ""}`;
-    const actions = [{ kind: "open-issues" as const, label: "Reopen" }];
-    if (reuse) {
-      chatStore.replaceNote(left, reuse.id, text, actions);
-      posted.current.set(left, { id: reuse.id, messages });
-      return;
-    }
-    chatStore.post(left, text, actions);
-    const note = chatStore.get(left).items.at(-1);
-    if (note?.kind === "note") posted.current.set(left, { id: note.id, messages });
+    void summarise(posted.current, left, spoken.length, line);
   }, [project]);
 }
+

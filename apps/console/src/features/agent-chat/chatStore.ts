@@ -470,12 +470,11 @@ export function createChatStore(options: ChatStoreOptions) {
 
     send,
 
-    /** Post a line in the agent's voice about something started outside the chat: "v1 is building". */
-    post(projectName: string, text: string, actions: NoteAction[] = []): void {
-      setItems(projectName, (items) => [
-        ...items,
-        { kind: "note", id: localId("n"), text, ...(actions.length > 0 ? { actions } : {}) },
-      ]);
+    /** Post a line in the agent's voice about something started outside the chat: "v1 is building". Returns the note's id. */
+    post(projectName: string, text: string, actions: NoteAction[] = []): string {
+      const id = localId("n");
+      setItems(projectName, (items) => [...items, { kind: "note", id, text, ...(actions.length > 0 ? { actions } : {}) }]);
+      return id;
     },
 
     /** Reword a posted line where it stands: the card that sums up a visit, updated by the next one. */
