@@ -315,6 +315,29 @@ func TestCodingAgentRunNameFor_IsStableAcrossRetries(t *testing.T) {
 	}
 }
 
+// TestDispatch_TheRunnerGetsTheVersionItBuilds (B2, API-24): the cycle's
+// version reaches the run as AEP_SPEC_TAG, the bare tag name: the runner
+// fetches refs/tags/<name> and pins specs/ to it (pinSpecsToVersion).
+func TestDispatch_TheRunnerGetsTheVersionItBuilds(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+	req := codingMilestoneDispatch()
+	req.SpecTag = "release-2"
+
+	if _, err := e.Dispatch(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	var tag string
+	for _, ev := range rec.load.Env {
+		if ev.Key == "AEP_SPEC_TAG" {
+			tag = ev.Value
+		}
+	}
+	if tag != "release-2" {
+		t.Errorf("AEP_SPEC_TAG = %q, want the cycle's version release-2", tag)
+	}
+}
+
 // TestDispatch_ValidationCycleDispatchesOnOCPath: validation carries task kind
 // and deadline through the OpenChoreo Component path.
 func TestDispatch_ValidationCycleDispatchesOnOCPath(t *testing.T) {

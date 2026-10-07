@@ -221,9 +221,6 @@ func (t *planTap) linksFor(p plannedTask) []taskLink {
 
 // newPlanTap builds a tap with every map initialised. Callers set the milestone,
 // the preloaded state and the app paths.
-
-// newPlanTap builds a tap with every map initialised. Callers set the milestone,
-// the preloaded state and the app paths.
 func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient, writer *delivery.IssueWriter) *planTap {
 	return &planTap{
 		ctx:               ctx,
