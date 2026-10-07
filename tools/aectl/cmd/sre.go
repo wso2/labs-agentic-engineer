@@ -120,7 +120,11 @@ with a new key file rotates it.
 Requires --platform-chart or --platform-version: this command also turns on
 sreAgent.* on the AEP platform release (org, handoff key, MCP hostname) via
 an internal 'aectl platform update', and a pinned chart source keeps that call
-from silently upgrading the release to whatever is latest on GHCR.`,
+from silently upgrading the release to whatever is latest on GHCR.
+
+It also needs the aectl platform config (written by 'make dev-env' / platform
+install) and refuses to start without it: the internal update re-applies the
+platform's AE Studio values.`,
 	RunE: runSreInstall,
 }
 
@@ -201,6 +205,22 @@ func sreMCPURL(host string, port int) string {
 	return fmt.Sprintf("https://%s:%d%s", host, port, sreHandoffMCPPath)
 }
 
+// sreInstallPreflight holds the checks that must fail before this command
+// writes anything (a secret, the handoff key, a helm install).
+//
+// This command flips sreAgent.* on the AEP platform release via `aectl
+// platform update`'s own code path. Without an explicit chart source that call
+// falls back to the unversioned OCI chart, silently upgrading the platform
+// release to whatever is latest on GHCR. That same call needs a valid aectl
+// config (platformUpdate refuses without one), and reaching it only at step 5
+// would leave the handoff key written on one side only.
+func sreInstallPreflight() error {
+	if srePlatformChart == "" && srePlatformVersion == "" {
+		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
+	}
+	return requireAEStudioConfig()
+}
+
 func runSreInstall(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -208,13 +228,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm is required but was not found in PATH\nInstall it from https://helm.sh/docs/intro/install/ and try again")
 	}
 
-	// This command flips sreAgent.* on the AEP platform release via `aectl
-	// platform update`'s own code path; without an explicit chart source that
-	// call falls back to the unversioned OCI chart, silently upgrading the
-	// platform release to whatever is latest on GHCR. Fail fast rather than
-	// risk that.
-	if srePlatformChart == "" && srePlatformVersion == "" {
-		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
+	if err := sreInstallPreflight(); err != nil {
+		return err
 	}
 
 	// Resolve and probe the SRE model before touching the cluster, so a bad

@@ -17,8 +17,12 @@
 package cmd
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/spf13/viper"
 )
 
 // helmUpgradeArgs must resolve the chart source cfg carries — a local
@@ -100,5 +104,70 @@ func TestUpdatePlatformSreAgent_PassesChartSourceThrough(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Errorf("args = %q, want to contain %q", joined, want)
 		}
+	}
+}
+
+// `sre install` must refuse a missing aectl config before it writes anything:
+// the platform update it ends with needs one, and by step 5 the handoff key is
+// already written on one side only.
+func TestSreInstallPreflight(t *testing.T) {
+	setValidUpdateConfig(t)
+	prevChart, prevVersion := srePlatformChart, srePlatformVersion
+	t.Cleanup(func() { srePlatformChart, srePlatformVersion = prevChart, prevVersion })
+
+	srePlatformChart, srePlatformVersion = "", ""
+	if err := sreInstallPreflight(); err == nil || !strings.Contains(err.Error(), "--platform-chart or --platform-version") {
+		t.Fatalf("no chart pin: want pin error, got %v", err)
+	}
+
+	srePlatformChart = "deployments/helm-charts/platform"
+	if err := sreInstallPreflight(); err != nil {
+		t.Fatalf("pinned chart + valid config: %v", err)
+	}
+
+	viper.Reset()
+	if err := sreInstallPreflight(); err == nil || !strings.Contains(err.Error(), "aectl config is missing or invalid") {
+		t.Fatalf("missing config: want config error, got %v", err)
+	}
+}
+
+// With a missing config runSreInstall returns the config error itself, not a
+// later cluster-connect error: nothing downstream of the preflight ran.
+func TestRunSreInstall_MissingConfigRefusesBeforeCluster(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not in PATH; runSreInstall checks it before the preflight")
+	}
+	setValidUpdateConfig(t)
+	prevChart, prevKube := srePlatformChart, kubeconfig
+	t.Cleanup(func() { srePlatformChart, kubeconfig = prevChart, prevKube })
+	srePlatformChart = "deployments/helm-charts/platform"
+	kubeconfig = filepath.Join(t.TempDir(), "no-such-kubeconfig")
+	viper.Reset()
+
+	err := runSreInstall(nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "aectl config is missing or invalid") {
+		t.Fatalf("want config refusal before any cluster access, got %v", err)
+	}
+}
+
+// The platform update `sre install` builds must carry the AE Studio values and
+// the value strategy that keeps the chart's new defaults reaching an existing
+// install, same as `platform update`.
+func TestSreAgentPlatformUpdateConfig_CarriesAEStudioValuesAndValueStrategy(t *testing.T) {
+	setValidUpdateConfig(t)
+	p := sreParams{AEPNamespace: "wso2-aep", MCPHostname: "aep-mcp.openchoreo.localhost"}
+	args, err := helmUpgradeArgs(sreAgentPlatformUpdateConfig(p, "deployments/helm-charts/platform", "", "abc123"))
+	if err != nil {
+		t.Fatalf("helmUpgradeArgs: %v", err)
+	}
+	joined := strings.Join(args, "\x00")
+	want := aeStudioOverrides("wso2-aep")
+	for i := 0; i+1 < len(want); i += 2 {
+		if !strings.Contains(joined, want[i]+"\x00"+want[i+1]) {
+			t.Errorf("sre update args lack %s %s", want[i], want[i+1])
+		}
+	}
+	if !strings.Contains(joined, "--reset-then-reuse-values") || strings.Contains(joined, "--reuse-values\x00") {
+		t.Errorf("sre update args = %q, want --reset-then-reuse-values and no plain --reuse-values", args)
 	}
 }
