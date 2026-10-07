@@ -8617,8 +8617,8 @@ components:
             `never-started` is distinct from `""` because the two need opposite treatment:
             one means the journey has not begun and the user needs a way to begin it, the
             other means it is under way between turns and offering to restart it would
-            supersede a live interview. Derived from the newest `agent_turns` row for the project,
-            which is what `exists`/`version`/`dirty` cannot say: all three read committed git,
+            supersede a live interview. Derived from the newest main-chat `agent_turns` row for the project (use case
+            `general`; the Issues chat's turns are excluded), which is what `exists`/`version`/`dirty` cannot say: all three read committed git,
             and a kickoff writes nothing until it lands. The overview's spec card needs it to
             say *Writing requirements* while the platform-fired `/start` runs, and the spec
             view needs it to explain an empty workspace instead of offering a file picker.

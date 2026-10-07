@@ -67,7 +67,9 @@ const (
 	KindDevelopment = "development"
 	// KindBug ("bug") is a defect, from anywhere: a red build, a failed deploy,
 	// a failed acceptance criterion, a wiring conformance defect, or a human.
-	// Where it came from is the `src/*` source label, which only bugs carry.
+	// Where it came from is the `src/*` source label, which every platform-minted bug
+	// carries; the Issues agent also stamps `src/user` on the feature and improvement
+	// issues it files, which are not delivery kinds.
 	KindBug = "bug"
 	// KindConflict ("conflict") is a cycle's pull request that will not merge.
 	// The issue names the pull request so the agent rebases THAT branch rather
@@ -84,8 +86,10 @@ const (
 	KindProvision = "provision"
 )
 
-// The SOURCES. Only a KindBug issue carries one, and an ABSENT source reads as
-// SrcUser: a bug with no source label is a human's, because every platform minter
+// The SOURCES. A KindBug issue carries one (so does a feature or improvement issue
+// the Issues agent files for a user, stamped `src/user`; those are not delivery
+// kinds), and an ABSENT source reads as SrcUser: a bug with no source label is a
+// human's, because every platform minter
 // stamps its own. Nothing substitutes the value — the reading is what a person or
 // an agent takes from the missing label, which is why `src/user` is also stamped
 // explicitly wherever the platform knows a human filed the issue.
