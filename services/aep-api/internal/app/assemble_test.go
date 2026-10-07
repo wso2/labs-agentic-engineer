@@ -25,6 +25,9 @@ package app
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
@@ -207,6 +210,62 @@ func TestAssemble_Degradations(t *testing.T) {
 			if hasCapability(degs, gone) {
 				t.Errorf("with OBSERVER_URL set, %q must not be degraded, got %+v", gone, degs)
 			}
+		}
+	})
+}
+
+// The SRE handoff (SRE_HANDOFF_TOKEN) mounts its MCP surface only together
+// with the observer and the service credential its tools verify every call
+// with; a key without them refuses the boot. The key opens that one surface:
+// on /api/v1 it is just another unverifiable bearer.
+func TestAssemble_SREHandoff(t *testing.T) {
+	const key = "sre-handoff-key-for-the-assembly-test"
+	sreCfg := func() config.Config {
+		cfg := baseCfg()
+		cfg.SREHandoff.Token = key
+		cfg.Observability.BaseURL = "http://observer"
+		return cfg
+	}
+	serve := func(t *testing.T, h http.Handler, method, path, body string) int {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	const toolsList = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+
+	t.Run("configured: the key opens sre-handoff/mcp and not /api/v1", func(t *testing.T) {
+		app, err := Assemble(sreCfg(), Fake(), Seam{AuthProvider: staticM2M{}})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if got := serve(t, app.Handler, http.MethodPost, "/internal/v1/sre-handoff/mcp", toolsList); got != http.StatusOK {
+			t.Errorf("sre-handoff/mcp with the key = %d, want 200", got)
+		}
+		if got := serve(t, app.Handler, http.MethodGet, "/api/v1/projects/shop/issues", ""); got != http.StatusUnauthorized {
+			t.Errorf("/api/v1 with the handoff key = %d, want 401", got)
+		}
+	})
+	t.Run("unconfigured: not mounted", func(t *testing.T) {
+		app, err := Assemble(baseCfg(), Fake(), Seam{AuthProvider: staticM2M{}})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if got := serve(t, app.Handler, http.MethodPost, "/internal/v1/sre-handoff/mcp", toolsList); got != http.StatusNotFound {
+			t.Errorf("sre-handoff/mcp unconfigured = %d, want 404", got)
+		}
+	})
+	t.Run("the key without the observer or the service credential refuses the boot", func(t *testing.T) {
+		noObserver := sreCfg()
+		noObserver.Observability.BaseURL = ""
+		if _, err := Assemble(noObserver, Fake(), Seam{AuthProvider: staticM2M{}}); err == nil || !strings.Contains(err.Error(), "SRE_HANDOFF_TOKEN") {
+			t.Errorf("without OBSERVER_URL: err = %v, want the SRE handoff boot refusal", err)
+		}
+		if _, err := Assemble(sreCfg(), Fake(), Seam{}); err == nil || !strings.Contains(err.Error(), "SRE_HANDOFF_TOKEN") {
+			t.Errorf("without the service credential: err = %v, want the SRE handoff boot refusal", err)
 		}
 	})
 }

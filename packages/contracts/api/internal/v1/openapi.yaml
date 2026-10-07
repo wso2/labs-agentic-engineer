@@ -4,14 +4,14 @@ info:
   description: |-
     aep-api's internal service-to-service surface. Its audience is machines,
     never the console: non-public, never gateway-advertised. Every operation's
-    tags name its caller (Runner, AE Studio), so the spec reads as who calls
-    what. Callers authenticate with a Thunder per-org publisher
+    tags name its caller (Runner, AE Studio, SRE Agent), so the spec reads as
+    who calls what. Callers authenticate with a Thunder per-org publisher
     client-credentials token (runner ops and mcp) or the org's ae-studio-<org>
     client-credentials token (ae-studio/ ops and mcp); the acting org is
     always derived from the verified credential, never from request input.
-    The OpenChoreo SRE agent's raw JSON-RPC handoff (sre-handoff/mcp) is
-    mounted beside mcp with its own gate (the install-time handoff key) and
-    is not described here.
+    The one exception is the OpenChoreo SRE agent's sre-handoff/mcp: its
+    install-time handoff key names no org, so each tool call names its org
+    and the tools verify it against the observer's recorded alerts.
 
     Requests are validated against this spec and body-capped per operation
     (1 MiB by default) before any handler runs.
@@ -302,6 +302,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /sre-handoff/mcp:
+    post:
+      operationId: call-sre-handoff-mcp-tool
+      summary: SRE handoff MCP JSON-RPC (tools/list, tools/call)
+      description: |-
+        One opaque JSON-RPC 2.0 operation; sourcecontrol/issues serves its two
+        tools (search_related_issues, create_issue). Every tool call names its
+        org (`namespace`), verified against the observer's alerts of the last
+        hour before the tool acts. Mounted only when SRE_HANDOFF_TOKEN is set.
+        Declared so this spec lists every internal route. Excluded from code
+        generation (internal/igen/oapi-codegen.yaml exclude-operation-ids): the
+        handler is a raw JSON-RPC handler, not a strict-server method.
+      tags:
+      - SRE Agent
+      security:
+      - sreHandoffKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: The bearer is not the handoff key (plain text).
 components:
   schemas:
     ValidationContextResponse:
@@ -616,3 +647,10 @@ components:
         (ae-studio-<org>), held by its AE Studio tools pod; the org is the one
         that client is recorded for. The only credential the ae-studio/ ops
         accept, and the pod's credential on mcp; never a runner op's.
+    sreHandoffKey:
+      type: http
+      scheme: bearer
+      description: |-
+        The install-time SRE handoff key (SRE_HANDOFF_TOKEN), shared by
+        aep-api and the OpenChoreo SRE agent. Names no org; opens
+        sre-handoff/mcp only.

@@ -6,8 +6,10 @@ prefix per caller, one gate per prefix.**
 - The **spec** says who reads the contract: a person on the console
   (`packages/contracts/api/v1/openapi.yaml`) or a machine
   (`packages/contracts/api/internal/v1/openapi.yaml`). The internal spec's
-  tags name the caller: `Runner`, `AE Studio`. The SRE handoff's raw
-  JSON-RPC route (`/internal/v1/sre-handoff/mcp`) has no spec entry.
+  tags name the caller: `Runner`, `AE Studio`, `SRE Agent`. It declares
+  every internal route, the two raw JSON-RPC routes (`mcp`,
+  `sre-handoff/mcp`) included; those two are excluded from code generation,
+  so the validator never sees them and their own gates answer.
 - The **prefix** says which caller. Each prefix is a **route group**. The
   word is "route group", never "surface": in this repo a **Surface** is the
   reader of a turn's narration (`CONTEXT.md`).

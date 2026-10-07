@@ -84,6 +84,16 @@ const pubIssuer, pubAudPrefix = "platform-idp", "aep-publisher-"
 // ae-studio client recorded for.
 const orgWithoutStudioClient = "no-client"
 
+// sreHandoffKey is the stack's install-time SRE handoff key: it opens
+// sre-handoff/mcp and nothing else.
+const sreHandoffKey = "s3cr3t-sre-handoff-key-of-32-chars"
+
+// sreHandoffMCPReached stands in for the SRE MCP handler: a 200 here means the
+// request got past the handoff verifier.
+var sreHandoffMCPReached = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+})
+
 // recordedStudioClients records ae-studio-<org> for every org but
 // orgWithoutStudioClient.
 type recordedStudioClients struct{}
@@ -170,6 +180,8 @@ func newInternalStack(t *testing.T) internalStack {
 		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
 		ValidationContext: stack.context,
 		StudioClients:     studioClients,
+		SREHandoffAuth:    auth.NewSREHandoffVerifier(sreHandoffKey),
+		SREHandoffMCP:     sreHandoffMCPReached,
 	}
 	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack

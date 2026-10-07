@@ -267,14 +267,15 @@ func TestMCPRoutes_FullRoundTrip(t *testing.T) {
 	}
 }
 
-// The publisher token lists the nine tools aep-api still serves; the two
-// remote-git tools moved to the runner and the AE Studio tools pod, which
-// serve them in-process.
-func TestMCP_PublisherTokenListsNineToolsWithoutRemoteGit(t *testing.T) {
+// The publisher token lists the ten tools aep-api serves, the guardrail
+// catalog among them; the two remote-git tools moved to the runner and the AE
+// Studio tools pod, which serve them in-process.
+func TestMCP_PublisherTokenListsTenToolsWithoutRemoteGit(t *testing.T) {
 	s := newMCPSurface(t)
 	names := toolNames(t, postMCP(t, s.srv, s.idp.publisherToken(t, "acme"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	if len(names) != 9 || slices.Contains(names, "get_remote_git_file_contents") || slices.Contains(names, "search_remote_git_code") {
-		t.Fatalf("tools/list = %v, want the 9 non-remote-git tools", names)
+	if len(names) != 10 || !slices.Contains(names, "list_guardrail_policies") ||
+		slices.Contains(names, "get_remote_git_file_contents") || slices.Contains(names, "search_remote_git_code") {
+		t.Fatalf("tools/list = %v, want the 10 non-remote-git tools incl. list_guardrail_policies", names)
 	}
 }
 

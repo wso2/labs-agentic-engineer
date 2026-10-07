@@ -30,7 +30,6 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 
 	"github.com/wso2/aep/aep-api/internal/igen"
-	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 // The INT-6 cycle fence must check the cycle id the handler is served, not the

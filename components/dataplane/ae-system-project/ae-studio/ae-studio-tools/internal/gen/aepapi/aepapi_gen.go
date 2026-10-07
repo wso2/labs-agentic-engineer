@@ -244,6 +244,9 @@ type aeStudioCCContextKey string
 // publisherCCContextKey is the context key for publisherCC security scheme
 type publisherCCContextKey string
 
+// sreHandoffKeyContextKey is the context key for sreHandoffKey security scheme
+type sreHandoffKeyContextKey string
+
 // IngestWebhookEventParams defines parameters for IngestWebhookEvent.
 type IngestWebhookEventParams struct {
 	// XGitHubDelivery GitHub's delivery id (X-GitHub-Delivery), the dedup key.

@@ -17,16 +17,12 @@
 package edge
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/getkin/kin-openapi/openapi3"
-
 	"github.com/wso2/aep/aep-api/internal/gen"
-	"github.com/wso2/aep/aep-api/internal/igen"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
