@@ -72,9 +72,12 @@ group, and the org is the only claim it checks.**
    not carry it.
 
    The invariant: the `ae-studio-<org>` token opens `ae-studio/` and `mcp`
-   and is 401 on `runs/` and `sre-handoff/mcp`; a publisher token opens `mcp` and the
-   org's own `runs/` ops (fenced to open cycles of its org) and is 401 on
-   `ae-studio/` and `sre-handoff/mcp`. `mcp` is the one group both clients share.
+   and is 401 on `runs/`; a publisher token opens `mcp` and the org's own
+   `runs/` ops (fenced to open cycles of its org) and is 401 on
+   `ae-studio/`. `mcp` is the one group both clients share. Neither opens
+   `sre-handoff/mcp`: it is 401 there when the handoff is configured, and 404
+   when it is not (the route is mounted only with `SRE_HANDOFF_TOKEN` set,
+   `edge/internal.go`).
    An earlier revision had the pod hold the publisher client for `mcp`,
    which also cleared its own org's `runs/` ops.
 

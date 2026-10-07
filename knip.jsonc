@@ -60,8 +60,8 @@
     // imports.
     "packages/prototype-cli/test/**",
     "packages/prototype-theme-oxygen/test/**",
-    // The kit's shared feedback table reader, imported by its own and
-    // @aep/agent-stream's feedback tests (Go reads the same fixture).
+    // The kit's shared feedback table reader, imported by its own,
+    // @aep/agent-stream's and the design agent's turn-input feedback tests.
     "packages/prototype-kit/test/feedback-cases.ts",
     "packages/prototype-*/scripts/**",
     // The design agent's `gen` script (package.json) pastes the kit reference

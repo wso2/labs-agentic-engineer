@@ -19,7 +19,8 @@
 /**
  * The shared prototype feedback table (`fixtures/feedback-cases.json`): every
  * host that judges a batch reads the same rows — this kit, `@aep/agent-stream`
- * (by relative import of this module) and the Go BFF — so a limit or rule
+ * (by relative import of this module) and the design agent's turn-input
+ * checks (`ae-design-agent/test/v1-turn-inputs.test.ts`) — so a limit or rule
  * changed on one side only fails a row on another.
  */
 

@@ -95,9 +95,11 @@ The one TS definition of a reviewer's requests: `FeedbackRequest`,
 `prototypeHash` (SHA-256 of manifest, NUL, source). The hash is plain
 JavaScript and synchronous: Web Crypto's `crypto.subtle` exists only in secure
 contexts, and a console served over plain HTTP must still name a revision. The
-CLI, `@aep/agent-stream` and the console import it; the Go BFF and the OpenAPI
-contract mirror it, held by `test/fixtures/feedback-cases.json`, which the kit,
-agent-stream and Go all assert.
+CLI, `@aep/agent-stream`, the console and the design agent's turn-input checks
+(`ae-design-agent/src/edge/turn-input.ts`) import it; the design agent's
+contract (`api/ae-design-agent/v1/openapi.yaml`) mirrors the limits. The table
+`test/fixtures/feedback-cases.json` holds them together: the kit, agent-stream
+and the design agent (`test/v1-turn-inputs.test.ts`) all assert it.
 
 ## Host reducer and bridge (`/host`)
 
