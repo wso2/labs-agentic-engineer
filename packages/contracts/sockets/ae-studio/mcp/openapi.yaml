@@ -345,6 +345,23 @@ components:
         contextTokens:
           type: integer
           format: int64
+        designFeatures:
+          type: array
+          maxItems: 200
+          description: |-
+            The features a `design` turn designed, as the `/design F1 F2`
+            line named them, in that order; IDs only, never the line. Absent
+            or empty means every feature designable at baseRef (a bare
+            `/design`). Send it only on a `design` turn; aep-api ignores it on
+            any other flow. Same schema as aep-api's
+            AEStudioTurnRecord.designFeatures, which refuses a whole batch for
+            one bad item, so a record with an item off this schema is refused
+            here (400 invalid_request) and never queued: drop an ID that does
+            not match rather than send it.
+          items:
+            type: string
+            pattern: '^F[0-9]+$'
+            maxLength: 16
     TurnRecordAuthor:
       type: object
       additionalProperties: false

@@ -583,10 +583,28 @@ func TestTurnUsage_OptionalFieldsStayAbsent(t *testing.T) {
 		t.Fatalf("outbox = %+v", got)
 	}
 	sent, _ := json.Marshal(got[0])
-	for _, key := range []string{`"author"`, `"project"`, `"reason"`, `"code"`, `"contextTokens"`} {
+	for _, key := range []string{`"author"`, `"project"`, `"reason"`, `"code"`, `"contextTokens"`, `"designFeatures"`} {
 		if strings.Contains(string(sent), key) {
 			t.Fatalf("%s invented: %s", key, sent)
 		}
+	}
+}
+
+// A design turn's features reach the record aep-api gets as the agent sent
+// them, in order.
+func TestTurnUsage_DesignFeaturesCarriedOver(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	record := strings.Replace(turnRecordJSON, `,"contextTokens":15}`, `,"contextTokens":15,"designFeatures":["F1","F2"]}`, 1)
+	if c, body := s.post("/turn-usage", record); c != http.StatusAccepted {
+		t.Fatalf("POST /turn-usage = %d %s", c, body)
+	}
+	got := s.usage.got()
+	if len(got) != 1 || !reflect.DeepEqual(got[0].DesignFeatures, []string{"F1", "F2"}) {
+		t.Fatalf("outbox = %+v", got)
+	}
+	sent, _ := json.Marshal(got[0])
+	if !strings.Contains(string(sent), `"designFeatures":["F1","F2"]`) {
+		t.Fatalf("record = %s", sent)
 	}
 }
 
@@ -598,6 +616,12 @@ func TestTurnUsage_InvalidRecordIs400(t *testing.T) {
 		"bad kind":    strings.Replace(turnRecordJSON, `"kind":"plan"`, `"kind":"chat"`, 1),
 		"extra field": strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","cost":1`, 1),
 		"a batch":     "[" + turnRecordJSON + "]",
+		// aep-api refuses a whole batch for one bad feature ID, so the
+		// socket refuses the one record and the agent sees why.
+		"a lower-case feature":   strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["f1"]`, 1),
+		"a story, not a feature": strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["F1.2"]`, 1),
+		"a feature over 16":      strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["F`+strings.Repeat("1", 16)+`"]`, 1),
+		"201 features":           strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":[`+strings.Repeat(`"F1",`, 200)+`"F1"]`, 1),
 	} {
 		if c, out := s.post("/turn-usage", body); c != http.StatusBadRequest || !strings.Contains(out, "invalid_request") {
 			t.Fatalf("%s: POST /turn-usage = %d %s", name, c, out)
