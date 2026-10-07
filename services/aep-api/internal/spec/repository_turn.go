@@ -225,13 +225,14 @@ func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*
 }
 
 // NewestCompletedFlow reads one row off the (org_id, project_id) index,
-// narrowed by the indexed `flow` column.
+// narrowed by the indexed `flow` column: the run that finished last, ordered
+// as CompletedFlows orders them, so both name the same newest run.
 func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
 			orgID, projectID, flow, turnStatusCompleted).
-		Order("created_at DESC").
+		Order("COALESCE(finished_at, created_at) DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil

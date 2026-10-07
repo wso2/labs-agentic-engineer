@@ -161,7 +161,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   console's "out of date" and the gate's agree. A run whose commit is unreadable is skipped. The
   status poll's `designOutdated` flag is coarser and display-only: the whole requirements tree
   (`RequirementsFingerprint`, path + blob sha) now versus at the newest completed design run
-  (`NewestCompletedFlow`). Nothing is stamped because a turn NEVER commits: its file changes stream
+  (`NewestCompletedFlow`, the run that finished last, as `CompletedFlows` orders them). Nothing is stamped because a turn NEVER commits: its file changes stream
   to the project's Room and the Room's committer (`ae-collab`) commits them later with no turn id
   and no author, so there is no moment the platform controls and no way to tell that flush from a
   hand edit. Only the run's base commit and the feature IDs it named are recorded.
@@ -180,8 +180,9 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   (the record's `designFeatures`, space-joined: `F1 F2`; empty = every designable feature, read back
   by `DesignedFeatures`) and is empty on every other turn: the field is ignored off a design turn,
   and the line the user typed never reaches aep-api. `created_at` is the turn's start, so
-  `Newest`/`NewestCompletedFlow` order ledger rows by when the turn ran, whatever order they
-  arrive in. The edge refuses the whole batch with 404 when any record names a project outside
+  `Newest` orders ledger rows by when the turn ran, whatever order they arrive in;
+  `NewestCompletedFlow` and `CompletedFlows` order by when the run finished
+  (`COALESCE(finished_at, created_at)`): of two overlapping runs, the one that finished last wrote last. The edge refuses the whole batch with 404 when any record names a project outside
   the token's org; a record with no project (a marketplace turn) is stored under
   `project_id = ''`. The primary key is `(org_id, id)`: the pod chooses turn ids (the kickoff's
   is uuidv5 of `org/project`, which anyone can compute), so another org's row with the same id

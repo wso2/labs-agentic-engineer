@@ -430,3 +430,40 @@ func TestCompletedFlows_LatestFinishedFirst(t *testing.T) {
 		t.Fatalf("CompletedFlows limit 1 = (%v, %v), want the latest-finished run", runs, err)
 	}
 }
+
+// NewestCompletedFlow is the head of CompletedFlows: the run that finished
+// last, so the status poll's design baseline is the build gate's. A run that
+// started later but finished first is not it, and a row with no finished_at
+// sorts by created_at.
+func TestNewestCompletedFlow_IsTheLatestFinishedRun(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := spec.NewTurnRepository(db, nil)
+	ctx := context.Background()
+	base := time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)
+	at := func(rec spec.TurnRecord, start, finish time.Duration) spec.TurnRecord {
+		rec.StartedAt, rec.FinishedAt = base.Add(start), base.Add(finish)
+		return rec
+	}
+	long := at(finishedTurn("p1"), 0, 30*time.Minute)              // started first, finished last
+	short := at(finishedTurn("p1"), 5*time.Minute, 10*time.Minute) // started later, finished first
+	if err := repo.RecordFinished(ctx, "o1", []spec.TurnRecord{short, long}); err != nil {
+		t.Fatalf("RecordFinished: %v", err)
+	}
+	newest, err := repo.NewestCompletedFlow(ctx, "o1", "p1", spec.FlowDesign)
+	if err != nil || newest == nil || newest.ID != long.TurnID {
+		t.Fatalf("NewestCompletedFlow = (%+v, %v), want the latest-finished run %s", newest, err, long.TurnID)
+	}
+
+	legacy := spec.AgentTurn{
+		ID: uuid.NewString(), OrgID: "o1", ProjectID: "p1", ConversationID: uuid.NewString(),
+		Flow: spec.FlowDesign, BaseRef: "cccccccccccccccccccccccccccccccccccccccc", Status: "completed",
+		StartedAt: base.Add(40 * time.Minute), CreatedAt: base.Add(40 * time.Minute),
+	}
+	if err := db.Create(&legacy).Error; err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+	if newest, err := repo.NewestCompletedFlow(ctx, "o1", "p1", spec.FlowDesign); err != nil || newest == nil || newest.ID != legacy.ID {
+		t.Fatalf("NewestCompletedFlow with a legacy row = (%+v, %v), want the legacy row (created after the long run finished)", newest, err)
+	}
+}
