@@ -91,6 +91,7 @@ export class FakeToolsSocket implements ToolsSocket {
   private failStatus = 503;
   private held: Promise<void> | null = null;
   private lookupHeld: Promise<void> | null = null;
+  private lookupFault: ToolsSocketError | null = null;
 
   constructor(opts: FakeToolsSocketOptions = {}) {
     this.projects = opts.projects ?? {};
@@ -115,6 +116,15 @@ export class FakeToolsSocket implements ToolsSocket {
         release();
       },
     };
+  }
+
+  /**
+   * The next `lookup` throws this 404 problem whatever `at` says: the socket
+   * can answer `ref_not_found` for a lookup with no `at` when `git archive`
+   * of the tip it just resolved fails (a race with a force-push).
+   */
+  failNextLookup(code: string): void {
+    this.lookupFault = new ToolsSocketError(code, 404, "the studio could not read the project's tree");
   }
 
   /** `lookup` calls wait until `release()` (a cold tools sidecar). */
@@ -167,6 +177,11 @@ export class FakeToolsSocket implements ToolsSocket {
   async lookup(project: string, at?: string): Promise<ProjectSnapshot | null> {
     this.lookups.push(at === undefined ? { project } : { project, at });
     if (this.lookupHeld) await this.lookupHeld;
+    const fault = this.lookupFault;
+    if (fault) {
+      this.lookupFault = null;
+      throw fault;
+    }
     const known = this.projects[project];
     // The project resolves first, as on the socket: an unknown project is null whatever `at` says.
     if (known && at !== undefined && this.missingRefs.has(at)) {

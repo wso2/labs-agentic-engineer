@@ -258,6 +258,15 @@ test("a pinned sha that names no commit of the repository is 400 invalid_turn, n
   });
 });
 
+test("ref_not_found on a plan with no pin is the sidecar's 503 tools_unavailable; only a pinned sha is the request's fault", async () => {
+  await withEdge({ files: SEED_FILES }, async (edge) => {
+    edge.tools.failNextLookup("ref_not_found");
+    const res = await postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "plan", credit: NOBODY });
+    assert.equal(res.status, 503);
+    assert.equal((await res.json()).code, "tools_unavailable");
+  });
+});
+
 test("a kickoff joins spec-acme-greeter on the Room socket as the credited user, with no token, on the current thread", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ae-room-"));
   const roomSocket = join(dir, "room.sock");

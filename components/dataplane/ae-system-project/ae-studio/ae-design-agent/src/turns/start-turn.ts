@@ -410,24 +410,32 @@ export class TurnStarter {
     return conn;
   }
 
+  /**
+   * The project's snapshot. `ref_not_found` is the request's fault only when
+   * it sent `at`: the pin names no commit, which a retry will not change.
+   * Without `at` it is the sidecar failing to read the tip it resolved.
+   */
   private async lookup(project: string, at?: string): Promise<ProjectSnapshot> {
     if (!isProjectName(project)) throw new TurnStartError(404, "project_unknown", "no such project");
-    const found = await this.toolsCall(() => this.deps.tools.lookup(project, at));
+    const found = await this.toolsCall(async () => {
+      try {
+        return await this.deps.tools.lookup(project, at);
+      } catch (err) {
+        if (at !== undefined && err instanceof ToolsSocketError && err.code === "ref_not_found") {
+          throw new TurnStartError(400, "invalid_turn", "at names no commit of the project's repository");
+        }
+        throw err;
+      }
+    });
     if (!found) throw new TurnStartError(404, "project_unknown", "no such project");
     return found;
   }
 
-  /**
-   * A tools socket call; a failure is the sidecar's, not the request's, except
-   * `ref_not_found`: a plan's pin names no commit, which a retry will not change.
-   */
+  /** A tools socket call; a failure is the sidecar's, not the request's. */
   private async toolsCall<T>(call: () => Promise<T>): Promise<T> {
     try {
       return await call();
     } catch (err) {
-      if (err instanceof ToolsSocketError && err.code === "ref_not_found") {
-        throw new TurnStartError(400, "invalid_turn", "at names no commit of the project's repository");
-      }
       if (err instanceof ToolsSocketError) {
         throw new TurnStartError(503, "tools_unavailable", "the studio's tools are not answering");
       }
