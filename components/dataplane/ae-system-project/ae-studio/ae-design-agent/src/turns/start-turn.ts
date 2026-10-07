@@ -72,7 +72,7 @@ import { connectionHost, type ModelConnection } from "../shared/model.js";
 import { projectSnapshotDir, skillsSnapshotDir } from "../shared/snapshot-path.js";
 import type { ConversationStore } from "../store/conversation-store.js";
 import { ToolsSocketError, type ProjectSnapshot, type ToolsSocket } from "../tools-socket/client.js";
-import { startTurnSummary, turnSpecFor } from "./start-spec.js";
+import { designFeaturesOf, startTurnSummary, turnSpecFor } from "./start-spec.js";
 import {
   DeskClosedError,
   errorClassOf,
@@ -510,6 +510,7 @@ export class TurnStarter {
       modelHost: connectionHost(l.conn),
       baseRef: l.material.baseRef,
       skillsRef: l.material.skillsRef,
+      ...designFeaturesFact(l.flow, l.spec),
     };
     const scope = l.input.scope;
     const instruction = composeInstruction(l.spec, {
@@ -650,6 +651,13 @@ export class TurnStarter {
 
 function feedbackNeedsRoom(): TurnStartError {
   return new TurnStartError(400, "invalid_turn", "prototypeFeedback must be a Room turn: only the Room's committer saves the revision");
+}
+
+/** A design turn's feature IDs for its usage record; none for a bare `/design` or any other flow. */
+function designFeaturesFact(flow: string, spec: TurnSpec): { designFeatures?: string[] } {
+  if (flow !== "design") return {};
+  const ids = designFeaturesOf(spec);
+  return ids.length > 0 ? { designFeatures: ids } : {};
 }
 
 /** The turn's author: the credited user, named by `name` or else the id; none when the credit names no one. */

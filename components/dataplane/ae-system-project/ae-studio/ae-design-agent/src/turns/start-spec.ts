@@ -91,6 +91,31 @@ export function turnSpecFor(
   };
 }
 
+/** A feature ID as a usage record carries it (the MCP socket's `TurnRecord.designFeatures`). */
+const FEATURE_ID = /\bF[0-9]+\b/g;
+const MAX_FEATURE_ID = 16;
+const MAX_DESIGN_FEATURES = 200;
+
+/**
+ * The features a `/design F1 F2` turn designs, for its usage record: the
+ * feature IDs among the command's arguments in line order, deduplicated (the
+ * reading aep-api's `DesignedFeatures` applies). Only IDs leave the pod, never
+ * the line. An ID the record's schema would refuse (over 16 characters) is
+ * dropped, and the list stops at 200, since one bad item makes the socket
+ * refuse the whole record. Empty for a bare `/design` (every feature) and for
+ * any other turn.
+ */
+export function designFeaturesOf(spec: TurnSpec): string[] {
+  if (spec.kind !== "flow" || spec.skill !== "design" || !spec.text) return [];
+  const ids = new Set<string>();
+  for (const [id] of spec.text.matchAll(FEATURE_ID)) {
+    if (id.length > MAX_FEATURE_ID) continue;
+    ids.add(id);
+    if (ids.size === MAX_DESIGN_FEATURES) break;
+  }
+  return [...ids];
+}
+
 /**
  * What a turn's display record says: the instruction verbatim for every turn
  * but a bare `/start` that resolved an idea. The platform fires that kickoff

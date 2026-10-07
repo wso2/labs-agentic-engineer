@@ -112,6 +112,8 @@ export interface TurnMeta {
    */
   baseRef?: string;
   skillsRef?: string;
+  /** A `design` turn's scoped feature IDs (`start-spec.ts` `designFeaturesOf`); absent = every feature. */
+  designFeatures?: string[];
 }
 
 /** How a run ended, as the run reports it. */
@@ -386,6 +388,7 @@ export class TurnDesk {
       cacheReadTokens: usage?.cacheReadTokens ?? 0,
       cacheCreationTokens: usage?.cacheCreationTokens ?? 0,
       ...(ending.contextTokens !== undefined ? { contextTokens: ending.contextTokens } : {}),
+      ...(meta.designFeatures?.length ? { designFeatures: meta.designFeatures } : {}),
     };
   }
 

@@ -26,7 +26,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startTurnSummary, turnSpecFor } from "../src/turns/start-spec.js";
+import { designFeaturesOf, startTurnSummary, turnSpecFor } from "../src/turns/start-spec.js";
 
 const REFS = { references: ["z-notes.md", "brief.pdf"] };
 const PATHS = ["specs/requirements/references/brief.pdf", "specs/requirements/references/z-notes.md"];
@@ -104,4 +104,19 @@ test("a review batch rides the /prototype flow it was sent with", () => {
     spec: { kind: "flow", skill: "prototype", text: "web", prototypeFeedback: batch },
     flow: "prototype",
   });
+});
+
+test("designFeaturesOf: the /design line's feature IDs in order, deduplicated; none for a bare /design or another flow", () => {
+  const of = (raw: string) => designFeaturesOf(turnSpecFor(raw, { references: [] }).spec);
+  assert.deepEqual(of("/design F2 F1, F2 and F10"), ["F2", "F1", "F10"]);
+  assert.deepEqual(of("/design"), []);
+  assert.deepEqual(of("/design the checkout"), []);
+  assert.deepEqual(of("/refine F2"), []);
+  assert.deepEqual(of("please /design F1"), []);
+  // f1, F1.2's story part and an ID past the record's 16-character cap never reach the record.
+  assert.deepEqual(of("/design f1 F1.2 F12345678901234567"), ["F1"]);
+  const many = Array.from({ length: 250 }, (_, i) => `F${i}`).join(" ");
+  const capped = of(`/design ${many}`);
+  assert.equal(capped.length, 200);
+  assert.equal(capped[199], "F199");
 });

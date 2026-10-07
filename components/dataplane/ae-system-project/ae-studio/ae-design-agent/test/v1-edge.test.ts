@@ -391,3 +391,25 @@ test("an idle stream gets keep-alives, and closing the pod ends an attached stre
     }
     await closed;
   }));
+
+test("a design turn's usage record names the features its /design line scoped; a bare /design or another flow names none", async () => {
+  const edge = await startEdge({ models: [1, 2, 3].map(() => mockModel([{ kind: "text", text: "ok" }])) });
+  try {
+    const tok = await edge.token();
+    for (const instruction of ["/design F2 F1 F2", "/design", "/refine F2"]) {
+      const res = await startTurn(edge, tok, { instruction });
+      await streamOf(edge, tok, ((await res.json()) as { turnId: string }).turnId);
+    }
+    await until(() => edge.tools.usage.length === 3, "three usage records");
+    assert.deepEqual(
+      edge.tools.usage.map((r) => [r.flow, r.designFeatures]),
+      [
+        ["design", ["F2", "F1"]],
+        ["design", undefined],
+        ["refine", undefined],
+      ],
+    );
+  } finally {
+    await edge.close();
+  }
+});

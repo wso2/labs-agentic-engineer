@@ -122,7 +122,10 @@ changing underneath it would plan the wrong Tasks.
 Every finished turn, Plan turns included, hands its whole record to the
 usage outbox once (`TurnRecord` in
 `packages/contracts/sockets/ae-studio/mcp/openapi.yaml`). A marketplace
-turn's record has no `project`.
+turn's record has no `project`. A `design` turn's record carries
+`designFeatures`, the feature IDs its `/design F1 F2` line named (IDs only,
+never the line; `start-spec.ts` `designFeaturesOf`); a bare `/design` sends
+none, which `aep-api` reads as every feature.
 
 - The record's tokens are the run's whole-turn usage. A turn the desk ends
   itself (shutdown on a roll, the 30-minute cap) or whose run reports none
