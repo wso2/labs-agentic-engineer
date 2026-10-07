@@ -213,6 +213,50 @@ describe("ChatPanel", () => {
       expect(inputIn(sheet()!).value).toBe("half a thought");
     });
 
+    it("keeps the Issues draft while an issue's card is open over the page", () => {
+      const { rerender } = render(panel("issues", null, null, OPEN));
+      fireEvent.change(inputIn(sheet()!), { target: { value: "half a thought" } });
+      rerender(panel("issues", "issue", null, OPEN));
+      expect(sheet()).toBeNull();
+      expect(mainLayer().hasAttribute("inert")).toBe(false);
+      rerender(panel("issues", null, null, OPEN));
+      expect(inputIn(sheet()!).value).toBe("half a thought");
+    });
+
+    it("keeps a minimised sheet's draft across an issue's card too", () => {
+      const { rerender } = render(panel("issues", null, null, OPEN));
+      fireEvent.change(inputIn(sheet()!), { target: { value: "half a thought" } });
+      fireEvent.click(screen.getByRole("button", { name: /Main chat/ }));
+      rerender(panel("issues", "issue", null, OPEN));
+      expect(screen.queryByTestId("branch-link")).toBeNull();
+      rerender(panel("issues", null, null, OPEN));
+      fireEvent.click(screen.getByRole("button", { name: "Open ↑" }));
+      expect(inputIn(sheet()!).value).toBe("half a thought");
+    });
+
+    it("takes focus once, when it is brought up, not again when the sheet is shown or mounted later", async () => {
+      const { rerender } = render(panel("issues"));
+      fireEvent.click(screen.getByRole("button", { name: "Start" }));
+      await waitFor(() => expect(document.activeElement).toBe(inputIn(sheet()!)));
+      inputIn(sheet()!).blur();
+      rerender(panel("issues", "issue", null, OPEN));
+      rerender(panel("issues", null, null, OPEN));
+      expect(document.activeElement).not.toBe(inputIn(sheet()!));
+      rerender(panel("overview", null, null, OPEN));
+      rerender(panel("issues", null, null, OPEN));
+      expect(sheet()).not.toBeNull();
+      await act(async () => {});
+      expect(document.activeElement).not.toBe(inputIn(sheet()!));
+    });
+
+    it("minimising moves focus to the link that brings the sheet back", async () => {
+      render(panel("issues", null, null, OPEN));
+      const strip = screen.getByRole("button", { name: /Main chat/ });
+      strip.focus();
+      fireEvent.click(strip);
+      await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "Open ↑" })));
+    });
+
     it("the strip shows the main chat's last line", () => {
       chats.main = [{ kind: "agent", id: "a1", turnId: "t1", text: "Sure, I'll look at that." }];
       render(panel("issues", null, null, OPEN));

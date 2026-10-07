@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { Box, Breadcrumbs, IconButton, InputBase, Link, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { ArrowRight, PanelLeftClose } from "@wso2/oxygen-ui-icons-react";
 import { useSession } from "../../../auth/SessionContext";
@@ -131,7 +131,9 @@ function Composer({
   view,
   composeRequest,
   onComposeApplied,
-  focusSignal = 0,
+  focusSignal = null,
+  focusActive = true,
+  onFocusApplied,
 }: {
   projectName: string;
   topic: string;
@@ -140,8 +142,12 @@ function Composer({
   view: ChatView;
   composeRequest: ComposeRequest | null;
   onComposeApplied: (nonce: number) => void;
-  /** Bumped to put the cursor here: the user brought this chat to the front. */
-  focusSignal?: number;
+  /** A nonce that puts the cursor here: the user brought this chat to the front. Applied once. */
+  focusSignal?: number | null;
+  /** False while this composer is out of sight, so a signal waits for it. */
+  focusActive?: boolean;
+  /** Called with the signal's nonce once applied; the panel clears it. */
+  onFocusApplied?: (nonce: number) => void;
 }) {
   const chat = useProjectChat(projectName, view);
   const statusId = useId();
@@ -159,20 +165,24 @@ function Composer({
     setPendingFocus(true);
     onComposeApplied(request.nonce);
   }, [request, onComposeApplied]);
+  const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
-    if (focusSignal) setPendingFocus(true);
-  }, [focusSignal]);
+    if (focusSignal === null || !focusActive || focusSignal === appliedFocus.current) return;
+    appliedFocus.current = focusSignal;
+    setPendingFocus(true);
+    onFocusApplied?.(focusSignal);
+  }, [focusSignal, focusActive, onFocusApplied]);
   // After the draft has committed, so the cursor lands past the new text, and
   // once the input is enabled: a disabled field takes no focus.
   const enabled = chat.status === "ready";
   useEffect(() => {
-    if (!pendingFocus || !enabled) return;
+    if (!pendingFocus || !enabled || !focusActive) return;
     const el = input.current;
     if (!el) return;
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
     setPendingFocus(false);
-  }, [pendingFocus, enabled]);
+  }, [pendingFocus, enabled, focusActive]);
   const ready = canSend(chat);
   const status = composerNote(chat);
 
@@ -270,7 +280,7 @@ function StartRow({ onStart }: { onStart: () => void }) {
 }
 
 /** At the end of the main thread while the Issues chat is minimised. */
-function BranchLink({ onOpen }: { onOpen: () => void }) {
+function BranchLink({ onOpen, linkRef }: { onOpen: () => void; linkRef: RefObject<HTMLButtonElement | null> }) {
   return (
     <Typography
       data-testid="branch-link"
@@ -280,7 +290,14 @@ function BranchLink({ onOpen }: { onOpen: () => void }) {
       sx={{ px: 1.75, pb: 1 }}
     >
       ↳ Issues · its own chat ·{" "}
-      <Link component="button" type="button" variant="caption" onClick={onOpen} sx={{ verticalAlign: "baseline" }}>
+      <Link
+        ref={linkRef}
+        component="button"
+        type="button"
+        variant="caption"
+        onClick={onOpen}
+        sx={{ verticalAlign: "baseline" }}
+      >
         Open ↑
       </Link>
     </Typography>
@@ -327,17 +344,39 @@ export function ChatPanel({
   const main = useProjectChat(projectName, "main");
   const issues = useProjectChat(projectName, "issues");
   const openIssuesChat = useOpenIssuesChat(projectName);
-  const [focusSheet, setFocusSheet] = useState(0);
+  // The nonce of a pending ask to put the cursor in the sheet; the sheet's
+  // composer clears it once it has applied it, so it never fires twice.
+  const focusNonce = useRef(0);
+  const [focusSheet, setFocusSheet] = useState<number | null>(null);
+  const requestSheetFocus = () => setFocusSheet(++focusNonce.current);
+  const sheetFocusApplied = useCallback((nonce: number) => setFocusSheet((n) => (n === nonce ? null : n)), []);
+  // Minimising hides the strip button that had focus: focus goes to the link
+  // that brings the sheet back, rather than falling to the page.
+  const branchLink = useRef<HTMLButtonElement | null>(null);
+  const [focusLink, setFocusLink] = useState(false);
 
   // `chatViewFor` names the chat this page has of its own; the main chat is
   // always here, and a page with its own (the Issues Page) stacks it on top.
   const branchHere = chatViewFor(page, card) === "issues";
   const sheetUp = branchHere && branch.started && !branch.minimised;
+  // The sheet stays mounted, out of sight, while an issue's card is open on
+  // the Issues page, so its draft survives; it is shown only where it belongs.
+  const sheetMounted = page === "issues" && branch.started;
+  const sheetHidden = !sheetUp;
+  const minimise = () => {
+    onMinimiseBranch();
+    setFocusLink(true);
+  };
+  useEffect(() => {
+    if (!focusLink || !branchHere || !branch.minimised) return;
+    branchLink.current?.focus();
+    setFocusLink(false);
+  }, [focusLink, branchHere, branch.minimised]);
   const mainTopic = chatTopic(card, feature ? `${feature.id} ${feature.name}` : null, "main");
   const issuesTopic = chatTopic(card, null, "issues");
   const bringUp = () => {
     onStartBranch();
-    setFocusSheet((n) => n + 1);
+    requestSheetFocus();
   };
 
   const issuesCount = issues.items.filter(isSpoken).length;
@@ -374,10 +413,10 @@ export function ChatPanel({
           issues={issuesThread}
           current={sheetUp ? "issues" : "main"}
           onMain={() => {
-            if (sheetUp) onMinimiseBranch();
+            if (sheetUp) minimise();
           }}
           onIssues={() => {
-            setFocusSheet((n) => n + 1);
+            requestSheetFocus();
             void openIssuesChat();
           }}
         />
@@ -395,7 +434,7 @@ export function ChatPanel({
           sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
         >
           <Thread projectName={projectName} view="main" />
-          {branchHere && branch.started && branch.minimised && <BranchLink onOpen={bringUp} />}
+          {branchHere && branch.started && branch.minimised && <BranchLink onOpen={bringUp} linkRef={branchLink} />}
           {branchHere && !branch.started && <StartRow onStart={bringUp} />}
           <Composer
             projectName={projectName}
@@ -407,8 +446,8 @@ export function ChatPanel({
             onComposeApplied={onComposeApplied}
           />
         </Box>
-        {branchHere && branch.started && (
-          <BranchSheet projectLabel={label} peek={lastLine(main.items)} hidden={branch.minimised} onMinimise={onMinimiseBranch}>
+        {sheetMounted && (
+          <BranchSheet projectLabel={label} peek={lastLine(main.items)} hidden={sheetHidden} onMinimise={minimise}>
             <Thread projectName={projectName} view="issues" />
             <Composer
               projectName={projectName}
@@ -419,6 +458,8 @@ export function ChatPanel({
               composeRequest={composeRequest}
               onComposeApplied={onComposeApplied}
               focusSignal={focusSheet}
+              focusActive={sheetUp}
+              onFocusApplied={sheetFocusApplied}
             />
           </BranchSheet>
         )}

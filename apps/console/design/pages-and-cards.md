@@ -97,14 +97,15 @@ a **Work on Issues here · Start** row sits above the main composer; started
 (Start, Create Issue, a hand-off's New Issue, Reopen, the threads menu, or a
 turn running there) it is a sheet over the main chat inside the panel, with
 a **↑ Main chat** strip that minimises it to a link at the end of the main
-thread. The shell keeps that state per project (`useChatControls`) and drops
+thread (focus moves to that link). The shell keeps that state per project (`useChatControls`) and drops
 it when the user leaves the Issues page; the main chat then gets its From
 Issues note. The Issues chat's thread and running turn are its alone, about
 "the project's issues", with no spec room and no Turn scope (the composer's
 scope is not sent; `viewTurnBody` sends the words and the view). The Issues agent files
 issues, so its turn ending re-reads the issue list. An Issue card is over the
-Page and shows the main chat alone (the branch waits, unchanged, for the card to
-close), setting no Turn scope: no agent works on one issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
+Page and shows the main chat alone (the branch waits for the card to close: the
+sheet stays mounted but out of sight, so its draft, thread and any running turn are
+kept, and it takes no focus when it returns), setting no Turn scope: no agent works on one issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
 card of their own over this Page (`issues/questions`, `chatViewFor` reads it as
 the `issues` view), so a question asked here never points to the overview or
 answers the main chat; a send closes back to the Issues Page. The Dashboard's Alerts
