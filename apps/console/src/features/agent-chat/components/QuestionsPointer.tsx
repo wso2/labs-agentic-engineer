@@ -20,6 +20,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Box, ButtonBase, Typography } from "@wso2/oxygen-ui";
 import { CircleQuestionMark } from "@wso2/oxygen-ui-icons-react";
 import type { QuestionItem } from "../chatLog";
+import { questionsPath, type ChatView } from "../chatView";
 
 // The agent's questions, as the chat shows them (ADR-0002 / #879): every
 // question is answered on the Questions card, so while one is open the chat
@@ -31,11 +32,14 @@ export function QuestionsPointer({
   projectName,
   item,
   open,
+  view = "main",
 }: {
   projectName: string;
   item: QuestionItem;
   /** The conversation is waiting on these questions (or still being asked them). */
   open: boolean;
+  /** The chat that asked: its questions are answered on the card over its own page. */
+  view?: ChatView;
 }) {
   const navigate = useNavigate();
 
@@ -59,7 +63,7 @@ export function QuestionsPointer({
       : `The agent has ${item.questions.length} questions`;
   return (
     <ButtonBase
-      onClick={() => void navigate({ to: "/projects/$projectName/questions", params: { projectName } })}
+      onClick={() => void navigate({ to: questionsPath(view), params: { projectName } })}
       sx={{
         width: "100%",
         display: "flex",

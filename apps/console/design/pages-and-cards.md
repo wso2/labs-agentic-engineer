@@ -31,6 +31,7 @@ routes/projects/$projectName/
     $env/configure.tsx         /projects/$p/deploy/staging/configure  Configure card
   issues/route.tsx           the Issues Page         /projects/$p/issues
     $number.tsx                /projects/$p/issues/14  Issue card
+    questions.tsx              /projects/$p/issues/questions  Questions card (the Issues chat's)
 ```
 
 - **A Page is a layout route.** It renders `PageWithCards` around its content:
@@ -96,7 +97,10 @@ issues", with no spec room and no Turn scope (the composer's scope is not
 sent; `viewTurnBody` sends the words and the view). The Issues agent files
 issues, so its turn ending re-reads the issue list. An Issue card is over the
 Page and stays in the main chat, setting no Turn scope: no agent works on one
-issue yet. The Dashboard's Alerts
+issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
+card of their own over this Page (`issues/questions`, `chatViewFor` reads it as
+the `issues` view), so a question asked here never points to the overview or
+answers the main chat; a send closes back to the Issues Page. The Dashboard's Alerts
 link straight to Issue cards: they are every project's issues that need
 attention (`features/issues/useAlerts.ts` asks each project, as no read
 answers for the org), and the rail's logo counts those that need a person.

@@ -6,6 +6,12 @@ compactly or several as a form") of console
 [ADR-0012](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0012-agent-hitl-tool-call-question-cards.md)
 (at the `classic-console` tag); the rest of ADR-0012 stands. Spec: #879.
 
+**Amended 2026-10-07:** the card opens over the page whose chat asked: the
+overview for the main chat, the Issues Page for the Issues chat (its own
+route, `/projects/$p/issues/questions`, answering that chat's thread). The
+chat's pointer and the automatic opening follow the view that asked, and a
+send closes back to that page.
+
 ## Context
 
 The agent asks through `ask_question` (one) and `ask_questions` (a batch of up

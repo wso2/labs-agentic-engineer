@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { chatViewFor, viewTurnBody, wireView } from "./chatView";
+import { chatViewFor, homePath, questionsPath, viewTurnBody, wireView } from "./chatView";
 
 // A project has a chat per view: the Issues Page talks to its own agent on its
 // own thread; everywhere else, including the Issue card over it, is the main chat.
@@ -31,10 +31,27 @@ describe("chatViewFor", () => {
     expect(chatViewFor("issues", "issue")).toBe("main");
   });
 
+  it("is the issues view on the Questions card over the Issues Page, and the main chat on the one over the overview", () => {
+    expect(chatViewFor("issues", "questions")).toBe("issues");
+    expect(chatViewFor("overview", "questions")).toBe("main");
+  });
+
   it("is the main chat on every other Page", () => {
     expect(chatViewFor("overview", null)).toBe("main");
     expect(chatViewFor("builds", null)).toBe("main");
     expect(chatViewFor("deploy", null)).toBe("main");
+  });
+});
+
+describe("where a view's questions are answered, and where it closes back to", () => {
+  it("is the overview's card for the main chat", () => {
+    expect(questionsPath("main")).toBe("/projects/$projectName/questions");
+    expect(homePath("main")).toBe("/projects/$projectName");
+  });
+
+  it("is the Issues Page's card for the issues view", () => {
+    expect(questionsPath("issues")).toBe("/projects/$projectName/issues/questions");
+    expect(homePath("issues")).toBe("/projects/$projectName/issues");
   });
 });
 

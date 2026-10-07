@@ -77,10 +77,12 @@ describe("shellScope", () => {
       ["/projects/$projectName/_overview/spec", "spec", "overview"],
       ["/projects/$projectName/_overview/design", "design", "overview"],
       ["/projects/$projectName/_overview/prototype", "prototype", "overview"],
+      ["/projects/$projectName/_overview/questions", "questions", "overview"],
       ["/projects/$projectName/builds/$version", "build", "builds"],
       ["/projects/$projectName/validations/$version", "validation", "validations"],
       ["/projects/$projectName/deploy/$env/configure", "configure", "deploy"],
       ["/projects/$projectName/issues/$number", "issue", "issues"],
+      ["/projects/$projectName/issues/questions", "questions", "issues"],
     ] as const;
     for (const [routeId, card, page] of routes) {
       expect(inProject(routeId)).toEqual({ kind: "project", projectName: "acme-expenses", page, card, specFile: null });
@@ -118,6 +120,8 @@ describe("cards and the Pages they are over", () => {
     expect(cardOfRoute("/projects/$projectName/deploy")).toBeNull();
     expect(cardOfRoute("/projects/$projectName/issues/$number")).toBe("issue");
     expect(cardOfRoute("/projects/$projectName/issues")).toBeNull();
+    expect(cardOfRoute("/projects/$projectName/issues/questions")).toBe("questions");
+    expect(cardOfRoute("/projects/$projectName/_overview/questions")).toBe("questions");
     expect(cardOfRoute("/_dashboard/settings")).toBe("settings");
     expect(cardOfRoute("/_dashboard/")).toBeNull();
     expect(cardOfRoute("/skills/$name")).toBe("skill");

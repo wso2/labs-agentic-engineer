@@ -91,18 +91,24 @@ const PAGE_ROUTES: Record<string, ProjectPage> = {
   "/projects/$projectName/issues": "issues",
 };
 
-const CARD_ROUTES: Record<string, ProjectCard> = {
-  "/projects/$projectName/_overview/spec": "spec",
-  "/projects/$projectName/_overview/design": "design",
-  "/projects/$projectName/_overview/prototype": "prototype",
-  "/projects/$projectName/_overview/questions": "questions",
-  "/projects/$projectName/builds/$version": "build",
-  "/projects/$projectName/validations/$version": "validation",
-  "/projects/$projectName/deploy/$env/configure": "configure",
-  "/projects/$projectName/issues/$number": "issue",
+/**
+ * Each Card route, with the Page it is drawn over. Most Cards have one route;
+ * the Questions card has two, since the chat that asked decides the Page (the
+ * overview for the main chat, the Issues Page for the Issues chat).
+ */
+const CARD_ROUTES: Record<string, { card: ProjectCard; page: ProjectPage }> = {
+  "/projects/$projectName/_overview/spec": { card: "spec", page: "overview" },
+  "/projects/$projectName/_overview/design": { card: "design", page: "overview" },
+  "/projects/$projectName/_overview/prototype": { card: "prototype", page: "overview" },
+  "/projects/$projectName/_overview/questions": { card: "questions", page: "overview" },
+  "/projects/$projectName/issues/questions": { card: "questions", page: "issues" },
+  "/projects/$projectName/builds/$version": { card: "build", page: "builds" },
+  "/projects/$projectName/validations/$version": { card: "validation", page: "validations" },
+  "/projects/$projectName/deploy/$env/configure": { card: "configure", page: "deploy" },
+  "/projects/$projectName/issues/$number": { card: "issue", page: "issues" },
 };
 
-/** The Page each Card opens over, and closes back to. */
+/** The Page a Card opens over when only the Card is known (the Questions card's default is the overview's). */
 const CARD_PAGE: Record<ProjectCard, ProjectPage> = {
   spec: "overview",
   design: "overview",
@@ -116,10 +122,10 @@ const CARD_PAGE: Record<ProjectCard, ProjectPage> = {
 
 /** The Card a route draws, the org's or a project's, or null when it draws none. */
 export function cardOfRoute(routeId: string): ProjectCard | OrgCard | null {
-  return CARD_ROUTES[routeId] ?? ORG_CARD_ROUTES[routeId] ?? null;
+  return CARD_ROUTES[routeId]?.card ?? ORG_CARD_ROUTES[routeId] ?? null;
 }
 
-/** The Page a project Card is drawn over. */
+/** The Page a project Card is drawn over, when only the Card is known (the Questions card's is the overview). */
 export function pageOfCard(card: ProjectCard): ProjectPage {
   return CARD_PAGE[card];
 }
@@ -132,14 +138,15 @@ export function shellScope(leaf: {
 }): ShellScope {
   const { routeId, params, search } = leaf;
   if (params.projectName && routeId.startsWith("/projects/$projectName")) {
-    const card = CARD_ROUTES[routeId] ?? null;
+    const cardRoute = CARD_ROUTES[routeId];
+    const card = cardRoute?.card ?? null;
     const file = search?.file;
     return {
       kind: "project",
       projectName: params.projectName,
       // An address in a project that is neither a Page nor a Card (one it
       // does not have) reads as the overview's.
-      page: card ? pageOfCard(card) : (PAGE_ROUTES[routeId] ?? "overview"),
+      page: cardRoute ? cardRoute.page : (PAGE_ROUTES[routeId] ?? "overview"),
       card,
       specFile: card === "spec" && typeof file === "string" && file ? file : null,
     };

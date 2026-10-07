@@ -31,7 +31,16 @@ import type { ProjectChat } from "../chatStore";
 let chat: ProjectChat;
 const answer = vi.fn(async () => true);
 const retry = vi.fn();
-vi.mock("../useProjectChat", () => ({ useProjectChat: () => chat, chatStore: { answer, retry } }));
+const issuesAnswer = vi.fn(async () => true);
+const issuesRetry = vi.fn();
+const viewsRead: string[] = [];
+vi.mock("../useProjectChat", () => ({
+  useProjectChat: (_project: string, view = "main") => {
+    viewsRead.push(view);
+    return chat;
+  },
+  chatStoreFor: (view: string) => (view === "issues" ? { answer: issuesAnswer, retry: issuesRetry } : { answer, retry }),
+}));
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 
@@ -43,6 +52,9 @@ const { QuestionsList } = await import("./QuestionsList");
 afterEach(() => {
   cleanup();
   answer.mockClear();
+  issuesAnswer.mockClear();
+  issuesRetry.mockClear();
+  viewsRead.length = 0;
   navigate.mockReset();
 });
 
@@ -55,6 +67,7 @@ function show(
   phase: "idle" | "starting" | "running" = "idle",
   project = { fresh: true },
   status: Partial<Pick<ProjectChat, "status" | "error">> = {},
+  view?: "main" | "issues",
 ) {
   if (project.fresh) n += 1;
   chat = {
@@ -67,7 +80,7 @@ function show(
   // A project per render: drafts are kept per project and question.
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
-      <QuestionsList projectName={`acme-${n}`} />
+      <QuestionsList projectName={`acme-${n}`} view={view ?? "main"} />
     </OxygenUIThemeProvider>,
   );
 }
@@ -113,6 +126,26 @@ describe("QuestionsList", () => {
     await vi.waitFor(() =>
       expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName", params: { projectName: `acme-${n}` } }),
     );
+  });
+
+  it("answers the Issues chat's questions through its own store, then closes back to the Issues page", async () => {
+    show([batch()], "idle", { fresh: true }, {}, "issues");
+    expect(viewsRead).toContain("issues");
+    fireEvent.click(screen.getByRole("radio", { name: /Finance/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /In-app only/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Send answers" }));
+    expect(issuesAnswer).toHaveBeenCalledWith(`acme-${n}`, "t1:q:c1", [{ selected: ["Finance"] }, { selected: ["In-app only"] }]);
+    expect(answer).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: `acme-${n}` } }),
+    );
+  });
+
+  it("retries the Issues chat's load through its own store", () => {
+    show([], "idle", { fresh: true }, { status: "error", error: "boom" }, "issues");
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(issuesRetry).toHaveBeenCalledWith(`acme-${n}`);
+    expect(retry).not.toHaveBeenCalled();
   });
 
   it("stays open, answers and all, when the answers could not be sent", async () => {

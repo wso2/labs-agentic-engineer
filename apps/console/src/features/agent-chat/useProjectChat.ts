@@ -28,7 +28,7 @@ import { fetchConversationMessages, fetchCurrentConversationId } from "./api/con
 import { getActiveTurn, getTurn, openTurnStream, startTurn } from "./api/turns";
 import { issuesListKey } from "../issues/api/issues";
 import { createChatStore, type ProjectChat } from "./chatStore";
-import { viewTurnBody, type ChatView } from "./chatView";
+import { questionsPath, viewTurnBody, type ChatView } from "./chatView";
 import { opensQuestionsCard } from "./openQuestions";
 import { shellScope } from "../shell/scope";
 
@@ -124,19 +124,23 @@ export function useRefreshOnTurnEnd(): void {
  */
 export function useOpenQuestionsWhenAsked(): void {
   const router = useRouter();
-  useEffect(
-    () =>
-      chatStore.onQuestionsAsked((projectName) => {
-        const leaf = router.state.matches.at(-1);
-        const scope = shellScope({
-          routeId: leaf?.routeId ?? "",
-          params: (leaf?.params ?? {}) as { projectName?: string },
-        });
-        if (!opensQuestionsCard(scope, projectName)) return;
-        void router.navigate({ to: "/projects/$projectName/questions", params: { projectName } });
-      }),
-    [router],
-  );
+  useEffect(() => {
+    const opener = (view: ChatView) => (projectName: string) => {
+      const leaf = router.state.matches.at(-1);
+      const scope = shellScope({
+        routeId: leaf?.routeId ?? "",
+        params: (leaf?.params ?? {}) as { projectName?: string },
+      });
+      if (!opensQuestionsCard(scope, projectName, view)) return;
+      void router.navigate({ to: questionsPath(view), params: { projectName } });
+    };
+    const stopMain = chatStore.onQuestionsAsked(opener("main"));
+    const stopIssues = issuesChatStore.onQuestionsAsked(opener("issues"));
+    return () => {
+      stopMain();
+      stopIssues();
+    };
+  }, [router]);
 }
 
 /**

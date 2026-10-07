@@ -52,11 +52,14 @@ const PAGE_PATH = {
 export function CardOverlay({
   card,
   title = cardTitle(card),
+  page = pageOfCard(card),
   fill = false,
   actions,
   children,
 }: {
   card: ProjectCard;
+  /** The Page it is over, when the card's own does not say (the Questions card is over the Issues Page for the Issues chat). */
+  page?: ProjectPage;
   title?: string;
   fill?: boolean;
   actions?: ReactNode;
@@ -65,7 +68,6 @@ export function CardOverlay({
   const { projectName } = useParams({ from: "/projects/$projectName" });
   const navigate = useNavigate();
 
-  const page = pageOfCard(card);
   const close = useCallback(
     () => void navigate({ to: PAGE_PATH[page], params: { projectName } }),
     [navigate, page, projectName],

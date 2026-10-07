@@ -28,9 +28,23 @@ import type { TurnBody } from "./turnScope";
 
 export type ChatView = "main" | components["schemas"]["ChatView"];
 
-/** The view whose chat the user is talking to from here: the Issues Page with no card open. */
+/**
+ * The view whose chat the user is talking to from here: the Issues Page with
+ * no card open, or with its own Questions card open (the card answers this
+ * chat's questions).
+ */
 export function chatViewFor(page: ProjectPage, card: ProjectCard | null): ChatView {
-  return page === "issues" && card === null ? "issues" : "main";
+  return page === "issues" && (card === null || card === "questions") ? "issues" : "main";
+}
+
+/** The Questions card a view's questions are answered on (ADR-0002): over the page whose chat asked. */
+export function questionsPath(view: ChatView): "/projects/$projectName/questions" | "/projects/$projectName/issues/questions" {
+  return view === "issues" ? "/projects/$projectName/issues/questions" : "/projects/$projectName/questions";
+}
+
+/** The page a view's Questions card closes back to: the one it is over. */
+export function homePath(view: ChatView): "/projects/$projectName" | "/projects/$projectName/issues" {
+  return view === "issues" ? "/projects/$projectName/issues" : "/projects/$projectName";
 }
 
 /** A view as the contract carries it: absent for the main chat. */

@@ -28,6 +28,25 @@ const at = (page: ProjectPage, card: ProjectCard | null = null, projectName = "a
   specFile: null,
 });
 
+describe("opensQuestionsCard in the issues view", () => {
+  it("opens over the Issues Page only", () => {
+    expect(opensQuestionsCard(at("issues"), "acme", "issues")).toBe(true);
+  });
+
+  it("leaves the user on an Issue card, the overview, or another page", () => {
+    expect(opensQuestionsCard(at("issues", "issue"), "acme", "issues")).toBe(false);
+    expect(opensQuestionsCard(at("issues", "questions"), "acme", "issues")).toBe(false);
+    expect(opensQuestionsCard(at("overview"), "acme", "issues")).toBe(false);
+    expect(opensQuestionsCard(at("builds"), "acme", "issues")).toBe(false);
+    expect(opensQuestionsCard(at("issues", null, "other"), "acme", "issues")).toBe(false);
+  });
+
+  it("is not opened by the main chat's rule, and the main chat is not opened by the Issues page", () => {
+    expect(opensQuestionsCard(at("issues"), "acme", "main")).toBe(false);
+    expect(opensQuestionsCard(at("overview"), "acme", "main")).toBe(true);
+  });
+});
+
 describe("opensQuestionsCard (where asked questions open the card)", () => {
   it("opens over the project's overview and the cards on it", () => {
     expect(opensQuestionsCard(at("overview"), "acme")).toBe(true);

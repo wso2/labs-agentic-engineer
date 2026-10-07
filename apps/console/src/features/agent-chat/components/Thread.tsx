@@ -267,7 +267,7 @@ export function Thread({
           {item.kind === "error" && <ErrorRow text={item.text} />}
           {item.kind === "question" && (
             <Box sx={{ pl: 4 }}>
-              <QuestionsPointer projectName={projectName} item={item} open={item.id === openQuestion} />
+              <QuestionsPointer projectName={projectName} item={item} open={item.id === openQuestion} view={view} />
             </Box>
           )}
           {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
