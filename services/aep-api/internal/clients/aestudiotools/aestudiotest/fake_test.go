@@ -662,6 +662,31 @@ func TestFake_References(t *testing.T) {
 	}
 }
 
+// Like the pod, the fake refuses a type the models cannot read (an Office
+// document reaches the pod only as the markdown aep-api converts it to) and a
+// document over the per-document limit, and then keeps the stored set.
+func TestFake_PutReferences_EnforcesThePodsRules(t *testing.T) {
+	for name, content := range map[string][]byte{
+		"policy.docx": []byte("PK"),
+		"big.pdf":     bytes.Repeat([]byte("a"), sourcecontrol.MaxReferenceBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := aestudiotest.New()
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			w, _ := mw.CreateFormFile("files", name)
+			_, _ = w.Write(content)
+			_ = mw.Close()
+			if err := f.PutReferences(context.Background(), ref, mw.FormDataContentType(), &buf); !errors.Is(err, sourcecontrol.ErrReferenceRejected) {
+				t.Fatalf("err = %v, want ErrReferenceRejected", err)
+			}
+			if got := f.References(ref); got != nil {
+				t.Fatalf("stored %v from a refused upload", got)
+			}
+		})
+	}
+}
+
 // ReadBundle refuses an ext the contract pattern rejects, or more than 20, as
 // the pod's validator does (before any repo resolution, a permanent 400); a
 // valid filter reads.

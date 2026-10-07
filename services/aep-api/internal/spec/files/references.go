@@ -25,11 +25,13 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"path"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/officetext"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -46,8 +48,10 @@ const referencesField = "files"
 // The strict server hands this handler a *multipart.Reader, so the bytes
 // cannot pass through as they came: each `files` part is re-streamed, chunk by
 // chunk, into a new multipart body under the same field and file name.
-// No part is buffered whole. A body that breaks off mid-part aborts the pod's
-// upload with the same error, so the pod never stores a truncated set.
+// No part is buffered whole except an Office document, which is converted to
+// markdown first (copyOfficePart). A body that breaks off mid-part, or an
+// Office part that cannot be converted, aborts the pod's upload with that
+// error, so the pod never stores a truncated or partial set.
 func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProjectReferencesRequestObject) (gen.PutProjectReferencesResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	if request.Body == nil {
@@ -71,7 +75,12 @@ func (h *Handler) PutProjectReferences(ctx context.Context, request gen.PutProje
 	putErr := h.refs.PutReferences(ctx, ref, mw.FormDataContentType(), pr)
 	// Wait for the copy: it reads the request body, which must not be read
 	// after this handler returns.
-	if copyErr := <-copied; copyErr != nil && !errors.Is(copyErr, io.ErrClosedPipe) {
+	copyErr := <-copied
+	var refused refusedPartError
+	switch {
+	case errors.As(copyErr, &refused):
+		return nil, apierr.BadRequest(string(refused))
+	case copyErr != nil && !errors.Is(copyErr, io.ErrClosedPipe):
 		return nil, apierr.BadRequest("can't decode multipart body: " + copyErr.Error())
 	}
 	if putErr != nil {
@@ -103,6 +112,12 @@ func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 		if part.FormName() != referencesField {
 			continue
 		}
+		if ext := strings.ToLower(path.Ext(part.FileName())); officetext.Extensions[ext] {
+			if err := copyOfficePart(part, ext, out); err != nil {
+				return err
+			}
+			continue
+		}
 		header := textproto.MIMEHeader{}
 		header.Set("Content-Disposition", multipart.FileContentDisposition(referencesField, part.FileName()))
 		if ct := part.Header.Get("Content-Type"); ct != "" {
@@ -112,15 +127,50 @@ func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 		if err != nil {
 			return err
 		}
-		// TODO(main-sync Task 48): API-15: an Office part (officetext.Extensions)
-		// is buffered up to the pod's 5 MiB per-file limit, converted with
-		// officetext.Markdown and re-streamed as `<name>.md`; a failed conversion
-		// is a 400 before the pod sees anything (main #878 S5).
 		if _, err := io.Copy(w, part); err != nil {
 			return err
 		}
 	}
 }
+
+// copyOfficePart writes an Office part to out as the markdown it converts to
+// (#878 S5), named `<name>.md`: the models do not read Office formats and the
+// pod does not store them, and the name keeps the original's (Policy.docx.md),
+// which is what the agent cites it by. It is the one part aep-api holds whole,
+// and only up to the pod's per-document limit, read one byte past it because
+// io.LimitReader ends a capped read with io.EOF and a truncated document would
+// convert to the wrong words. A part over the limit or one that does not
+// convert is a refusedPartError, returned before any byte of the part is
+// written.
+func copyOfficePart(part *multipart.Part, ext string, out *multipart.Writer) error {
+	name := part.FileName()
+	content, err := io.ReadAll(io.LimitReader(part, sourcecontrol.MaxReferenceBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(content) > sourcecontrol.MaxReferenceBytes {
+		return refusedPartError(fmt.Sprintf("%q exceeds the %d MiB per-document limit", name, sourcecontrol.MaxReferenceBytes>>20))
+	}
+	text, err := officetext.Markdown(ext, content)
+	if err != nil {
+		return refusedPartError(fmt.Sprintf("%q could not be read as a %s file", name, ext))
+	}
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", multipart.FileContentDisposition(referencesField, name+".md"))
+	header.Set("Content-Type", "text/markdown; charset=utf-8")
+	w, err := out.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, text)
+	return err
+}
+
+// refusedPartError is a part aep-api itself refuses (an Office document it
+// cannot convert), worded as the caller's 400 message.
+type refusedPartError string
+
+func (e refusedPartError) Error() string { return string(e) }
 
 // codeRequestTooLarge is the envelope code of an upload the pod refused for size.
 const codeRequestTooLarge = "request_too_large"

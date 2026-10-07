@@ -22,6 +22,7 @@ package aestudiotest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -190,9 +191,20 @@ func storedReferenceName(raw string) string {
 	return cleaned + ext
 }
 
+// referenceExtensions are the types the pod stores (ae-studio-tools
+// repo.referenceExtensions): the ones the models read. Office formats are
+// absent there too, so an unconverted .docx is refused here as it is live.
+var referenceExtensions = map[string]bool{
+	".pdf": true, ".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
+	".md": true, ".txt": true, ".csv": true, ".tsv": true, ".json": true,
+	".yaml": true, ".yml": true, ".xml": true, ".html": true, ".rst": true,
+}
+
 // PutReferences reads the multipart upload of field `files` and stores its
-// file names for ref, replacing the previous set. It closes body, as the
-// adapter does.
+// file names for ref, replacing the previous set. Like the pod it refuses
+// (ErrReferenceRejected) a type the models cannot read or a document over
+// sourcecontrol.MaxReferenceBytes, and then stores nothing. It closes body,
+// as the adapter does.
 func (f *Fake) PutReferences(_ context.Context, ref sourcecontrol.RepoRef, contentType string, body io.Reader) error {
 	if c, ok := body.(io.Closer); ok {
 		defer func() { _ = c.Close() }()
@@ -217,8 +229,17 @@ func (f *Fake) PutReferences(_ context.Context, ref sourcecontrol.RepoRef, conte
 		if p.FormName() != "files" {
 			return errors.New("aestudiotest: unexpected field " + p.FormName())
 		}
-		if _, err := io.Copy(io.Discard, p); err != nil {
+		ext := path.Ext(storedReferenceName(p.FileName()))
+		if !referenceExtensions[ext] {
+			return fmt.Errorf("%w: unsupported type %q", sourcecontrol.ErrReferenceRejected, ext)
+		}
+		n, err := io.Copy(io.Discard, io.LimitReader(p, sourcecontrol.MaxReferenceBytes+1))
+		if err != nil {
 			return err
+		}
+		if n > sourcecontrol.MaxReferenceBytes {
+			return fmt.Errorf("%w: %q exceeds the %d MiB per-document limit",
+				sourcecontrol.ErrReferenceRejected, p.FileName(), sourcecontrol.MaxReferenceBytes>>20)
 		}
 		names = append(names, p.FileName())
 	}

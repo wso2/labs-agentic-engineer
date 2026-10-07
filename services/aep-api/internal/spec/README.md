@@ -139,7 +139,12 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
 - **The references upload** (`files/references.go`) — a pass-through to the org's pod, which stores and
   validates the documents. The strict server hands over a `*multipart.Reader`, so each `files` part is
   re-streamed through an `io.Pipe` (same field, name and content type, never buffered whole); a body
-  that breaks off aborts the pod's upload. The held kickoff fires only on the pod's `2xx`.
+  that breaks off aborts the pod's upload. The one exception is an Office document (`.docx`, `.xlsx`,
+  `.pptx`, `officetext.Extensions`): the models do not read it and the pod does not store it, so it is
+  held whole up to the pod's per-document limit (`sourcecontrol.MaxReferenceBytes`, 5 MiB), converted
+  by `platform/officetext` and streamed as `<name>.md`. One over the limit or that does not convert is
+  a 400 that aborts the upload, so the pod stores nothing. The held kickoff fires only on the pod's
+  `2xx`.
 - **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
   design was written?" is answered by reading the requirements at the commit the newest successful
   `/design` turn recorded reading the project at, and comparing that reduction against today's —

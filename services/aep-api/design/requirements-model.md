@@ -51,4 +51,5 @@ into the repair milestone and starts the run without planning.
 against the previous validated version's final attempt (`Baseline`). The
 verdict, digest and regression count come from it; repair issues are filed by
 standing (regression / still failing / plain). Office uploads are converted
-to markdown by `internal/platform/officetext`.
+to markdown by `internal/platform/officetext` while the references upload
+streams them to the pod (`spec/files/references.go`).
