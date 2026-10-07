@@ -8,10 +8,9 @@ Alerts bell and stepper show the *current* state rather than the write-time snap
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
-  INT(["/internal/v1/sre"]) -->|NewReport| CORE
   subgraph ops
     SL["slices — getreport · listreports"]
-    CORE["report core<br/>model · NewReport · wire projection"]
+    CORE["report core<br/>model · wire projection"]
     SL --> CORE
     CORE --> DB[("rca_agent_reports")]
   end
@@ -24,10 +23,11 @@ flowchart LR
 | `getreport` | read one, reconciled against live executions | `GET /rca-agent/reports/{reportId}` |
 | `listreports` | keyset page, newest first | `GET /rca-agent/reports` |
 
-The write side is not a slice: the SRE handoff records a report through
-`POST /internal/v1/sre/rca-reports` (`sre-create-rca-report`, served in
-`internal/edge/internal_sre.go`), which validates with `NewReport` (`new_report.go`)
-and persists through `Repository`.
+Nothing writes reports today. The SRE handoff's MCP tools
+(`/internal/v1/sre-handoff/mcp`, [sre-handoff.md](../../design/sre-handoff.md))
+search and file issues only, and no route accepts a report, so the Alerts list
+stays empty until a writer is added (for example a third handoff tool). That
+is a product decision, not a missing wire-up.
 
 ## Ports
 | Port | Dir | Peer · contract |

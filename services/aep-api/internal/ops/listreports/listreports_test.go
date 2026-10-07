@@ -36,7 +36,6 @@ type fakeRepo struct {
 	next      string
 }
 
-func (f *fakeRepo) Create(context.Context, *ops.RcaAgentReport) error                { return nil }
 func (f *fakeRepo) Get(context.Context, string, string) (*ops.RcaAgentReport, error) { return nil, nil }
 func (f *fakeRepo) List(_ context.Context, orgID, cursor string, limit int) ([]ops.RcaAgentReport, string, error) {
 	f.gotOrg, f.gotCursor, f.gotLimit = orgID, cursor, limit

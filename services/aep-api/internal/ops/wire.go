@@ -18,8 +18,7 @@ package ops
 
 import "github.com/wso2/aep/aep-api/internal/gen"
 
-// The domain's ONE public-wire projection. (The internal sre-create-rca-report
-// op projects onto its own igen type in internal/edge/internal_sre.go.)
+// The domain's ONE public-wire projection.
 //
 // It sits in the root rather than in a slice because both slices return the
 // report on the wire — the duplication is real and immediate, which is the

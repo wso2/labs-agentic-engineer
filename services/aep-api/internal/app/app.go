@@ -834,9 +834,8 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
 
 	// The RCA-report store the ops domain reads through (console Alerts). No
-	// writer is wired since the SRE handoff moved to its MCP tools (API-5).
-	// TODO(main-sync Task 46): API-5: record the writer gap; drop
-	// ops.NewReport and its sre-create-rca-report comments if left dead.
+	// writer is wired since the SRE handoff moved to its MCP tools; see
+	// internal/ops/README.md.
 	rcaReports := ops.NewRepository(db)
 
 	// Validation-context runner callback: resolves the run's deployed endpoint

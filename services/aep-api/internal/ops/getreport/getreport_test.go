@@ -33,7 +33,6 @@ type fakeRepo struct {
 	byID map[string]*ops.RcaAgentReport
 }
 
-func (f *fakeRepo) Create(context.Context, *ops.RcaAgentReport) error { return nil }
 func (f *fakeRepo) Get(_ context.Context, _, id string) (*ops.RcaAgentReport, error) {
 	return f.byID[id], nil
 }
