@@ -129,29 +129,17 @@ func TestBasis_SharedFixture(t *testing.T) {
 // mark on the text, not characters in it: `name` is the word name. The basis
 // must read the file the same way, or a feature whose file has any inline
 // markup reads as out of date forever. A closing *assumed* is still a tag.
+// How each kind of markup reads is held on both sides by the shared
+// inline-markup-cases.json (inline_test.go); this is the basis end to end.
 func TestBasis_InlineMarkupReadsAsItsWords(t *testing.T) {
-	feature := func(lines ...string) map[string]string {
+	feature := func(line string) map[string]string {
 		return map[string]string{
-			"features/F1-greeting.md": "# Greeting\n\n## User Stories\n\n- " + strings.Join(lines, "\n- ") + "\n",
+			"features/F1-greeting.md": "# Greeting\n\n## User Stories\n\n- " + line + "\n",
 		}
 	}
-	cases := map[string]struct{ markdown, words string }{
-		"code span":            {"F1.1 Greet with a `name` query parameter.", "F1.1 Greet with a name query parameter."},
-		"code span, literal":   {"F1.1 Match ``a\\*b ` c`` as typed.", "F1.1 Match a\\*b ` c as typed."},
-		"strong":               {"F1.1 Greet **every** caller, __always__.", "F1.1 Greet every caller, always."},
-		"emphasis":             {"F1.1 Greet *each* caller, _politely_; foo*bar*.", "F1.1 Greet each caller, politely; foobar."},
-		"strikethrough":        {"F1.1 Greet ~~some~~ every caller.", "F1.1 Greet some every caller."},
-		"link":                 {"F1.1 Greet as the [style guide](https://example.com/g) says.", "F1.1 Greet as the style guide says."},
-		"autolink":             {"F1.1 Greet at <https://example.com/hi>.", "F1.1 Greet at https://example.com/hi."},
-		"nested":               {"F1.1 Greet **bold *and* italic** in [`code` link](u).", "F1.1 Greet bold and italic in code link."},
-		"not markup":           {"F1.1 Keep snake_case_name, a * b * c, \\*stars\\* and `unclosed.", "F1.1 Keep snake_case_name, a * b * c, *stars* and `unclosed."},
-		"source kept a source": {"F1.1 Greet in **English**. [Brief · p.2]", "F1.1 Greet in English."},
-	}
-	for name, c := range cases {
-		got := Basis(feature(c.markdown), "F1")
-		if want := "Greeting\nUser Stories\n" + c.words; got != want {
-			t.Errorf("%s: basis\n%q\nwant\n%q", name, got, want)
-		}
+	marked := feature("F1.1 Greet **every** caller with a `name`, as the [guide](u) says. [Brief · p.2]")
+	if got, want := Basis(marked, "F1"), "Greeting\nUser Stories\nF1.1 Greet every caller with a name, as the guide says."; got != want {
+		t.Errorf("basis\n%q\nwant\n%q", got, want)
 	}
 
 	tagged := feature("F1.1 Greet with a *friendly* `name`. *assumed*")

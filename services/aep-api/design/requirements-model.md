@@ -18,8 +18,13 @@ feature. Decisions: ADR-0039, ADR-0040, ADR-0041. Terms: `CONTEXT.md`
   markup is a mark and not text (`inline.go`): code spans, emphasis, strong,
   strikethrough, links and autolinks read as their words, escapes and
   entities as their characters. A closing `*assumed*`/`*blocking*` is kept for
-  `parseLine`. The console's text is canonical: it has no markdown source to
-  re-derive markup from, and the basis is compared by string equality.
+  `parseLine`. The room's parser (`marked`, via @tiptap/markdown) is the
+  reference, not the CommonMark spec: the console has no markdown source to
+  re-derive markup from, and the basis is compared by string equality. Both
+  sides are held to `packages/contracts/requirements/inline-markup-cases.json`.
+- The reader is linear in a line's length (one pairing pass for brackets,
+  parentheses and code spans; emphasis paired with CommonMark's
+  `openers_bottom`): files are user-written and every basis reads them all.
 
 ## The save gate — `internal/spec`
 
