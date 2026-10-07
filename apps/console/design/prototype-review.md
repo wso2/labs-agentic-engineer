@@ -62,10 +62,12 @@ left the key unused); the dialog ignores an Escape whose target is the frame.
 ## Wire
 
 `turnBody` puts `prototypeFeedback` (`PrototypeFeedbackInput`, from the
-generated API types) on the JSON body with `collab: true`; the instruction is
-the bare `/prototype` or `/prototype <c>` with the same component. The mock
-(`mocks/fixtures/prototype.ts`) writes the manifest then the source, answers
-feedback by number, and refuses a bad batch as Go does.
+design agent's generated types) on the JSON body of a turn to the org's design
+agent (every such turn is a Room turn, so there is no flag for it); the
+instruction is the bare `/prototype` or `/prototype <c>` with the same
+component. The mock (`mocks/fixtures/prototype.ts`) writes the manifest then
+the source, answers feedback by number, and refuses a bad batch as the design
+agent does.
 
 ## Theme
 

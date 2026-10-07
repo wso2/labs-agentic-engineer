@@ -8,11 +8,15 @@ serves only what the documents cannot say.
 ## The room
 
 `features/spec/collab/specRoom.ts`: one Hocuspocus room per project
-(`spec-<org>-<project>`) for the whole app, counted by its users and closed a
+(`spec-<org>-<project>`) on the org's AE Studio Room (`<collab>/v1/rooms`,
+from `GET /ae-studio`), for the whole app, counted by its users and closed a
 few seconds after the last lets go. Its lifecycle is the old console's
-`useCollabSpec` (rejoin fresh after a drop, back off, latch on a refused
-bearer). Files are keyed by their repo paths (`specs/requirements/prd.md`).
-`useSpecDoc` returns its doc once synced; a build flushes it first.
+`useCollabSpec` (rejoin fresh after a drop, back off, token sync, renew once
+and rejoin when the Room drops the bearer; see console
+[ADR-0003](decisions/ADR-0003-the-console-calls-the-orgs-ae-studio-directly.md)).
+Files are keyed by their repo paths (`specs/requirements/prd.md`).
+`useSpecDoc` returns its doc once synced; a build flushes it first, and a save
+with warnings shows *Saved with warnings* on the spec.
 
 ## The spec
 
