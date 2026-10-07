@@ -173,7 +173,7 @@ type PlanScope struct {
 	// Stories Each story the version builds, in ID order.
 	Stories []PlanStory `json:"stories"`
 
-	// Tag The version's tag name (the turn's `at` is `tags/<tag>`).
+	// Tag The version's tag name, describing the version to the planner. Not the pin and not checked against it; the turn's `at` is.
 	Tag string `json:"tag"`
 }
 
@@ -246,7 +246,7 @@ type TurnInProgressCode string
 
 // TurnRequest Starts one turn that is not a browser chat turn, a kickoff (`start`) or a plan. Idempotent on turnId, a retry reattaches to the running turn. A different turnId while a turn runs is 409.
 type TurnRequest struct {
-	// At A plan turn only, the commit the planner reads the repository at, as the git reads' `at` names one; aep-api sends `tags/<version>` so an edit made after the version is not planned. Omitted, the default-branch tip. A start turn that sends it is refused (400 validation_failed).
+	// At A plan turn only, the commit the planner reads the repository at, as a 40-hex sha. The studio sends it, resolved from the `at` aep-api gave it (`tags/<version>`), so the design agent never resolves a ref. Omitted, the default-branch tip. It is the pin and wins; scope.tag only describes the version and is not checked against it. The design agent refuses it on a start turn (400 validation_failed).
 	At string `json:"at,omitempty"`
 
 	// Credit Who the turn's commits and records are credited to.

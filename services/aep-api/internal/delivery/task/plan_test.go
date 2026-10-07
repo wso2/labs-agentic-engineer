@@ -61,9 +61,20 @@ type planRig struct {
 	svc    *PlanService
 }
 
+// widgetsRef is proj1's repository as the plan service addresses it.
+var widgetsRef = aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}
+
+// newPlanRig seeds proj1's repository and, when versions names one, cuts the
+// version's tag on it: the pod resolves the plan turn's `at` against it.
 func newPlanRig(t *testing.T, versions planVersions) *planRig {
 	t.Helper()
 	pod := aestudiotest.New()
+	pod.SeedRepo(widgetsRef, map[string]string{"specs/requirements/prd.md": "# PRD\n"})
+	if versions.specTag != "" {
+		if err := pod.Tag(context.Background(), widgetsRef, sourcecontrol.TagSpec{Name: versions.specTag, Message: "Spec " + versions.specTag}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	issues := newFakeIssues()
 	row := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"}
 	svc := NewPlanService(fakeRepos{repo: row}, versions, pod, issues, issues.writer())
@@ -89,7 +100,7 @@ func TestPlanMilestone_StartsAPlanTurnInThePod(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v1"})
 	call := r.plan(t)
 
-	if call.Ref != (aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}) {
+	if call.Ref != widgetsRef {
 		t.Errorf("ref = %+v, want the project's repository in org1", call.Ref)
 	}
 	req := call.Request
@@ -264,6 +275,22 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	}
 	if got := delivery.ParseServesStories(created[0].Body); fmt.Sprint(got) != "[F1.1 F1.2]" {
 		t.Errorf("stamped stories = %v, want [F1.1 F1.2] (body: %q)", got, created[0].Body)
+	}
+}
+
+// A version whose tag the repository does not have cannot be planned: the
+// pod refuses the turn (404 ref_not_found) before it starts, and the refusal
+// is permanent, so the planning activity does not retry it.
+func TestPlanIntoMilestone_AnUnknownVersionTagIsPermanent(t *testing.T) {
+	r := newPlanRig(t, planVersions{})
+	r.svc = NewPlanService(fakeRepos{repo: &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"}},
+		planVersions{specTag: "v4"}, r.pod, r.issues, r.issues.writer())
+	err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7)
+	if !errors.Is(err, sourcecontrol.ErrRefNotFound) || !sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v, want a permanent ErrRefNotFound", err)
+	}
+	if n := len(r.pod.TurnCalls()); n != 0 {
+		t.Fatalf("pod started %d turns, want none", n)
 	}
 }
 

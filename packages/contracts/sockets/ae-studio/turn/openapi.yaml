@@ -112,11 +112,13 @@ components:
         at:
           type: string
           description: A plan turn only, the commit the planner reads the
-            repository at, as the git reads' `at` names one; aep-api sends
-            `tags/<version>` so an edit made after the version is not planned.
-            Omitted, the default-branch tip. A start turn that sends it is
-            refused (400 validation_failed).
-          pattern: ^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$
+            repository at, as a 40-hex sha. The studio sends it, resolved from
+            the `at` aep-api gave it (`tags/<version>`), so the design agent
+            never resolves a ref. Omitted, the default-branch tip. It is the
+            pin and wins; scope.tag only describes the version and is not
+            checked against it. The design agent refuses it on a start turn
+            (400 validation_failed).
+          pattern: ^[0-9a-f]{40}$
         scope:
           $ref: '#/components/schemas/PlanScope'
         taskContext:
@@ -155,8 +157,9 @@ components:
       properties:
         tag:
           type: string
-          description: The version's tag name (the turn's `at` is
-            `tags/<tag>`).
+          description: The version's tag name, describing the version to the
+            planner. Not the pin and not checked against it; the turn's `at`
+            is.
           pattern: ^[A-Za-z0-9._/-]{1,200}$
         stories:
           type: array

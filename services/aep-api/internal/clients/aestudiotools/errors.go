@@ -220,6 +220,14 @@ func errorFromProblem(a answer) error {
 		return fmt.Errorf("%w: %w", sourcecontrol.ErrRefInvalid,
 			&StatusError{Op: a.op, Status: a.status, Code: a.code, Detail: a.detail})
 	}
+	if a.op == "start-repo-turn" && a.code == "ref_not_found" {
+		// A plan turn's `at` the pod could not resolve: nothing started. Unlike
+		// a read's ref_not_found (a push the mirror may not have fetched yet),
+		// the same request cannot succeed, so it is also the permanent
+		// StatusError.
+		return fmt.Errorf("%w: %w", sourcecontrol.ErrRefNotFound,
+			&StatusError{Op: a.op, Status: a.status, Code: a.code, Detail: a.detail})
+	}
 	if sentinel, ok := codeSentinels[a.code]; ok {
 		return fmt.Errorf("%w (ae studio: %s answered %d %s)", sentinel, a.op, a.status, a.code)
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // The start-repo-turn body's patterns (ae-studio-tools internal/v1
@@ -42,7 +43,9 @@ var (
 
 // validTurn refuses what the adapter refuses before sending (a turnId that
 // is not a UUID, an unknown kind: plain errors) and what the pod's validator
-// and handler answer 400 validation_failed to.
+// and handler answer 400 validation_failed to. A refused start is in Calls
+// (begin records it first) but never in TurnCalls: a test asserting that no
+// turn was attempted reads Calls.
 func validTurn(req aestudiotools.TurnRequest) error {
 	if _, err := uuid.Parse(req.TurnID); err != nil {
 		return fmt.Errorf("ae studio: turnId %q is not a UUID", req.TurnID)
@@ -112,6 +115,9 @@ func (f *Fake) StartTurn(_ context.Context, ref aestudiotools.RepoRef, req aestu
 	if err := validTurn(req); err != nil {
 		return nil, err
 	}
+	if err := f.resolveTurnAt(ref, req.At); err != nil {
+		return nil, err
+	}
 	f.mu.Lock()
 	f.turns = append(f.turns, TurnCall{Ref: ref, Request: req})
 	events := slices.Clone(f.script)
@@ -126,4 +132,25 @@ func (f *Fake) StartTurn(_ context.Context, ref aestudiotools.RepoRef, req aestu
 			}
 		}
 	}, nil
+}
+
+// resolveTurnAt resolves a plan turn's `at` as the pod does before the turn
+// starts: a repository the Fake lacks is the pod's 404 project_unknown, a tag
+// or sha the repository lacks its permanent 404 ref_not_found, both in the
+// adapter's shape.
+func (f *Fake) resolveTurnAt(ref aestudiotools.RepoRef, at string) error {
+	if at == "" {
+		return nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	st, err := f.content(ref)
+	if err != nil {
+		return err
+	}
+	if _, err := st.resolve(at); err != nil {
+		return fmt.Errorf("%w: %w", sourcecontrol.ErrRefNotFound,
+			&aestudiotools.StatusError{Op: OpStartTurn, Status: 404, Code: "ref_not_found", Detail: at})
+	}
+	return nil
 }

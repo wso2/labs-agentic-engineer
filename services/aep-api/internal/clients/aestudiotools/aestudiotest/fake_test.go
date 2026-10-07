@@ -544,6 +544,10 @@ const turnID = "0d1f8a8e-1f2a-4c1e-9a51-7a1d0e5a6b10"
 func TestFake_StartTurnRefusesWhatThePodRefuses(t *testing.T) {
 	ctx := context.Background()
 	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "Spec v1"}); err != nil {
+		t.Fatal(err)
+	}
 	valid := func() aestudiotools.TurnRequest {
 		return aestudiotools.TurnRequest{
 			TurnID: turnID, Project: "greeter", Kind: aestudiotools.TurnKindPlan, At: "tags/v1",
@@ -586,6 +590,18 @@ func TestFake_StartTurnRefusesWhatThePodRefuses(t *testing.T) {
 	} {
 		if _, err := f.StartTurn(ctx, ref, req); err == nil || sourcecontrol.IsPermanent(err) {
 			t.Errorf("%s: err = %v, want the adapter's plain refusal", name, err)
+		}
+	}
+	// The pod resolves `at` before the turn starts: a tag or sha the
+	// repository lacks is 404 ref_not_found, permanent, and starts nothing.
+	for _, at := range []string{"tags/v9", "0000000000000000000000000000000000000000"} {
+		req := valid()
+		req.At = at
+		_, err := f.StartTurn(ctx, ref, req)
+		var se *aestudiotools.StatusError
+		if !errors.Is(err, sourcecontrol.ErrRefNotFound) || !errors.As(err, &se) || se.Status != 404 ||
+			se.Code != "ref_not_found" || !sourcecontrol.IsPermanent(err) {
+			t.Errorf("at %s: err = %v, want the adapter's permanent 404 ref_not_found", at, err)
 		}
 	}
 	if n := len(f.TurnCalls()); n != 2 {

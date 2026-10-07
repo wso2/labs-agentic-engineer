@@ -182,6 +182,9 @@ func TestStartTurn_Refusals(t *testing.T) {
 		{name: "503 agent_unavailable", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "agent_unavailable", "") }, want: sourcecontrol.ErrAEStudioUnavailable},
 		{name: "502 from the gateway", reply: func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, want: sourcecontrol.ErrAEStudioUnavailable},
 		{name: "404 project_unknown", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "project_unknown", "") }, want: sourcecontrol.ErrRepoNotFound, permanent: true},
+		// The plan's `at` names no tag or commit the pod knows: nothing started,
+		// and a retry cannot change it (unlike a read's ref_not_found).
+		{name: "404 ref_not_found", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "ref_not_found", "tags/v9") }, want: sourcecontrol.ErrRefNotFound, permanent: true},
 		{name: "409 no_default_key", reply: func(w http.ResponseWriter) { writeProblem(w, 409, "no_default_key", "") }, code: "no_default_key", permanent: true},
 		{name: "400 validation_failed", reply: func(w http.ResponseWriter) { writeProblem(w, 400, "validation_failed", "kind") }, code: "validation_failed", permanent: true},
 		{name: "502 agent_error", reply: func(w http.ResponseWriter) { writeProblem(w, 502, "agent_error", "") }, code: "agent_error"},

@@ -124,7 +124,8 @@ type Turns interface {
 
 // StartTurn starts (or reattaches to) a turn and returns its events, the
 // result last. A different turn running for the project is
-// ErrTurnInProgress. The stream is bounded by ctx only; ranging over it to
+// ErrTurnInProgress; a plan turn's At the pod cannot resolve is
+// sourcecontrol.ErrRefNotFound, permanent (nothing started). The stream is bounded by ctx only; ranging over it to
 // the end, or breaking off, closes it, and it can be ranged over once. A
 // stream that ends without a result is ErrAEStudioUnavailable.
 func (a *Adapter) StartTurn(ctx context.Context, ref RepoRef, req TurnRequest) (iter.Seq2[TurnEvent, error], error) {
