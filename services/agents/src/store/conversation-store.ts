@@ -105,7 +105,7 @@ export interface Conversation {
    * (the read path falls back to the raw message for those).
    */
   turns: TurnJournalEntry[];
-  /** `awaiting-human` = the turn ended on a HITL question call (ask_question / ask_questions). */
+  /** `awaiting-human` = the turn ended on a HITL question call (ask_question / ask_questions) or an accepted hand-off call. */
   status: "active" | "awaiting-human" | "done";
   /** Store-owned timestamps. */
   createdAt: Date;

@@ -55,7 +55,7 @@ type StreamPart struct {
 	Files   map[string]string `json:"files,omitempty"`
 	Deleted []string          `json:"deleted,omitempty"`
 	Usage   *TurnUsage        `json:"usage,omitempty"`
-	// Outcome is an Issues turn's last reply (≤ 400 chars); see Manifest.Outcome.
+	// Outcome is an Issues turn's outcome, `Filed #N: <title>` or else its last reply (≤ 400 chars); see Manifest.Outcome.
 	Outcome string `json:"outcome,omitempty"`
 }
 

@@ -586,7 +586,7 @@ func (s *Service) branchNotes(ctx context.Context, job turnJob, last *AgentTurn)
 }
 
 // withUsage stamps the manifest's token spend (#249), the turn's closing
-// context size and its outcome (an Issues turn's last reply) onto a terminal.
+// context size and its outcome (an Issues turn's filing, else its last reply) onto a terminal.
 // A nil manifest leaves all three unset: without it the agents service saved
 // nothing into the conversation, so the context the steps reached is not the
 // history the next turn reads. A manifest without usage (pre-capture agents)

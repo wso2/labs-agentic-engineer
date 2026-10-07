@@ -442,7 +442,8 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
 
     if (history !== conv.messages) conv.messages.push(...history.slice(historyLen));
 
-    // 5. set status: awaiting-human when the turn ended on a HITL question call.
+    // 5. set status: awaiting-human when the turn ended on a HITL question call
+    // or an accepted hand-off call.
     conv.status = endedAwaitingHuman(conv.messages.slice(startLen)) ? "awaiting-human" : "done";
 
     // 6. per-turn spend (#249): project the whole-turn usage onto the pinned

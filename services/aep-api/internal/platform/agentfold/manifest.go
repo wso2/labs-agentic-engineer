@@ -43,9 +43,9 @@ type Manifest struct {
 	Deleted []string
 	// Usage is the turn's token spend (#249); nil for pre-capture agents.
 	Usage *TurnUsage
-	// Outcome is what an Issues turn came to: its last reply, at most 400
+	// Outcome is what an Issues turn came to: `Filed #N: <title>` when it filed, else its last reply, at most 400
 	// characters. Empty for every other turn, and for an Issues turn that
-	// never replied in text. The main chat's next turn is told it (branch notes).
+	// neither filed nor replied in text. The main chat's next turn is told it (branch notes).
 	Outcome string
 }
 

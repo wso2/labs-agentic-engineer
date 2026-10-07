@@ -32,8 +32,9 @@ from) and `AgentRunSettings` (`src/agents/run-settings.ts`), what `runTurn` deci
 this turn: the model built from the org's connection, the step cap, the output ceiling,
 retries, provider options, `instructionsWrap` (the system prompt, with the cache
 breakpoint when caching is on) and `prepareStep` (the rolling breakpoint). Every agent
-is assembled by one helper, `buildToolLoopAgent`, which stops at the step cap or on an
-accepted question call (`questionStop`) and leaves an absent option off entirely.
+is assembled by one helper, `buildToolLoopAgent`, which stops at the step cap, on an
+accepted question call (`questionStop`) or on an accepted hand-off call (`handOffStop`),
+and leaves an absent option off entirely.
 
 `runTurn` takes `agentFor(run)` rather than tools and instructions: it pushes the user
 message, which is what fixes the turn prompt's index for the rolling breakpoint, then
@@ -81,7 +82,9 @@ selects that view's agent in place of the spec editor:
 tools, the turn's MCP tools under them, Issues-agent instructions, no spec bundle), and
 it stops on an accepted question call like every agent, so a "File this issue?" card
 ends the turn awaiting the user. Adding a view is one entry in `VIEWS`, one tool set,
-and one `src/agents/<view>/` with its `agent.ts` factory.
+one `src/agents/<view>/` with its `agent.ts` factory, and, so the main agent can hand a
+report to it, one entry each in `HAND_OFF_TOOLS` and `HAND_OFF_DESCRIPTIONS`
+(`src/agents/main/tools/hand-off.ts`) and in `VIEW_AGENTS` (`src/agents/views.ts`).
 
 The Issues agent files on one explicit answer. The prompt has it call a single
 `ask_question` with the exact question `FILE_QUESTION` and the exact options `FILE_IT`

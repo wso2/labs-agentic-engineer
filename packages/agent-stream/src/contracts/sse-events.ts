@@ -1245,9 +1245,9 @@ export interface ManifestPart {
    */
   usage?: TurnUsage;
   /**
-   * What an Issues turn came to: its last reply, trimmed and cut to
+   * What an Issues turn came to: `Filed #N: <title>` when it filed an issue, else its last reply, trimmed and cut to
    * `OUTCOME_MAX_CHARS` (ending in `…` when cut). Set only for Issues turns
-   * that replied in text; aep-api stores it so the main chat's next turn can
+   * that filed or replied in text; aep-api stores it so the main chat's next turn can
    * be told (`TurnRequest.branchNotes`).
    */
   outcome?: string;

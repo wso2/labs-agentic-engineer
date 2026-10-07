@@ -168,7 +168,7 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
   and the status poll read the main chat's newest turn only.
 - **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
-  manifest carries its `outcome` (its last reply, ≤ 400 chars), stored on `agent_turns.outcome`.
+  manifest carries its `outcome` (`Filed #N: <title>` when it filed, else its last reply; ≤ 400 chars), stored on `agent_turns.outcome`.
   A main-chat dispatch reads `BranchOutcomes` — the Issues turns that FINISHED (`updated_at`) with
   an outcome since the main conversation's previous terminal turn was created, or since the thread
   was created for its first turn — and, when there are any, sends one `branchNotes` entry

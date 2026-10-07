@@ -131,7 +131,7 @@ type AgentTurn struct {
 	// other turn and on rows that predate it.
 	ContextTokens *int64 `json:"-"`
 
-	// Outcome is what an Issues turn came to: its last reply (at most 400
+	// Outcome is what an Issues turn came to: `Filed #N: <title>` when it filed, else its last reply (at most 400
 	// characters), off the terminal manifest. The main chat's next turn is
 	// told it as a branch note (BranchOutcomes). Nullable, added by
 	// AutoMigrate: NULL on every other turn and on rows that predate it.

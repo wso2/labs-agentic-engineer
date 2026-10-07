@@ -109,7 +109,7 @@ type TurnTerminal struct {
 	// ContextTokens is the conversation's context size at the turn's end
 	// (AgentTurn.ContextTokens); nil when the turn left no measure.
 	ContextTokens *int64
-	// Outcome is an Issues turn's last reply off its manifest
+	// Outcome is an Issues turn's outcome (the filing, else its last reply) off its manifest
 	// (AgentTurn.Outcome); "" when there was none.
 	Outcome string
 	// SpecEdited is true when the turn authored real spec changes: a committed
