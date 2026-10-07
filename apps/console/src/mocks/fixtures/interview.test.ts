@@ -81,4 +81,15 @@ describe("the mock main agent's hand-off", () => {
     expect(handOffs("Export is not working")).toHaveLength(1);
     expect(handOffs("What is left to do?")).toHaveLength(0);
   });
+
+  it("hands an /issue message to Issues too, with the words after the command as the request", () => {
+    expect(handOffs("/issue Save does nothing").map((f) => f.part.input)).toEqual([{ request: "Save does nothing" }]);
+    expect(handOffs("/issue   Export is slow").map((f) => f.part.input)).toEqual([{ request: "Export is slow" }]);
+  });
+
+  it("hands a bare /issue off as it is, and leaves other commands and /issuesomething alone", () => {
+    expect(handOffs("/issue").map((f) => f.part.input)).toEqual([{ request: "/issue" }]);
+    expect(handOffs("/issues are great")).toHaveLength(0);
+    expect(handOffs("/interview F4")).toHaveLength(0);
+  });
 });

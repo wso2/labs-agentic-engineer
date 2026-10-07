@@ -407,6 +407,12 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
+/** The `/issue` command's words (the whole message for a bare `/issue`), or null when it is not that command. */
+function issueCommandRequest(text: string): string | null {
+  const match = /^\/issue(?:\s+([\s\S]*))?$/.exec(text);
+  return match ? ((match[1] ?? "").trim() || text) : null;
+}
+
 /**
  * A message in the user's own words that says something is broken. An answer
  * to a card or a command is the conversation's own business, never a report.
@@ -480,10 +486,11 @@ export function scriptTurn(req: TurnRequest): ScriptedTurn {
     };
   }
 
-  // A report of something broken belongs in Issues: the agent hands it over,
-  // in the user's words, and the turn ends waiting for the user to go there.
-  if (readsBroken(text)) {
-    const input: HandOffInput = { request: text.slice(0, 2000) };
+  // A report of something broken, or an `/issue` message, belongs in Issues: the
+  // agent hands it over, in the user's words, and the turn ends waiting for the user to go there.
+  const issueRequest = issueCommandRequest(text);
+  if (issueRequest !== null || readsBroken(text)) {
+    const input: HandOffInput = { request: (issueRequest ?? text).slice(0, 2000) };
     const output: HandOffResult = { status: "awaiting_handoff", view: "issues" };
     const s = new Script()
       .pause(500)
