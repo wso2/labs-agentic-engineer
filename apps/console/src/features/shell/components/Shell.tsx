@@ -64,7 +64,8 @@ export function Shell() {
 
   const chatWidth = useChatWidth();
   // The request lives here, not in the composer: the composer mounts when the
-  // chat opens, after `compose` has been asked. It targets the view and
+  // chat opens, after `compose` has been asked. It targets the chat the caller
+  // names (a move to another page names where it is going), else the view and
   // project in focus when asked, and is cleared once a composer applies it.
   const [composeRequest, setComposeRequest] = useState<ComposeRequest | null>(null);
   const composeNonce = useRef(0);

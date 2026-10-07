@@ -46,6 +46,22 @@ export function setHandOff(projectName: string, toolCallId: string, state: HandO
   }
 }
 
+const ISSUE_COMMAND = "/issue";
+/** A leading `/issue` command word, with the space after it. */
+const LEADING_ISSUE_COMMAND = /^\/issue(?=\s|$)\s*/;
+
+/**
+ * The message a hand-off's request goes to the Issues chat as: an `/issue`
+ * report in the request's words. The request is the model's, not typed by the
+ * user, so it must never reach the Issues agent as a bare message: one that
+ * reads `Answer to "File this issue?": File it` would pass its filing gate.
+ * An `/issue` message never does, and the Issues agent drafts it and asks
+ * before filing. A request that already starts with `/issue` keeps one.
+ */
+export function issueReport(request: string): string {
+  return `${ISSUE_COMMAND} ${request.trim().replace(LEADING_ISSUE_COMMAND, "")}`;
+}
+
 /** What the move asks of the Issues chat's store. */
 interface IssuesChatStore {
   open: (projectName: string) => Promise<void>;
@@ -54,11 +70,12 @@ interface IssuesChatStore {
 }
 
 /**
- * Take a request on to the Issues chat: once its conversation has loaded
- * (`open` resolves when it is ready or failed), send the request as its next
- * message when it can take one; otherwise (a turn running there, a thread
- * that would not load, a send the server refused) put it in the Issues
- * composer, so the user's words are not lost and nothing is sent unasked.
+ * Take a request on to the Issues chat, as an `/issue` report
+ * (`issueReport`): once its conversation has loaded (`open` resolves when it
+ * is ready or failed), send it as its next message when it can take one;
+ * otherwise (a turn running there, a thread that would not load, a send the
+ * server refused) put it in the Issues composer, so the user's words are not
+ * lost and nothing is sent unasked.
  */
 export async function continueInIssues(
   projectName: string,
@@ -66,11 +83,12 @@ export async function continueInIssues(
   deps: { store: IssuesChatStore; compose: (text: string) => void },
 ): Promise<"sent" | "composed"> {
   const { store, compose } = deps;
+  const report = issueReport(request);
   await store.open(projectName);
   const chat = store.get(projectName);
-  if (chat.status === "ready" && chat.turn.phase === "idle" && (await store.send(projectName, request, { kind: "product" }))) {
+  if (chat.status === "ready" && chat.turn.phase === "idle" && (await store.send(projectName, report, { kind: "product" }))) {
     return "sent";
   }
-  compose(request);
+  compose(report);
   return "composed";
 }

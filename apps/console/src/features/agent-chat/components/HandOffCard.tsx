@@ -21,34 +21,89 @@ import { useNavigate } from "@tanstack/react-router";
 import { Box, Button, Link, Typography } from "@wso2/oxygen-ui";
 import { useChatPanel } from "../../shell/chatPanel";
 import type { HandOffItem } from "../chatLog";
-import { continueInIssues, getHandOff, setHandOff, type HandOffState } from "../handOffState";
+import { continueInIssues, getHandOff, issueReport, setHandOff, type HandOffState } from "../handOffState";
 import { chatStoreFor, useProjectChat } from "../useProjectChat";
+
+/** How much of the request the card shows before New Issue is chosen. */
+const PREVIEW_CHARS = 200;
+
+function preview(request: string): string {
+  const words = request.trim();
+  return words.length > PREVIEW_CHARS ? `${words.slice(0, PREVIEW_CHARS)}…` : words;
+}
 
 /**
  * The main chat's announcement that a request belongs in Issues. New Issue
- * opens the Issues page and takes the request on to its chat; Stay here keeps
- * the user where they are, and nothing is sent. Once chosen, the card reads
- * as what was chosen, here and after a reload; a request already on the
- * Issues thread reads as continued wherever it was moved from.
+ * opens the Issues page and takes the request on to its chat as an `/issue`
+ * report (`continueInIssues`); Stay here keeps the user where they are, and
+ * nothing is sent. Once chosen, the card reads as what was chosen, here and
+ * after a reload.
  */
 export function HandOffCard({ projectName, item }: { projectName: string; item: HandOffItem }) {
   const navigate = useNavigate();
-  const chatPanel = useChatPanel();
-  const issues = useProjectChat(projectName, "issues");
   const [chosen, setChosen] = useState<HandOffState>(() => getHandOff(projectName, item.toolCallId));
-  const request = item.request.trim();
-  const onIssuesThread = issues.items.some((i) => i.kind === "user" && i.text.trim() === request);
-  const state: HandOffState = chosen === "pending" && onIssuesThread ? "continued" : chosen;
-
   const choose = (next: HandOffState) => {
     setHandOff(projectName, item.toolCallId, next);
     setChosen(next);
   };
   const openIssues = () => navigate({ to: "/projects/$projectName/issues", params: { projectName } });
 
+  if (chosen === "stayed") {
+    return (
+      <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>
+        Stayed here instead of opening Issues
+      </Typography>
+    );
+  }
+  if (chosen === "continued") return <Continued onOpen={() => void openIssues()} />;
+  return <Pending projectName={projectName} item={item} openIssues={openIssues} choose={choose} />;
+}
+
+function Continued({ onOpen }: { onOpen: () => void }) {
+  return (
+    <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>
+      Continued in Issues ·{" "}
+      <Link component="button" type="button" variant="caption" onClick={onOpen} sx={{ verticalAlign: "baseline" }}>
+        Open
+      </Link>
+    </Typography>
+  );
+}
+
+/**
+ * The choice still to make. Only an undecided card watches the Issues chat:
+ * once its thread carries the report, the request went on from somewhere (a
+ * teammate, another tab) and the card reads as continued.
+ */
+function Pending({
+  projectName,
+  item,
+  openIssues,
+  choose,
+}: {
+  projectName: string;
+  item: HandOffItem;
+  openIssues: () => Promise<void>;
+  choose: (next: HandOffState) => void;
+}) {
+  const chatPanel = useChatPanel();
+  const issues = useProjectChat(projectName, "issues");
+  const [moving, setMoving] = useState(false);
+  const report = issueReport(item.request);
+  if (issues.items.some((i) => i.kind === "user" && i.text.trim() === report.trim())) {
+    return <Continued onOpen={() => void openIssues()} />;
+  }
+
   const newIssue = async () => {
+    setMoving(true);
+    try {
+      await openIssues();
+    } catch {
+      // The move did not happen: nothing was sent, and the choice is offered again.
+      setMoving(false);
+      return;
+    }
     choose("continued");
-    await openIssues();
     chatPanel.open();
     await continueInIssues(projectName, item.request, {
       store: chatStoreFor("issues"),
@@ -56,33 +111,19 @@ export function HandOffCard({ projectName, item }: { projectName: string; item: 
     });
   };
 
-  if (state === "stayed") {
-    return (
-      <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>
-        Stayed here instead of opening Issues
-      </Typography>
-    );
-  }
-  if (state === "continued") {
-    return (
-      <Typography variant="caption" color="text.secondary" sx={{ pl: 4 }}>
-        Continued in Issues ·{" "}
-        <Link component="button" type="button" variant="caption" onClick={() => void openIssues()} sx={{ verticalAlign: "baseline" }}>
-          Open
-        </Link>
-      </Typography>
-    );
-  }
   return (
     <Box sx={{ pl: 4, display: "flex", flexDirection: "column", gap: 0.75 }}>
       <Typography variant="body2">
         This belongs in <strong>Issues</strong>. I&apos;ll open it and draft the issue, in its own chat on top of this one.
       </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+        {`I'll pass on: “${preview(item.request)}”`}
+      </Typography>
       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
-        <Button size="small" variant="contained" onClick={() => void newIssue()}>
+        <Button size="small" variant="contained" disabled={moving} onClick={() => void newIssue()}>
           New Issue
         </Button>
-        <Button size="small" variant="outlined" onClick={() => choose("stayed")}>
+        <Button size="small" variant="outlined" disabled={moving} onClick={() => choose("stayed")}>
           Stay here
         </Button>
       </Box>
