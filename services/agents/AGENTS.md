@@ -69,6 +69,22 @@ search/file tools merged from the turn's `mcp` block. It has its own instruction
 (`prompt.ts`), no spec bundle and no file or skill tools; the user's message is the whole
 prompt. An unknown `view` is a 400, and a view turn cannot join a collab room.
 
+Filing is gated in code (`filing-gate.ts`), not only by the prompt. The agent drafts the
+issue, then asks ONE `ask_question` whose question is exactly `FILE_QUESTION` ("File this
+issue?") and whose option is exactly `FILE_IT` ("File it", `recommended: true`, with
+"Change it"); `recommended` is a flag, never label text. `create_issue` (the MCP tool name
+is a contract: the gate wraps it by that name) refuses unless the turn's instruction is
+the single-answer serialization of that exact answer, and when confirmed it executes at
+most once per turn: a second call, including a retry after a failed first attempt, is
+refused so the agent reports the result and asks again. The batch (`ask_questions`) form is
+never accepted as a go-ahead.
+
+`classify_report` degrades to asking. It files only on a bug, feature or improvement at
+confidence 0.8 or above; below that, or for a `question`, `needsClarification` is true. A
+missing `JEV_API_KEY`, a non-2xx, a malformed body, a network error or the 5 s timeout all
+resolve to kind `unknown` (never a failed turn), and the agent then asks which kind the
+report is. The request carries `where_the_user_is: {page: "issues"}` and no project name.
+
 ## Run
 
 - `pnpm --filter @aep/agents dev` — SSE server, watch/reload. `start` — run once.

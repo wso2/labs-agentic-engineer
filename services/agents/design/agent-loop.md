@@ -61,6 +61,21 @@ Issues-agent instructions, no spec bundle), and the question stop condition appl
 unchanged, so a "File this issue?" card ends the turn awaiting the user. Adding a view
 is one entry in `VIEWS`, one tool set, and one `src/agents/<view>/`.
 
+The Issues agent files on one explicit answer. The prompt has it call a single
+`ask_question` with the exact question `FILE_QUESTION` and the exact options `FILE_IT`
+(flagged `recommended: true`) and "Change it". `gateCreateIssue` (`filing-gate.ts`) wraps
+the MCP tool named `create_issue`: unless the turn's instruction is the single-answer
+serialization of `FILE_IT` to `FILE_QUESTION` (a batched answer never qualifies), the tool
+refuses with an error that tells the model what to ask. Once confirmed, the tool executes
+at most once in the turn; any later call is refused, so injected text in an earlier tool
+result, or a retry after a timeout that did file, cannot file twice, and a failed first
+attempt is reported to the user rather than retried silently.
+
+The report classifier (`classify_report`, Jev) never blocks a turn. Below 0.8 confidence,
+or for a `question`, it asks the agent to clarify; a missing key, a non-2xx response, a
+malformed body, a network error or the 5 s timeout all yield kind `unknown` with
+`needsClarification`, and the agent asks the user which kind the report is.
+
 ## Prototype write gate
 
 A turn's file tools are built with `gates.prototypeRender` (`buildFileToolSet`),
