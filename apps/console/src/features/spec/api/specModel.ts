@@ -18,7 +18,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, retryAfterMs } from "../../../api/errors";
 import { env } from "../../../config/env";
 import type { components } from "../../../generated/aep-api";
 
@@ -118,10 +118,10 @@ export function useSpecState(projectName: string) {
   return useQuery({
     queryKey: specKey(projectName),
     queryFn: async (): Promise<SpecStateWire> => {
-      const { data, error } = await client.GET("/projects/{projectName}/spec/state", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/spec/state", {
         params: { path: { projectName } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Couldn't load the spec"));
+      if (error || data === undefined) throw new ApiRequestError(error, "Couldn't load the spec", { retryAfterMs: retryAfterMs(response) });
       return data;
     },
   });

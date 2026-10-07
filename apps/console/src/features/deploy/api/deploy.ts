@@ -18,7 +18,7 @@
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorMessage, retryAfterMs } from "../../../api/errors";
 import type { components } from "../../../generated/aep-api";
 import { deploymentsAreMoving } from "../model/pipeline";
 
@@ -168,10 +168,10 @@ export function useDesignDependencies(projectName: string) {
   return useQuery({
     queryKey: deployKeys.designDependencies(projectName),
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/design/dependencies", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/design/dependencies", {
         params: { path: { projectName } },
       });
-      if (error) throw new Error(apiErrorMessage(error, "Couldn't load the design's dependencies"));
+      if (error) throw new ApiRequestError(error, "Couldn't load the design's dependencies", { retryAfterMs: retryAfterMs(response) });
       return data ?? [];
     },
     staleTime: 30_000,
