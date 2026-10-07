@@ -1,6 +1,6 @@
 # ADR-0042 — A prototype is React on a fixed kit, run in a sandbox
 
-**Status:** Accepted · 2026-10-02
+**Status:** Accepted · 2026-10-02 · Amended 2026-10-07 (the agent's gate runs in the org's AE Studio)
 **Supersedes:** the json-render prototype decision, "ADR-0035 — The prototype
 is a json-render spec over a closed catalog", which exists only on the unmerged
 v2 branch `feat/813-prototype-json-render` (on main, ADR-0035 is the agent
@@ -103,3 +103,21 @@ AEP: Oxygen, AEP paths, no CLI, unpublished.
 - Each theme ships its own runtimes with React bundled; their size is watched.
 - The prototype stays optional beside wireframes; making it what Build reads is
   sub-project 5.
+
+## Amendment 2026-10-07 — the agent's gate runs in the org's AE Studio
+
+Design turns moved into each organization's AE Studio
+([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
+Where this ADR says "the agents service", read the org's `ae-design-agent`:
+
+- The agent's write gate (`agent-stream`'s prototype gate) and its isolated
+  render check run in `ae-design-agent`, in the org's pod
+  (`src/prototype/render-check.ts`). The egress concern above applies to that
+  pod.
+- A `/prototype` turn's `prototypeFeedback` is validated by `ae-design-agent`
+  before the turn opens (`src/edge/turn-input.ts`, with
+  `@wso2/prototype-kit/feedback`), not by Go. aep-api no longer mirrors the
+  feedback rules; the design agent's contract
+  (`packages/contracts/api/ae-design-agent/v1/openapi.yaml`) carries the shape.
+- The Go save gate is unchanged and stays in aep-api: it runs when a build cuts
+  the version (`internal/spec/save_gate.go`).

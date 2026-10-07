@@ -10,6 +10,14 @@ tokens) · [ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)
 (where its secrets come from) ·
 [ADR-0048](ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md)
 (its webhook route)
+**Relation to:** [ADR-0039 requirements](ADR-0039-requirements-are-features-with-stable-ids.md)
+and [ADR-0041 build selection](ADR-0041-a-build-is-a-selection-of-features.md)
+hold as written: `aep-api` still parses the requirements and cuts the version,
+reading the repository through the org's `ae-studio-tools`.
+[ADR-0040 design out of date](ADR-0040-a-design-goes-out-of-date-per-feature.md)
+and [ADR-0042 prototype](ADR-0042-a-prototype-is-react-on-a-fixed-kit-in-a-sandbox.md)
+each carry a 2026-10-07 amendment for what moved into this pod (the design
+run's features; the prototype write gate and its render check)
 **Detail:** [`components/dataplane/ae-system-project/ae-studio/design/README.md`](../../components/dataplane/ae-system-project/ae-studio/design/README.md)
 
 ## Context

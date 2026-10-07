@@ -7,6 +7,10 @@ pod that reads them) ·
 [ADR-0036](ADR-0036-the-coding-credential-is-a-subscription.md) and
 [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md) (the card
 that writes two of them; each carries a 2026-10-06 amendment)
+**Relation to:** [ADR-0040 SRE agent](ADR-0040-the-sre-agent-is-configured-at-install.md):
+the SRE agent's model key and handoff key are install-wide, written by
+`aectl sre install` into Kubernetes Secrets; they are not org secrets, and this
+ADR does not cover them
 
 ## Context
 

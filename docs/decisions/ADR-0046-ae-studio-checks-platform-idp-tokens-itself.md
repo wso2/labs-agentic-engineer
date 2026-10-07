@@ -5,6 +5,9 @@
 (the org's AE Studio) ·
 [ADR-0028](ADR-0028-the-platform-idp-is-neutral-infrastructure.md) (the
 Platform IdP)
+**Relation to:** [ADR-0040 SRE agent](ADR-0040-the-sre-agent-is-configured-at-install.md):
+`/internal/v1/sre-handoff/mcp` has its own gate, the install's handoff key
+(no org claim); no Platform IdP token opens it
 **Detail:** [`services/aep-api/design/route-groups.md`](../../services/aep-api/design/route-groups.md)
 (`aep-api`'s gates) ·
 [`services/aep-api/design/git-boundary.md`](../../services/aep-api/design/git-boundary.md)
@@ -60,7 +63,7 @@ group, and the org is the only claim it checks.**
    It opens two route groups of `/internal/v1`:
    - `ae-studio/`: the project repository and skills lookups, dependency
      completion, turn usage and the webhook forward;
-   - `mcp`: the nine tools the pod forwards (`auth.MCPGate`).
+   - `mcp`: the ten tools the pod forwards (`auth.MCPGate`).
 
    On both, `aep-api` verifies the token with `auth.StudioClientVerifier`
    and binds the org recorded for that client, never an org the request
@@ -69,9 +72,9 @@ group, and the org is the only claim it checks.**
    not carry it.
 
    The invariant: the `ae-studio-<org>` token opens `ae-studio/` and `mcp`
-   and is 401 on `runs/` and `sre/`; a publisher token opens `mcp` and the
+   and is 401 on `runs/` and `sre-handoff/mcp`; a publisher token opens `mcp` and the
    org's own `runs/` ops (fenced to open cycles of its org) and is 401 on
-   `ae-studio/` and `sre/`. `mcp` is the one group both clients share.
+   `ae-studio/` and `sre-handoff/mcp`. `mcp` is the one group both clients share.
    An earlier revision had the pod hold the publisher client for `mcp`,
    which also cleared its own org's `runs/` ops.
 
