@@ -62,8 +62,10 @@ function Note({ children }: { children: ReactNode }) {
 
 /**
  * The design card's header actions: Address comments, the design turn when
- * there is something to design, Make prototype once the design has a web
- * application, and Build once something is designed.
+ * there is something to design and a design exists (before the first one,
+ * the card's body offers it), Make prototype once the design has a web
+ * application, and Build once something is designed. "A design exists" is
+ * read from its artifacts: the platform model has no revision counter.
  */
 export function DesignActions({ projectName }: { projectName: string }) {
   const design = useDesignModel(projectName).data;
@@ -86,7 +88,7 @@ export function DesignActions({ projectName }: { projectName: string }) {
           {design.running?.kind === "address" ? "Addressing comments…" : `Address comments · ${open}`}
         </Button>
       )}
-      {label && design.revision > 0 && (
+      {label && design.artifacts.length > 0 && (
         <Button size="small" variant="outlined" disabled={!turns.ready || running} onClick={() => turns.design()}>
           {design.running?.kind === "design" ? "Designing…" : label}
         </Button>
