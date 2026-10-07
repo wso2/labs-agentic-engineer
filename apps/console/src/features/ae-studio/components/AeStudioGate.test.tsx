@@ -414,4 +414,33 @@ describe("after the user's own config write", () => {
       expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
     },
   );
+
+  // The server wrote the settings, then failed a follow-up step: the roll is
+  // under way all the same. A refusal before the write rolls nothing.
+  it.each([
+    ["agent_manager_not_updated", true],
+    ["invalid_request", false],
+  ] as const)("a model connection save refused with %s re-reads AE Studio: %s", async (code, reReads) => {
+    let reads = 0;
+    server.use(
+      http.get(`${BASE}/ae-studio`, () => {
+        reads++;
+        return HttpResponse.json({ state: "ready", urls: { designAgent: "d", collab: "c", tools: "t" } });
+      }),
+      http.patch(`${BASE}/config`, () => HttpResponse.json({ code, message: "refused" }, { status: 502 })),
+    );
+    renderWithProviders(
+      <AeStudioGate>
+        <SaveConnection />
+      </AeStudioGate>,
+    );
+    await firstAnswer();
+    fireEvent.click(screen.getByRole("button", { name: "write" }));
+    if (reReads) await waitFor(() => expect(reads).toBe(2));
+    else {
+      await act(() => new Promise((r) => setTimeout(r, 50)));
+      expect(reads).toBe(1);
+    }
+  });
 });
+
