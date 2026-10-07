@@ -25,13 +25,22 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
 // baseCfg is the minimal config that Assemble accepts. The OpenChoreo clients
@@ -220,20 +229,26 @@ func TestAssemble_Degradations(t *testing.T) {
 // on /api/v1 it is just another unverifiable bearer.
 func TestAssemble_SREHandoff(t *testing.T) {
 	const key = "sre-handoff-key-for-the-assembly-test"
+	jwksURL, userJWT := userTokens(t)
 	sreCfg := func() config.Config {
 		cfg := baseCfg()
 		cfg.SREHandoff.Token = key
 		cfg.Observability.BaseURL = "http://observer"
+		cfg.JWKSURL, cfg.JWTAllowedIssuer, cfg.JWTAllowedAudience = jwksURL, testUserIssuer, testUserAudience
 		return cfg
 	}
-	serve := func(t *testing.T, h http.Handler, method, path, body string) int {
+	serveAs := func(t *testing.T, h http.Handler, bearer, method, path, body string) int {
 		t.Helper()
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+key)
+		req.Header.Set("Authorization", "Bearer "+bearer)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		return w.Code
+	}
+	serve := func(t *testing.T, h http.Handler, method, path, body string) int {
+		t.Helper()
+		return serveAs(t, h, key, method, path, body)
 	}
 	const toolsList = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
 
@@ -247,6 +262,11 @@ func TestAssemble_SREHandoff(t *testing.T) {
 		}
 		if got := serve(t, app.Handler, http.MethodGet, "/api/v1/projects/shop/issues", ""); got != http.StatusUnauthorized {
 			t.Errorf("/api/v1 with the handoff key = %d, want 401", got)
+		}
+		// Control: the same route takes a valid user JWT past authentication,
+		// so the 401 above is the key refused, not a route that is always 401.
+		if got := serveAs(t, app.Handler, userJWT, http.MethodGet, "/api/v1/projects/shop/issues", ""); got == http.StatusUnauthorized {
+			t.Errorf("/api/v1 with a valid user JWT = %d, want it past authentication", got)
 		}
 	})
 	t.Run("unconfigured: not mounted", func(t *testing.T) {
@@ -280,4 +300,41 @@ func TestAssemble_RefusesInvalidResourceLabels(t *testing.T) {
 	if _, err := Assemble(baseCfg(), Fake(), Seam{ResourceLabels: map[string]string{"cloud.wso2.com/product-name": "app-factory"}}); err != nil {
 		t.Fatalf("Assemble with a valid resource label = %v, want nil", err)
 	}
+}
+
+const (
+	testUserIssuer   = "thunder"
+	testUserAudience = "aep-console-client"
+)
+
+// userTokens serves a JWKS trusting a fresh key and returns its URL and a user
+// JWT (authorization_code grant, org acme) it verifies, issued by
+// testUserIssuer to testUserAudience.
+func userTokens(t *testing.T) (jwksURL, token string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
+			Kty: "RSA", Kid: "k1", Use: "sig", Alg: "RS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(srv.Close)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtassertion.TokenClaims{
+		Sub: "user-1", ClientID: testUserAudience, OuHandle: "acme", GrantType: "authorization_code",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: testUserIssuer, Audience: jwt.ClaimStrings{testUserAudience},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	tok.Header["kid"] = "k1"
+	signed, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv.URL, signed
 }
