@@ -117,7 +117,8 @@ components:
             never resolves a ref. Omitted, the default-branch tip. It is the
             pin and wins; scope.tag only describes the version and is not
             checked against it. The design agent refuses it on a start turn
-            (400 invalid_turn).
+            (400 invalid_turn), and answers 400 invalid_turn for a sha that
+            names no commit of the project's repository.
           pattern: ^[0-9a-f]{40}$
         scope:
           $ref: '#/components/schemas/PlanScope'

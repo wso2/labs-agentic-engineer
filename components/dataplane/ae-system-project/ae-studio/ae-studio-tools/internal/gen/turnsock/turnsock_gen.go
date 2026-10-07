@@ -246,7 +246,7 @@ type TurnInProgressCode string
 
 // TurnRequest Starts one turn that is not a browser chat turn, a kickoff (`start`) or a plan. Idempotent on turnId, a retry reattaches to the running turn. A different turnId while a turn runs is 409.
 type TurnRequest struct {
-	// At A plan turn only, the commit the planner reads the repository at, as a 40-hex sha. The studio sends it, resolved from the `at` aep-api gave it (`tags/<version>`), so the design agent never resolves a ref. Omitted, the default-branch tip. It is the pin and wins; scope.tag only describes the version and is not checked against it. The design agent refuses it on a start turn (400 invalid_turn).
+	// At A plan turn only, the commit the planner reads the repository at, as a 40-hex sha. The studio sends it, resolved from the `at` aep-api gave it (`tags/<version>`), so the design agent never resolves a ref. Omitted, the default-branch tip. It is the pin and wins; scope.tag only describes the version and is not checked against it. The design agent refuses it on a start turn (400 invalid_turn), and answers 400 invalid_turn for a sha that names no commit of the project's repository.
 	At string `json:"at,omitempty"`
 
 	// Credit Who the turn's commits and records are credited to.

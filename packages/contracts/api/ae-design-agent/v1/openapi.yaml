@@ -115,7 +115,9 @@ paths:
         The instruction is sent verbatim; the pod parses `/<skill>` flow commands.
         Send JSON, or multipart when the turn carries chat attachments. At most
         10 files, each at most 5 MiB, 15 MiB of raw bytes in total. A turn
-        carrying `target` (retired by `scope`) is refused in either form.
+        carrying `target` (retired by `scope`) is refused in either form. A
+        multipart turn carrying a `prototypeFeedback` part is refused (400):
+        the review batch is JSON only, so send it without attachments.
       tags:
       - Turns
       parameters:
