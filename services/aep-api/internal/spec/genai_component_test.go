@@ -451,11 +451,14 @@ func (m *memTurnRepo) LastContextTokens(_ context.Context, orgID, projectID, con
 func (m *memTurnRepo) BranchOutcomes(_ context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	turns, latest := 0, ""
-	for _, r := range m.rows { // insertion order == creation order
+	turns, latest, latestAt := 0, "", time.Time{}
+	for _, r := range m.rows { // a terminal row's UpdatedAt is its finish time
 		if r.OrgID == orgID && r.ProjectID == projectID && r.UseCase == useCase && r.Status == "completed" &&
-			r.CreatedAt.After(since) && r.Outcome != nil {
-			turns, latest = turns+1, *r.Outcome
+			r.UpdatedAt.After(since) && r.Outcome != nil {
+			turns++
+			if !r.UpdatedAt.Before(latestAt) {
+				latest, latestAt = *r.Outcome, r.UpdatedAt
+			}
 		}
 	}
 	return turns, latest, nil
@@ -1411,6 +1414,52 @@ func TestBranchNotes_IssuesOutcomeReachesTheMainChat(t *testing.T) {
 	r.waitTerminal(t, r.startTurn(t, main, "general", "and now?"))
 	if notes := r.fake.sentTurn(t, 4).req.BranchNotes; len(notes) != 0 {
 		t.Fatalf("main turn with no Issues turns since: branchNotes = %+v, want none", notes)
+	}
+}
+
+// TestBranchNotes_StartFromTheMainThread: the first turn of a fresh or rotated
+// main thread is told only of Issues turns that finished after the thread was
+// created, not the project's whole Issues history; a stored outcome longer
+// than the wire's 400 units is capped before it is sent.
+func TestBranchNotes_StartFromTheMainThread(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(convs), withMCP())
+	setManifest := func(outcome string) {
+		b, _ := json.Marshal(map[string]any{"type": "manifest", "files": map[string]string{}, "deleted": []string{}, "outcome": outcome})
+		m := string(b)
+		r.fake.mu.Lock()
+		r.fake.manifest = &m
+		r.fake.mu.Unlock()
+	}
+	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
+	issuesTurn := func(outcome string) {
+		t.Helper()
+		setManifest(outcome)
+		id := acceptedTurnID(t, postTurnBody(t, r, issuesThread, map[string]any{"instruction": "report", "view": "issues"}))
+		if st := r.waitTerminal(t, id); st.Status != "completed" {
+			t.Fatalf("issues turn = %+v, want completed", st)
+		}
+	}
+
+	issuesTurn("weeks-old outcome")
+	if _, err := convs.Rotate(context.Background(), testOrg, testProj, spec.UseCaseGeneral, ""); err != nil {
+		t.Fatal(err)
+	}
+	main := listConversations(t, r)[0].ConversationID
+
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "hello"))
+	if notes := r.fake.sentTurn(t, 1).req.BranchNotes; len(notes) != 0 {
+		t.Fatalf("first turn of a rotated thread: branchNotes = %+v, want none (the Issues turn predates it)", notes)
+	}
+
+	issuesTurn(strings.Repeat("x", 450))
+	setManifest("")
+	r.waitTerminal(t, r.startTurn(t, main, "general", "what happened?"))
+	want := []agentsvc.BranchNote{{View: "issues", Turns: 1, Outcome: strings.Repeat("x", 399) + "…"}}
+	if got := r.fake.sentTurn(t, 3).req.BranchNotes; !reflect.DeepEqual(got, want) {
+		t.Fatalf("branchNotes = %+v, want one capped note", got)
 	}
 }
 

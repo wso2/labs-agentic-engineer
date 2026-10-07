@@ -169,10 +169,13 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   and the status poll read the main chat's newest turn only.
 - **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
   manifest carries its `outcome` (its last reply, ≤ 400 chars), stored on `agent_turns.outcome`.
-  A main-chat dispatch reads `BranchOutcomes` — the Issues turns completed with an outcome since
-  the main conversation's previous terminal turn was created — and, when there are any, sends one
-  `branchNotes` entry (`{view: "issues", turns, outcome}`, the newest outcome) so the agents service
-  can tell the main agent what happened there.
+  A main-chat dispatch reads `BranchOutcomes` — the Issues turns that FINISHED (`updated_at`) with
+  an outcome since the main conversation's previous terminal turn was created, or since the thread
+  was created for its first turn — and, when there are any, sends one `branchNotes` entry
+  (`{view: "issues", turns, outcome}`, the most recently finished outcome, capped to 400 UTF-16
+  units) so the agents service can tell the main agent what happened there. Counting by finish
+  time keeps an Issues turn that overlapped a main dispatch for the next one; a note read by a
+  main turn that then fails is not re-sent.
 - **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
   have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
   conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`

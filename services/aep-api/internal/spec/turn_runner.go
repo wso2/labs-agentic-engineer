@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/contracts"
@@ -302,7 +303,6 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		slog.WarnContext(ctx, "genai: last-terminal lookup failed — dispatching without the D20 flags",
 			"turn", job.turnID, "error", err)
 	} else {
-		var since time.Time
 		if last != nil {
 			landed := last.CommitSHA
 			if landed == "" {
@@ -310,10 +310,9 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 			}
 			filesChangedExternally = landed != job.baseRef
 			previousTurnFailed = last.Status == turnStatusFailed
-			since = last.CreatedAt
 		}
 		if job.view == ChatViewMain {
-			branchNotes = s.branchNotes(ctx, job, since)
+			branchNotes = s.branchNotes(ctx, job, last)
 		}
 	}
 
@@ -549,10 +548,31 @@ func noManifestTerminal(end agentfold.StreamEnd, agentErr *agentfold.TurnError) 
 }
 
 // branchNotes reads what the Issues chat came to since the main chat's
-// previous turn (created after `since`): one note with its turn count and the
-// newest outcome, or none when no Issues turn completed with one. Best-effort:
-// a failed read dispatches without the note rather than failing the turn.
-func (s *Service) branchNotes(ctx context.Context, job turnJob, since time.Time) []agentsvc.BranchNote {
+// previous turn: one note with the Issues turns that finished since and the
+// most recent outcome (capped to the wire's limit), or none when no Issues
+// turn finished with one. Best-effort: a failed read dispatches without the
+// note rather than failing the turn.
+//
+// "Since" is the previous terminal turn's creation — its dispatch read the
+// Issues turns finished by then. A note goes to the turn that read it: if that
+// turn then fails, the next one starts after it and the note is not re-sent
+// (accepted; the failed turn's history already claims it). With no previous
+// turn — a fresh or rotated thread — it is the thread's creation, so the
+// first turn is not handed the project's whole Issues history.
+func (s *Service) branchNotes(ctx context.Context, job turnJob, last *AgentTurn) []agentsvc.BranchNote {
+	var since time.Time
+	switch {
+	case last != nil:
+		since = last.CreatedAt
+	case s.conversations != nil:
+		created, err := s.conversations.CreatedAt(ctx, job.orgID, job.projectID, UseCaseGeneral, job.conversationID)
+		if err != nil {
+			slog.WarnContext(ctx, "genai: conversation lookup failed — dispatching without branch notes",
+				"turn", job.turnID, "error", err)
+			return nil
+		}
+		since = created
+	}
 	turns, latest, err := s.turns.BranchOutcomes(ctx, job.orgID, job.projectID, useCaseIssues, since)
 	if err != nil {
 		slog.WarnContext(ctx, "genai: branch-outcomes lookup failed — dispatching without branch notes",
@@ -562,7 +582,7 @@ func (s *Service) branchNotes(ctx context.Context, job turnJob, since time.Time)
 	if turns == 0 {
 		return nil
 	}
-	return []agentsvc.BranchNote{{View: string(ChatViewIssues), Turns: turns, Outcome: latest}}
+	return []agentsvc.BranchNote{{View: string(ChatViewIssues), Turns: turns, Outcome: capOutcome(latest)}}
 }
 
 // withUsage stamps the manifest's token spend (#249), the turn's closing
@@ -725,4 +745,27 @@ func (p *pulseReader) Read(b []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// capOutcome holds a stored outcome to the wire's limit — 400 UTF-16 units,
+// the agents service's JS string length, which 400s a longer one and with it
+// the whole main turn. A longer one (a row written by an older agents
+// service, say) is cut to 399 units + "…", never splitting a surrogate pair.
+func capOutcome(s string) string {
+	const maxUnits = 400
+	units := 0
+	for i, r := range s {
+		n := utf16.RuneLen(r)
+		if n < 0 {
+			n = 1 // invalid UTF-8 decodes as U+FFFD: one unit
+		}
+		if units+n > maxUnits-1 {
+			if len(utf16.Encode([]rune(s))) <= maxUnits {
+				return s
+			}
+			return s[:i] + "…"
+		}
+		units += n
+	}
+	return s
 }

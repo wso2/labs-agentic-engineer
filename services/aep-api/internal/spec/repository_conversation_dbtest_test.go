@@ -25,6 +25,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/spec"
@@ -293,5 +294,34 @@ func TestConversationRepo_RotateIfCurrentMintsOneSuccessor(t *testing.T) {
 	}
 	if again, _ := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada"); again.ID != now.ID {
 		t.Fatalf("a stale RotateIfCurrent moved current: %q -> %q", now.ID, again.ID)
+	}
+}
+
+// CreatedAt reads a thread's creation time — current or demoted — and the
+// zero time for an unknown or non-uuid id (never a cast error).
+func TestConversationRepo_CreatedAt(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	old, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	fresh, err := repo.Rotate(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	for _, row := range []*spec.ProjectConversation{old, fresh} {
+		got, err := repo.CreatedAt(ctx, "o1", "p1", "general", row.ID)
+		if err != nil || !got.Equal(row.CreatedAt) {
+			t.Fatalf("CreatedAt(%s) = (%v, %v), want %v", row.ID, got, err, row.CreatedAt)
+		}
+	}
+	if got, err := repo.CreatedAt(ctx, "o1", "p1", "issues", fresh.ID); err != nil || !got.IsZero() {
+		t.Fatalf("CreatedAt(other use case) = (%v, %v), want zero", got, err)
+	}
+	if got, err := repo.CreatedAt(ctx, "o1", "p1", "general", "abc123"); err != nil || !got.Equal(time.Time{}) {
+		t.Fatalf("CreatedAt(non-uuid) = (%v, %v), want (zero, nil)", got, err)
 	}
 }

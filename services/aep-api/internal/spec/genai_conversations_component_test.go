@@ -33,6 +33,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 
@@ -49,6 +50,7 @@ type memConversationRepo struct {
 	mu      sync.Mutex
 	rows    map[string]*spec.ProjectConversation // scope key → current row
 	demoted []string                             // rotated-away scope key + "/" + id (still Exists)
+	created map[string]time.Time                 // scope key + "/" + id → creation, current or demoted
 	n       int
 }
 
@@ -72,6 +74,11 @@ func (m *memConversationRepo) ResolveCurrent(_ context.Context, org, project, us
 		OrgID: org, ProjectID: project, UseCase: useCase,
 		Current: true, CreatedBy: createdBy,
 	}
+	row.CreatedAt = time.Now().UTC()
+	if m.created == nil {
+		m.created = map[string]time.Time{}
+	}
+	m.created[k+"/"+row.ID] = row.CreatedAt
 	m.rows[k] = row
 	return row, nil
 }
@@ -115,6 +122,12 @@ func (m *memConversationRepo) Exists(_ context.Context, org, project, useCase, i
 		}
 	}
 	return false, nil
+}
+
+func (m *memConversationRepo) CreatedAt(_ context.Context, org, project, useCase, id string) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.created[m.key(org, project, useCase)+"/"+id], nil
 }
 
 type conversationViewBody struct {

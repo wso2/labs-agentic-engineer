@@ -163,10 +163,12 @@ type TurnRepository interface {
 	LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error)
 
 	// BranchOutcomes counts the project's COMPLETED turns of one use case
-	// created after `since` that carry an outcome, and returns the newest
-	// one's outcome ("" when there are none). The main chat's dispatch reads
-	// the Issues chat this way to tell its agent what happened there since its
-	// own previous turn (agentsvc.BranchNote).
+	// that FINISHED after `since` and carry an outcome, and returns the most
+	// recently finished one's outcome ("" when there are none). The main
+	// chat's dispatch reads the Issues chat this way to tell its agent what
+	// happened there since its own previous turn (agentsvc.BranchNote).
+	// Finished, not created: an Issues turn still running when the main turn
+	// was dispatched must reach the NEXT main turn rather than neither.
 	BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (turns int, latest string, err error)
 
 	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
@@ -386,22 +388,32 @@ func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID
 	return &tokens[0], nil
 }
 
-// BranchOutcomes reads the project's turns through
-// `ix_agent_turns_project_newest` (org_id, project_id, created_at DESC),
-// filtering the use case as it walks; it runs once per main-chat dispatch and
-// only over the window since that chat's previous turn.
+// BranchOutcomes uses updated_at as the finish time: a terminal row is never
+// written again (Heartbeat and Finish are guarded on status running, the sweep
+// only claims running rows, and Finish's Updates stamps updated_at), so on a
+// completed row updated_at is when it finished.
+//
+// No index of its own: the (org_id, project_id) prefix of
+// `ix_agent_turns_project_newest` narrows the read to one project's turns and
+// the rest is a heap filter. It runs once per main-chat dispatch — never on a
+// poll — and a project holds hundreds of turns, not millions.
 func (r *turnRepository) BranchOutcomes(ctx context.Context, orgID, projectID, useCase string, since time.Time) (int, string, error) {
-	var outcomes []string
-	err := r.db.WithContext(ctx).
+	finished := r.db.WithContext(ctx).
 		Model(&AgentTurn{}).
-		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ? AND created_at > ? AND outcome IS NOT NULL",
-			orgID, projectID, useCase, turnStatusCompleted, since).
-		Order("created_at DESC").
-		Pluck("outcome", &outcomes).Error
-	if err != nil || len(outcomes) == 0 {
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND status = ? AND updated_at > ? AND outcome IS NOT NULL",
+			orgID, projectID, useCase, turnStatusCompleted, since)
+	var turns int64
+	if err := finished.Session(&gorm.Session{}).Count(&turns).Error; err != nil || turns == 0 {
 		return 0, "", err
 	}
-	return len(outcomes), outcomes[0], nil
+	var latest []string
+	if err := finished.Session(&gorm.Session{}).Order("updated_at DESC").Limit(1).Pluck("outcome", &latest).Error; err != nil {
+		return 0, "", err
+	}
+	if len(latest) == 0 { // finished between the two reads' snapshots; nothing to say
+		return 0, "", nil
+	}
+	return int(turns), latest[0], nil
 }
 
 // Newest reads one row off `ix_agent_turns_project_newest`

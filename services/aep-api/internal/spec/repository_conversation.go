@@ -80,6 +80,10 @@ type ConversationRepository interface {
 	// demoted — the rehydrate read: a known-but-turn-less thread answers an
 	// empty history, never a 404 (which the console must treat as failure).
 	Exists(ctx context.Context, orgID, projectID, useCase, id string) (bool, error)
+
+	// CreatedAt returns when id — any of the scope's threads, current or
+	// demoted — was created; the zero time when id names none of them.
+	CreatedAt(ctx context.Context, orgID, projectID, useCase, id string) (time.Time, error)
 }
 
 type conversationRepository struct{ db *gorm.DB }
@@ -232,4 +236,16 @@ func (r *conversationRepository) RotateIfCurrent(ctx context.Context, orgID, pro
 		return nil, err
 	}
 	return fresh, nil
+}
+
+func (r *conversationRepository) CreatedAt(ctx context.Context, orgID, projectID, useCase, id string) (time.Time, error) {
+	var created []time.Time
+	err := r.db.WithContext(ctx).Model(&ProjectConversation{}).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND id::text = ?", orgID, projectID, useCase, id).
+		Limit(1).
+		Pluck("created_at", &created).Error
+	if err != nil || len(created) == 0 {
+		return time.Time{}, err
+	}
+	return created[0], nil
 }
