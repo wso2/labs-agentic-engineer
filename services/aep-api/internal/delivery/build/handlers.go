@@ -91,9 +91,6 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 		if err != nil {
 			return nil, mapBuildRunError(err)
 		}
-		if h.activity != nil {
-			h.activity.RecordSpecPublished(ctx, org, request.ProjectName, tag)
-		}
 		return gen.BuildProject200JSONResponse(gen.BuildResponse{Tag: tag}), nil
 	}
 	var inputs []BuildInputItem

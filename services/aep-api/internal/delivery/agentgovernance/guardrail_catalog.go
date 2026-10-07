@@ -60,7 +60,7 @@ func (g *Governor) GuardrailCatalog(ctx context.Context, org, environment string
 	if err != nil {
 		return nil, fmt.Errorf("resolve AI gateway binding: %w", err)
 	}
-	conn, _, ok, err := g.deps.Connections.Effective(ctx, org)
+	conn, ok, err := g.deps.Connections.Connection(ctx, org)
 	if err != nil {
 		return nil, fmt.Errorf("read org model connection: %w", err)
 	}
