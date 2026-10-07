@@ -38,13 +38,13 @@ RUN corepack enable
 WORKDIR /repo
 
 # Workspace + package manifests first so the install layer (and the
-# workspace-dep builds below) stay cached when only agents source changes; the
+# workspace-dep builds below) stay cached when only design-agent source changes; the
 # service source is COPY'd LAST. tsconfig.base.json is the shared base
 # @aep/agent-stream's tsconfig extends — needed for the tsc build below. The
 # pnpm store is a BuildKit cache mount (needs BuildKit; CI's buildx sets it
 # automatically; local builds pass DOCKER_BUILDKIT=1).
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
-# The workspace packages @aep/ae-design-agent depends on, plus the agents manifest only.
+# The workspace packages @aep/ae-design-agent depends on, plus the design agent's manifest only.
 COPY packages ./packages
 COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent/package.json ./components/dataplane/ae-system-project/ae-studio/ae-design-agent/
 
@@ -70,13 +70,13 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # import, so an image without it fails to boot.
 # Without this step the container crashes at boot with "Cannot find module
 # .../@aep/agent-stream/dist" (or the collab-doc analog). These depend only on
-# packages/, so an agents-source edit doesn't rerun them.
+# packages/, so a design-agent source edit doesn't rerun them.
 RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @wso2/prototype-kit build \
     && pnpm --filter @aep/ui-theme build && pnpm --filter @wso2/prototype-theme-oxygen build \
     && pnpm --filter @aep/agent-stream build && pnpm --filter @aep/collab-doc build \
     && pnpm --filter @aep/web-search build && pnpm --filter @aep/platform-idp-auth build
 
-# Service source LAST: an agents-only change invalidates only this COPY (install
+# Service source LAST: a design-agent-only change invalidates only this COPY (install
 # + the workspace-dep builds above stay cached). @aep/ae-design-agent runs via tsx, so
 # there is no build step of its own.
 COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent ./components/dataplane/ae-system-project/ae-studio/ae-design-agent
