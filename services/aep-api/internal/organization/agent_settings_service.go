@@ -112,8 +112,8 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 	// The credential row is the subscription, the same predicate coding
 	// dispatch keys on (ResolveCodingCredential). One whose coding-agent-key
 	// reference row is missing (saved before the token lived in vault) is
-	// still projected, flagged TokenMissing: dispatch fails every Claude Code
-	// run on it, so the card must offer it for Replace or Remove.
+	// still projected, flagged TokenMissing: dispatch bills the connection's
+	// key instead, so the card offers it for Replace or Remove.
 	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
 	switch {
 	case isNotFound(err):

@@ -3070,10 +3070,10 @@ components:
         tokenMissing:
           description: >-
             True when the token was never recorded in the vault (a
-            subscription saved before the vault held it). Every Claude Code
-            coding run then fails with `terminalReason` coding-credential
-            until the token is saved again or the subscription is removed
-            (`agents.subscription: null`). Absent while the token is recorded.
+            subscription saved before the vault held it). Coding then bills
+            the connection's API key until the token is saved again; removing
+            the subscription (`agents.subscription: null`) clears the flag.
+            Absent while the token is recorded.
           type: boolean
       required:
       - kind

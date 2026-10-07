@@ -26,7 +26,8 @@ package organization_test
 //     while nothing is connected, an error while the row is missing;
 //   - ResolveCodingCredential — the subscription only on Claude Code, the
 //     connection's key otherwise, from the coding-agent-key and default-key
-//     rows, failing closed on a broken subscription;
+//     rows, falling back to the key when the subscription's token was never
+//     recorded;
 //   - the connection itself, read from org_model_connections with the model
 //     it was saved with.
 
@@ -197,8 +198,8 @@ func TestResolveCodingCredential_OpenCodeNeverGetsTheSubscription_DB(t *testing.
 		t.Fatalf("an OpenCode run must mount the API key, got %+v", cred)
 	}
 
-	// Not consulted means not consulted: a subscription broken enough to fail a
-	// Claude Code run closed still leaves OpenCode on the API key.
+	// Not consulted means not consulted: a subscription without its token
+	// leaves OpenCode on the API key too.
 	dropRow(t, c, organization.OrgSecretCodingAgentKey)
 	cred, err = c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeOpenCode)
 	if err != nil || cred.Kind != organization.CodingCredentialConnectionKey {
@@ -206,21 +207,43 @@ func TestResolveCodingCredential_OpenCodeNeverGetsTheSubscription_DB(t *testing.
 	}
 }
 
-// An org that chose to bill its plan must never have a run quietly billed to
-// API credits instead: a subscription whose reference row is missing is an
-// ERROR.
-func TestResolveCodingCredential_BrokenSubscriptionFailsClosed_DB(t *testing.T) {
+// A subscription whose token was never recorded (the credential row stays, its
+// coding-agent-key reference row is missing: saved before the token lived in
+// vault) cannot be mounted, so coding falls back to the connection's key
+// rather than fail every run. Settings shows that subscription with a "save
+// its token again" warning (tokenMissing).
+func TestResolveCodingCredential_SubscriptionWithoutItsTokenFallsBackToTheKey_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	keyAndSubscription(t, c)
 	dropRow(t, c, organization.OrgSecretCodingAgentKey)
 
 	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
-	if err == nil {
-		t.Fatalf("a subscription without its reference must fail closed, got %+v", cred)
+	if err != nil {
+		t.Fatalf("a subscription without its token must fall back to the key, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "coding-agent-key") {
-		t.Fatalf("the error must name what is missing, got: %v", err)
+	if cred.Ref.Name != c.ref(t, "acme", organization.OrgSecretDefaultKey).Name || cred.Ref.Property != "api-key" ||
+		cred.Kind != organization.CodingCredentialConnectionKey {
+		t.Fatalf("a subscription without its token must resolve to the API key, got %+v", cred)
+	}
+	wantAnthropic(t, cred.Conn, modelconn.DefaultAnthropicModel)
+}
+
+// With no connection key recorded either there is nothing to bill: the
+// resolver errors, as it does for an org with no subscription and no key.
+func TestResolveCodingCredential_SubscriptionWithoutItsTokenAndNoKey_Errors_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	keyAndSubscription(t, c)
+	dropRow(t, c, organization.OrgSecretCodingAgentKey)
+	dropRow(t, c, organization.OrgSecretDefaultKey)
+
+	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err == nil {
+		t.Fatalf("no recorded token and no recorded key must not resolve, got %+v", cred)
+	}
+	if !strings.Contains(err.Error(), "default-key") {
+		t.Fatalf("the error must name the missing key reference, got: %v", err)
 	}
 }
 
