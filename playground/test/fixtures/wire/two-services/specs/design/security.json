@@ -13,8 +13,8 @@
   ],
   "groups": [{ "name": "Staff", "description": "Order desk" }],
   "roles": [
-    { "name": "Customer", "description": "Places orders", "stories": [1], "grants": ["orders:read"], "assignTo": ["Staff"] },
-    { "name": "OrderDesk", "description": "Sees every order", "stories": [2], "grants": ["orders:read", "orders:read-all"], "assignTo": ["Staff"] }
+    { "name": "Customer", "description": "Places orders", "stories": ["F1.1"], "grants": ["orders:read"], "assignTo": ["Staff"] },
+    { "name": "OrderDesk", "description": "Sees every order", "stories": ["F1.2"], "grants": ["orders:read", "orders:read-all"], "assignTo": ["Staff"] }
   ],
   "testUsers": [{ "username": "test-customer", "roles": ["Customer"] }]
 }

@@ -34,7 +34,7 @@ import (
 //  1. delete the coding-role bytes (org_secrets 'anthropic/coding-key') of
 //     every org whose coding row is not a subscription token, and of every org
 //     that has no coding row at all (unreachable bytes nothing can clean up).
-//     Only while org_secrets still has its legacy key column: phase26 renames
+//     Only while org_secrets still has its legacy key column: phase29 renames
 //     it and deletes every value row, these bytes included;
 //  2. delete the api_key coding rows;
 //  3. verify no row breaks the new rule (abort otherwise);

@@ -401,3 +401,75 @@ describe("AgentView — Configuration", () => {
     expect(screen.getByText("Text only, no files")).toBeInTheDocument();
   });
 });
+
+describe("AgentView — Guardrails", () => {
+  const GUARDED = AFM.replace(
+    '  memory:\n    type: "client"',
+    '  memory:\n    type: "client"\n  guardrails:\n' +
+      '    - policy: pii-masking-regex\n      params: { email: true }\n      why: "The model never needs contact details."\n' +
+      '    - policy: regex-guardrail\n      params:\n        request: { regex: "casino", invert: true }\n      why: "Gambling is not a business expense."',
+  );
+
+  it("lists each declared guardrail with why the agent has it", () => {
+    render(<AgentView spec={GUARDED} />);
+    openTab("Configuration");
+
+    expect(screen.getByText("pii-masking-regex")).toBeInTheDocument();
+    expect(screen.getByText("The model never needs contact details.")).toBeInTheDocument();
+    expect(screen.getByText("regex-guardrail")).toBeInTheDocument();
+  });
+
+  it("says what the last deploy did with each, per environment", () => {
+    render(
+      <AgentView
+        spec={GUARDED}
+        guardrailStatus={{
+          "pii-masking-regex": [{ environment: "development", status: "applied" }],
+          "regex-guardrail": [
+            { environment: "development", status: "invalid", reason: "the regex does not compile" },
+          ],
+        }}
+      />,
+    );
+    openTab("Configuration");
+
+    expect(screen.getByText("development: applied")).toBeInTheDocument();
+    expect(screen.getByText("development: invalid")).toBeInTheDocument();
+    expect(screen.getByText("the regex does not compile")).toBeInTheDocument();
+  });
+
+  it("says when a declared guardrail has not been deployed yet", () => {
+    render(<AgentView spec={GUARDED} guardrailStatus={{}} />);
+    openTab("Configuration");
+
+    expect(screen.getAllByText("Not deployed yet")).toHaveLength(2);
+  });
+
+  // A live collaboration draft reaches the view before the write gate that
+  // refuses a repeated policy, so a repeat must still render as two rows.
+  it("renders a repeated policy in an unvalidated draft as separate rows", () => {
+    const repeated = GUARDED.replace(
+      "    - policy: regex-guardrail",
+      '    - policy: pii-masking-regex\n      params: { phone: true }\n      why: "Phone numbers too."\n    - policy: regex-guardrail',
+    );
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<AgentView spec={repeated} />);
+    openTab("Configuration");
+
+    expect(screen.getAllByText("pii-masking-regex")).toHaveLength(2);
+    expect(screen.getByText("Phone numbers too.")).toBeInTheDocument();
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+    errors.mockRestore();
+  });
+
+  // The panel is about checks the AI gateway applies; with none, there is
+  // nothing to show, and an empty "declared" row only reads as a contradiction
+  // of rules the agent itself follows.
+  it("leaves the panel out when the agent has no AI gateway guardrails", () => {
+    render(<AgentView spec={AFM} />);
+    openTab("Configuration");
+
+    expect(screen.queryByText("Guardrails")).not.toBeInTheDocument();
+    expect(screen.queryByText("None declared")).not.toBeInTheDocument();
+  });
+});

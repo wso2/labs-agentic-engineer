@@ -1,0 +1,126 @@
+{
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "statement": "An HR Coordinator can create a new hire's onboarding record",
+      "stories": [1],
+      "criteria": [
+        { "id": "AC-001-a", "must": "An HR Coordinator can create a new onboarding record for a named new hire with a start date", "method": "e2e" },
+        { "id": "AC-001-b", "must": "The new onboarding record becomes visible to IT, HR and Facilities staff after creation", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-002",
+      "statement": "A new onboarding record is pre-populated with a standard set of tasks for each department",
+      "stories": [2],
+      "criteria": [
+        { "id": "AC-002-a", "must": "Creating an onboarding record automatically adds tasks for IT, HR and Facilities without manual entry", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-003",
+      "statement": "An HR Coordinator can add, edit or remove individual tasks on a specific new hire's onboarding record",
+      "stories": [3],
+      "criteria": [
+        { "id": "AC-003-a", "must": "An HR Coordinator can add a new task to an existing onboarding record", "method": "e2e" },
+        { "id": "AC-003-b", "must": "An HR Coordinator can edit an existing task's details on an onboarding record", "method": "e2e" },
+        { "id": "AC-003-c", "must": "An HR Coordinator can remove a task from an onboarding record", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-004",
+      "statement": "An HR Coordinator can set a due date on each task",
+      "stories": [4],
+      "criteria": [
+        { "id": "AC-004-a", "must": "Every task on an onboarding record carries a due date that the HR Coordinator can set or change", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-005",
+      "statement": "An IT Staff member can see a list of all IT tasks across all new hires",
+      "stories": [5],
+      "criteria": [
+        { "id": "AC-005-a", "must": "An IT Staff member can view a list of IT tasks spanning every active onboarding record", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-006",
+      "statement": "An IT Staff member can mark an IT task as in-progress or complete",
+      "stories": [6],
+      "criteria": [
+        { "id": "AC-006-a", "must": "An IT Staff member can change an IT task's status to in-progress", "method": "e2e" },
+        { "id": "AC-006-b", "must": "An IT Staff member can change an IT task's status to complete", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-007",
+      "statement": "A Facilities Staff member can see a list of all Facilities tasks across all new hires",
+      "stories": [7],
+      "criteria": [
+        { "id": "AC-007-a", "must": "A Facilities Staff member can view a list of Facilities tasks spanning every active onboarding record", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-008",
+      "statement": "A Facilities Staff member can mark a Facilities task as in-progress or complete",
+      "stories": [8],
+      "criteria": [
+        { "id": "AC-008-a", "must": "A Facilities Staff member can change a Facilities task's status to in-progress", "method": "e2e" },
+        { "id": "AC-008-b", "must": "A Facilities Staff member can change a Facilities task's status to complete", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-009",
+      "statement": "An HR Coordinator can see a dashboard listing every active new hire and their onboarding completion status across all three departments",
+      "stories": [9],
+      "criteria": [
+        { "id": "AC-009-a", "must": "The dashboard lists every active new hire's onboarding record", "method": "e2e" },
+        { "id": "AC-009-b", "must": "The dashboard shows each new hire's completion status broken out by IT, HR and Facilities", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-010",
+      "statement": "A task past its due date and not yet complete is visibly flagged as overdue in the app, with no email or notification sent",
+      "stories": [10],
+      "criteria": [
+        { "id": "AC-010-a", "must": "A task whose due date has passed and is not complete is visibly flagged as overdue in the app", "method": "e2e" },
+        { "id": "AC-010-b", "must": "No email, SMS or push notification is sent for an overdue task", "method": "manual" }
+      ]
+    },
+    {
+      "id": "REQ-011",
+      "statement": "An HR Coordinator can mark a new hire's onboarding as complete once every task across all departments is done",
+      "stories": [11],
+      "criteria": [
+        { "id": "AC-011-a", "must": "An HR Coordinator can mark an onboarding record complete once every one of its tasks is complete", "method": "e2e" },
+        { "id": "AC-011-b", "must": "An onboarding record with an incomplete task cannot be marked complete", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-012",
+      "statement": "An Admin can manage the standard task templates (name, department, default due offset) used when a new onboarding record is created",
+      "stories": [12],
+      "criteria": [
+        { "id": "AC-012-a", "must": "An Admin can create a task template with a name, department and default due offset", "method": "e2e" },
+        { "id": "AC-012-b", "must": "An Admin can edit an existing task template", "method": "e2e" },
+        { "id": "AC-012-c", "must": "An Admin can remove a task template", "method": "e2e" }
+      ]
+    },
+    {
+      "id": "REQ-013",
+      "statement": "The product supports no email or push notifications of any kind",
+      "stories": [10],
+      "criteria": [
+        { "id": "AC-013-a", "must": "The application has no configuration or feature for sending email or push notifications", "method": "manual" }
+      ]
+    },
+    {
+      "id": "REQ-014",
+      "statement": "The product does not support uploading or storing files or documents against a task or onboarding record",
+      "stories": [3, 4],
+      "criteria": [
+        { "id": "AC-014-a", "must": "No screen or API operation allows uploading a file or document to a task or onboarding record", "method": "manual" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@wso2/prototype-theme-default",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "The default prototype theme: a lightweight plain React + CSS rendering of every @wso2/prototype-kit component, with its prebuilt frame and check runtimes.",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./frame-runtime.js": "./dist/frame-runtime.js",
+    "./check-runtime.js": "./dist/check-runtime.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsx scripts/build-runtimes.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "dev": "echo \"@wso2/prototype-theme-default: no dev server\""
+  },
+  "dependencies": {
+    "@wso2/prototype-kit": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "esbuild": "^0.28.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "5.9.3"
+  }
+}

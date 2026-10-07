@@ -1,0 +1,17 @@
+{
+  "name": "clinic-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "clinic-api",
+  "entrypoint": "deployment/service",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app", "description": "Sign-in client; the gateway validates tokens issued through it." },
+    { "kind": "platform-resource", "name": "clinic-db", "resourceType": "postgres-cnpg", "description": "Dedicated Postgres storing slots, appointments and visit notes; owned exclusively by this service." }
+  ],
+  "description": "The single backend for slots, appointments, check-in and visit notes. Enforces no double booking (transactionally against its own clinic-db), the 2-hour cancel/reschedule cutoff, same-day check-in, and doctor-only access to visit notes. Does not send notifications, run background jobs, store files or call external systems.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

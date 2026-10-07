@@ -1,0 +1,17 @@
+{
+  "name": "expense-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "expense-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "component", "name": "expense-api", "description": "Submits, reviews, approves, rejects and exports expense claims." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Single-page app for Employees, Managers and Finance to submit, review and export expense claims. Presents role-specific screens (my claims, approval queue, approved-claims export) and holds no business logic of its own — all reads and writes go through expense-api.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

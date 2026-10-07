@@ -17,7 +17,7 @@
  */
 
 import type { components } from "../../../generated/aep-api";
-import { startupWaitNotice } from "../lib/agentStart";
+import { startupWaitNotice } from "../model/agentStart";
 import { RunHoldNotice } from "./RunHoldNotice";
 
 type RunCycleView = components["schemas"]["RunCycleView"];

@@ -124,7 +124,7 @@ const groupSchema = z.strictObject({
 const roleSchema = z.strictObject({
   name: z.string().min(1),
   description: z.string().min(1),
-  stories: z.array(z.number().int().positive()).min(1),
+  stories: z.array(z.string().min(1)).min(1),
   grants: z
     .array(z.string().min(1).refine(isHandle, { message: HANDLE_HINT }))
     .min(1),

@@ -291,3 +291,29 @@ func TestPortedMethodsMapENOSPCToDiskFull(t *testing.T) {
 		})
 	}
 }
+
+// A version's annotation carries its build scope after the subject, on several
+// lines; the listing hands the body back whole, and a subject-only tag reads
+// an empty body.
+func TestListTagsBody(t *testing.T) {
+	fx := workspacetest.New(t, seedFiles())
+	ctx := context.Background()
+	fx.Origin.Tag(t, "v1", "Spec v1")
+	head := fx.Origin.HeadSHA(t)
+	gitOut(t, fx.Origin.Dir(), "tag", "-a", "-m", "Spec v2\n\nFeatures: F1 F2\nProduct-wide: P1\nHeld back: F2.4", "v2", head)
+
+	tags, err := fx.Engine.ListTags(ctx, fx.Ref, "v")
+	if err != nil {
+		t.Fatalf("ListTags: %v", err)
+	}
+	byName := map[string]gitfs.TagInfo{}
+	for _, tag := range tags {
+		byName[tag.Name] = tag
+	}
+	if got := byName["v2"]; got.Message != "Spec v2" || got.Body != "Features: F1 F2\nProduct-wide: P1\nHeld back: F2.4" {
+		t.Fatalf("v2 = %+v", got)
+	}
+	if got := byName["v1"]; got.Message != "Spec v1" || got.Body != "" {
+		t.Fatalf("v1 = %+v", got)
+	}
+}

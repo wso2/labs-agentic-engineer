@@ -25,7 +25,7 @@ import (
 // RunPhase12EncryptCredentialColumns is a RETIRED tombstone. It sealed
 // organization_idp_profiles.publisher_client_secret and the
 // org_credentials.webhook_secrets entries in place with the column cipher.
-// Both columns are gone (phase26): the publisher client secret lives only in
+// Both columns are gone (phase29): the publisher client secret lives only in
 // the vault, and nothing verifies against the webhook list. The step stays in
 // the list because the list is frozen (a removal would break the golden
 // order).

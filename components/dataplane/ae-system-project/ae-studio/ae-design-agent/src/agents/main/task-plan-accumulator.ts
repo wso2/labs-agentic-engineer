@@ -53,6 +53,8 @@ export interface PlannedTask {
   dependsOn: string[];
   origin: TaskOrigin;
   rationale: string;
+  /** The feature the Task builds in its component ("F2"), or "foundation" (B3). */
+  feature?: string;
   body?: string;
 }
 
@@ -119,8 +121,18 @@ export class TaskPlan {
       dependsOn: [...input.dependsOn],
       origin,
       rationale: input.rationale,
+      ...(input.feature ? { feature: input.feature } : {}),
     });
-    return { ok: true, op, component: input.component, title: input.title, dependsOn: [...input.dependsOn], origin, rationale: input.rationale };
+    return {
+      ok: true,
+      op,
+      component: input.component,
+      title: input.title,
+      dependsOn: [...input.dependsOn],
+      origin,
+      rationale: input.rationale,
+      ...(input.feature ? { feature: input.feature } : {}),
+    };
   }
 
   updateTask(input: UpdateTaskInput): UpdateTaskResult {
@@ -137,7 +149,7 @@ export class TaskPlan {
       if (unknownDeps.length > 0) {
         return this.unknownComponent(op, `dependsOn names unknown component(s): ${unknownDeps.join(", ")}.`);
       }
-      const cycle = this.cycleThroughComponent(target.component, set.dependsOn);
+      const cycle = this.cycleThroughComponent(target.component, set.dependsOn, target.key);
       if (cycle) return this.dependencyCycle(op, cycle);
     }
 
@@ -214,8 +226,12 @@ export class TaskPlan {
    * gating), and a planned task for the same component overrides the existing one
    * (later plan order wins). This kills the stale-edge false positive where an old
    * rendering's dependsOn would fabricate a cycle the current plan doesn't have.
+   *
+   * A component planned as several Tasks (one per feature, B3) has the UNION of
+   * their edges: each is a build-order fact about the component. `exceptKey`
+   * leaves one planned Task out, for an update about to replace its edges.
    */
-  private effectiveGraph(): Map<string, string[]> {
+  private effectiveGraph(exceptKey?: string): Map<string, string[]> {
     const latestByComponent = new Map<string, number>();
     for (const [n, base] of this.existing) {
       const prev = latestByComponent.get(base.component);
@@ -226,7 +242,14 @@ export class TaskPlan {
       const base = this.existing.get(n)!;
       graph.set(component, this.existingPatch.get(n)?.dependsOn ?? base.dependsOn);
     }
-    for (const p of this.planned) graph.set(p.component, p.dependsOn); // planned overrides existing; later planned wins
+    const planned = new Map<string, Set<string>>();
+    this.planned.forEach((p, i) => {
+      if (`planned:${i}` === exceptKey) return;
+      const edges = planned.get(p.component) ?? new Set<string>();
+      p.dependsOn.forEach((d) => edges.add(d));
+      planned.set(p.component, edges);
+    });
+    for (const [component, edges] of planned) graph.set(component, [...edges]); // planned overrides existing
     return graph;
   }
 
@@ -238,9 +261,10 @@ export class TaskPlan {
    * `aep:attention` (design §5) — so it never blocks this op. Returns the cycle
    * path THROUGH `component` (e.g. `[a, b, a]`), or null.
    */
-  private cycleThroughComponent(component: string, deps: string[]): string[] | null {
-    const graph = this.effectiveGraph();
-    graph.set(component, [...deps]);
+  private cycleThroughComponent(component: string, deps: string[], exceptKey?: string): string[] | null {
+    const graph = this.effectiveGraph(exceptKey);
+    const siblings = this.planned.some((p, i) => p.component === component && `planned:${i}` !== exceptKey);
+    graph.set(component, siblings ? [...new Set([...(graph.get(component) ?? []), ...deps])] : [...deps]);
 
     const visited = new Set<string>([component]);
     const path: string[] = [];

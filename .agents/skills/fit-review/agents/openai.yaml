@@ -1,0 +1,5 @@
+interface:
+  display_name: "Fit Review"
+  short_description: "Review a diff for overfit"
+policy:
+  allow_implicit_invocation: false

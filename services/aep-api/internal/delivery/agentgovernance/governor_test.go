@@ -57,6 +57,17 @@ type fakeAMP struct {
 	tracingMints  int
 	tracingExpiry int64
 	tracingErr    error
+
+	// Guardrails: the catalog the gateway offers, the binding as stored, and
+	// every policies write that reached Agent Manager.
+	catalog        []agentmanager.PolicyDefinition
+	catalogErr     error
+	binding        agentmanager.Binding
+	bindingErr     error
+	policyWrites   [][]agentmanager.BindingPolicy
+	policyWriteErr error
+	// providerUUID is the provider a find-only lookup answers; "" is none.
+	providerUUID string
 }
 
 // newFakeAMP is an Agent Manager that answers the way the real one does.
@@ -988,4 +999,25 @@ func TestGovernSurvivesATracingTokenFailure(t *testing.T) {
 	if keys.writes != 1 {
 		t.Errorf("model key writes = %d, want the model key still stored", keys.writes)
 	}
+}
+
+func (f *fakeAMP) ListPolicies(context.Context, string, string) ([]agentmanager.PolicyDefinition, error) {
+	return f.catalog, f.catalogErr
+}
+
+func (f *fakeAMP) ReadBinding(context.Context, agentmanager.BindingRef) (agentmanager.Binding, error) {
+	return f.binding, f.bindingErr
+}
+
+func (f *fakeAMP) WriteBindingPolicies(_ context.Context, _ agentmanager.BindingRef, _ agentmanager.Binding, policies []agentmanager.BindingPolicy) error {
+	if f.policyWriteErr != nil {
+		return f.policyWriteErr
+	}
+	f.policyWrites = append(f.policyWrites, policies)
+	f.binding.Policies = policies
+	return nil
+}
+
+func (f *fakeAMP) FindProvider(context.Context, string, string) (string, bool, error) {
+	return f.providerUUID, f.providerUUID != "", nil
 }

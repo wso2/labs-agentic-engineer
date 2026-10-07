@@ -101,16 +101,27 @@ export function deriveTags(features: readonly AcceptanceFeature[]): readonly str
   return [...seen].sort(compareTags);
 }
 
-const STORY = /^@story-(\d+)$/;
+// A story tag: `@story-F2.3` (a feature's story, skills/prd-contract), or a
+// bare number from projects written before features.
+const STORY = /^@story-F?(\d+(?:\.\d+)?)$/;
+
+function storyParts(tag: string): number[] | undefined {
+  return STORY.exec(tag)?.[1]?.split(".").map(Number);
+}
 
 function compareTags(a: string, b: string): number {
   if (a === "@negative") return -1;
   if (b === "@negative") return 1;
-  const [na, nb] = [STORY.exec(a)?.[1], STORY.exec(b)?.[1]];
-  // Numeric, so @story-10 sorts after @story-9 rather than between 1 and 2.
-  if (na !== undefined && nb !== undefined) return Number(na) - Number(nb);
-  if (na !== undefined) return -1;
-  if (nb !== undefined) return 1;
+  const [pa, pb] = [storyParts(a), storyParts(b)];
+  // Numeric part by part, so @story-F2.10 sorts after @story-F2.9.
+  if (pa && pb) {
+    for (let i = 0; i < Math.min(pa.length, pb.length); i++) {
+      if (pa[i] !== pb[i]) return pa[i]! - pb[i]!;
+    }
+    return pa.length - pb.length;
+  }
+  if (pa) return -1;
+  if (pb) return 1;
   return a.localeCompare(b);
 }
 

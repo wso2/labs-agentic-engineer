@@ -42,3 +42,8 @@ with.
   idea) that a caller puts on a `TurnSpec` (declared in `@aep/agent-stream`, `src/contracts/sse-events.ts`). The sentences those facts become —
   including which skill a token loads, and which branch of it — belong to
   `components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/prompts/` (ADR-0003 in that service's `design/`).
+- `requirements/` holds the requirements fixture both readers of
+  `specs/requirements/` are held to: aep-api's `internal/platform/reqspec` (Go)
+  and the console's `features/spec/model/requirements.ts`. Each fixture folder
+  is written to `skills/prd-contract`, and its `expected.json` is the parse both
+  must yield. Change the contract, the fixture and both readers together.

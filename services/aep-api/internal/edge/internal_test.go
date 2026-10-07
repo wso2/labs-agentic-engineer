@@ -76,55 +76,13 @@ func TestInternalContract(t *testing.T) {
 	}
 }
 
-// sharedSchemas are the public spec's schemas the internal spec copies verbatim
-// for the sre/ ops (one spec per audience; a cross-file $ref is not viable).
-// None of them $refs another schema. CreateRcaAgentReportRequest is not listed:
-// its only operation moved here, so the internal spec is now its sole owner.
-var sharedSchemas = []string{"CreateIssueRequest", "IssueResult", "IssueInfo", "RcaAgentReport"}
-
-// TestInternalSpec_SharedSchemasMatchPublic keeps the copies from drifting: a
-// change to one side without the other fails here.
-func TestInternalSpec_SharedSchemasMatchPublic(t *testing.T) {
-	contracts := filepath.Join("..", "..", "..", "..", "packages", "contracts", "api")
-	load := func(path string) *openapi3.T {
-		t.Helper()
-		doc, err := openapi3.NewLoader().LoadFromFile(filepath.Join(contracts, path))
-		if err != nil {
-			t.Fatalf("load %s: %v", path, err)
-		}
-		return doc
-	}
-	public, internal := load("v1/openapi.yaml"), load("internal/v1/openapi.yaml")
-	for _, name := range sharedSchemas {
-		pub, in := public.Components.Schemas[name], internal.Components.Schemas[name]
-		if pub == nil || in == nil {
-			t.Errorf("%s: public %v, internal %v; want both present", name, pub != nil, in != nil)
-			continue
-		}
-		pubJSON, err := json.Marshal(pub.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		inJSON, err := json.Marshal(in.Value)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(pubJSON) != string(inJSON) {
-			t.Errorf("%s drifted between the public and internal specs:\npublic   %s\ninternal %s", name, pubJSON, inJSON)
-		}
-	}
-}
-
-// sourcecontrol owns the attentionReason closed set both IssueInfo projections
-// filter through; it must be exactly the contracts' enum.
+// sourcecontrol owns the attentionReason closed set the IssueInfo projection
+// filters through; it must be exactly the contract's enum.
 func TestAttentionReasonSetMatchesContracts(t *testing.T) {
 	for _, v := range []string{"unverified_fix", "no_change_verdict", "escalated", "bogus", ""} {
 		inSet := sourcecontrol.IsContractAttentionReason(v)
 		if pub := gen.IssueInfoAttentionReason(v).Valid(); pub != inSet {
 			t.Errorf("%q: sourcecontrol set %v, public enum %v", v, inSet, pub)
-		}
-		if in := igen.IssueInfoAttentionReason(v).Valid(); in != inSet {
-			t.Errorf("%q: sourcecontrol set %v, internal enum %v", v, inSet, in)
 		}
 	}
 }

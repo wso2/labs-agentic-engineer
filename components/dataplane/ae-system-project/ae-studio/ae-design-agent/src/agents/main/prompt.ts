@@ -73,6 +73,12 @@ Reacting to tool results (each result tells you the next move):
   keyword, a misplaced left/right/table-row, or retired x,y coordinates). Fix EVERY listed line and
   re-emit the WHOLE corrected file with removeFile + addFile — layout comes from structure, never
   from coordinates.
+- INVALID_PROTOTYPE — a components/<name>/prototype.json or prototype.tsx write was rejected. The message
+  and the findings list every problem as CODE, file and location (a JSON path in prototype.json, a source
+  line in prototype.tsx, or a screen/role/state for a render failure). The write did NOT land. Fix every
+  finding and re-emit the WHOLE corrected file with addFile (removeFile first only if it already existed).
+  prototype.json must be written before prototype.tsx, which is checked against it. Every write is checked
+  this way, down to drawing each screen, so one that applied is already valid.
 
 Narration: keep prose outside tool calls to a single short sentence by default. A LOADED skill may define
 the narration for its own flow (what to say as you work, and how to close) — when one does, follow the skill,
@@ -293,14 +299,15 @@ export const taskPlanInstructions = `You are a task-planning agent. You are give
 (inlined under "Existing files:") plus any existing Tasks, and an instruction to plan the work. You plan Tasks by
 calling the task tools. You do NOT edit files — the existing files are read-only context.
 
-The unit of work is the DESIGN COMPONENT. Each component under specs/design/components/<name>/ that needs work gets a
-Task. Never invent a component: if a requirement is covered by no design component, do not plan a Task for it — say so
-in your final text and recommend regenerating the design.
+The unit of work is ONE FEATURE IN ONE DESIGN COMPONENT. Each component under specs/design/components/<name>/ gets a
+Task per feature whose stories it serves, plus a foundation Task when it has shared work. Never invent a component: if a
+requirement is covered by no design component, do not plan a Task for it — say so in your final text and recommend
+regenerating the design.
 
 Tools:
-- planTask(component, title, rationale, dependsOn[], origin?) — create a Task for one component. component must be a
-  known component; dependsOn lists component names (from the design's relationships), never issue numbers; title must
-  be unique; rationale is one sentence.
+- planTask(component, feature?, title, rationale, dependsOn[], origin?) — create a Task for one feature in one component.
+  component must be a known component; feature is the feature's ID ("F2") or "foundation"; dependsOn lists component
+  names (from the design's relationships), never issue numbers; title must be unique; rationale is one sentence.
 - updateTask(ref, set) — patch a Task and/or write its body. ref is { title } for a Task you planned earlier this turn,
   or { issueNumber } for an existing Task from the context. After planning, write each Task's full body via updateTask
   in this same turn. There is no close operation.

@@ -166,6 +166,9 @@ type RunCycle struct {
 	// Off the wire (`json:"-"`): it is a loop control input, not something a
 	// reader of the timeline can interpret.
 	ValidationDigest string `gorm:"type:text" json:"-"`
+	// ValidationRegressions counts THIS attempt's failures that passed in the
+	// previous validated version (B4).
+	ValidationRegressions int `gorm:"not null;default:0" json:"validationRegressions,omitempty"`
 
 	// MergeVerdict is why the pull request did NOT merge, when something decided
 	// so: CycleMergeDeclined (the policy: not this run's work) or

@@ -24,6 +24,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+// testForceSync stands in for the per-run force-sync stamp.
+const testForceSync = "1790592655"
+
 // fakeExternalSecrets is the cluster's ExternalSecrets as the observer repoint
 // sees them: one optional object, and a record of every apply.
 type fakeExternalSecrets struct {
@@ -63,7 +66,7 @@ func observerExternalSecret(store, key string) *unstructured.Unstructured {
 
 func TestPointObserverAtReaderSecret_PlaneAbsent_NoApply(t *testing.T) {
 	es := &fakeExternalSecrets{}
-	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore)
+	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore, testForceSync)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -77,7 +80,7 @@ func TestPointObserverAtReaderSecret_PlaneAbsent_NoApply(t *testing.T) {
 
 func TestPointObserverAtReaderSecret_OldKey_PatchedToTheAEPKey(t *testing.T) {
 	es := &fakeExternalSecrets{obj: observerExternalSecret("default", "observer-oauth-client-secret")}
-	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore)
+	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore, testForceSync)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -87,14 +90,14 @@ func TestPointObserverAtReaderSecret_OldKey_PatchedToTheAEPKey(t *testing.T) {
 	got := es.applied[0]
 	// The SAME manifest `aectl sre install` applies: one source of truth.
 	want, err := renderTemplate("sre-observer-secret", sreObserverClientSecretTmpl,
-		sreParams{ObsNamespace: defaultObsNamespace, PlatformSecretStore: defaultPlatformSecretStore})
+		sreParams{ObsNamespace: defaultObsNamespace, PlatformSecretStore: defaultPlatformSecretStore, ForceSync: testForceSync})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
 	if got != want {
 		t.Errorf("applied manifest differs from sreObserverClientSecretTmpl\n--- got\n%s\n--- want\n%s", got, want)
 	}
-	for _, s := range []string{"key: aep/thunder-clients/oc-observer-reader", "name: aep-platform", "namespace: openchoreo-observability-plane"} {
+	for _, s := range []string{"key: aep/thunder-clients/oc-observer-reader", "name: aep-platform", "namespace: openchoreo-observability-plane", `force-sync: "` + testForceSync + `"`} {
 		if !strings.Contains(got, s) {
 			t.Errorf("applied manifest missing %q\n%s", s, got)
 		}
@@ -105,7 +108,7 @@ func TestPointObserverAtReaderSecret_OldKey_PatchedToTheAEPKey(t *testing.T) {
 // behind the platform's store.
 func TestPointObserverAtReaderSecret_RightKeyWrongStore_Patched(t *testing.T) {
 	es := &fakeExternalSecrets{obj: observerExternalSecret("default", observerReaderVaultKey)}
-	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore)
+	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore, testForceSync)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -116,7 +119,7 @@ func TestPointObserverAtReaderSecret_RightKeyWrongStore_Patched(t *testing.T) {
 
 func TestPointObserverAtReaderSecret_AlreadyCorrect_NoWrite(t *testing.T) {
 	es := &fakeExternalSecrets{obj: observerExternalSecret(defaultPlatformSecretStore, observerReaderVaultKey)}
-	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore)
+	changed, err := pointObserverAtReaderSecret(context.Background(), es, defaultObsNamespace, defaultPlatformSecretStore, testForceSync)
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}

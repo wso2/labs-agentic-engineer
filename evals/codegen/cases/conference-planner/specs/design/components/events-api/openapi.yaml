@@ -1,0 +1,634 @@
+openapi: 3.0.3
+info:
+  title: Events API
+  version: 0.1.0
+servers:
+  - url: /
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            events:manage: Create and edit every event, room and session
+            proposals:submit: Submit a proposal as the caller
+            proposals:read: The caller's own proposals
+            proposals:read-all: Every proposal of an event with its scores
+            proposals:review: Score any proposal
+            proposals:decide: Accept or reject any proposal and schedule it
+            registrations:register: Register the caller for an event or session
+            registrations:read: The caller's own registrations
+            registrations:cancel: Cancel the caller's own registration
+            registrations:read-all: Every registration and waitlist of a session
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+    Event:
+      type: object
+      required: [id, name, startDate, endDate]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        venue: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+    EventInput:
+      type: object
+      required: [name, startDate, endDate]
+      properties:
+        name: { type: string }
+        venue: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+    Room:
+      type: object
+      required: [id, eventId, name, capacity]
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        name: { type: string }
+        capacity: { type: integer, description: physical seats in the room }
+    RoomInput:
+      type: object
+      required: [name, capacity]
+      properties:
+        name: { type: string }
+        capacity: { type: integer }
+    Session:
+      type: object
+      required: [id, eventId, roomId, title, startTime, endTime, capacity]
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        roomId: { type: string }
+        title: { type: string }
+        speakerId: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        capacity: { type: integer, description: maximum confirmed seats }
+        seatsRemaining: { type: integer }
+        waitlistCount: { type: integer }
+    SessionInput:
+      type: object
+      required: [roomId, title, startTime, endTime, capacity]
+      properties:
+        roomId: { type: string }
+        title: { type: string }
+        speakerId: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        capacity: { type: integer }
+    Proposal:
+      type: object
+      required: [id, eventId, speakerId, title, abstract, status]
+      properties:
+        id: { type: string }
+        eventId: { type: string }
+        speakerId: { type: string }
+        title: { type: string }
+        abstract: { type: string }
+        status: { type: string, enum: [submitted, accepted, rejected] }
+        averageScore: { type: number, nullable: true, description: mean of reviewer scores 1 to 5 }
+        scoreCount: { type: integer }
+        sessionId: { type: string, nullable: true }
+    ProposalInput:
+      type: object
+      required: [eventId, title, abstract]
+      properties:
+        eventId: { type: string }
+        title: { type: string }
+        abstract: { type: string }
+    ScoreInput:
+      type: object
+      required: [value]
+      properties:
+        value: { type: integer, minimum: 1, maximum: 5 }
+    Decision:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [accepted, rejected] }
+    Registration:
+      type: object
+      required: [id, userId, eventId, status]
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        eventId: { type: string }
+        sessionId: { type: string, nullable: true, description: null for an event registration }
+        status: { type: string, enum: [confirmed, waitlisted, cancelled] }
+        waitlistPosition: { type: integer, nullable: true, description: 1 is next to be promoted }
+    RegistrationInput:
+      type: object
+      required: [eventId]
+      properties:
+        eventId: { type: string }
+        sessionId: { type: string, description: omit to register for the event only }
+  parameters:
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, default: 0 }
+    eventId:
+      name: eventId
+      in: path
+      required: true
+      schema: { type: string }
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+    proposalId:
+      name: proposalId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid or insufficient credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Request conflicts with current state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+security:
+  - oauth2: []
+paths:
+  /events:
+    get:
+      operationId: listEvents
+      summary: List events
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Events page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Event' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createEvent
+      summary: Create an event
+      security:
+        - oauth2: [events:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /events/{eventId}:
+    parameters:
+      - $ref: '#/components/parameters/eventId'
+    get:
+      operationId: getEvent
+      summary: Get an event
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: updateEvent
+      summary: Edit an event
+      security:
+        - oauth2: [events:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Event' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /events/{eventId}/rooms:
+    parameters:
+      - $ref: '#/components/parameters/eventId'
+    get:
+      operationId: listRooms
+      summary: List rooms of an event
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Rooms page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Room' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createRoom
+      summary: Add a room to an event
+      security:
+        - oauth2: [events:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoomInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Room' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /events/{eventId}/sessions:
+    parameters:
+      - $ref: '#/components/parameters/eventId'
+    get:
+      operationId: listSessions
+      summary: List sessions of an event with seats remaining
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Sessions page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSession
+      summary: Create a session with room, time slot and capacity
+      security:
+        - oauth2: [events:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/sessionId'
+    get:
+      operationId: getSession
+      summary: Get a session
+      responses:
+        '200':
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: updateSession
+      summary: Edit a session
+      security:
+        - oauth2: [events:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sessions/{sessionId}/registrations:
+    parameters:
+      - $ref: '#/components/parameters/sessionId'
+    get:
+      operationId: listSessionRegistrations
+      summary: Every registration and waitlist entry of a session
+      security:
+        - oauth2: [registrations:read-all]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [confirmed, waitlisted] }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Registrations page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Registration' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /me/proposals:
+    get:
+      operationId: listMyProposals
+      summary: The caller's proposals
+      security:
+        - oauth2: [proposals:read]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Proposals page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Proposal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: submitMyProposal
+      summary: Submit a proposal as the caller
+      security:
+        - oauth2: [proposals:submit]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProposalInput' }
+      responses:
+        '201':
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /events/{eventId}/proposals:
+    parameters:
+      - $ref: '#/components/parameters/eventId'
+    get:
+      operationId: listEventProposals
+      summary: Every proposal of an event with scores
+      security:
+        - oauth2: [proposals:read-all]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [submitted, accepted, rejected] }
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Proposals page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Proposal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /proposals/{proposalId}:
+    parameters:
+      - $ref: '#/components/parameters/proposalId'
+    get:
+      operationId: getProposal
+      summary: Any proposal with its score
+      security:
+        - oauth2: [proposals:read-all]
+      responses:
+        '200':
+          description: The proposal
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /proposals/{proposalId}/scores:
+    parameters:
+      - $ref: '#/components/parameters/proposalId'
+    post:
+      operationId: scoreProposal
+      summary: Score a proposal once per reviewer
+      security:
+        - oauth2: [proposals:review]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScoreInput' }
+      responses:
+        '200':
+          description: Proposal with updated average
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /proposals/{proposalId}/decision:
+    parameters:
+      - $ref: '#/components/parameters/proposalId'
+    post:
+      operationId: decideProposal
+      summary: Accept or reject a proposal
+      security:
+        - oauth2: [proposals:decide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Decision' }
+      responses:
+        '200':
+          description: Proposal with decision
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proposal' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /proposals/{proposalId}/session:
+    parameters:
+      - $ref: '#/components/parameters/proposalId'
+    post:
+      operationId: scheduleProposalSession
+      summary: Turn an accepted proposal into a session
+      security:
+        - oauth2: [proposals:decide]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SessionInput' }
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Session' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/registrations:
+    get:
+      operationId: listMyRegistrations
+      summary: The caller's registrations and waitlist entries
+      security:
+        - oauth2: [registrations:read]
+      parameters:
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/offset'
+      responses:
+        '200':
+          description: Registrations page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Registration' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createMyRegistration
+      summary: Register the caller for an event or session, or waitlist them
+      security:
+        - oauth2: [registrations:register]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistrationInput' }
+      responses:
+        '201':
+          description: Registration, confirmed or waitlisted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Registration' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/registrations/{registrationId}:
+    delete:
+      operationId: cancelMyRegistration
+      summary: Cancel the caller's registration and promote the waitlist
+      security:
+        - oauth2: [registrations:cancel]
+      parameters:
+        - name: registrationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Cancelled
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }

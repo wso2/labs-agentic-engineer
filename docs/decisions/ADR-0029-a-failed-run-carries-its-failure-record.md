@@ -10,7 +10,7 @@
 `BuildStage.failureCode` in
 `packages/contracts/api/v1/openapi.yaml` · **Detail:**
 [`services/aep-api/design/run-failure-record.md`](../../services/aep-api/design/run-failure-record.md),
-console [ADR-0031](../../apps/console/design/decisions/ADR-0031-a-failed-run-explains-itself.md)
+console [ADR-0031](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0031-a-failed-run-explains-itself.md) (at the `classic-console` tag)
 
 **Why here.** Two codebases have to agree on what a failure IS on the wire: the
 platform records a code and facts, the console renders a sentence. That

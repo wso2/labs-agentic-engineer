@@ -21,38 +21,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
-
-// crtTypeCatalog adapts the dependencies resource-type catalog onto spec's
-// own CRTType vocabulary: design-save's resourceTypeCatalog port returns
-// spec.CRTType, so the spec domain names the dependencies feature nowhere
-// (the "a domain names no other domain's entity, even in a port" rule). It is
-// the projection point — dependencies becomes a domain in P8; this stays a port.
-type crtTypeCatalog struct {
-	cat *dependencies.ResourceTypeCatalog
-}
-
-func (c crtTypeCatalog) ResourceTypesByName(ctx context.Context) (map[string]spec.CRTType, error) {
-	types, err := c.cat.TypesByName(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]spec.CRTType, len(types))
-	for k, v := range types {
-		out[k] = spec.CRTType{
-			EndUserAuth:          v.Markers.EndUserAuth,
-			ConsumerURLEnvConfig: v.Markers.ConsumerURLEnvConfig,
-			ConsumerURLPath:      v.Markers.ConsumerURLPath,
-			Skill:                v.Markers.Skill,
-			Description:          v.Description,
-			Outputs:              v.Outputs,
-		}
-	}
-	return out, nil
-}
 
 // designFilesCommitter adapts the project repository to design's narrow
 // designFileCommitter port — the committed-truth single-commit write surface

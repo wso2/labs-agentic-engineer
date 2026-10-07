@@ -18,24 +18,18 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../../api/client";
+import { apiErrorMessage } from "../../../api/errors";
 import { usageKeys } from "./keys";
 
-function firstError(error: unknown, fallback: string): Error {
-  const e = error as { detail?: string; title?: string } | undefined;
-  return new Error(e?.detail ?? e?.title ?? fallback);
-}
-
-// Org-wide per-project usage cards (#291), the Settings → Usage read. Costs
-// are write-time stamps that only grow as work lands; a governance page has
-// no liveness needs, so 60s staleness is plenty.
+// The org's agent spend, one row per project (#291). Costs are stamped as
+// work lands and only grow; nothing here needs to be live, so a minute's
+// staleness is plenty.
 export function useProjectUsageList() {
   return useQuery({
     queryKey: usageKeys.projects(),
     queryFn: async () => {
       const { data, error } = await client.GET("/usage/projects");
-      if (error || data === undefined) {
-        throw firstError(error, "Failed to load usage");
-      }
+      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Failed to load usage"));
       return data;
     },
     staleTime: 60_000,

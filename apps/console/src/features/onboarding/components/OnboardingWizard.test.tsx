@@ -36,6 +36,9 @@ vi.mock("../../settings/api/queries", () => ({
   }),
   useTestConnection: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false, error: null }),
   useConnectGitHubPat: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
+}));
+
+vi.mock("../../skills/api/skills", () => ({
   useSyncSkills: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 

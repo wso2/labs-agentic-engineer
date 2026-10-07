@@ -157,7 +157,8 @@ which is why you copy it rather than write it:
 Copy the assets in Layout; do not hand-write a different `proxy_pass`, do not add
 `/oidc/` (token endpoint stays cross-origin; `thunder-authentication`), do not
 copy `apps/console/docker-entrypoint.sh`. Keep the official `nginx:alpine`
-`ENTRYPOINT`. The only extra file is `/docker-entrypoint.d/15-aep-api-proxy.sh`.
+`ENTRYPOINT`. The image adds exactly the three asset files: `nginx.conf`, the
+`default.conf` template and `/docker-entrypoint.d/15-aep-api-proxy.sh`.
 
 **Auth.** If the component declares an auth `platform-resource` dependency, its
 sign-in, screen gating and API-client wiring are `thunder-authentication`'s:
@@ -236,6 +237,13 @@ A `404` from `/chat` means the conversation is gone or was never yours — drop
 the stored id, start fresh, and tell the user the previous conversation
 expired. Do not retry the same id.
 
+A `422` whose body carries `guardrail` (`{ error, guardrail }`) means the
+platform's AI gateway refused that message on policy — the agent is up. Say so
+in the user's terms with the agent's `error` as the reason ("This message was
+blocked by a safety check: <error>"), keep their text in the composer to edit,
+and keep the conversation as it was: the blocked turn left nothing behind.
+Reserve "couldn't reach the assistant" for a network failure or a 5xx.
+
 ## Layout
 
 ```
@@ -264,6 +272,7 @@ expired. Do not retry the same id.
 │   └── pages/            # design-system components only, never raw HTML
 ├── mock/                 # mock mode — references/mock-mode.md (mock/authz/ comes with the tree above)
 ├── nginx/
+│   ├── nginx.conf        # copied from the skill assets, unchanged
 │   ├── default.conf      # copied from the skill assets, then /api locations kept
 │   └── 15-aep-api-proxy.sh
 ├── Dockerfile
@@ -279,6 +288,7 @@ above IS the shape. From the App Path:
 
 ```bash
 mkdir -p nginx
+cp "$AEP_SKILLS_DIR/react-webapp/assets/nginx.conf" nginx/nginx.conf
 cp "$AEP_SKILLS_DIR/react-webapp/assets/nginx-default.conf" nginx/default.conf
 cp "$AEP_SKILLS_DIR/react-webapp/assets/15-aep-api-proxy.sh" nginx/15-aep-api-proxy.sh
 ```
@@ -403,12 +413,24 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY nginx/nginx.conf /etc/nginx/nginx.conf
+COPY nginx/default.conf /etc/nginx/aep/default.conf
 COPY nginx/15-aep-api-proxy.sh /docker-entrypoint.d/15-aep-api-proxy.sh
-RUN chmod +x /docker-entrypoint.d/15-aep-api-proxy.sh
+RUN chmod +x /docker-entrypoint.d/15-aep-api-proxy.sh \
+ && rm /etc/nginx/conf.d/default.conf
+USER 101
 EXPOSE 9090
 CMD ["nginx", "-g", "daemon off;"]
 ```
+
+**The container runs on a read-only root filesystem, as a non-root UID the
+platform picks** — the cloud `web-application` type enforces both and mounts no
+writable volume, so `/tmp` is read-only too. Every runtime write goes under
+`/dev/shm/nginx`, the tmpfs every pod has: the asset `nginx.conf` keeps nginx's
+pid and temp files there, and the drop-in renders the conf there from the
+read-only template at `/etc/nginx/aep/default.conf`. Keep every path you add
+under `/dev/shm/nginx` too. A local deploy runs on a writable root, so it proves
+nothing here; the first cloud deploy is where a stray write crash-loops the pod.
 
 `.dockerignore` — beside it, so `COPY . .` uploads this app's sources rather than
 a local `node_modules` and a stale `dist`, both of which the builder stage makes
@@ -430,13 +452,14 @@ moves. Keep the patterns to these two and do not write an unanchored
 `generated/` — `src/generated/` is committed on purpose, and ignoring it is the
 `TS2307` failure in Pitfalls.
 
-**Done when:** Dockerfile COPYs the drop-in to `/docker-entrypoint.d/` and has
-no `ENTRYPOINT` line, and `.dockerignore` sits beside it.
+**Done when:** the Dockerfile COPYs `nginx.conf` to `/etc/nginx/nginx.conf`,
+`default.conf` to `/etc/nginx/aep/default.conf` and the drop-in to
+`/docker-entrypoint.d/`, sets `USER 101`, and has no `ENTRYPOINT` line; and
+`.dockerignore` sits beside it.
 
-`workload.yaml` follows your prompt — as given when it carries one, else per the
-component contract. Consumer connection to the sibling: `visibility: project`,
-`envBindings.address: <DEP_NAME>_URL` (pod, for nginx). Any default under
-`configurations.env` arrives as a `window._env_` entry.
+`workload.yaml` per the component contract. Consumer connection to the sibling:
+`visibility: project`, `envBindings.address: <DEP_NAME>_URL` (pod, for nginx).
+Any default under `configurations.env` arrives as a `window._env_` entry.
 
 **Done when:** this app's dependency on the sibling is `visibility: project`
 (never `external`). The sibling *service's* own endpoint `visibility` is the
@@ -448,6 +471,7 @@ as written rather than trimming it because this SPA uses `/api`.
 | Symptom | Cause | Fix |
 |---|---|---|
 | SPA throws on load: `window._env_ not set` | `/env-config.js` failed to load. A `SyntaxError: Unexpected token '<'` just before it means the tag is relative and the catch-all served `index.html`. Otherwise 404, or the `<script>` was `defer`/`async` | Root-absolute (`/env-config.js`), synchronous, in `<head>` before the bundle. Verify on a nested route loaded directly, not clicked into. |
+| Pod exits 1 at start: `Read-only file system` from `sed`, `mkdir` or nginx (`/etc/nginx`, `/tmp`, `/var/cache/nginx`, `/var/run`) | A runtime write outside `/dev/shm/nginx` — the cloud root filesystem is read-only, `/tmp` included, and `chmod` cannot make it writable | Copy `nginx.conf`, `default.conf` and the drop-in from the assets and lay them out as the Dockerfile above does; put any path you add under `/dev/shm/nginx`. |
 | `nginx: [emerg] host not found in upstream "…"` at pod start | Literal `proxy_pass http://hostname` (startup DNS) or leftover `/oidc/` block | Use the asset conf (`proxy_pass http://$api_backend`) and the drop-in; delete `/oidc/`. |
 | Browser CORS error calling the sibling API | `baseUrl` is the public gateway URL or `window._env_.API_BASE_URL` | `baseUrl: "/api"`. |
 | `/api` 502, SPA otherwise fine | API pod down, or drop-in left `TODO_API_URL` when the dep is named something else | Align both `API_URL="${…}"` lines with the dependency name; 502 while the API is down is expected. |

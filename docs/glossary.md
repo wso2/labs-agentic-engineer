@@ -423,7 +423,7 @@ host).
 The agents of ONE cycle, arranged as the tree the runtime declared, each carrying
 how long it has been going and how long it has been quiet. Built by
 `buildCrew(events, now)` in `@aep/progress-view` and rendered by the console's
-crew view (`apps/console/design/crew-view.md`); the playground reads the same
+crew view ([`design/crew-view.md` at `classic-console`](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/crew-view.md)); the playground reads the same
 model, so a run looks the same wherever it is watched.
 
 A crew is not a log. The feed answers *what happened*; the crew answers *who is
@@ -582,6 +582,25 @@ supports (Claude Code, the Claude subscription, web search, native PDFs, image
 input, generated agents) is its **capabilities**, computed only by
 `modelconn.CapabilitiesOf` in aep-api from format and host
 ([ADR-0038](decisions/ADR-0038-an-organization-has-one-model-connection.md)).
+
+### Incident issue
+A GitHub issue AE files from the SRE handoff's `ae_create_issue` call. Always
+carries the label `incident`, stamped server-side — never something the SRE
+agent's request controls — alongside its `kind` and
+any `componentName`/`actionStatuses` the RCA report carried. Deduplication,
+suppression and recurrence (see [SRE attention reason](#sre-attention-reason))
+all key on this label plus the server-owned incident identity, not on
+anything the agent asserts.
+
+### SRE handoff key
+The one long-lived key the OpenChoreo SRE (RCA) agent authenticates to
+aep-api's SRE handoff with. `aectl sre install` generates it and writes it
+into the agent's Secret (`AEP_MCP_TOKEN`) and aep-api's (`SRE_HANDOFF_TOKEN`).
+It authenticates the agent, not an org: each tool call names its org, which
+aep-api verifies against the observer's recorded alerts. The agent's own model is set the
+same way, at install, into its Secret. See
+[ADR-0040](decisions/ADR-0040-the-sre-agent-is-configured-at-install.md) and
+`services/aep-api/design/sre-handoff.md`.
 
 ### Connection fingerprint
 `format@host`, recorded on each spec-agent turn's journal entry. The history

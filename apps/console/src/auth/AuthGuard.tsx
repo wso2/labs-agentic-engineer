@@ -16,36 +16,59 @@
  * under the License.
  */
 
-import { useEffect, useMemo, type PropsWithChildren } from "react";
+import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { env } from "../config/env";
 import { getUserManager } from "./userManager";
 import { decodeJwtClaims, identityFromClaims, sessionUserId, type TokenClaims } from "./claims";
-import { MOCK_ORG, MOCK_USER } from "./mockSession";
+import { MOCK_ORG, MOCK_USER, isMockSignedOut, setMockSignedOut } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
 import { BillingActivation } from "./BillingActivation";
 import { SessionContext, type Session } from "./SessionContext";
 
-const MOCK_SESSION: Session = {
-  user: MOCK_USER,
-  orgHandle: MOCK_ORG,
-  signOut: () => {
-    console.info("[auth] mock mode — sign-out is a no-op");
-  },
-};
-
 // Gates the whole app (rendered at __root): children only ever see a
-// signed-in state, with the session in context.
+// signed-in state, with the session in context. Signing in ends with WSO2
+// Cloud's billing activation where the install has one (BillingActivation).
 export function AuthGuard({ children }: PropsWithChildren) {
   if (env.authMode === "mock") {
-    return (
-      <SessionContext.Provider value={MOCK_SESSION}>
-        <BillingActivation />
-        {children}
-      </SessionContext.Provider>
-    );
+    return <MockGuard>{children}</MockGuard>;
   }
   return <OidcGuard>{children}</OidcGuard>;
+}
+
+// Mock mode's fixed dev session. Sign-out ends it for the tab and shows the
+// signed-out screen; Sign in starts it again, with no IdP involved.
+function MockGuard({ children }: PropsWithChildren) {
+  const [signedOut, setSignedOut] = useState(isMockSignedOut);
+  const session = useMemo<Session>(
+    () => ({
+      user: MOCK_USER,
+      orgHandle: MOCK_ORG,
+      signOut: () => {
+        setMockSignedOut(true);
+        setSignedOut(true);
+      },
+    }),
+    [],
+  );
+
+  if (signedOut) {
+    return (
+      <AuthScreen
+        label=""
+        onSignIn={() => {
+          setMockSignedOut(false);
+          setSignedOut(false);
+        }}
+      />
+    );
+  }
+  return (
+    <SessionContext.Provider value={session}>
+      <BillingActivation />
+      {children}
+    </SessionContext.Provider>
+  );
 }
 
 // RP-initiated logout when the IdP advertises end_session_endpoint; some

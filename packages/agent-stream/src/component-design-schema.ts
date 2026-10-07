@@ -141,10 +141,11 @@ export const componentDesignSchema = z.strictObject({
   endpoint: endpointSchema.optional(),
   exposesAPI: exposesAPISchema.optional(),
   componentAgentInstructions: z.string().optional(),
-  // Agent-authored during enrichment (#369): the PRD stories this component
-  // serves. The build gate's coverage check reads it — every PRD story must
-  // be claimed by some component's list before a version can be cut.
-  stories: z.array(z.number().int().positive()).optional(),
+  // Agent-authored during enrichment (#369): the story IDs ("F2.3") this
+  // component serves. The build gate's coverage check reads it — every story
+  // the requirements define must be claimed by some component's list before a
+  // version can be cut, and the gate refuses an ID it does not know.
+  stories: z.array(z.string().min(1)).optional(),
   skillsPinned: z.array(z.string()).optional(),
 });
 

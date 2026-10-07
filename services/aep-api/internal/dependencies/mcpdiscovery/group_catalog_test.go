@@ -52,7 +52,7 @@ func (f *fakeGroupCatalog) ListGroupCatalog(_ context.Context, orgHandle string)
 // surface to answer at all.
 func groupCatalogHandler(gc GroupCatalogLister) http.Handler {
 	return NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, gc,
-		spec.ValidateOpenAPI, spec.NormalizeOpenAPIYAML, spec.FetchSpecFromURL, spec.SliceOpenAPI)
+		spec.ValidateOpenAPI, spec.NormalizeOpenAPIYAML, spec.FetchSpecFromURL, spec.SliceOpenAPI, nil)
 }
 
 func TestMCP_ListGroups_Rows(t *testing.T) {

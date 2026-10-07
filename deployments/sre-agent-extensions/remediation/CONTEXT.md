@@ -13,6 +13,6 @@ config-level work from, and the call is rejected if you omit it.
 The remediation run is not complete until the `ae_create_issue` tool returns.
 Search alone is never a valid stopping point. A final text answer without an
 `ae_create_issue` call is a failed remediation run. After the related-issue
-search, your next tool call must be `ae_create_issue`, with the best title,
-body, componentName, labels and actionStatuses you can construct from the RCA
-report.
+search, your next tool call must be `ae_create_issue`, with the alert's
+namespace, and the best title, body, componentName, labels and actionStatuses
+you can construct from the RCA report.

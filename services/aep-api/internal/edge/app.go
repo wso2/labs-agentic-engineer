@@ -87,6 +87,7 @@ type AppParams struct {
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
 	MCPResourceTypes     mcpdiscovery.ResourceTypeLister
 	MCPGroupCatalog      mcpdiscovery.GroupCatalogLister
+	MCPGuardrailCatalog  mcpdiscovery.GuardrailCatalogLister
 	// MCPSpecValidator/MCPSpecNormalizer/MCPSpecFetcher back the OpenAPI spec
 	// MCP tools (validate_openapi_spec, fetch_openapi_spec). Wired to the
 	// spec package's ValidateOpenAPI/NormalizeOpenAPIYAML/FetchSpecFromURL

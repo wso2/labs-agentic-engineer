@@ -1,0 +1,124 @@
+{
+  "F1": [
+    {
+      "words": "Employees record expenses with a receipt photo and submit them as a claim."
+    },
+    {
+      "id": "F1.1",
+      "words": "F1.1 As an employee, I photograph a receipt and the amount and date are filled in for me."
+    },
+    {
+      "id": "F1.2",
+      "words": "F1.2 As an employee, I pick a category for each expense: meals, travel or supplies."
+    },
+    {
+      "id": "F1.3",
+      "words": "F1.3 As an employee, I save expenses as a draft and submit them later as one claim."
+    },
+    {
+      "id": "F1.4",
+      "words": "F1.4 As an employee, I see which of my claims are pending, approved or rejected."
+    },
+    {
+      "words": "A receipt is required for any expense above $25."
+    },
+    {
+      "words": "Meals are capped at $50 per day."
+    },
+    {
+      "words": "A claim can hold expenses from any dates."
+    },
+    {
+      "words": "Amounts are entered as P3 describes; a submitted claim goes to F2 for approval."
+    },
+    {
+      "words": "Corporate card transactions. Staff pay and claim back."
+    }
+  ],
+  "F2": [
+    {
+      "words": "Managers approve or reject their team's claims; large claims also go to Finance."
+    },
+    {
+      "id": "F2.1",
+      "words": "F2.1 As a manager, I see my team's pending claims in one list, oldest first."
+    },
+    {
+      "id": "F2.2",
+      "words": "F2.2 As a manager, I approve or reject a claim with a reason."
+    },
+    {
+      "id": "F2.4",
+      "words": "F2.4 As a manager going on leave, I name a deputy who approves in my place."
+    },
+    {
+      "id": "F2.5",
+      "words": "F2.5 As finance, I give a second approval on any claim over $1,000, after the manager."
+    },
+    {
+      "words": "A claim is approved by the employee's line manager."
+    },
+    {
+      "words": "A rejected claim goes back to the employee to edit and resubmit."
+    },
+    {
+      "words": "Every approval and rejection is kept, as P1 requires."
+    },
+    {
+      "id": "F2.3",
+      "words": "F2.3 moved to F5.1"
+    }
+  ],
+  "F3": [
+    {
+      "words": "Finance sends approved claims to Xero every night and fixes the ones that fail."
+    },
+    {
+      "id": "F3.1",
+      "words": "F3.1 As finance, I have approved claims sent to Xero every night."
+    },
+    {
+      "id": "F3.2",
+      "words": "F3.2 As finance, I see which claims failed to sync and why."
+    },
+    {
+      "id": "F3.3",
+      "words": "F3.3 As finance, I resend a failed claim after fixing it."
+    },
+    {
+      "words": "Xero accepts up to 100 invoices per API call."
+    },
+    {
+      "words": "Each claim becomes one bill in Xero, with one line per expense."
+    },
+    {
+      "words": "A claim over $1,000 is sent only after its second approval (F2.5)."
+    },
+    {
+      "words": "Does finance post to one Xero organisation, or one per country?"
+    },
+    {
+      "words": "Finance posts every claim to one Xero organisation."
+    },
+    {
+      "words": "Each country has its own Xero organisation; a claim goes to the employee's country."
+    },
+    {
+      "words": "Should a failed sync email finance, or only show on the failures list?"
+    }
+  ],
+  "F4": [
+    {
+      "words": "Finance sees where the money goes, by team and category."
+    }
+  ],
+  "F5": [
+    {
+      "words": "Staff claim for driving to client sites."
+    },
+    {
+      "id": "F5.1",
+      "words": "F5.1 As a manager, I see the route and distance when I approve a mileage expense."
+    }
+  ]
+}

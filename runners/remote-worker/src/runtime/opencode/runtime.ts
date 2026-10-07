@@ -53,7 +53,7 @@ import { buildOpencodeConfig, CONNECTION_KEY_ENV } from "./config.js";
 import { createOpencodeAdapter } from "./translate.js";
 
 /** The model an OpenCode run bills to when the org has not chosen: the platform's priced default. */
-export const OPENCODE_DEFAULT_MODEL = "claude-sonnet-5";
+export const OPENCODE_DEFAULT_MODEL = "claude-sonnet-5-5";
 
 /**
  * Where the image ships the guard plugin (Dockerfile, runner-opencode stage):

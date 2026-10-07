@@ -27,10 +27,8 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
-	"github.com/wso2/aep/aep-api/internal/ops"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
@@ -40,11 +38,12 @@ import (
 // (capInternalBody, which finds its route once); every generated operation then
 // passes internalGate, which verifies the caller's credential for the op's
 // route group (a runner's publisher-cc bearer against the cycle named in the
-// path, the INT-6 fence; the SRE handoff bearer for sre/; an org's
-// ae-studio-<org> client token for ae-studio/) and binds the verified org into the context;
-// only an authenticated request is validated against the embedded internal
-// spec (internalValidator). The raw MCP route carries its own gate
-// (publisher token only). The spec is non-public, never gateway-advertised, but the path
+// path, the INT-6 fence; an org's ae-studio-<org> client token for
+// ae-studio/) and binds the verified org into the context; only an
+// authenticated request is validated against the embedded internal spec
+// (internalValidator). The raw MCP routes carry their own gates: mcp takes a
+// publisher or recorded ae-studio-<org> token (auth.MCPGate), sre-handoff/mcp
+// the install-time SRE handoff key (auth.SREHandoffVerifier). The spec is non-public, never gateway-advertised, but the path
 // is reachable through the console's /aep-api-service/ route, so nothing on it
 // parses a body for an anonymous caller.
 //
@@ -55,15 +54,6 @@ type InternalDeps struct {
 	// cycle id: the token's org must own that run cycle (the cycle fence).
 	// nil fails closed: every runner op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
-	// SREHandoff verifies aep-mcp-server's static SRE handoff bearer for the
-	// sre/ ops. It is the same instance that switches auto-RCA on
-	// (internal/app). nil fails closed: every sre/ op answers 401.
-	SREHandoff *auth.SREHandoffVerifier
-	// Issues backs sre-list-issues and sre-create-issue (the same issue
-	// service as the console's ops); RcaReports backs sre-create-rca-report.
-	// A nil one answers 503 for its ops.
-	Issues     sourcecontrol.IssueService
-	RcaReports ops.Repository
 	// StudioClients verifies an org's ae-studio-<org> client token for the
 	// ae-studio/ ops and MCP (the AE Studio tools pod) and binds the org
 	// recorded for that client. nil fails closed: every ae-studio/ op answers
@@ -92,6 +82,13 @@ type InternalDeps struct {
 	// MCP serves POST /internal/v1/mcp (call-mcp-tool), already wrapped in
 	// auth.MCPGate; nil leaves the route unmounted.
 	MCP http.Handler
+	// SREHandoffAuth guards SREHandoffMCP, the OpenChoreo SRE agent's handoff
+	// tools (sourcecontrol/issues/sre_mcp.go), with the install-time handoff
+	// key. Either nil (the default) leaves POST /internal/v1/sre-handoff/mcp
+	// unmounted. Each tool call names its org, which the tools verify against
+	// the observer's recorded alerts.
+	SREHandoffAuth *auth.SREHandoffVerifier
+	SREHandoffMCP  http.Handler
 }
 
 // internalServer implements igen.StrictServerInterface.
@@ -123,6 +120,9 @@ func newInternalV1Handler(deps InternalDeps) http.Handler {
 	mux := http.NewServeMux()
 	if deps.MCP != nil {
 		mux.Handle("POST "+internalV1+"/mcp", deps.MCP)
+	}
+	if deps.SREHandoffAuth != nil && deps.SREHandoffMCP != nil {
+		mux.Handle("POST "+internalV1+"/sre-handoff/mcp", deps.SREHandoffAuth.Middleware(deps.SREHandoffMCP))
 	}
 	igen.HandlerWithOptions(strict, igen.StdHTTPServerOptions{
 		BaseURL:          internalV1,
@@ -213,8 +213,6 @@ const (
 	// runnerCredential: a coding runner's publisher-cc bearer, fenced to the
 	// cycle the path names (INT-6).
 	runnerCredential internalCredential = iota + 1
-	// sreHandoffCredential: aep-mcp-server's static SRE handoff bearer.
-	sreHandoffCredential
 	// aeStudioCredential: the org's ae-studio-<org> client token, presented
 	// by its AE Studio tools pod; no cycle fence, the org is the one that
 	// client is recorded for. An org's publisher token (what its coding Jobs
@@ -234,9 +232,6 @@ type internalOpGate struct {
 // TestInternalGate_CoversEverySpecOperation pins it to the spec both ways.
 var internalOpGates = map[string]internalOpGate{
 	"runner-validation-context":        {credential: runnerCredential, cycleParam: "cycleId"},
-	"sre-list-issues":                  {credential: sreHandoffCredential},
-	"sre-create-issue":                 {credential: sreHandoffCredential},
-	"sre-create-rca-report":            {credential: sreHandoffCredential},
 	"get-ae-studio-project-repository": {credential: aeStudioCredential},
 	"get-ae-studio-skills-repository":  {credential: aeStudioCredential},
 	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
@@ -250,9 +245,9 @@ var internalOpGates = map[string]internalOpGate{
 // schema-detail 400 or a body parse:
 //
 //	runs/                      coding runner   publisher token, cycle fence (cycle id in the path)
-//	sre/                       SRE handoff     SRE handoff bearer, binds its one org + the incident context
 //	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
 //	mcp                        runner, pod     route miss here: own gate (auth.MCPGate), publisher or recorded ae-studio-<org> token, binds the verified org
+//	sre-handoff/mcp            SRE agent       route miss here: own gate (auth.SREHandoffVerifier), install-time handoff key; org per tool call, verified against observer alerts
 //	any other embedded op      -               denied (401)
 //
 // A route miss passes through untouched: the inner mux answers 404 or 405, or
@@ -260,8 +255,8 @@ var internalOpGates = map[string]internalOpGate{
 // must present the credential of its route group, and the verified org is bound
 // into the context. A credential opens its own group only (mcp, the one group
 // two callers share, takes both of theirs): a publisher token never clears
-// sre/ or ae-studio/, the SRE bearer never clears a runner op or ae-studio/,
-// an ae-studio-<org> client token never clears a runner op, and no other
+// ae-studio/, an ae-studio-<org> client token never clears a runner op, the
+// SRE handoff key opens only sre-handoff/mcp, and no other
 // token (a user JWT, the AE-only client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
 // denied outright, so adding an internal op means teaching this gate its
 // credential first. The cycle fence checks the decoded path value, the one
@@ -284,20 +279,11 @@ func internalGate(deps InternalDeps, next http.Handler) http.Handler {
 }
 
 // authenticateInternal verifies authHeader for the matched operation's route
-// group and returns ctx with the verified org (and, for sre/, the claims and
-// incident context) bound.
+// group and returns ctx with the verified org bound.
 func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader string, m internalRouteMatch) (context.Context, error) {
 	op := m.route.Operation.OperationID
 	gate, ok := internalOpGates[op]
 	switch {
-	case ok && gate.credential == sreHandoffCredential:
-		claims, ok := deps.SREHandoff.Verify(authHeader) // nil verifier: false, fails closed
-		if !ok {
-			return nil, errUnauthorized("SRE handoff bearer required")
-		}
-		ctx = auth.WithClaims(ctx, claims)
-		ctx = sourcecontrol.WithIncidentContext(ctx, sreHandoffIncidentID)
-		return tenant.WithBoundOrg(ctx, claims.OuHandle), nil
 	case ok && gate.credential == aeStudioCredential:
 		return authenticateAEStudio(ctx, deps.StudioClients, authHeader)
 	case ok && gate.credential == runnerCredential:
@@ -346,18 +332,6 @@ func internalValidator(next http.Handler) http.Handler {
 		}
 	})
 }
-
-// sreHandoffIncidentID is the opaque incident identity the sre/ gate binds onto
-// every request it authenticates (sourcecontrol.WithIncidentContext). It is
-// intentionally a constant, not a per-alert value: CreateIssue only uses it
-// (alongside org/project/componentName) to compute the dedupe hash, and the
-// SRE-handoff design deliberately dedupes by component alone, not by a
-// per-alert signature (docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md
-// §3) — there is no per-request signal this transport could bind that would
-// mean anything finer. Without SOME incident context bound here,
-// CreateIssue's own anti-spoofing guard (ErrIncidentContextRequired) rejects
-// every SRE-filed componentName/actionStatuses outright, trusted bearer or not.
-const sreHandoffIncidentID = "sre-handoff"
 
 // mapRunnerAuthError translates the authorizer's neutral auth.HTTPError onto
 // the envelope; anything unrecognized fails closed as a 401.
@@ -419,7 +393,8 @@ func mcpRoutes(p AppParams) http.Handler {
 	if p.Deps.PublisherTokens != nil || p.InternalDeps.StudioClients != nil {
 		mcp = auth.MCPGate(p.Deps.PublisherTokens, p.InternalDeps.StudioClients, mcpdiscovery.NewMCPHandler(
 			p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes, p.MCPGroupCatalog,
-			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer))
+			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer,
+			p.MCPGuardrailCatalog))
 	}
 	return mcp
 }

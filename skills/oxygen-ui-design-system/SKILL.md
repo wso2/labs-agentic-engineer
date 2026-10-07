@@ -4,7 +4,7 @@ description: Oxygen UI (`@wso2/oxygen-ui`) — this organization's web-app desig
 metadata:
   aep:
     kind: org
-    audience: [coding]
+    audience: [design, coding]
 ---
 
 # Oxygen UI Design System
@@ -19,6 +19,11 @@ You are here because the component you are building pinned this skill, so the
 whole of it is yours — theming included. The organization's colors are settled
 in Brand colors below; nobody is interviewed about them, at design time or any
 other time.
+
+On a `/prototype` turn you are here for one thing: how an Oxygen screen is
+composed (page anatomy, listing pages, forms, status colors), so the prototype
+you write reads as one. The kit draws its components; the setup, packages and
+code below are the build's concern, not that turn's.
 
 `react-webapp` owns the app: layout, config, verify sequence, Dockerfile, nginx.
 This skill owns what goes **inside** `src/` — the UI. Where the two appear to
@@ -349,6 +354,14 @@ specifies. "Install no other library" above is about UI and styling.
 
 ## Implementing a wireframe with Oxygen
 
+For the coding run only: this is what the BUILT application's pages are made
+of. The `/prototype` flow's review renderer draws none of this shell (no
+`Header`, `UserMenu`, `ColorSchemeToggle` or `Footer`): it draws only the
+prototype's own components and the navigation a screen names (the prototype
+skill's **What the reviewer sees**). A design turn reads this skill for how an
+Oxygen screen is composed, and never cites this table as what a reviewer is
+shown.
+
 `wireframes/references/implementing.md` says what each DSL line must become;
 this is what it becomes here. Every row names the exact component and its
 props, and what to do when the DSL carries more than the component holds —
@@ -364,7 +377,7 @@ improvising around the component:
 | `text`, `link`, `breadcrumb` | `Typography`, `Link component={RouterLink} to="…"`, `AppBreadcrumbs` |
 | `card "Label \| Value \| Caption"` | `Card` > `CardContent` > `Typography variant="overline"` (label), `Typography variant="h4"` (value), `Typography variant="caption" color="text.secondary"` (caption). `StatCard` holds only `label` + `value` (+ `icon`): use it for a two-part `card "Label \| Value"`, and never park the caption outside it |
 | `card "Title"` with nested children | `Card` > `CardHeader title="Title"` + `CardContent` holding the children |
-| `table "A \| B \| C" [-> S]` + `row` lines | `ListingTable.Container` > `ListingTable` > `.Head` / `.Body` / `.Row` / `.Cell` with exactly those columns; `-> S` makes each `ListingTable.Row clickable onClick={() => navigate(…)}`; `ListingTable.EmptyState` with no rows. **Every drawn column is built.** A column the list response does not carry is filled from **one** request to whichever other list operation of the contract supplies it — a name column from the entity list joined on id, a count column from the child list filtered once and grouped; two missing columns may need two such requests, one per list, never one per row. Only a column no list operation can supply is omitted, with a line in your report |
+| `table "A \| B \| C" [-> S]` + `row` lines | `ListingTable.Container` > `ListingTable` > `.Head` / `.Body` / `.Row` / `.Cell` with exactly those columns; `-> S` makes each `ListingTable.Row clickable onClick={() => navigate(…)}`; with no rows, `ListingTable.EmptyState` in one full-width row of `.Body`, under `.Head`. The head and each control drawn with the table stay on the page when it is empty. **Every drawn column is built.** A column the list response does not carry is filled from **one** request to whichever other list operation of the contract supplies it — a name column from the entity list joined on id, a count column from the child list filtered once and grouped; two missing columns may need two such requests, one per list, never one per row. Only a column no list operation can supply is omitted, with a line in your report |
 | `select "Label: Value"` | `TextField select label="Label"` with a `MenuItem` per option and `Value` preselected — never a bare `Select`: its `label` prop renders nothing without `FormControl` + `InputLabel`, so the control shows no label at all |
 | `select "Active only"` (one filter, no `Label:`) | `FormControlLabel control={<Switch />} label="Active only"` — the DSL string is the visible label, and a select whose only choice is on/off is a switch |
 | `input "Label"` | `TextField label="Label"`; a label naming a date → `TextField type="date" label="Label" slotProps={{ inputLabel: { shrink: true } }}` |

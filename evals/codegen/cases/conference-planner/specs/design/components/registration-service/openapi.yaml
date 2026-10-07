@@ -1,0 +1,232 @@
+openapi: 3.0.3
+info:
+  title: Registration Service
+  version: 0.1.0
+servers:
+  - url: /
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes: {}
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+    Registration:
+      type: object
+      required: [id, userId, eventId, status]
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        eventId: { type: string }
+        sessionId: { type: string, nullable: true, description: null for an event registration }
+        status: { type: string, enum: [confirmed, waitlisted, cancelled] }
+        waitlistPosition: { type: integer, nullable: true, description: 1 is next to be promoted }
+    ReserveInput:
+      type: object
+      required: [userId, eventId]
+      properties:
+        userId: { type: string }
+        eventId: { type: string }
+    CapacityInput:
+      type: object
+      required: [capacity]
+      properties:
+        capacity: { type: integer, minimum: 0, description: maximum confirmed seats }
+    Availability:
+      type: object
+      required: [sessionId, capacity, seatsRemaining, waitlistCount]
+      properties:
+        sessionId: { type: string }
+        capacity: { type: integer }
+        seatsRemaining: { type: integer }
+        waitlistCount: { type: integer }
+  parameters:
+    sessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema: { type: string }
+    eventId:
+      name: eventId
+      in: path
+      required: true
+      schema: { type: string }
+    userId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid gateway assertion
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Already registered
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+security:
+  - oauth2: []
+paths:
+  /sessions/{sessionId}/capacity:
+    parameters:
+      - $ref: '#/components/parameters/sessionId'
+    put:
+      operationId: setSessionCapacity
+      summary: Set a session's capacity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CapacityInput' }
+      responses:
+        '200':
+          description: Current availability
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Availability' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sessions/{sessionId}/availability:
+    parameters:
+      - $ref: '#/components/parameters/sessionId'
+    get:
+      operationId: getSessionAvailability
+      summary: Seats remaining and waitlist size
+      responses:
+        '200':
+          description: Availability
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Availability' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sessions/{sessionId}/registrations:
+    parameters:
+      - $ref: '#/components/parameters/sessionId'
+    get:
+      operationId: listSessionSeats
+      summary: Confirmed and waitlisted entries of a session
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [confirmed, waitlisted] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Entries page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Registration' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: reserveSessionSeat
+      summary: Reserve a seat or join the waitlist when full
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReserveInput' }
+      responses:
+        '201':
+          description: Confirmed or waitlisted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Registration' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /sessions/{sessionId}/registrations/{registrationId}:
+    delete:
+      operationId: cancelSessionSeat
+      summary: Cancel and promote the first waitlisted entry if a seat freed
+      parameters:
+        - $ref: '#/components/parameters/sessionId'
+        - name: registrationId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204':
+          description: Cancelled
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /events/{eventId}/attendees:
+    parameters:
+      - $ref: '#/components/parameters/eventId'
+    post:
+      operationId: registerEventAttendee
+      summary: Register a user for an event (no capacity)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReserveInput' }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Registration' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /users/{userId}/registrations:
+    parameters:
+      - $ref: '#/components/parameters/userId'
+    get:
+      operationId: listUserRegistrations
+      summary: A user's event and session registrations with status
+      responses:
+        '200':
+          description: Registrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Registration' }
+        '401': { $ref: '#/components/responses/Unauthorized' }

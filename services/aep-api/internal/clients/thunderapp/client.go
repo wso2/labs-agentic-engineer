@@ -28,19 +28,17 @@ package thunderapp
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/httpx"
+	"github.com/wso2/aep/aep-api/internal/clients/kubeauth"
 	"github.com/wso2/aep/aep-api/internal/clients/requests"
 )
 
@@ -81,10 +79,9 @@ type Config struct {
 
 // Client LISTs ThunderApplications by OpenChoreo resource + environment labels.
 type Client struct {
-	baseURL   string
-	bearer    string
-	tokenFile string
-	http      *requests.RetryableHTTPClient
+	baseURL string
+	auth    kubeauth.Authorizer
+	http    *requests.RetryableHTTPClient
 }
 
 // New builds a Client. BaseURL is required; callers that cannot resolve a
@@ -95,18 +92,17 @@ func New(cfg Config) (*Client, error) {
 	}
 	inner := cfg.HTTPClient
 	if inner == nil {
-		tr, err := tlsTransport(cfg.CAFile)
+		tr, err := kubeauth.Transport(cfg.CAFile)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("thunderapp: %w", err)
 		}
 		inner = &http.Client{Transport: httpx.WrapTransport(tr)}
 	} else if inner.Transport == nil {
 		inner.Transport = httpx.WrapTransport(nil)
 	}
 	return &Client{
-		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
-		bearer:    cfg.BearerToken,
-		tokenFile: cfg.TokenFile,
+		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		auth:    kubeauth.NewAuthorizer(cfg.BearerToken, cfg.TokenFile),
 		// One retry with short backoff: DeploymentState already polls; a hard
 		// 5xx should surface for activity retry rather than stall the poll.
 		http: requests.NewRetryableHTTPClient(inner, requests.RequestRetryConfig{
@@ -135,9 +131,9 @@ func (c *Client) FindByResource(ctx context.Context, resourceName, environment s
 		return nil, fmt.Errorf("thunderapp: build request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	auth, err := c.authorization()
+	auth, err := c.auth.Header()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("thunderapp: %w", err)
 	}
 	if auth != "" {
 		req.Header.Set("Authorization", auth)
@@ -192,24 +188,6 @@ func IsNotFound(err error) bool {
 	return errors.As(err, &he) && he.StatusCode == http.StatusNotFound
 }
 
-func (c *Client) authorization() (string, error) {
-	if c.bearer != "" {
-		return "Bearer " + c.bearer, nil
-	}
-	if c.tokenFile == "" {
-		return "", nil
-	}
-	b, err := os.ReadFile(c.tokenFile)
-	if err != nil {
-		return "", fmt.Errorf("thunderapp: read token file: %w", err)
-	}
-	tok := strings.TrimSpace(string(b))
-	if tok == "" {
-		return "", fmt.Errorf("thunderapp: token file is empty")
-	}
-	return "Bearer " + tok, nil
-}
-
 type thunderList struct {
 	Items []thunderCR `json:"items"`
 }
@@ -225,24 +203,4 @@ type thunderCR struct {
 		Ready              bool  `json:"ready"`
 		ObservedGeneration int64 `json:"observedGeneration"`
 	} `json:"status"`
-}
-
-func tlsTransport(caFile string) (http.RoundTripper, error) {
-	if caFile == "" {
-		return nil, nil
-	}
-	pem, err := os.ReadFile(caFile)
-	if err != nil {
-		return nil, fmt.Errorf("thunderapp: read CA file %s: %w", caFile, err)
-	}
-	if len(pem) == 0 {
-		return nil, fmt.Errorf("thunderapp: CA file %s is empty", caFile)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("thunderapp: CA file %s is not valid PEM", caFile)
-	}
-	return &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12},
-	}, nil
 }

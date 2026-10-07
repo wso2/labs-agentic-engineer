@@ -172,7 +172,7 @@ type MilestoneRunRepository interface {
 	// it, guarded on the run being non-terminal so a settled run's verdict is
 	// frozen. An issue of 0 leaves the column as-is. Written by a validation run,
 	// and by a dev run only to record `skipped` for a version with no oracle.
-	SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*MilestoneRun, error)
+	SetValidationVerdict(ctx context.Context, id, verdict string, issue, regressions int) (*MilestoneRun, error)
 
 	// GetByIDScoped returns the run only when it belongs to orgID — the store
 	// fence for token-derived org. Returns (nil, nil) for both "no such id" and
@@ -369,7 +369,7 @@ func (r *milestoneRunRepository) RequestCancel(ctx context.Context, id string) (
 	})
 }
 
-func (r *milestoneRunRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int) (*MilestoneRun, error) {
+func (r *milestoneRunRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue, regressions int) (*MilestoneRun, error) {
 	if !ValidationVerdicts[verdict] {
 		return nil, fmt.Errorf("milestone run: unknown validation verdict %q", verdict)
 	}
@@ -377,7 +377,7 @@ func (r *milestoneRunRepository) SetValidationVerdict(ctx context.Context, id, v
 	// produced it at the same instant, and a settled run needs the issue to stay
 	// navigable. Issue 0 (a task run, or a skip before minting) leaves the
 	// column alone rather than overwriting a real number with zero.
-	fields := map[string]any{"validation_verdict": verdict}
+	fields := map[string]any{"validation_verdict": verdict, "validation_regressions": regressions}
 	if issue > 0 {
 		fields["validation_issue"] = issue
 	}

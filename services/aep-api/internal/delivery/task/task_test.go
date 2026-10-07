@@ -36,20 +36,18 @@ import (
 func TestComposeTaskBody_ProseWithResolvedAndUnresolvedDependencies(t *testing.T) {
 	planned := plannedTask{
 		Component: "order-service",
+		Feature:   "F2",
 		AppPath:   "src/order-service",
-		DependsOn: []string{"user-service", "cart-service"},
 		Rationale: "core of the plan",
 		Body:      "## Scope\nWrite it.",
 	}
-	body := composeTaskBody(planned, func(component string) (int, bool) {
-		if component == "user-service" {
-			return 12, true
-		}
-		return 0, false
-	})
+	brief := taskBrief{FeatureName: "Approvals", ProductWide: []string{"P1", "P3"}}
+	body := composeTaskBody(planned, brief, []taskLink{{Number: 12}, {Name: "`cart-service`"}})
 	for _, want := range []string{
 		"core of the plan",
 		"**Component:** `order-service`",
+		"**Feature:** F2 Approvals",
+		"**Product-wide:** P1, P3",
 		"**App Path:** `src/order-service`",
 		"Depends on #12",
 		"Depends on the `cart-service` task",
@@ -66,7 +64,7 @@ func TestComposeTaskBody_ProseWithResolvedAndUnresolvedDependencies(t *testing.T
 
 // An empty plan renders an empty body rather than a skeleton of blank headings.
 func TestComposeTaskBody_EmptyFactsRenderNothing(t *testing.T) {
-	if got := composeTaskBody(plannedTask{}, func(string) (int, bool) { return 0, false }); got != "" {
+	if got := composeTaskBody(plannedTask{}, taskBrief{}, nil); got != "" {
 		t.Errorf("empty plannedTask rendered %q, want an empty body", got)
 	}
 }

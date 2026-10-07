@@ -202,7 +202,7 @@ RUN apt-get update \
 # `/usr/bin/chromium`, Debian's `#!/bin/sh` launcher. Both start; the launcher
 # sources `/etc/chromium.d/*` first, which adds extension and GPU flags and
 # exports Google API credentials into the run. ADR-0016 lists what and why.
-ARG AGENT_BROWSER_VERSION=0.35.2
+ARG AGENT_BROWSER_VERSION=0.38.2
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/lib/chromium/chromium
 
 # `--no-sandbox` IS THE IMAGE'S, for every run. This reverses an earlier call

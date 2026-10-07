@@ -19,7 +19,14 @@
 // Checks an acceptance run's report against the feature files it claims to have
 // run.
 //
-//   node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" <project-dir>
+//   node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" <project-dir> \
+//     [--features F1,F2] [--held-back F2.4]
+//
+// A version validates its built scope (the validation issue names it): with
+// --features, only the feature files whose `Feature:` line leads with one of
+// those IDs are expected, and with --held-back, a rule whose every `@story-`
+// tag is held back is not. An entry outside the scope is a breach like any
+// other unknown entry: it reports on code this version did not build.
 //
 // Exit 0 = the report is answerable for · 1 = usage/IO · 2 = a contract breach.
 //
@@ -110,6 +117,9 @@ function needsObserved(step) {
 function scanFeature(text) {
   let feature = "";
   let rule = "";
+  let ruleStories = [];
+  let featureStories = [];
+  let tags = [];
   let fence = ""; // the docstring delimiter we are inside, or "" outside one
   const scenarios = [];
 
@@ -129,20 +139,46 @@ function scanFeature(text) {
     if (line.startsWith("#")) return;
 
     const take = (kw) => line.slice(kw.length).trim();
-    if (line.startsWith("Feature:")) feature = take("Feature:");
-    else if (line.startsWith("Rule:")) rule = take("Rule:");
-    else if (line.startsWith("Scenario Outline:")) scenarios.push({ rule, name: take("Scenario Outline:"), line: i + 1 });
-    else if (line.startsWith("Scenario:")) scenarios.push({ rule, name: take("Scenario:"), line: i + 1 });
-    else if (line.startsWith("Example:")) scenarios.push({ rule, name: take("Example:"), line: i + 1 });
+    const stories = () => [...featureStories, ...ruleStories];
+    if (line.startsWith("@")) {
+      tags.push(...[...line.matchAll(/@story-(\S+)/g)].map((m) => m[1]));
+      return;
+    }
+    if (line.startsWith("Feature:")) {
+      feature = take("Feature:");
+      featureStories = tags;
+    } else if (line.startsWith("Rule:")) {
+      rule = take("Rule:");
+      ruleStories = tags;
+    } else if (line.startsWith("Scenario Outline:")) scenarios.push({ rule, stories: stories(), name: take("Scenario Outline:"), line: i + 1 });
+    else if (line.startsWith("Scenario:")) scenarios.push({ rule, stories: stories(), name: take("Scenario:"), line: i + 1 });
+    else if (line.startsWith("Example:")) scenarios.push({ rule, stories: stories(), name: take("Example:"), line: i + 1 });
+    if (line !== "") tags = [];
   });
 
   return { feature, scenarios };
 }
 
-const projectDir = process.argv[2];
-if (!projectDir) {
-  console.error('usage: node check-report.mjs <project-dir>');
+/** `--name a,b` from argv, or null when absent. */
+function listArg(argv, name) {
+  const i = argv.indexOf(name);
+  if (i < 0) return null;
+  return (argv[i + 1] ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+const argv = process.argv.slice(2);
+const projectDir = argv[0];
+if (!projectDir || projectDir.startsWith("--")) {
+  console.error("usage: node check-report.mjs <project-dir> [--features F1,F2] [--held-back F2.4]");
   process.exit(1);
+}
+const scopeFeatures = listArg(argv, "--features");
+const heldBack = new Set(listArg(argv, "--held-back") ?? []);
+
+/** Whether this version validates a scenario: its feature is built and its rule stands for a story that is not held back. */
+function inScope(feature, scenario) {
+  if (scopeFeatures && !scopeFeatures.includes(/^(F\d+)\b/.exec(feature)?.[1] ?? feature)) return false;
+  return scenario.stories.length === 0 || scenario.stories.some((id) => !heldBack.has(id));
 }
 
 const featureDir = join(projectDir, "specs/validation/acceptance");
@@ -167,7 +203,9 @@ const expected = new Map();
 for (const file of readdirSync(featureDir).filter((f) => f.endsWith(".feature")).sort()) {
   const { feature, scenarios } = scanFeature(readFileSync(join(featureDir, file), "utf8"));
   if (!feature) continue;
-  for (const s of scenarios) expected.set(`${feature} ▸ ${s.rule} ▸ ${s.name}`, `${file}:${s.line}`);
+  for (const s of scenarios) {
+    if (inScope(feature, s)) expected.set(`${feature} ▸ ${s.rule} ▸ ${s.name}`, `${file}:${s.line}`);
+  }
 }
 
 const errors = [];

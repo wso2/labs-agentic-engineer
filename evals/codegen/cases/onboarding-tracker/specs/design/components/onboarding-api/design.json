@@ -1,0 +1,17 @@
+{
+  "name": "onboarding-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "onboarding-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "onboarding-db", "resourceType": "postgres-cnpg", "parameters": {} },
+    { "kind": "platform-resource", "name": "onboarding-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Owns onboarding records, their tasks, and department task templates. Exposes CRUD for onboarding records, department-scoped task queues (IT, HR, Facilities), and template management for Admins. Computes an 'overdue' status on each task from its due date rather than storing it. Does not send email or push notifications, and does not store files or documents.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

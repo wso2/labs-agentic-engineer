@@ -123,7 +123,7 @@ func TestModelAccessEnvVars_ReturnsTheConnectionsModelVars(t *testing.T) {
 			name: "Anthropic's own API",
 			want: map[string]string{
 				modelEndpointEnvVar:      "https://api.anthropic.com/v1",
-				modelNameEnvVar:          "claude-sonnet-5",
+				modelNameEnvVar:          "claude-sonnet-5-5",
 				modelAPIFormatEnvVar:     "anthropic",
 				modelAPIAuthSchemeEnvVar: "x-api-key",
 			},
@@ -418,7 +418,7 @@ func TestModelAccessEnvVars_GovernedCarriesTheConnectionsModelAndFormat(t *testi
 		conn        *modelconn.Connection
 		model, form string
 	}{
-		{name: "Anthropic's own API", model: "claude-sonnet-5", form: "anthropic"},
+		{name: "Anthropic's own API", model: "claude-sonnet-5-5", form: "anthropic"},
 		{name: "Ollama, OpenAI-compatible", conn: ollamaConnection(), model: "gpt-oss:20b", form: "openai-compatible"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -94,12 +94,17 @@ during it.**
 ### Install
 
 ```bash
-npm install -g agent-browser@0.35.2      # match runners/remote-worker/Dockerfile
+npm install -g agent-browser@0.38.2      # match runners/remote-worker/Dockerfile
 ```
 
 `npm warn EBADENGINE` (package wants node ≥24, this repo runs 22) is expected
 and ignored on purpose: the tarball ships prebuilt Rust binaries and no node
 ever runs the CLI. The Dockerfile documents the same choice.
+
+The codegen eval walker and `play code --host` do not use this global install.
+Each runs the copy pinned as a devDependency of its own package
+(`evals/codegen`, `playground`), and a unit test there holds that pin equal to
+the Dockerfile's `AGENT_BROWSER_VERSION`.
 
 ### Get a browser
 

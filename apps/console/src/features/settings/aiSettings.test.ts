@@ -28,7 +28,6 @@ import {
   infoLines,
   keyRequired,
   lastChange,
-  modelReads,
   refusedField,
   runtimeMovedByFormat,
   subscriptionOffered,
@@ -349,12 +348,5 @@ describe("lastChange", () => {
     expect(lastChange(c)).toEqual({ at: "2026-09-26T08:00:00Z", by: "alice@acme.test" });
     expect(lastChange(config())).toEqual({ at: "2026-09-25T13:53:00Z", by: "dev@acme.example" });
     expect(lastChange(config({ llm: null }))).toEqual({ at: null, by: null });
-  });
-});
-
-describe("modelReads", () => {
-  it("reads the attach fields off the connection, and nothing without one", () => {
-    expect(modelReads(config())).toEqual({ model: "claude-sonnet-5", imageInput: "yes", nativePdf: true });
-    expect(modelReads(config({ llm: null }))).toBeNull();
   });
 });

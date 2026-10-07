@@ -75,6 +75,18 @@ export interface AgentModel {
   authKey?: string | undefined;
 }
 
+/**
+ * One `x-aep.guardrails` entry: an AI-gateway policy applied to this agent's
+ * model traffic, with the use-case params and the reason it is there. Whether
+ * it was actually applied is a deploy-time fact (Deployment.guardrails), not
+ * something this document says.
+ */
+export interface AgentGuardrail {
+  policy: string;
+  params: Record<string, unknown>;
+  why: string;
+}
+
 /** `x-aep.attachments` — what the agent may be sent with a message. */
 export interface AgentAttachments {
   types: string[];
@@ -97,6 +109,8 @@ export interface AgentSpec {
   identity?: string | undefined;
   /** `x-aep.attachments`; undefined for a text-only agent or an unreadable block. */
   attachments?: AgentAttachments | undefined;
+  /** `x-aep.guardrails`; empty when the agent declares none. */
+  guardrails: AgentGuardrail[];
   prompt: PromptSection[];
   /**
    * The prompt body VERBATIM, exactly as it sits after the front matter.
@@ -216,6 +230,17 @@ function readAttachments(value: unknown): AgentAttachments | undefined {
   return { types, maxFiles, maxFileSizeMB };
 }
 
+function readGuardrails(value: unknown): AgentGuardrail[] {
+  const out: AgentGuardrail[] = [];
+  for (const entry of list(value)) {
+    const guardrail = record(entry);
+    const policy = str(guardrail?.policy);
+    if (!policy) continue;
+    out.push({ policy, params: record(guardrail?.params) ?? {}, why: str(guardrail?.why) ?? "" });
+  }
+  return out;
+}
+
 function readTools(value: unknown): AgentToolGroup[] {
   const out: AgentToolGroup[] = [];
   for (const entry of list(record(value)?.openapi)) {
@@ -258,6 +283,7 @@ export function parseAgentAfm(raw: string): ParseResult {
     memory: str(record(aep?.memory)?.type),
     identity: str(record(aep?.identity)?.mode),
     attachments: readAttachments(aep?.attachments),
+    guardrails: readGuardrails(aep?.guardrails),
     prompt: readPrompt(split.body),
     body: split.body,
   };

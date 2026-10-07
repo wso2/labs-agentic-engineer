@@ -19,8 +19,8 @@
 import type { ReactNode } from "react";
 import { Stack, Typography } from "@wso2/oxygen-ui";
 
-import type { AgentModelConnection } from "./AgentView.js";
-import type { AgentAttachments, AgentSpec } from "./parse.js";
+import type { AgentGuardrailStatus, AgentModelConnection } from "./AgentView.js";
+import type { AgentAttachments, AgentGuardrail, AgentSpec } from "./parse.js";
 import { mono, Panel, Row } from "./parts.js";
 
 /** Plain-language gloss for the interface types AFM defines. */
@@ -112,14 +112,76 @@ function ModelPanel({
   );
 }
 
+/**
+ * The AI-gateway guardrails the spec declares, each with why the agent has it
+ * and — when the caller knows — what the last deploy did with it in each
+ * environment. Anything but "applied" carries its reason, because a guardrail
+ * that did not land is a protection the agent does not have. Rendered only
+ * when there is at least one: rules the agent follows itself are its
+ * instructions, not this panel's.
+ */
+function GuardrailsPanel({
+  guardrails,
+  status,
+}: {
+  guardrails: AgentGuardrail[];
+  status: Record<string, AgentGuardrailStatus[]> | undefined;
+}) {
+  return (
+    <Panel title="Guardrails">
+      {/* Keyed by position too: a live draft reaches this view before the write
+          gate that refuses a repeated policy. */}
+      {guardrails.map((g, i) => {
+          const outcomes = status?.[g.policy];
+          return (
+            <Row
+              key={`${g.policy}:${i}`}
+              label="Policy"
+              value={
+                <Stack spacing={0.25}>
+                  <span style={mono}>{g.policy}</span>
+                  {g.why ? (
+                    <Typography variant="caption" color="text.secondary">
+                      {g.why}
+                    </Typography>
+                  ) : null}
+                  {status === undefined ? null : outcomes && outcomes.length > 0 ? (
+                    outcomes.map((o) => (
+                      <Stack key={o.environment} spacing={0}>
+                        <Typography variant="caption" color={o.status === "applied" ? "success.main" : "warning.main"}>
+                          {`${o.environment}: ${o.status}`}
+                        </Typography>
+                        {o.reason ? (
+                          <Typography variant="caption" color="text.secondary">
+                            {o.reason}
+                          </Typography>
+                        ) : null}
+                      </Stack>
+                    ))
+                  ) : (
+                    <Typography variant="caption" color="text.secondary">
+                      Not deployed yet
+                    </Typography>
+                  )}
+                </Stack>
+              }
+            />
+          );
+        })}
+    </Panel>
+  );
+}
+
 export function ConfigurationTab({
   spec,
   modelConnection,
   settingsLink,
+  guardrailStatus,
 }: {
   spec: AgentSpec;
   modelConnection: AgentModelConnection | null | "loading" | undefined;
   settingsLink: ReactNode;
+  guardrailStatus: Record<string, AgentGuardrailStatus[]> | undefined;
 }) {
   const memory = spec.memory ? memoryRow(spec.memory) : null;
   return (
@@ -140,6 +202,7 @@ export function ConfigurationTab({
         </Panel>
       ) : null}
       <AttachmentsPanel attachments={spec.attachments} />
+      {spec.guardrails.length > 0 ? <GuardrailsPanel guardrails={spec.guardrails} status={guardrailStatus} /> : null}
       {memory ? (
         <Panel title="Memory">
           <Row label="Conversation" value={memory.value} note={memory.note} />

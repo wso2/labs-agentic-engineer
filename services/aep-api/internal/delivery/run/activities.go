@@ -178,6 +178,9 @@ type SetValidationVerdictInput struct {
 	// the cycle write is fenced write-once on an empty verdict: a digest written
 	// afterwards could never land on the cycle it belongs to.
 	Digest string `json:"digest,omitempty"`
+	// Regressions counts the attempt's failures that passed in the previous
+	// validated version (B4).
+	Regressions int `json:"regressions,omitempty"`
 }
 
 // SetValidationVerdict records the attempt's verdict in the two places that need
@@ -197,11 +200,11 @@ func (a *Activities) SetValidationVerdict(ctx context.Context, in SetValidationV
 		if a.cycles == nil {
 			return errNotConfigured
 		}
-		if err := a.cycles.SetValidationVerdict(ctx, in.CycleID, in.Verdict, in.Issue, in.Digest); err != nil {
+		if err := a.cycles.SetValidationVerdict(ctx, in.CycleID, in.Verdict, in.Issue, in.Digest, in.Regressions); err != nil {
 			return err
 		}
 	}
-	return a.runs.SetValidationVerdict(ctx, in.RunID, in.Verdict, in.Issue)
+	return a.runs.SetValidationVerdict(ctx, in.RunID, in.Verdict, in.Issue, in.Regressions)
 }
 
 // ---- cycle record ----------------------------------------------------------
@@ -921,11 +924,20 @@ func (a *Activities) CloseCancelledWork(ctx context.Context, in CloseCancelledWo
 // An unwired coordinator returns 0 rather than an error: "this deployment has
 // no acceptance oracle" and "this deployment has no validation feature" are the
 // same thing from the loop's point of view, and neither is a failed run.
-func (a *Activities) EnsureValidationIssue(ctx context.Context, in MilestoneRef) (int, error) {
+// ValidationIssueInput names the version whose validation task to ensure.
+// Version is its tag; the issue names what that version built (B4).
+type ValidationIssueInput struct {
+	OrgID           string `json:"orgId"`
+	ProjectID       string `json:"projectId"`
+	MilestoneNumber int    `json:"milestoneNumber"`
+	Version         string `json:"version,omitempty"`
+}
+
+func (a *Activities) EnsureValidationIssue(ctx context.Context, in ValidationIssueInput) (int, error) {
 	if a.validation == nil {
 		return 0, nil
 	}
-	issue, err := a.validation.EnsureValidationIssue(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber)
+	issue, err := a.validation.EnsureValidationIssue(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.Version)
 	return issue, sourceControlErr(err)
 }
 
@@ -935,7 +947,10 @@ func (a *Activities) EnsureValidationIssue(ctx context.Context, in MilestoneRef)
 type ValidationReportRef struct {
 	OrgID     string `json:"orgId"`
 	ProjectID string `json:"projectId"`
-	At        string `json:"at,omitempty"`
+	// Version is the version judged: the report is read within its scope and
+	// against the version before it (B4).
+	Version string `json:"version,omitempty"`
+	At      string `json:"at,omitempty"`
 }
 
 // ValidationOutcome is one attempt's answer: the verdict, and a digest of the
@@ -949,6 +964,9 @@ type ValidationReportRef struct {
 type ValidationOutcome struct {
 	Verdict string `json:"verdict"`
 	Digest  string `json:"digest,omitempty"`
+	// Regressions counts the failures that passed in the previous validated
+	// version.
+	Regressions int `json:"regressions,omitempty"`
 }
 
 // ReadValidationVerdict reads the runner's committed report at the cycle's merge
@@ -963,11 +981,11 @@ func (a *Activities) ReadValidationVerdict(ctx context.Context, in ValidationRep
 	if a.validation == nil {
 		return ValidationOutcome{Verdict: delivery.ValidationVerdictSkipped}, nil
 	}
-	verdict, digest, err := a.validation.Verdict(ctx, in.OrgID, in.ProjectID, in.At)
+	verdict, digest, regressions, err := a.validation.Verdict(ctx, in.OrgID, in.ProjectID, in.Version, in.At)
 	if err != nil {
 		return ValidationOutcome{}, sourceControlErr(err)
 	}
-	return ValidationOutcome{Verdict: verdict, Digest: digest}, nil
+	return ValidationOutcome{Verdict: verdict, Digest: digest, Regressions: regressions}, nil
 }
 
 // ValidationHistoryInput asks what this milestone's earlier validation runs
@@ -1076,6 +1094,8 @@ type MintValidationRepairIssuesInput struct {
 	OrgID           string `json:"orgId"`
 	ProjectID       string `json:"projectId"`
 	MilestoneNumber int    `json:"milestoneNumber"`
+	// Version is the version judged, as for the verdict.
+	Version string `json:"version,omitempty"`
 	// At is the validation cycle's merge commit — the same pin the verdict was read
 	// at, so the failures filed are the ones this attempt actually reported.
 	At string `json:"at"`
@@ -1092,7 +1112,7 @@ func (a *Activities) MintValidationRepairIssues(ctx context.Context, in MintVali
 	if a.validation == nil {
 		return nil, nil
 	}
-	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.At)
+	filed, err := a.validation.MintRepairIssues(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber, in.Version, in.At)
 	return filed, sourceControlErr(err)
 }
 

@@ -1,55 +1,55 @@
 # AGENTS.md — apps/console (`@aep/console`)
 
-React SPA console for AEP. Vite + TypeScript + Oxygen UI, talking to the
-`aep-api` BFF through the generated OpenAPI client.
+The agentic-first console. It was built beside the earlier console (as
+`apps/console-next`) and replaced it; the earlier one is kept at
+the `classic-console` git tag (`apps/console/` there) as source to port from.
+`design/classic-console-gaps.md` lists what it has and this app does not yet.
 
-> [!IMPORTANT]
-> All UI in this project must be built with WSO2 Oxygen UI. For ANY React UI work —
-> setup, components, pages, layouts, forms, tables, dialogs, theming — consult the
-> `oxygen-ui` skill before writing or editing UI code, even when the request does not
-> mention Oxygen UI by name.
+Every decision behind it lives on the wayfinder map "The agentic-first
+console" (https://claude.ai/artifact/LhkAvt26fS5XVLniiVyu2F). Its build items
+are Phase 6 (N1–N10) of the plan tracker
+(https://claude.ai/artifact/JyqAbejCdT6gx2J7mkauLx). Read the map's ticket for
+an area before changing it.
 
-> [!IMPORTANT]
-> Frontend features go through the `console-feature` skill — it grills first,
-> then drives the build. A feature request goes into that cycle, not straight
-> into code, and an ungrilled issue gets grilled before it gets built.
+## Rules
 
-**Read before working on any feature:**
-
-- `PRD.md` — the living product picture: what exists, what's planned.
-- `design/development-flow.md` — **the** spec for the feature cycle: every
-  stage, every rule, the feature-issue template. Follow it; don't freestyle
-  features.
-- `design/design-system.md` — Oxygen UI conventions and which skills to use.
-- `design/api-guidelines.md` — data fetching, error handling, user feedback,
-  and the mock layer. Three rules are non-negotiable; the rest is judgment
-  with a promotion path.
+- **Oxygen UI is the only component library.** Colours come from `aepTheme`
+  (`@aep/ui-theme`, shared with the Oxygen prototype theme), the guided-shell
+  design's palette over Oxygen's base. Never add raw MUI or another kit.
+- **Build on MSW, approve, then wire.** Each screen is built against MSW
+  handlers and fixtures (`src/mocks/`), approved on the running mock
+  (`VITE_API_MODE=mock`), and only then wired to aep-api. The mock cannot show
+  whether aep-api maps a new contract field onto the response, so the wiring
+  step checks against the real API.
+- **Depend only on the contract and existing packages.** Code this app needs
+  from the classic console is copied in and owned here (auth was), not
+  extracted into a new shared package.
+- **Tests:** unit tests with Vitest (node; `// @vitest-environment jsdom` per
+  file for components). The live end-to-end walk lives in `tests/e2e`.
+- Request and response types come from the generated client
+  (`src/generated/aep-api.d.ts`, from `pnpm gen`); never redefine them.
+- **Adding a `@aep/*` dep whose `types` resolves to `./dist` means adding a
+  `RUN pnpm --filter … build` line to the `Dockerfile`.** The list is
+  hand-maintained, host builds hide the omission, and the image build fails
+  with TS2307 plus a cascade of unrelated-looking type errors.
 
 ## Layout
 
-- `features/<feature>/{components,hooks,api,routes}` + small shared `ui/`.
-- `src/layouts/` — the app shell (`AppLayout`, per the oxygen-ui skill's
-  canonical structure); pages render `PageContent > PageTitle > body`.
-- `src/mocks/` — MSW handlers + fixtures, typed against `@aep/contracts`
-  generated types. Dev-only; excluded from production builds.
-- Request/response types come from the generated OpenAPI client — never
-  redefined locally. Chat turns, the spec Room and spec file reads go to the
-  org's AE Studio, not `aep-api`, each through its own generated client
+- `src/auth/`: OIDC sign-in, the session and token handling, copied from the
+  old console. `src/api/`: the `openapi-fetch` client and its 401 handler.
+- `src/features/<feature>/{components,api}`: one folder per area. `shell` is
+  the frame (rail, chat slot, main outlet) and the route→scope mapping the
+  rail and chat read.
+- `src/components/`: app-wide primitives copied from the old console
+  (`ErrorBoundary`, `EmptyState`). `src/lib/`: small app-wide helpers with no
+  UI (`stamp.ts`, how a time is shown).
+- `src/routes/`: TanStack file routes; `src/generated/` is codegen, gitignored.
+- `src/mocks/`: MSW handlers and fixtures for mock mode. Dev-only; never in a
+  production build.
+- `Dockerfile`, `nginx.conf`, `docker-entrypoint.sh`: the image (`ghcr.io/wso2/aep/console`).
+  nginx serves the SPA and forwards `/aep-api-service/` to aep-api (nothing
+  else: the Room and GitHub callbacks no longer go through it); the
+  entrypoint writes `env-config.js` (`window._env_`) from the pod's env.
+- Chat turns and the spec Room go to the org's AE Studio, not `aep-api`, each
+  through its own generated client
   ([ADR-0034](design/decisions/ADR-0034-the-console-calls-the-orgs-ae-studio-directly.md)).
-- Runtime config via `window._env_` (BFF-owned `env-config.js`).
-- **Adding a `@aep/*` dep whose `types` resolves to `./dist` means adding a
-  `RUN pnpm --filter … build` line to `apps/console/Dockerfile`.** The list is
-  hand-maintained, host builds hide the omission, and the image build fails with
-  TS2307 plus a cascade of unrelated-looking type errors. Rationale inline in
-  the Dockerfile.
-
-## Feature docs (issue-driven — ADR-0001)
-
-- **A feature is a GitHub issue** (labels `console` + `feature`): the body is
-  the feature doc, and nothing is built ungrilled. Requires `gh` auth.
-- **`design/decisions/` ADRs are the current truth** — read them FIRST for
-  context, then `gh issue list --repo wso2/labs-agentic-engineer --label
-  console --label feature` (closed issues are frozen history, never edited;
-  issues live upstream, not in forks).
-
-Commands are the uniform verbs from the root `Makefile` (`make build`, etc.).

@@ -131,6 +131,11 @@ const (
 	// a person removing the label, and the next build, which strips it from the
 	// bugs it carries forward into the new version's milestone.
 	LabelHalted = "aep:halted"
+	// LabelRegression ("regression") marks a repair issue for a scenario that
+	// passed in the previous validated version and fails in this one (B4): the
+	// body names both versions and what this one built, so the fix starts from
+	// what changed rather than from the feature that broke.
+	LabelRegression = "regression"
 )
 
 // kindPrecedence is the order KindOf resolves a multi-kind issue in.

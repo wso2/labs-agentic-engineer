@@ -205,6 +205,9 @@ type componentService struct {
 	// agentRecordName names an agent in Agent Manager, for the Deployments
 	// page's link to it. See SetAgentRecordNamer.
 	agentRecordName func(project, component string) string
+	// guardrailOutcomes reads what the last deploy did with an agent's
+	// declared guardrails. See SetGuardrailOutcomes.
+	guardrailOutcomes GuardrailOutcomeReader
 	// modelKeyResolver + secretRefClient back ModelAccessEnvVars, which the
 	// deploy stage calls while composing an ai-agent's ReleaseBinding (see
 	// ai_agent_model_access.go). Optional — nil means "not configured" (tests /
@@ -464,6 +467,7 @@ func (s *componentService) ListDeployments(ctx context.Context, orgName, project
 		return nil, err
 	}
 	s.withAgentManagerLinks(ctx, orgName, projectName, componentName, list)
+	s.withGuardrailOutcomes(ctx, orgName, projectName, componentName, list)
 	return list, nil
 }
 

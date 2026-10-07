@@ -50,7 +50,7 @@ type modelEndpoint struct {
 // newModelEndpoint starts the fake answering status on /models.
 func newModelEndpoint(t testing.TB, status int) *modelEndpoint {
 	t.Helper()
-	e := &modelEndpoint{status: status, models: []string{"claude-sonnet-5", "claude-haiku-4-5", "gpt-oss:20b", "glm-5.3"}}
+	e := &modelEndpoint{status: status, models: []string{"claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-4-5", "gpt-oss:20b", "glm-5.3"}}
 	e.srv = httptest.NewTLSServer(http.HandlerFunc(e.serve))
 	t.Cleanup(e.srv.Close)
 	return e

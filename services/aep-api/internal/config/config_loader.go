@@ -60,8 +60,7 @@ func Load() (Config, error) {
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
-		SREHandoffToken:          r.readOptionalString("SRE_HANDOFF_TOKEN", ""),
-		SREHandoffOrg:            r.readOptionalString("SRE_HANDOFF_ORG", ""),
+		SREHandoff:               r.sreHandoff(),
 		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
 		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
 		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
@@ -309,6 +308,20 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// minSREHandoffTokenLen is the shortest handoff key accepted. aectl generates
+// 32 random bytes, hex-encoded; anything far shorter was not made by it.
+const minSREHandoffTokenLen = 32
+
+// sreHandoff reads SRE_HANDOFF_TOKEN, refusing a key too short to be one
+// aectl generated.
+func (r *configReader) sreHandoff() SREHandoffConfig {
+	c := SREHandoffConfig{Token: r.readOptionalString("SRE_HANDOFF_TOKEN", "")}
+	if c.Token != "" && len(c.Token) < minSREHandoffTokenLen {
+		r.errors = append(r.errors, fmt.Errorf("SRE_HANDOFF_TOKEN must be at least %d characters", minSREHandoffTokenLen))
+	}
+	return c
 }
 
 func (r *configReader) readRequiredString(key string) string {

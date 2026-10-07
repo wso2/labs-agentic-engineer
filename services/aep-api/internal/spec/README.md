@@ -167,7 +167,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   is uuidv5 of `org/project`, which anyone can compute), so another org's row with the same id
   never stands in for this org's record. Nothing runs here: whether a turn is running right now is
   the pod's to say. Rows written by aep-api's former in-process turn engine were reshaped by
-  migrate's `phase24_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
+  migrate's `phase27_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
   and dropped that engine's columns, guard index and `project_conversations`.
 
 ## Invariants — don't break
@@ -195,8 +195,8 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   through its own connection mechanism — ordering it would refuse two services that call each other.
   ADR-0019.
 - **`CRTType` is a projection, not a re-export.** design-save reads the dependencies resource-type catalog
-  through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by a root
-  adapter — the spec domain names the dependencies domain nowhere.
+  through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by
+  `internal/app/crtcatalog` — the spec domain names the dependencies domain nowhere.
 - **Design save DERIVES two platform facts, in one pass over one catalog call** (`derive.go`, ADR-0013):
   `exposesAPI.auth` off a resource type's role marker (`derive_auth.go`), and each `platform-resource` /
   `external` dependency's `wiring` — the OC ref plus output→env-var mapping the coding agent copies into
@@ -218,6 +218,10 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
     disabled path does not reject every build. Membership is against the live catalog map, never
     a hardcoded type name (ADR-0007). Wiring derivation still treats an unknown type as "not
     derivable yet"; the membership pass is a separate gate before persist.
+  - **One implementation, two callers.** `DerivePlatformResourceFacts` is the pure pass (membership,
+    auth, wiring, change detection, render) and returns the changed files; the build path commits them,
+    and `cmd/design-derive` writes them to a directory for the playground (playground ADR-0003). Neither
+    re-implements a rule; `cmd/design-derive`'s oracle test pins its output to files a build committed.
 - **A component `openapi.yaml` is judged against its two siblings, at save AND at build**
   (`openapi_security_gate.go`). A component behind end-user sign-in declares the `oauth2` scheme and
   the document default `security: [{oauth2: []}]`; each operation's `security` is absent, `[]`

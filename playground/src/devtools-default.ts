@@ -24,7 +24,7 @@
  * the model), and these traces are also the raw material for prompt-parity
  * comparison against live-env captures (docs/design/playground.md §14).
  *
- * The agents service reads AGENT_DEVTOOLS at config-module load, so this
+ * The design agent reads AGENT_DEVTOOLS at config-module load, so this
  * side-effect module MUST be the first import of the CLI entry — before any
  * import that transitively evaluates `@aep/ae-design-agent/shared/config`. Explicitly
  * exported opt-out: `AGENT_DEVTOOLS=false pnpm play …`.

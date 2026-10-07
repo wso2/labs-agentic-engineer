@@ -28,7 +28,7 @@
  */
 
 import type { ModelMessage } from "ai";
-import type { TurnAnchor } from "@aep/agent-stream";
+import type { PrototypeFeedback, TurnAnchor, TurnScope } from "@aep/agent-stream";
 
 /**
  * One turn's display record (#463): what the CLIENT sent, verbatim, plus who
@@ -60,6 +60,17 @@ export interface TurnJournalEntry {
    * the words but not the target is not a record of what happened.
    */
   anchor?: TurnAnchor;
+  /**
+   * What the user was looking at when they sent this message (S6) — a feature,
+   * or the design review — so a reloaded thread can say what it was about.
+   */
+  scope?: TurnScope;
+  /**
+   * The prototype review this message sent (#860): the batch itself, since the
+   * message's text is only the command, and the chat renders it as the
+   * requests it carried.
+   */
+  prototypeFeedback?: PrototypeFeedback;
   /**
    * Index into `messages` of the user message this turn appended — stamped at
    * write time (the append site knows it exactly), so the display read pairs

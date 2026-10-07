@@ -78,5 +78,5 @@ unknown value is therefore a pre-stream 400, never a silent fallback — the wro
 answer narrates repo paths at someone who cannot see a file tree.
 
 Ordering, precedence and the four rules are settled under **How the agent talks**
-in `apps/console/design/lexicon.md`, which stays the source for the artifact
-names the skill pins.
+in the classic console's lexicon ([`apps/console/design/lexicon.md` at `classic-console`](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/lexicon.md#how-the-agent-talks)).
+The artifact names the skill pins are now sourced from `apps/console/design/lexicon.md`.

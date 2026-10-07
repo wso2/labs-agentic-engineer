@@ -43,6 +43,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import type { ComponentDesign, Dependency } from "@aep/agent-stream";
 import { listComponents } from "../gates.js";
+import type { WireCause } from "./failure.js";
 
 /** The first host port a service is mapped to; the next takes the one after. */
 export const FIRST_HOST_PORT = 19090;
@@ -399,21 +400,21 @@ export function buildWirePlan(specs: WireSpecs, options: PlanOptions = {}): Wire
 }
 
 /**
- * Give every service a free host port, in declared order.
+ * Give every service a host port, in declared order.
  *
- * Separate from `buildWirePlan` and takes its "is this port free?" answer as an
- * argument, because whether 19090 is taken is a fact about the machine at this
- * second: folding it into the plan would make the plan untestable and its
- * golden file a lie the moment anything else was listening.
+ * Separate from `buildWirePlan` and takes its "may this session have this
+ * port?" answer as an argument, because whether 19090 is taken is a fact about
+ * the machine at this second: folding it into the plan would make the plan
+ * untestable and its golden file a lie the moment anything else was listening.
  */
 export async function assignHostPorts(
   plan: WirePlan,
-  isFree: (port: number) => Promise<boolean>,
+  take: (port: number) => Promise<boolean>,
   from = FIRST_HOST_PORT,
 ): Promise<WirePlan> {
   let candidate = from;
   for (const service of plan.services) {
-    while (!(await isFree(candidate))) candidate += 1;
+    while (!(await take(candidate))) candidate += 1;
     service.hostPort = candidate;
     candidate += 1;
   }
@@ -470,7 +471,7 @@ export function readWireSpecs(projectDir: string, slug: string): WireSpecs {
  * That is the exact failure this verb exists to catch, so it is a blocker and
  * the message is the fix.
  */
-function webappBlockers(webapp: WireWebapp, projectDir: string): string[] {
+function webappBlockers(webapp: WireWebapp, projectDir: string): PlanBlocker[] {
   const mock = join(projectDir, webapp.appPath, "mock");
   const plugin = join(mock, "plugin.ts");
   const carriesWired =
@@ -479,31 +480,43 @@ function webappBlockers(webapp: WireWebapp, projectDir: string): string[] {
     readFileSync(plugin, "utf8").includes("AEP_WIRED_API");
   if (carriesWired) return [];
   return [
-    `${webapp.appPath}: mock mode here predates wired mode, so the app would answer its own API and the ` +
-      `service would go untouched. Re-copy the verbatim files from the react-webapp skill's assets ` +
-      `(mock-plugin.ts, mock-browser.ts, mock-badge.ts, mock-wired.ts) — see its references/mock-mode.md.`,
+    {
+      cause: "app",
+      text:
+        `${webapp.appPath}: mock mode here predates wired mode, so the app would answer its own API and the ` +
+        `service would go untouched. Re-copy the verbatim files from the react-webapp skill's assets ` +
+        `(mock-plugin.ts, mock-browser.ts, mock-badge.ts, mock-wired.ts) — see its references/mock-mode.md.`,
+    },
   ];
 }
 
+/** One reason `wire` cannot start, and whose it is (failure.ts). */
+export interface PlanBlocker {
+  cause: WireCause;
+  text: string;
+}
+
 /** Everything that would stop `wire` before it starts anything. */
-export function planBlockers(plan: WirePlan, projectDir: string, skip: string[] = []): string[] {
-  const blockers: string[] = [];
+export function planBlockers(plan: WirePlan, projectDir: string, skip: string[] = []): PlanBlocker[] {
+  const blockers: PlanBlocker[] = [];
   if (plan.webapp) blockers.push(...webappBlockers(plan.webapp, projectDir));
   if (plan.services.length === 0 && plan.webapp === null) {
-    blockers.push("no components to run — the design has no service and no web application");
+    blockers.push({ cause: "app", text: "no components to run — the design has no service and no web application" });
   }
   for (const service of plan.services) {
     const dockerfile = join(projectDir, service.appPath, "Dockerfile");
     if (!existsSync(dockerfile)) {
-      blockers.push(`${service.name}: no Dockerfile at ${service.appPath}/ — run the coding phase first`);
+      blockers.push({ cause: "app", text: `${service.name}: no Dockerfile at ${service.appPath}/ — run the coding phase first` });
     }
   }
   for (const item of plan.unresolved) {
     if (skip.includes(item.dependency)) continue;
-    blockers.push(
-      `${item.component} depends on ${item.dependency} (${item.kind}${item.resourceType ? `/${item.resourceType}` : ""}), ` +
+    blockers.push({
+      cause: "environment",
+      text:
+        `${item.component} depends on ${item.dependency} (${item.kind}${item.resourceType ? `/${item.resourceType}` : ""}), ` +
         `which wired mode cannot stand in for — re-run with --skip ${item.dependency} to start with that env unset`,
-    );
+    });
   }
   return blockers;
 }

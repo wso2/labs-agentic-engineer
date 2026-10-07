@@ -1,0 +1,89 @@
+{
+  "id": "project",
+  "name": "design-expense-tracker",
+  "modelVersion": "0.2.0",
+  "components": [
+    {
+      "id": "expense-api",
+      "label": "expense-api",
+      "version": "0.1.0",
+      "type": "service",
+      "buildPack": "Ballerina",
+      "services": {
+        "expense-api:api": {
+          "id": "expense-api:api",
+          "label": "API",
+          "type": "HTTP",
+          "dependencyIds": [],
+          "deploymentMetadata": {
+            "gateways": {
+              "internet": {
+                "isExposed": true
+              },
+              "intranet": {
+                "isExposed": false
+              }
+            }
+          }
+        }
+      },
+      "connections": [
+        {
+          "id": "default:external-apis:claims-db",
+          "label": "claims-db",
+          "type": "datastore",
+          "onPlatform": true,
+          "tooltip": "datastore"
+        },
+        {
+          "id": "default:external-apis:user-auth",
+          "label": "user-auth",
+          "type": "datastore",
+          "onPlatform": true,
+          "tooltip": "datastore"
+        }
+      ]
+    },
+    {
+      "id": "expense-webapp",
+      "label": "expense-webapp",
+      "version": "0.1.0",
+      "type": "service",
+      "buildPack": "TypeScript",
+      "services": {
+        "expense-webapp:api": {
+          "id": "expense-webapp:api",
+          "label": "API",
+          "type": "HTTP",
+          "dependencyIds": [
+            "expense-api:api"
+          ],
+          "deploymentMetadata": {
+            "gateways": {
+              "internet": {
+                "isExposed": false
+              },
+              "intranet": {
+                "isExposed": false
+              }
+            }
+          }
+        }
+      },
+      "connections": [
+        {
+          "id": "default:project:expense-api",
+          "label": "expense-api",
+          "onPlatform": true
+        },
+        {
+          "id": "default:external-apis:user-auth",
+          "label": "user-auth",
+          "type": "datastore",
+          "onPlatform": true,
+          "tooltip": "datastore"
+        }
+      ]
+    }
+  ]
+}

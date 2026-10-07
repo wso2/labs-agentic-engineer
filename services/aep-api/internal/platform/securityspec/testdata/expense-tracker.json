@@ -29,14 +29,14 @@
     {
       "name": "Employee",
       "description": "Submits and follows their own claims.",
-      "stories": [1, 2],
+      "stories": ["F1.1", "F1.2"],
       "grants": ["claims:read", "claims:submit"],
       "assignTo": ["Employees"]
     },
     {
       "name": "Approver",
       "description": "Approves or rejects submitted claims and reads monthly reports.",
-      "stories": [3, 7],
+      "stories": ["F1.3", "F1.7"],
       "grants": ["claims:read", "claims:read-all", "claims:approve", "claims:reject", "reports:read"],
       "assignTo": ["Finance"],
       "assignableBy": ["Approver"]

@@ -34,7 +34,15 @@
  * all send a `TurnSpec` and none of them composes.
  */
 
-import type { PlanContextFile, PlanScope, Toolset, TurnAim, TurnSpec } from "@aep/agent-stream";
+import type {
+  PlanContextFile,
+  PlanScope,
+  PrototypeFeedback,
+  Toolset,
+  TurnAim,
+  TurnScope,
+  TurnSpec,
+} from "@aep/agent-stream";
 
 // --- Wording -----------------------------------------------------------------
 
@@ -73,9 +81,19 @@ const REFERENCES_PREFIX =
 const SPEC_PATHS_RULE =
   "\n\nSpec sources live under specs/ (requirements under specs/requirements/, design under specs/design/) — when creating a file that does not exist yet, always use its full path, never a bare filename.";
 
-/** The caller-pinned spec-bundle target. */
-const TARGET_PREFIX = "\n\n(target: ";
-const TARGET_CLOSE = ")";
+/**
+ * The scope (S6): what the user was looking at when they sent the message. It
+ * FOCUSES the turn and fences nothing — decided with the user on 2026-09-30:
+ * every edit lands directly, and what the agent decides on the user's behalf
+ * is tagged `*assumed*` in the requirements, which is the user's review. So
+ * the note says what to read first and asks the agent to say where else it
+ * wrote, never to hold a change back.
+ */
+const SCOPE_READ_FIRST = "Read specs/requirements/prd.md and that file before you change anything.";
+const SCOPE_NO_FENCE =
+  "This focuses the turn and fences nothing: make every change the message implies, in the file it belongs in, and say in your reply which other files you changed.";
+const SCOPE_DESIGN_REVIEW =
+  "The user is in the design review, looking at the design under specs/design/: read their message as being about the design. A point that is really a change to a requirement is made in the requirements file it belongs in; say so in your reply.";
 
 /**
  * D20: the previous turn of this conversation FAILED, so the conversation
@@ -141,17 +159,22 @@ const PLAN_CONTEXT_HEADER = "\n\n## Existing open Tasks in this version (referen
  * lives here with the rest of it, not in the parsers, which only ever yield
  * facts (`@aep/contracts/commands`, `internal/spec/start_command.go`).
  *
- * `/settle` and `/design` are absent because their token already IS their
- * skill; an unlisted token stays a plain skill load, which is what keeps
- * `/<org-skill>` working.
+ * `/interview` is absent because its token already IS its skill; an unlisted token stays a plain skill load, which is what keeps
+ * `/<org-skill>` working. `/feature`, `/actor`, `/amend` and `/settle` are the
+ * console's older doors into what is now one loop, the `refine` skill.
  *
  * Read through `commandFlow`, never indexed directly: the key is a token the
  * user typed, and `/constructor` reaching `Object.prototype` would turn a
  * skill-not-found — which the agent reports cleanly — into a thrown turn.
  */
 const COMMAND_FLOWS: Record<string, { skill: string; scope: (subject: string) => string }> = {
-  feature: { skill: "amend", scope: (s) => (s ? `Add a feature: ${s}` : "Add a feature.") },
-  actor: { skill: "amend", scope: (s) => (s ? `Add an actor: ${s}` : "Add an actor.") },
+  feature: { skill: "refine", scope: (s) => (s ? `Add a feature: ${s}` : "Add a feature.") },
+  actor: { skill: "refine", scope: (s) => (s ? `Add an actor: ${s}` : "Add an actor.") },
+  amend: { skill: "refine", scope: (s) => s },
+  settle: { skill: "refine", scope: (s) => (s ? `Settle this point: ${s}` : "Settle the Open Questions, one at a time.") },
+  // `/design F1 F2` names the features this run designs (E1); bare, it designs
+  // every designable feature, and the skill says so.
+  design: { skill: "design", scope: (s) => (s ? `Design these features: ${s}` : "") },
   // The plural walks every open dependency; the singular's token IS its skill.
   "resolve-dependencies": {
     skill: "resolve-dependency",
@@ -181,10 +204,10 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // inlining the cold-start interview playbook, whose frame ("the idea comes to
   // you", the coverage walk over an empty document) is wrong for a scoped edit.
   start: ["grilling", "prd-contract"],
-  amend: ["grilling", "prd-contract"],
-  // `/settle` revises a document that already exists — it asks, then writes the
-  // answer where it belongs — so it needs the same two as its siblings.
-  settle: ["grilling", "prd-contract"],
+  // One feature's interview, and the change loop after the kickoff: both ask
+  // (grilling) and write the requirements (prd-contract).
+  interview: ["grilling", "prd-contract"],
+  refine: ["grilling", "prd-contract"],
   // `/resolve-dependency` asks (grilling) and writes a dependency file whose
   // shape and research playbook the architecture skill owns.
   "resolve-dependency": ["grilling", "architecture"],
@@ -207,7 +230,75 @@ const FLOW_SUPPORTING_SKILLS: Record<string, string[]> = {
   // `acceptance-criteria` writes the Gherkin features a validation run drives
   // (ADR-0029), authored from the PRD alone.
   design: ["grilling", "cell-design", "architecture", "security-design", "openapi-conventions", "wireframes", "agent-building", "acceptance-criteria"],
+  // `/prototype` derives from the finished design, so it reads what that design
+  // wrote: the cell, the roles and the API. The design-system skill says how an
+  // Oxygen screen is composed from the kit's components; the kit itself is in
+  // the `prototype` skill.
+  prototype: ["cell-design", "security-design", "openapi-conventions", "oxygen-ui-design-system"],
 };
+
+/**
+ * What a flow READS, said where the turn starts. Most flows discover their
+ * inputs by walking their own playbook; a flow that is purely DERIVED from
+ * artifacts already on disk names them, so the agent opens the right files
+ * first instead of rediscovering the design tree. Keyed by the skill the flow
+ * loads; a flow absent here gets no brief.
+ *
+ * Each brief is one self-contained instruction, appended after the skill
+ * pointer. A flow with more than one brief for different turn shapes picks
+ * between them in `specBody`, so a second brief is added there rather than
+ * folded into this text.
+ */
+const FLOW_BRIEFS: Record<string, string> = {
+  prototype:
+    "Generate the prototype of each web-application the design declares. The design is the input: read " +
+    "specs/design/design.cell for the web-application components, the roles in specs/design/security.json, " +
+    "each web-application's API (the openapi.yaml of every component it depends on), the numbered user " +
+    "stories in specs/requirements/prd.md, and the key flows in specs/design/flows/*.md. Cover them: every " +
+    "design flow a web-application's users walk becomes a flow of its prototype, and every user story gets at " +
+    "least one screen, unless the product gives it no view (a platform sign-in, a backend job, a machine-facing " +
+    "endpoint); name any story you set aside in your closing. Per web-application write " +
+    "specs/design/components/<component>/prototype.json (the manifest) first and then prototype.tsx beside it " +
+    "(the screens), and change no other file. When component names follow this brief, write only those " +
+    "prototypes; otherwise write one for every web-application. Where a prototype already exists, revise it " +
+    "with edits and keep its ids stable.",
+};
+
+/** The brief a flow's skill carries, or undefined. */
+function flowBrief(skill: string): string | undefined {
+  return Object.hasOwn(FLOW_BRIEFS, skill) ? FLOW_BRIEFS[skill] : undefined;
+}
+
+/**
+ * The revision brief of a `/prototype` turn that carries a reviewer's feedback
+ * batch. It replaces the generation brief: the turn revises ONE prototype, not
+ * every one the design declares. The reviewer's words are quoted verbatim, one
+ * quote line per text line, so a request can never read as instruction text
+ * and nothing the reviewer wrote is paraphrased.
+ */
+function feedbackBrief(feedback: PrototypeFeedback): string {
+  const dir = `specs/design/components/${feedback.component}`;
+  const n = feedback.requests.length;
+  const requests = feedback.requests.map((r, i) => {
+    const where = [`screen "${r.screenId}"`, ...(r.flowId ? [`flow "${r.flowId}"`] : []), `role "${r.roleId}"`, `display state "${r.stateId}"`];
+    const about = r.elementIds.length > 0 ? `Elements (ids): ${r.elementIds.join(", ")}` : "Elements: none selected, so the request is about the whole screen";
+    const quoted = r.text.split(/\r?\n/).map((line) => `> ${line}`).join("\n");
+    return `Request ${i + 1}\nWhere: ${where.join(", ")}\n${about}\nThe reviewer wrote:\n${quoted}`;
+  });
+  return (
+    `Revise the prototype of the web-application "${feedback.component}" from a reviewer's feedback. This is a revision, ` +
+    `not a generation: do not write any other component's prototype. The reviewer looked at the revision with hash ` +
+    `${feedback.prototypeHash} and made ${n === 1 ? "one request" : `${n} requests`} below, each pointing at the ` +
+    `ids shown on the screen, in the role and in the display state named. Read ${dir}/prototype.json and ` +
+    `${dir}/prototype.tsx first and change only those two files, with edits; if they no longer match what the ` +
+    `request describes, apply what still makes sense and say what differs. Apply every request you can. Keep every ` +
+    `manifest key and element id you do not need to change, so the next round of feedback still lines up. Decline a ` +
+    `request only when it conflicts with the design (the cell, the security roles, the API or the stories), and ` +
+    `say which part of the design it conflicts with. A request that names no element is about the whole screen. ` +
+    `Finish by answering each request by its number, as applied (with what you changed) or declined (with why).\n\n` +
+    requests.join("\n\n")
+  );
+}
 
 /** The branch a command names, or undefined for a token that IS its skill. */
 function commandFlow(token: string): { skill: string; scope: (subject: string) => string } | undefined {
@@ -221,10 +312,35 @@ function supportingSkills(skill: string): string[] {
 
 // --- Composition -------------------------------------------------------------
 
+/**
+ * A turn's scope as the composer takes it: the feature scope carries the file
+ * the caller found for it (null when the feature has no file yet), so this
+ * module stays a pure function of facts.
+ */
+export type ScopeFact =
+  | { kind: "feature"; feature: string; file: string | null }
+  | { kind: "design-review" };
+
+const FEATURE_FILES = "specs/requirements/features/";
+
+/**
+ * A wire scope as a fact: a feature scope finds its file among the turn's
+ * paths (`features/F2-<slug>.md`, skills/prd-contract), or null when the
+ * feature has none yet.
+ */
+export function scopeFactFor(scope: TurnScope, paths: Iterable<string>): ScopeFact {
+  if (scope.kind === "design-review") return scope;
+  const prefix = `${FEATURE_FILES}${scope.feature}-`;
+  const files = [...paths]
+    .filter((path) => path.startsWith(prefix) && path.endsWith(".md") && !path.slice(prefix.length).includes("/"))
+    .sort();
+  return { kind: "feature", feature: scope.feature, file: files[0] ?? null };
+}
+
 /** Turn-level modifiers — facts the caller supplies, never text it formats. */
 export interface TurnModifiers {
-  /** The spec-bundle path this turn should write to. */
-  target?: string | undefined;
+  /** What the user was looking at when they sent this turn (S6); absent = the whole product. */
+  scope?: ScopeFact | undefined;
   /** D20: the previous turn of this conversation failed (see the note above). */
   previousTurnFailed?: boolean | undefined;
   /** No interview is possible in this run. */
@@ -241,14 +357,33 @@ export interface TurnModifiers {
 /**
  * A `TurnSpec` plus its modifiers, as the instruction text the agent receives.
  *
- * Shape: `[failure note] [aim note] <body> [spec-paths rule] [target] [headless note]`.
+ * Shape: `[failure note] [scope note] [aim note] <body> [spec-paths rule] [headless note]`.
  * The spec-paths rule is a property of the KIND — plan turns write no spec
- * files, so they never carry it — which is why it is not a caller flag.
+ * files, so they never carry it — which is why it is not a caller flag. A plan
+ * turn has no scope either: it plans from the whole design.
  */
 export function composeInstruction(turn: TurnSpec, mods: TurnModifiers = {}): string {
-  const body = turn.kind === "plan" ? planBody(turn) : specBody(turn) + SPEC_PATHS_RULE + target(mods.target);
+  const body = turn.kind === "plan" ? planBody(turn) : specBody(turn) + SPEC_PATHS_RULE;
   const lead = mods.previousTurnFailed ? PREVIOUS_TURN_FAILED_NOTE + "\n\n" : "";
-  return lead + aimNote(mods.aim) + body + (mods.headless ? HEADLESS_NOTE : "");
+  const scope = turn.kind === "plan" ? "" : scopeNote(mods.scope);
+  return lead + scope + aimNote(mods.aim) + body + (mods.headless ? HEADLESS_NOTE : "");
+}
+
+/**
+ * What the user was looking at, as the model reads it. Empty for an unscoped
+ * turn, so a turn about the whole product is byte-identical to one sent before
+ * scopes existed.
+ */
+export function scopeNote(scope: ScopeFact | undefined): string {
+  if (!scope) return "";
+  if (scope.kind === "design-review") return `${SCOPE_DESIGN_REVIEW}\n\n`;
+  const where = scope.file
+    ? `whose file is ${scope.file}`
+    : `whose file (specs/requirements/features/${scope.feature}-<name>.md) is not in the requirements yet`;
+  const sentences = [`The user is looking at feature ${scope.feature}, ${where}: read their message as being about that feature.`];
+  if (scope.file) sentences.push(SCOPE_READ_FIRST);
+  sentences.push(SCOPE_NO_FENCE);
+  return `${sentences.join(" ")}\n\n`;
 }
 
 /**
@@ -280,7 +415,9 @@ function specBody(turn: Exclude<TurnSpec, { kind: "plan" }>): string {
       // and the agent says so, which is a better failure than a client-side
       // allowlist that goes stale against the org's catalog.
       const command = commandFlow(turn.skill);
-      const base = `Load the ${command?.skill ?? turn.skill} skill and follow it.`;
+      const skill = command?.skill ?? turn.skill;
+      const brief = turn.prototypeFeedback ? feedbackBrief(turn.prototypeFeedback) : flowBrief(skill);
+      const base = `Load the ${skill} skill and follow it.` + (brief ? `\n\n${brief}` : "");
       // A command that names a BRANCH says which one, and carries whatever the
       // user clicked as the branch's subject; everything else passes the user's
       // trailing text through untouched.
@@ -314,10 +451,7 @@ function references(paths: string[] | undefined): string {
   return listed.length === 0 ? "" : REFERENCES_PREFIX + listed.map((p) => `- ${p}`).join("\n");
 }
 
-function target(raw: string | undefined): string {
-  const trimmed = (raw ?? "").trim();
-  return trimmed === "" ? "" : TARGET_PREFIX + trimmed + TARGET_CLOSE;
-}
+
 
 /**
  * The milestone's story coverage. COVERED stories already have Tasks, so the
@@ -329,15 +463,42 @@ function scopeBlock(scope: PlanScope | undefined): string {
   const rows = scope.stories
     .map((s) => {
       const status = s.covered ? "COVERED" : "NEEDS TASKS";
-      return s.title ? `- Story ${s.number}: ${s.title} — ${status}` : `- Story ${s.number} — ${status}`;
+      return s.title ? `- Story ${s.id}: ${s.title} — ${status}` : `- Story ${s.id} — ${status}`;
     })
     .join("\n");
   return (
     `\n\n## Milestone scope (spec ${scope.tag})\n\n` +
     "Plan Tasks so every story marked NEEDS TASKS below is covered. COVERED stories already have Tasks — leave them alone.\n\n" +
+    featureRows(scope) +
     rows +
     "\n"
   );
+}
+
+/**
+ * The features and product-wide items the version carries (B3): what the
+ * planner cuts Tasks by. Empty for a scope that names none, which keeps a
+ * story-only scope's block byte-identical.
+ */
+function featureRows(scope: PlanScope): string {
+  let out = "";
+  if (scope.features?.length) {
+    const rows = scope.features.map((f) => {
+      const name = f.name ? ` ${f.name}` : "";
+      const needs = f.needs?.length ? ` — needs ${f.needs.join(", ")}` : "";
+      return `- ${f.id}${name}${needs}`;
+    });
+    out += "Features this version builds — one Task per feature per component that serves it:\n\n" + rows.join("\n") + "\n\n";
+  }
+  if (scope.productWide?.length) {
+    const rows = scope.productWide.map((p) => {
+      const text = p.text ? `: ${p.text}` : "";
+      const applies = p.appliesTo?.length ? ` (applies to ${p.appliesTo.join(", ")})` : "";
+      return `- ${p.id}${text}${applies}`;
+    });
+    out += "Product-wide requirements this version carries — each component's foundation Task builds them:\n\n" + rows.join("\n") + "\n\n";
+  }
+  return out === "" ? "" : out + "Stories:\n\n";
 }
 
 /**
@@ -358,7 +519,7 @@ function planContext(files: PlanContextFile[] | undefined): string {
  * `task-planning`, or whichever skill a `/<skill>` command names. A plain chat
  * turn names none: the user's words are the instruction.
  */
-function instructedSkill(turn: TurnSpec): string | undefined {
+function instructedSkill(turn: TurnSpec, scope?: TurnScope): string | undefined {
   switch (turn.kind) {
     case "start":
       return "start";
@@ -367,7 +528,10 @@ function instructedSkill(turn: TurnSpec): string | undefined {
     case "flow":
       return commandFlow(turn.skill)?.skill ?? turn.skill;
     case "chat":
-      return undefined;
+      // A message sent with a feature open is a change to the requirements
+      // (S4): the loop's playbook rides it. Other chat loads nothing up front;
+      // the agent loads a skill when the message needs one.
+      return scope?.kind === "feature" ? "refine" : undefined;
   }
 }
 
@@ -448,8 +612,8 @@ export function imageLeftOutOfHistory(filename: string | undefined): string {
   return `[${filename ? `The image ${filename}` : "An image"} was left out here: the model on this connection does not read images.]`;
 }
 
-export function eagerSkillsFor(turn: TurnSpec): string[] {
-  const instructed = instructedSkill(turn);
+export function eagerSkillsFor(turn: TurnSpec, scope?: TurnScope): string[] {
+  const instructed = instructedSkill(turn, scope);
   if (instructed === undefined) return [];
   return [instructed, ...supportingSkills(instructed)];
 }

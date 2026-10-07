@@ -1,0 +1,30 @@
+{{- if .Values.sreAgent.enabled }}
+# The OpenChoreo SRE agent's handoff MCP surface, over https on the OpenChoreo
+# control-plane gateway: the agent's extension loader sends its Authorization
+# header only to https URLs. Exactly the one path, so nothing else aep-api
+# serves is reachable through this route; aep-api checks the handoff key there.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: aep-api-sre-handoff
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: wso2-aep
+spec:
+  parentRefs:
+    - name: gateway-default
+      namespace: openchoreo-control-plane
+      sectionName: https
+  hostnames:
+    - {{ required "sreAgent.mcpHostname is required when sreAgent.enabled" .Values.sreAgent.mcpHostname | quote }}
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /internal/v1/sre-handoff/mcp
+          method: POST
+      backendRefs:
+        - name: aep-api
+          port: {{ .Values.aepApi.port }}
+{{- end }}

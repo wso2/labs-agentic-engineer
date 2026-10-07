@@ -34,7 +34,7 @@ test("createRuntime: the default is Claude Code, and it is what an unset env res
 test("createRuntime: OpenCode builds its own adapter, with the platform's default model", () => {
   const runtime = createRuntime("opencode");
   assert.equal(runtime.name, "opencode");
-  assert.equal(runtime.defaultModel, "claude-sonnet-5");
+  assert.equal(runtime.defaultModel, "claude-sonnet-5-5");
   assert.match(runtime.toolGlossary(), /## Tool glossary \(OpenCode\)/);
 });
 

@@ -1,0 +1,38 @@
+# A kickoff from an attached document (S5): the policy is the primary brief,
+# the idea says which part matters. The document's points land as the user's
+# own words with their section cited, and the policy gets a coverage file
+# that says where each point landed — or why it did not.
+
+brief:
+  name: expense-policy
+  idea: >-
+    An app for our staff to claim back expenses they paid themselves, following
+    the attached travel and expense policy: submit with a receipt photo, the
+    manager approves, Finance pays.
+  references:
+    - acme-te-policy.md
+  persona: >-
+    Finance lead at a 60-person company; precise about the policy, happy to
+    defer anything it does not cover; plain language.
+  facts:
+    - Employees sign in with their company Microsoft accounts.
+    - Managers see only their own team's claims; Finance sees every claim.
+    - "The first release is web only; a phone browser is enough."
+  fallback: >-
+    Follow the policy where it speaks; otherwise prefer the smallest reasonable
+    first release.
+
+rubric:
+  mustCover:
+    - item: "The policy has a coverage file under specs/requirements/sources/ that lists its points section by section, each with where it landed (a line or feature ID) or `not used:` and why"
+      weight: 2
+    - item: Requirements taken from the policy cite it with the section (the source tag), and are not marked assumed
+      weight: 2
+    - A receipt is required above $25, and a photo is enough
+    - Meals capped at $50 a day; hotels at $180 a night
+    - Claims over $1,000 need Finance's second approval after the manager
+    - Expense records kept seven years
+    - Mileage and corporate cards are left out, and the coverage file says so with the reason
+  mustNot:
+    - Asking the user for something the policy already states (a limit, the approval rule, retention)
+    - Mileage reimbursement or corporate-card reconciliation built into the product

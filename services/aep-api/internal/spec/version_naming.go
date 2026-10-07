@@ -158,7 +158,15 @@ func suggestedVersionName(tags []sourcecontrol.TagInfo) string {
 	for _, t := range tags {
 		taken[t.Name] = true
 	}
-	for n := len(versionTags(tags)) + 1; ; n++ {
+	// A repair (v1.1) is a point release of the version it fixes, not a
+	// version of its own, so it takes no number.
+	own := 0
+	for _, t := range versionTags(tags) {
+		if fixesOf(t.Body) == "" {
+			own++
+		}
+	}
+	for n := own + 1; ; n++ {
 		name := "v" + strconv.Itoa(n)
 		if !taken[name] {
 			return name

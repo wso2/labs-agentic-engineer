@@ -45,11 +45,11 @@ import (
 // staleness: EVERYTHING under the requirements directory, main document and
 // nested feature files alike.
 //
-// Deliberately broader than requirementsBundleFilter, which admits only
-// top-level files and answers a different question ("does a spec exist"). The
-// depth is where the detail lives — the main document names its feature files
-// and keeps their content out of line — so changes there are the ones most
-// likely to invalidate a design. A rule with carve-outs is one a user cannot
+// Deliberately broader than requirementsBundleFilter, which admits only the
+// files the requirements contract defines and answers a different question
+// ("does a spec exist"). The depth is where the detail lives — the main
+// document names its feature files and keeps their content out of line — so
+// changes there are the ones most likely to invalidate a design. A rule with carve-outs is one a user cannot
 // predict; this one states in a sentence: if anything in your requirements
 // changed after the design was written, the design might be behind.
 const requirementsFingerprintPrefix = requirementsPrefix

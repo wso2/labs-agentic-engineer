@@ -141,3 +141,7 @@ they are properties of the *outcome*, not of the mechanism:
 - The hand-install path is now `make runner-plugin` + `claude plugin install`,
   which runs the same assembler a session runs. There is no checked-in plugin
   directory to drift, and the github-mode plugin is the authored text verbatim.
+- *Amended 2026-10-05.* A fan-out subagent's own rules (no `git`, every command
+  in the foreground) live in `references/component-contract.md`, the file it
+  reads, rather than in a list the lead must relay through every prompt;
+  `workflow_skill.test.ts` pins them there.

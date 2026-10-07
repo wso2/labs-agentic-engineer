@@ -1,0 +1,458 @@
+openapi: 3.0.3
+info:
+  title: Help Desk API
+  version: 0.1.0
+servers:
+  - url: /
+security:
+  - oauth2: []
+paths:
+  /me:
+    get:
+      operationId: getCurrentUser
+      summary: The signed-in caller's profile
+      responses:
+        '200':
+          description: The caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/tickets:
+    get:
+      operationId: listMyTickets
+      summary: The caller's tickets
+      security:
+        - oauth2: [tickets:read]
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Page of the caller's tickets
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: createTicket
+      summary: Raise a ticket as the caller
+      security:
+        - oauth2: [tickets:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketCreate' }
+      responses:
+        '201':
+          description: Ticket created with its SLA due time
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/tickets/{ticketId}:
+    get:
+      operationId: getMyTicket
+      summary: One of the caller's tickets
+      security:
+        - oauth2: [tickets:read]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      responses:
+        '200':
+          description: The ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /me/tickets/{ticketId}/reopen:
+    post:
+      operationId: reopenMyTicket
+      summary: Reopen one of the caller's resolved tickets
+      security:
+        - oauth2: [tickets:reopen]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      responses:
+        '200':
+          description: Ticket reopened
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/tickets/{ticketId}/comments:
+    get:
+      operationId: listMyTicketComments
+      summary: Comments on one of the caller's tickets
+      security:
+        - oauth2: [comments:read]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Page of comments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommentPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: addMyTicketComment
+      summary: Comment on one of the caller's tickets
+      security:
+        - oauth2: [comments:create]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommentCreate' }
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tickets:
+    get:
+      operationId: listTickets
+      summary: Every ticket in the queue
+      security:
+        - oauth2: [tickets:read-all]
+      parameters:
+        - { $ref: '#/components/parameters/Status' }
+        - name: priority
+          in: query
+          schema: { $ref: '#/components/schemas/Priority' }
+        - name: assigneeId
+          in: query
+          schema: { type: string }
+        - name: slaBreached
+          in: query
+          description: When true, only tickets unresolved past their SLA due time
+          schema: { type: boolean }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Page of matching tickets
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /tickets/{ticketId}:
+    get:
+      operationId: getTicket
+      summary: Any ticket
+      security:
+        - oauth2: [tickets:read-all]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      responses:
+        '200':
+          description: The ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /tickets/{ticketId}/triage:
+    post:
+      operationId: triageTicket
+      summary: Triage any ticket and set its priority
+      security:
+        - oauth2: [tickets:triage]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TriageRequest' }
+      responses:
+        '200':
+          description: Ticket triaged; SLA due time recomputed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tickets/{ticketId}/assignee:
+    put:
+      operationId: assignTicket
+      summary: Assign or reassign any ticket
+      security:
+        - oauth2: [tickets:assign]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AssignRequest' }
+      responses:
+        '200':
+          description: Ticket assigned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tickets/{ticketId}/start:
+    post:
+      operationId: startTicket
+      summary: Move any triaged or reopened ticket to in progress
+      security:
+        - oauth2: [tickets:work]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      responses:
+        '200':
+          description: Ticket in progress
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tickets/{ticketId}/resolve:
+    post:
+      operationId: resolveTicket
+      summary: Resolve any in-progress ticket
+      security:
+        - oauth2: [tickets:work]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      responses:
+        '200':
+          description: Ticket resolved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /tickets/{ticketId}/comments:
+    get:
+      operationId: listTicketComments
+      summary: Comments on any ticket
+      security:
+        - oauth2: [comments:read-all]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: Page of comments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CommentPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: addTicketComment
+      summary: Comment on any ticket
+      security:
+        - oauth2: [comments:write-all]
+      parameters:
+        - { $ref: '#/components/parameters/TicketId' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CommentCreate' }
+      responses:
+        '201':
+          description: Comment added
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /agents:
+    get:
+      operationId: listAgents
+      summary: Users who can be assigned tickets
+      security:
+        - oauth2: [tickets:assign]
+      responses:
+        '200':
+          description: Assignable agents
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/UserProfile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            tickets:create: Raise a ticket as the caller
+            tickets:read: The caller's own tickets
+            tickets:reopen: Reopen one of the caller's own resolved tickets
+            tickets:read-all: Every ticket in the queue
+            tickets:triage: Triage any ticket and set its priority
+            tickets:assign: Assign or reassign any ticket and list agents
+            tickets:work: Move any ticket to in progress and resolved
+            comments:read: Comments on the caller's own tickets
+            comments:create: Comment on the caller's own tickets
+            comments:read-all: Comments on every ticket
+            comments:write-all: Comment on any ticket
+  parameters:
+    TicketId:
+      name: ticketId
+      in: path
+      required: true
+      schema: { type: string }
+    Status:
+      name: status
+      in: query
+      schema: { $ref: '#/components/schemas/Status' }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, default: 0 }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or invalid credentials or permission
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Ticket not found, or not the caller's
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Transition not allowed from the ticket's current status
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+    Status:
+      type: string
+      enum: [open, triaged, in_progress, resolved, reopened]
+    Priority:
+      type: string
+      enum: [low, medium, high, critical]
+    UserProfile:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: string }
+        displayName: { type: string }
+    Ticket:
+      type: object
+      required: [id, title, description, status, priority, requesterId, slaDueAt, slaBreached, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string }
+        status: { $ref: '#/components/schemas/Status' }
+        priority: { $ref: '#/components/schemas/Priority' }
+        requesterId: { type: string }
+        assigneeId: { type: string, nullable: true }
+        slaDueAt: { type: string, format: date-time, description: computed by the API from priority }
+        slaBreached: { type: boolean, description: true when unresolved and past slaDueAt }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+    TicketCreate:
+      type: object
+      required: [title, description, priority]
+      properties:
+        title: { type: string }
+        description: { type: string }
+        priority: { $ref: '#/components/schemas/Priority' }
+    TriageRequest:
+      type: object
+      required: [priority]
+      properties:
+        priority: { $ref: '#/components/schemas/Priority' }
+    AssignRequest:
+      type: object
+      required: [assigneeId]
+      properties:
+        assigneeId: { type: string }
+    TicketPage:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: total matching items }
+        next: { type: string, nullable: true, description: relative URI of the next page }
+        previous: { type: string, nullable: true, description: relative URI of the previous page }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Ticket' }
+    Comment:
+      type: object
+      required: [id, ticketId, authorId, body, createdAt]
+      properties:
+        id: { type: string }
+        ticketId: { type: string }
+        authorId: { type: string }
+        authorName: { type: string }
+        body: { type: string }
+        createdAt: { type: string, format: date-time }
+    CommentCreate:
+      type: object
+      required: [body]
+      properties:
+        body: { type: string }
+    CommentPage:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: total matching items }
+        next: { type: string, nullable: true, description: relative URI of the next page }
+        previous: { type: string, nullable: true, description: relative URI of the previous page }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/Comment' }

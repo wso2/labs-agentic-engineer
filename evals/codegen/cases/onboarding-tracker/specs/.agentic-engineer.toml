@@ -1,0 +1,5 @@
+apiVersion = "agentic-engineer/v1"
+name = "onboarding-tracker"
+createdAt = "2026-09-17T09:03:09.787Z"
+idea = "Track each new hire's onboarding tasks across IT, HR and facilities, with reminders for overdue items no emails/notificaitons, no object storage."
+

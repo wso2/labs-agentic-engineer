@@ -94,6 +94,11 @@ export interface PlanTaskInput {
   origin?: TaskOrigin;
   /** One sentence: why this Task exists. */
   rationale: string;
+  /**
+   * The feature this Task builds in its component ("F2"), or "foundation" for
+   * the component's shared setup and carried product-wide requirements (B3).
+   */
+  feature?: string;
 }
 
 /**
@@ -127,6 +132,8 @@ export interface PlanTaskOk {
   /** Normalized: the default `spec-plan` is filled in. */
   origin: TaskOrigin;
   rationale: string;
+  /** As PlanTaskInput.feature; absent when the planner gave none. */
+  feature?: string;
 }
 
 /**

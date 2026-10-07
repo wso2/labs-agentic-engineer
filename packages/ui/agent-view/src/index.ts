@@ -17,10 +17,11 @@
  */
 
 export { AgentView } from "./AgentView.js";
-export type { AgentViewProps, AgentToolStatusInfo, AgentModelConnection } from "./AgentView.js";
+export type { AgentViewProps, AgentToolStatusInfo, AgentModelConnection, AgentGuardrailStatus } from "./AgentView.js";
 export { parseAgentAfm, isParseError } from "./parse.js";
 export type {
   AgentAttachments,
+  AgentGuardrail,
   AgentInterface,
   AgentModel,
   AgentSpec,

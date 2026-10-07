@@ -33,7 +33,7 @@ function effortEnv(value: string | undefined, fallback: ReasoningEffort): Reason
 }
 
 export const config = {
-  model: process.env.AGENT_MODEL || "claude-sonnet-5",
+  model: process.env.AGENT_MODEL || "claude-sonnet-5-5",
   // Reasoning effort for every turn. The provider default is `high`; the spec
   // flows favor `medium` — faster time-to-first-artifact for the same quality
   // on well-specified generation prompts. effortEnv guards a bad override.

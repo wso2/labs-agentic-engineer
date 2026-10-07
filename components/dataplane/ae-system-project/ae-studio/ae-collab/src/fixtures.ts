@@ -16,8 +16,8 @@
  * under the License.
  */
 
-// Dev-mode seed content. Mirrors the console mock layer's demo-shop project
-// (apps/console/src/mocks/fixtures/project.ts) so `make dev` shows the same
+// Dev-mode seed content. Mirrors the classic console mock layer's demo-shop project
+// (src/mocks/fixtures/project.ts at the classic-console tag) so `make dev` shows the same
 // spec in both the mocked REST reads and the live collab doc.
 
 /** A spec file as the Files socket serves it: repo-relative path under specs/. */

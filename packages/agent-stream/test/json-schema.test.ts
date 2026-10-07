@@ -79,7 +79,7 @@ for (const [name, path, render] of artifacts) {
 
 test("plan-task/update-task schemas expose their routable fields first (streaming order)", () => {
   const plan = planTaskJsonSchema() as { properties?: Record<string, unknown> };
-  assert.deepEqual(Object.keys(plan.properties ?? {}), ["component", "title", "dependsOn", "origin", "rationale"]);
+  assert.deepEqual(Object.keys(plan.properties ?? {}), ["component", "feature", "title", "dependsOn", "origin", "rationale"]);
   const update = updateTaskJsonSchema() as { properties?: { set?: { properties?: Record<string, unknown> } } };
   // `body` (the long free-text field) streams last within `set`.
   assert.deepEqual(Object.keys(update.properties?.set?.properties ?? {}), ["title", "dependsOn", "rationale", "body"]);

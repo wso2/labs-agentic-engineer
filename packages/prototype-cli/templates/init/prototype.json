@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 3,
+  "name": "Tasks",
+  "entryScreen": "screen.tasks",
+  "roles": [{ "id": "member", "name": "Team member" }],
+  "states": [
+    { "id": "state.default", "name": "Default" },
+    { "id": "state.empty", "name": "No tasks yet" }
+  ],
+  "screens": [
+    { "id": "screen.tasks", "name": "Tasks", "roleIds": ["member"] },
+    { "id": "screen.new-task", "name": "New task", "roleIds": ["member"] }
+  ],
+  "flows": [{ "id": "flow.add-task", "name": "Add a task", "roleId": "member", "screenIds": ["screen.tasks", "screen.new-task"] }]
+}

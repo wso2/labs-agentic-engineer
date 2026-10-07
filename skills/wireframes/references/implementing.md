@@ -75,7 +75,7 @@ in that order, with that literal content:
 | `navbar "App"` / `sidebar "A -> S \| B"` | the pinned design system's canonical app shell — the brand in the top bar, the `sidebar` items as the navigation rail; each item that carries `-> S` links there. The DSL draws a different rail per role because it draws one role at a time; the app has **ONE** rail whose items are each wrapped in `<Can scope="…">`, which reproduces every one of those pictures and also covers a user holding two roles. Navigation stays in the rail even if a wireframe put a link in the `navbar` |
 | `heading`, `text`, `link`, `breadcrumb` | the same words on the page |
 | `card "Label \| Value \| Caption"` | a stat tile with that label, that value bound to live data, that caption |
-| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns, bound to the real list. A column the list endpoint does not return is filled from **one** more request to another list operation of the contract (a name joined on id from the entity list; a count from the child list filtered once and grouped) — never one request per row, and never dropped while some list operation can supply it. Only a column no list can supply is left out, with the gap named in your report |
+| `table "A \| B \| C"` + `row` lines | a data table with exactly those columns, bound to the real list. A column the list endpoint does not return is filled from **one** more request to another list operation of the contract that every role loading the screen may call (a name joined on id from the entity list; a count from the child list filtered once and grouped) — never one request per row, and never dropped while some list operation can supply it. A column that no such list can supply is a contract gap: report it |
 | `list`, `tabs`, `badge`, `progress`, `avatar`, `chart`, `image` | the matching UI primitive — a status is a badge, not a paragraph |
 | `input`, `textarea`, `select`, `search`, `checkbox`, `radio`, `toggle` | a real form control whose placeholder/label is the DSL label, wired to submit |
 | `button "X" primary` | a primary-styled button; every button the DSL marks `primary` is primary on the page, and only those. Unmarked buttons take a non-primary style (destructive where the DSL says `danger`) |
@@ -116,7 +116,12 @@ Every `-> Screen` — on a button, a link, a table, a navbar or sidebar item —
 is **working navigation** to that screen's route — including the rail item
 pointing at the screen it sits on, which is the active nav link and still a
 link. A chrome item with no target names a section outside this wireframe set:
-render it and leave it inert rather than inventing a destination for it.
+render it and leave it inert rather than inventing a destination for it. The
+exception is `Sign out`: it is an action, not a section. Render it where the
+DSL draws it, outside the `Can` wrap, and make it call `signOut()`.
+
+A create's `-> Screen` lands where the new row shows. If that list has a
+filter, it opens with a filter value that includes the new row.
 
 Every `flow` block is a journey a role must be able to walk end to end by
 clicking: entry screen first, each screen reachable from the one before. A
@@ -145,8 +150,8 @@ Screens
 - [ ] NewRisk → /risks/new — "Register" select not built: no registers endpoint
 
 Flows
-- [x] F1 · Approval queue — stories 2, 5
-- [ ] F2 · Log a risk — stories 1, 3 — breaks at NewRisk → RiskDetail: the
+- [x] Flow 1 · Approval queue — stories F2.1, F2.3
+- [ ] Flow 2 · Log a risk — stories F1.1, F1.2 — breaks at NewRisk → RiskDetail: the
       "Register" select is not built
 ```
 

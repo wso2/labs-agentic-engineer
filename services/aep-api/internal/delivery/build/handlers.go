@@ -21,10 +21,13 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
@@ -83,13 +86,33 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 			return nil, apierr.ServiceUnavailable("publisher credentials unavailable")
 		}
 	}
+	if request.Body != nil && request.Body.Repair != nil {
+		tag, err := h.svc.Repair(ctx, org, request.ProjectName, strings.TrimSpace(request.Body.Repair.Of))
+		if err != nil {
+			return nil, mapBuildRunError(err)
+		}
+		if h.activity != nil {
+			h.activity.RecordSpecPublished(ctx, org, request.ProjectName, tag)
+		}
+		return gen.BuildProject200JSONResponse(gen.BuildResponse{Tag: tag}), nil
+	}
 	var inputs []BuildInputItem
 	var version string
+	var pick *reqspec.Pick
 	if request.Body != nil {
 		inputs = toBuildInputItems(request.Body.Inputs)
 		version = request.Body.Version
+		// An absent selection (the generated value is then empty) builds
+		// every feature that can be designed.
+		if sel := request.Body.Selection; len(sel.Features) > 0 || len(sel.ProductWide) > 0 {
+			p, err := pickOf(sel)
+			if err != nil {
+				return nil, err
+			}
+			pick = &p
+		}
 	}
-	tag, failures, err := h.svc.Run(ctx, org, request.ProjectName, inputs, version)
+	tag, failures, err := h.svc.Run(ctx, org, request.ProjectName, inputs, version, pick)
 	if err != nil {
 		return nil, mapBuildRunError(err)
 	}
@@ -227,6 +250,7 @@ func toBuildList(l BuildList) gen.BuildList {
 			FailureCode:     b.FailureCode,
 			StartedAt:       b.StartedAt,
 			WaitingReason:   gen.BuildSummaryWaitingReason(b.WaitingReason),
+			Regressions:     b.Regressions,
 		}
 		s.CompletedAt = b.CompletedAt // nil while running — omitted on the wire
 		builds = append(builds, s)
@@ -277,4 +301,25 @@ func toBuildPreflight(pf BuildPreflight) gen.BuildPreflight {
 		SpecUnchanged:    pf.SpecUnchanged,
 		Changes:          changes,
 	}
+}
+
+var (
+	featureIDPattern     = regexp.MustCompile(`^F[0-9]+$`)
+	productWideIDPattern = regexp.MustCompile(`^P[0-9]+$`)
+)
+
+// pickOf reads the version's selection off the request (B1), refusing an ID
+// of the wrong shape before anything is planned.
+func pickOf(sel gen.BuildSelection) (reqspec.Pick, error) {
+	for _, id := range sel.Features {
+		if !featureIDPattern.MatchString(id) {
+			return reqspec.Pick{}, apierr.BadRequest("selection.features must be feature IDs such as F2")
+		}
+	}
+	for _, id := range sel.ProductWide {
+		if !productWideIDPattern.MatchString(id) {
+			return reqspec.Pick{}, apierr.BadRequest("selection.productWide must be product-wide IDs such as P4")
+		}
+	}
+	return reqspec.Pick{Features: sel.Features, ProductWide: sel.ProductWide}, nil
 }

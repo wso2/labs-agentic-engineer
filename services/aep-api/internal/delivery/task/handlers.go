@@ -35,9 +35,9 @@ import (
 // and plan operations the retired Huma surface also carried (plan-tasks,
 // execute-task, hold-task, unhold-task) are NOT in the committed contract and
 // were deliberately dropped from the HTTP edge (parked proposal in
-// packages/contracts/workflows). promote-task-from-issue STAYS: it is the
-// dispatch leg of the SRE/RCA alert handoff, called by the deployed
-// aep-mcp-server (AE-HANDOFF-DESIGN.md).
+// packages/contracts/workflows). promote-task-from-issue STAYS in the
+// contract, though nothing in this repository calls it: the SRE handoff's
+// create_issue adopts and dispatches the issue itself.
 type Handler struct {
 	reads    *Reads
 	commands *Commands
@@ -90,8 +90,7 @@ func (h *Handler) GetTask(ctx context.Context, request gen.GetTaskRequestObject)
 }
 
 // PromoteTaskFromIssue turns an ad-hoc GitHub issue into a coding Task and
-// dispatches it through the funnel (async 202, empty body). The second half
-// of the SRE/RCA handoff: aep-mcp-server calls this right after create-issue.
+// dispatches it through the funnel (async 202, empty body).
 func (h *Handler) PromoteTaskFromIssue(ctx context.Context, request gen.PromoteTaskFromIssueRequestObject) (gen.PromoteTaskFromIssueResponseObject, error) {
 	if h.commands == nil {
 		return nil, apierr.ServiceUnavailable("tasks not configured")

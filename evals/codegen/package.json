@@ -1,0 +1,25 @@
+{
+  "name": "@aep/codegen-evals",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Codegen evals: a saved case (specs + issues) → `play code` → `play wire` → a walker agent clicks the running app through a frozen checklist → a judge scores the symptoms (evals/codegen/README.md).",
+  "scripts": {
+    "eval": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@aep/playground": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.289",
+    "yaml": "^2.8.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "agent-browser": "0.38.2",
+    "tsx": "^4.21.0"
+  }
+}

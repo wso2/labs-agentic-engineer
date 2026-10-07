@@ -18,8 +18,8 @@
 
 /** Throwaway eval project directories under the sanctioned gitignored home. */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { join, relative } from "node:path";
 import { FIXTURES_DIR, PROJECTS_HOME } from "./config.js";
 
 /**
@@ -37,6 +37,27 @@ export function prepareProject(name: string, fixture?: string): string {
     cpSync(src, dir, { recursive: true });
   }
   return dir;
+}
+
+const REQUIREMENTS_DIR = "specs/requirements";
+
+/**
+ * Every requirements file (skills/prd-contract), repo-relative, in reading
+ * order: the product page, then the feature files, then product-wide.md and
+ * its topic files. Reference documents are the user's inputs, not
+ * requirements, so `references/` is left out.
+ */
+export function listRequirementFiles(projectDir: string): string[] {
+  const root = join(projectDir, REQUIREMENTS_DIR);
+  if (!existsSync(root)) return [];
+  const rank = (rel: string): number =>
+    rel === "prd.md" ? 0 : rel.startsWith("features/") ? 1 : rel.startsWith("product-wide") ? 2 : 3;
+  return readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith(".md"))
+    .map((e) => relative(root, join(e.parentPath, e.name)))
+    .filter((rel) => !rel.startsWith("references/"))
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, "en", { numeric: true }))
+    .map((rel) => `${REQUIREMENTS_DIR}/${rel}`);
 }
 
 /** Read a project file, "" when absent (structural checks handle emptiness). */

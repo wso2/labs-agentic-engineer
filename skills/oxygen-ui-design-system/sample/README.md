@@ -15,6 +15,7 @@ Refresh: copy `samples/oxygen-ui-test-app/src` from the oxygen-ui release that
 matches the `@wso2/oxygen-ui` version Setup installs, replace `src/` wholesale,
 and re-check `references/app-structure.md`'s excerpts against it. Last taken
 from the copy vendored under `apps/console/.claude/skills/oxygen-ui/sample`
+at the `classic-console` tag
 (repo commit 2edc47eb, 2026-07-03).
 
 ## Known defects — take the structure, not these lines

@@ -33,7 +33,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
 
 - Always use **two-word camelCase** for ALL identifiers: variables, parameters, record fields (e.g., `userName`, `baseUrl`, `responseBody`).
 - Exception: a record whose fields bind to external payload/JSON keys (e.g. via `cloneWithType()`) must use the **exact source key names** — even if that means single-word or PascalCase (e.g. `Name`, `CreatedDate`). The wire contract wins over the naming convention here.
-- A reserved word cannot name anything — function, variable, field, parameter, resource path segment or any identifier — without a leading quote. The ones that bite read like ordinary service nouns: `conflict`, `order`, `limit`, `start`, `join`, `outer`, `select`, `from`, `where`, `on`, `by`, `equals`, `let`, `do`, `fail`. 
+- A reserved word cannot name anything — function, variable, field, parameter, resource path segment or any identifier — without a leading quote. The ones that bite read like ordinary service nouns: `conflict`, `order`, `limit`, `start`, `join`, `outer`, `select`, `from`, `where`, `on`, `by`, `ascending`, `descending`, `equals`, `let`, `do`, `fail`. 
 - Use ' to escape the reserved keyword (int 'limit = 20).
 
 ## Function Calls
@@ -59,6 +59,7 @@ For tests, see [tests.md](tests.md) — write them only when the user asks.
   }
   ```
   Narrowing arm by arm (`if user is http:Unauthorized { ... } else if ...`) leaves the value as the whole union afterwards and the next line fails with *"incompatible types"* even though every branch returned.
+- When the union has an open record — each type that `bal openapi` generates is one — only the guard on the type you want narrows. `if r is Failure { return …; }` leaves `Order|Failure`, and the next line fails with *"incompatible types: expected 'Order', found '(Order|Failure)'"*. Write `if r !is Order { return …; }`.
 - An **optional field** (`field?: T` — what every non-required OpenAPI property generates) needs optional field access: `payload?.dueDate`, often `payload?.priority ?: "medium"`. Plain `payload.dueDate` fails to compile with *"field access cannot be used to access an optional field of a type that includes nil"*.
 - Do not invoke methods on json access expressions — always use a separate statement.
 
@@ -90,7 +91,15 @@ Params bind from the signature, no annotation needed: a plain typed param is a q
 
 Every `http:<StatusName>` record is `record {| *CommonResponse; … |}` and takes `body?`, `headers?` and `mediaType?` — `http:Ok`, `http:Created`, `http:BadRequest`, `http:Unauthorized`, `http:NotFound`, `http:Conflict` and `http:InternalServerError` alike. It is a family, not a list: you do not need a lookup to confirm one exists. `http:NoContent` takes `headers?` only — no body — and `http:NO_CONTENT` is its empty value.
 
-`check` needs an `error` member in the enclosing return type, so a resource returning `UserList|http:NotFound` cannot use it — that is *"invalid usage of the 'check' expression operator: no matching error return type(s) in the enclosing invokable"*, and it catches `.close()` and langlib calls as much as client actions. Add `|error` to the union and `http` maps a returned error to 500, which is the right shape for an upstream failure the contract never modelled; otherwise assign to `T|error` and branch with the early-return guards under Type Safety.
+`check` needs an `error` member in the enclosing return type, so a resource returning `UserList|http:NotFound` cannot use it — that is *"invalid usage of the 'check' expression operator: no matching error return type(s) in the enclosing invokable"*, and it catches `.close()` and langlib calls as much as client actions. Do not add `|error` to a resource's return type: `http` sends a returned error's message in the 500 body, so the user sees the SQL and the driver text. Use `check` in the functions that the resource calls. In the resource, assign to `T|error`, log the error and return a 500 with no detail:
+
+```ballerina
+UserList|error users = loadUsers();
+if users is error {
+    log:printError("loadUsers failed", 'error = users);
+    return http:INTERNAL_SERVER_ERROR;
+}
+```
 
 ```ballerina
 resource function get items(string? status, int 'limit = 20) returns http:Ok|http:BadRequest {
@@ -106,8 +115,10 @@ resource function post items(@http:Header string x\-user\-id, ItemInput payload)
 
 - Values interpolate into a `sql:ParameterizedQuery` backtick template — that *is* the parameter binding, so never assemble SQL by string concatenation.
 - Add a conditional clause with `sql:queryConcat(q, ` AND status = ${status}`)`.
-- `dbClient->query(q)` returns `stream<RowType, sql:Error?>`. `queryRow(q)` returns one row, or `sql:NoRowsError` when nothing matched — that is a 404, never a 500. `execute(q)` returns `sql:ExecutionResult` (`affectedRowCount`, `lastInsertId`).
-- A `timestamptz` column binds to `time:Utc`; a plain `timestamp` binds to `time:Civil` (`sql:DateTimeValue`). **Bind the time value itself, never a string of it.** `sql:TimestampValue` also accepts a `string`, and that is the trap: `new sql:TimestampValue(time:utcToString(t))` compiles clean and then fails against the database at runtime — *"column is of type timestamp with time zone but expression is of type character varying"*. The RFC3339 round trip is for the JSON payload, not for the bind.
+- `dbClient->query(q)` returns `stream<RowType, sql:Error?>`. `queryRow(q)` returns one row, or `sql:NoRowsError` when nothing matched — that is a 404, never a 500. `execute(q)` returns `sql:ExecutionResult` (`affectedRowCount`, `lastInsertId`), and is only for a statement that returns no row: INSERT, UPDATE, DELETE, DDL.
+- A SELECT goes through `query` or `queryRow`, also a SELECT that you run for its effect. `execute` of `SELECT pg_advisory_xact_lock(…)` compiles, then fails at runtime with *"A result was returned when none was expected"*. Take the lock inside the `transaction` block, where it holds until the commit: `string? _ = check db->queryRow(`SELECT pg_advisory_xact_lock(${key})`);`.
+- A Ballerina `int` binds as `bigint`, and Postgres has no `date + bigint`. `current_date + ${days}` compiles, then fails at runtime with *"operator does not exist: date + bigint"*. Cast the value: `current_date + ${days}::int`.
+- A `timestamptz` column binds `new sql:TimestampValue(t)`, with `t` a `time:Utc`. Do not bind a bare `time:Utc`: a value from `time:utcAddSeconds` compiles, then fails at runtime with *"java.lang.UnsupportedOperationException"*. A plain `timestamp` binds to `time:Civil` (`sql:DateTimeValue`). **Bind the time value itself, never a string of it.** `sql:TimestampValue` also accepts a `string`, and that is the trap: `new sql:TimestampValue(time:utcToString(t))` compiles clean and then fails against the database at runtime — *"column is of type timestamp with time zone but expression is of type character varying"*. The RFC3339 round trip is for the JSON payload, not for the bind.
 
 ## Time
 

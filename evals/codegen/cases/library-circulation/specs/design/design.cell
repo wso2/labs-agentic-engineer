@@ -1,0 +1,21 @@
+title Library Circulation
+
+component library-webapp as "Library Web App" web-application
+component circulation-api as "Circulation API" service
+component catalogue-service as "Catalogue Service" service
+
+component catalogue-db as "Catalogue DB" database
+component circulation-db as "Circulation DB" database
+
+east user-auth as "Thunder Auth" identity-server
+
+north -> library-webapp
+north -> circulation-api
+west -> catalogue-service
+
+library-webapp -> circulation-api
+library-webapp -> user-auth
+circulation-api -> catalogue-service
+circulation-api -> user-auth
+catalogue-service -> catalogue-db
+circulation-api -> circulation-db

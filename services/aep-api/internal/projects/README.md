@@ -97,8 +97,8 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 - **Auto-RCA follows the SRE handoff, as one switch for both halves.** The default "error → RCA"
   `observability-alert-rule` trait exists to start the SRE loop (an error log, an alert, the OpenChoreo SRE
   agent's RCA, the handoff back to this platform), so it rides a service component only where that loop is
-  wired: the SRE handoff is configured (`SRE_HANDOFF_TOKEN` and `SRE_HANDOFF_ORG`; the chart's
-  `sreHandoff.enabled`), and the design does not set `disableAutoRca`. `ComponentService` (the trait) and
+  wired: the SRE handoff is configured (`SRE_HANDOFF_TOKEN`; the chart's
+  `sreAgent.*`, set by `aectl sre install`), and the design does not set `disableAutoRca`. `ComponentService` (the trait) and
   `DeploymentService` (its config) take the same value from the composition root. wso2cloud configures no
   handoff, so it attaches none, which its org ComponentTypes also require: they accept only the org's
   namespaced alert-rule `Trait`, whose contract (`notificationChannel`, `enableAiRootCauseAnalysis`) is not the

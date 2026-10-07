@@ -35,7 +35,7 @@ import (
 // rather than a sort of the matched set.
 //
 // The in-process engine's one-active-turn guard (ux_agent_turns_active) is
-// no longer created here: turns run in the org's AE Studio pod, and phase24
+// no longer created here: turns run in the org's AE Studio pod, and phase27
 // drops the index.
 //
 // Idempotent: CREATE INDEX IF NOT EXISTS is a no-op on re-run, and the step

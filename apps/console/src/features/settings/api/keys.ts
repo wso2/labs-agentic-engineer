@@ -19,16 +19,3 @@
 export const configKeys = {
   all: ["config"] as const,
 };
-
-export const skillsKeys = {
-  all: ["skills"] as const,
-  lists: () => [...skillsKeys.all, "list"] as const,
-  updates: () => [...skillsKeys.all, "updates"] as const,
-  details: () => [...skillsKeys.all, "detail"] as const,
-  detail: (name: string) => [...skillsKeys.details(), name] as const,
-};
-
-export const resourceKeys = {
-  platformTypes: ["resources", "platform-types"] as const,
-  external: ["resources", "external"] as const,
-};

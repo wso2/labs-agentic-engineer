@@ -30,6 +30,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -93,6 +94,14 @@ type SaveRequest struct {
 	// and a stale read here fails the gate or tags the wrong tree. Empty →
 	// resolve HEAD (standalone save with no prior apply).
 	CommitSHA string `json:"commitSha,omitempty"`
+	// Pick is what the user picked for this version (B1): features, and
+	// product-wide items added since the last build. Nil builds every feature
+	// that can be designed.
+	Pick *reqspec.Pick `json:"-"`
+	// Blocked names features a build cannot carry for a reason outside the
+	// requirements (E2: an external dependency still open), with the reason in
+	// words. A picked feature among them is refused; the rest build.
+	Blocked map[string]string `json:"-"`
 }
 
 // commitSHAPattern is the accepted shape of a caller-provided CommitSHA: a
@@ -144,6 +153,16 @@ type ArtifactService interface {
 	// ListSpecVersionTags lists the spec version tags (newest first by creation
 	// time) with the latest tag and whether specs/ moved since it (#117).
 	ListSpecVersionTags(ctx context.Context, orgID, projectID string) (*TagList, error)
+	// ListVersions lists what each version built, oldest first: the features
+	// it carried with their lines at its tag, and its product-wide items (B5).
+	ListVersions(ctx context.Context, orgID, projectID string) ([]Version, error)
+	// ValidationScope reads what a version validates (B4); ok is false for a
+	// version that names nothing it built.
+	ValidationScope(ctx context.Context, orgID, projectID, version string) (ValidationScope, bool, error)
+	// TagRepair cuts a repair version of `of` (B4).
+	TagRepair(ctx context.Context, orgID, projectID, of string) (string, error)
+	// SpecState reads what the spec workspace needs beside its documents (N5).
+	SpecState(ctx context.Context, orgID, projectID string) (SpecState, error)
 	// GetDesignAtTag reads the design bundle at a spec version tag — the tag a
 	// build carries. The name is the user's (ADR-0030) and is not parsed: the
 	// tag either resolves or it does not.
@@ -167,12 +186,13 @@ type ArtifactService interface {
 	// because equal-by-accident is the failure that ships a stale design.
 	RequirementsFingerprintAt(ctx context.Context, orgID, projectID, at string) (string, error)
 
-	// SetDesignBaselineResolver wires the build gate's staleness input (#575):
-	// the commit the newest successful design run read the project at. On the
-	// interface because the composition root has to reach it, and it cannot be
-	// a constructor argument — the turn store it reads from is built after this
-	// service. nil is a documented no-op: the gate keeps working without it.
-	SetDesignBaselineResolver(f func(ctx context.Context, orgID, projectID string) (string, error))
+	// SetDesignRunsResolver wires the build gate's staleness input (#575, E1):
+	// the project's completed design runs, newest first — the commit each read
+	// and the features it designed. On the interface because the composition
+	// root has to reach it, and it cannot be a constructor argument — the turn
+	// store it reads from is built after this service. nil is a documented
+	// no-op: the gate keeps working without it.
+	SetDesignRunsResolver(f func(ctx context.Context, orgID, projectID string) ([]DesignRun, error))
 	// ComponentCountAtTag counts the design components at a spec tag — the
 	// deploy stage's denominator. Local-only; unknown tag errors.
 	ComponentCountAtTag(ctx context.Context, orgID, projectID, tag string) (int, error)
@@ -181,23 +201,31 @@ type ArtifactService interface {
 type artifactService struct {
 	repo sourcecontrol.RepoRepository
 	git  sourcecontrol.Git
-	// designBaseline resolves the commit the newest successful design run read
-	// the project at, or "" when it has never designed. The build gate needs it
-	// to refuse a design the requirements have moved past (#575).
+	// designRuns lists the project's completed design runs, newest first. The
+	// build gate needs them to refuse a feature whose requirements have moved
+	// past its design (#575, per feature since E1).
 	//
 	// A function rather than a port because it is one fact, and optional
 	// because the gate must keep working without it: a service assembled with
-	// no baseline resolver simply does not run the staleness check, which is
-	// the pre-#575 behaviour rather than a build that can never start.
-	designBaseline func(ctx context.Context, orgID, projectID string) (string, error)
+	// no resolver simply does not run the staleness check, which is the
+	// pre-#575 behaviour rather than a build that can never start.
+	designRuns func(ctx context.Context, orgID, projectID string) ([]DesignRun, error)
 }
 
-// SetDesignBaselineResolver wires the staleness check's input (#575). Wired at
+// DesignRun is one completed design run: the commit it read the project at,
+// and the features it designed — nil when it named none, which means every
+// feature that was designable at that commit.
+type DesignRun struct {
+	BaseRef  string
+	Features []string
+}
+
+// SetDesignRunsResolver wires the staleness check's input (#575). Wired at
 // the composition root from the agent-turn store; nil is a documented no-op.
-func (s *artifactService) SetDesignBaselineResolver(
-	f func(ctx context.Context, orgID, projectID string) (string, error),
+func (s *artifactService) SetDesignRunsResolver(
+	f func(ctx context.Context, orgID, projectID string) ([]DesignRun, error),
 ) {
-	s.designBaseline = f
+	s.designRuns = f
 }
 
 // NewArtifactService builds the ArtifactService. `repo` resolves the
@@ -221,8 +249,10 @@ var allowedRequirementExts = []string{".md", ".excalidraw", ".dsl"}
 // `.cell` is the project-level cell-diagram DSL (design.cell) that drives the
 // live architecture diagram; `.dsl` is the per-component wireframes DSL
 // (wireframes.dsl) — the build gate demands it for deployable
-// web-applications, so it must ride the bundle the gate reads.
-var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell", ".dsl"}
+// web-applications, so it must ride the bundle the gate reads; `.tsx` is a
+// web-application's prototype source (prototype.tsx, beside its prototype.json),
+// which the save gate checks and a revision turn reads back.
+var allowedDesignExts = []string{".md", ".yaml", ".yml", ".json", ".cell", ".dsl", ".tsx"}
 
 func hasAllowedDesignExt(name string) bool {
 	lower := strings.ToLower(name)

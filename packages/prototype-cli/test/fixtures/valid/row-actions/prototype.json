@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 3,
+  "name": "Documents",
+  "entryScreen": "screen.documents",
+  "roles": [{ "id": "editor", "name": "Editor" }],
+  "states": [{ "id": "state.default", "name": "Default" }],
+  "screens": [
+    { "id": "screen.documents", "name": "Documents", "roleIds": ["editor"] },
+    { "id": "screen.document", "name": "Document", "roleIds": ["editor"] }
+  ],
+  "flows": [{ "id": "flow.documents", "name": "Documents", "roleId": "editor", "screenIds": ["screen.documents", "screen.document"] }]
+}

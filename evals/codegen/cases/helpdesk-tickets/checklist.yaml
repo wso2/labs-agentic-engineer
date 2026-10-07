@@ -1,0 +1,316 @@
+# Derived by the planner (save / replan) and frozen: every attempt walks this
+# list, in this order, from an empty database. HAND-EDITABLE — fix, reorder,
+# reweight or delete items freely; only an explicit replan re-derives it.
+
+# role: one of Employee, Support Agent, Team Lead, no role, signed out
+# weight: default 1. extras.mustCover items are walked and scored like items;
+# extras.mustNot entries ({id, description}) cap the band at review when violated.
+
+# Planner gaps — what the walk cannot cover, and where the PRD and the wireframes disagree:
+#  - Assignee and reassign selects list users recorded on first sign-in, and display names of the test users are not in the spec; the assign items assume the Support Agent signing in earlier made that agent selectable. If agent names differ, the tester picks any listed agent.
+#  - The spec gives no way to create an SLA breach from an empty database (due times are hours to days away and cannot be edited), so the SLA breached only items can only show that new tickets are excluded; items showing a breached or Overdue ticket and the breach highlight are omitted. A person could add them by hand once a ticket is past its due time.
+#  - The Team queue summary cards in the DSL show fixed sample numbers; the spec does not say whether they are live counts, so only their presence is checked.
+#  - The spec has no way to use two different Employee users, so 'employees see only their own tickets' (PRD decisions) cannot be walked; a person could add it with test-employee-2 by hand.
+#  - The Reopen ticket button on MyTicketDetail and the Triage, Start work and Resolve buttons are drawn with no navigation; their behaviour on non-eligible statuses (e.g. reopening an unresolved ticket) is not specified, so no refusal items were written.
+#  - The Team Lead's grants reach every screen the Support Agent has (read-all, assign, comments read-all), so no refusal item was written for the Team Lead on Queue, TicketWork or AssignTicket; likewise the Support Agent reaches TeamQueue, LeadTicket and ReassignTicket. Only the employee-only My tickets screens are refused to agents and leads, and Employees are refused the queue screens.
+#  - PRD story 6 says an agent sets priority at triage, and the DSL draws Priority as a select next to Triage; the wireframe labels it only 'Priority', so values are assumed to be Low, Medium, High, Critical per the PRD.
+#  - The Team Lead screens LeadTicket and ReassignTicket draw no comment input, so Team Lead commenting is not tested (grant is read-only for comments).
+
+items:
+  - id: employee-lands-my-tickets
+    role: Employee
+    screen: MyTickets
+    flow: Raise and follow a ticket
+    steps: Look at the screen the app opens on. The database is empty so far.
+    expect: The My tickets screen is shown with its heading and a New ticket button. With no tickets yet the list is empty or shows an empty state, without an error or a blank page.
+    weight: 1
+  - id: employee-opens-new-ticket
+    role: Employee
+    screen: NewTicket
+    flow: Raise and follow a ticket
+    steps: Click the New ticket button.
+    expect: The New ticket screen opens with a Title input, a Describe the problem text area, a Priority select, and Cancel and Submit ticket buttons.
+    weight: 1
+  - id: employee-cancels-new-ticket
+    role: Employee
+    screen: MyTickets
+    flow: Raise and follow a ticket
+    steps: On New ticket, type Title 'Throwaway' and click Cancel.
+    expect: You arrive back on My tickets and no ticket titled 'Throwaway' is listed.
+    weight: 1
+  - id: employee-raises-ticket-a
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 1: raise a ticket"
+    steps: Open New ticket from the sidebar. Enter Title 'VPN not connecting', Describe the problem 'Cannot connect to the VPN from home since this morning.', Priority High. Click Submit ticket.
+    expect: You arrive on the ticket detail screen for 'VPN not connecting', showing the description, a High priority badge, an Open status and an SLA due time.
+    weight: 2
+  - id: employee-raises-ticket-b
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 1: raise a ticket"
+    steps: Open New ticket from the sidebar. Enter Title 'Replace keyboard', Describe the problem 'Two keys are stuck.', Priority Low. Click Submit ticket.
+    expect: You arrive on the detail screen for 'Replace keyboard' with a Low priority badge and an SLA due time.
+    weight: 1
+  - id: employee-raises-ticket-c
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 1: raise a ticket"
+    steps: Open New ticket from the sidebar. Enter Title 'Cannot print', Describe the problem 'Printer on floor 2 shows an error.', Priority Medium. Click Submit ticket.
+    expect: You arrive on the detail screen for 'Cannot print' with a Medium priority badge and an SLA due time.
+    weight: 1
+  - id: employee-sees-own-ticket-list
+    role: Employee
+    screen: MyTickets
+    flow: "Story 2: my tickets"
+    steps: Click My tickets in the sidebar.
+    expect: The table lists 'VPN not connecting', 'Replace keyboard' and 'Cannot print', each with its status (Open), priority and an SLA due value.
+    weight: 2
+  - id: employee-opens-ticket-from-list
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 2: my tickets"
+    steps: On My tickets, click the 'VPN not connecting' row.
+    expect: The detail screen for 'VPN not connecting' opens with a breadcrumb back to My tickets, its status and priority badges, its description and a Comments section.
+    weight: 1
+  - id: employee-sees-sla-due
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 12: SLA due time"
+    steps: On the 'VPN not connecting' detail screen, read the row of badges and text under the heading.
+    expect: An SLA due time is shown for the ticket.
+    weight: 1
+  - id: employee-adds-comment
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 3: comment on my ticket"
+    steps: On the 'VPN not connecting' detail screen, type 'Still failing after restart' in Write a comment and click Add comment.
+    expect: The comment 'Still failing after restart' appears in the Comments list and you stay on the same ticket screen.
+    weight: 2
+  - id: agent-lands-on-queue
+    role: Support Agent
+    screen: Queue
+    flow: Work the queue
+    steps: Look at the screen the app opens on.
+    expect: The Ticket queue screen is shown with the Status, Priority and Assignee selects, the SLA breached only toggle, and a table that lists 'VPN not connecting', 'Replace keyboard' and 'Cannot print' with their requester, status, priority, assignee and SLA due.
+    weight: 2
+  - id: agent-opens-ticket
+    role: Support Agent
+    screen: TicketWork
+    flow: Work the queue
+    steps: In the queue, click the 'VPN not connecting' row.
+    expect: The ticket work screen opens showing the title, status and priority badges, assignee, SLA due, the employee's comment 'Still failing after restart' in the Comments list, and Priority select with Triage, Start work and Resolve buttons.
+    weight: 1
+  - id: agent-triages-ticket
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 6: triage"
+    steps: On the 'VPN not connecting' work screen, set Priority to Critical and click Triage.
+    expect: The ticket shows status Triaged and priority Critical, and its SLA due time is updated.
+    weight: 2
+  - id: agent-cancels-assign
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 7: assign"
+    steps: On the 'VPN not connecting' work screen, click Assign, then on Assign ticket click Cancel.
+    expect: You arrive back on the work screen for 'VPN not connecting' and its assignee is unchanged.
+    weight: 1
+  - id: agent-assigns-ticket
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 7: assign"
+    steps: On the 'VPN not connecting' work screen click Assign. On Assign ticket open the Support agent select, choose the signed-in agent (the entry for the test support agent), and click Assign.
+    expect: You arrive back on the work screen and the assignee now shows the chosen agent.
+    weight: 2
+  - id: agent-starts-work
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 8: progress"
+    steps: On the 'VPN not connecting' work screen, click Start work.
+    expect: The status badge shows In progress.
+    weight: 2
+  - id: agent-adds-comment
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 9: comment"
+    steps: On the same work screen, type 'Please restart the client' in Write a comment and click Add comment.
+    expect: The comment appears in the Comments list under the agent's name and you stay on the same screen.
+    weight: 2
+  - id: agent-resolves-ticket
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 8: progress"
+    steps: On the same work screen, click Resolve.
+    expect: The status badge shows Resolved.
+    weight: 2
+  - id: agent-back-to-queue
+    role: Support Agent
+    screen: Queue
+    flow: Work the queue
+    steps: On the work screen click Back to queue.
+    expect: The Ticket queue is shown and 'VPN not connecting' is listed as Resolved with the assigned agent.
+    weight: 1
+  - id: agent-resolves-ticket-c
+    role: Support Agent
+    screen: TicketWork
+    flow: "Story 8: progress"
+    steps: In the queue open 'Cannot print'. Set Priority Medium and click Triage, then click Start work, then click Resolve.
+    expect: The status badge goes Triaged, then In progress, then Resolved.
+    weight: 1
+  - id: agent-filters-by-status
+    role: Support Agent
+    screen: Queue
+    flow: "Story 5: filter queue"
+    steps: Open the queue. Set the Status select to Open.
+    expect: "'Replace keyboard' is listed; 'VPN not connecting' and 'Cannot print' are not."
+    weight: 2
+  - id: agent-filters-by-priority
+    role: Support Agent
+    screen: Queue
+    flow: "Story 5: filter queue"
+    steps: Clear the Status filter, then set the Priority select to Critical.
+    expect: "'VPN not connecting' is listed; 'Replace keyboard' and 'Cannot print' are not."
+    weight: 1
+  - id: agent-filters-by-assignee
+    role: Support Agent
+    screen: Queue
+    flow: "Story 5: filter queue"
+    steps: Clear the Priority filter, then set the Assignee select to the agent assigned in agent-assigns-ticket.
+    expect: "'VPN not connecting' is listed; 'Replace keyboard' is not."
+    weight: 1
+  - id: agent-filters-sla-breached
+    role: Support Agent
+    screen: Queue
+    flow: "Story 5: filter queue"
+    steps: Clear the Assignee filter and switch on SLA breached only.
+    expect: "'Replace keyboard', which was raised moments ago and is unresolved before its due time, is not listed. The screen does not crash."
+    weight: 1
+  - id: employee-reopens-ticket
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 4: reopen"
+    steps: Open My tickets, click the 'VPN not connecting' row (now Resolved) and click Reopen ticket.
+    expect: The ticket's status badge shows Reopened.
+    weight: 2
+  - id: employee-sees-agent-comment
+    role: Employee
+    screen: MyTicketDetail
+    flow: "Story 3: comment on my ticket"
+    steps: On the 'VPN not connecting' detail screen read the Comments list.
+    expect: Both 'Still failing after restart' and the agent's 'Please restart the client' are listed.
+    weight: 1
+  - id: team-lead-lands-on-team-queue
+    role: Team Lead
+    screen: TeamQueue
+    flow: Watch the queue
+    steps: Look at the screen the app opens on.
+    expect: The Team queue screen is shown with summary cards (Open, In progress, SLA breached), the Status, Priority and Assignee selects, the SLA breached only toggle, and a table listing 'VPN not connecting', 'Replace keyboard' and 'Cannot print' with status, priority, assignee and SLA due.
+    weight: 2
+  - id: team-lead-filters-by-status
+    role: Team Lead
+    screen: TeamQueue
+    flow: "Story 10: watch the queue"
+    steps: Set the Status select to Resolved.
+    expect: "'Cannot print' is listed; 'Replace keyboard' is not."
+    weight: 1
+  - id: team-lead-filters-by-priority
+    role: Team Lead
+    screen: TeamQueue
+    flow: "Story 10: watch the queue"
+    steps: Clear Status, then set the Priority select to Low.
+    expect: "'Replace keyboard' is listed; 'Cannot print' is not."
+    weight: 1
+  - id: team-lead-filters-by-assignee
+    role: Team Lead
+    screen: TeamQueue
+    flow: "Story 10: watch the queue"
+    steps: Clear Priority, then set the Assignee select to the agent assigned to 'VPN not connecting'.
+    expect: "'VPN not connecting' is listed; 'Replace keyboard' is not."
+    weight: 1
+  - id: team-lead-filters-sla-breached
+    role: Team Lead
+    screen: TeamQueue
+    flow: "Story 10: SLA breaches"
+    steps: Clear Assignee and switch on SLA breached only.
+    expect: "'Replace keyboard', not yet past its due time, is not listed. The screen does not crash."
+    weight: 2
+  - id: team-lead-opens-ticket
+    role: Team Lead
+    screen: LeadTicket
+    flow: Watch the queue
+    steps: Switch the toggle off, then click the 'VPN not connecting' row.
+    expect: The ticket review screen opens with a breadcrumb to Team queue, its status, assignee and a Comments list containing 'Still failing after restart' and 'Please restart the client'.
+    weight: 1
+  - id: team-lead-cancels-reassign
+    role: Team Lead
+    screen: LeadTicket
+    flow: "Story 11: reassign"
+    steps: Click Reassign, then on Reassign ticket click Cancel.
+    expect: You arrive back on the review screen for 'VPN not connecting' with the assignee unchanged.
+    weight: 1
+  - id: team-lead-reassigns-ticket
+    role: Team Lead
+    screen: LeadTicket
+    flow: "Story 11: reassign"
+    steps: On the review screen for 'Replace keyboard' (open it from Team queue), click Reassign, choose an entry in the Support agent select, and click Reassign.
+    expect: You arrive back on the review screen and the assignee shows the chosen agent.
+    weight: 2
+  - id: team-lead-reassign-resolved-refused
+    role: Team Lead
+    screen: LeadTicket
+    flow: SLA breach monitoring
+    steps: From Team queue open 'Cannot print' (Resolved). Click Reassign, choose an agent, click Reassign.
+    expect: "The reassignment is refused: the ticket's assignee does not change and the app does not crash."
+    weight: 1
+  - id: team-lead-back-to-team-queue
+    role: Team Lead
+    screen: TeamQueue
+    flow: Watch the queue
+    steps: On a ticket review screen click Back to team queue.
+    expect: The Team queue screen is shown.
+    weight: 1
+  - id: employee-refused-queue
+    role: Employee
+    screen: MyTickets
+    flow: Role reach
+    steps: Open the address the Ticket queue had in agent-lands-on-queue.
+    expect: The Ticket queue and its data are not shown to the Employee; access is refused or the app does not show the queue.
+    weight: 1
+  - id: agent-refused-my-tickets
+    role: Support Agent
+    screen: Queue
+    flow: Role reach
+    steps: Open the address My tickets had in employee-lands-my-tickets.
+    expect: The employee's My tickets screen and data are not shown to the Support Agent; access is refused or the app does not show it.
+    weight: 1
+  - id: team-lead-refused-my-tickets
+    role: Team Lead
+    screen: TeamQueue
+    flow: Role reach
+    steps: Open the address My tickets had in employee-lands-my-tickets.
+    expect: The employee's My tickets screen and data are not shown to the Team Lead; access is refused or the app does not show it.
+    weight: 1
+  - id: no-role-sees-no-access
+    role: no role
+    screen: MyTickets
+    flow: Role reach
+    steps: Look at the screen the app shows.
+    expect: A no-access page is shown instead of the app, with no tickets visible.
+    weight: 1
+  - id: signed-out-guard-signs-in
+    role: signed out
+    screen: MyTickets
+    flow: Role reach
+    steps: Load the app while signed out and wait for it to settle.
+    expect: The address loses the sign-out marker and the app reloads into a session, with no blank page or crash.
+    weight: 1
+  - id: employee-signs-out
+    role: Employee
+    screen: MyTickets
+    flow: Sign out
+    steps: Click Sign out in the sidebar.
+    expect: The Employee's screens and tickets are gone and the app shows its no-access state; no sign-in form appears.
+    weight: 1
+extras:
+  mustCover: []
+  mustNot: []

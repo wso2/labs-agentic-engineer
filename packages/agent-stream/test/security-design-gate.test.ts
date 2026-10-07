@@ -79,7 +79,7 @@ const V1 = JSON.stringify({
     {
       name: "Viewer",
       description: "Reads submitted claims.",
-      stories: [1],
+      stories: ["F1.1"],
       grantedBy: "first sign-in",
       permissions: [{ component: "expense-api", actions: ["read own claims"] }],
     },
@@ -212,7 +212,7 @@ test("a grant that is not a resource:action handle is rejected", () => {
           {
             name: "Employee",
             description: "Submits and follows their own claims.",
-            stories: [1],
+            stories: ["F1.1"],
             grants: [bad],
             assignTo: ["Employees"],
           },
@@ -242,7 +242,7 @@ test("a role must grant at least one handle, and a permission must carry at leas
     checkSecurityDesign(
       PATH,
       doc({
-        roles: [{ name: "Employee", description: "d", stories: [1], grants: [], assignTo: ["Employees"] }],
+        roles: [{ name: "Employee", description: "d", stories: ["F1.1"], grants: [], assignTo: ["Employees"] }],
         testUsers: [],
       }),
     )?.code,
@@ -267,7 +267,7 @@ test("enrolment and kind accept only the declared values", () => {
         {
           name: "Employee",
           description: "d",
-          stories: [1],
+          stories: ["F1.1"],
           grants: ["claims:read"],
           enrolment: "invite",
         },
@@ -288,7 +288,7 @@ test("a grant naming a handle the catalog does not declare is rejected", () => {
         {
           name: "Employee",
           description: "d",
-          stories: [1],
+          stories: ["F1.1"],
           grants: ["claims:archive"],
           assignTo: ["Employees"],
         },
@@ -304,8 +304,8 @@ test("a duplicate role name is rejected, case-insensitively", () => {
     PATH,
     doc({
       roles: [
-        { name: "Employee", description: "a", stories: [1], grants: ["claims:read"], assignTo: ["Employees"] },
-        { name: "employee", description: "b", stories: [2], grants: ["claims:read"], assignTo: ["Employees"] },
+        { name: "Employee", description: "a", stories: ["F1.1"], grants: ["claims:read"], assignTo: ["Employees"] },
+        { name: "employee", description: "b", stories: ["F1.2"], grants: ["claims:read"], assignTo: ["Employees"] },
       ],
       testUsers: [],
     }),
@@ -350,7 +350,7 @@ test("a refused addFile creates nothing, and says so plus the retry move", () =>
   const clashing = JSON.stringify({
     ...JSON.parse(fixture("expense-tracker")),
     roles: [
-      { name: "Employees", description: "a", stories: [1], grants: ["claims:read"], assignTo: ["Employees"] },
+      { name: "Employees", description: "a", stories: ["F1.1"], grants: ["claims:read"], assignTo: ["Employees"] },
     ],
     testUsers: [{ username: "test-employee", roles: ["Employees"] }],
   });

@@ -56,7 +56,7 @@ func (f *fakeValidationContext) ValidationContext(_ context.Context, cycleID, or
 type internalStack struct {
 	handler http.Handler
 	// deps is what handler was built from, so a test can extend the runner
-	// wiring (e.g. with the SRE handoff deps) and build its own handler.
+	// wiring and build its own handler.
 	deps InternalDeps
 	// mint signs an org's publisher client token (the runner's credential).
 	mint func(org string) string

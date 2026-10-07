@@ -316,7 +316,7 @@ func TestParseRefusesAVersion1Document(t *testing.T) {
       "version": 1,
       "coldStartRole": "Viewer",
       "publicComponents": ["web"],
-      "roles": [{"name":"Viewer","description":"Reads.","stories":[1],"grantedBy":"first sign-in",
+      "roles": [{"name":"Viewer","description":"Reads.","stories":["F1.1"],"grantedBy":"first sign-in",
                  "permissions":[{"component":"api","actions":["read"]}]}],
       "testUsers": [{"username":"test-viewer","role":"Viewer"}],
       "thunder": {"name":"Expense Tracker","type":"browser"}

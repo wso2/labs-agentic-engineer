@@ -28,7 +28,9 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/platform/taskplan"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // planDrainIdleTimeout aborts a Plan turn's stream when no event arrives for
@@ -77,7 +79,7 @@ type planTap struct {
 	// componentStories maps a component id (lowercased) to its IN-SCOPE story
 	// citations (#369) — the source of the platform-stamped Serves-stories
 	// block. Nil on a scope-less legacy plan.
-	componentStories map[string][]int
+	componentStories map[string][]string
 	// rendered into the body as the App Path the agent works in. Empty when no
 	// design reader is wired.
 	appPaths map[string]string
@@ -100,18 +102,125 @@ type planTap struct {
 	existingSlugs map[string]bool
 	createdSlugs  map[string]bool
 	// componentToNumber resolves a "Depends on" component name to the issue this
-	// run planned for it, so dependency lines carry real issue numbers.
+	// run planned for it, so dependency lines carry real issue numbers. With
+	// per-feature Tasks it holds the component's latest, and only says the
+	// component has Tasks this run; taskFor is the lookup.
 	componentToNumber map[string]int
+	// taskFor resolves a component's Task for one feature (or its foundation)
+	// to the issue this run planned for it (B3).
+	taskFor map[taskKey]int
+
+	// features are the version's carried features by ID, and productWide its
+	// carried product-wide items: what a Task's feature waits on, and which
+	// product-wide requirements its body names. Empty on a scope-less plan.
+	features    map[string]spec.ScopeFeature
+	productWide []spec.ScopeItem
 
 	// failures counts the GitHub writes the tap could not land.
 	failures int
 }
 
-// storiesFor resolves a component's in-scope story citations for the stamp;
-// nil when the scope carries none for it.
-func (t *planTap) storiesFor(component string) []int {
-	return t.componentStories[strings.ToLower(strings.TrimSpace(component))]
+// taskKey names one component's Task for one feature.
+type taskKey struct{ component, feature string }
+
+func keyOf(component, feature string) taskKey {
+	return taskKey{component: strings.ToLower(strings.TrimSpace(component)), feature: feature}
 }
+
+// withScope gives the tap the version's features and product-wide items.
+func (t *planTap) withScope(scope spec.BuildScope) {
+	t.componentStories = scope.ComponentStories
+	t.features = map[string]spec.ScopeFeature{}
+	for _, f := range scope.Features {
+		t.features[f.ID] = f
+	}
+	t.productWide = scope.ProductWide
+}
+
+// storiesFor resolves a Task's in-scope story citations for the stamp: the
+// component's stories of the Task's feature, none for a foundation Task, and
+// all of them when the planner named no feature. nil when the scope carries
+// none for it.
+func (t *planTap) storiesFor(component, feature string) []string {
+	all := t.componentStories[strings.ToLower(strings.TrimSpace(component))]
+	switch feature {
+	case "":
+		return all
+	case foundation:
+		return nil
+	}
+	var out []string
+	for _, id := range all {
+		if strings.HasPrefix(id, feature+".") {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// briefFor is what a Task's body states from the version's scope: its
+// feature's name, and the product-wide requirements it honours — every
+// carried one for a foundation Task, those that apply to the feature for a
+// feature's Task.
+func (t *planTap) briefFor(feature string) taskBrief {
+	brief := taskBrief{FeatureName: t.features[feature].Name}
+	for _, it := range t.productWide {
+		item := reqspec.Item{ID: it.ID, AppliesTo: it.AppliesTo}
+		if feature == foundation || (feature != "" && item.Reaches(feature)) {
+			brief.ProductWide = append(brief.ProductWide, it.ID)
+		}
+	}
+	return brief
+}
+
+// linksFor resolves a Task's dependencies to issues, in the order a reader
+// takes them: its component's foundation, its component's Tasks for the
+// features its own waits on, then each component it depends on — that
+// component's Task for the same feature, else its foundation. A dependency
+// on a component that has Tasks this run but none for the feature is left
+// out: the work it relies on belongs to another feature, which the needs
+// already order. One with no Tasks yet is named, for a forward reference.
+func (t *planTap) linksFor(p plannedTask) []taskLink {
+	var out []taskLink
+	seen := map[int]bool{}
+	add := func(n int) {
+		if n > 0 && !seen[n] {
+			seen[n] = true
+			out = append(out, taskLink{Number: n})
+		}
+	}
+	if p.Feature != "" && p.Feature != foundation {
+		add(t.taskFor[keyOf(p.Component, foundation)])
+		for _, need := range t.features[p.Feature].Needs {
+			add(t.taskFor[keyOf(p.Component, need)])
+		}
+	}
+	for _, dep := range p.DependsOn {
+		dep = strings.TrimSpace(dep)
+		if dep == "" {
+			continue
+		}
+		if p.Feature == "" {
+			if n, ok := t.issueForComponent(dep); ok && n > 0 {
+				add(n)
+			} else {
+				out = append(out, taskLink{Name: "`" + dep + "`"})
+			}
+			continue
+		}
+		if n := t.taskFor[keyOf(dep, p.Feature)]; n > 0 {
+			add(n)
+		} else if n := t.taskFor[keyOf(dep, foundation)]; n > 0 {
+			add(n)
+		} else if _, planned := t.issueForComponent(dep); !planned {
+			out = append(out, taskLink{Name: "`" + dep + "`"})
+		}
+	}
+	return out
+}
+
+// newPlanTap builds a tap with every map initialised. Callers set the milestone,
+// the preloaded state and the app paths.
 
 // newPlanTap builds a tap with every map initialised. Callers set the milestone,
 // the preloaded state and the app paths.
@@ -128,6 +237,7 @@ func newPlanTap(ctx context.Context, orgID, projectID string, issues IssueClient
 		existingSlugs:     map[string]bool{},
 		createdSlugs:      map[string]bool{},
 		componentToNumber: map[string]int{},
+		taskFor:           map[taskKey]int{},
 	}
 }
 
@@ -228,6 +338,7 @@ func (t *planTap) handlePlan(out *taskplan.PlanTaskOk) {
 	}
 	planned := plannedTask{
 		Component: out.Component,
+		Feature:   out.Feature,
 		AppPath:   t.appPathFor(out.Component),
 		DependsOn: out.DependsOn,
 		Rationale: out.Rationale,
@@ -242,7 +353,7 @@ func (t *planTap) handlePlan(out *taskplan.PlanTaskOk) {
 		Title: out.Title,
 		// The Serves-stories stamp is platform-authored from the design's
 		// citations (#369) — the planner has zero discretion over it.
-		Body: delivery.StampServesStories(composeTaskBody(planned, t.issueForComponent), t.storiesFor(out.Component)),
+		Body: delivery.StampServesStories(composeTaskBody(planned, t.briefFor(planned.Feature), t.linksFor(planned)), t.storiesFor(out.Component, out.Feature)),
 		// Armed, and PLANNED work: a Task is what the spec asked for. The kind is
 		// what keeps a bug-fix run off it — that loop works the deployed version
 		// and must never pick up planned work for a version still being built.
@@ -269,6 +380,9 @@ func (t *planTap) handlePlan(out *taskplan.PlanTaskOk) {
 	t.titleToNumber[norm] = number
 	if c := strings.ToLower(strings.TrimSpace(out.Component)); c != "" {
 		t.componentToNumber[c] = number
+		if out.Feature != "" {
+			t.taskFor[keyOf(c, out.Feature)] = number
+		}
 	}
 	t.state[number] = planned
 }
@@ -339,11 +453,11 @@ func (t *planTap) handleUpdate(out *taskplan.UpdateTaskOk) {
 	// from the design's citations, falling back to the stamp the body carried
 	// (a pre-existing task whose component the scope no longer names must not
 	// lose its lineage).
-	stories := t.storiesFor(st.Component)
+	stories := t.storiesFor(st.Component, st.Feature)
 	if len(stories) == 0 {
 		stories = prior
 	}
-	body := delivery.StampServesStories(composeTaskBody(st, t.issueForComponent), stories)
+	body := delivery.StampServesStories(composeTaskBody(st, t.briefFor(st.Feature), t.linksFor(st)), stories)
 	if err := t.issues.EditIssueBody(t.ctx, t.orgID, t.projectID, number, body); err != nil {
 		t.recordFlag(number, err)
 	}

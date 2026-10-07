@@ -54,3 +54,56 @@ export const DESIGN_COMMAND = "/design";
 
 /** Marketplace register flow. Same family as `/start` / `/design`. */
 export const REGISTER_EXTERNAL_RESOURCE_COMMAND = "/register-external-resource";
+
+/**
+ * `/interview F<n>` — interview one feature (the `interview` skill). The
+ * console sends it when the user starts a feature's interview; the feature is
+ * named by its ID, which a rename never changes.
+ */
+export const INTERVIEW_COMMAND = "/interview";
+
+/** The line that starts a feature's interview. */
+export function interviewCommand(featureId: string): string {
+  return `${INTERVIEW_COMMAND} ${featureId}`;
+}
+
+/** The feature an `/interview` line names, or null for any other line. */
+export function parseInterviewCommand(line: string): { featureId: string } | null {
+  const m = /^\/interview\s+(F[0-9]+)\s*$/.exec(line.trim());
+  return m ? { featureId: m[1]! } : null;
+}
+
+/**
+ * `/design F1 F2` — design the named features (the `design` skill); a bare
+ * `/design` designs every feature that can be designed. The features a run
+ * named are what the build later checks each feature's design against.
+ */
+export function designCommand(featureIds: readonly string[]): string {
+  return featureIds.length > 0 ? `${DESIGN_COMMAND} ${featureIds.join(" ")}` : DESIGN_COMMAND;
+}
+
+/** The features a `/design` line names (empty for a bare one), or null for any other line. */
+export function parseDesignCommand(line: string): { featureIds: string[] } | null {
+  const m = /^\/design(?:\s+([\s\S]*))?$/.exec(line.trim());
+  if (!m) return null;
+  return { featureIds: [...new Set((m[1] ?? "").match(/\bF[0-9]+\b/g) ?? [])] };
+}
+
+/**
+ * `/prototype <component>` — write or revise the clickable prototype of one
+ * web-application component (the `prototype` skill); a bare `/prototype`
+ * covers every web application the design has. A review's feedback rides the
+ * same command, as the turn's typed `prototypeFeedback`.
+ */
+export const PROTOTYPE_COMMAND = "/prototype";
+
+/** The line that makes or revises one component's prototype. */
+export function prototypeCommand(component: string): string {
+  return `${PROTOTYPE_COMMAND} ${component}`;
+}
+
+/** The component a `/prototype` line names (null for a bare one), or null for any other line. */
+export function parsePrototypeCommand(line: string): { component: string | null } | null {
+  const m = /^\/prototype(?:\s+([A-Za-z0-9][A-Za-z0-9_-]*))?\s*$/.exec(line.trim());
+  return m ? { component: m[1] ?? null } : null;
+}

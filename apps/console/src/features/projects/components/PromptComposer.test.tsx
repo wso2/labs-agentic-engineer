@@ -47,7 +47,7 @@ function attach(names: string[]): void {
   });
 }
 
-describe("PromptComposer attachment cards (#383)", () => {
+describe("PromptComposer attachments (#383)", () => {
   it("shows the file name and a type badge, and no file size", () => {
     render(<Host />);
     attach(["Anjana Income Expense All Years USD Tax.pdf"]);
@@ -85,7 +85,7 @@ describe("PromptComposer attachment cards (#383)", () => {
   it("accepts a drop anywhere on the composer, not just a separate zone", () => {
     render(<Host />);
     // Dropped ON THE TEXTAREA — the deepest thing a user is likely to aim at,
-    // and the point of folding the old dashed zone into the box: the handler
+    // and the point of one box: the handler
     // is on the container, so the event only lands because it bubbles.
     fireEvent.drop(screen.getByRole("textbox"), {
       dataTransfer: { files: [new File(["x"], "notes.txt")] },
@@ -100,7 +100,7 @@ describe("PromptComposer attachment cards (#383)", () => {
   // into one notice and then close both at once.
   it("raises one notice per rejected file and dismisses them independently", () => {
     render(<Host />);
-    attach(["spec.docx", "spec.docx", "prd.md"]);
+    attach(["spec.odt", "spec.odt", "prd.md"]);
 
     // The supported file still lands.
     expect(screen.getByText("prd.md")).toBeInTheDocument();
@@ -122,9 +122,9 @@ describe("PromptComposer attachment cards (#383)", () => {
     expect(screen.getByText(/Larger than 5 MB/)).toBeInTheDocument();
   });
 
-  it("keeps Start disabled until the prompt is more than whitespace", () => {
+  it("keeps Continue disabled until the prompt is more than whitespace", () => {
     render(<Host />);
-    const start = screen.getByRole("button", { name: "Start" });
+    const start = screen.getByRole("button", { name: "Continue" });
     expect(start).toBeDisabled();
 
     fireEvent.change(screen.getByRole("textbox"), {
@@ -140,10 +140,10 @@ describe("PromptComposer attachment cards (#383)", () => {
 
   // Attaching is optional and documents alone are not a brief: the typed idea
   // stays the anchor (grilling decision 7, unchanged by the v2 reversal).
-  it("does not enable Start on attachments alone", () => {
+  it("does not enable Continue on attachments alone", () => {
     render(<Host />);
     attach(["prd.md"]);
 
-    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 });

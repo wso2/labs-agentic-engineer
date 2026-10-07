@@ -182,6 +182,48 @@ format, and the console card no longer names it.
   with `AEP_EVAL_MODEL_FORMAT`, `AEP_EVAL_MODEL_BASE_URL`, `AEP_EVAL_MODEL_NAME`
   and `AEP_EVAL_MODEL_AUTH_SCHEME` beside it: all five or none.
 
+## Amendment 2026-09-29 — the SRE agent may use its own connection
+
+**Superseded by [ADR-0040](ADR-0040-the-sre-agent-is-configured-at-install.md):**
+the SRE agent's model is now written into its own Secret at install, and
+aep-api stores no SRE model connection.
+
+The OpenChoreo SRE (RCA) agent is one Deployment per plane, not dispatched
+per-org, so "the" connection above does not quite fit it: an org's default
+connection may be Anthropic-format, which the stock agent (OpenAI-compatible
+only) cannot call. An org may now save a second, optional connection just for
+it — the **SRE model connection** (`/config` section `sreLlm`,
+`org_sre_model_connections`) — OpenAI-compatible and Bearer only, under the
+same probe-before-save and host-change-needs-a-key rules as the org's main
+connection.
+
+Resolving what the agent runs on checks, in order: the SRE model connection,
+if saved; else the org's own model connection, if it carries the `SREAgent`
+capability (an `openai-compatible` connection with Bearer auth); else unconfigured, and the
+agent is scaled to zero. This is not a second peer connection in the sense
+§1 rejects — every other agent still reads exactly one connection — it is a
+narrow, single-purpose override for the one workload this platform runs
+outside the per-org dispatch model. See
+[`services/aep-api/design/sre-model-connection.md`](../../services/aep-api/design/sre-model-connection.md)
+for delivery (aep-api pushes the resolved connection into the agent's
+Secret; the agent never reads AE's database).
+
+## Amendment 2026-10-01 — the SRE model connection is set at install only
+
+**Superseded by [ADR-0040](ADR-0040-the-sre-agent-is-configured-at-install.md).**
+
+Supplying a separate OpenAI-compatible key next to the org's own connection
+was a stop-gap; there is no console row or `/config` section for it anymore.
+It is set, and rotated, only by `aectl sre install`'s install-time seed
+(`--llm-api-key-file`/`--llm-model`/`--llm-base-url`), and the seed is
+authoritative: a re-run whose seed hash differs from the last one tried is
+probed and, on success, **replaces** whatever connection is stored; a refusal
+leaves the stored connection untouched; no seed configured leaves it alone
+too (re-running the installer without a key file never wipes it). Removal is
+`aectl sre uninstall`, unchanged. See
+[`services/aep-api/design/sre-model-connection.md`](../../services/aep-api/design/sre-model-connection.md)
+for the mechanism.
+
 ## Amendment 2026-10-06 — AE Studio and the key's write order
 
 - **The design agent reads the connection from its pod.** The connection's

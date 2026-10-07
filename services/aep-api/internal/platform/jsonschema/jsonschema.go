@@ -36,6 +36,8 @@ package jsonschema
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 )
 
 // Schema is one node of a parsed schema document.
@@ -55,7 +57,16 @@ type Schema struct {
 	MinLength *int            `json:"minLength"`
 	MaxLength *int            `json:"maxLength"`
 	MinItems  *int            `json:"minItems"`
+	MaxItems  *int            `json:"maxItems"`
 	Items     *Schema         `json:"items"`
+	// Pattern is an RE2 regular expression a string must match.
+	Pattern string `json:"pattern"`
+	// Numeric bounds. Zod emits them for constrained numbers; the AI gateway's
+	// policy catalog uses them for its limits.
+	Minimum          *float64 `json:"minimum"`
+	Maximum          *float64 `json:"maximum"`
+	ExclusiveMinimum *float64 `json:"exclusiveMinimum"`
+	ExclusiveMaximum *float64 `json:"exclusiveMaximum"`
 	// AnyOf is how a nullable or union-typed field renders (z.string().nullable()
 	// becomes anyOf[{type:string},{type:null}]). The value must satisfy at least
 	// one branch.
@@ -80,13 +91,12 @@ var SupportedKeywords = map[string]bool{
 	"minItems":             true,
 	"items":                true,
 	"anyOf":                true,
-	// Emitted by Zod for `z.number().int().positive()` alongside `type:integer`.
-	// The integer type check already rejects the shapes that matter here (a
-	// string, an object) and the referential checks own the rest, so these are
-	// deliberately accepted-and-ignored rather than left to trip the walk.
-	"exclusiveMinimum": true,
-	"maximum":          true,
-	"minimum":          true,
+	"maxItems":             true,
+	"pattern":              true,
+	"exclusiveMinimum":     true,
+	"exclusiveMaximum":     true,
+	"maximum":              true,
+	"minimum":              true,
 }
 
 // MustParse decodes a schema document, panicking on malformed input. Callers
@@ -137,10 +147,13 @@ func validate(value any, s *Schema, path string) []string {
 		if f != float64(int64(f)) {
 			return []string{at(path) + "must be an integer"}
 		}
+		return validateBounds(f, s, path)
 	case "number":
-		if _, ok := value.(float64); !ok {
+		f, ok := value.(float64)
+		if !ok {
 			return []string{at(path) + "must be a number"}
 		}
+		return validateBounds(f, s, path)
 	case "null":
 		if value != nil {
 			return []string{at(path) + "must be null"}
@@ -200,6 +213,23 @@ func validateObject(value any, s *Schema, path string) []string {
 	return nil
 }
 
+// validateBounds checks a number against the schema's numeric bounds.
+func validateBounds(f float64, s *Schema, path string) []string {
+	switch {
+	case s.Minimum != nil && f < *s.Minimum:
+		return []string{at(path) + "must be at least " + formatNumber(*s.Minimum)}
+	case s.Maximum != nil && f > *s.Maximum:
+		return []string{at(path) + "must be at most " + formatNumber(*s.Maximum)}
+	case s.ExclusiveMinimum != nil && f <= *s.ExclusiveMinimum:
+		return []string{at(path) + "must be greater than " + formatNumber(*s.ExclusiveMinimum)}
+	case s.ExclusiveMaximum != nil && f >= *s.ExclusiveMaximum:
+		return []string{at(path) + "must be less than " + formatNumber(*s.ExclusiveMaximum)}
+	}
+	return nil
+}
+
+func formatNumber(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
+
 func validateArray(value any, s *Schema, path string) []string {
 	arr, ok := value.([]any)
 	if !ok {
@@ -207,6 +237,9 @@ func validateArray(value any, s *Schema, path string) []string {
 	}
 	if s.MinItems != nil && len(arr) < *s.MinItems {
 		return []string{at(path) + fmt.Sprintf("must have at least %d items", *s.MinItems)}
+	}
+	if s.MaxItems != nil && len(arr) > *s.MaxItems {
+		return []string{at(path) + fmt.Sprintf("must have at most %d items", *s.MaxItems)}
 	}
 	for i, item := range arr {
 		if msgs := validate(item, s.Items, fmt.Sprintf("%s[%d]", path, i)); len(msgs) > 0 {
@@ -229,6 +262,15 @@ func validateString(value any, s *Schema, path string) []string {
 	}
 	if len(s.Enum) > 0 && !enumContains(s.Enum, str) {
 		return []string{at(path) + fmt.Sprintf("%q is not an allowed value", str)}
+	}
+	if s.Pattern != "" {
+		re, err := regexp.Compile(s.Pattern)
+		if err != nil {
+			return []string{at(path) + "cannot be checked: the schema's pattern does not compile"}
+		}
+		if !re.MatchString(str) {
+			return []string{at(path) + fmt.Sprintf("must match %s", s.Pattern)}
+		}
 	}
 	return nil
 }

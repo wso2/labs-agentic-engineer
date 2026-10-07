@@ -30,7 +30,9 @@ preferences, reporting/analytics — check for each explicitly before finishing.
 per operation and a one-line `description` per response — no multi-sentence
 descriptions, no `example`/`examples` blocks, no speculative endpoints the
 requirements don't imply. Schemas carry the required fields plus the few core
-properties that define the entity — not every conceivable attribute.
+properties that define the entity — not every conceivable attribute. A property
+whose name and type do not give its meaning, such as a unit, a direction or a
+sign, gets a one-line `description` in each schema that has it.
 
 For resource taxonomy (collection/atomic/controller), URI grammar, HTTP-method
 semantics, and a full worked example, read
@@ -150,7 +152,8 @@ Which **rows** an operation reaches is its path, and nothing else says it:
 
 The `<relation>` is a noun the domain model has (`team` because `Employee` has a
 `managerId`), never a role or a group name — `/me/team/claims`, not
-`/manager/claims`. The handler behind a `/me/…` path resolves the rows through
+`/manager/claims`. Some operation writes that relation: if none sets
+`managerId`, `/me/team/claims` is empty for every caller. The handler behind a `/me/…` path resolves the rows through
 the gateway assertion's `sub` and nothing the client sends; a row that is not
 the caller's does not exist there, so the answer is 404, never 403.
 

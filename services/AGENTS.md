@@ -3,7 +3,6 @@
 | Folder | Tech |
 |---|---|
 | `aep-api/` | Go BFF + GitHub webhooks (git ops folded in) |
-| `aep-mcp-server/` | TS MCP server for the SRE handoff issue endpoints |
 
 The design agent, the Room and the AE Studio tools run in each organization's
 pod, not here: see [`../components/AGENTS.md`](../components/AGENTS.md).

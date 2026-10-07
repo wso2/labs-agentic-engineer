@@ -116,7 +116,7 @@ already pays for it. For the same reason the run state — not a task's status �
 is the console's single liveness driver.
 
 The console rendering that follows from this is a console decision:
-[`apps/console/design/decisions/ADR-0013-version-run-surface.md`][console-adr].
+[console ADR-0013, at the `classic-console` tag][console-adr].
 
 ## Consequences
 
@@ -164,4 +164,4 @@ Component per cycle — is documented in
 [adr20]: ADR-0020-a-run-species-is-a-workflow.md
 [delivery]: ../../services/aep-api/internal/delivery/README.md
 [adr8]: ADR-0008-architecture-in-readme-ladder.md
-[console-adr]: ../../apps/console/design/decisions/ADR-0013-version-run-surface.md
+[console-adr]: https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0013-version-run-surface.md

@@ -1,0 +1,43 @@
+{
+  "name": "onboarding-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "onboarding-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "stories": [
+    "F1.1",
+    "F1.2",
+    "F1.3",
+    "F1.4",
+    "F1.5",
+    "F1.6",
+    "F1.7",
+    "F1.8",
+    "F1.9",
+    "F1.10",
+    "F1.11",
+    "F1.12"
+  ],
+  "description": "Owns new hire records, the standard onboarding task template, and the onboarding tasks generated for each new hire across IT, HR and Facilities. Generates a hire's checklist from the template on creation, and tracks due dates and completion. Flags a task overdue once its due date passes without completion, surfaced in-app to the assigned staff member and to HR — it sends no external notification. Does not manage payroll/benefits, or track physical asset inventory.",
+  "dependencies": [
+    {
+      "kind": "platform-resource",
+      "name": "onboarding-db",
+      "resourceType": "postgres-cnpg"
+    },
+    {
+      "kind": "platform-resource",
+      "name": "user-auth",
+      "resourceType": "thunder-app"
+    }
+  ],
+  "skillsPinned": [
+    "openapi-conventions",
+    "ballerina",
+    "api-management",
+    "thunder-authentication"
+  ]
+}

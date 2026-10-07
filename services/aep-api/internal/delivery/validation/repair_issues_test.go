@@ -57,8 +57,7 @@ func TestMintRepairIssues_OnePerFailedScenario(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(failedReport))
+	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(failedReport))})
 	if err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
@@ -122,13 +121,13 @@ func TestMintRepairIssues_DedupeKeyIsScopedToTheScenario(t *testing.T) {
 
 	// Called twice — a Temporal activity retry. The keys must match so the second
 	// pass resolves onto what the first filed.
-	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, report); err != nil {
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport(report)}); err != nil {
 		t.Fatalf("first mint: %v", err)
 	}
 	firstKeys := dedupeKeys(iss)
 	iss.created = nil
 
-	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, report); err != nil {
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport(report)}); err != nil {
 		t.Fatalf("retry: %v", err)
 	}
 	if got := dedupeKeys(iss); !equalStrings(got, firstKeys) {
@@ -154,7 +153,7 @@ func TestMintRepairIssues_RecurrenceCommentsRatherThanFilingAgain(t *testing.T) 
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
 	// Attempt 1 files both failures.
-	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, []byte(failedReport))
+	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(failedReport))})
 	if err != nil {
 		t.Fatalf("first attempt: %v", err)
 	}
@@ -166,7 +165,7 @@ func TestMintRepairIssues_RecurrenceCommentsRatherThanFilingAgain(t *testing.T) 
 	iss.created = nil
 	iss.openByDedupe = map[string]int{keys[0]: 77}
 
-	refiled, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, []byte(failedReport))
+	refiled, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(failedReport))})
 	if err != nil {
 		t.Fatalf("second attempt: %v", err)
 	}
@@ -209,8 +208,7 @@ func TestMintRepairIssues_NothingFailedFilesNothing(t *testing.T) {
 		"no report":  "",
 		"unparsable": `{`,
 	} {
-		filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-			[]byte(report))
+		filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(report))})
 		if err != nil {
 			t.Errorf("%s: MintRepairIssues: %v", name, err)
 		}
@@ -228,8 +226,7 @@ func TestMintRepairIssues_NeedsNoOracle(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{found: false})
 
-	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(failedReport))
+	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(failedReport))})
 	if err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
@@ -288,8 +285,7 @@ func TestMintRepairIssues_AgainstAProductionReport(t *testing.T) {
 	// No oracle at all: the report has to be sufficient on its own.
 	svc := newSvc(iss, fakeCriteria{found: false})
 
-	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(productionReport))
+	filed, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(productionReport))})
 	if err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
@@ -359,8 +355,7 @@ func TestRepairIssueBody_CarriesTheWholeTraceAndTheCapture(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{found: false})
 
-	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(evidenceReport)); err != nil {
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(evidenceReport))}); err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
 	body := iss.created[0].Body
@@ -396,8 +391,7 @@ func TestRepairIssueBody_SaysWhenNoRequestLeftThePage(t *testing.T) {
 
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{found: false})
-	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(report)); err != nil {
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(report))}); err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
 	if !strings.Contains(iss.created[0].Body, "no request left the page") {
@@ -416,8 +410,7 @@ func TestRepairIssueBody_RendersAnHonestlyMissingCapture(t *testing.T) {
 
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{found: false})
-	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone,
-		[]byte(report)); err != nil {
+	if _, err := svc.MintRepairIssues(context.Background(), "org", "proj", thisMilestone, Judgement{Report: ParseReport([]byte(report))}); err != nil {
 		t.Fatalf("MintRepairIssues: %v", err)
 	}
 	body := iss.created[0].Body

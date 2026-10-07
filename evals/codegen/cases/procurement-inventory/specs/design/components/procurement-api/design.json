@@ -1,0 +1,18 @@
+{
+  "name": "procurement-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "procurement-api",
+  "entrypoint": "deployment/service",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "inventory-service", "description": "Reads and manages items, prices, stock levels, ledger and low-stock items; records stock movements when goods are received." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" },
+    { "kind": "platform-resource", "name": "procurement-db", "resourceType": "postgres-cnpg", "description": "Stores purchase requests, request lines and goods receipts." }
+  ],
+  "description": "Owns purchase requests and goods receipts, and enforces approval rules (one configured approval limit of 5000 for all approvers, no self-approval) and receiving rules (approved only, outstanding quantity). Exposes catalogue management and the stock views by calling the inventory service, which only this API may call. Does not store stock or per-approver limits; its own data lives in its dedicated procurement-db.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

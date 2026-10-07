@@ -56,6 +56,12 @@ export interface AcceptanceScenario {
   readonly tags: readonly string[];
   /** `@negative` anywhere up the chain — tags inherit Feature -> Rule -> Scenario. */
   readonly negative: boolean;
+  /**
+   * The IDs from `@story-<id>` tags on the Feature and the Rule — NOT the
+   * scenario's own, exactly as the checker reads them. Scope ("held back")
+   * is decided per story, so this is what both sides must agree on.
+   */
+  readonly stories: readonly string[];
   readonly steps: readonly AcceptanceStep[];
 }
 
@@ -82,10 +88,13 @@ export interface AcceptanceFeature {
 }
 
 const NEGATIVE = "@negative";
+const STORY_TAG = /^@story-(\S+)$/;
 const STEP = /^(Given|When|Then|And|But|\*)\s+(.*)$/;
 
 /** `Scenario Outline:` must be tried before `Scenario:`, which is its prefix. */
 const SCENARIO_KEYWORDS = ["Scenario Outline:", "Scenario:", "Example:"] as const;
+
+const storyIds = (tags: readonly string[]): string[] => tags.flatMap((t) => STORY_TAG.exec(t)?.[1] ?? []);
 
 interface MutableRule {
   text: string;
@@ -190,6 +199,7 @@ export function parseFeatureFile(file: string, text: string): AcceptanceFeature 
         line: index + 1,
         tags: own,
         negative: inherited.includes(NEGATIVE),
+        stories: [...storyIds(featureTags), ...storyIds(owning.tags)],
         steps: scenarioSteps,
       });
       steps = scenarioSteps;

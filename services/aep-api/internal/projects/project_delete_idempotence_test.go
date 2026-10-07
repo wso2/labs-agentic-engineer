@@ -298,3 +298,53 @@ func assertTeardownOrder(t *testing.T, trace *deleteTrace, want ...string) {
 		}
 	}
 }
+
+type fakeGuardrailRecords struct {
+	calls int
+	args  [2]string
+	err   error
+}
+
+func (f *fakeGuardrailRecords) DeleteByProject(_ context.Context, org, project string) error {
+	f.calls++
+	f.args = [2]string{org, project}
+	return f.err
+}
+
+// A guardrail record is AEP's claim over the entries it wrote to an agent's
+// binding, keyed by project and agent name. Left behind, a project recreated
+// under the same name inherits it — and would treat an operator's same-named
+// guardrail as its own to remove.
+func TestDeleteProject_PurgesTheProjectsGuardrailRecords(t *testing.T) {
+	t.Parallel()
+	oc := &ocmocks.ProjectClientMock{
+		DeleteProjectFunc: func(context.Context, string, string) error { return nil },
+	}
+	records := &fakeGuardrailRecords{}
+	svc := NewProjectService(oc, &fakeRepoSvc{DeleteRepoFunc: func(context.Context, string, string) error { return nil }}, nil, nil, &fakeExecs{})
+	svc.SetGuardrailRecords(records)
+
+	if err := svc.DeleteProject(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+	if records.calls != 1 || records.args != [2]string{"acme", "web"} {
+		t.Errorf("guardrail records purge: calls=%d args=%v, want 1 (acme,web)", records.calls, records.args)
+	}
+}
+
+func TestDeleteProject_GuardrailRecordsPurgeFailureIsSwallowed(t *testing.T) {
+	t.Parallel()
+	oc := &ocmocks.ProjectClientMock{
+		DeleteProjectFunc: func(context.Context, string, string) error { return nil },
+	}
+	execs := &fakeExecs{}
+	svc := NewProjectService(oc, &fakeRepoSvc{DeleteRepoFunc: func(context.Context, string, string) error { return nil }}, nil, nil, execs)
+	svc.SetGuardrailRecords(&fakeGuardrailRecords{err: errors.New("db down")})
+
+	if err := svc.DeleteProject(context.Background(), "acme", "web"); err != nil {
+		t.Fatalf("a guardrail records purge failure must be best-effort, got %v", err)
+	}
+	if execs.deleteCalls != 1 {
+		t.Errorf("executions purge ran %d times, want 1", execs.deleteCalls)
+	}
+}

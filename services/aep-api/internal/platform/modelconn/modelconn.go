@@ -141,7 +141,7 @@ type FormatOption struct {
 // DefaultAnthropicModel is the Anthropic format's default model, and the one
 // the platform seeds a `model_rates` row for, so an org that connects with
 // defaults has priced usage.
-const DefaultAnthropicModel = "claude-sonnet-5"
+const DefaultAnthropicModel = "claude-sonnet-5-5"
 
 // Formats is what the card offers; GET /config's llmFormats is built from it.
 var Formats = []FormatOption{

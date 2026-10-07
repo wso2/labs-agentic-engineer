@@ -143,6 +143,15 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function SignInCard({ launch, session, phase }: { launch: Launch; session: Session; phase: Phase }) {
+  // signIn() rejects before it navigates when the identity provider cannot be
+  // reached from this page; left unshown, the button seems to do nothing.
+  const [startError, setStartError] = useState<string | null>(null);
+  const signIn = () => {
+    setStartError(null);
+    session.signIn().catch((error: unknown) => {
+      setStartError(error instanceof Error ? error.message : String(error));
+    });
+  };
   return (
     <Paper variant="outlined" sx={{ p: 3 }}>
       <Stack spacing={2}>
@@ -165,6 +174,12 @@ function SignInCard({ launch, session, phase }: { launch: Launch; session: Sessi
             {phase.message}
           </Alert>
         )}
+        {startError !== null && (
+          <Alert severity="error">
+            <AlertTitle>The sign-in could not start</AlertTitle>
+            {startError}
+          </Alert>
+        )}
         {phase.kind === "checking" ? (
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }} aria-live="polite">
             <CircularProgress size={18} />
@@ -177,7 +192,7 @@ function SignInCard({ launch, session, phase }: { launch: Launch; session: Sessi
             variant="contained"
             size="large"
             startIcon={<KeyRound size={16} aria-hidden />}
-            onClick={() => void session.signIn()}
+            onClick={signIn}
           >
             Sign in as a test user
           </Button>

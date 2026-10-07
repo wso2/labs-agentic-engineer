@@ -24,7 +24,7 @@ import (
 )
 
 // RunOrgSecretsMigration creates org_secrets in its legacy (value-column)
-// shape. RunPhase26SecretsRefsOnly converges it to reference names only, so a
+// shape. RunPhase29SecretsRefsOnly converges it to reference names only, so a
 // fresh database and an upgraded one meet the same schema at every step; no
 // secret value is ever stored here at HEAD.
 //

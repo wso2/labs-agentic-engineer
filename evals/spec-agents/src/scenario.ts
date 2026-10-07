@@ -26,6 +26,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import type { PlanScope } from "@aep/agent-stream";
 import { z } from "zod";
 import { SCENARIOS_DIR } from "./config.js";
 
@@ -41,6 +42,13 @@ export const briefSchema = z.object({
   traits: z.array(z.string()).optional(),
   /** Per-scenario override of the agent-turn cap (#354). */
   maxTurns: z.number().int().min(1).max(30).optional(),
+  /**
+   * Documents the user attached (S5), by file name under
+   * scenarios/fixtures/references/: copied into the project's
+   * specs/requirements/references/ and listed to the kickoff, as the platform
+   * overlays them.
+   */
+  references: z.array(z.string().min(1)).optional(),
 });
 export type ScenarioBrief = z.infer<typeof briefSchema>;
 
@@ -74,6 +82,26 @@ export type DesignScenario = z.infer<typeof designScenarioSchema>;
 const tasksScenarioSchema = z.object({
   name: z.string().regex(/^[a-z0-9-]+$/),
   fixture: z.string().min(1),
+  /**
+   * The milestone scope the platform would send for the version (aep-api
+   * `planScopeFor`): its stories, features and product-wide items. Absent →
+   * a scope-less plan of the whole design.
+   */
+  scope: z
+    .object({
+      tag: z.string().min(1),
+      stories: z.array(z.object({ id: z.string(), title: z.string().optional(), covered: z.boolean() })),
+      features: z
+        .array(z.object({ id: z.string(), name: z.string().optional(), needs: z.array(z.string()).optional() }))
+        .optional(),
+      productWide: z
+        .array(z.object({ id: z.string(), text: z.string().optional(), appliesTo: z.array(z.string()).optional() }))
+        .optional(),
+    })
+    // Parsed YAML never carries an explicit undefined, which is the one way
+    // zod's optional output differs from the contract's exact optionals.
+    .transform((s) => s as PlanScope)
+    .optional(),
   rubric: rubricSchema,
 });
 export type TasksScenario = z.infer<typeof tasksScenarioSchema>;

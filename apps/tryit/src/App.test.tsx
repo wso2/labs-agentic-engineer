@@ -77,6 +77,21 @@ describe("App", () => {
     expect(sessionStorage.getItem("tryit:launch")).toContain("incident-triage");
   });
 
+  // signinRedirect() fails before it navigates when the identity provider's
+  // discovery document cannot be fetched (unreachable, or this origin not yet
+  // allowed). Swallowed, the button looked like it did nothing at all.
+  it("says why when the sign-in cannot start, and lets the user try again", async () => {
+    window.location.hash = launchHash;
+    signIn.mockRejectedValueOnce(new TypeError("NetworkError when attempting to fetch resource."));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in as a test user" }));
+
+    expect(await screen.findByText("The sign-in could not start")).toBeInTheDocument();
+    expect(screen.getByText(/NetworkError when attempting to fetch resource/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in as a test user" })).toBeEnabled();
+  });
+
   it("finishes the callback, drops the code from the URL, and shows the agent", async () => {
     sessionStorage.setItem(
       "tryit:launch",

@@ -52,3 +52,65 @@ func (h *Handler) ListProjectTags(ctx context.Context, request gen.ListProjectTa
 		SpecDirty: tags.SpecDirty,
 	}), nil
 }
+
+// ListProjectVersions serves what each version built (B5), for the console
+// to say what changed in a feature since it was last built.
+func (h *Handler) ListProjectVersions(ctx context.Context, request gen.ListProjectVersionsRequestObject) (gen.ListProjectVersionsResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	versions, err := h.artifacts.ListVersions(ctx, org, request.ProjectName)
+	if err != nil {
+		switch {
+		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
+			return nil, apierr.NotFound("project repository not found")
+		default:
+			return nil, apierr.Internal("internal error")
+		}
+	}
+	out := gen.SpecVersionList{Versions: make([]gen.SpecVersion, 0, len(versions))}
+	for _, v := range versions {
+		sv := gen.SpecVersion{
+			Name:        v.Name,
+			Features:    make([]gen.VersionFeature, 0, len(v.Features)),
+			ProductWide: nonNil(v.ProductWide),
+			HeldBack:    nonNil(v.HeldBack),
+			Fixes:       v.Fixes,
+		}
+		for _, f := range v.Features {
+			vf := gen.VersionFeature{ID: f.ID, Name: f.Name, Lines: make([]gen.VersionLine, 0, len(f.Lines))}
+			for _, l := range f.Lines {
+				vf.Lines = append(vf.Lines, gen.VersionLine{ID: l.ID, Words: l.Words})
+			}
+			sv.Features = append(sv.Features, vf)
+		}
+		out.Versions = append(out.Versions, sv)
+	}
+	return gen.ListProjectVersions200JSONResponse(out), nil
+}
+
+// nonNil keeps a required list a list on the wire when it is empty.
+func nonNil(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+// GetSpecState serves what the spec workspace needs beside its documents (N5).
+func (h *Handler) GetSpecState(ctx context.Context, request gen.GetSpecStateRequestObject) (gen.GetSpecStateResponseObject, error) {
+	org := tenant.BoundOrgFromContext(ctx)
+	st, err := h.artifacts.SpecState(ctx, org, request.ProjectName)
+	if err != nil {
+		switch {
+		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
+			return nil, apierr.NotFound("project repository not found")
+		default:
+			return nil, apierr.Internal("internal error")
+		}
+	}
+	out := gen.SpecState{DesignedFrom: st.DesignedFrom, Documents: make([]gen.SourceDocument, 0, len(st.Documents))}
+	for _, name := range st.Documents {
+		// Coverage (what each page says and where it landed) is S5's.
+		out.Documents = append(out.Documents, gen.SourceDocument{ID: name, Title: name, Rows: []gen.SourceDocumentRow{}})
+	}
+	return gen.GetSpecState200JSONResponse(out), nil
+}

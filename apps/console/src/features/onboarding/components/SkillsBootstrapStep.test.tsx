@@ -26,7 +26,7 @@ import type { components } from "../../../generated/aep-api";
 type AeStudio = components["schemas"]["AeStudio"];
 
 const mutate = vi.fn();
-vi.mock("../../settings/api/queries", () => ({
+vi.mock("../../skills/api/skills", () => ({
   useSyncSkills: () => ({ mutate, isPending: false, isError: false, isSuccess: false }),
 }));
 

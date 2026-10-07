@@ -54,7 +54,7 @@ function fixture(files: Record<string, string> = {}) {
   const bundle = new FileBundle(files);
   const { tools, writes } = buildFileToolSet(bundle);
   const wire: StreamPart[] = [];
-  return { bundle, tools, writes, wire, feed: tapWrites(writes, (p) => wire.push(p)) };
+  return { bundle, tools, writes, wire, feed: tapWrites(writes, (p) => wire.push(p)).forward };
 }
 
 const outputs = (wire: StreamPart[]): OpResult[] =>
@@ -155,4 +155,91 @@ test("frames for tools the ledger does not own pass through verbatim", () => {
 test("an unregistered tool is a programming error, not a silent no-op", () => {
   const ledger = new WriteLedger({});
   assert.throws(() => ledger.apply("c1", ADD_FILE, {}), /no write op registered/);
+});
+
+// --- An op that waits on an async gate (the prototype render check) ----------
+
+/** A ledger whose addFile waits for `release()` before it applies: a render check in flight. */
+function slowFixture() {
+  const bundle = new FileBundle({});
+  const releases: (() => void)[] = [];
+  const order: string[] = [];
+  const ledger = new WriteLedger({
+    [ADD_FILE]: {
+      validate: (args) => args,
+      apply: (input) => {
+        const { path, content } = input as { path: string; content: string };
+        order.push(`start ${path}`);
+        if (!path.endsWith(".tsx")) return bundle.addFile(path, content);
+        return new Promise<OpResult>((resolve) =>
+          releases.push(() => {
+            order.push(`land ${path}`);
+            resolve(bundle.addFile(path, content));
+          }),
+        );
+      },
+    },
+  });
+  const wire: StreamPart[] = [];
+  const tap = tapWrites(ledger, (p) => wire.push(p));
+  return { bundle, ledger, wire, tap, releases, order };
+}
+
+test("frames after a pending async verdict wait for it, and the wire keeps the stream's order", async () => {
+  const { wire, tap, releases, bundle } = slowFixture();
+  for (const part of callFrames("c1", { path: "specs/p.tsx", content: "x" })) tap.forward(part);
+  for (const part of callFrames("c2", { path: "specs/a.md", content: "# A\n" })) tap.forward(part);
+  tap.forward({ type: "text-delta", delta: "after" });
+
+  assert.deepEqual(wire.map((p) => p.type), ["tool-input-start", "tool-input-delta", "tool-input-delta", "tool-input-end"], "held at c1's tool-call");
+  assert.equal(bundle.has("specs/a.md"), false, "c2 is not applied while c1's gate is ruling");
+
+  releases[0]!();
+  await tap.drained();
+  assert.deepEqual(
+    wire.map((p) => `${p.type}${"toolCallId" in p && p.toolCallId ? ` ${p.toolCallId}` : ""}`),
+    [
+      "tool-input-start",
+      "tool-input-delta",
+      "tool-input-delta",
+      "tool-input-end",
+      "tool-call c1",
+      "tool-result c1",
+      "tool-input-start",
+      "tool-input-delta",
+      "tool-input-delta",
+      "tool-input-end",
+      "tool-call c2",
+      "tool-result c2",
+      "text-delta",
+    ],
+  );
+  assert.equal(bundle.read("specs/a.md"), "# A\n");
+});
+
+test("ops apply in call order behind a pending one, whichever path asks first", async () => {
+  const { ledger, releases, order } = slowFixture();
+  const first = ledger.apply("c1", ADD_FILE, { path: "specs/p.tsx", content: "x" });
+  const second = ledger.apply("c2", ADD_FILE, { path: "specs/a.md", content: "# A\n" });
+  assert.ok(second instanceof Promise, "queued behind the pending op");
+  assert.equal(ledger.apply("c2", ADD_FILE, {}), second, "the SDK's execute gets the same verdict");
+  await Promise.resolve();
+  assert.deepEqual(order, ["start specs/p.tsx"]);
+  releases[0]!();
+  assert.equal((await first).ok, true);
+  assert.equal((await second).ok, true);
+  assert.deepEqual(order, ["start specs/p.tsx", "land specs/p.tsx", "start specs/a.md"]);
+  // Nothing pending once the queue has settled: the next op is synchronous again.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((ledger.apply("c3", ADD_FILE, { path: "specs/b.md", content: "# B\n" }) as OpResult).ok, true);
+});
+
+test("drained() rejects with an error the sink threw on a held frame", async () => {
+  const { ledger, releases } = slowFixture();
+  const tap = tapWrites(ledger, (p) => {
+    if (p.type === "tool-result") throw new Error("sink closed");
+  });
+  for (const part of callFrames("c1", { path: "specs/p.tsx", content: "x" })) tap.forward(part);
+  releases[0]!();
+  await assert.rejects(tap.drained(), /sink closed/);
 });

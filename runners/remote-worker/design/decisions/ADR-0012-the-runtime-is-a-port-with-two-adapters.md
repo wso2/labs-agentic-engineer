@@ -46,7 +46,7 @@ it does not.
 ## Where the design's sketch and the repository disagreed
 
 The design (rev 6, §11) sketched the interface. The repo won six arguments with
-it, and each is recorded at its field in `port.ts`.
+it. Each is listed below.
 
 1. **`allowWriteUnder: string[]` → `WritePolicy.allowOutsideProject(target)`.**
    A prefix list is a decision this repo already made and reversed:

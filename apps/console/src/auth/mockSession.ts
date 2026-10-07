@@ -48,6 +48,28 @@ export const MOCK_USER = {
 
 export const MOCK_ORG = "acme";
 
+// Signing out in mock mode ends the fixed session for this tab (sessionStorage,
+// like the real session store), so a reload stays signed out until the
+// developer signs in again — the same walk a real sign-out gives.
+const SIGNED_OUT_KEY = "aep:mock:signed-out";
+
+export function isMockSignedOut(): boolean {
+  try {
+    return sessionStorage.getItem(SIGNED_OUT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function setMockSignedOut(signedOut: boolean): void {
+  try {
+    if (signedOut) sessionStorage.setItem(SIGNED_OUT_KEY, "1");
+    else sessionStorage.removeItem(SIGNED_OUT_KEY);
+  } catch {
+    /* storage blocked: the sign-out lasts until reload */
+  }
+}
+
 // JWT-shaped but unsigned — enough for the collab mock BFF, which decodes
 // name/email claims without verifying. Never sent to a real BFF: real API
 // runs use thunder auth mode.

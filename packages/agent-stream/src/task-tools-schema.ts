@@ -40,6 +40,13 @@ export const planTaskInputSchema = z.object({
   component: z
     .string()
     .describe("The design component this Task implements. Must be one of the known components (a directory under specs/design/components/)."),
+  feature: z
+    .string()
+    .regex(/^(F[0-9]+|foundation)$/)
+    .optional()
+    .describe(
+      "The feature this Task builds in its component (F2), or 'foundation' for the component's shared setup and the product-wide requirements the version carries. Omit only for a design with no features.",
+    ),
   title: z
     .string()
     .describe("Short human-facing title; must be unique across planned and existing Tasks."),

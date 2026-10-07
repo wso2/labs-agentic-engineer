@@ -19,54 +19,44 @@
 import { env } from "../config/env";
 import { getAccessToken } from "../auth/token";
 
-/** Product code billing uses for App Factory subscriptions. */
-export const APP_FACTORY_BILLING_PRODUCT = "app-factory";
+/** The product code WSO2 Cloud billing knows this platform's subscriptions by. */
+const APP_FACTORY_BILLING_PRODUCT = "app-factory";
 
 /**
- * Activate (or no-op refresh) the org's product subscription via the WSO2
- * Cloud billing-user-api. New orgs are created with inactive subscriptions;
- * this GET is the first-login activation path.
+ * Activate (or, once active, harmlessly refresh) the org's product
+ * subscription through WSO2 Cloud's billing-user-api. A new org's
+ * subscription starts inactive; this GET at sign-in is what activates it.
  *
- * Returns without calling the network when `BILLING_API_BASE_URL` is unset
- * (local / non-cloud). Deduped for the SPA session so React StrictMode and
- * remounts share one in-flight (or completed) request.
+ * Makes no call when `BILLING_API_BASE_URL` is unset (local, or any install
+ * outside WSO2 Cloud). One request per SPA session: StrictMode and remounts
+ * share the one in flight or done; a failure clears it, so a later mount
+ * tries again.
  */
 let activationInFlight: Promise<void> | null = null;
 
-export function ensureBillingSubscriptionActivated(
-  product: string = APP_FACTORY_BILLING_PRODUCT,
-): Promise<void> {
+export function ensureBillingSubscriptionActivated(): Promise<void> {
   const base = env.billingApiBaseUrl.trim();
-  if (!base) {
-    return Promise.resolve();
-  }
-  if (!activationInFlight) {
-    activationInFlight = activateBillingSubscription(base, product).catch(
-      (err: unknown) => {
-        // Allow a later mount to retry if billing was briefly unavailable.
-        activationInFlight = null;
-        throw err;
-      },
-    );
-  }
+  if (!base) return Promise.resolve();
+  activationInFlight ??= activateBillingSubscription(base, APP_FACTORY_BILLING_PRODUCT).catch((err: unknown) => {
+    activationInFlight = null;
+    throw err;
+  });
   return activationInFlight;
 }
 
-/** @internal exported for tests */
+/**
+ * Forget the session's activation, so each test starts from none.
+ * @knipkeep test seam: the module's once-per-session state, reset between tests
+ */
 export function resetBillingActivationForTests(): void {
   activationInFlight = null;
 }
 
-async function activateBillingSubscription(
-  base: string,
-  product: string,
-): Promise<void> {
+async function activateBillingSubscription(base: string, product: string): Promise<void> {
   const url = `${base.replace(/\/$/, "")}/api/v1/organization?product=${encodeURIComponent(product)}`;
   const headers: Record<string, string> = { Accept: "application/json" };
   const token = await getAccessToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(url, { headers });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);

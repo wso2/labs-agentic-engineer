@@ -39,6 +39,10 @@ type FakeArtifactService struct {
 	SaveSpecFunc                  func(ctx context.Context, orgID, projectID string, req spec.SaveRequest) (*spec.SpecSaveResult, error)
 	BuildVersionFactsFunc         func(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error)
 	ListSpecVersionTagsFunc       func(ctx context.Context, orgID, projectID string) (*spec.TagList, error)
+	ListVersionsFunc              func(ctx context.Context, orgID, projectID string) ([]spec.Version, error)
+	ValidationScopeFunc           func(ctx context.Context, orgID, projectID, version string) (spec.ValidationScope, bool, error)
+	TagRepairFunc                 func(ctx context.Context, orgID, projectID, of string) (string, error)
+	SpecStateFunc                 func(ctx context.Context, orgID, projectID string) (spec.SpecState, error)
 	GetDesignAtTagFunc            func(ctx context.Context, orgID, projectID, tag string) (map[string]string, error)
 	GetDesignAtCommitFunc         func(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error)
 	StatusSnapshotFunc            func(ctx context.Context, orgID, projectID string) (*spec.StatusSnapshot, error)
@@ -80,6 +84,34 @@ func (f *FakeArtifactService) ListSpecVersionTags(ctx context.Context, orgID, pr
 	return f.ListSpecVersionTagsFunc(ctx, orgID, projectID)
 }
 
+func (f *FakeArtifactService) ListVersions(ctx context.Context, orgID, projectID string) ([]spec.Version, error) {
+	if f.ListVersionsFunc == nil {
+		panic("artifactstest: ListVersions called but ListVersionsFunc is not set")
+	}
+	return f.ListVersionsFunc(ctx, orgID, projectID)
+}
+
+func (f *FakeArtifactService) ValidationScope(ctx context.Context, orgID, projectID, version string) (spec.ValidationScope, bool, error) {
+	if f.ValidationScopeFunc == nil {
+		panic("artifactstest: ValidationScope called but ValidationScopeFunc is not set")
+	}
+	return f.ValidationScopeFunc(ctx, orgID, projectID, version)
+}
+
+func (f *FakeArtifactService) TagRepair(ctx context.Context, orgID, projectID, of string) (string, error) {
+	if f.TagRepairFunc == nil {
+		panic("artifactstest: TagRepair called but TagRepairFunc is not set")
+	}
+	return f.TagRepairFunc(ctx, orgID, projectID, of)
+}
+
+func (f *FakeArtifactService) SpecState(ctx context.Context, orgID, projectID string) (spec.SpecState, error) {
+	if f.SpecStateFunc == nil {
+		panic("artifactstest: SpecState called but SpecStateFunc is not set")
+	}
+	return f.SpecStateFunc(ctx, orgID, projectID)
+}
+
 func (f *FakeArtifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, tag string) (map[string]string, error) {
 	if f.GetDesignAtTagFunc == nil {
 		panic("artifactstest: GetDesignAtTag called but GetDesignAtTagFunc is not set")
@@ -119,6 +151,6 @@ func (f *FakeArtifactService) ComponentCountAtTag(ctx context.Context, orgID, pr
 	return f.ComponentCountAtTagFunc(ctx, orgID, projectID, tag)
 }
 
-// SetDesignBaselineResolver is wiring, not behaviour — the fakes ignore it.
-func (f *FakeArtifactService) SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error)) {
+// SetDesignRunsResolver is wiring, not behaviour — the fakes ignore it.
+func (f *FakeArtifactService) SetDesignRunsResolver(func(ctx context.Context, orgID, projectID string) ([]spec.DesignRun, error)) {
 }

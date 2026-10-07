@@ -39,6 +39,12 @@ type MilestoneDispatch struct {
 	MilestoneNumber int    `json:"milestoneNumber"`
 	MilestoneTitle  string `json:"milestoneTitle"`
 
+	// SpecTag is the version this run builds (B2). The runner reads specs/ as
+	// the tag holds it, not as main holds it now, so an edit made to the
+	// requirements or the design while the build runs never leaks into it.
+	// Empty only for runs admitted before the tag rode the dispatch.
+	SpecTag string `json:"specTag,omitempty"`
+
 	// Kind is the RunCycle kind this dispatch serves (CycleKind*). It selects
 	// the runner's skill and prompt shape: every kind but validation is the
 	// ordinary milestone loop, and validation swaps in the `validation-task`

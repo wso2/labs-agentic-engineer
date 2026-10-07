@@ -23,9 +23,7 @@ interface RuntimeEnv {
   VITE_THUNDER_URL?: string;
   VITE_THUNDER_CLIENT_ID?: string;
   VITE_THUNDER_SCOPES?: string;
-  /** The platform's test app; the console opens a component there in a new tab. */
   VITE_TRY_IT_URL?: string;
-  /** WSO2 Cloud billing-user-api base; empty/absent disables first-login activation. */
   BILLING_API_BASE_URL?: string;
 }
 
@@ -56,16 +54,21 @@ export const env = {
     import.meta.env.VITE_API_MODE,
     import.meta.env.VITE_AUTH_MODE,
   ),
-  // Thunder OIDC issuer (issue #91). Dev default is the dev-thunder-setup
-  // container; deployments override via window._env_. This is the REST/OIDC
-  // root, not the admin SPA — the Deploy "Thunder Console" link is
-  // `{thunderUrl}/console/users` (see thunderUsersConsoleHref).
+  // Mock mode (VITE_API_MODE=mock, dev only) runs the API on MSW. The few
+  // things only the platform has — the collab room, above all — are stood in
+  // for locally when it is set.
+  apiMode: import.meta.env.DEV && import.meta.env.VITE_API_MODE === "mock" ? ("mock" as const) : ("platform" as const),
+  // Thunder OIDC issuer: the REST/OIDC root, not the admin SPA. The dev
+  // default is the dev-thunder-setup container, as for the old console.
   thunderUrl: getEnv("VITE_THUNDER_URL") || "http://localhost:8097",
+  // The console's client. The dev server's origin (http://localhost:8090) is
+  // added to its redirect URIs by hand; see README.
   thunderClientId: getEnv("VITE_THUNDER_CLIENT_ID") || "aep-console-client",
   thunderScopes: getEnv("VITE_THUNDER_SCOPES") || "openid profile email",
-  // The platform's test app (apps/tryit); same origin as aep-api's TRY_IT_CALLBACK_URL.
+  // The platform's test app (apps/tryit), which Try it opens an agent in; same
+  // origin as aep-api's TRY_IT_CALLBACK_URL. The default is the dev cluster's.
   tryItUrl: getEnv("VITE_TRY_IT_URL") || "http://tryit.aep.localhost:8095",
-  // Empty outside WSO2 Cloud — presence of this URL is the gate for the
-  // first-login billing activation call (GET …/organization?product=…).
+  // WSO2 Cloud's billing-user-api, which sign-in activates the org's
+  // subscription with (api/billing.ts). Unset outside WSO2 Cloud: no call.
   billingApiBaseUrl: getEnv("BILLING_API_BASE_URL") || "",
 } as const;

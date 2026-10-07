@@ -1,0 +1,16 @@
+{
+  "name": "inventory-service",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "inventory-service",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "inventory-db", "resourceType": "postgres-cnpg", "description": "Stores items, on-hand levels and the append-only stock ledger." }
+  ],
+  "description": "Owns stock and the item catalogue: items (added and edited here, starting with 0 on hand), on-hand levels and the append-only stock ledger, persisted in its dedicated inventory-db. Deployed separately because the requirements keep stock in its own service that only the procurement API calls. Receipts are idempotent by reference and write ledger entries atomically with the level change. Does not know about requests, users or approvals.",
+  "stories": [1, 2, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["openapi-conventions", "ballerina"]
+}

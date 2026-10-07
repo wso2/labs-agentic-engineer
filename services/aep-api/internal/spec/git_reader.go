@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -41,12 +42,14 @@ const (
 )
 
 // bundleFilter decides whether a path RELATIVE to the read prefix belongs to the
-// artifact bundle. Requirements are flat (top-level markdown / dsl / excalidraw);
+// artifact bundle. Requirements are the top-level files (markdown / dsl /
+// excalidraw) plus the contract's feature and product-wide topic files
+// (reqspec.IsNestedFile) — never references/, the user's source documents;
 // design is a recursive tree (markdown / yaml at any depth).
 type bundleFilter func(rel string) bool
 
 func requirementsBundleFilter(rel string) bool {
-	return !strings.Contains(rel, "/") && hasAllowedRequirementExt(rel)
+	return (!strings.Contains(rel, "/") && hasAllowedRequirementExt(rel)) || reqspec.IsNestedFile(rel)
 }
 
 func designBundleFilter(rel string) bool {

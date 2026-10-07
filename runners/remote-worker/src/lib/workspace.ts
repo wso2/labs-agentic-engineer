@@ -45,7 +45,7 @@
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
-import { exec } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { config } from "../config.js";
@@ -60,6 +60,7 @@ import { TASK_LOG_DIR } from "./logger.js";
 import { shellQuote } from "./shell.js";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface WorkspaceLayout {
   workspace: string;
@@ -77,6 +78,9 @@ export interface ProvisionRequest {
   bearer: string;
   identity: { name: string; email: string; login?: string };
   correlationId?: string;
+  // B2 — the version this run builds (AEP_SPEC_TAG). When set, the clone's
+  // specs/ is the version's, not main's (pinSpecsToVersion).
+  specTag?: string;
 }
 
 // writeBearerFile persists the platform access token for skill readers. Temp-file + rename so a concurrent `cat` never sees a truncated
@@ -274,5 +278,42 @@ export async function provisionWorkspace(req: ProvisionRequest): Promise<Workspa
     await installScopedCredentialHelper(layout.workspace, scope, ghHelper);
   }
 
+  if (req.specTag) await pinSpecsToVersion(layout.workspace, req.specTag);
+
   return layout;
+}
+
+// pinSpecsToVersion makes the clone's specs/ the version this run builds (B2).
+//
+// The clone is main's tip, and has to be: each task builds on the code the
+// tasks before it merged. But specs/ on main moves while a build runs — the
+// user keeps editing the requirements and the design — and an agent reading
+// main's specs/ builds something nobody versioned. So specs/ is swapped for the
+// tag's, in a way no git operation the agent runs can undo or commit:
+//
+//   - a sparse checkout leaves specs/ out of every tree git writes, so a
+//     rebase onto a newer main never brings main's specs/ back (and git is
+//     told to expect files there, so it does not take them for edits);
+//   - the tag's specs/ is unpacked into that hole, and excluded, so
+//     `git add -A` never stages it and `git status` stays clean.
+//
+// The tag name is the user's (ADR-0030), so it is checked as a ref name and
+// only ever passed as an argument, never through a shell.
+export async function pinSpecsToVersion(workspace: string, tag: string): Promise<void> {
+  const ref = `refs/tags/${tag}`;
+  await execFileAsync("git", ["check-ref-format", ref]);
+  await execFileAsync("git", ["-C", workspace, "fetch", "--no-tags", "origin", `+${ref}:${ref}`]);
+  await execFileAsync("git", ["-C", workspace, "sparse-checkout", "set", "--no-cone", "/*", "!/specs/"]);
+  // Files outside the sparse patterns are expected here: without this, git
+  // (2.37+) finds the unpacked specs/ present, clears their skip flags, and
+  // reports them as changes against main.
+  await execFileAsync("git", ["-C", workspace, "config", "sparse.expectFilesOutsideOfPatterns", "true"]);
+  const archive = path.join(workspace, ".git", "aep-specs-at-version.tar");
+  try {
+    await execFileAsync("git", ["-C", workspace, "archive", "--format=tar", "-o", archive, ref, "specs"]);
+    await execFileAsync("tar", ["-x", "-f", archive, "-C", workspace]);
+  } finally {
+    await fs.promises.rm(archive, { force: true });
+  }
+  await appendCloneExclude(workspace, "the version's specs", ["/specs/"]);
 }

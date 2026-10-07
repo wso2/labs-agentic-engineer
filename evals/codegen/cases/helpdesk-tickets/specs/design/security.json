@@ -1,0 +1,64 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "tickets",
+      "component": "helpdesk-api",
+      "description": "Help desk tickets and their lifecycle",
+      "actions": [
+        { "handle": "create", "description": "Raise a ticket as the caller" },
+        { "handle": "read", "description": "The caller's own tickets" },
+        { "handle": "reopen", "description": "Reopen one of the caller's own resolved tickets" },
+        { "handle": "read-all", "description": "Every ticket in the queue" },
+        { "handle": "triage", "description": "Triage any ticket and set its priority" },
+        { "handle": "assign", "description": "Assign or reassign any ticket and list agents" },
+        { "handle": "work", "description": "Move any ticket to in progress and resolved" }
+      ]
+    },
+    {
+      "resource": "comments",
+      "component": "helpdesk-api",
+      "description": "Ticket comment threads",
+      "actions": [
+        { "handle": "read", "description": "Comments on the caller's own tickets" },
+        { "handle": "create", "description": "Comment on the caller's own tickets" },
+        { "handle": "read-all", "description": "Comments on every ticket" },
+        { "handle": "write-all", "description": "Comment on any ticket" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Employees", "description": "Everyone who may raise help desk tickets" },
+    { "name": "Support Agents", "description": "IT staff who work help desk tickets" },
+    { "name": "Team Leads", "description": "Leads who watch the support queue" }
+  ],
+  "roles": [
+    {
+      "name": "Employee",
+      "description": "Raises, follows, comments on and reopens their own tickets.",
+      "stories": [1, 2, 3, 4, 12],
+      "grants": ["tickets:create", "tickets:read", "tickets:reopen", "comments:read", "comments:create"],
+      "assignTo": ["Employees"]
+    },
+    {
+      "name": "Support Agent",
+      "description": "Works the whole queue: triages, assigns, progresses, resolves and comments.",
+      "stories": [5, 6, 7, 8, 9],
+      "grants": ["tickets:read-all", "tickets:triage", "tickets:assign", "tickets:work", "comments:read-all", "comments:write-all"],
+      "assignTo": ["Support Agents"]
+    },
+    {
+      "name": "Team Lead",
+      "description": "Watches the queue and SLA breaches and assigns or reassigns tickets.",
+      "stories": [10, 11],
+      "grants": ["tickets:read-all", "tickets:assign", "comments:read-all"],
+      "assignTo": ["Team Leads"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-employee", "roles": ["Employee"] },
+    { "username": "test-employee-2", "roles": ["Employee"] },
+    { "username": "test-support-agent", "roles": ["Support Agent"] },
+    { "username": "test-team-lead", "roles": ["Team Lead"] }
+  ]
+}

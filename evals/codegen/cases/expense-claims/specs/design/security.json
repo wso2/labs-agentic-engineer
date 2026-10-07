@@ -1,0 +1,62 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "claims",
+      "component": "expense-api",
+      "description": "Expense claims and their lifecycle",
+      "actions": [
+        { "handle": "read", "description": "The caller's own claims" },
+        { "handle": "submit", "description": "Create a new claim" },
+        { "handle": "update", "description": "Edit a pending claim" },
+        { "handle": "withdraw", "description": "Withdraw a pending claim" },
+        { "handle": "read-team", "description": "Claims submitted by the caller's direct reports" },
+        { "handle": "approve", "description": "Approve a submitted claim from the caller's team" },
+        { "handle": "reject", "description": "Reject a submitted claim from the caller's team" },
+        { "handle": "read-all", "description": "Every claim, regardless of employee" }
+      ]
+    },
+    {
+      "resource": "exports",
+      "component": "expense-api",
+      "description": "Payroll export batches",
+      "actions": [
+        { "handle": "read", "description": "Past export batches" },
+        { "handle": "create", "description": "Export not-yet-exported approved claims" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Employees", "description": "Everyone who may submit expense claims" },
+    { "name": "Managers", "description": "People who review and approve their team's claims" },
+    { "name": "Finance", "description": "People who export approved claims to payroll" }
+  ],
+  "roles": [
+    {
+      "name": "Employee",
+      "description": "Submits, tracks, edits and withdraws their own expense claims.",
+      "stories": [1, 2, 3],
+      "grants": ["claims:read", "claims:submit", "claims:update", "claims:withdraw"],
+      "assignTo": ["Employees"]
+    },
+    {
+      "name": "Manager",
+      "description": "Reviews, approves or rejects claims submitted by their direct reports.",
+      "stories": [4, 5, 6],
+      "grants": ["claims:read-team", "claims:approve", "claims:reject"],
+      "assignTo": ["Managers"]
+    },
+    {
+      "name": "FinanceReviewer",
+      "description": "Views every approved claim and exports them to payroll.",
+      "stories": [7, 8, 9],
+      "grants": ["claims:read-all", "exports:read", "exports:create"],
+      "assignTo": ["Finance"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-employee", "roles": ["Employee"] },
+    { "username": "test-manager", "roles": ["Manager"] },
+    { "username": "test-financereviewer", "roles": ["FinanceReviewer"] }
+  ]
+}

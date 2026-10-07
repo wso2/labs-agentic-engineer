@@ -150,3 +150,54 @@ test("rejects a repeated attachment type", () => {
   const problem = checkAgentAfm(VALID.replace("x-aep:\n", ATTACH.replace("image/png", "image/jpeg")), "lunch-agent");
   assert.ok(problem && problem.message.startsWith("x-aep.attachments.types"), problem?.message);
 });
+
+// x-aep.guardrails — shape only; params are checked against the gateway's
+// catalog at deploy. The Go gate (afmgate.go) must give the same verdicts.
+const PII = "    - policy: pii-masking-regex\n      params: { email: true }\n      why: \"The model never needs contact details.\"\n";
+const withGuardrails = (entries: string) => VALID.replace("x-aep:\n", `x-aep:\n  guardrails:\n${entries}`);
+const guardrailProblem = (entries: string) => checkAgentAfm(withGuardrails(entries), "lunch-agent");
+const startsWith = (entries: string, prefix: string) => {
+  const problem = guardrailProblem(entries);
+  assert.ok(problem && problem.message.startsWith(prefix), problem?.message ?? "expected a problem");
+};
+
+test("accepts x-aep.guardrails naming a policy with use-case params and a reason", () => {
+  assert.equal(guardrailProblem(PII), null);
+});
+
+test("rejects a guardrail without a reason", () => {
+  startsWith(PII.replace('      why: "The model never needs contact details."\n', ""), "x-aep.guardrails.0.why");
+});
+
+test("rejects a policy name that is not a lowercase gateway policy name", () => {
+  startsWith(PII.replace("pii-masking-regex", "PII"), "x-aep.guardrails.0.policy");
+});
+
+test("rejects more than ten guardrails", () => {
+  const eleven = Array.from({ length: 11 }, (_, i) => PII.replace("pii-masking-regex", `policy-${i}`)).join("");
+  startsWith(eleven, "x-aep.guardrails");
+});
+
+test("rejects the same policy twice", () => {
+  startsWith(PII + PII, "x-aep.guardrails");
+});
+
+test("rejects a jsonPath the platform owns", () => {
+  startsWith(PII.replace("{ email: true }", '{ email: true, jsonPath: "$.x" }'), "x-aep.guardrails.0.params");
+});
+
+test("rejects a request jsonPath the platform owns", () => {
+  startsWith(PII.replace("{ email: true }", '{ request: { regex: "x", jsonPath: "$.x" } }'), "x-aep.guardrails.0.params");
+});
+
+test("rejects a response streamingJsonPath the platform owns", () => {
+  startsWith(PII.replace("{ email: true }", '{ response: { enabled: true, streamingJsonPath: "$.x" } }'), "x-aep.guardrails.0.params");
+});
+
+test("rejects a policy version the platform owns", () => {
+  startsWith(PII.replace("{ email: true }", '{ version: "v1.0.4" }'), "x-aep.guardrails.0.params");
+});
+
+test("rejects an unknown key on a guardrail", () => {
+  startsWith(PII.replace("      why:", "      enabled: true\n      why:"), "x-aep.guardrails.0");
+});

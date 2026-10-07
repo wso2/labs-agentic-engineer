@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "description": "Client-side consumption surface for the spec agent's turn stream: wire contracts, the FileBundle fold (with the component design.json write-gate), the SSE reader, and the published JSON Schema. Zero server-side deps.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -26,7 +27,8 @@
   "dependencies": {
     "yaml": "^2.8.4",
     "zod": "^4.3.6",
-    "@aep/excalidraw-dsl": "workspace:*"
+    "@aep/excalidraw-dsl": "workspace:*",
+    "@wso2/prototype-kit": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.21.0"

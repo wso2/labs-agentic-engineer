@@ -31,6 +31,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -66,7 +67,10 @@ type externalSecretClient interface {
 // observerReaderVaultKey through store. It reports whether it wrote. An absent
 // ExternalSecret (no plane, or a plane that does not use one) is no write and
 // no error. Only the reference is read and written, never the value.
-func pointObserverAtReaderSecret(ctx context.Context, es externalSecretClient, obsNamespace, store string) (bool, error) {
+// forceSync is the run's force-sync annotation value (sreParams.ForceSync),
+// the same per-run stamp `aectl sre install` writes, so the two writers do
+// not flip the annotation between an empty and a set value.
+func pointObserverAtReaderSecret(ctx context.Context, es externalSecretClient, obsNamespace, store, forceSync string) (bool, error) {
 	obj, err := es.Get(ctx, "external-secrets.io/v1", "ExternalSecret", obsNamespace, observerSecretName)
 	if err != nil {
 		return false, fmt.Errorf("read ExternalSecret %s/%s: %w", obsNamespace, observerSecretName, err)
@@ -74,7 +78,7 @@ func pointObserverAtReaderSecret(ctx context.Context, es externalSecretClient, o
 	if obj == nil || observerSecretReadsReader(obj, store) {
 		return false, nil
 	}
-	p := sreParams{ObsNamespace: obsNamespace, PlatformSecretStore: store}
+	p := sreParams{ObsNamespace: obsNamespace, PlatformSecretStore: store, ForceSync: forceSync}
 	if err := applyTemplate(ctx, es, "sre-observer-secret", obsNamespace, sreObserverClientSecretTmpl, p); err != nil {
 		return false, fmt.Errorf("apply ExternalSecret %s/%s: %w", obsNamespace, observerSecretName, err)
 	}
@@ -114,7 +118,7 @@ func syncObserverClientSecret(ctx context.Context, k8sClient *kubernetes.Clients
 		return
 	}
 	applied := time.Now()
-	changed, err := pointObserverAtReaderSecret(ctx, applier, defaultObsNamespace, defaultPlatformSecretStore)
+	changed, err := pointObserverAtReaderSecret(ctx, applier, defaultObsNamespace, defaultPlatformSecretStore, strconv.FormatInt(applied.Unix(), 10))
 	switch {
 	case err != nil:
 		ui.Warn(fmt.Sprintf("Observer client secret not repointed: %v (re-run `aectl platform sync-clients`)", err))

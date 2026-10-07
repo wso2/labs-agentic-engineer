@@ -85,6 +85,16 @@ type Client interface {
 	// authenticates its OTLP export with. Unlike the two above it is NOT a
 	// stored key: see TracingToken.
 	IssueTracingToken(ctx context.Context, in TracingTokenRef) (TracingToken, error)
+
+	// FindProvider looks the org's provider up by handle and never creates
+	// one; found is false when the org has none.
+	FindProvider(ctx context.Context, org, id string) (uuid string, found bool, err error)
+
+	// ListPolicies, ReadBinding and WriteBindingPolicies carry an agent's
+	// guardrails (client_guardrails.go).
+	ListPolicies(ctx context.Context, org, providerUUID string) ([]PolicyDefinition, error)
+	ReadBinding(ctx context.Context, ref BindingRef) (Binding, error)
+	WriteBindingPolicies(ctx context.Context, ref BindingRef, b Binding, policies []BindingPolicy) error
 }
 
 // EnsureProviderInput is one org's LLM provider, as AEP declares it.

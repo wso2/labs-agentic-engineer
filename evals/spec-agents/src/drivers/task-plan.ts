@@ -29,6 +29,7 @@ import { runPlanTurn } from "@aep/playground/src/engine/plan-turn.js";
 import { tasksGate } from "@aep/playground/src/engine/gates.js";
 import { FsIssueStore, type FoldOutcome, type Issue } from "@aep/playground/src/ports/issue-store.js";
 import { saveProjectState } from "@aep/playground/src/state/project.js";
+import type { PlanScope } from "@aep/agent-stream";
 import { collectPart, newTurnRecord, reportTurnTrace, type TurnRecord } from "../tracing.js";
 
 export interface TaskPlanRunResult {
@@ -39,7 +40,8 @@ export interface TaskPlanRunResult {
   error?: string;
 }
 
-export async function runTaskPlanSection(projectDir: string): Promise<TaskPlanRunResult> {
+/** `scope` is the milestone scope the platform would compute for the version (B3). */
+export async function runTaskPlanSection(projectDir: string, scope?: PlanScope): Promise<TaskPlanRunResult> {
   const gate = tasksGate(projectDir);
   if (!gate.ok) {
     return { section: "tasks", records: [], issues: [], error: `gate: ${gate.reason ?? "blocked"}` };
@@ -51,6 +53,8 @@ export async function runTaskPlanSection(projectDir: string): Promise<TaskPlanRu
     const rec = newTurnRecord("tasks", 1, "task-plan (one-shot)");
     const start = Date.now();
     // A Plan turn on the Turn socket, as aep-api starts one in production.
+    // TODO(Task 50, AGT-22/AGT-13): pass `scope` on the Turn socket request once
+    // runPlanTurn and the socket's PlanScope contract take main's shape.
     const result = await runPlanTurn(session, store.planContext(), {
       onPart: (part) => collectPart(rec, part),
     });

@@ -16,62 +16,57 @@
 
 package auth
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
-func TestNewSREHandoffVerifier_DisabledWhenUnconfigured(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name, secret, org string
-	}{
-		{"both empty", "", ""},
-		{"secret empty", "", "acme"},
-		{"org empty", "s3cr3t", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if v := NewSREHandoffVerifier(tc.secret, tc.org); v != nil {
-				t.Fatalf("want nil verifier, got %+v", v)
-			}
-		})
+func TestNewSREHandoffVerifier_DisabledWithoutToken(t *testing.T) {
+	if v := NewSREHandoffVerifier(""); v != nil {
+		t.Fatalf("want nil verifier, got %+v", v)
 	}
 }
 
 func TestSREHandoffVerifier_Verify(t *testing.T) {
 	t.Parallel()
-	v := NewSREHandoffVerifier("s3cr3t", "acme")
+	v := NewSREHandoffVerifier("s3cr3t")
+	for name, tc := range map[string]struct {
+		bearer string
+		want   bool
+	}{
+		"matching bearer":           {"Bearer s3cr3t", true},
+		"wrong key":                 {"Bearer wrong", false},
+		"key prefix only":           {"Bearer s3cr3", false},
+		"missing Bearer prefix":     {"s3cr3t", false},
+		"empty header":              {"", false},
+		"Bearer with an empty key":  {"Bearer ", false},
+		"lower-case scheme refused": {"bearer s3cr3t", false},
+	} {
+		if got := v.Verify(tc.bearer); got != tc.want {
+			t.Errorf("%s: Verify(%q) = %v, want %v", name, tc.bearer, got, tc.want)
+		}
+	}
 
-	t.Run("matching bearer binds the configured org", func(t *testing.T) {
-		claims, ok := v.Verify("Bearer s3cr3t")
-		if !ok {
-			t.Fatal("want verified, got rejected")
-		}
-		if claims.OuHandle != "acme" {
-			t.Fatalf("OuHandle = %q, want acme", claims.OuHandle)
-		}
-	})
+	var nilVerifier *SREHandoffVerifier
+	if nilVerifier.Verify("Bearer s3cr3t") {
+		t.Error("a nil verifier must reject")
+	}
+}
 
-	t.Run("wrong secret is rejected", func(t *testing.T) {
-		if _, ok := v.Verify("Bearer wrong"); ok {
-			t.Fatal("want rejected, got verified")
+func TestSREHandoffVerifier_Middleware(t *testing.T) {
+	t.Parallel()
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := NewSREHandoffVerifier("s3cr3t").Middleware(next)
+	for bearer, want := range map[string]int{"Bearer s3cr3t": http.StatusNoContent, "Bearer wrong": http.StatusUnauthorized, "": http.StatusUnauthorized} {
+		r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if bearer != "" {
+			r.Header.Set("Authorization", bearer)
 		}
-	})
-
-	t.Run("missing Bearer prefix is rejected", func(t *testing.T) {
-		if _, ok := v.Verify("s3cr3t"); ok {
-			t.Fatal("want rejected, got verified")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("bearer %q: status = %d, want %d", bearer, w.Code, want)
 		}
-	})
-
-	t.Run("empty header is rejected", func(t *testing.T) {
-		if _, ok := v.Verify(""); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
-
-	t.Run("nil verifier always rejects", func(t *testing.T) {
-		var nilVerifier *SREHandoffVerifier
-		if _, ok := nilVerifier.Verify("Bearer s3cr3t"); ok {
-			t.Fatal("want rejected, got verified")
-		}
-	})
+	}
 }

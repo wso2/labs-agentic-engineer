@@ -85,7 +85,7 @@ func (s *stubCycles) NoteLaunch(_ context.Context, cycleID, host, environment, _
 }
 
 func (s *stubCycles) Finish(context.Context, string, string) error { return nil }
-func (s *stubCycles) SetValidationVerdict(context.Context, string, string, int, string) error {
+func (s *stubCycles) SetValidationVerdict(context.Context, string, string, int, string, int) error {
 	return nil
 }
 

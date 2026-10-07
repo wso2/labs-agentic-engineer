@@ -1,0 +1,610 @@
+{
+ "count": 4,
+ "list": [
+  {
+   "name": "basic-ratelimit",
+   "version": "v1.1.1",
+   "description": "Limits request rates by restricting the number of requests allowed within one\nor more defined time windows.\n",
+   "parameters": {
+    "additionalProperties": false,
+    "properties": {
+     "limits": {
+      "description": "Specifies one or more rate limits. All limits are evaluated, and the\nmost restrictive result is enforced.\n",
+      "items": {
+       "additionalProperties": false,
+       "properties": {
+        "duration": {
+         "description": "Specifies the time window for the limit. Supports integer values\nwith units: ns, us, \u00b5s, ms, s, m, h (for example \"500ms\", \"1s\",\n\"1m\", \"1h\", \"24h\").\n",
+         "pattern": "^[0-9]+(ns|us|\u00b5s|ms|s|m|h)$",
+         "type": "string"
+        },
+        "requests": {
+         "description": "Specifies the maximum number of requests allowed during the configured duration.",
+         "maximum": 1000000000,
+         "minimum": 1,
+         "type": "integer"
+        }
+       },
+       "required": [
+        "requests",
+        "duration"
+       ],
+       "type": "object"
+      },
+      "maxItems": 10,
+      "minItems": 1,
+      "type": "array"
+     }
+    },
+    "required": [
+     "limits"
+    ],
+    "type": "object"
+   },
+   "systemParameters": {
+    "additionalProperties": false,
+    "properties": {
+     "algorithm": {
+      "default": "fixed-window",
+      "description": "Rate limiting algorithm to use:\n- gcra: Generic Cell Rate Algorithm. Provides smooth rate limiting\n  with burst support and token bucket semantics. Better for consistent traffic\n  shaping and burst handling.\n- fixed-window: Simple fixed time window counter (default). Divides time into\n  fixed intervals and counts requests per window. Lower computational overhead,\n  but can allow up to 2x burst at window boundaries.\n",
+      "enum": [
+       "gcra",
+       "fixed-window"
+      ],
+      "type": "string",
+      "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.algorithm}"
+     },
+     "backend": {
+      "default": "memory",
+      "description": "Rate limit storage backend. 'memory' for in-memory storage (single-instance),\n'redis' for exact distributed rate limiting (one Redis call per request), or\n'redis-local-async' for distributed rate limiting with a local-first hot path\nthat reconciles with Redis asynchronously (lower latency and Redis load, with\nbounded overshoot).\n",
+      "enum": [
+       "memory",
+       "redis",
+       "redis-local-async"
+      ],
+      "type": "string",
+      "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.backend}"
+     },
+     "local": {
+      "additionalProperties": false,
+      "description": "Configures the local-first hot path when backend is redis-local-async.",
+      "properties": {
+       "flushWorkers": {
+        "default": 0,
+        "description": "Number of background flush workers shared by all redis-local-async limiters\nin the process. 0 = auto (GOMAXPROCS/2, capped at 8). Only the first\nregistrant's value takes effect; a restart is required to change it.\n",
+        "minimum": 0,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.local.flush_workers}"
+       },
+       "maxLocalEntries": {
+        "default": 100000,
+        "description": "Maximum local key-state entries per limiter before eviction (carrying any\nunflushed delta to Redis). Bounds memory under high/adversarial key\ncardinality.\n",
+        "minimum": 0,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.local.max_local_entries}"
+       },
+       "maxPipelineCommands": {
+        "default": 5000,
+        "description": "Maximum INCRBYs issued in a single Redis pipeline per flush; excess dirty keys\nspill to the next flush tick.\n",
+        "minimum": 0,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.local.max_pipeline_commands}"
+       },
+       "syncInterval": {
+        "default": "50ms",
+        "description": "Specifies how often locally counted requests are flushed to Redis and the\nauthoritative count is read back. Lower values tighten accuracy (less\novershoot) at the cost of more Redis operations. Supports units ns, us, \u00b5s,\nms, s, m, h, including composite and fractional values (for example \"500ms\",\n\"1.5s\", \"1m30s\").\n",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.local.sync_interval}"
+       }
+      },
+      "type": "object"
+     },
+     "memory": {
+      "additionalProperties": false,
+      "description": "In-memory storage configuration (only used when backend=memory)",
+      "properties": {
+       "cleanupInterval": {
+        "default": "5m",
+        "description": "Interval for cleaning up expired entries as a Go duration string.\nSupports units ns, us, \u00b5s, ms, s, m, h, including composite and\nfractional values (for example \"500ms\", \"1.5s\", \"1m30s\").\nUse \"0\" to disable periodic cleanup.\n",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.memory.cleanup_interval}"
+       },
+       "maxEntries": {
+        "default": 10000,
+        "description": "Maximum number of rate limit entries to store in memory.\nOldest entries are evicted when limit is reached.\n",
+        "maximum": 10000000,
+        "minimum": 100,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.memory.max_entries}"
+       }
+      },
+      "type": "object"
+     },
+     "redis": {
+      "additionalProperties": false,
+      "description": "Redis configuration (used when backend=redis or backend=redis-local-async)",
+      "properties": {
+       "connectionTimeout": {
+        "default": "5s",
+        "description": "Redis connection timeout as a Go duration string. Supports units ns, us, \u00b5s, ms, s, m, h, including composite and fractional values (for example \"500ms\", \"1.5s\", \"1m30s\").",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.connection_timeout}"
+       },
+       "db": {
+        "default": 0,
+        "description": "Redis database number",
+        "maximum": 15,
+        "minimum": 0,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.db}"
+       },
+       "failureMode": {
+        "default": "open",
+        "description": "Behavior when Redis is unavailable. 'open' allows requests through,\n'closed' denies requests. Recommended: 'open' for availability.\n",
+        "enum": [
+         "open",
+         "closed"
+        ],
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.failure_mode}"
+       },
+       "host": {
+        "default": "localhost",
+        "description": "Redis server hostname or IP address",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.host}"
+       },
+       "keyPrefix": {
+        "default": "ratelimit:v1:",
+        "description": "Prefix for all Redis keys to avoid conflicts",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.key_prefix}"
+       },
+       "password": {
+        "description": "Redis authentication password (optional)",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.password}"
+       },
+       "poolSize": {
+        "default": 0,
+        "description": "Redis connection pool size for the shared client. 0 = go-redis default\n(10 \u00d7 GOMAXPROCS). One pool is shared per distinct Redis endpoint config.\n",
+        "minimum": 0,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.pool_size}"
+       },
+       "port": {
+        "default": 6379,
+        "description": "Redis server port",
+        "maximum": 65535,
+        "minimum": 1,
+        "type": "integer",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.port}"
+       },
+       "readTimeout": {
+        "default": "3s",
+        "description": "Redis read timeout as a Go duration string. Supports units ns, us, \u00b5s, ms, s, m, h, including composite and fractional values (for example \"500ms\", \"1.5s\", \"1m30s\").",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.read_timeout}"
+       },
+       "username": {
+        "description": "Redis ACL username (optional, Redis 6+)",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.username}"
+       },
+       "writeTimeout": {
+        "default": "3s",
+        "description": "Redis write timeout as a Go duration string. Supports units ns, us, \u00b5s, ms, s, m, h, including composite and fractional values (for example \"500ms\", \"1.5s\", \"1m30s\").",
+        "type": "string",
+        "wso2/defaultValue": "${config.policy_configurations.ratelimit_v1.redis.write_timeout}"
+       }
+      },
+      "type": "object"
+     }
+    },
+    "type": "object"
+   }
+  },
+  {
+   "name": "pii-masking-regex",
+   "version": "v1.0.4",
+   "description": "Masks or redacts Personally Identifiable Information (PII) in request and\nresponse payloads.\n",
+   "parameters": {
+    "anyOf": [
+     {
+      "required": [
+       "customPIIEntities"
+      ]
+     },
+     {
+      "properties": {
+       "email": {
+        "const": true
+       }
+      },
+      "required": [
+       "email"
+      ]
+     },
+     {
+      "properties": {
+       "phone": {
+        "const": true
+       }
+      },
+      "required": [
+       "phone"
+      ]
+     },
+     {
+      "properties": {
+       "ssn": {
+        "const": true
+       }
+      },
+      "required": [
+       "ssn"
+      ]
+     }
+    ],
+    "properties": {
+     "customPIIEntities": {
+      "description": "Specifies custom PII entity definitions used for detection. Each item\ncontains an entity name and the regex pattern used to match it.\n",
+      "items": {
+       "properties": {
+        "piiEntity": {
+         "description": "Specifies the PII entity name, for example \"EMAIL\", \"PHONE\", or \"SSN\". Letter case is ignored and names are normalized internally.",
+         "type": "string"
+        },
+        "piiRegex": {
+         "description": "Specifies the regex pattern used to match the configured PII entity.",
+         "type": "string"
+        }
+       },
+       "required": [
+        "piiEntity",
+        "piiRegex"
+       ],
+       "type": "object"
+      },
+      "minItems": 1,
+      "type": "array",
+      "x-wso2-policy-advanced-param": true
+     },
+     "email": {
+      "default": false,
+      "description": "Specifies whether built-in EMAIL detection is enabled.\n",
+      "type": "boolean",
+      "x-wso2-policy-advanced-param": false
+     },
+     "jsonPath": {
+      "default": "$.messages[-1].content",
+      "description": "Specifies the JSONPath used to extract the value to process. When\nempty, the entire payload is processed as plain text.\n",
+      "type": "string",
+      "x-wso2-policy-advanced-param": false
+     },
+     "phone": {
+      "default": false,
+      "description": "Specifies whether built-in PHONE detection is enabled.\n",
+      "type": "boolean",
+      "x-wso2-policy-advanced-param": false
+     },
+     "redactPII": {
+      "default": false,
+      "description": "Specifies whether matched PII is permanently redacted as \"*****\"\n(true) or masked with reversible placeholders (false).\n",
+      "type": "boolean",
+      "x-wso2-policy-advanced-param": true
+     },
+     "ssn": {
+      "default": false,
+      "description": "Specifies whether built-in SSN detection is enabled.\n",
+      "type": "boolean",
+      "x-wso2-policy-advanced-param": false
+     }
+    },
+    "type": "object"
+   },
+   "systemParameters": {
+    "properties": {},
+    "type": "object"
+   }
+  },
+  {
+   "name": "regex-guardrail",
+   "version": "v1.0.1",
+   "description": "Validate request or response content against regex patterns using optional JSONPath extraction and optional inverted matching.\n",
+   "parameters": {
+    "anyOf": [
+     {
+      "required": [
+       "request"
+      ]
+     },
+     {
+      "required": [
+       "response"
+      ]
+     }
+    ],
+    "properties": {
+     "request": {
+      "anyOf": [
+       {
+        "properties": {
+         "enabled": {
+          "const": false
+         }
+        },
+        "required": [
+         "enabled"
+        ]
+       },
+       {
+        "required": [
+         "regex"
+        ]
+       }
+      ],
+      "description": "Configuration for request phase validation",
+      "properties": {
+       "enabled": {
+        "default": true,
+        "description": "Enables validation for the request flow.",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": false
+       },
+       "invert": {
+        "default": false,
+        "description": "If true, validation passes when regex does NOT match (inverted logic).\nIf false (default), validation passes when regex matches.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "jsonPath": {
+        "default": "$.messages[-1].content",
+        "description": "JSONPath expression to extract a specific value from JSON payload.\nIf empty, validates the entire payload as a string.\nExamples: \"$.messages\", \"$.data.content\", \"$.items[0].text\"\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "regex": {
+        "description": "Regular expression pattern to match against the content",
+        "minLength": 1,
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "showAssessment": {
+        "default": false,
+        "description": "If true, includes detailed assessment information in error responses.\nIf false, returns minimal error information.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       }
+      },
+      "type": "object",
+      "x-wso2-policy-advanced-param": false
+     },
+     "response": {
+      "anyOf": [
+       {
+        "properties": {
+         "enabled": {
+          "const": false
+         }
+        },
+        "required": [
+         "enabled"
+        ]
+       },
+       {
+        "required": [
+         "regex"
+        ]
+       }
+      ],
+      "description": "Configuration for response phase validation",
+      "properties": {
+       "enabled": {
+        "default": false,
+        "description": "Enables validation for the response flow.",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": false
+       },
+       "invert": {
+        "default": false,
+        "description": "If true, validation passes when regex does NOT match (inverted logic).\nIf false (default), validation passes when regex matches.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "jsonPath": {
+        "default": "$.choices[0].message.content",
+        "description": "JSONPath expression to extract a specific value from JSON payload.\nIf empty, validates the entire payload as a string.\nExamples: \"$.messages\", \"$.data.content\", \"$.items[0].text\"\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "regex": {
+        "description": "Regular expression pattern to match against the content",
+        "minLength": 1,
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "showAssessment": {
+        "default": false,
+        "description": "If true, includes detailed assessment information in error responses.\nIf false, returns minimal error information.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "streamingJsonPath": {
+        "default": "$.choices[0].delta.content",
+        "description": "JSONPath expression to extract content from SSE streaming delta chunks.\nUsed when the upstream returns a streaming (stream: true) response.\nDefaults to the standard OpenAI SSE delta content path.\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       }
+      },
+      "type": "object",
+      "x-wso2-policy-advanced-param": false
+     }
+    },
+    "type": "object"
+   },
+   "systemParameters": {
+    "properties": {},
+    "type": "object"
+   }
+  },
+  {
+   "name": "word-count-guardrail",
+   "version": "v1.0.2",
+   "description": "Validate word counts in request or response content using min/max limits, optional JSONPath extraction, and optional inverted logic.\n",
+   "parameters": {
+    "additionalProperties": false,
+    "anyOf": [
+     {
+      "required": [
+       "request"
+      ]
+     },
+     {
+      "required": [
+       "response"
+      ]
+     }
+    ],
+    "properties": {
+     "request": {
+      "additionalProperties": false,
+      "anyOf": [
+       {
+        "properties": {
+         "enabled": {
+          "const": false
+         }
+        },
+        "required": [
+         "enabled"
+        ]
+       },
+       {
+        "required": [
+         "min",
+         "max"
+        ]
+       }
+      ],
+      "description": "Configuration for request phase validation",
+      "properties": {
+       "enabled": {
+        "default": true,
+        "description": "Enables validation for the request flow.",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": false
+       },
+       "invert": {
+        "default": false,
+        "description": "If true, validation passes when word count is NOT within the min-max range (inverted logic).\nIf false (default), validation passes when word count is within the min-max range.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "jsonPath": {
+        "default": "$.messages[-1].content",
+        "description": "JSONPath expression to extract a specific value from JSON payload.\nIf empty, validates the entire payload as a string.\nExamples: \"$.messages\", \"$.data.content\", \"$.items[0].text\"\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "max": {
+        "description": "Maximum allowed word count (inclusive)",
+        "minimum": 1,
+        "type": "integer",
+        "x-wso2-policy-advanced-param": false
+       },
+       "min": {
+        "description": "Minimum allowed word count (inclusive)",
+        "minimum": 0,
+        "type": "integer",
+        "x-wso2-policy-advanced-param": false
+       },
+       "showAssessment": {
+        "default": false,
+        "description": "If true, includes detailed assessment information in error responses.\nIf false, returns minimal error information.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       }
+      },
+      "type": "object",
+      "x-wso2-policy-advanced-param": false
+     },
+     "response": {
+      "additionalProperties": false,
+      "anyOf": [
+       {
+        "properties": {
+         "enabled": {
+          "const": false
+         }
+        },
+        "required": [
+         "enabled"
+        ]
+       },
+       {
+        "required": [
+         "min",
+         "max"
+        ]
+       }
+      ],
+      "description": "Configuration for response phase validation",
+      "properties": {
+       "enabled": {
+        "default": false,
+        "description": "Enables validation for the response flow.",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": false
+       },
+       "invert": {
+        "default": false,
+        "description": "If true, validation passes when word count is NOT within the min-max range (inverted logic).\nIf false (default), validation passes when word count is within the min-max range.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "jsonPath": {
+        "default": "$.choices[0].message.content",
+        "description": "JSONPath expression to extract a specific value from JSON payload.\nIf empty, validates the entire payload as a string.\nExamples: \"$.messages\", \"$.data.content\", \"$.items[0].text\"\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       },
+       "max": {
+        "description": "Maximum allowed word count (inclusive)",
+        "minimum": 1,
+        "type": "integer",
+        "x-wso2-policy-advanced-param": false
+       },
+       "min": {
+        "description": "Minimum allowed word count (inclusive)",
+        "minimum": 0,
+        "type": "integer",
+        "x-wso2-policy-advanced-param": false
+       },
+       "showAssessment": {
+        "default": false,
+        "description": "If true, includes detailed assessment information in error responses.\nIf false, returns minimal error information.\n",
+        "type": "boolean",
+        "x-wso2-policy-advanced-param": true
+       },
+       "streamingJsonPath": {
+        "default": "$.choices[0].delta.content",
+        "description": "JSONPath expression to extract content from SSE streaming delta chunks.\nUsed when the upstream returns a streaming (stream: true) response.\nDefaults to the standard OpenAI SSE delta content path.\n",
+        "type": "string",
+        "x-wso2-policy-advanced-param": false
+       }
+      },
+      "type": "object",
+      "x-wso2-policy-advanced-param": false
+     }
+    },
+    "type": "object"
+   },
+   "systemParameters": {
+    "additionalProperties": false,
+    "properties": {},
+    "type": "object"
+   }
+  }
+ ]
+}

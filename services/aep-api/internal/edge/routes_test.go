@@ -100,10 +100,10 @@ func TestRouteTable(t *testing.T) {
 		t.Error("mount table still has the dev secret resync")
 	}
 	// The SRE handoff is an internal caller: /api/ admits user JWTs only.
-	if c := got["/internal/v1/"].caller; !strings.Contains(c, "aep-mcp-server (SRE handoff)") {
+	if c := got["/internal/v1/"].caller; !strings.Contains(c, "OpenChoreo SRE agent (sre-handoff/mcp)") {
 		t.Errorf("/internal/v1/ caller %q does not name the SRE handoff", c)
 	}
-	if c := got["/api/"].caller; strings.Contains(c, "SRE") || strings.Contains(c, "aep-mcp-server") {
+	if c := got["/api/"].caller; strings.Contains(c, "SRE") {
 		t.Errorf("/api/ caller %q still names the SRE handoff", c)
 	}
 }

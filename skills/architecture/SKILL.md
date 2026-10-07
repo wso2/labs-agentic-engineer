@@ -29,10 +29,11 @@ Replace the scaffold's `"language": "TBD"` sentinel with the decided value;
 the build gate refuses a component whose language is still TBD. That choice is a fact
 you record, not a preference you re-derive per component: write it as the
 component's `language` and pin the matching stack skill in `skillsPinned`.
-- **stories** — the PRD story numbers this component serves, as an integer
-  array (e.g. `"stories": [1, 2, 4]`). Claim every story the component
-  actually serves: the build gate refuses the tag while any PRD story is
-  claimed by no component.
+- **stories** — the IDs of the stories this component serves, as written in
+  the feature files (e.g. `"stories": ["F1.1", "F1.2", "F2.1"]`). Claim every
+  story the component actually serves: the build gate refuses the tag while
+  any story is claimed by no component, or an ID the requirements do not
+  define is cited.
 - **dependencies** — the playbook below.
 - **description** — one paragraph: single responsibility, port/entrypoint
   expectations, and what it explicitly does NOT do.
@@ -115,8 +116,8 @@ in kebab-case after their responsibility (`expense-api`, `expense-webapp`,
 **An AI agent is `"ai-agent"`, and every model call is one.** It is the only
 component type with model access. Reach for it when the requirements call for a
 conversational or autonomous surface — a user talking to the system in their own
-words rather than filling in a form — and for every agent the PRD's Product
-Decisions name. Its behaviour is authored as
+words rather than filling in a form — and for every agent the requirements'
+decisions name. Its behaviour is authored as
 `agent.afm.md` (the `agent-building` skill), it is implemented in TypeScript, and
 it pins `["agent-building"]`. It is a normal deployable that calls other
 components over HTTP: give it a `component` dependency for every API it uses.
@@ -186,7 +187,7 @@ violations:
   "exposure": "internet",             // "internet" (public) | "intranet" (internal only)
   "dependencies": [ /* see below — every dependency edge touching this component appears here */ ],
   "description": "One paragraph: single responsibility, port/entrypoint expectations, and what it explicitly does NOT do.",
-  "stories": [1, 2, 4],               // PRD story numbers THIS component serves — the build gate refuses the tag while any story is claimed by nobody
+  "stories": ["F1.1", "F1.2", "F2.1"], // story IDs THIS component serves — the build gate refuses the tag while any story is claimed by nobody
   "skillsPinned": ["openapi-conventions", "ballerina"], // the skills this component's build needs — see the field above
   "endpoint": { "name": "http" } // optional; see below
 }
@@ -387,7 +388,7 @@ Work each one in order:
    inline under a new name.
 2. **The PRD names the service, or nobody has.** The user chooses providers;
    you never do. Two outcomes, never a `status`:
-   - **The PRD's Product Decisions name a service for this capability**
+   - **The requirements' decisions name a service for this capability**
      ("Payments: Stripe") → write `resource.provider` and go on to the
      contract (step 3). An org or platform skill that mandates a vendor
      counts the same way. Nothing else does: "the requirement implies it",

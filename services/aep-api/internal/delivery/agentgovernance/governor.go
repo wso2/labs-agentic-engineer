@@ -134,6 +134,9 @@ type Deps struct {
 	// Kinds gates which components are governed. Nil governs every target,
 	// which is right only for a caller that has already filtered.
 	Kinds ComponentKinds
+	// Guardrails records which guardrails AEP applied to each agent's binding.
+	// Nil leaves every binding's guardrails as they are.
+	Guardrails GuardrailStore
 }
 
 // Governor implements run.AgentGovernor.
@@ -178,6 +181,7 @@ func (g *Governor) GovernAgent(ctx context.Context, in delivery.GovernAgentInput
 		return delivery.GovernAgentOutcome{}, err
 	}
 	g.reconcileTracingToken(ctx, reg, in)
+	g.reconcileGuardrails(ctx, reg, in)
 	slog.InfoContext(ctx, "governance: agent registered with Agent Manager",
 		"org", in.OrgID, "project", in.ProjectID, "component", in.Component,
 		"environment", in.Environment, "provider", reg.provider.Handle)
@@ -216,6 +220,9 @@ type registration struct {
 	// endpoint is the base an agent's SDK is pointed at — the in-cluster
 	// gateway, this agent's own proxy path, and the connection's base path.
 	endpoint string
+	// format is the model connection's wire format: it decides where in a
+	// request the gateway's guardrails find the user's text.
+	format modelconn.Format
 }
 
 // register settles everything about an agent that is safe to assert at any
@@ -330,7 +337,7 @@ func (g *Governor) register(ctx context.Context, in delivery.GovernAgentInput) (
 		return registration{}, delivery.GovernAgentOutcome{}, err
 	}
 
-	return registration{amp: amp, provider: provider, config: cfg, endpoint: endpoint, agentName: agentName},
+	return registration{amp: amp, provider: provider, config: cfg, endpoint: endpoint, agentName: agentName, format: conn.Format},
 		delivery.GovernAgentOutcome{ProxyURL: endpoint}, nil
 }
 

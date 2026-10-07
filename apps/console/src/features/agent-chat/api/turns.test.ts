@@ -16,126 +16,49 @@
  * under the License.
  */
 
-import { describe, expect, it } from "vitest";
-import { mapConversationMessage } from "./turns";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("mapConversationMessage anchors", () => {
-  const anchor = {
-    file: "specs/requirements/PRD.md",
-    nodes: [{ name: "Which Slack workspace", kind: "list item", context: "Open Questions" }],
-  };
+// What startTurn puts on the wire and how it reads the server's refusals,
+// after the old console's api/turns.transport.test.ts.
 
-  it("keeps a well-formed anchor, so the tag survives a reload", () => {
-    expect(mapConversationMessage({ role: "user", content: "hi", anchor })).toEqual({
-      role: "user",
-      content: "hi",
-      anchor,
+const post = vi.fn<(path: string, init: Record<string, unknown>) => Promise<unknown>>();
+vi.mock("../../../api/client", () => ({
+  client: { POST: (path: string, init: Record<string, unknown>) => post(path, init) },
+}));
+
+const { ConversationRotatedError, TurnInProgressError, startTurn } = await import("./turns");
+
+function refused(status: number, error: unknown) {
+  post.mockResolvedValueOnce({ data: undefined, error, response: { status } });
+}
+
+describe("startTurn", () => {
+  beforeEach(() => post.mockReset());
+
+  it("posts the scoped body to the project's conversation and returns the turn id", async () => {
+    post.mockResolvedValueOnce({ data: { turnId: "t-1" }, error: undefined, response: { status: 202 } });
+    const body = { instruction: "Go", collab: true, target: "specs/requirements/prd.md" };
+    expect(await startTurn("shop", "conv-1", body)).toBe("t-1");
+    expect(post).toHaveBeenCalledWith("/projects/{projectName}/agents/{conversationId}/messages", {
+      params: { path: { projectName: "shop", conversationId: "conv-1" } },
+      body,
     });
   });
 
-  it("omits anchor for an ordinary message", () => {
-    expect(mapConversationMessage({ role: "user", content: "hi" })).not.toHaveProperty("anchor");
+  it("reads a 409 turn_in_progress as the running turn, by id", async () => {
+    refused(409, { code: "turn_in_progress", activeTurnId: "t-9" });
+    const err = await startTurn("shop", "conv-1", { instruction: "Go" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TurnInProgressError);
+    expect((err as InstanceType<typeof TurnInProgressError>).activeTurnId).toBe("t-9");
   });
 
-  // Dropped WHOLE rather than partially: a tag naming fewer nodes than the user
-  // selected is a quieter and worse failure than no tag at all.
-  it("drops the whole anchor when one node is malformed", () => {
-    const half = { file: "a.md", nodes: [{ name: "ok", kind: "paragraph" }, { kind: "paragraph" }] };
-    expect(mapConversationMessage({ role: "user", content: "hi", anchor: half })).not.toHaveProperty(
-      "anchor",
-    );
+  it("reads a 409 conversation_rotated as a replaced thread", async () => {
+    refused(409, { code: "conversation_rotated" });
+    await expect(startTurn("shop", "conv-1", { instruction: "Go" })).rejects.toBeInstanceOf(ConversationRotatedError);
   });
 
-  it("drops an anchor with no file to resolve against", () => {
-    expect(
-      mapConversationMessage({ role: "user", content: "hi", anchor: { nodes: anchor.nodes } }),
-    ).not.toHaveProperty("anchor");
-  });
-
-  it("omits an empty context rather than sending a blank one", () => {
-    const bare = { file: "a.md", nodes: [{ name: "n", kind: "paragraph", context: "" }] };
-    const mapped = mapConversationMessage({ role: "user", content: "hi", anchor: bare });
-    expect(mapped?.anchor?.nodes[0]).not.toHaveProperty("context");
-  });
-});
-
-describe("mapConversationMessage", () => {
-  it("keeps an author present on the payload", () => {
-    expect(
-      mapConversationMessage({
-        role: "user",
-        content: "hi",
-        author: { id: "u-sarah", displayName: "Sarah Perera" },
-      }),
-    ).toEqual({
-      role: "user",
-      content: "hi",
-      author: { id: "u-sarah", displayName: "Sarah Perera" },
-    });
-  });
-
-  it("omits author when the payload has none", () => {
-    expect(mapConversationMessage({ role: "assistant", content: "hi" })).toEqual({
-      role: "assistant",
-      content: "hi",
-    });
-  });
-
-  it("falls back to a `user` field with a `name` property", () => {
-    expect(
-      mapConversationMessage({ role: "user", content: "hi", user: { id: "u-1", name: "Ann" } }),
-    ).toEqual({ role: "user", content: "hi", author: { id: "u-1", displayName: "Ann" } });
-  });
-
-  it("drops a malformed author instead of throwing", () => {
-    expect(
-      mapConversationMessage({ role: "user", content: "hi", author: { id: 42 } }),
-    ).toEqual({ role: "user", content: "hi" });
-  });
-
-  it("carries attachment names off the journal (#428)", () => {
-    expect(
-      mapConversationMessage({
-        role: "user",
-        content: "what is wrong here?",
-        attachments: ["error.png", "rows.csv"],
-      }),
-    ).toEqual({
-      role: "user",
-      content: "what is wrong here?",
-      attachments: ["error.png", "rows.csv"],
-    });
-  });
-
-  it("omits attachments entirely when the payload has none", () => {
-    // A message without attachments must keep the exact row shape it had
-    // before the feature existed — not gain an empty array.
-    expect(mapConversationMessage({ role: "user", content: "hi" })).toEqual({
-      role: "user",
-      content: "hi",
-    });
-  });
-
-  it("drops malformed attachment entries rather than rendering blank chips", () => {
-    // Untyped extension field in the contract, so this is untrusted input.
-    expect(
-      mapConversationMessage({
-        role: "user",
-        content: "hi",
-        attachments: ["ok.pdf", 42, "", "   ", null],
-      }),
-    ).toEqual({ role: "user", content: "hi", attachments: ["ok.pdf"] });
-    expect(
-      mapConversationMessage({ role: "user", content: "hi", attachments: "nope" }),
-    ).toEqual({ role: "user", content: "hi" });
-  });
-
-  it("returns null for a non-object entry", () => {
-    expect(mapConversationMessage("nope")).toBeNull();
-    expect(mapConversationMessage(null)).toBeNull();
-  });
-
-  it("returns null when role is missing or not a string", () => {
-    expect(mapConversationMessage({ content: "hi" })).toBeNull();
+  it("carries the server's message for any other refusal", async () => {
+    refused(400, { code: "invalid_request", message: "instruction is required" });
+    await expect(startTurn("shop", "conv-1", { instruction: " " })).rejects.toThrow("instruction is required");
   });
 });

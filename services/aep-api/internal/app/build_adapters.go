@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/build"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -35,11 +36,11 @@ type buildSpecTagger struct {
 	art spec.ArtifactService
 }
 
-func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID, version string) (*spec.SpecSaveResult, error) {
+func (t buildSpecTagger) TagSpec(ctx context.Context, orgID, projectID, version string, pick *reqspec.Pick, blocked map[string]string) (*spec.SpecSaveResult, error) {
 	// The name rides as Name, never as the message: the message is the tag's
 	// body (what this save was), the name is the tag itself (what the version
 	// IS). Empty takes the platform's suggestion.
-	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build", Name: version})
+	return t.art.SaveSpec(ctx, orgID, projectID, spec.SaveRequest{Message: "Build", Name: version, Pick: pick, Blocked: blocked})
 }
 
 // buildVersionFacts adapts the artifact service onto the preflight's
@@ -50,6 +51,10 @@ type buildVersionFacts struct {
 
 func (v buildVersionFacts) BuildVersionFacts(ctx context.Context, orgID, projectID string) (spec.VersionFacts, error) {
 	return v.art.BuildVersionFacts(ctx, orgID, projectID)
+}
+
+func (t buildSpecTagger) TagRepair(ctx context.Context, orgID, projectID, of string) (string, error) {
+	return t.art.TagRepair(ctx, orgID, projectID, of)
 }
 
 func (t buildSpecTagger) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error) {

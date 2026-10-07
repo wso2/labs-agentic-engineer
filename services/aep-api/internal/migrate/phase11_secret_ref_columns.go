@@ -26,8 +26,8 @@ import (
 // secret_ref_name/kv_path/property(/written_at) triplet to
 // org_anthropic_credentials, org_credentials and organization_idp_profiles,
 // and copied leftover sm_api_* names into it. The org_secrets reference rows
-// replaced the triplet, and phase26 drops it; re-adding it on every boot only
-// for phase26 to drop it again would be churn. The step stays in the list
+// replaced the triplet, and phase29 drops it; re-adding it on every boot only
+// for phase29 to drop it again would be churn. The step stays in the list
 // because the list is frozen (a removal would break the golden order).
 // Leftover sm_api_* columns are still dropped by phase14.
 func RunPhase11SecretRefColumns(context.Context, *gorm.DB) error { return nil }

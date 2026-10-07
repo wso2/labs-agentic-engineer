@@ -1,0 +1,634 @@
+openapi: 3.0.3
+info:
+  title: Onboarding API
+  version: 0.1.0
+  description: Tracks new-hire onboarding records and their IT, HR and Facilities tasks.
+servers:
+  - url: /
+security:
+  - oauth2: []
+paths:
+  /onboarding-records:
+    get:
+      operationId: listOnboardingRecords
+      summary: Every onboarding record, with per-department task status
+      security:
+        - oauth2: [onboarding-records:read-all]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: status, in: query, schema: { type: string, enum: [in-progress, complete] } }
+      responses:
+        '200':
+          description: Page of onboarding records
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer, description: total matching records }
+                  next: { type: string, nullable: true, description: relative URI of the next page }
+                  previous: { type: string, nullable: true, description: relative URI of the previous page }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/OnboardingRecord' }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    post:
+      operationId: createOnboardingRecord
+      summary: Start a new hire's onboarding record, seeded from department templates
+      security:
+        - oauth2: [onboarding-records:create]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newHireName, startDate]
+              properties:
+                newHireName: { type: string }
+                startDate: { type: string, format: date }
+      responses:
+        '201':
+          description: Created, with tasks seeded from templates
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OnboardingRecord' } }
+        '400':
+          description: Invalid request
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /onboarding-records/{recordId}:
+    get:
+      operationId: getOnboardingRecord
+      summary: One onboarding record, with its tasks by department
+      security:
+        - oauth2: [onboarding-records:read-all]
+      parameters:
+        - { name: recordId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The onboarding record
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OnboardingRecordDetail' } }
+        '404':
+          description: No such onboarding record
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /onboarding-records/{recordId}/complete:
+    post:
+      operationId: completeOnboardingRecord
+      summary: Mark a record complete once every task is done
+      security:
+        - oauth2: [onboarding-records:complete]
+      parameters:
+        - { name: recordId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Record marked complete
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/OnboardingRecord' } }
+        '400':
+          description: Tasks remain incomplete
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '404':
+          description: No such onboarding record
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /onboarding-records/{recordId}/tasks:
+    post:
+      operationId: addOnboardingTask
+      summary: Add a task exception to a record
+      security:
+        - oauth2: [onboarding-records:manage]
+      parameters:
+        - { name: recordId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [department, name, dueDate]
+              properties:
+                department: { $ref: '#/components/schemas/Department' }
+                name: { type: string }
+                dueDate: { type: string, format: date }
+                notes: { type: string }
+      responses:
+        '201':
+          description: Task added
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Task' } }
+        '400':
+          description: Invalid request
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '404':
+          description: No such onboarding record
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /onboarding-records/{recordId}/tasks/{taskId}:
+    patch:
+      operationId: editOnboardingTask
+      summary: Edit a task's name, due date or notes
+      security:
+        - oauth2: [onboarding-records:manage]
+      parameters:
+        - { name: recordId, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                dueDate: { type: string, format: date }
+                notes: { type: string }
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Task' } }
+        '404':
+          description: No such task
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    delete:
+      operationId: removeOnboardingTask
+      summary: Remove a task exception from a record
+      security:
+        - oauth2: [onboarding-records:manage]
+      parameters:
+        - { name: recordId, in: path, required: true, schema: { type: string } }
+        - { name: taskId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204':
+          description: Task removed
+        '404':
+          description: No such task
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /it-tasks:
+    get:
+      operationId: listItTasks
+      summary: Every IT task across new hires, overdue flagged
+      security:
+        - oauth2: [it-tasks:read]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, in-progress, complete] } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Page of IT tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer, description: total matching tasks }
+                  next: { type: string, nullable: true, description: relative URI of the next page }
+                  previous: { type: string, nullable: true, description: relative URI of the previous page }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /it-tasks/{taskId}:
+    patch:
+      operationId: updateItTask
+      summary: Change an IT task's status
+      security:
+        - oauth2: [it-tasks:update]
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/TaskStatus' }
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Task' } }
+        '404':
+          description: No such task
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /facilities-tasks:
+    get:
+      operationId: listFacilitiesTasks
+      summary: Every Facilities task across new hires, overdue flagged
+      security:
+        - oauth2: [facilities-tasks:read]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, in-progress, complete] } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Page of Facilities tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer, description: total matching tasks }
+                  next: { type: string, nullable: true, description: relative URI of the next page }
+                  previous: { type: string, nullable: true, description: relative URI of the previous page }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /facilities-tasks/{taskId}:
+    patch:
+      operationId: updateFacilitiesTask
+      summary: Change a Facilities task's status
+      security:
+        - oauth2: [facilities-tasks:update]
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/TaskStatus' }
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Task' } }
+        '404':
+          description: No such task
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /hr-tasks:
+    get:
+      operationId: listHrTasks
+      summary: Every HR task across new hires, overdue flagged
+      security:
+        - oauth2: [hr-tasks:read]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, in-progress, complete] } }
+        - { name: overdue, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: Page of HR tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer, description: total matching tasks }
+                  next: { type: string, nullable: true, description: relative URI of the next page }
+                  previous: { type: string, nullable: true, description: relative URI of the previous page }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Task' }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /hr-tasks/{taskId}:
+    patch:
+      operationId: updateHrTask
+      summary: Change an HR task's status
+      security:
+        - oauth2: [hr-tasks:update]
+      parameters:
+        - { name: taskId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/TaskStatus' }
+      responses:
+        '200':
+          description: Task updated
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Task' } }
+        '404':
+          description: No such task
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /task-templates:
+    get:
+      operationId: listTaskTemplates
+      summary: Every standard task template, by department
+      security:
+        - oauth2: [task-templates:manage]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: department, in: query, schema: { $ref: '#/components/schemas/Department' } }
+      responses:
+        '200':
+          description: Page of task templates
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer, description: total matching templates }
+                  next: { type: string, nullable: true, description: relative URI of the next page }
+                  previous: { type: string, nullable: true, description: relative URI of the previous page }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/TaskTemplate' }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    post:
+      operationId: createTaskTemplate
+      summary: Create a task template
+      security:
+        - oauth2: [task-templates:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [department, name, defaultDueOffsetDays]
+              properties:
+                department: { $ref: '#/components/schemas/Department' }
+                name: { type: string }
+                defaultDueOffsetDays: { type: integer }
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/TaskTemplate' } }
+        '400':
+          description: Invalid request
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+  /task-templates/{templateId}:
+    patch:
+      operationId: editTaskTemplate
+      summary: Edit a task template
+      security:
+        - oauth2: [task-templates:manage]
+      parameters:
+        - { name: templateId, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                defaultDueOffsetDays: { type: integer }
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/TaskTemplate' } }
+        '404':
+          description: No such template
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    delete:
+      operationId: removeTaskTemplate
+      summary: Remove a task template
+      security:
+        - oauth2: [task-templates:manage]
+      parameters:
+        - { name: templateId, in: path, required: true, schema: { type: string } }
+      responses:
+        '204':
+          description: Template removed
+        '404':
+          description: No such template
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401':
+          description: Not signed in
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '403':
+          description: Missing required scope
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            onboarding-records:create: Start a new onboarding record
+            onboarding-records:read-all: Every onboarding record
+            onboarding-records:manage: Add, edit or remove tasks on a record
+            onboarding-records:complete: Mark a record complete
+            it-tasks:read: Every IT task
+            it-tasks:update: Update an IT task's status
+            facilities-tasks:read: Every Facilities task
+            facilities-tasks:update: Update a Facilities task's status
+            hr-tasks:read: Every HR task
+            hr-tasks:update: Update an HR task's status
+            task-templates:manage: Create, edit or remove task templates
+  schemas:
+    Department:
+      type: string
+      enum: [it, hr, facilities]
+    TaskStatus:
+      type: string
+      enum: [pending, in-progress, complete]
+    OnboardingRecord:
+      type: object
+      required: [id, newHireName, startDate, status, createdAt]
+      properties:
+        id: { type: string }
+        newHireName: { type: string }
+        startDate: { type: string, format: date }
+        status: { type: string, enum: [in-progress, complete] }
+        createdAt: { type: string, format: date-time }
+        itTasksComplete: { type: integer, description: completed IT tasks }
+        itTasksTotal: { type: integer, description: total IT tasks }
+        hrTasksComplete: { type: integer, description: completed HR tasks }
+        hrTasksTotal: { type: integer, description: total HR tasks }
+        facilitiesTasksComplete: { type: integer, description: completed Facilities tasks }
+        facilitiesTasksTotal: { type: integer, description: total Facilities tasks }
+        hasOverdueTasks: { type: boolean, description: any task past due and not complete }
+    OnboardingRecordDetail:
+      allOf:
+        - $ref: '#/components/schemas/OnboardingRecord'
+        - type: object
+          properties:
+            tasks:
+              type: array
+              items: { $ref: '#/components/schemas/Task' }
+    Task:
+      type: object
+      required: [id, onboardingRecordId, department, name, status, dueDate]
+      properties:
+        id: { type: string }
+        onboardingRecordId: { type: string }
+        department: { $ref: '#/components/schemas/Department' }
+        name: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        dueDate: { type: string, format: date }
+        notes: { type: string }
+        overdue: { type: boolean, description: past due date and not complete }
+    TaskTemplate:
+      type: object
+      required: [id, department, name, defaultDueOffsetDays]
+      properties:
+        id: { type: string }
+        department: { $ref: '#/components/schemas/Department' }
+        name: { type: string }
+        defaultDueOffsetDays: { type: integer }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }

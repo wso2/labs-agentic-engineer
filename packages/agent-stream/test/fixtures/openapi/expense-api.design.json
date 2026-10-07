@@ -7,7 +7,7 @@
   "appPath": "expense-api",
   "entrypoint": "deployment/service",
   "exposure": "intranet",
-  "stories": [1, 2, 3, 4, 5, 6, 7],
+  "stories": ["F1.1", "F1.2", "F1.3", "F1.4", "F1.5", "F1.6", "F1.7"],
   "description": "Go service owning expense claims and their approval lifecycle. Accepts a claim from an employee, serves an employee their own claims and an approver every claim, records an approve or reject decision once, and computes the monthly total of approved claims. Holds no role of its own: it enforces the scope each operation declares and applies the catalog's ownership rule to the rows it returns.",
   "dependencies": [
     {

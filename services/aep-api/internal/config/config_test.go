@@ -164,3 +164,51 @@ func TestConfig_NoOpenBaoTokenEnv(t *testing.T) {
 		t.Fatalf("OpenBaoAuth = %+v; want the env overrides %+v", cfg.OpenBaoAuth, want)
 	}
 }
+
+// setRequiredLoadEnv sets the env vars Load() needs to reach cfg.Validate()
+// without a "configuration errors" failure, so a test can isolate one
+// optional field's wiring.
+func setRequiredLoadEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("PLATFORM_API_SERVICE_BASE_URL", "https://platform-api.example")
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/aep")
+	t.Setenv("JWKS_URL", "https://thunder.example/oauth2/jwks")
+	t.Setenv("BFF_TASK_SIGNING_KEY", "-----BEGIN KEY-----\nx\n-----END KEY-----")
+}
+
+// TestLoad_SREHandoff pins the handoff's env wiring: a key is enabled, none
+// is disabled, and a short key is refused.
+func TestLoad_SREHandoff(t *testing.T) {
+	key := strings.Repeat("a", 64)
+
+	t.Run("a key is enabled", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+		t.Setenv("SRE_HANDOFF_TOKEN", key)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if !cfg.SREHandoff.Enabled() || cfg.SREHandoff.Token != key {
+			t.Fatalf("SREHandoff = %+v, want enabled", cfg.SREHandoff)
+		}
+	})
+
+	t.Run("no key is disabled", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() error = %v, want nil", err)
+		}
+		if cfg.SREHandoff.Enabled() {
+			t.Fatal("SREHandoff.Enabled() = true with nothing set")
+		}
+	})
+
+	t.Run("a short key is refused", func(t *testing.T) {
+		setRequiredLoadEnv(t)
+		t.Setenv("SRE_HANDOFF_TOKEN", "too-short")
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "SRE_HANDOFF_TOKEN") {
+			t.Fatalf("Load() error = %v, want an SRE_HANDOFF_TOKEN error", err)
+		}
+	})
+}

@@ -28,6 +28,11 @@ import (
 	"github.com/wso2/aep/aectl/internal/ui"
 )
 
+// defaultPlatformRelease is the Helm release name `platform update` and
+// `sre install`'s internal sreAgent.* wiring both target unless told
+// otherwise. A single constant, not two copies of the string literal.
+const defaultPlatformRelease = "aep-platform"
+
 var (
 	updateNamespace       string
 	updatePlatformRelease string
@@ -39,9 +44,8 @@ var (
 	// Per-service image overrides. Each accepts "repo:tag".
 	// For local images: load into the node runtime first (k3d image import /
 	// kind load docker-image), then set --pull-policy Never.
-	updateAepApiImage    string
-	updateMcpServerImage string
-	updateConsoleImage   string
+	updateAepApiImage  string
+	updateConsoleImage string
 )
 
 var updateCmd = &cobra.Command{
@@ -78,7 +82,7 @@ func init() {
 
 	f := updateCmd.Flags()
 	f.StringVar(&updateNamespace, "namespace", "wso2-aep", "Namespace where the platform chart is installed")
-	f.StringVar(&updatePlatformRelease, "platform-release", "aep-platform", "Helm release name")
+	f.StringVar(&updatePlatformRelease, "platform-release", defaultPlatformRelease, "Helm release name")
 	f.StringVar(&updatePlatformVersion, "version", "", "Chart version to upgrade to (default: reuse current version)")
 	f.StringVar(&updatePlatformChart, "platform-chart", "", "Local path to a platform chart (overrides --version)")
 	f.BoolVar(&updateResetValues, "reset-values", false, "Reset all values to chart defaults before applying overrides (default: reuse the previous release's values on the new chart's defaults)")
@@ -86,7 +90,6 @@ func init() {
 	f.StringArrayVar(&updateHelmSets, "set", nil, "Additional helm --set overrides (repeatable)")
 
 	f.StringVar(&updateAepApiImage, "aep-api-image", "", "aep-api image as repo:tag  (e.g. ghcr.io/wso2/aep/aep-api:v1.2)")
-	f.StringVar(&updateMcpServerImage, "mcp-server-image", "", "aep-mcp-server image as repo:tag")
 	f.StringVar(&updateConsoleImage, "console-image", "", "console image as repo:tag")
 }
 
@@ -96,14 +99,139 @@ type serviceImageOverride struct {
 	image    string // "repo:tag" from the flag
 }
 
-func runUpdate(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+// platformUpdateConfig is everything a platform-chart `helm upgrade` needs.
+// runUpdate (this file's cobra RunE) builds one from its own flags; other
+// callers in the same process — namely `aectl sre install`, which must flip
+// sreAgent.* on the same release — build their own and call platformUpdate
+// directly, so the two callers never share or fight over mutable package
+// state (updateNamespace/updateHelmSets/... stay this command's own).
+type platformUpdateConfig struct {
+	Namespace      string
+	Release        string
+	ChartPath      string // local chart path; takes precedence over ChartVersion
+	ChartVersion   string // OCI version; ignored when ChartPath is set
+	ResetValues    bool
+	PullPolicy     string
+	HelmSets       []string
+	ImageOverrides []serviceImageOverride
+}
 
+func runUpdate(cmd *cobra.Command, args []string) error {
+	return platformUpdate(context.Background(), updateConfigFromFlags())
+}
+
+// updateConfigFromFlags builds the platformUpdateConfig of `aectl platform
+// update` from its own flags.
+func updateConfigFromFlags() platformUpdateConfig {
+	return platformUpdateConfig{
+		Namespace:    updateNamespace,
+		Release:      updatePlatformRelease,
+		ChartPath:    updatePlatformChart,
+		ChartVersion: updatePlatformVersion,
+		ResetValues:  updateResetValues,
+		PullPolicy:   updatePullPolicy,
+		HelmSets:     updateHelmSets,
+		ImageOverrides: []serviceImageOverride{
+			{"aepApi", updateAepApiImage},
+			{"console", updateConsoleImage},
+		},
+	}
+}
+
+// requireAEStudioConfig refuses an upgrade whose aectl config is missing or
+// partial. The AE Studio values are derived from aectl config; with the config
+// ConfigMap absent or partial they would be derived from defaults (plain
+// http, empty Thunder namespace in the egress rule) and the upgrade would
+// write those over a working install, so fail instead.
+func requireAEStudioConfig() error {
+	if errs := config.ValidateLoaded(); len(errs) > 0 {
+		return fmt.Errorf("aectl config is missing or invalid, refusing to derive aeStudio.* values from it "+
+			"(run 'aectl platform config import --config <file>' first): %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// helmUpgradeArgs builds the `helm upgrade` argument list for cfg. Split out
+// from platformUpdate so the call shape — chart source resolution, value
+// strategy, image overrides, the AE Studio values, arbitrary --set — is
+// unit-testable without shelling out to helm.
+func helmUpgradeArgs(cfg platformUpdateConfig) ([]string, error) {
+	helmArgs := []string{
+		"upgrade", cfg.Release,
+		"-n", cfg.Namespace,
+	}
+
+	// Chart source: local path > GHCR with version > GHCR without version.
+	if cfg.ChartPath != "" {
+		helmArgs = append(helmArgs, cfg.ChartPath)
+	} else {
+		// OCI artifact is named after the chart's `name:` (aep-platform).
+		helmArgs = append(helmArgs, "oci://ghcr.io/wso2/aep/charts/aep-platform")
+		if cfg.ChartVersion != "" {
+			helmArgs = append(helmArgs, "--version", cfg.ChartVersion)
+		}
+	}
+
+	// Value strategy. Not --reuse-values: Helm then renders on the defaults
+	// of the chart the release was installed with, so a default a newer
+	// chart adds (aeStudio.webhookRelay.image) never reaches an existing
+	// install. --reset-then-reuse-values renders on the new chart's defaults
+	// and keeps every value supplied to the previous release.
+	if cfg.ResetValues {
+		helmArgs = append(helmArgs, "--reset-values")
+	} else {
+		helmArgs = append(helmArgs, "--reset-then-reuse-values")
+	}
+
+	// Per-service image overrides.
+	for _, o := range cfg.ImageOverrides {
+		if o.image == "" {
+			continue
+		}
+		repo, tag, err := splitImage(o.image)
+		if err != nil {
+			return nil, fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
+		}
+		helmArgs = append(helmArgs,
+			"--set", fmt.Sprintf("%s.image.repository=%s", o.chartKey, repo),
+			"--set", fmt.Sprintf("%s.image.tag=%s", o.chartKey, tag),
+		)
+		if cfg.PullPolicy != "" {
+			helmArgs = append(helmArgs,
+				"--set", fmt.Sprintf("%s.image.pullPolicy=%s", o.chartKey, cfg.PullPolicy),
+			)
+		}
+	}
+
+	// The aectl-computed AE Studio values, the same set `platform install`
+	// applies, so an install that predates them converges on upgrade. Before
+	// --set so an explicit override still wins.
+	helmArgs = append(helmArgs, aeStudioOverrides(cfg.Namespace)...)
+
+	// Arbitrary --set overrides.
+	for _, s := range cfg.HelmSets {
+		helmArgs = append(helmArgs, "--set", s)
+	}
+	return helmArgs, nil
+}
+
+// platformUpdate runs `helm upgrade` on the AEP platform release per cfg. It
+// carries no default of its own beyond what cfg's zero values mean (no chart
+// pin => the unversioned OCI chart, --reset-then-reuse-values unless
+// ResetValues) — callers that need a pinned chart source (e.g. `sre install`,
+// which must never silently drift the platform release) are responsible for
+// setting cfg.ChartPath/ChartVersion themselves. Every caller gets the same
+// AE Studio values and relay seed, so `sre install`'s internal upgrade on a
+// newer chart renders them like `platform update` does.
+func platformUpdate(ctx context.Context, cfg platformUpdateConfig) error {
+	if err := requireAEStudioConfig(); err != nil {
+		return err
+	}
 	if _, err := exec.LookPath("helm"); err != nil {
 		return fmt.Errorf("helm is required but was not found in PATH")
 	}
 
-	helmArgs, err := buildUpdateArgs()
+	helmArgs, err := helmUpgradeArgs(cfg)
 	if err != nil {
 		return err
 	}
@@ -116,7 +244,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ui.Step(fmt.Sprintf("Upgrading platform chart %q", updatePlatformRelease))
+	ui.Step(fmt.Sprintf("Upgrading platform chart %q", cfg.Release))
 	var out bytes.Buffer
 	c := exec.CommandContext(ctx, "helm", helmArgs...)
 	c.Stdout = &out
@@ -126,84 +254,6 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	ui.Success("Platform updated")
 	return nil
-}
-
-// buildUpdateArgs assembles the `helm upgrade` argv from the update flags and
-// aectl config.
-func buildUpdateArgs() ([]string, error) {
-	// The AE Studio values are derived from aectl config. With the config
-	// ConfigMap absent or partial they would be derived from defaults (plain
-	// http, empty Thunder namespace in the egress rule) and the upgrade
-	// would write those over a working install, so fail instead.
-	if errs := config.ValidateLoaded(); len(errs) > 0 {
-		return nil, fmt.Errorf("aectl config is missing or invalid, refusing to derive aeStudio.* values from it "+
-			"(run 'aectl platform config import --config <file>' first): %s", strings.Join(errs, "; "))
-	}
-
-	overrides := []serviceImageOverride{
-		{"aepApi", updateAepApiImage},
-		{"aepMcpServer", updateMcpServerImage},
-		{"console", updateConsoleImage},
-	}
-
-	// Build helm upgrade arguments.
-	helmArgs := []string{
-		"upgrade", updatePlatformRelease,
-		"-n", updateNamespace,
-	}
-
-	// Chart source: local path > GHCR with version > GHCR without version.
-	if updatePlatformChart != "" {
-		helmArgs = append(helmArgs, updatePlatformChart)
-	} else {
-		// OCI artifact is named after the chart's `name:` (aep-platform).
-		helmArgs = append(helmArgs, "oci://ghcr.io/wso2/aep/charts/aep-platform")
-		if updatePlatformVersion != "" {
-			helmArgs = append(helmArgs, "--version", updatePlatformVersion)
-		}
-	}
-
-	// Value strategy. Not --reuse-values: Helm then renders on the defaults
-	// of the chart the release was installed with, so a default a newer
-	// chart adds (aeStudio.webhookRelay.image) never reaches an existing
-	// install. --reset-then-reuse-values renders on the new chart's defaults
-	// and keeps every value supplied to the previous release.
-	if updateResetValues {
-		helmArgs = append(helmArgs, "--reset-values")
-	} else {
-		helmArgs = append(helmArgs, "--reset-then-reuse-values")
-	}
-
-	// Per-service image overrides.
-	for _, o := range overrides {
-		if o.image == "" {
-			continue
-		}
-		repo, tag, err := splitImage(o.image)
-		if err != nil {
-			return nil, fmt.Errorf("--%s-image: %w", strings.ToLower(o.chartKey), err)
-		}
-		helmArgs = append(helmArgs,
-			"--set", fmt.Sprintf("%s.image.repository=%s", o.chartKey, repo),
-			"--set", fmt.Sprintf("%s.image.tag=%s", o.chartKey, tag),
-		)
-		if updatePullPolicy != "" {
-			helmArgs = append(helmArgs,
-				"--set", fmt.Sprintf("%s.image.pullPolicy=%s", o.chartKey, updatePullPolicy),
-			)
-		}
-	}
-
-	// The aectl-computed AE Studio values, the same set `platform install`
-	// applies, so an install that predates them converges on upgrade. Before
-	// --set so an explicit override still wins.
-	helmArgs = append(helmArgs, aeStudioOverrides(updateNamespace)...)
-
-	// Arbitrary --set overrides.
-	for _, s := range updateHelmSets {
-		helmArgs = append(helmArgs, "--set", s)
-	}
-	return helmArgs, nil
 }
 
 // splitImage splits "repo:tag" on the last colon. Returns an error if the

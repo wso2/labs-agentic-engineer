@@ -34,7 +34,7 @@ export default defineConfig({
     setupFiles: ["src/test-setup.ts"],
     server: {
       // oxygen-ui ships in a form that needs vite's transform pipeline rather
-      // than a plain node require (matches apps/console/vitest.config.ts).
+      // than a plain node require (matches design-view).
       deps: {
         inline: [
           "@wso2/oxygen-ui",

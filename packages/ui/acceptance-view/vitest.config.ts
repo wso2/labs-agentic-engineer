@@ -22,8 +22,7 @@ export default defineConfig({
   test: {
     // parseFeature/report/outcomes are pure logic and node is the fastest
     // default; AcceptanceView.test.tsx opts into jsdom per-file via a
-    // `// @vitest-environment jsdom` pragma, mirroring design-view and
-    // apps/console.
+    // `// @vitest-environment jsdom` pragma, mirroring design-view.
     environment: "node",
     // Source only. `build` compiles tests into dist/ alongside the library, and
     // vitest's default glob collects those stale copies and runs them against
@@ -37,7 +36,7 @@ export default defineConfig({
     setupFiles: ["src/test-setup.ts"],
     server: {
       // oxygen-ui ships in a form that needs vite's transform pipeline rather
-      // than a plain node require (matches design-view and apps/console).
+      // than a plain node require (matches design-view).
       deps: {
         inline: [
           "@wso2/oxygen-ui",

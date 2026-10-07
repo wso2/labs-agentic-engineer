@@ -28,7 +28,7 @@
 # two paths (a test seam, so a differing pair can be shown to fail).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-want=(aep-api aep-mcp-server console tryit)
+want=(aep-api console tryit)
 skaffold=$(grep -oE 'image: ghcr.io/wso2/aep/[a-z-]+' skaffold.yaml | sed 's#.*/##' | sort -u)
 imports=$(sed -n '/^dev-images:/,/--cluster openchoreo/p' Makefile | grep -oE 'ghcr.io/wso2/aep/[a-z-]+:dev-local' | sed 's#.*/##;s#:.*##' | sort -u)
 sets=$(sed -n '/^dev-update:/,/rollout restart/p' Makefile | grep -oE 'repository=ghcr.io/wso2/aep/[a-z-]+' | sed 's#.*/##' | sort -u)

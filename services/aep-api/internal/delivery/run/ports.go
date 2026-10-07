@@ -93,7 +93,7 @@ type RunStore interface {
 	// SetValidationVerdict records the validation cycle's outcome on the run,
 	// together with the validation issue that produced it so a settled run stays
 	// navigable to its criteria. An issue of 0 leaves the stored one untouched.
-	SetValidationVerdict(ctx context.Context, id, verdict string, issue int) error
+	SetValidationVerdict(ctx context.Context, id, verdict string, issue, regressions int) error
 	// CancelRequested reports whether a person has asked this run to stop.
 	//
 	// The DURABLE half of cancel. The cancel signal is the fast path — it stops
@@ -130,7 +130,7 @@ type CycleStore interface {
 	//
 	// The digest rides this call because the underlying write is fenced write-once
 	// on an empty verdict, so nothing recorded afterwards could ever land.
-	SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int, digest string) error
+	SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int, digest string, regressions int) error
 	// LatestValidationDigest returns the newest digest recorded by any of these
 	// runs' validation cycles, or "" when none did. This is how one attempt reads
 	// what the PREVIOUS attempt concluded — the comparison spans runs, so it
@@ -213,7 +213,10 @@ type ValidationCoordinator interface {
 	// at deployed-green and returns its number, or 0 when the project has no
 	// validation criteria. Minting here rather than at plan time is what keeps
 	// an unworkable issue out of the working set for the whole run.
-	EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error)
+	//
+	// version is the version judged (its tag): the issue names what it built
+	// and nothing it did not (B4).
+	EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int, version string) (int, error)
 	// Verdict reads the validation runner's committed report AT `at` — the
 	// validation cycle's own merge commit — and returns one of the
 	// delivery.ValidationVerdict* values, plus a DIGEST of the evidence it was
@@ -229,7 +232,11 @@ type ValidationCoordinator interface {
 	// from one that learned nothing. It covers the criteria and their outcomes ONLY,
 	// never the raw file — the report embeds the commit it was generated at, so a
 	// whole-file hash would differ on every attempt and could never match.
-	Verdict(ctx context.Context, orgID, projectID, at string) (verdict, digest string, err error)
+	//
+	// The report is read within the version's built scope (B4), and its failures
+	// against the previous validated version: regressions counts those that
+	// passed there.
+	Verdict(ctx context.Context, orgID, projectID, version, at string) (verdict, digest string, regressions int, err error)
 
 	// MintRepairIssues turns a `failed` attempt's report into ordinary work: one
 	// issue per failed scenario, filed into the milestone, which the next cycle
@@ -240,7 +247,7 @@ type ValidationCoordinator interface {
 	// dedupe key is the SCENARIO, so one defect keeps one issue however many
 	// attempts meet it; an attempt that finds a scenario still failing leaves its
 	// evidence on that issue as a comment.
-	MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at string) ([]int, error)
+	MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, version, at string) ([]int, error)
 
 	// CloseValidationIssue closes the version's validation task, leaving a comment
 	// that names the verdict (or its absence).

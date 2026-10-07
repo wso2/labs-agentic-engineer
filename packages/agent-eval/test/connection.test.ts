@@ -45,7 +45,7 @@ const OLLAMA: ModelConnection = {
 const FIRST_PARTY: ModelConnection = {
   format: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-5-5",
   authScheme: "x-api-key",
   key: "sk-ant-local",
 };
@@ -124,7 +124,7 @@ describe("judgeProvider", () => {
   // @anthropic-ai/sdk posts to <root>/v1/messages; the connection stores <root>/v1.
   it("gives the Anthropic provider the root, not the /v1 base", () => {
     expect(judgeProvider(FIRST_PARTY)).toEqual({
-      id: "anthropic:messages:claude-sonnet-5",
+      id: "anthropic:messages:claude-sonnet-5-5",
       config: { apiBaseUrl: "https://api.anthropic.com" },
     });
     expect(defaultJudgeProvider()).toEqual(judgeProvider(FIRST_PARTY));

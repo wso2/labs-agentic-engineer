@@ -1,0 +1,26 @@
+# The run matrix. Each entry is one configuration of the CODING run under test:
+# `runtime` → AEP_AGENT_RUNTIME, `model` → AEP_AGENT_MODEL, exactly as a
+# dispatch stamps them. The FIRST entry is what `run` uses without --config.
+#
+# claude-code entries run on the Claude OAuth token (deployments/.env
+# AEP_CODING_ANTHROPIC_KEY) and nothing else. An opencode entry needs its own
+# model connection, because the playground refuses OpenCode on an OAuth token —
+# literal non-secret values here, and the NAME of the variable holding the key
+# (read from deployments/.env, then the shell). Never put a key in this file.
+#
+#   - id: <id>
+#     runtime: opencode
+#     model: <model id the connection serves>
+#     connection:
+#       format: openai-compatible
+#       baseUrl: https://ollama.com/v1
+#       authScheme: bearer
+#       apiKeyEnv: OLLAMA_API_KEY
+
+- id: sonnet-5-5
+  runtime: claude-code
+  model: claude-sonnet-5-5
+
+- id: sonnet
+  runtime: claude-code
+  model: claude-sonnet-5

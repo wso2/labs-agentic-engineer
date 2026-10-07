@@ -216,12 +216,12 @@ test("systemPromptAppend: an unpinned run still gets the glossary, with no empty
 
 // Every role the workflow's prose defers to has to be bound here, or the agent
 // resolves it by guessing a tool name.
-test("systemPromptAppend: the glossary names the fan-out, wait and task-list tools", () => {
+test("systemPromptAppend: the glossary binds the fan-out, wait and task-list roles", () => {
   const glossary = toolGlossary();
 
   assert.match(glossary, /fan-out tool.*`Agent`/);
   assert.match(glossary, /`run_in_background: true`/);
-  assert.match(glossary, /wait tool.*`TaskOutput`/);
+  assert.match(glossary, /wait tool\*\*: none\./);
   assert.match(glossary, /task list.*`TaskCreate`/);
   // A run has one model and the fan-out call names none: an alias offered here
   // is a second model the org's key may not serve or the platform cannot price

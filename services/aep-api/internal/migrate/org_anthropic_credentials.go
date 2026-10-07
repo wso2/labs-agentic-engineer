@@ -24,7 +24,7 @@ import (
 )
 
 // RunOrgAnthropicCredentialsMigration creates the org_anthropic_credentials
-// table in its legacy shape. RunPhase26SecretsRefsOnly drops its key preview
+// table in its legacy shape. RunPhase29SecretsRefsOnly drops its key preview
 // and reference columns: the key lives only in the vault, behind the org's
 // default-key / coding-agent-key org_secrets reference rows, and this table
 // keeps status / connected_at / last_validated_at / validation_error.

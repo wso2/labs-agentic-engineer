@@ -19,25 +19,18 @@
 // Standalone config (instead of vite.config.ts) so tests skip the app's
 // router-codegen and react plugins.
 //
-// `environment` stays "node": most of the suite is pure logic and node is
-// the fastest/least-disruptive default. Component tests opt into jsdom
-// per-file via a `// @vitest-environment jsdom` pragma at the top of the file.
-import { configDefaults, defineConfig } from "vitest/config";
+// `environment` stays "node": most of the suite is pure logic. Component
+// tests opt into jsdom per file with a `// @vitest-environment jsdom` pragma.
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // `test/` holds the few node-side tests that cannot live under src/ — see the
-    // header of test/validation-fixtures.contract.test.ts for why.
-    include: ["src/**/*.test.{ts,tsx}", "test/**/*.test.{ts,tsx}"],
-    // Real-browser tests (`*.browser.test.tsx`) run under vitest.browser.config.ts
-    // in headless Chromium — they can't run in this node/jsdom project.
-    exclude: [...configDefaults.exclude, "**/*.browser.test.{ts,tsx}"],
+    include: ["src/**/*.test.{ts,tsx}"],
     environment: "node",
     globals: true,
     setupFiles: ["src/test-setup.ts"],
-    // Above the 5s async-util budget in `src/test-setup.ts`, so a slow CI
-    // machine surfaces the real assertion failure instead of a bare test
-    // timeout that says nothing about what the component was waiting for.
+    // Above the 5s async-util budget in src/test-setup.ts, so a slow CI
+    // machine surfaces the real assertion failure, not a bare timeout.
     testTimeout: 15_000,
     server: {
       deps: {

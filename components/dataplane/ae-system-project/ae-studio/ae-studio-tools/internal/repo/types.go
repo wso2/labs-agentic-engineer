@@ -192,6 +192,9 @@ type TagInfo struct {
 	Name       string `json:"name"`
 	CommitHash string `json:"commitHash"`
 	Message    string `json:"message,omitempty"`
+	// Body is the annotation after its subject line (trimmed), empty for a
+	// lightweight tag. A spec version records its build scope there.
+	Body string `json:"body,omitempty"`
 	// CreatedAt is git's `creatordate`: the tag's own date for an annotated
 	// tag, the commit's for a lightweight one. It is what orders versions
 	// (their names are the user's and carry no sequence). Zero when the ref

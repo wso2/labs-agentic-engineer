@@ -173,7 +173,6 @@ func TestInternalGate_InvalidEscapeFailsClosed(t *testing.T) {
 func TestInternalGate_HEADAuthenticatesLikeGET(t *testing.T) {
 	s := newInternalStack(t)
 	deps := s.deps
-	deps.SREHandoff, deps.Issues = auth.NewSREHandoffVerifier("s3cr3t", "acme"), &fakeIssues{}
 	h := NewHandler(AppParams{InternalDeps: deps})
 	for _, tc := range []struct {
 		name, path, bearer string
@@ -183,9 +182,6 @@ func TestInternalGate_HEADAuthenticatesLikeGET(t *testing.T) {
 		{"runner op, no bearer", "/internal/v1/runs/c1/validation-context", "", 401},
 		{"runner op, other org's bearer", "/internal/v1/runs/c1/validation-context", "Bearer " + s.mint("org-other"), 403},
 		{"runner op, encoded other-org cycle", "/internal/v1/runs/%6Fther-org-x/validation-context", "Bearer " + s.mint("org-acme"), 403},
-		{"sre op, sre bearer", "/internal/v1/sre/projects/p/issues", "Bearer s3cr3t", 200},
-		{"sre op, no bearer", "/internal/v1/sre/projects/p/issues", "", 401},
-		{"sre op, publisher token", "/internal/v1/sre/projects/p/issues", "Bearer " + s.mint("acme"), 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodHead, tc.path, nil)

@@ -25,10 +25,11 @@
 //     resources this component consumes.
 //
 // This parent package hosts the authenticated MCP discovery server
-// (mcp_server.go / mcp_tools.go / ports.go) — the four read-only tools
+// (mcp_server.go / mcp_tools.go / ports.go) — the read-only tools the design
+// agent queries BEFORE inventing something: a dependency
 // (list_external_resources / get_external_resource_schema / list_org_endpoints /
-// list_platform_resource_types) the design agent queries BEFORE inventing a
-// dependency — and composes the two child families beneath it.
+// list_platform_resource_types and the rest) or an agent guardrail
+// (list_guardrail_policies) — and composes the two child families beneath it.
 //
 // Invariant (F3): dependency names — external AND platform-resource — share ONE
 // OpenChoreo Resource namespace per project and are matched project-wide (the

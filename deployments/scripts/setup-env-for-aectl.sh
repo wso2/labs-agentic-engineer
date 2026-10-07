@@ -119,13 +119,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================================
 # Versions — everything except THUNDER_* is copied straight from the official
-# page for release-v1.2 / v1.2.5. Bump OC_BRANCH/OC_VERSION together if you
-# track a newer release; the Thunder coordinates are independent of both.
+# page for release-v1.2 / v1.2.5 (the minimum AEP's aectl enforces — see
+# tools/aectl/cmd/platform.go's minOCVersion). Bump OC_BRANCH/OC_VERSION together if you track a newer release; the
+# Thunder coordinates are independent of both.
 # ============================================================================
 OC_BRANCH="release-v1.2"
 OC_VERSION="1.2.5"
 CLUSTER_NAME="openchoreo"
 CLUSTER_CONTEXT="k3d-${CLUSTER_NAME}"
+
+# Dev control-plane gateway https listener (SRE agent -> aep-api's handoff, see
+# deployments/scripts/setup-sre.sh / tools/aectl/cmd/sre.go's --mcp-hostname).
+# The wildcard covers every *.openchoreo.localhost hostname the gateway
+# fronts (aep-mcp, observer, rca-agent, ...), issued off the control-plane
+# chart's own "cluster-gateway-ca" CA via its "cluster-gateway-selfsigned-
+# issuer" Issuer (both chart-managed, created unconditionally — see
+# install/helm/openchoreo-control-plane/templates/cluster-gateway/{issuer,
+# ca-certificate,selfsigned-issuer}.yaml in the openchoreo/openchoreo repo).
+DEV_GATEWAY_TLS_HOSTNAME="*.openchoreo.localhost"
+DEV_GATEWAY_TLS_SECRET="openchoreo-gateway-wildcard-tls"
+DEV_GATEWAY_CA_ISSUER="cluster-gateway-selfsigned-issuer"
 
 THUNDER_CHART="oci://ghcr.io/thunder-id/helm-charts/thunderid"
 THUNDER_VERSION="1.0.0"
@@ -1403,6 +1416,17 @@ echo "   Control Plane"
 # finished by then on a cold cluster — so kubelet SIGKILLs it mid-startup,
 # the restart begins again, and the release never satisfies `--wait`. A longer
 # timeout here does not help: the loop is deterministic, not slow.
+# The local https listener the SRE agent reaches aep-api's handoff through (see
+# DEV_GATEWAY_TLS_* above). WITH_TLS=1 adds its own "https" listener to
+# gateway-default further down, for the public domain, and the handoff route
+# attaches to that one instead — two listeners may not share the name.
+DEV_GATEWAY_TLS_SET=()
+if [ "$WITH_TLS" != "1" ]; then
+    DEV_GATEWAY_TLS_SET=(--set gateway.tls.enabled=true
+        --set "gateway.tls.hostname=${DEV_GATEWAY_TLS_HOSTNAME}"
+        --set-json "gateway.tls.certificateRefs=[{\"name\":\"${DEV_GATEWAY_TLS_SECRET}\"}]")
+fi
+
 OC_PORTAL_SET=()
 if [ "${WITH_OC_PORTAL:-1}" != "1" ]; then
     OC_PORTAL_SET=(--set backstage.enabled=false)
@@ -1414,6 +1438,7 @@ helm upgrade --install openchoreo-control-plane \
     --version "${OC_VERSION}" \
     --namespace openchoreo-control-plane --create-namespace \
     --values "$(oc_values single-cluster/values-cp.yaml)" \
+    ${DEV_GATEWAY_TLS_SET[@]+"${DEV_GATEWAY_TLS_SET[@]}"} \
     ${OC_PORTAL_SET[@]+"${OC_PORTAL_SET[@]}"} \
     --wait --timeout 600s
 
@@ -1441,6 +1466,33 @@ for binding in $(kubectl get clusterauthzrolebindings.openchoreo.dev -o jsonpath
     echo "   ✓ ${binding} -> client_id"
 done
 echo "✅ Entitlement claim is client_id"
+
+# ── Dev gateway https listener cert ─────────────────────────────────────────
+# The Gateway CR above already declares the https listener's certificateRefs
+# (${DEV_GATEWAY_TLS_SECRET}); cert-manager issues into that Secret name once
+# this Certificate exists. Reuses the chart's own "cluster-gateway-ca" CA via
+# its "cluster-gateway-selfsigned-issuer" Issuer (both created unconditionally
+# by the control-plane chart above) rather than standing up a second CA.
+if [ "$WITH_TLS" != "1" ]; then
+echo "🔐 Issuing the dev gateway's https cert (${DEV_GATEWAY_TLS_SECRET})..."
+kubectl wait -n openchoreo-control-plane --for=condition=Ready certificate/cluster-gateway-ca --timeout=120s
+kubectl apply -f - <<EOF
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ${DEV_GATEWAY_TLS_SECRET}
+  namespace: openchoreo-control-plane
+spec:
+  secretName: ${DEV_GATEWAY_TLS_SECRET}
+  issuerRef:
+    kind: Issuer
+    name: ${DEV_GATEWAY_CA_ISSUER}
+  dnsNames:
+    - "${DEV_GATEWAY_TLS_HOSTNAME}"
+EOF
+kubectl wait -n openchoreo-control-plane --for=condition=Ready "certificate/${DEV_GATEWAY_TLS_SECRET}" --timeout=120s
+echo "✅ Dev gateway https cert ready"
+fi
 
 echo "✅ Control Plane ready"
 

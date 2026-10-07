@@ -17,23 +17,16 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ensureBillingSubscriptionActivated,
-  resetBillingActivationForTests,
-} from "./billing";
+import { ensureBillingSubscriptionActivated, resetBillingActivationForTests } from "./billing";
 
-vi.mock("../config/env", () => ({
-  env: {
-    billingApiBaseUrl: "",
-    authMode: "mock",
-  },
-}));
-
-vi.mock("../auth/token", () => ({
-  getAccessToken: vi.fn(async () => "tok-test"),
-}));
+vi.mock("../config/env", () => ({ env: { billingApiBaseUrl: "" } }));
+vi.mock("../auth/token", () => ({ getAccessToken: vi.fn(async () => "tok-test") }));
 
 import { env } from "../config/env";
+
+const setBase = (url: string) => {
+  (env as { billingApiBaseUrl: string }).billingApiBaseUrl = url;
+};
 
 describe("ensureBillingSubscriptionActivated", () => {
   beforeEach(() => {
@@ -46,25 +39,33 @@ describe("ensureBillingSubscriptionActivated", () => {
     resetBillingActivationForTests();
   });
 
-  it("does not call the network when BILLING_API_BASE_URL is empty", async () => {
-    (env as { billingApiBaseUrl: string }).billingApiBaseUrl = "";
+  it("makes no call when BILLING_API_BASE_URL is unset", async () => {
+    setBase("");
     await ensureBillingSubscriptionActivated();
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("calls billing once when the URL is set, even if invoked twice", async () => {
-    (env as { billingApiBaseUrl: string }).billingApiBaseUrl =
-      "https://billing.example/billing-service-user-api";
+  it("activates once per session, with the signed-in user's token", async () => {
+    setBase("https://billing.example/billing-service-user-api/");
     vi.mocked(fetch).mockResolvedValue(new Response("{}", { status: 200 }));
 
-    await Promise.all([
-      ensureBillingSubscriptionActivated(),
-      ensureBillingSubscriptionActivated(),
-    ]);
+    await Promise.all([ensureBillingSubscriptionActivated(), ensureBillingSubscriptionActivated()]);
+    await ensureBillingSubscriptionActivated();
 
     expect(fetch).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
-      "https://billing.example/billing-service-user-api/api/v1/organization?product=app-factory",
-    );
+    const [url, init] = vi.mocked(fetch).mock.calls[0] ?? [];
+    expect(url).toBe("https://billing.example/billing-service-user-api/api/v1/organization?product=app-factory");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer tok-test" });
+  });
+
+  it("tries again on a later call after a failure", async () => {
+    setBase("https://billing.example");
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response("down", { status: 503 }))
+      .mockResolvedValueOnce(new Response("{}", { status: 200 }));
+
+    await expect(ensureBillingSubscriptionActivated()).rejects.toThrow("Billing API error 503: down");
+    await ensureBillingSubscriptionActivated();
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 });

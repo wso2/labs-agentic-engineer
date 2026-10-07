@@ -468,7 +468,7 @@ func TestMilestoneRunRepository_Transitions(t *testing.T) {
 	if got, err := repo.BumpBudget(ctx, run.ID, delivery.RunBudgetCycles); err != nil || got != nil {
 		t.Fatalf("BumpBudget on a terminal run = (%+v, %v), want (nil, nil)", got, err)
 	}
-	if got, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictPassed, 0); err != nil || got != nil {
+	if got, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictPassed, 0, 0); err != nil || got != nil {
 		t.Fatalf("SetValidationVerdict on a terminal run = (%+v, %v), want (nil, nil)", got, err)
 	}
 	// An unknown id is the same no-op, not an error.
@@ -527,10 +527,10 @@ func TestMilestoneRunRepository_Budgets(t *testing.T) {
 	}
 
 	// The verdict is a run property, written when the validation cycle settles.
-	if _, err := repo.SetValidationVerdict(ctx, run.ID, "maybe", 0); err == nil {
+	if _, err := repo.SetValidationVerdict(ctx, run.ID, "maybe", 0, 0); err == nil {
 		t.Fatalf("SetValidationVerdict(unknown) succeeded, want a rejection")
 	}
-	verdicted, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictFailed, 77)
+	verdicted, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictFailed, 77, 0)
 	if err != nil || verdicted == nil {
 		t.Fatalf("SetValidationVerdict = (%+v, %v)", verdicted, err)
 	}
@@ -545,7 +545,7 @@ func TestMilestoneRunRepository_Budgets(t *testing.T) {
 	}
 	// Issue 0 means "nothing to name" (a task run, or a skip decided before
 	// minting) and must not blank a number already recorded.
-	kept, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictPartial, 0)
+	kept, err := repo.SetValidationVerdict(ctx, run.ID, delivery.ValidationVerdictPartial, 0, 0)
 	if err != nil || kept == nil {
 		t.Fatalf("SetValidationVerdict(issue 0) = (%+v, %v)", kept, err)
 	}
@@ -554,7 +554,7 @@ func TestMilestoneRunRepository_Budgets(t *testing.T) {
 	}
 	// Every member of the vocabulary must be storable.
 	for verdict := range delivery.ValidationVerdicts {
-		if _, err := repo.SetValidationVerdict(ctx, run.ID, verdict, 0); err != nil {
+		if _, err := repo.SetValidationVerdict(ctx, run.ID, verdict, 0, 0); err != nil {
 			t.Errorf("SetValidationVerdict(%q) rejected: %v", verdict, err)
 		}
 	}

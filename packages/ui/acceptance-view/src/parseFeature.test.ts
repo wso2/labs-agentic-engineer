@@ -87,6 +87,7 @@ describe("agreement with the run's own checker", () => {
           rule: rule.text,
           name: scenario.name,
           line: scenario.line,
+          stories: scenario.stories,
         })),
       ).toEqual(reference.scenarios);
     },
@@ -252,5 +253,23 @@ describe("shapes the authoring skill discourages but Gherkin allows", () => {
       "      Then it has 1 item",
     ].join("\n")) as NonNullable<ReturnType<typeof parseFeatureFile>>;
     expect(featureScenarios(f)[0]?.scenario.steps.map((s) => s.keyword)).toEqual(["Given", "Then"]);
+  });
+
+  it("takes a scenario's stories from the Feature and the Rule, not its own tags", () => {
+    const f = parseFeatureFile("a.feature", [
+      "@story-F1.1",
+      "Feature: Stories",
+      "  @story-F1.2 @negative",
+      "  Rule: A rule",
+      "    @story-F9.9",
+      "    Scenario: Tagged",
+      "      Then it holds",
+      "  Rule: Untagged rule",
+      "    Scenario: Inherits the feature only",
+      "      Then it holds",
+    ].join("\n")) as NonNullable<ReturnType<typeof parseFeatureFile>>;
+    const byName = new Map(featureScenarios(f).map(({ scenario }) => [scenario.name, scenario]));
+    expect(byName.get("Tagged")?.stories).toEqual(["F1.1", "F1.2"]);
+    expect(byName.get("Inherits the feature only")?.stories).toEqual(["F1.1"]);
   });
 });

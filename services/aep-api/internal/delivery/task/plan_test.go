@@ -241,9 +241,9 @@ func TestPlanMilestone_WriteFailureIsAnError(t *testing.T) {
 // its component's claimed stories — zero LLM discretion on either.
 func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v2", scope: spec.BuildScope{
-		Tag: "v2", InScope: []int{1, 2},
-		StoryTitles:      map[int]string{1: "As a user, I want A.", 2: "As a user, I want B."},
-		ComponentStories: map[string][]int{"svc": {1, 2}},
+		Tag: "v2", InScope: []string{"F1.1", "F1.2"},
+		StoryTitles:      map[string]string{"F1.1": "As a user, I want A.", "F1.2": "As a user, I want B."},
+		ComponentStories: map[string][]string{"svc": {"F1.1", "F1.2"}},
 	}})
 	r.pod.ScriptTurn(taskOp(`{"ok":true,"op":"plan","component":"svc","title":"Build svc","dependsOn":[],"origin":"spec-plan","rationale":"core"}`))
 
@@ -254,7 +254,7 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	if scope.Tag != "v2" {
 		t.Errorf("scope tag = %q, want v2", scope.Tag)
 	}
-	if want := (aestudiotools.PlanStory{Number: 1, Title: "As a user, I want A.", Covered: false}); !slices.Contains(scope.Stories, want) {
+	if want := (aestudiotools.PlanStory{ID: "F1.1", Title: "As a user, I want A.", Covered: false}); !slices.Contains(scope.Stories, want) {
 		t.Errorf("scope missing the uncovered story: %+v", scope.Stories)
 	}
 
@@ -262,7 +262,25 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	if len(created) != 1 {
 		t.Fatalf("created %d issues, want 1", len(created))
 	}
-	if got := delivery.ParseServesStories(created[0].Body); fmt.Sprint(got) != "[1 2]" {
-		t.Errorf("stamped stories = %v, want [1 2] (body: %q)", got, created[0].Body)
+	if got := delivery.ParseServesStories(created[0].Body); fmt.Sprint(got) != "[F1.1 F1.2]" {
+		t.Errorf("stamped stories = %v, want [F1.1 F1.2] (body: %q)", got, created[0].Body)
+	}
+}
+
+// The plan turn reads the version it plans, not main's tip (B2): an edit made
+// to the spec after the version was cut never reaches the planner.
+//
+// TODO(main-sync Task 47): API-13/API-29: main's case on its workspace rig;
+// rewrite on newPlanRig/aestudiotest (assert the turn pins scope.Tag).
+func TestPlanIntoMilestone_ReadsTheVersionNotMain(t *testing.T) {
+	r := newPlanRig(t, map[string]string{"specs/design/design.md": "# d\n"}, "v2")
+	versioned := r.fx.Origin.HeadSHA(t)
+	r.fx.Origin.Seed(t, map[string]string{"specs/design/design.md": "# edited after v2\n"}, "edit after the version")
+	r.turn.script = "data: [DONE]\n\n"
+	if err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7); err != nil {
+		t.Fatalf("PlanIntoMilestone: %v", err)
+	}
+	if got := r.turn.req.Workspace.Ref; got != versioned {
+		t.Errorf("plan read %s, want the version's commit %s", got, versioned)
 	}
 }

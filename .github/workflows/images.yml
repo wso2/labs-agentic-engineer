@@ -109,7 +109,6 @@ jobs:
             "ae-design-agent|.|components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile|||"
             "ae-collab|.|components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile|||"
             "ae-studio-tools|components/dataplane/ae-system-project/ae-studio/ae-studio-tools|components/dataplane/ae-system-project/ae-studio/ae-studio-tools/Dockerfile|||"
-            "aep-mcp-server|.|services/aep-mcp-server/Dockerfile|||"
             "console|.|apps/console/Dockerfile|||"
             "tryit|.|apps/tryit/Dockerfile|||"
             "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile|||"

@@ -25,7 +25,7 @@ export type {
   AcceptanceScenario,
   AcceptanceStep,
 } from "./parseFeature.js";
-export { isReportParseError, OUTCOMES, parseAcceptanceReport } from "./report.js";
+export { decidingStep, isReportParseError, OUTCOMES, parseAcceptanceReport } from "./report.js";
 export type {
   AcceptanceReport,
   KnownOutcome,

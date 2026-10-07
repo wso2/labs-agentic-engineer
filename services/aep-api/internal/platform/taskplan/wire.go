@@ -72,6 +72,9 @@ type PlanTaskOk struct {
 	DependsOn []string `json:"dependsOn"`
 	Origin    string   `json:"origin"`
 	Rationale string   `json:"rationale"`
+	// Feature is the feature the Task builds in its component ("F2"), or
+	// "foundation" (B3); "" when the planner gave none.
+	Feature string `json:"feature,omitempty"`
 }
 
 // UpdateTaskOk is a successful updateTask result. Ref is RESOLVED by the agent:

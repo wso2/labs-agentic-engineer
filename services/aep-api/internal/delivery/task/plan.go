@@ -113,7 +113,7 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 	// exists for.
 	contextFiles := map[string]string{}
 	preload, slugs := s.assembleMilestoneTasks(ctx, orgID, projectID, milestoneNumber, contextFiles)
-	// The tag's story scope (#369): the PRD's story set drives DELTA
+	// The tag's story scope (#369): the requirements' story set drives DELTA
 	// planning — stories already covered by existing Tasks (their platform
 	// stamps) need no new work. Best-effort: a scope-less read degrades to
 	// the legacy plan-everything behavior.
@@ -124,10 +124,10 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 		slog.WarnContext(ctx, "plan: story scope read failed — planning without milestone scope",
 			"project", projectID, "tag", versions.Latest, "error", serr)
 	}
-	covered := map[int]bool{}
+	covered := map[string]bool{}
 	for _, p := range preload {
-		for _, n := range delivery.ParseServesStories(p.Body) {
-			covered[n] = true
+		for _, id := range delivery.ParseServesStories(p.Body) {
+			covered[id] = true
 		}
 	}
 	// Freeze the set of issue numbers the agent actually received as context: an
@@ -146,6 +146,8 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 	defer cancel()
 	// A fresh turn id per plan: a Plan is one-shot, never resumed. No credit:
 	// no run row records who asked for the build (C7).
+	// TODO(main-sync Task 47): API-13 (B2): the pod must plan against the
+	// version's tag (scope.Tag), not main's tip.
 	events, err := s.turns.StartTurn(streamCtx, ref, aestudiotools.TurnRequest{
 		TurnID:      uuid.NewString(),
 		Project:     projectID,
@@ -159,7 +161,7 @@ func (s *PlanService) PlanIntoMilestone(ctx context.Context, orgID, projectID st
 
 	tap := newPlanTap(context.WithoutCancel(ctx), orgID, projectID, s.issues, s.writer)
 	tap.milestone = milestoneNumber
-	tap.componentStories = scope.ComponentStories
+	tap.withScope(scope)
 	tap.appPaths = s.componentPaths(ctx, orgID, projectID)
 	tap.state = preload
 	tap.existingSlugs = slugs
@@ -239,19 +241,29 @@ func (s *PlanService) assembleMilestoneTasks(ctx context.Context, orgID, project
 // Platform-computed — the model never decides coverage, and never sees this as
 // anything but the section the design agent renders from it. nil when the
 // tag carries no readable stories.
-func planScopeFor(scope spec.BuildScope, covered map[int]bool) *aestudiotools.PlanScope {
+//
+// TODO(main-sync Task 47): API-13: aestudiotools.PlanStory.ID (string),
+// PlanFeature and PlanItem need the ae-studio-tools contract change + regen.
+func planScopeFor(scope spec.BuildScope, covered map[string]bool) *aestudiotools.PlanScope {
 	if len(scope.InScope) == 0 {
 		return nil
 	}
 	stories := make([]aestudiotools.PlanStory, 0, len(scope.InScope))
-	for _, n := range scope.InScope {
+	for _, id := range scope.InScope {
 		stories = append(stories, aestudiotools.PlanStory{
-			Number:  n,
-			Title:   scope.StoryTitles[n],
-			Covered: covered[n],
+			ID:      id,
+			Title:   scope.StoryTitles[id],
+			Covered: covered[id],
 		})
 	}
-	return &aestudiotools.PlanScope{Tag: scope.Tag, Stories: stories}
+	out := &aestudiotools.PlanScope{Tag: scope.Tag, Stories: stories}
+	for _, f := range scope.Features {
+		out.Features = append(out.Features, aestudiotools.PlanFeature{ID: f.ID, Name: f.Name, Needs: f.Needs})
+	}
+	for _, it := range scope.ProductWide {
+		out.ProductWide = append(out.ProductWide, aestudiotools.PlanItem{ID: it.ID, Text: it.Text, AppliesTo: it.AppliesTo})
+	}
+	return out
 }
 
 // planContextFor carries the milestone's existing-Task renders as facts, sorted

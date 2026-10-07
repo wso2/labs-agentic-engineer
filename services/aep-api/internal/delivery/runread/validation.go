@@ -46,6 +46,17 @@ type ValidationReads struct {
 	// recordings answers RunCycleView.recording. Optional: nil reports
 	// `unavailable` — a boot with no feed can serve none.
 	recordings RecordingReader
+	// judge reads an attempt as its version (B4). Optional: nil leaves the
+	// snapshot without scope or standing, as for a version cut before builds
+	// were selections.
+	judge ValidationJudge
+}
+
+// WithJudge attaches the reading of an attempt as its version. Returns the
+// receiver.
+func (r *ValidationReads) WithJudge(j ValidationJudge) *ValidationReads {
+	r.judge = j
+	return r
 }
 
 // NewValidationReads wires the validation read model. A nil snapshot reader
@@ -336,7 +347,33 @@ func (r *ValidationReads) ValidationSnapshot(ctx context.Context, orgID, project
 	if found {
 		out.Report = &content
 	}
+	if r.judge != nil {
+		st, err := r.judge.Standing(ctx, orgID, projectID, tag, cycle.MergeSHA)
+		if err != nil {
+			return nil, err
+		}
+		withStanding(out, st)
+	}
 	return out, nil
+}
+
+// withStanding adds the version's reading of the attempt (B4): what it
+// validates, what it is compared with, and how each failure stood there.
+func withStanding(out *gen.ValidationSnapshot, st ValidationStanding) {
+	if st.Scoped {
+		out.Scope = &gen.ValidationVersionScope{Features: nonNilIDs(st.Features), HeldBack: nonNilIDs(st.HeldBack)}
+	}
+	if st.BaselineVersion != "" {
+		out.Baseline = &gen.ValidationBaseline{Version: st.BaselineVersion, Commit: st.BaselineCommit}
+	}
+	out.Regressions, out.StillFailing = st.Regressions, st.StillFailing
+}
+
+func nonNilIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // validationCycleOn finds the cycle under the VERSION it was asked for. The

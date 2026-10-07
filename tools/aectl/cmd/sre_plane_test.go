@@ -28,12 +28,12 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
-func TestFindObsPlaneReleaseReadsChartVersion(t *testing.T) {
+func TestFindChartReleaseReadsChartVersion(t *testing.T) {
 	out := []byte(`[
 		{"name":"observability-logs-opensearch","chart":"observability-logs-opensearch-0.5.3"},
 		{"name":"openchoreo-observability-plane","chart":"openchoreo-observability-plane-1.2.5"}
 	]`)
-	rel, found, err := findObsPlaneRelease(out)
+	rel, found, err := findChartRelease(out, obsPlaneChart)
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
@@ -42,16 +42,30 @@ func TestFindObsPlaneReleaseReadsChartVersion(t *testing.T) {
 	}
 }
 
-func TestFindObsPlaneReleaseKeepsPrereleaseVersion(t *testing.T) {
+func TestFindChartReleaseFindsLogsModule(t *testing.T) {
+	out := []byte(`[
+		{"name":"openchoreo-observability-plane","chart":"openchoreo-observability-plane-1.2.5"},
+		{"name":"logs","chart":"observability-logs-opensearch-0.5.3"}
+	]`)
+	rel, found, err := findChartRelease(out, obsLogsChart)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if rel.Name != "logs" || rel.Version != "0.5.3" {
+		t.Fatalf("got %+v", rel)
+	}
+}
+
+func TestFindChartReleaseKeepsPrereleaseVersion(t *testing.T) {
 	out := []byte(`[{"name":"observability-plane","chart":"openchoreo-observability-plane-1.0.1-hotfix.1"}]`)
-	rel, found, err := findObsPlaneRelease(out)
+	rel, found, err := findChartRelease(out, obsPlaneChart)
 	if err != nil || !found || rel.Version != "1.0.1-hotfix.1" {
 		t.Fatalf("rel=%+v found=%v err=%v", rel, found, err)
 	}
 }
 
-func TestFindObsPlaneReleaseNoneInstalled(t *testing.T) {
-	_, found, err := findObsPlaneRelease([]byte(`[{"name":"x","chart":"observability-logs-opensearch-0.5.3"}]`))
+func TestFindChartReleaseNoneInstalled(t *testing.T) {
+	_, found, err := findChartRelease([]byte(`[{"name":"x","chart":"observability-logs-opensearch-0.5.3"}]`), obsPlaneChart)
 	if err != nil || found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
@@ -82,81 +96,6 @@ func TestFindSREAgentDeploymentMissingNamesRCAEnabled(t *testing.T) {
 	_, err := findSREAgentDeployment(context.Background(), client, "obs")
 	if err == nil || !strings.Contains(err.Error(), "rca.enabled") {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func secretReference(data ...interface{}) *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]interface{}{
-		"metadata": map[string]interface{}{"name": "default-default-key-0a1b2c3d", "namespace": "default"},
-		"spec":     map[string]interface{}{"data": data},
-	}}
-}
-
-func TestOrgAnthropicKVRefReadsAPIKeyEntry(t *testing.T) {
-	ref, err := orgAnthropicKVRef(secretReference(
-		map[string]interface{}{"secretKey": "other", "remoteRef": map[string]interface{}{"key": "x"}},
-		map[string]interface{}{"secretKey": "api-key", "remoteRef": map[string]interface{}{
-			"key": "user-app-secrets/wc-01900000-18da14df/anthropic-secrets", "property": "api-key"}},
-	))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ref.Key != "user-app-secrets/wc-01900000-18da14df/anthropic-secrets" || ref.Property != "api-key" {
-		t.Fatalf("got %+v", ref)
-	}
-}
-
-func TestOrgAnthropicKVRefRejectsMissingEntry(t *testing.T) {
-	if _, err := orgAnthropicKVRef(secretReference()); err == nil {
-		t.Fatal("want error for a SecretReference without an api-key entry")
-	}
-}
-
-func namedRef(name string, created time.Time) unstructured.Unstructured {
-	u := unstructured.Unstructured{Object: map[string]interface{}{}}
-	u.SetName(name)
-	u.SetNamespace("default")
-	u.SetCreationTimestamp(metav1.NewTime(created))
-	return u
-}
-
-// The key aep-api points at is the org's default-key reference
-// (<ns>-default-key-<8 hex>); the pre-reference names point at a stale copy
-// and are never read, and another secret's reference is never taken for it.
-func TestCurrentDefaultKeyRefPicksTheMintedReference(t *testing.T) {
-	t0 := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
-	for name, tc := range map[string]struct {
-		refs []unstructured.Unstructured
-		want string
-	}{
-		"none saved": {refs: []unstructured.Unstructured{
-			namedRef("model-connection-secrets", t0), namedRef("anthropic-secrets", t0),
-			namedRef("default-coding-agent-key-0a1b2c3d", t0), namedRef("default-github-pat-0a1b2c3d", t0),
-		}},
-		"one saved": {refs: []unstructured.Unstructured{
-			namedRef("model-connection-secrets", t0.Add(time.Hour)),
-			namedRef("default-default-key-0a1b2c3d", t0),
-		}, want: "default-default-key-0a1b2c3d"},
-		"replaced, old one not yet retired": {refs: []unstructured.Unstructured{
-			namedRef("default-default-key-ffffffff", t0.Add(time.Minute)),
-			namedRef("default-default-key-00000000", t0),
-		}, want: "default-default-key-ffffffff"},
-		"trimmed long namespace": {refs: []unstructured.Unstructured{
-			namedRef("a-very-long-org-namespace-trimm-default-key-12345678", t0),
-		}, want: "a-very-long-org-namespace-trimm-default-key-12345678"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, ok := currentDefaultKeyRef(tc.refs)
-			if tc.want == "" {
-				if ok {
-					t.Fatalf("picked %q; want none", got.GetName())
-				}
-				return
-			}
-			if !ok || got.GetName() != tc.want {
-				t.Fatalf("picked %v (ok=%t); want %q", got, ok, tc.want)
-			}
-		})
 	}
 }
 

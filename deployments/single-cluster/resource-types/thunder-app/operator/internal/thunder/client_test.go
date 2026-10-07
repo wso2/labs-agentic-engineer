@@ -55,10 +55,17 @@ type fakeThunder struct {
 
 	tokenCalls  int
 	createCalls int
-	getCalls    int
-	putCalls    int
-	deleteCalls int
-	listCalls   int
+
+	// tokenExp, when set, makes the issued token a JWT carrying this `exp`
+	// (Unix seconds); otherwise the token is opaque.
+	tokenExp int64
+	// listUnauthorized answers that many application-list calls with 401, the
+	// way ThunderID answers a bearer it no longer honours.
+	listUnauthorized int
+	getCalls         int
+	putCalls         int
+	deleteCalls      int
+	listCalls        int
 
 	lastCreateBody map[string]any
 	lastPutBody    map[string]any
@@ -126,8 +133,14 @@ func (f *fakeThunder) handleToken(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	f.mu.Lock()
+	token := "fake-system-token"
+	if f.tokenExp != 0 {
+		token = fakeJWT(map[string]any{"exp": f.tokenExp, "scope": "system"})
+	}
+	f.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"access_token": "fake-system-token",
+		"access_token": token,
 		"expires_in":   3600,
 	})
 }
@@ -194,6 +207,11 @@ func (f *fakeThunder) handleList(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listCalls++
+	if f.listUnauthorized > 0 {
+		f.listUnauthorized--
+		writeJSON(w, http.StatusUnauthorized, map[string]any{"code": "AUTH-4010"})
+		return
+	}
 
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))

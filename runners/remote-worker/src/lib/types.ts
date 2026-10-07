@@ -72,6 +72,11 @@ export interface DispatchRequest {
    */
   validationIssue?: number;
   /**
+   * B2 — the version this run builds (AEP_SPEC_TAG). The clone's specs/ is
+   * pinned to it, so an edit made on main while the build runs never leaks in.
+   */
+  specTag?: string;
+  /**
    * Developer diagnostics for this run: the SDK's own debug log, its stderr,
    * and per-token streaming frames for the watchdog. All three land in files
    * beside `runtime.log`; none of them reach the progress feed.

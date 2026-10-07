@@ -91,7 +91,7 @@ export const SESSION = {
    * — an unpinned playground run once resolved to claude-sonnet-4-6. A sweep
    * comparing two model versions is measuring the wrong thing.
    */
-  model: envString("BAL_EVAL_MODEL", "claude-sonnet-5"),
+  model: envString("BAL_EVAL_MODEL", "claude-sonnet-5-5"),
   systemPromptPreset: "claude_code",
   /**
    * What a Ballerina case needs. No `Agent`: fan-out spreads components across

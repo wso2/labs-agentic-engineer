@@ -44,7 +44,7 @@ export interface ModelConnection {
 const FIRST_PARTY: Omit<ModelConnection, "key"> = {
   format: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
-  model: "claude-sonnet-5",
+  model: "claude-sonnet-5-5",
   authScheme: "x-api-key",
 };
 

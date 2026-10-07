@@ -152,7 +152,7 @@ names rather than one it introduces.
 ## Consequences
 
 - **The console renders the report raw.** *Superseded — the shaped view landed once there were real
-  reports to design against; see `apps/console/design/decisions/ADR-0031-the-report-annotates-the-specification.md`.* The reasoning stands as
+  reports to design against; see console [ADR-0031](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0031-the-report-annotates-the-specification.md) at the `classic-console` tag.* The reasoning stands as
   the reason it waited: the acceptance run answers per scenario and the criteria are a different
   decomposition of the same requirement, so there is no id to join them on, and passing the report
   through the criteria-joining path would have rendered `Not validated` on every row — a verdict,

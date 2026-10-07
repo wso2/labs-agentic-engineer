@@ -110,8 +110,8 @@ func TestVerdictFromReport(t *testing.T) {
 		{"a report missing its scenarios key", `{"schemaVersion":2}`, delivery.ValidationVerdictUnreported},
 	}
 	for _, c := range cases {
-		if got := validation.VerdictFromReport([]byte(c.raw)); got != c.want {
-			t.Errorf("VerdictFromReport(%s) = %q, want %q", c.name, got, c.want)
+		if got := validation.ParseReport([]byte(c.raw)).Verdict(); got != c.want {
+			t.Errorf("ParseReport(%s).Verdict() = %q, want %q", c.name, got, c.want)
 		}
 	}
 }
@@ -128,9 +128,9 @@ func TestVerdictFromReportOnlyProducesStorableVerdicts(t *testing.T) {
 		"",
 	}
 	for _, raw := range raws {
-		got := validation.VerdictFromReport([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Verdict()
 		if !delivery.ValidationVerdicts[got] {
-			t.Errorf("VerdictFromReport(%q) = %q, which the store would reject", raw, got)
+			t.Errorf("ParseReport(%q).Verdict() = %q, which the store would reject", raw, got)
 		}
 	}
 }
@@ -170,7 +170,7 @@ func TestValidationVerdictFailsRun(t *testing.T) {
 // prints a value exits 0 merely by running.
 func TestFailedScenarios(t *testing.T) {
 	t.Run("nothing failed", func(t *testing.T) {
-		if got := validation.FailedScenarios([]byte(`{"scenarios":[{"outcome":"passed"}]}`)); got != nil {
+		if got := validation.ParseReport([]byte(`{"scenarios":[{"outcome":"passed"}]}`)).Failed(); got != nil {
 			t.Errorf("got %+v, want nil", got)
 		}
 	})
@@ -179,7 +179,7 @@ func TestFailedScenarios(t *testing.T) {
 		raw := `{"scenarios":[
 		  {"scenario":"A","outcome":"blocked","steps":[{"keyword":"When","text":"x","observed":"the button was [disabled]"}]}
 		]}`
-		if got := validation.FailedScenarios([]byte(raw)); got != nil {
+		if got := validation.ParseReport([]byte(raw)).Failed(); got != nil {
 			t.Errorf("a blocked scenario was filed for repair: %+v", got)
 		}
 	})
@@ -194,7 +194,7 @@ func TestFailedScenarios(t *testing.T) {
 		     {"keyword":"Then","text":"the list still has one item","command":"agent-browser wait --text x","exit":1,
 		      "observed":"the list held two items"}]}
 		]}`
-		got := validation.FailedScenarios([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Failed()
 		if len(got) != 1 {
 			t.Fatalf("got %d failures, want 1", len(got))
 		}
@@ -231,7 +231,7 @@ func TestFailedScenarios(t *testing.T) {
 		     "console":["TypeError: items.map is not a function"],
 		     "snapshot":"- list \"Milk\"\n- list \" milk \""}}
 		]}`
-		got := validation.FailedScenarios([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Failed()
 		if len(got) != 1 {
 			t.Fatalf("got %d failures, want 1", len(got))
 		}
@@ -255,7 +255,7 @@ func TestFailedScenarios(t *testing.T) {
 		   "steps":[{"keyword":"Then","text":"x","command":"c","exit":1}],
 		   "evidence":{"network":[],"console":[]}}
 		]}`
-		got := validation.FailedScenarios([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Failed()
 		if len(got) != 1 || len(got[0].Evidence.Network) != 0 {
 			t.Fatalf("got %+v", got)
 		}
@@ -272,7 +272,7 @@ func TestFailedScenarios(t *testing.T) {
 		    {"keyword":"Then","text":"the list still has exactly one item",
 		     "command":"agent-browser get count \".item\"","exit":0,"observed":"2"}]}
 		]}`
-		got := validation.FailedScenarios([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Failed()
 		if len(got) != 1 || got[0].Deciding != 0 || got[0].Steps[0].Observed != "2" {
 			t.Fatalf("got %+v, want the observation to settle it", got)
 		}
@@ -283,7 +283,7 @@ func TestFailedScenarios(t *testing.T) {
 		  {"scenario":"B","outcome":"failed"},
 		  {"scenario":"A","outcome":"passed"},
 		  {"scenario":"C","outcome":"failed"}]}`
-		got := validation.FailedScenarios([]byte(raw))
+		got := validation.ParseReport([]byte(raw)).Failed()
 		if len(got) != 2 || got[0].Scenario != "B" || got[1].Scenario != "C" {
 			t.Errorf("got %+v, want B then C", got)
 		}
@@ -291,8 +291,8 @@ func TestFailedScenarios(t *testing.T) {
 
 	t.Run("an unreadable report files nothing", func(t *testing.T) {
 		for _, raw := range []string{"", "{not json", `{"scenarios":[]}`} {
-			if got := validation.FailedScenarios([]byte(raw)); got != nil {
-				t.Errorf("FailedScenarios(%q) = %+v, want nil", raw, got)
+			if got := validation.ParseReport([]byte(raw)).Failed(); got != nil {
+				t.Errorf("ParseReport(%q).Failed() = %+v, want nil", raw, got)
 			}
 		}
 	})
@@ -305,8 +305,8 @@ func TestFailedScenarios(t *testing.T) {
 func TestReportDigest(t *testing.T) {
 	t.Run("empty for anything unreadable", func(t *testing.T) {
 		for _, raw := range []string{"", "{not json", `{"scenarios":[]}`} {
-			if got := validation.ReportDigest([]byte(raw)); got != "" {
-				t.Errorf("ReportDigest(%q) = %q, want empty", raw, got)
+			if got := validation.ParseReport([]byte(raw)).Digest(); got != "" {
+				t.Errorf("ParseReport(%q).Digest() = %q, want empty", raw, got)
 			}
 		}
 	})
@@ -314,7 +314,7 @@ func TestReportDigest(t *testing.T) {
 	t.Run("order does not change the answer", func(t *testing.T) {
 		a := `{"scenarios":[{"scenario":"A","outcome":"passed"},{"scenario":"B","outcome":"failed"}]}`
 		b := `{"scenarios":[{"scenario":"B","outcome":"failed"},{"scenario":"A","outcome":"passed"}]}`
-		if validation.ReportDigest([]byte(a)) != validation.ReportDigest([]byte(b)) {
+		if validation.ParseReport([]byte(a)).Digest() != validation.ParseReport([]byte(b)).Digest() {
 			t.Error("the same outcomes in a different order produced different digests")
 		}
 	})
@@ -322,7 +322,7 @@ func TestReportDigest(t *testing.T) {
 	t.Run("the same scenario failing differently is a different answer", func(t *testing.T) {
 		a := `{"scenarios":[{"scenario":"A","outcome":"failed","steps":[{"keyword":"Then","text":"t","exit":1,"observed":"one"}]}]}`
 		b := `{"scenarios":[{"scenario":"A","outcome":"failed","steps":[{"keyword":"Then","text":"t","exit":1,"observed":"two"}]}]}`
-		if validation.ReportDigest([]byte(a)) == validation.ReportDigest([]byte(b)) {
+		if validation.ParseReport([]byte(a)).Digest() == validation.ParseReport([]byte(b)).Digest() {
 			t.Error("a repair that changed the failure still read as the same answer")
 		}
 	})
@@ -330,7 +330,7 @@ func TestReportDigest(t *testing.T) {
 	t.Run("the timestamp and commit are not part of the answer", func(t *testing.T) {
 		a := `{"commit":"aaa","generatedAt":"2026-01-01T00:00:00Z","scenarios":[{"scenario":"A","outcome":"passed"}]}`
 		b := `{"commit":"bbb","generatedAt":"2026-02-02T00:00:00Z","scenarios":[{"scenario":"A","outcome":"passed"}]}`
-		if validation.ReportDigest([]byte(a)) != validation.ReportDigest([]byte(b)) {
+		if validation.ParseReport([]byte(a)).Digest() != validation.ParseReport([]byte(b)).Digest() {
 			t.Error("a re-run with the same conclusions produced a different digest")
 		}
 	})
@@ -338,7 +338,7 @@ func TestReportDigest(t *testing.T) {
 	t.Run("a changed outcome is a different answer", func(t *testing.T) {
 		a := `{"scenarios":[{"scenario":"A","outcome":"failed"}]}`
 		b := `{"scenarios":[{"scenario":"A","outcome":"passed"}]}`
-		if validation.ReportDigest([]byte(a)) == validation.ReportDigest([]byte(b)) {
+		if validation.ParseReport([]byte(a)).Digest() == validation.ParseReport([]byte(b)).Digest() {
 			t.Error("a fixed scenario read as the same answer")
 		}
 	})
@@ -364,7 +364,7 @@ func TestFailedScenarios_ADecidingStepIsAThen(t *testing.T) {
 	    {"keyword":"Then","text":"her list includes it","command":"agent-browser eval ...","exit":0,
 	     "observed":"false — no such row exists"}]}
 	]}`
-	got := validation.FailedScenarios([]byte(raw))
+	got := validation.ParseReport([]byte(raw)).Failed()
 	if len(got) != 1 {
 		t.Fatalf("got %d failures, want 1", len(got))
 	}
@@ -385,7 +385,7 @@ func TestFailedScenarios_AContinuedThenStillDecides(t *testing.T) {
 	    {"keyword":"Then","text":"the row appears","command":"c","exit":0},
 	    {"keyword":"And","text":"it shows today's date","command":"c","exit":0,"observed":"the cell was empty"}]}
 	]}`
-	got := validation.FailedScenarios([]byte(raw))
+	got := validation.ParseReport([]byte(raw)).Failed()
 	if len(got) != 1 || got[0].Deciding != 2 {
 		t.Fatalf("Deciding = %+v; an `And` continuing a `Then` is still a Then", got)
 	}
@@ -399,7 +399,7 @@ func TestFailedScenarios_FallsBackWhenNoThenObserved(t *testing.T) {
 	    {"keyword":"When","text":"she tries","command":"c","exit":0,"observed":"the control was absent"},
 	    {"keyword":"Then","text":"it holds","command":"c","exit":0}]}
 	]}`
-	got := validation.FailedScenarios([]byte(raw))
+	got := validation.ParseReport([]byte(raw)).Failed()
 	if len(got) != 1 || got[0].Deciding != 0 {
 		t.Fatalf("Deciding = %+v; want the only observation there was", got)
 	}

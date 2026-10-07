@@ -58,7 +58,7 @@ silence (`docs/decisions/ADR-0016`).
 
 `resolveConnection` (`src/connection.ts`) reads `AEP_EVAL_MODEL_*` first, and a
 part of it that is absent defaults to Anthropic's own API
-(`https://api.anthropic.com/v1`, `claude-sonnet-5`, `x-api-key`). Failing that,
+(`https://api.anthropic.com/v1`, `claude-sonnet-5-5`, `x-api-key`). Failing that,
 it falls back to `ANTHROPIC_API_KEY` — on Anthropic's API only, whatever else is
 set, so a key under Anthropic's name never follows another host. It never treats
 `CLAUDE_CODE_OAUTH_TOKEN` as a fallback: that is the platform's own coding

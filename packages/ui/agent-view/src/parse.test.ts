@@ -158,6 +158,34 @@ describe("parseAgentAfm — attachments", () => {
   });
 });
 
+describe("parseAgentAfm — guardrails", () => {
+  const GUARDRAILS =
+    "x-aep:\n  guardrails:\n" +
+    "    - policy: pii-masking-regex\n      params: { email: true }\n      why: \"The model never needs emails.\"\n" +
+    "    - policy: regex-guardrail\n      params:\n        request: { regex: \"casino\", invert: true }\n      why: \"Not a business expense.\"\n";
+
+  test("reads x-aep.guardrails with their params and reasons", () => {
+    const spec = parsed(BOOKING_AGENT.replace("x-aep:\n", GUARDRAILS));
+
+    expect(spec.guardrails).toEqual([
+      { policy: "pii-masking-regex", params: { email: true }, why: "The model never needs emails." },
+      { policy: "regex-guardrail", params: { request: { regex: "casino", invert: true } }, why: "Not a business expense." },
+    ]);
+  });
+
+  test("skips an entry without a policy", () => {
+    const spec = parsed(
+      BOOKING_AGENT.replace("x-aep:\n", "x-aep:\n  guardrails:\n    - params: { email: true }\n      why: \"x\"\n"),
+    );
+
+    expect(spec.guardrails).toEqual([]);
+  });
+
+  test("is empty for an agent that declares none", () => {
+    expect(parsed(BOOKING_AGENT).guardrails).toEqual([]);
+  });
+});
+
 describe("parseAgentAfm — prompt body", () => {
   test("splits the body into its headed sections, in document order", () => {
     const spec = parsed(BOOKING_AGENT);

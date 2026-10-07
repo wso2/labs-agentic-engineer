@@ -1,0 +1,39 @@
+# Task generation per feature (B3): the one-shot task-plan turn from a
+# captured per-feature design, with the milestone scope the platform would
+# send for a first build of every feature. Two components serve all three
+# features, so the plan is a foundation Task plus one Task per feature in each.
+
+name: expense-tracker
+fixture: expense-tracker-design
+
+scope:
+  tag: v1
+  stories:
+    - { id: F1.1, title: "As an Employee, I want to submit an expense claim with a description, an amount and a date, so that Finance has a record to act on.", covered: false }
+    - { id: F1.2, title: "As an Employee, I want to see my own claims and their current status, so that I know what has been decided and what is still waiting.", covered: false }
+    - { id: F1.3, title: "As an Employee, I want to see the decision and the reason on a claim of mine, so that I do not have to ask anybody what happened to it.", covered: false }
+    - { id: F2.1, title: "As an Approver, I want to see every claim waiting for a decision in one queue, so that nothing sits unanswered.", covered: false }
+    - { id: F2.2, title: "As an Approver, I want to approve a submitted claim, so that the employee is reimbursed and the claim leaves the queue.", covered: false }
+    - { id: F2.3, title: "As an Approver, I want to reject a submitted claim with a reason, so that the employee knows why and can correct it.", covered: false }
+    - { id: F3.1, title: "As an Approver, I want to read the monthly total of approved claims, so that Finance can close the month without rebuilding the figure by hand.", covered: false }
+  # As aep-api's featureOrder computes it: F1.3's need on F2 would close a
+  # loop with F2's file-level need on F1, so it does not order the features.
+  features:
+    - { id: F1, name: Claims }
+    - { id: F2, name: Approvals, needs: [F1] }
+    - { id: F3, name: Monthly report, needs: [F2] }
+  productWide:
+    - { id: P1, text: "Sign-in is SSO through the platform identity provider. What a person may do is decided by the permissions their roles grant, not by anything this app stores about them.", appliesTo: [all] }
+    - { id: P2, text: "An Employee sees their own claims only; an Approver sees every claim. This is a permission difference, not two copies of the data.", appliesTo: [F1, F2] }
+
+rubric:
+  mustCover:
+    - item: Each feature (F1, F2, F3) has its own Task in each component that serves it — expense-api and expense-webapp — with the matching `feature` in the frontmatter
+      weight: 2
+    - 'Shared setup and the product-wide sign-in (P1) sit in a foundation Task per component (`feature: "foundation"`) rather than being repeated in every feature''s Task'
+    - The expense-webapp Tasks list expense-api in dependsOn
+    - Tasks are planned in build order — foundation first, then Claims, Approvals, Monthly report
+    - Each Task's body scopes its work to its own feature's stories (an Approvals Task does not re-describe claim submission)
+  mustNot:
+    - One Task that covers several features of the same component
+    - Tasks for a multi-step approval chain, draft claims, receipts or payment

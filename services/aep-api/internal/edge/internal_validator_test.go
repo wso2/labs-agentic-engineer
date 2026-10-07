@@ -38,7 +38,7 @@ func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	callers := map[string]bool{"Runner": true, "AE Studio": true, "SRE": true}
+	callers := map[string]bool{"Runner": true, "AE Studio": true}
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			if len(op.Tags) == 0 {
@@ -139,12 +139,9 @@ func TestInternalBodyCap_PerOp(t *testing.T) {
 func TestInternalGate_RunsBeforeValidator(t *testing.T) {
 	s := newInternalStack(t)
 	deps := s.deps
-	deps.SREHandoff = auth.NewSREHandoffVerifier("s3cr3t", "acme")
 	for _, tc := range []struct{ name, method, path, bearer, body string }{
-		{"sre op, no bearer", http.MethodPost, "/internal/v1/sre/projects/p/issues", "", `{"title":1}`},
-		{"sre op, publisher token", http.MethodPost, "/internal/v1/sre/rca-reports", "Bearer " + s.mint("acme"), `{}`},
 		{"runner op, no bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "", ""},
-		{"runner op, sre bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "Bearer s3cr3t", ""},
+		{"runner op, static bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "Bearer s3cr3t", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			validated := false
@@ -170,7 +167,7 @@ func TestInternalGate_RouteMissPassesThrough(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/internal/v1/mcp"},
 		{http.MethodGet, "/internal/v1/nope"},
-		{http.MethodDelete, "/internal/v1/sre/rca-reports"},
+		{http.MethodPost, "/internal/v1/sre-handoff/mcp"},
 	} {
 		called := false
 		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })

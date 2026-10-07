@@ -1,0 +1,13 @@
+name: helpdesk-tickets
+description: "Internal IT help desk: employees raise support tickets, support
+  agents triage, assign and resolve them, and a team lead watches the queue.
+  Tickets move open, triaged, in progress, resolved, reopened; priority sets an
+  SLA due time computed by the API; each ticket has a comment thread; the queue
+  filters by status, priority, assignee and SLA breach. One web app and one API
+  service. No email or notifications, no file uploads or object storage, no
+  scheduled or background jobs, no external integrations or AI features."
+source:
+  project: helpdesk-tickets
+  snapshot: current
+  savedAt: 2026-10-04T11:42:47.195Z
+tags: []

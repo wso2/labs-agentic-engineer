@@ -31,6 +31,7 @@ import { listComponents, listFlows } from "@aep/playground/src/engine/gates.js";
 import { featureScenarios, parseFeatureFile } from "@aep/ui-acceptance-view/parse";
 import { compileProject } from "@aep/ui-cell-diagram-react/compiler";
 import type { SectionRunResult } from "../drivers/conversational.js";
+import { listRequirementFiles } from "../project.js";
 import type { TaskPlanRunResult } from "../drivers/task-plan.js";
 
 export interface CheckResult {
@@ -59,10 +60,14 @@ const check = (name: string, ok: boolean, detail?: string): CheckResult => ({
 export function requirementsChecks(projectDir: string, run: SectionRunResult): StructuralReport {
   const md = readSafe(join(projectDir, "specs/requirements/prd.md"));
   const headings = (md.match(/^#{1,3} /gm) ?? []).length;
+  const files = listRequirementFiles(projectDir);
+  const features = files.filter((f) => /^specs\/requirements\/features\/F\d+-[^/]+\.md$/.test(f));
+  const size = files.reduce((n, f) => n + readSafe(join(projectDir, f)).length, 0);
   return report([
     check("prd.md exists", md.trim().length > 0, "specs/requirements/prd.md missing or empty"),
-    check("substantial (≥800 chars)", md.length >= 800, `${md.length} chars`),
-    check("structured (≥3 headings)", headings >= 3, `${headings} headings`),
+    check("features written (≥1 features/F<n>-<slug>.md)", features.length > 0, "no feature file under specs/requirements/features/"),
+    check("substantial (≥800 chars across the files)", size >= 800, `${size} chars`),
+    check("structured (≥3 headings in prd.md)", headings >= 3, `${headings} headings`),
     check("interview happened", run.questionsAsked > 0, "the agent never asked a question"),
     check("interview finished within cap", run.finishedInterview, run.error ?? "hit the turn cap"),
   ]);

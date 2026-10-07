@@ -49,21 +49,27 @@ import (
 // run. The granularity is nearly free — a coding cycle is scoped to the milestone,
 // so N issues still cost one cycle.
 //
-// report is the bytes read at the validation cycle's own merge commit; the caller
-// owns that read because it already performs it for the verdict. An empty or
-// all-green report mints nothing, which is not an error — it is what "there was
-// nothing to repair" looks like.
+// j is the attempt's report, read at the validation cycle's own merge commit
+// within the version's scope and against the previous validated version; the
+// caller owns that read because it already performs it for the verdict. An
+// empty or all-green report mints nothing, which is not an error — it is what
+// "there was nothing to repair" looks like.
+//
+// Each failure is filed by how it stood in that baseline (B4): a REGRESSION
+// gets an issue of its own, labelled `regression`, naming both versions and
+// what this one built; one STILL FAILING resolves onto its open issue and says
+// so; a plain failure is filed as before, its feature in the title.
 //
 // A defect keeps ONE issue across attempts. The dedupe key is the scenario alone,
 // so an attempt that meets a scenario still failing resolves onto its open issue
 // and leaves the current evidence there as a comment, rather than filing a second
 // issue beside the first. See DedupeKeyValidationFix for why the attempt used to
 // be part of that key and why it cannot have been buying what it claimed.
-func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, report []byte) ([]int, error) {
+func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, j Judgement) ([]int, error) {
 	if milestoneNumber <= 0 {
 		return nil, fmt.Errorf("validation: a milestone is required to file repair issues under")
 	}
-	failed := FailedScenarios(report)
+	failed := j.Failures()
 	if len(failed) == 0 {
 		return nil, nil
 	}
@@ -73,10 +79,14 @@ func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string,
 	// answerable from the report alone.
 	out := make([]int, 0, len(failed))
 	for _, f := range failed {
+		labels := []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcValidation}
+		if f.Was == WasPassing {
+			labels = append(labels, delivery.LabelRegression)
+		}
 		number, deduped, err := s.writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
-			Title:     fmt.Sprintf("Fix the failing scenario: %s", scenarioName(f)),
-			Body:      repairIssueBody(f),
-			Labels:    []string{delivery.LabelAgentWork, delivery.KindBug, delivery.SrcValidation},
+			Title:     repairTitle(f),
+			Body:      repairIssueBody(j, f),
+			Labels:    labels,
 			Milestone: milestoneNumber,
 			DedupeKey: delivery.DedupeKeyValidationFix(f.ID),
 		})
@@ -98,7 +108,7 @@ func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string,
 			// would retry the whole activity and re-comment every scenario already
 			// handled — trading one attempt's trace for duplicate comments on all
 			// of them.
-			if cerr := s.writer.Comment(ctx, orgID, projectID, number, recurrenceComment(f)); cerr != nil {
+			if cerr := s.writer.Comment(ctx, orgID, projectID, number, recurrenceComment(j, f)); cerr != nil {
 				slog.WarnContext(ctx, "validation: could not record a recurrence on the open repair issue",
 					"project", projectID, "issue", number, "scenario", f.ID, "error", cerr)
 			}
@@ -117,15 +127,16 @@ func (s *Service) MintRepairIssues(ctx context.Context, orgID, projectID string,
 // is guidance, not enforcement — nothing checks it yet — but the cheapest path to
 // a green report is to weaken the failing assertion, and the issue that hands the
 // agent the failure is the right place to say so.
-func repairIssueBody(f FailedScenario) string {
+func repairIssueBody(j Judgement, f Failure) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The scenario **%s** failed when the deployed system was validated. "+
-		"This is a defect in the implementation, not in the specification.\n\n", scenarioName(f))
+		"This is a defect in the implementation, not in the specification.\n\n", scenarioName(f.FailedScenario))
+	writeStanding(&b, j, f)
 	if f.Rule != "" {
 		fmt.Fprintf(&b, "The rule it illustrates:\n\n> %s\n\n", f.Rule)
 	}
-	writeTrace(&b, f)
-	writeEvidence(&b, f)
+	writeTrace(&b, f.FailedScenario)
+	writeEvidence(&b, f.FailedScenario)
 	// Trimmed rather than carefully spaced: which sections wrote anything varies
 	// per failure, and every arrangement has to end in exactly one blank line.
 	return strings.TrimRight(b.String(), "\n") +
@@ -147,14 +158,71 @@ func repairIssueBody(f FailedScenario) string {
 //
 // It deliberately does not repeat the instructions: the body already carries
 // them, and this issue is the same work it always was.
-func recurrenceComment(f FailedScenario) string {
+func recurrenceComment(j Judgement, f Failure) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**%s** failed again on a later validation attempt, so this issue stays "+
-		"open rather than a second one being filed beside it. The body above describes the "+
-		"attempt that filed it; this is what the latest run saw.\n\n", scenarioName(f))
-	writeTrace(&b, f)
-	writeEvidence(&b, f)
+	if f.Was == WasFailing && j.Baseline != nil {
+		fmt.Fprintf(&b, "**%s** is still failing in %s — it failed in %s as well — so this issue stays "+
+			"open rather than a second one being filed beside it. This is what the latest run saw.\n\n",
+			scenarioName(f.FailedScenario), j.Version, j.Baseline.Version)
+	} else {
+		fmt.Fprintf(&b, "**%s** failed again on a later validation attempt, so this issue stays "+
+			"open rather than a second one being filed beside it. The body above describes the "+
+			"attempt that filed it; this is what the latest run saw.\n\n", scenarioName(f.FailedScenario))
+	}
+	writeTrace(&b, f.FailedScenario)
+	writeEvidence(&b, f.FailedScenario)
 	return strings.TrimRight(b.String(), "\n") + "\n"
+}
+
+// repairTitle names the feature by its `Feature:` line, so the milestone reads
+// by feature; a regression says so first.
+func repairTitle(f Failure) string {
+	name := scenarioName(f.FailedScenario)
+	feature := strings.TrimSpace(f.Feature)
+	switch {
+	case f.Was == WasPassing && feature != "":
+		return fmt.Sprintf("Regression in %s: %s", feature, name)
+	case f.Was == WasPassing:
+		return fmt.Sprintf("Regression: %s", name)
+	case feature != "":
+		return fmt.Sprintf("Fix the failing scenario in %s: %s", feature, name)
+	default:
+		return fmt.Sprintf("Fix the failing scenario: %s", name)
+	}
+}
+
+// writeStanding says where the failure stands against the previous validated
+// version: for a regression, both versions, the range between them and what
+// this one built, so the fix starts from what changed rather than from the
+// feature that broke. The stories the rule stands for are named either way.
+func writeStanding(b *strings.Builder, j Judgement, f Failure) {
+	if len(f.Stories) > 0 {
+		fmt.Fprintf(b, "It checks %s.\n\n", strings.Join(f.Stories, ", "))
+	}
+	if j.Baseline == nil {
+		return
+	}
+	switch f.Was {
+	case WasPassing:
+		fmt.Fprintf(b, "**Regression:** it passed in %s", j.Baseline.Version)
+		if j.Baseline.Commit != "" {
+			fmt.Fprintf(b, " (`%s`)", shortSHA(j.Baseline.Commit))
+		}
+		fmt.Fprintf(b, " and fails in %s. What changed between them: `%s...%s`.", j.Version, j.Baseline.Version, j.Version)
+		if len(j.Built) > 0 {
+			fmt.Fprintf(b, " Built in %s: %s.", j.Version, strings.Join(j.Built, ", "))
+		}
+		b.WriteString("\n\n")
+	case WasFailing:
+		fmt.Fprintf(b, "It was failing in %s too.\n\n", j.Baseline.Version)
+	}
+}
+
+func shortSHA(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
 
 // writeTrace renders the scenario AS EXECUTED — every step, its command, and

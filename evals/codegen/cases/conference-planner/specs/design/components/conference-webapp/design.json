@@ -1,0 +1,17 @@
+{
+  "name": "conference-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "conference-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "events-api", "description": "The only backend the web app calls: events, sessions, proposals, scoring and registrations." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Single-page app for all four roles (organizer, speaker, reviewer, attendee) with role-specific screens; the one user-facing surface, served as one bundle. Calls only the events API and never the registration service. Holds no business logic or data.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

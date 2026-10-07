@@ -112,6 +112,10 @@ func copyReferenceParts(in *multipart.Reader, out *multipart.Writer) error {
 		if err != nil {
 			return err
 		}
+		// TODO(main-sync Task 48): API-15: an Office part (officetext.Extensions)
+		// is buffered up to the pod's 5 MiB per-file limit, converted with
+		// officetext.Markdown and re-streamed as `<name>.md`; a failed conversion
+		// is a 400 before the pod sees anything (main #878 S5).
 		if _, err := io.Copy(w, part); err != nil {
 			return err
 		}

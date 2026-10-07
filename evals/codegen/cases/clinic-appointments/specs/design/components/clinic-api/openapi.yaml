@@ -1,0 +1,460 @@
+openapi: 3.0.3
+info:
+  title: Clinic API
+  version: 0.1.0
+servers:
+  - url: /
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            slots:browse: Every doctor's available slots
+            slots:manage: The caller's own slots
+            appointments:read: The caller's own appointments
+            appointments:book: Book a slot for the caller
+            appointments:reschedule: Reschedule the caller's own appointment
+            appointments:cancel: Cancel the caller's own appointment
+            appointments:read-all: Every appointment
+            appointments:book-any: Book for any patient
+            appointments:reschedule-any: Reschedule any appointment
+            appointments:cancel-any: Cancel any appointment
+            appointments:check-in: Check in any patient
+            schedule:read: The doctor's own day
+            notes:read: Notes on the doctor's own appointments
+            notes:write: Write notes on the doctor's own appointments
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, default: 20, maximum: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, default: 0 }
+    SlotId:
+      name: slotId
+      in: path
+      required: true
+      schema: { type: string }
+    AppointmentId:
+      name: appointmentId
+      in: path
+      required: true
+      schema: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing or insufficient credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Rule violated (slot taken, within 2 hours of start, wrong state)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+    Slot:
+      type: object
+      required: [id, doctorId, doctorName, startTime, endTime, status]
+      properties:
+        id: { type: string }
+        doctorId: { type: string }
+        doctorName: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        status: { type: string, enum: [AVAILABLE, BOOKED] }
+    SlotPage:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: total matching items }
+        next: { type: string, nullable: true }
+        previous: { type: string, nullable: true }
+        data: { type: array, items: { $ref: '#/components/schemas/Slot' } }
+    SlotCreate:
+      type: object
+      required: [startTime, endTime]
+      properties:
+        startTime: { type: string, format: date-time, description: start of the availability window }
+        endTime: { type: string, format: date-time, description: end of the availability window }
+        slotMinutes: { type: integer, default: 30, description: length of each generated slot in minutes }
+    SlotList:
+      type: object
+      required: [data]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Slot' } }
+    Appointment:
+      type: object
+      required: [id, slotId, doctorId, doctorName, patientId, patientName, startTime, endTime, status]
+      properties:
+        id: { type: string }
+        slotId: { type: string }
+        doctorId: { type: string }
+        doctorName: { type: string }
+        patientId: { type: string }
+        patientName: { type: string }
+        startTime: { type: string, format: date-time }
+        endTime: { type: string, format: date-time }
+        status: { type: string, enum: [BOOKED, CHECKED_IN, CANCELLED] }
+        checkedInAt: { type: string, format: date-time, nullable: true }
+    AppointmentPage:
+      type: object
+      required: [count, data]
+      properties:
+        count: { type: integer, description: total matching items }
+        next: { type: string, nullable: true }
+        previous: { type: string, nullable: true }
+        data: { type: array, items: { $ref: '#/components/schemas/Appointment' } }
+    BookRequest:
+      type: object
+      required: [slotId]
+      properties:
+        slotId: { type: string }
+    BookForPatientRequest:
+      type: object
+      required: [slotId, patientId, patientName]
+      properties:
+        slotId: { type: string }
+        patientId: { type: string, description: the patient's sign-in username }
+        patientName: { type: string }
+    RescheduleRequest:
+      type: object
+      required: [slotId]
+      properties:
+        slotId: { type: string, description: the new available slot }
+    VisitNote:
+      type: object
+      required: [appointmentId, text, updatedAt]
+      properties:
+        appointmentId: { type: string }
+        text: { type: string }
+        updatedAt: { type: string, format: date-time }
+    VisitNoteInput:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+security:
+  - oauth2: []
+paths:
+  /slots:
+    get:
+      operationId: listAvailableSlots
+      summary: Every doctor's available slots
+      security:
+        - oauth2: [slots:browse]
+      parameters:
+        - { name: doctorId, in: query, schema: { type: string } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Available slots
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SlotPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/slots:
+    get:
+      operationId: listMySlots
+      summary: The caller's own slots
+      security:
+        - oauth2: [slots:manage]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: The doctor's slots
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SlotPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: publishMySlots
+      summary: Publish slots in the caller's availability window
+      security:
+        - oauth2: [slots:manage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SlotCreate' }
+      responses:
+        '201':
+          description: Slots created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SlotList' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/slots/{slotId}:
+    delete:
+      operationId: removeMySlot
+      summary: Remove one of the caller's unbooked slots
+      security:
+        - oauth2: [slots:manage]
+      parameters:
+        - $ref: '#/components/parameters/SlotId'
+      responses:
+        '204':
+          description: Slot removed
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/appointments:
+    get:
+      operationId: listMyAppointments
+      summary: The caller's appointments, upcoming and past
+      security:
+        - oauth2: [appointments:read]
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [BOOKED, CHECKED_IN, CANCELLED] } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: The caller's appointments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppointmentPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: bookMyAppointment
+      summary: Book a slot for the caller
+      security:
+        - oauth2: [appointments:book]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookRequest' }
+      responses:
+        '201':
+          description: Appointment booked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/appointments/{appointmentId}/reschedule:
+    post:
+      operationId: rescheduleMyAppointment
+      summary: Move the caller's appointment to another slot
+      security:
+        - oauth2: [appointments:reschedule]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RescheduleRequest' }
+      responses:
+        '200':
+          description: Appointment rescheduled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/appointments/{appointmentId}/cancel:
+    post:
+      operationId: cancelMyAppointment
+      summary: Cancel the caller's appointment
+      security:
+        - oauth2: [appointments:cancel]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200':
+          description: Appointment cancelled and slot freed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /appointments:
+    get:
+      operationId: listAppointments
+      summary: Every appointment
+      security:
+        - oauth2: [appointments:read-all]
+      parameters:
+        - { name: patientId, in: query, schema: { type: string } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: status, in: query, schema: { type: string, enum: [BOOKED, CHECKED_IN, CANCELLED] } }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Matching appointments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppointmentPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: bookAppointmentForPatient
+      summary: Book a slot for any patient
+      security:
+        - oauth2: [appointments:book-any]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookForPatientRequest' }
+      responses:
+        '201':
+          description: Appointment booked
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /appointments/{appointmentId}/reschedule:
+    post:
+      operationId: rescheduleAppointment
+      summary: Move any appointment to another slot
+      security:
+        - oauth2: [appointments:reschedule-any]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RescheduleRequest' }
+      responses:
+        '200':
+          description: Appointment rescheduled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /appointments/{appointmentId}/cancel:
+    post:
+      operationId: cancelAppointment
+      summary: Cancel any appointment
+      security:
+        - oauth2: [appointments:cancel-any]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200':
+          description: Appointment cancelled and slot freed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /appointments/{appointmentId}/check-in:
+    post:
+      operationId: checkInAppointment
+      summary: Check in a patient on the day of the appointment
+      security:
+        - oauth2: [appointments:check-in]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200':
+          description: Patient checked in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Appointment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /me/schedule:
+    get:
+      operationId: getMySchedule
+      summary: The caller's appointments as a doctor for a day
+      security:
+        - oauth2: [schedule:read]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date }, description: defaults to today }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: The doctor's appointments for the day
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppointmentPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /me/schedule/{appointmentId}/note:
+    get:
+      operationId: getMyVisitNote
+      summary: The visit note on the caller's own appointment
+      security:
+        - oauth2: [notes:read]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      responses:
+        '200':
+          description: The visit note
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VisitNote' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: saveMyVisitNote
+      summary: Write or replace the visit note on the caller's own appointment
+      security:
+        - oauth2: [notes:write]
+      parameters:
+        - $ref: '#/components/parameters/AppointmentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VisitNoteInput' }
+      responses:
+        '200':
+          description: Note saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VisitNote' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }

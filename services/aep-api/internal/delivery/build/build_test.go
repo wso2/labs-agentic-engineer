@@ -30,12 +30,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/build"
@@ -65,15 +67,26 @@ type fakeTagger struct {
 	// version records the name the build asked to cut — empty when it took the
 	// platform's suggestion.
 	version string
+	// pick and blocked record what the build asked the version to carry.
+	pick    *reqspec.Pick
+	blocked map[string]string
+	// repairOf records the version a repair build asked to fix.
+	repairOf string
+}
+
+func (f *fakeTagger) TagRepair(_ context.Context, _, _, of string) (string, error) {
+	f.repairOf = of
+	return of + ".1", f.err
 }
 
 func (f *fakeTagger) BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error) {
 	return spec.BuildScope{Tag: tag}, nil
 }
 
-func (f *fakeTagger) TagSpec(_ context.Context, _, _, version string) (*spec.SpecSaveResult, error) {
+func (f *fakeTagger) TagSpec(_ context.Context, _, _, version string, pick *reqspec.Pick, blocked map[string]string) (*spec.SpecSaveResult, error) {
 	f.called++
 	f.version = version
+	f.pick, f.blocked = pick, blocked
 	if f.seq != nil {
 		*f.seq = append(*f.seq, "tag")
 	}
@@ -1049,6 +1062,36 @@ func TestBuild_DependencyGate_UnchosenExternal_BlocksNoTagNoWorkflow(t *testing.
 	}
 }
 
+// An open dependency of a component that serves stories blocks only the
+// features those stories belong to (E2): the build goes on to the save, which
+// refuses those features if they are picked and builds the rest.
+func TestBuild_DependencyGate_BlocksOnlyTheFeaturesItServes(t *testing.T) {
+	design := &gateDesign{comps: []spec.DesignComponent{
+		{Name: "xero-sync", ComponentType: spec.ComponentTypeService, Stories: []string{"F3.1", "F3.2"},
+			Dependencies: []spec.Dependency{
+				{Kind: spec.DependencyKindExternal, Name: "xero", Status: spec.DependencyStatusUnresolved, Reason: spec.DependencyReasonNeedsInput},
+			}},
+		{Name: "api", ComponentType: spec.ComponentTypeService, Stories: []string{"F1.1", "F2.1"}},
+	}}
+	spy := newPlanSpy()
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: spec.SpecSaveApproved}}
+	svc := withPlanPath(build.NewService(build.Deps{
+		Repos: fakeRepos{}, Tagger: tagger, Design: design,
+	}), spy)
+
+	code, body := postBuild(t, svc, "shop")
+	if code != 200 {
+		t.Fatalf("build: got %d body=%s", code, body)
+	}
+	if out := decodeBody[gen.BuildResponse](t, body); len(out.Failures) != 0 || out.Tag != "v1" {
+		t.Fatalf("response = %+v, want the build to go on", out)
+	}
+	want := map[string]string{"F3": "it waits on xero — No provider chosen yet — choose which one to use."}
+	if !reflect.DeepEqual(tagger.blocked, want) {
+		t.Errorf("blocked = %v, want %v", tagger.blocked, want)
+	}
+}
+
 // A web-application's unchosen external dependency blocks the build exactly
 // like a service's would (#252 Task 14 — lifting the ComponentType != service
 // guard dependencyGateFailures used to apply here). Task 9 already shows this
@@ -1297,5 +1340,80 @@ func TestGetPreflight_Unconfigured503(t *testing.T) {
 	e := componenttest.DecodeEnvelope(t, resp.Body.String())
 	if e.Code != "service_unavailable" || e.Message != "build preflight is not configured" {
 		t.Fatalf("503 envelope = %+v", e)
+	}
+}
+
+// The ledger row counts regressions from the version's newest JUDGED attempt
+// (B4) — a repair run in flight after it is the version's newest run, but it
+// has not judged anything yet.
+func TestListBuilds_CarriesTheLatestJudgedRegressionCount(t *testing.T) {
+	spy := newPlanSpy()
+	spy.rows = []delivery.MilestoneRun{
+		{MilestoneNumber: 3, MilestoneTitle: "v2", Kind: delivery.RunKindTask, State: delivery.RunStateRunning},
+		{MilestoneNumber: 3, MilestoneTitle: "v2", Kind: delivery.RunKindValidation, State: delivery.RunStateFailed,
+			ValidationVerdict: delivery.ValidationVerdictFailed, ValidationRegressions: 2},
+		{MilestoneNumber: 3, MilestoneTitle: "v2", Kind: delivery.RunKindValidation, State: delivery.RunStateFailed,
+			ValidationVerdict: delivery.ValidationVerdictFailed, ValidationRegressions: 5},
+	}
+	svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
+
+	_, rawBody := listBuilds(t, svc, "shop")
+	if got := decodeBody[gen.BuildList](t, rawBody).Builds[0]; got.Regressions != 2 {
+		t.Errorf("regressions = %d, want 2 (the newest judged attempt's)", got.Regressions)
+	}
+}
+
+// fakeRepairer answers what the fixed version failed, and records the repair
+// issues filed — and when, against the run start.
+type fakeRepairer struct {
+	failures int
+	spy      *planSpy
+	filedTo  int
+	startedB int
+}
+
+func (f *fakeRepairer) FailuresOf(context.Context, string, string, string) (int, error) {
+	return f.failures, nil
+}
+
+func (f *fakeRepairer) FileRepairs(_ context.Context, _, _ string, milestone int, _ string) error {
+	f.filedTo = milestone
+	f.startedB = len(f.spy.startedRuns())
+	return nil
+}
+
+func repairSvc(tagger *fakeTagger, repairs *fakeRepairer, spy *planSpy) *build.Service {
+	return withPlanPath(build.NewService(build.Deps{Repos: fakeRepos{}, Tagger: tagger, Repairs: repairs}), spy)
+}
+
+// "Fix" on a failed version builds a repair version (B4): v1.1 at v1's
+// commit, its milestone holding v1's failures as repair issues BEFORE the run
+// starts, and no planning turn — the repair issues are the work.
+func TestRepair_CutsAPointReleaseWorkingTheFailures(t *testing.T) {
+	spy := newPlanSpy()
+	tagger := &fakeTagger{}
+	repairs := &fakeRepairer{failures: 2, spy: spy}
+	svc := repairSvc(tagger, repairs, spy)
+
+	tag, err := svc.Repair(context.Background(), "org", "shop", "v1")
+	if err != nil || tag != "v1.1" || tagger.repairOf != "v1" {
+		t.Fatalf("repair = %q, %v (asked to fix %q)", tag, err, tagger.repairOf)
+	}
+	spy.awaitStart(t)
+	if repairs.filedTo != 9 || repairs.startedB != 0 {
+		t.Errorf("repairs filed to milestone %d with %d runs already started, want the claimed milestone before the start", repairs.filedTo, repairs.startedB)
+	}
+	if req := spy.startedRuns()[0]; !req.Rebuild || req.Tag != "v1.1" {
+		t.Errorf("started %+v, want v1.1 with Rebuild set: nothing to plan", req)
+	}
+}
+
+func TestRepair_RefusesAVersionWithNothingToFix(t *testing.T) {
+	spy := newPlanSpy()
+	tagger := &fakeTagger{}
+	_, err := repairSvc(tagger, &fakeRepairer{spy: spy}, spy).Repair(context.Background(), "org", "shop", "v1")
+	var ee *build.EdgeError
+	if !errors.As(err, &ee) || ee.Status != 409 || tagger.repairOf != "" {
+		t.Errorf("err = %v, tagged %q, want a 409 that cuts no tag", err, tagger.repairOf)
 	}
 }

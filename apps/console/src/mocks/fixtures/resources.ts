@@ -20,22 +20,79 @@ import type { components } from "../../generated/aep-api";
 
 type PlatformResourceTypeDTO = components["schemas"]["PlatformResourceTypeDTO"];
 type ExternalResourceDTO = components["schemas"]["ExternalResourceDTO"];
+type OrgEndpointDTO = components["schemas"]["OrgEndpointDTO"];
 
-// Minimal catalog so a mock-mode resource click on Overview Dependencies
-// can resolve into Settings ResourceDrawer. Do not grow ExternalResourceDTO.
-export const seedPlatformResourceTypes: PlatformResourceTypeDTO[] = [
+// What a project can depend on, in mock mode: two platform types, one
+// Registered External resource the organization holds values for, two
+// External resources projects defined for themselves (one ready to promote,
+// one whose project has not chosen a provider), and two endpoints projects
+// offer. The environments are the deploy mock's.
+
+export const platformTypes: PlatformResourceTypeDTO[] = [
   {
     name: "postgres-cnpg",
-    description: "Managed Postgres via CloudNativePG",
+    description: "A PostgreSQL database, one per project and environment.",
+    parameters: {
+      storage: { type: "string", description: "Disk size, such as 1Gi." },
+      instances: { type: "integer", description: "Replicas." },
+    },
+    outputs: ["host", "port", "dbname", "user", "password"],
+    consumers: [{ projectId: "acme-expenses", componentName: "expense-api" }],
+  },
+  {
+    name: "thunder-app",
+    description: "An OAuth client on the platform's identity provider, for end-user sign-in.",
+    parameters: {},
+    outputs: ["clientId", "issuer"],
     consumers: [],
   },
 ];
 
-export const seedExternalResources: ExternalResourceDTO[] = [
+const ENVS = ["development", "staging", "production"];
+
+export const externalResources: ExternalResourceDTO[] = [
   {
-    name: "stripe",
-    description: "Stripe payments API",
+    name: "currency-service",
+    provider: "Open Exchange Rates",
+    description: "Live and historical exchange rates.",
+    consumptionInstructions: "Cache rates for an hour; the plan allows 1,000 calls a month.",
+    scope: "org",
+    config: [
+      { key: "OXR_APP_ID", description: "The app ID", secret: true },
+      { key: "OXR_BASE_URL", description: "Where the API is", secret: false },
+    ],
+    envCells: ENVS.flatMap((environment) => [
+      { environment, key: "OXR_APP_ID", status: "configured" as const },
+      { environment, key: "OXR_BASE_URL", status: "configured" as const, value: "https://openexchangerates.org/api" },
+    ]),
+    contract: { type: "openapi", path: "currency-service/openapi.yaml" },
+    resourceDocs: [{ type: "documentation", url: "https://docs.openexchangerates.org" }],
+    consumers: [{ projectId: "acme-expenses", componentName: "expense-api" }],
+  },
+  {
+    name: "payroll-service",
+    provider: "Xero",
+    description: "Payroll and reimbursements.",
+    scope: "project",
+    project: "acme-expenses",
+    config: [
+      { key: "XERO_CLIENT_ID", description: "OAuth client ID", secret: true },
+      { key: "XERO_CLIENT_SECRET", description: "OAuth client secret", secret: true },
+    ],
+    contract: { type: "openapi", path: "specs/design/dependencies/payroll-service/openapi.yaml", origin: "provider" },
+    consumers: [{ projectId: "acme-expenses", componentName: "expense-api" }],
+  },
+  {
+    name: "maps-service",
+    description: "Office locations on a map.",
+    scope: "project",
+    project: "employee-onboarding",
     config: [],
     consumers: [],
   },
+];
+
+export const orgEndpoints: OrgEndpointDTO[] = [
+  { name: "expense-api", project: "acme-expenses", endpoint: "rest", type: "HTTP", namespaceVisible: true },
+  { name: "people-directory", project: "employee-onboarding", endpoint: "graphql", type: "GraphQL", namespaceVisible: true },
 ];

@@ -285,8 +285,15 @@ say what held.
 Then check it:
 
 ```bash
-node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$(git rev-parse --show-toplevel)"
+node "$AEP_SKILLS_DIR/validation-task/scripts/check-report.mjs" "$(git rev-parse --show-toplevel)" <the issue's scope arguments>
 ```
+
+A version validates what it built. When the issue says "run the report checker
+with `--features F1,F2 --held-back F2.4`", pass exactly those arguments, and
+drive only the feature files the issue lists: a file under **Not run** is a
+feature designed but not built yet, and a rule tagged only with a held-back
+story waits on a feature nobody built. Reporting either is a breach, because it
+reports on code this version did not build.
 
 It exits 2 on a contract breach and prints every one. A scenario in the feature
 files with no entry fails it, so one you could not manage must be reported

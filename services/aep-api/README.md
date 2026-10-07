@@ -15,7 +15,7 @@ CI-enforced by `internal/arch`.
 
 ```mermaid
 flowchart TB
-  SURF(["route groups — /api/v1 · /internal/v1 (runs/ · ae-studio/ · mcp · sre/)"])
+  SURF(["route groups — /api/v1 · /internal/v1 (runs/ · ae-studio/ · mcp · sre-handoff/mcp)"])
   subgraph AEPAPI["aep-api"]
     direction TB
     EDGE["edge — route-group gates · tenant gate · composition root"]
@@ -75,6 +75,7 @@ datastore · `(["/prefix"])` = an inbound route group.
 - **`clients/`** — outbound adapters to external systems (`openchoreo`, `thundersvc`,
   `thunderapp`, `secretmanagersvc`, `oauth`, `oidc`, `observability`).
   `thunderapp` — Kubernetes GET of ThunderApplication CRs for the web-app deploy wait.
+  `kubeauth` — the bearer/token-file Authorization and cluster-CA transport both share.
   `aestudiotools` — each org's ae-studio-tools `/internal/v1` (turns, references,
   git content, issues, milestones, pulls, repos, hooks, skills mirror, GitHub
   identity) as aep-api's AE-only M2M client with `X-Impersonate-Org` = the pod's
@@ -119,6 +120,12 @@ an sm-api-backed `SecretsProvider` for cloud delivery, and the wso2cloud
 lives in the overlay (outside OSS CI); that is an accepted trade-off — public
 coverage never exercised it either. Detail →
 [`design/composition-seam.md`](design/composition-seam.md).
+
+**`cmd/design-derive`** is a second, offline entry: it runs the POST /build
+platform-resource derivation (`spec.DerivePlatformResourceFacts`) over a design
+directory on disk, with the resource-type catalog decoded from manifest files
+(`openchoreo.ResourceTypeDir`). The playground runs it before each coding run
+(playground ADR-0003).
 
 ## Conventions
 

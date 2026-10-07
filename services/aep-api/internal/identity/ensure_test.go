@@ -89,7 +89,7 @@ func rolesJSONSelfService(t *testing.T, roles []string, users ...userFixture) st
 	roleEntries := make([]any, 0, len(roles))
 	for _, name := range roles {
 		roleEntries = append(roleEntries, map[string]any{
-			"name": name, "description": name + " may read.", "stories": []int{1},
+			"name": name, "description": name + " may read.", "stories": []string{"F1.1"},
 			"grants":    []string{"claims:read"},
 			"enrolment": "self-service",
 		})
@@ -134,7 +134,7 @@ func buildRolesJSON(t *testing.T, roles []string, declareGroups bool, users ...u
 			})
 		}
 		roleEntries = append(roleEntries, map[string]any{
-			"name": name, "description": name + " may read.", "stories": []int{1},
+			"name": name, "description": name + " may read.", "stories": []string{"F1.1"},
 			"grants":   []string{"claims:read"},
 			"assignTo": []string{group},
 		})
@@ -261,12 +261,12 @@ func TestEnsureForTagReportsDeclaredWhenTheRolesDocumentDoesNotParse(t *testing.
 		"not JSON":         `{`,
 		"schema violation": `{"version": 3, "permissions": [], "groups": [], "roles": [], "testUsers": []}`,
 		"a v1 document": rolesJSONRaw(`{"version":1,"coldStartRole":null,"publicComponents":[],` +
-			`"roles":[{"name":"Viewer","description":"d","stories":[1],"grantedBy":"g",` +
+			`"roles":[{"name":"Viewer","description":"d","stories":["F1.1"],"grantedBy":"g",` +
 			`"permissions":[{"component":"api","actions":["read"]}]}],"testUsers":[],` +
 			`"thunder":{"name":"Expense Tracker","type":"browser"}}`),
 		"a grant naming no catalog handle": rolesJSONRaw(`{"version":3,` +
 			`"permissions":[{"resource":"claims","component":"api","actions":[{"handle":"read"}]}],` +
-			`"groups":[],"roles":[{"name":"Viewer","description":"d","stories":[1],` +
+			`"groups":[],"roles":[{"name":"Viewer","description":"d","stories":["F1.1"],` +
 			`"grants":["claims:audit"],"assignTo":["Viewers"]}],"testUsers":[]}`),
 	} {
 		t.Run(name, func(t *testing.T) {

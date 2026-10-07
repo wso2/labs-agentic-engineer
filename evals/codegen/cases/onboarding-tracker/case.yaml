@@ -1,0 +1,9 @@
+name: onboarding-tracker
+description: Track each new hire's onboarding tasks across IT, HR and
+  facilities, with reminders for overdue items no emails/notificaitons, no
+  object storage.
+source:
+  project: onboarding-tracker
+  snapshot: 2026-09-17T09-24-30-674Z
+  savedAt: 2026-10-03T14:28:57.072Z
+tags: []

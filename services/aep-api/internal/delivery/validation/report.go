@@ -98,11 +98,14 @@ type reportStep struct {
 }
 
 // id is the scenario's natural key: Gherkin carries no ids, so identity is what
-// the scenario IS. ASCII-joined on purpose — this string becomes a GitHub dedupe
-// label, which issue_service.go normalises and, past 50 chars, hashes.
+// the scenario IS — its feature by ID (B4: "F2", from `Feature: F2 Approvals`,
+// so renaming a feature splits no history and opens no second repair issue),
+// its rule and its name. ASCII-joined on purpose — this string becomes a
+// GitHub dedupe label, which issue_service.go normalises and, past 50 chars,
+// hashes.
 func (s reportScenario) id() string {
 	parts := make([]string, 0, 3)
-	for _, p := range []string{s.Feature, s.Rule, s.Scenario} {
+	for _, p := range []string{featureID(s.Feature, s.FeatureFile), s.Rule, s.Scenario} {
 		if strings.TrimSpace(p) != "" {
 			parts = append(parts, strings.TrimSpace(p))
 		}
@@ -170,7 +173,13 @@ func (s reportScenario) effectiveKeywords() []string {
 // everything a repair issue needs — so the issue is answerable from one read and
 // never sends its reader back to the specification or to another ticket.
 type FailedScenario struct {
-	ID          string
+	ID string
+	// FeatureID is the scenario's feature ("F2"); Feature is its whole
+	// `Feature:` line ("F2 Approvals").
+	FeatureID string
+	// Stories are the stories its rule stands for, from the rule's tags; nil
+	// when the report was not read against a scope.
+	Stories     []string
 	Feature     string
 	Rule        string
 	Scenario    string
@@ -216,7 +225,55 @@ type NetworkRequest struct {
 	Status int
 }
 
-// ReportDigest fingerprints WHAT A REPORT CONCLUDED, so two validation attempts
+// Report is a committed report as one version reads it: parsed once, and
+// narrowed to the version's scope (Within) before any verdict, digest or
+// failure is drawn from it.
+type Report struct {
+	doc reportDoc
+	// scope is what Within narrowed it to; nil when it was not narrowed.
+	scope *Scope
+}
+
+// ParseReport reads a committed report. An absent or unparseable one is a
+// Report with nothing in it, whose verdict is `unreported`.
+func ParseReport(raw []byte) Report {
+	if len(raw) == 0 {
+		return Report{}
+	}
+	var doc reportDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return Report{}
+	}
+	return Report{doc: doc}
+}
+
+// Within keeps the scenarios the version validates (B4). An agent that drove
+// a scenario outside the scope reported on code nobody asked to build, so its
+// result counts for nothing. A nil scope keeps everything: a version cut
+// before builds were selections validates the whole oracle.
+func (r Report) Within(s *Scope) Report {
+	if s == nil {
+		return r
+	}
+	out := Report{scope: s}
+	for _, sc := range r.doc.Scenarios {
+		if s.runs(sc) {
+			out.doc.Scenarios = append(out.doc.Scenarios, sc)
+		}
+	}
+	return out
+}
+
+// outcomes maps each scenario's key to its outcome.
+func (r Report) outcomes() map[string]string {
+	out := make(map[string]string, len(r.doc.Scenarios))
+	for _, sc := range r.doc.Scenarios {
+		out[sc.id()] = sc.Outcome
+	}
+	return out
+}
+
+// Digest fingerprints WHAT A REPORT CONCLUDED, so two validation attempts
 // can be compared. Empty for an absent or unparseable report — there is nothing to
 // compare, and two empty digests must not read as "the same answer twice".
 //
@@ -231,19 +288,12 @@ type NetworkRequest struct {
 // Sorted because report order is the agent's file-discovery order, which is not a
 // promise; two attempts that found the same outcomes in a different order reached
 // the same answer.
-func ReportDigest(raw []byte) string {
-	if len(raw) == 0 {
+func (r Report) Digest() string {
+	if len(r.doc.Scenarios) == 0 {
 		return ""
 	}
-	var doc reportDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return ""
-	}
-	if len(doc.Scenarios) == 0 {
-		return ""
-	}
-	lines := make([]string, 0, len(doc.Scenarios))
-	for _, s := range doc.Scenarios {
+	lines := make([]string, 0, len(r.doc.Scenarios))
+	for _, s := range r.doc.Scenarios {
 		observed := ""
 		if i := s.deciding(); i >= 0 {
 			observed = s.Steps[i].Observed
@@ -255,7 +305,7 @@ func ReportDigest(raw []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// FailedScenarios returns the scenarios the report records as failed, in report
+// Failed returns the scenarios the report records as failed, in report
 // order. Empty for an absent, unparseable or all-green report — every case where
 // there is nothing to repair.
 //
@@ -268,21 +318,16 @@ func ReportDigest(raw []byte) string {
 // The verdict is a single value the run stores; this is a list the supervisor turns
 // into issues, and the two are read by different callers at different moments (the
 // second only when the first came back `failed`).
-func FailedScenarios(raw []byte) []FailedScenario {
-	if len(raw) == 0 {
-		return nil
-	}
-	var doc reportDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return nil
-	}
+func (r Report) Failed() []FailedScenario {
 	var out []FailedScenario
-	for _, s := range doc.Scenarios {
+	for _, s := range r.doc.Scenarios {
 		if s.Outcome != outcomeFailed {
 			continue
 		}
 		f := FailedScenario{
 			ID:          s.id(),
+			FeatureID:   featureID(s.Feature, s.FeatureFile),
+			Stories:     r.scope.stories(s),
 			Feature:     s.Feature,
 			Rule:        s.Rule,
 			Scenario:    s.Scenario,
@@ -325,7 +370,7 @@ const (
 	outcomeUnjudgeable = "unjudgeable"
 )
 
-// VerdictFromReport derives a run's validation verdict from the committed report,
+// Verdict derives a run's validation verdict from the committed report,
 // returning one of the delivery.ValidationVerdict* values. Applied in order:
 //
 //  1. no usable report (absent, unparseable, or carrying no scenarios) → unreported
@@ -345,22 +390,17 @@ const (
 // to read. Only the second is fatal, because the read is pinned to the validation
 // cycle's own merge commit — so an absent report is a fact about this run, not a
 // propagation artifact.
-func VerdictFromReport(raw []byte) string {
-	if len(raw) == 0 {
-		return delivery.ValidationVerdictUnreported
-	}
-	var doc reportDoc
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return delivery.ValidationVerdictUnreported
-	}
+func (r Report) Verdict() string {
 	// No scenarios is not a vacuous pass: "nothing failed" over an empty set would
-	// otherwise report success for a run that judged nothing.
-	if len(doc.Scenarios) == 0 {
+	// otherwise report success for a run that judged nothing — and a report
+	// whose every scenario lies outside the version's scope judged nothing it
+	// was asked.
+	if len(r.doc.Scenarios) == 0 {
 		return delivery.ValidationVerdictUnreported
 	}
 
 	passed, uncovered := false, false
-	for _, s := range doc.Scenarios {
+	for _, s := range r.doc.Scenarios {
 		switch s.Outcome {
 		case outcomeFailed:
 			return delivery.ValidationVerdictFailed

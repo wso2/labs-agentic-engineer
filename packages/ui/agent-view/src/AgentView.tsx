@@ -98,6 +98,22 @@ export interface AgentViewProps {
   modelConnection?: AgentModelConnection | null | "loading" | undefined;
   /** Where the connection is changed (a link to Settings), shown beside it. */
   settingsLink?: ReactNode;
+  /**
+   * What the last deploy did with each declared guardrail, keyed by policy,
+   * one entry per environment — from the deployments read
+   * (`Deployment.guardrails`). Omitted, the Guardrails panel lists what the
+   * spec declares without a status; given but missing a policy, that
+   * guardrail has not been deployed yet.
+   */
+  guardrailStatus?: Record<string, AgentGuardrailStatus[]> | undefined;
+}
+
+/** One environment's outcome for a declared guardrail. */
+export interface AgentGuardrailStatus {
+  environment: string;
+  /** "applied" | "partial" | "unavailable" | "invalid" | "conflict" | "failed" | "unsupported". */
+  status: string;
+  reason?: string | undefined;
 }
 
 const AGENT_BADGE_COLOR = "#7c3aed";
@@ -143,6 +159,7 @@ export function AgentView({
   renderMarkdown,
   modelConnection,
   settingsLink,
+  guardrailStatus,
 }: AgentViewProps) {
   const attempt = useMemo(() => parseAgentAfm(spec), [spec]);
   const [tab, setTab] = useState<TabKey>("instructions");
@@ -212,7 +229,12 @@ export function AgentView({
           )}
           {tab === "tools" && <ToolsTab tools={attempt.tools} toolStatus={toolStatus} />}
           {tab === "configuration" && (
-            <ConfigurationTab spec={attempt} modelConnection={modelConnection} settingsLink={settingsLink} />
+            <ConfigurationTab
+              spec={attempt}
+              modelConnection={modelConnection}
+              settingsLink={settingsLink}
+              guardrailStatus={guardrailStatus}
+            />
           )}
         </Box>
       </Box>

@@ -533,7 +533,7 @@ func (l *loop) onEmptyWorkingSet(ctx workflow.Context, ends bookends) (settled b
 			return false, RunResult{}, nil
 		}
 		// Planning landed and produced nothing to work. Delivered, and unjudged.
-		if verr := l.setVerdict(ctx, noCycle, delivery.ValidationVerdictSkipped, ""); verr != nil {
+		if verr := l.setVerdict(ctx, noCycle, ValidationOutcome{Verdict: delivery.ValidationVerdictSkipped}); verr != nil {
 			return true, l.result(), verr
 		}
 		res, err = l.settle(ctx, delivery.RunStateSucceeded, "")

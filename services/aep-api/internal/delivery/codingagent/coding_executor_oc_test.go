@@ -712,7 +712,7 @@ func TestDispatch_MountsTheOrgDefaultKeyForEvaluation(t *testing.T) {
 	assertEvalConnEnv(t, rec.load, map[string]string{
 		envEvalModelFormat:     "anthropic",
 		envEvalModelBaseURL:    "https://api.anthropic.com/v1",
-		envEvalModelName:       "claude-sonnet-5",
+		envEvalModelName:       "claude-sonnet-5-5",
 		envEvalModelAuthScheme: "x-api-key",
 	})
 }

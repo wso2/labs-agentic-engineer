@@ -106,11 +106,12 @@ for, and give every actor a row. **When the actor noun is also the group's name*
 — a PRD actor `Finance` whose people are the org's `Finance` group — the group
 keeps the name and the role takes what the actor DOES here (`FinanceReviewer`),
 naming the actor in its `description`. A role and a group cannot share a name,
-and the group's is the organisation's to keep. Each role cites in `stories` the PRD story
-numbers it serves — **at least one, and the build gate checks one direction
-only**: every story a role cites must be a real PRD story, or the design and the
-requirements have drifted. The reverse is not checked here — a story no role
-names is not an error, because PRD coverage is carried by each component's
+and the group's is the organisation's to keep. Each role cites in `stories` the IDs
+of the stories it serves (`"F1.2"`) — **at least one, and the build gate checks
+one direction only**: every story a role cites must be a real story in the
+feature files, or the design and the requirements have drifted. The reverse is
+not checked here — a story no role names is not an error, because coverage is
+carried by each component's
 `design.json` `stories`, not by this file. So read the stories once more before
 you finish and ask whether an actor-bearing story is really served by the role
 you gave it.
@@ -205,14 +206,14 @@ property at any level where one could go, and a write that adds one is rejected.
     {
       "name": "Employee",
       "description": "Submits and follows their own claims.",
-      "stories": [1, 2, 6],
+      "stories": ["F1.1", "F1.2", "F1.3"],
       "grants": ["claims:read", "claims:submit"],
       "assignTo": ["Employees"]
     },
     {
       "name": "Approver",
       "description": "Approves or rejects submitted claims and reads monthly reports.",
-      "stories": [3, 4, 5, 7],
+      "stories": ["F2.1", "F2.2", "F2.3", "F3.1"],
       "grants": ["claims:read", "claims:read-all", "claims:approve", "claims:reject", "reports:read"],
       "assignTo": ["Finance"],
       "assignableBy": ["Approver"]
@@ -241,7 +242,7 @@ SPA gates each one on the operation it loads.
 | `groups[]` | Organisation groups this project introduces: `name`, `description`. Created if absent, never renamed or deleted. A group already in the directory is not redeclared. |
 | `roles[].name` | A PRD actor noun, unique in the project (case-insensitively), never a group name. It becomes `<project>/<name>` on the directory. |
 | `roles[].description` | What the role is for. Project-owned: the platform writes it on every build. |
-| `roles[].stories` | PRD story numbers this role serves. At least one. |
+| `roles[].stories` | Story IDs (`"F2.3"`) this role serves. At least one. |
 | `roles[].grants` | Handles from `permissions[]`. At least one. A handle no role grants is a warning ("unreachable by any role"); a handle no operation requires is a warning ("declared, used nowhere"). |
 | `roles[].assignTo` | Organisation groups the role is assigned to. Each must be declared in `groups[]` or exist in the directory (`list_groups`) — anything else is refused, so a typo cannot create a group. Required for `enrolment: admin` user roles; absent for self-service and service roles. |
 | `roles[].enrolment` | Optional. `admin` (default) or `self-service`. See **self-service actors**. |
