@@ -183,6 +183,16 @@
       "name": "tag not closing",
       "markdown": "An *assumed* word mid-line.",
       "text": "An assumed word mid-line."
+    },
+    {
+      "name": "hard break, trailing spaces",
+      "markdown": "Greet the caller  \nby name.",
+      "text": "Greet the caller by name."
+    },
+    {
+      "name": "hard break, trailing backslash",
+      "markdown": "Greet the caller\\\nby name.",
+      "text": "Greet the caller by name."
     }
   ]
 }

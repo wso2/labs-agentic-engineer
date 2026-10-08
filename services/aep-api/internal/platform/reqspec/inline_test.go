@@ -57,7 +57,9 @@ func TestReadInline_IsLinearOnAdversarialLines(t *testing.T) {
 
 // The cases the console is held to as well (console spec/collab/
 // inlineMarkup.test.ts): each line's text is what the collab room's parser
-// makes of it, and the closing tag the line keeps.
+// makes of it, and the closing tag the line keeps. A case may wrap with a hard
+// break (`··` or `\` at a line's end): the reader joins an item's wrapped lines
+// before it reads the markup, so the case is read as readDoc reads the item.
 func TestReadLine_SharedInlineMarkupCases(t *testing.T) {
 	raw, err := os.ReadFile("../../../../../packages/contracts/requirements/inline-markup-cases.json")
 	if err != nil {
@@ -73,11 +75,26 @@ func TestReadLine_SharedInlineMarkupCases(t *testing.T) {
 		t.Fatal("no cases")
 	}
 	for _, c := range fixture.Cases {
-		if got := readInline(c.Markdown).text; got != c.Text {
+		line := asOneLine(c.Markdown)
+		if got := readInline(line).text; got != c.Text {
 			t.Errorf("%s: %q reads %q, the room %q", c.Name, c.Markdown, got, c.Text)
 		}
-		if got := parseLine(readLine(c.Markdown)).tag; got != c.Tag {
+		if got := parseLine(readLine(line)).tag; got != c.Tag {
 			t.Errorf("%s: tag %q, want %q", c.Name, got, c.Tag)
 		}
+		doc := readDoc("## User Stories\n\n- " + c.Markdown + "\n")
+		if got, want := doc.sections[0].items[0].text, readLine(line); got != want {
+			t.Errorf("%s: the item reads %q, the joined line %q", c.Name, got, want)
+		}
 	}
+}
+
+// asOneLine joins a case's wrapped lines as readDoc joins an item's: each
+// line's hard break dropped, and the lines joined with a space.
+func asOneLine(markdown string) string {
+	lines := strings.Split(markdown, "\n")
+	for i, l := range lines {
+		lines[i] = dropHardBreak(strings.TrimSpace(l))
+	}
+	return strings.Join(lines, " ")
 }
