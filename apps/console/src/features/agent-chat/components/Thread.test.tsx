@@ -156,5 +156,34 @@ describe("a From Issues note in the conversation", () => {
     expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "acme" } });
     expect(startBranch).toHaveBeenCalledWith("issues", "acme");
   });
+
+  it("keeps Reopen on the newest note only, and every note's text", () => {
+    chat = ready([
+      { kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+      { kind: "note", id: "n2", text: "From Issues · 1 message · Filed #42.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+    ]);
+    renderThread();
+    expect(screen.getByText(/Filed #41/)).toBeTruthy();
+    expect(screen.getByText(/Filed #42/)).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Reopen" })).toHaveLength(1);
+  });
+
+  it("leaves an older note's other actions alone", () => {
+    chat = ready([
+      {
+        kind: "note",
+        id: "n1",
+        text: "From Issues · Filed #41.",
+        actions: [
+          { kind: "open-issues", label: "Reopen" },
+          { kind: "open-build", label: "Open build", version: "v1" },
+        ],
+      },
+      { kind: "note", id: "n2", text: "From Issues · Filed #42.", actions: [{ kind: "open-issues", label: "Reopen" }] },
+    ]);
+    renderThread();
+    expect(screen.getAllByRole("button", { name: "Reopen" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Open build" })).toBeTruthy();
+  });
 });
 

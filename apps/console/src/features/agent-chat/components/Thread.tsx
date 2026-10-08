@@ -23,7 +23,7 @@ import { visuallyHidden } from "../../../components/visuallyHidden";
 import { usePrototypeNotes } from "../../prototype/usePrototypeNotes";
 import { usePrototypeRequestsText } from "../../prototype/usePrototypeRequestsText";
 import { useSpecModel } from "../../spec/useSpecWorkspace";
-import { interviewWriteUp, openQuestionId, userLineText, type ChatItem } from "../chatLog";
+import { interviewWriteUp, openQuestionId, userLineText, type ChatItem, type NoteAction } from "../chatLog";
 import type { PrototypeFeedback } from "../turnScope";
 import type { ChatView } from "../chatView";
 import { chatStoreFor, useProjectChat } from "../useProjectChat";
@@ -182,6 +182,11 @@ function useStickToBottom() {
   return setNode;
 }
 
+/** A note's actions: Reopen only on the newest From Issues note, as it goes back to the one Issues chat. */
+function actionsFor(actions: NoteAction[] | undefined, newestReopen: boolean): NoteAction[] {
+  return newestReopen ? (actions ?? []) : (actions ?? []).filter((a) => a.kind !== "open-issues");
+}
+
 export function Thread({
   projectName,
   view = "main",
@@ -200,6 +205,10 @@ export function Thread({
   const featurePaths = useMemo(() => new Set((features ?? []).map((f) => f.path)), [features]);
   const followUp = running ? null : interviewWriteUp(items, featurePaths);
   const prototypeNotes = usePrototypeNotes(projectName, items, running);
+  const newestReopenId = useMemo(
+    () => items.filter((i) => i.kind === "note" && i.actions?.some((a) => a.kind === "open-issues")).at(-1)?.id,
+    [items],
+  );
   // Nothing from the agent yet since the last message: say it is working.
   const lastItem = items.at(-1);
   const waitingForOutput = running && (!lastItem || lastItem.kind === "user");
@@ -260,28 +269,31 @@ export function Thread({
         gap: 1.5,
       }}
     >
-      {items.map((item) => (
-        <Fragment key={item.id}>
-          {item.kind === "user" && <UserRow projectName={projectName} item={item} />}
-          {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
-          {item.kind === "note" && item.actions && <NoteActions projectName={projectName} actions={item.actions} />}
-          {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
-          {item.kind === "handoff" && <HandOffCard projectName={projectName} item={item} />}
-          {item.kind === "error" && <ErrorRow text={item.text} />}
-          {item.kind === "question" && (
-            <Box sx={{ pl: 4 }}>
-              <QuestionsPointer projectName={projectName} item={item} open={item.id === openQuestion} view={view} />
-            </Box>
-          )}
-          {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
-          {prototypeNotes.has(item.id) && (
-            <>
-              <AgentRow text={prototypeNotes.get(item.id)!.text} />
-              <NoteActions projectName={projectName} actions={prototypeNotes.get(item.id)!.actions} />
-            </>
-          )}
-        </Fragment>
-      ))}
+      {items.map((item) => {
+        const noteActions = item.kind === "note" ? actionsFor(item.actions, item.id === newestReopenId) : [];
+        return (
+          <Fragment key={item.id}>
+            {item.kind === "user" && <UserRow projectName={projectName} item={item} />}
+            {(item.kind === "agent" || item.kind === "note") && <AgentRow text={item.text} />}
+            {noteActions.length > 0 && <NoteActions projectName={projectName} actions={noteActions} />}
+            {item.kind === "activity" && <ActivityLine item={item} features={features ?? []} />}
+            {item.kind === "handoff" && <HandOffCard projectName={projectName} item={item} />}
+            {item.kind === "error" && <ErrorRow text={item.text} />}
+            {item.kind === "question" && (
+              <Box sx={{ pl: 4 }}>
+                <QuestionsPointer projectName={projectName} item={item} open={item.id === openQuestion} view={view} />
+              </Box>
+            )}
+            {followUp?.afterId === item.id && <InterviewFollowUp projectName={projectName} path={followUp.path} />}
+            {prototypeNotes.has(item.id) && (
+              <>
+                <AgentRow text={prototypeNotes.get(item.id)!.text} />
+                <NoteActions projectName={projectName} actions={prototypeNotes.get(item.id)!.actions} />
+              </>
+            )}
+          </Fragment>
+        );
+      })}
       {waitingForOutput && <Working />}
     </Box>
   );
