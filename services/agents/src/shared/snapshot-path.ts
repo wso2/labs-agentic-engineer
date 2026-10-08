@@ -56,7 +56,8 @@ export class WorkspaceRefError extends Error {
 // reject either way. None admit `/`, `\` or whitespace.
 const ORG_SEGMENT_RE = /^org_[A-Za-z0-9_.-]{1,128}$/;
 const PROJ_SEGMENT_RE = /^proj_[A-Za-z0-9_.-]{1,128}$/;
-const USE_CASE_RE = /^[a-z][a-z-]{0,63}$/;
+// Digits are for an issue's own thread (`issue-<n>`).
+const USE_CASE_RE = /^[a-z][a-z0-9-]{0,63}$/;
 const UUID_SEGMENT_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 const TURN_ID_RE = /^[A-Za-z0-9_.-]{1,128}$/;
 const REPO_SLUG_RE = /^[a-z0-9][a-z0-9._-]{0,99}$/;

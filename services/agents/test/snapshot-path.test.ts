@@ -27,7 +27,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { resolveWorkspace, WorkspaceRefError } from "../src/shared/snapshot-path.js";
+import { conversationOrgId, resolveWorkspace, WorkspaceRefError } from "../src/shared/snapshot-path.js";
 
 const ORG = "org-1a2b";
 const PROJ = "proj-3c4d";
@@ -204,5 +204,14 @@ test("well-formed but unknown snapshot shas (stat fail) → 400, for repo AND sk
     expectStatus(root, 400, { workspace: validWorkspace({ repoSlug: "other-repo" }) });
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an issue's thread id (use case issue-<n>) parses; the use case still refuses other characters", () => {
+  const uuid = "275b950c-4cf9-4f18-9622-30b61a72508c";
+  assert.equal(conversationOrgId(`org_${ORG}--proj_${PROJ}--issue-9--${uuid}`), ORG);
+  assert.equal(conversationOrgId(`org_${ORG}--proj_${PROJ}--issue-1234--${uuid}`), ORG);
+  for (const useCase of ["9issue", "Issue-9", "issue_9", "issue.9"]) {
+    assert.throws(() => conversationOrgId(`org_${ORG}--proj_${PROJ}--${useCase}--${uuid}`), WorkspaceRefError, useCase);
   }
 });
