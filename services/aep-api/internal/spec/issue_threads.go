@@ -21,19 +21,25 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // RemoveIssueThread removes a closed issue's chat thread (round three §4):
 // every project_conversations row of its issue-<n> use case, current and
-// demoted, and the agents-service conversations behind them. Its two callers
-// are the issue agent's close_issue and GitHub's issues.closed webhook, so it
-// is idempotent: a thread already gone is not an error. Only that use case is
-// touched — the main chat, the Issues chat and every other issue keep theirs.
+// demoted, and the agents-service conversations behind them. Its callers are
+// the issue agent's close_issue and GitHub's issues.closed and issues.reopened
+// webhooks (a reopen removes whatever a lost or failed close left, so a
+// reopened issue always starts a fresh thread), so it is idempotent: a thread
+// already gone is not an error. Only that use case is touched — the main chat,
+// the Issues chat and every other issue keep theirs.
 //
-// A turn running on the thread is never interrupted: the removal is recorded
-// and runs when that turn finishes (finishTurn). That is the issue agent's own
-// case — close_issue runs inside the issue's turn — so a deferred removal
-// never uses ctx after this returns.
+// A turn running on the thread is never interrupted: the removal is marked
+// for that turn and runs when it ends — its finishTurn, or the TurnSweeper
+// failing it after a crash (TurnSwept). That is the issue agent's own case —
+// close_issue runs inside the issue's turn — so a deferred removal never uses
+// ctx after this returns. A running row whose heartbeat is older than the
+// sweep's stale threshold is a dead turn, not a running one: the thread is
+// removed now.
 //
 // The agents-service delete is best-effort: a failure is logged and the rows
 // are deleted regardless; the agents store's TTL sweep reaps the orphan.
@@ -45,42 +51,56 @@ func (s *Service) RemoveIssueThread(ctx context.Context, orgID, projectID string
 	if s.conversations == nil {
 		return nil // test seam: no thread store, no threads
 	}
-	// Mark first, then look for a running turn. The turn's finish takes the
-	// mark after its terminal write, so whichever of the two takes the mark
-	// removes the thread, exactly once: if the turn finished before the mark,
-	// GetActive below no longer sees it running.
 	key := pendingRemovalKey(orgID, projectID, useCase)
-	s.pendingRemovals.mark(key)
 	active, err := s.turns.GetActive(ctx, orgID, projectID, useCase)
 	if err != nil {
-		s.pendingRemovals.take(key)
 		return fmt.Errorf("read the issue thread's running turn: %w", err)
 	}
-	if active != nil {
+	if active == nil || time.Since(active.HeartbeatAt) > turnSweepStaleAfter {
+		// No live turn: any mark left on the thread belonged to a turn that is
+		// gone, so it is dropped with the thread.
+		s.pendingRemovals.take(key, "")
+		return s.removeThreadsNow(ctx, orgID, projectID, useCase)
+	}
+	// Mark for the running turn, then look again: its end takes the mark
+	// after the terminal write, so if the turn ended before the mark, the
+	// re-read sees it ended and the removal runs here — exactly once either way.
+	s.pendingRemovals.mark(key, active.ID)
+	again, err := s.turns.Get(ctx, orgID, projectID, active.ID)
+	if err != nil {
+		s.pendingRemovals.take(key, active.ID)
+		return fmt.Errorf("re-read the issue thread's running turn: %w", err)
+	}
+	if again != nil && again.Status == turnStatusRunning {
 		slog.InfoContext(ctx, "genai: issue thread removal waits for its running turn",
 			"org", orgID, "project", projectID, "useCase", useCase, "turn", active.ID)
 		return nil
 	}
-	if !s.pendingRemovals.take(key) {
-		return nil // the turn's finish took it
+	if !s.pendingRemovals.take(key, active.ID) {
+		return nil // the turn's end took it
 	}
 	return s.removeThreadsNow(ctx, orgID, projectID, useCase)
 }
 
-// removePendingThread runs a removal that waited for this turn, once the turn
-// has written its terminal state. ctx is the finish's own detached budget.
-func (s *Service) removePendingThread(ctx context.Context, job turnJob) {
-	if job.chat.View != ChatViewIssue {
+// TurnSwept runs a removal that waited for a turn the TurnSweeper failed: a
+// turn lost to a crash never reaches its finishTurn, and one that does finds
+// the row swept, so the sweep is the turn's end.
+func (s *Service) TurnSwept(ctx context.Context, t AgentTurn) {
+	s.removePendingThread(ctx, t.OrgID, t.ProjectID, t.UseCase, t.ID)
+}
+
+// removePendingThread runs a removal that waited for turnID, once that turn
+// has ended (written its terminal state, or been swept). A mark for any other
+// turn is stale — one turn runs per use case, so that one ended without
+// taking it — and is dropped without removing: it must never delete a thread
+// a later turn is using. ctx is the caller's own budget, never a request's.
+func (s *Service) removePendingThread(ctx context.Context, orgID, projectID, useCase, turnID string) {
+	if !s.pendingRemovals.take(pendingRemovalKey(orgID, projectID, useCase), turnID) {
 		return
 	}
-	// The view passed useCaseFor at admission, so this cannot miss.
-	useCase, _ := useCaseFor(job.chat)
-	if !s.pendingRemovals.take(pendingRemovalKey(job.orgID, job.projectID, useCase)) {
-		return
-	}
-	if err := s.removeThreadsNow(ctx, job.orgID, job.projectID, useCase); err != nil {
+	if err := s.removeThreadsNow(ctx, orgID, projectID, useCase); err != nil {
 		slog.ErrorContext(ctx, "genai: could not remove the closed issue's thread after its turn",
-			"org", job.orgID, "project", job.projectID, "useCase", useCase, "turn", job.turnID, "error", err)
+			"org", orgID, "project", projectID, "useCase", useCase, "turn", turnID, "error", err)
 	}
 }
 
@@ -109,34 +129,35 @@ func (s *Service) removeThreadsNow(ctx context.Context, orgID, projectID, useCas
 	return nil
 }
 
-// pendingRemovals is the set of issue threads whose removal waits for a
-// running turn. In memory: aep-api runs one replica, and the turn that the
-// removal waits for runs in this process (a turn on another replica, or one
-// lost to a restart, leaves its thread's rows behind — a closed issue's
-// thread is refused anyway, and the next close removes them).
+// pendingRemovals holds the issue threads whose removal waits for a running
+// turn, each bound to the turn it waits for. In memory: aep-api runs one
+// replica, and that turn runs in this process. A mark lost to a restart
+// leaves the closed issue's rows behind — its thread is refused while it is
+// closed, and the next close or a reopen removes them.
 type pendingRemovals struct {
 	mu   sync.Mutex
-	keys map[string]struct{}
+	keys map[string]string // key -> the turn id the removal waits for
 }
 
 func pendingRemovalKey(orgID, projectID, useCase string) string {
 	return orgID + "/" + projectID + "/" + useCase
 }
 
-func (p *pendingRemovals) mark(key string) {
+func (p *pendingRemovals) mark(key, turnID string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.keys == nil {
-		p.keys = map[string]struct{}{}
+		p.keys = map[string]string{}
 	}
-	p.keys[key] = struct{}{}
+	p.keys[key] = turnID
 }
 
-// take removes key and reports whether it was marked.
-func (p *pendingRemovals) take(key string) bool {
+// take removes key's mark, whichever turn it was for, and reports whether it
+// was for turnID.
+func (p *pendingRemovals) take(key, turnID string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	_, ok := p.keys[key]
+	marked, ok := p.keys[key]
 	delete(p.keys, key)
-	return ok
+	return ok && marked == turnID
 }

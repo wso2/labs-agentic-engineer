@@ -34,24 +34,33 @@ const (
 // TurnSweeper is the agent_turns crash-safety watcher (design D17): a
 // stale-heartbeat running row is marked failed(stream-died), which releases
 // the D18 one-active guard; if this replica still buffers the turn's stream,
-// attached viewers get the terminal event too.
+// attached viewers get the terminal event too, and whatever waited for the
+// turn's end (SweptTurnHandler) runs.
 type TurnSweeper struct {
 	turns      TurnRepository
 	broker     *TurnBroker
+	swept      SweptTurnHandler
 	interval   time.Duration
 	staleAfter time.Duration
 }
 
-// NewTurnSweeper wires the sweeper. Non-positive interval/staleAfter fall
-// back to the 60s defaults.
-func NewTurnSweeper(turns TurnRepository, broker *TurnBroker, interval, staleAfter time.Duration) *TurnSweeper {
+// SweptTurnHandler is told of every turn the sweep failed — the turn's end
+// when its own finishTurn never runs. The Service is the one handler: a closed
+// issue's thread removal that waited for the turn runs here (TurnSwept).
+type SweptTurnHandler interface {
+	TurnSwept(ctx context.Context, t AgentTurn)
+}
+
+// NewTurnSweeper wires the sweeper; swept may be nil. Non-positive
+// interval/staleAfter fall back to the 60s defaults.
+func NewTurnSweeper(turns TurnRepository, broker *TurnBroker, swept SweptTurnHandler, interval, staleAfter time.Duration) *TurnSweeper {
 	if interval <= 0 {
 		interval = turnSweepInterval
 	}
 	if staleAfter <= 0 {
 		staleAfter = turnSweepStaleAfter
 	}
-	return &TurnSweeper{turns: turns, broker: broker, interval: interval, staleAfter: staleAfter}
+	return &TurnSweeper{turns: turns, broker: broker, swept: swept, interval: interval, staleAfter: staleAfter}
 }
 
 // Run drives the sweep on its interval until ctx is canceled (the app.Watcher
@@ -88,6 +97,9 @@ func (s *TurnSweeper) Sweep(ctx context.Context) error {
 				Reason:  turnReasonStreamDied,
 				Message: "replica crashed or hung",
 			}))
+		}
+		if s.swept != nil {
+			s.swept.TurnSwept(ctx, *t)
 		}
 	}
 	return nil

@@ -153,6 +153,152 @@ func TestRemoveIssueThread_WaitsForTheRunningTurn(t *testing.T) {
 	}
 }
 
+// crashedTurn is a running issue-7 row with no runner behind it — a turn on a
+// replica that died — whose last heartbeat was age ago.
+func crashedTurn(t *testing.T, r *genaiRig, thread string, age time.Duration) *spec.AgentTurn {
+	t.Helper()
+	turn, err := r.turns.TryStart(context.Background(), &spec.AgentTurn{
+		OrgID: testOrg, ProjectID: testProj, ConversationID: thread, UseCase: "issue-7", BaseRef: "base",
+	})
+	if err != nil {
+		t.Fatalf("TryStart: %v", err)
+	}
+	r.turns.mu.Lock()
+	defer r.turns.mu.Unlock()
+	for _, row := range r.turns.rows {
+		if row.ID == turn.ID {
+			row.HeartbeatAt = time.Now().Add(-age)
+		}
+	}
+	return turn
+}
+
+// ageTurn makes a running row's heartbeat stale enough for the sweep.
+func ageTurn(r *genaiRig, id string) {
+	r.turns.mu.Lock()
+	defer r.turns.mu.Unlock()
+	for _, row := range r.turns.rows {
+		if row.ID == id {
+			row.HeartbeatAt = time.Now().Add(-2 * time.Minute)
+		}
+	}
+}
+
+// A close that lands while a dead replica's turn still reads as running
+// waits for that turn; the sweep that fails it is the turn's end, so the
+// removal runs then. A reopen afterwards starts a fresh thread.
+func TestRemoveIssueThread_SweptTurnTakesItsRemoval(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newIssueRig(t, convs)
+	ctx := context.Background()
+	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	dead := crashedTurn(t, r, thread, 0)
+
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+		t.Fatalf("RemoveIssueThread: %v", err)
+	}
+	if ok, _ := convs.Exists(ctx, testOrg, testProj, "issue-7", thread); !ok {
+		t.Fatalf("issue 7 thread removed while its turn read as running")
+	}
+
+	ageTurn(r, dead.ID)
+	if err := spec.NewTurnSweeper(r.turns, r.broker, r.svc, 0, 0).Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if got := r.fake.deleted(); !slices.Equal(got, []string{issueThreadID("7", thread)}) {
+		t.Fatalf("agents deletes after the sweep = %v, want issue 7's thread", got)
+	}
+
+	// The reopen webhook finds nothing left; the issue's next read mints a
+	// fresh thread.
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+		t.Fatalf("reopen RemoveIssueThread: %v", err)
+	}
+	if fresh := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID; fresh == thread {
+		t.Errorf("reopened issue 7 resumed its closed thread %q", thread)
+	}
+}
+
+// A removal lost to a restart (the close was marked in the process that
+// died) leaves the rows behind; the reopen removes them, so the reopened
+// issue starts fresh rather than resuming the closed thread.
+func TestRemoveIssueThread_ReopenRemovesALeftoverThread(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newIssueRig(t, convs)
+	ctx := context.Background()
+	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	dead := crashedTurn(t, r, thread, 2*time.Minute)
+	if err := spec.NewTurnSweeper(r.turns, r.broker, r.svc, 0, 0).Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+	if r.turns.row(t, dead.ID).Status != "failed" {
+		t.Fatalf("dead turn not swept")
+	}
+	if ok, _ := convs.Exists(ctx, testOrg, testProj, "issue-7", thread); !ok {
+		t.Fatalf("an unmarked sweep removed the thread")
+	}
+
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+		t.Fatalf("reopen RemoveIssueThread: %v", err)
+	}
+	if fresh := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID; fresh == thread {
+		t.Errorf("reopened issue 7 resumed its closed thread %q", thread)
+	}
+}
+
+// A running row whose heartbeat is older than the sweep's threshold is a dead
+// turn, not a running one: the close removes the thread now instead of
+// waiting on a turn that will never finish.
+func TestRemoveIssueThread_StaleHeartbeatRemovesNow(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newIssueRig(t, convs)
+	ctx := context.Background()
+	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	crashedTurn(t, r, thread, 2*time.Minute)
+
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+		t.Fatalf("RemoveIssueThread: %v", err)
+	}
+	if got := r.fake.deleted(); !slices.Equal(got, []string{issueThreadID("7", thread)}) {
+		t.Fatalf("agents deletes = %v, want issue 7's thread now", got)
+	}
+	if ok, _ := convs.Exists(ctx, testOrg, testProj, "issue-7", thread); ok {
+		t.Errorf("issue 7 thread kept for a dead turn")
+	}
+}
+
+// A removal is bound to the turn it waited for: if that turn ends without
+// taking it, the next turn's finish drops the mark rather than deleting the
+// thread that turn is using.
+func TestRemoveIssueThread_AMarkNeverFiresOnAnotherTurn(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newIssueRig(t, convs)
+	ctx := context.Background()
+	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	first := crashedTurn(t, r, thread, 0)
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+		t.Fatalf("RemoveIssueThread: %v", err)
+	}
+	// The first turn ends without its finish taking the mark.
+	if _, err := r.turns.Finish(ctx, first.ID, spec.TurnTerminal{Status: "failed", Reason: "stream-died"}); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	second := acceptedTurnID(t, postTurnBody(t, r, thread, map[string]any{
+		"instruction": "carry on", "view": "issue", "issueNumber": 7,
+	}))
+	r.waitTerminal(t, second)
+
+	if got := r.fake.deleted(); len(got) != 0 {
+		t.Fatalf("the first turn's removal fired on the second: deletes = %v", got)
+	}
+	if ok, _ := convs.Exists(ctx, testOrg, testProj, "issue-7", thread); !ok {
+		t.Errorf("issue 7 thread removed by a mark for another turn")
+	}
+}
+
 func TestRemoveIssueThread_RefusesANonPositiveNumber(t *testing.T) {
 	r := newIssueRig(t, &memConversationRepo{})
 	if err := r.svc.RemoveIssueThread(context.Background(), testOrg, testProj, 0); !errors.Is(err, spec.ErrIssueNumber) {

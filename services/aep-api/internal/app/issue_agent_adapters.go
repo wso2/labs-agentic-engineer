@@ -41,20 +41,22 @@ func (p issueAgentPromoter) PromoteAndExecute(ctx context.Context, orgID, projec
 	return err
 }
 
-// issueThreadsOnClose removes a closed issue's chat thread on GitHub's
-// issues.closed webhook (round three §4) — whoever closed it: a user on
-// GitHub, a merged pull request, the SRE agent or the platform. Unlike the
-// event plane's issues handlers it has no echo filter: the removal is
-// idempotent, so the platform's own close (the issue agent's close_issue
-// already removed the thread) finds nothing left to do.
-type issueThreadsOnClose struct {
+// issueThreadRemoval removes an issue's chat thread on GitHub's issues.closed
+// and issues.reopened webhooks (round three §4). On close, whoever closed it:
+// a user on GitHub, a merged pull request, the SRE agent or the platform. On
+// reopen, whatever a close left behind — a removal lost to a restart, or one
+// still waiting for a turn that died — so a reopened issue always starts a
+// fresh thread. Unlike the event plane's issues handlers it has no echo
+// filter: the removal is idempotent, so the platform's own close (the issue
+// agent's close_issue already removed the thread) finds nothing left to do.
+type issueThreadRemoval struct {
 	repos interface {
 		ByFullName(ctx context.Context, fullName string) (orgID, projectID string, err error)
 	}
 	threads scissues.IssueThreadRemover
 }
 
-func (h issueThreadsOnClose) OnIssueClosed(ctx context.Context, _, _ string, payload []byte) error {
+func (h issueThreadRemoval) OnIssueEvent(ctx context.Context, _, action string, payload []byte) error {
 	var p struct {
 		Issue struct {
 			Number      int             `json:"number"`
@@ -73,13 +75,13 @@ func (h issueThreadsOnClose) OnIssueClosed(ctx context.Context, _, _ string, pay
 	}
 	orgID, projectID, err := h.repos.ByFullName(ctx, p.Repository.FullName)
 	if err != nil {
-		return fmt.Errorf("resolve the closed issue's project: %w", err)
+		return fmt.Errorf("resolve the %s issue's project: %w", action, err)
 	}
 	if projectID == "" {
 		return nil // not one of ours
 	}
 	if err := h.threads.RemoveIssueThread(ctx, orgID, projectID, p.Issue.Number); err != nil {
-		return fmt.Errorf("remove the closed issue's thread: %w", err)
+		return fmt.Errorf("remove the %s issue's thread: %w", action, err)
 	}
 	return nil
 }

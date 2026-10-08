@@ -640,7 +640,9 @@ func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) T
 // Either way the turn is over, so a closed issue's thread removal that waited
 // for it runs last.
 func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal) {
-	defer s.removePendingThread(ctx, job)
+	// The view passed useCaseFor at admission, so this cannot miss.
+	useCase, _ := useCaseFor(job.chat)
+	defer s.removePendingThread(ctx, job.orgID, job.projectID, useCase, job.turnID)
 	ok, err := s.turns.Finish(ctx, job.turnID, term)
 	if err != nil {
 		slog.ErrorContext(ctx, "genai: finish turn row failed", "turn", job.turnID, "error", err)
@@ -657,8 +659,6 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 	// with its own bounded context — a slow hook must never delay or fail the
 	// turn (the documented TurnFinishHook contract).
 	if hook := s.finishHook; hook != nil {
-		// The view passed useCaseFor at admission, so this cannot miss.
-		useCase, _ := useCaseFor(job.chat)
 		go func() {
 			hookCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

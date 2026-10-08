@@ -170,12 +170,18 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 - **A closed issue's thread is removed** (`issue_threads.go`). `RemoveIssueThread` deletes every
   `project_conversations` row of the issue's `issue-<n>` use case (current and demoted) and then
   each one's agents-service conversation (`DELETE /conversations/:id`; a failure is logged and the
-  rows go anyway — the agents store's TTL sweep reaps the orphan). Two triggers, so it is
-  idempotent: the issue agent's `close_issue` and GitHub's `issues.closed` webhook (app root, no
-  echo filter). A turn running on the thread is never interrupted: the removal is marked and the
-  turn's `finishTurn` performs it after the terminal write (mark-then-check / take-once, so exactly
-  one side removes). The mark lives in memory — aep-api is one replica; a restart drops it and the
-  rows stay until the next close (a closed issue's thread is refused anyway).
+  rows go anyway — the agents store's TTL sweep reaps the orphan). Three triggers, so it is
+  idempotent: the issue agent's `close_issue` and GitHub's `issues.closed` and `issues.reopened`
+  webhooks (app root, no echo filter; a reopen removes whatever a lost close left, so a reopened
+  issue always starts a fresh thread). A turn running on the thread is never interrupted: the
+  removal is marked **for that turn** and its end performs it — `finishTurn` after the terminal
+  write, or `TurnSweeper` failing it after a crash (`TurnSwept`) — mark-then-re-read / take-once,
+  so exactly one side removes. A running row whose heartbeat is older than the sweep threshold is
+  a dead turn: the removal runs now. A mark is taken only by its own turn; any other turn's end
+  drops it, so it never deletes a thread a later turn is using. The mark lives in memory —
+  aep-api is one replica; a restart drops it and the rows stay until the next close or a reopen
+  (a closed issue's thread is refused anyway). An agents-side run that outlives aep-api's turn
+  timeout or the sweep can save its history after the `DELETE`; the agents store's TTL reaps it.
 - **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
   manifest carries its `outcome` (`Filed #N: <title>` when it filed, else its last reply; ≤ 400 chars), stored on `agent_turns.outcome`.
   A main-chat dispatch reads `BranchOutcomes` — the Issues turns that FINISHED (`updated_at`) with

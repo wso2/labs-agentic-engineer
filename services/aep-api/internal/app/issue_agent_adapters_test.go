@@ -68,11 +68,12 @@ func (r *recordingThreadRemover) RemoveIssueThread(_ context.Context, org, proje
 	return r.err
 }
 
-// GitHub's issues.closed removes the closed issue's thread in the project its
-// repository backs — whoever closed it, the platform included. A repository
-// that is not one of ours, a pull request and a malformed delivery remove
-// nothing; a removal failure fails the delivery so GitHub redelivers it.
-func TestIssueThreadsOnClose(t *testing.T) {
+// GitHub's issues.closed and issues.reopened remove the issue's thread in the
+// project its repository backs — whoever closed it, the platform included. A
+// repository that is not one of ours, a pull request and a malformed delivery
+// remove nothing; a removal failure fails the delivery so the delivery
+// ledger's Replayer retries it (bounded attempts; the removal is idempotent).
+func TestIssueThreadRemoval(t *testing.T) {
 	locator := fakeRepoLocator{"acme/expenses": {"acme", "expenses"}}
 	payload := func(repo string, n int, pr bool) []byte {
 		p := map[string]any{"issue": map[string]any{"number": n}, "repository": map[string]any{"full_name": repo}}
@@ -95,20 +96,22 @@ func TestIssueThreadsOnClose(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			threads := &recordingThreadRemover{}
-			h := issueThreadsOnClose{repos: locator, threads: threads}
-			if err := h.OnIssueClosed(context.Background(), "issues", "closed", tc.payload); err != nil {
-				t.Fatalf("OnIssueClosed: %v", err)
-			}
-			if !reflect.DeepEqual(threads.calls, tc.want) {
-				t.Fatalf("removals = %v, want %v", threads.calls, tc.want)
+			for _, action := range []string{"closed", "reopened"} {
+				threads := &recordingThreadRemover{}
+				h := issueThreadRemoval{repos: locator, threads: threads}
+				if err := h.OnIssueEvent(context.Background(), "issues", action, tc.payload); err != nil {
+					t.Fatalf("OnIssueEvent(%s): %v", action, err)
+				}
+				if !reflect.DeepEqual(threads.calls, tc.want) {
+					t.Fatalf("%s: removals = %v, want %v", action, threads.calls, tc.want)
+				}
 			}
 		})
 	}
 
 	down := errors.New("db down")
-	h := issueThreadsOnClose{repos: locator, threads: &recordingThreadRemover{err: down}}
-	if err := h.OnIssueClosed(context.Background(), "issues", "closed", payload("acme/expenses", 7, false)); !errors.Is(err, down) {
+	h := issueThreadRemoval{repos: locator, threads: &recordingThreadRemover{err: down}}
+	if err := h.OnIssueEvent(context.Background(), "issues", "closed", payload("acme/expenses", 7, false)); !errors.Is(err, down) {
 		t.Fatalf("removal failure: err = %v, want it returned", err)
 	}
 }

@@ -390,6 +390,11 @@ func TestConversationRepo_DeleteUseCase(t *testing.T) {
 		"issue 70": {"issue-70", resolve("p1", "issue-70")},
 	}
 	otherProject := resolve("p2", "issue-7")
+	// The org fence: another org's project of the same id keeps its thread.
+	otherOrgRow, err := repo.ResolveCurrent(ctx, "o2", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent o2/p1/issue-7: %v", err)
+	}
 
 	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7")
 	if err != nil {
@@ -410,6 +415,9 @@ func TestConversationRepo_DeleteUseCase(t *testing.T) {
 	}
 	if ok, err := repo.IsCurrent(ctx, "o1", "p2", "issue-7", otherProject); err != nil || !ok {
 		t.Errorf("another project's issue-7 thread gone: (%v, %v)", ok, err)
+	}
+	if ok, err := repo.IsCurrent(ctx, "o2", "p1", "issue-7", otherOrgRow.ID); err != nil || !ok {
+		t.Errorf("another org's issue-7 thread gone: (%v, %v)", ok, err)
 	}
 
 	// Idempotent: nothing left to delete.

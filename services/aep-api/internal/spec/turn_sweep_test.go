@@ -51,7 +51,7 @@ func TestTurnSweeper_EmitsBrokerTerminalForLocalBuffers(t *testing.T) {
 		{ID: "turn-local", OrgID: "o", ProjectID: "p", UseCase: "requirements-chat"},
 		{ID: "turn-elsewhere", OrgID: "o", ProjectID: "q", UseCase: "design-generate"},
 	}}
-	sweeper := NewTurnSweeper(repo, broker, 0, 0)
+	sweeper := NewTurnSweeper(repo, broker, nil, 0, 0)
 	if err := sweeper.Sweep(context.Background()); err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
