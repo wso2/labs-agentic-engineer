@@ -550,6 +550,7 @@ type rigConfig struct {
 	mcpBaseURL    string
 	recorder      spec.TurnActivityRecorder
 	conversations spec.ConversationRepository
+	issues        spec.IssueReader
 	repos         spec.RepoResolver
 	snapshots     sourcecontrol.SnapshotProvider
 }
@@ -559,6 +560,12 @@ type rigConfig struct {
 // fence, keeping the pre-#430 tests' arbitrary conversation uuids valid).
 func withConversations(repo spec.ConversationRepository) rigOption {
 	return func(c *rigConfig) { c.conversations = repo }
+}
+
+// withIssues wires the issue reader the issue view admits a thread through
+// (the issue must exist in the project and be open).
+func withIssues(r spec.IssueReader) rigOption {
+	return func(c *rigConfig) { c.issues = r }
 }
 
 // withRepos swaps the project-repo resolver (e.g. a counting stub that 404s
@@ -692,6 +699,7 @@ func newGenaiRig(t *testing.T, seed map[string]string, opts ...rigOption) *genai
 		Snapshots:     snapshots,
 		SkillsRepo:    skillsRepo,
 		Conversations: cfg.conversations,
+		Issues:        cfg.issues,
 		MCPTokens:     cfg.mcpTokens,
 		MCPBaseURL:    cfg.mcpBaseURL,
 		Recorder:      cfg.recorder,

@@ -24,6 +24,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
@@ -50,6 +51,7 @@ const (
 	anchorField      = "anchor"
 	intentField      = "intent"
 	viewField        = "view"
+	issueNumberField = "issueNumber"
 )
 
 // The caps, and every one of them restates ONE number.
@@ -109,7 +111,10 @@ type multipartTurn struct {
 	Scope string
 	// View is the raw `view` part (the chat view); the service refuses a value
 	// outside the enum, since no request validator reads a multipart form.
-	View        string
+	View string
+	// IssueNumber is the `issueNumber` part, zero when absent; the service
+	// refuses it on the wrong view, or a missing one on the issue view.
+	IssueNumber int
 	Attachments []agentsvc.TurnAttachment
 }
 
@@ -171,6 +176,19 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 				return out, err
 			}
 			out.View = strings.TrimSpace(v)
+			continue
+		case issueNumberField:
+			v, err := readFormValue(part)
+			if err != nil {
+				return out, err
+			}
+			// The contract's minimum (1), held here as the JSON arm's request
+			// validator holds it there.
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n < 1 {
+				return out, apierr.BadRequest("issueNumber must be a positive integer")
+			}
+			out.IssueNumber = n
 			continue
 		case collabField:
 			v, err := readFormValue(part)

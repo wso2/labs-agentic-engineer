@@ -700,6 +700,14 @@ paths:
           # the handler must distinguish 'absent' (the main chat) from a view.
           x-go-type-skip-optional-pointer: false
           $ref: '#/components/schemas/ChatView'
+      - description: The issue whose thread to read. Required with view=issue; refused with any other view.
+        in: query
+        name: issueNumber
+        schema:
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
       responses:
         '200':
           content:
@@ -707,6 +715,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProjectConversationList'
           description: OK
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The issue view's issue is closed (code issue_closed), so it has no thread.
         default:
           content:
             application/json:
@@ -840,8 +854,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/TurnConflict'
           description: A turn is already running for this project, the design
-            use-case has no requirements yet, or the addressed conversation is
-            no longer the project's current thread (conversation_rotated).
+            use-case has no requirements yet, the addressed conversation is
+            no longer the project's current thread (conversation_rotated), or
+            the issue view's issue is closed (issue_closed).
         default:
           content:
             application/json:
@@ -2972,6 +2987,14 @@ paths:
           # the handler must distinguish 'absent' (the main chat) from a view.
           x-go-type-skip-optional-pointer: false
           $ref: '#/components/schemas/ChatView'
+      - description: The issue whose thread to read. Required with view=issue; refused with any other view.
+        in: query
+        name: issueNumber
+        schema:
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
       responses:
         '200':
           content:
@@ -2981,6 +3004,12 @@ paths:
           description: OK
         '204':
           description: No running turn
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The issue view's issue is closed (code issue_closed), so it has no thread.
         default:
           content:
             application/json:
@@ -4394,8 +4423,10 @@ components:
       type: object
     ChatView:
       description: The main-panel view whose agent the chat talks to. Absent = the project's main chat.
+        `issues` is the Issues page's chat; `issue` is one issue's own chat, named by `issueNumber`.
       enum:
       - issues
+      - issue
       type: string
     ClientSecretOutputBody:
       additionalProperties: false
@@ -9361,6 +9392,13 @@ components:
           x-go-type-skip-optional-pointer: false
         scope:
           $ref: '#/components/schemas/TurnScope'
+        issueNumber:
+          description: The issue whose thread this turn runs on. Required with view=issue;
+            refused with any other view.
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
         view:
           # Keep an explicit pointer under the global prefer-skip-optional-pointer:
           # the handler must distinguish 'absent' (the main chat) from a view.
@@ -9437,6 +9475,13 @@ components:
           type: string
         scope:
           $ref: '#/components/schemas/TurnScope'
+        issueNumber:
+          description: The issue whose thread this turn runs on. Required with view=issue;
+            refused with any other view.
+          # Keep an explicit pointer: 'absent' (every view but issue) differs from a number.
+          x-go-type-skip-optional-pointer: false
+          minimum: 1
+          type: integer
         view:
           # Keep an explicit pointer under the global prefer-skip-optional-pointer:
           # the handler must distinguish 'absent' (the main chat) from a view.
@@ -9667,13 +9712,15 @@ components:
         turn's id; requirements_missing means the design use-case has no
         requirements to work from; conversation_rotated means the addressed
         thread is no longer the project's current one — re-resolve via
-        list-conversations and retry.
+        list-conversations and retry; issue_closed means the issue view's
+        issue is closed, so it has no thread.
       properties:
         code:
           enum:
           - turn_in_progress
           - requirements_missing
           - conversation_rotated
+          - issue_closed
           type: string
         activeTurnId:
           type: string

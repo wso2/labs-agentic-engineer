@@ -34,7 +34,7 @@ import type { BranchState } from "../../shell/useChatControls";
 // in the header lists both.
 
 let chatStatus: ProjectChat["status"] = "ready";
-const chats: Record<ChatView, ProjectChat["items"]> = { main: [], issues: [] };
+const chats: Record<ChatView, ProjectChat["items"]> = { main: [], issues: [], issue: [] };
 let issuesTurn: ProjectChat["turn"] = { phase: "idle" };
 const chatOf = (view: ChatView): ProjectChat => ({
   status: chatStatus,
@@ -45,7 +45,11 @@ const chatOf = (view: ChatView): ProjectChat => ({
 
 const mainSend = vi.fn(() => Promise.resolve(true));
 const issuesSend = vi.fn(() => Promise.resolve(true));
-const stores: Record<ChatView, { send: typeof mainSend }> = { main: { send: mainSend }, issues: { send: issuesSend } };
+const stores: Record<ChatView, { send: typeof mainSend }> = {
+  main: { send: mainSend },
+  issues: { send: issuesSend },
+  issue: { send: vi.fn(() => Promise.resolve(true)) },
+};
 vi.mock("../useProjectChat", () => ({
   useProjectChat: (_projectName: string, view: ChatView = "main") => chatOf(view),
   chatStoreFor: (view: ChatView) => stores[view],

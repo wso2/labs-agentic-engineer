@@ -23,24 +23,31 @@ import (
 
 // A chat view names the conversation use case its thread and active-turn slot
 // live under; the main chat keeps the use case every existing thread was
-// namespaced with, so no conversation is stranded.
+// namespaced with, so no conversation is stranded. An issue's thread is its
+// own use case, named by the issue number; only the issue view takes one.
 func TestUseCaseFor(t *testing.T) {
 	cases := []struct {
-		view    ChatView
+		chat    ChatScope
 		want    string
 		wantErr error
 	}{
-		{view: ChatViewMain, want: "general"},
-		{view: ChatViewIssues, want: "issues"},
-		{view: "boards", wantErr: ErrUnknownChatView},
+		{chat: ChatScope{View: ChatViewMain}, want: "general"},
+		{chat: ChatScope{View: ChatViewIssues}, want: "issues"},
+		{chat: ChatScope{View: ChatViewIssue, IssueNumber: 7}, want: "issue-7"},
+		{chat: ChatScope{View: ChatViewIssue, IssueNumber: 1234}, want: "issue-1234"},
+		{chat: ChatScope{View: ChatViewIssue}, wantErr: ErrIssueNumber},
+		{chat: ChatScope{View: ChatViewIssue, IssueNumber: -3}, wantErr: ErrIssueNumber},
+		{chat: ChatScope{View: ChatViewMain, IssueNumber: 7}, wantErr: ErrIssueNumber},
+		{chat: ChatScope{View: ChatViewIssues, IssueNumber: 7}, wantErr: ErrIssueNumber},
+		{chat: ChatScope{View: "boards"}, wantErr: ErrUnknownChatView},
 	}
 	for _, tc := range cases {
-		got, err := useCaseFor(tc.view)
+		got, err := useCaseFor(tc.chat)
 		if !errors.Is(err, tc.wantErr) {
-			t.Errorf("useCaseFor(%q) err = %v, want %v", tc.view, err, tc.wantErr)
+			t.Errorf("useCaseFor(%+v) err = %v, want %v", tc.chat, err, tc.wantErr)
 		}
 		if got != tc.want {
-			t.Errorf("useCaseFor(%q) = %q, want %q", tc.view, got, tc.want)
+			t.Errorf("useCaseFor(%+v) = %q, want %q", tc.chat, got, tc.want)
 		}
 	}
 }

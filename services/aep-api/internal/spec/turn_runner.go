@@ -63,7 +63,7 @@ type turnJob struct {
 	orgID            string
 	projectID        string
 	flow             string               // recognised `/<skill>` token ("start", "design", …); "" for plain chat
-	view             ChatView             // the chat view the turn was sent from (validated at admission)
+	chat             ChatScope            // the chat the turn was sent from (validated at admission)
 	conversationID   string               // FE-chosen uuid (agent_turns key)
 	nsConversationID string               // namespaced agents-service id
 	turn             agentsvc.TurnSpec    // what this turn is FOR (the agents service composes the text)
@@ -248,12 +248,13 @@ func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
 // / base URL are not wired, when the turn is none of those, or when minting
 // fails — a turn without MCP is
 // byte-identical to today, so this is best-effort. An Issues-view turn gets the
-// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow.
+// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow. An
+// issue-view turn is a plain chat turn (no flow, no room), so it gets neither.
 func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
 	}
-	if job.view == ChatViewIssues {
+	if job.chat.View == ChatViewIssues {
 		return s.issuesMCPForTurn(ctx, job)
 	}
 	if !catalogTurn(job) {
@@ -311,7 +312,7 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 			filesChangedExternally = landed != job.baseRef
 			previousTurnFailed = last.Status == turnStatusFailed
 		}
-		if job.view == ChatViewMain {
+		if job.chat.View == ChatViewMain {
 			branchNotes = s.branchNotes(ctx, job, last)
 		}
 	}
@@ -367,7 +368,8 @@ func (s *Service) executeTurn(ctx context.Context, job turnJob) TurnTerminal {
 		Collab:                 collab,
 		Journal:                journalFor(job),
 		Surface:                agentsvc.SurfaceConsole,
-		View:                   string(job.view),
+		View:                   string(job.chat.View),
+		IssueNumber:            job.chat.IssueNumber,
 		BranchNotes:            branchNotes,
 		// The attachments themselves, not just their names on the journal. Both
 		// are needed and they are NOT the same thing: the journal drives the
@@ -631,7 +633,7 @@ func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal
 	// turn (the documented TurnFinishHook contract).
 	if hook := s.finishHook; hook != nil {
 		// The view passed useCaseFor at admission, so this cannot miss.
-		useCase, _ := useCaseFor(job.view)
+		useCase, _ := useCaseFor(job.chat)
 		go func() {
 			hookCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

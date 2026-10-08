@@ -84,6 +84,11 @@ type ConversationRepository interface {
 	// CreatedAt returns when id — any of the scope's threads, current or
 	// demoted — was created; the zero time when id names none of them.
 	CreatedAt(ctx context.Context, orgID, projectID, useCase, id string) (time.Time, error)
+
+	// UseCaseOf names the use case of id — any of the project's threads,
+	// current or demoted — for a read addressed by thread id alone
+	// (rehydrate); "" when id names none of them.
+	UseCaseOf(ctx context.Context, orgID, projectID, id string) (string, error)
 }
 
 type conversationRepository struct{ db *gorm.DB }
@@ -248,4 +253,16 @@ func (r *conversationRepository) CreatedAt(ctx context.Context, orgID, projectID
 		return time.Time{}, err
 	}
 	return created[0], nil
+}
+
+func (r *conversationRepository) UseCaseOf(ctx context.Context, orgID, projectID, id string) (string, error) {
+	var useCases []string
+	err := r.db.WithContext(ctx).Model(&ProjectConversation{}).
+		Where("org_id = ? AND project_id = ? AND id::text = ?", orgID, projectID, id).
+		Limit(1).
+		Pluck("use_case", &useCases).Error
+	if err != nil || len(useCases) == 0 {
+		return "", err
+	}
+	return useCases[0], nil
 }

@@ -325,3 +325,40 @@ func TestConversationRepo_CreatedAt(t *testing.T) {
 		t.Fatalf("CreatedAt(non-uuid) = (%v, %v), want (zero, nil)", got, err)
 	}
 }
+
+// UseCaseOf names the use case of any thread — current or demoted — so a read
+// addressed by thread id alone (rehydrate) finds the namespace its turns were
+// stored under; an id the project does not hold names none.
+func TestConversationRepo_UseCaseOf(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	issue, err := repo.ResolveCurrent(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	if _, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada"); err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	main, err := repo.ResolveCurrent(ctx, "o1", "p1", "general", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent general: %v", err)
+	}
+
+	cases := []struct {
+		project, id, want string
+	}{
+		{"p1", issue.ID, "issue-7"},
+		{"p1", main.ID, "general"},
+		{"p2", issue.ID, ""},
+		{"p1", "11111111-1111-4111-8111-111111111111", ""},
+		{"p1", "abc123", ""},
+	}
+	for _, tc := range cases {
+		got, err := repo.UseCaseOf(ctx, "o1", tc.project, tc.id)
+		if err != nil || got != tc.want {
+			t.Errorf("UseCaseOf(%s, %s) = (%q, %v), want (%q, nil)", tc.project, tc.id, got, err, tc.want)
+		}
+	}
+}

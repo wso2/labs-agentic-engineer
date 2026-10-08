@@ -38,13 +38,13 @@ import (
 // instead of panicking on a nil interface call.
 var ErrConversationsUnavailable = errors.New("conversation store not configured")
 
-// ListConversations returns one chat view's threads — today exactly one, the
-// view's current thread, created lazily on first read so a project's first
-// visitor (whoever they are) mints it and teammates converge on it. Each view
-// has its own: the Issues chat never shares the main chat's thread.
-func (s *Service) ListConversations(ctx context.Context, orgID, projectID string, view ChatView) ([]ProjectConversation, error) {
-	useCase, err := useCaseFor(view)
-	if err != nil {
+// ListConversations returns one chat's threads — today exactly one, the
+// chat's current thread, created lazily on first read so a project's first
+// visitor (whoever they are) mints it and teammates converge on it. Each chat
+// has its own: the Issues chat and each issue's chat never share the main
+// chat's thread or each other's. A closed issue has none (ErrIssueClosed).
+func (s *Service) ListConversations(ctx context.Context, orgID, projectID string, chat ChatScope) ([]ProjectConversation, error) {
+	if _, err := useCaseFor(chat); err != nil {
 		return nil, err
 	}
 	if s.conversations == nil {
@@ -56,6 +56,10 @@ func (s *Service) ListConversations(ctx context.Context, orgID, projectID string
 		if _, err := s.resolveRepo(ctx, orgID, projectID); err != nil {
 			return nil, err
 		}
+	}
+	useCase, err := s.chatUseCase(ctx, orgID, projectID, chat)
+	if err != nil {
+		return nil, err
 	}
 	row, err := s.conversations.ResolveCurrent(ctx, orgID, projectID, useCase, displayIdentityFrom(ctx))
 	if err != nil {

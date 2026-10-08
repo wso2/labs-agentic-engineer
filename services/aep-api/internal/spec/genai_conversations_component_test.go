@@ -130,6 +130,19 @@ func (m *memConversationRepo) CreatedAt(_ context.Context, org, project, useCase
 	return m.created[m.key(org, project, useCase)+"/"+id], nil
 }
 
+func (m *memConversationRepo) UseCaseOf(_ context.Context, org, project, id string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := org + "/" + project + "/"
+	for k := range m.created {
+		scope, rowID, ok := strings.Cut(strings.TrimPrefix(k, prefix), "/")
+		if ok && rowID == id && strings.HasPrefix(k, prefix) {
+			return scope, nil
+		}
+	}
+	return "", nil
+}
+
 type conversationViewBody struct {
 	ConversationID string `json:"conversationId"`
 	Current        bool   `json:"current"`

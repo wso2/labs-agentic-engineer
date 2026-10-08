@@ -261,9 +261,13 @@ type TurnRequest struct {
 	// Surface.
 	Surface string `json:"surface,omitempty"`
 	// View names the console view the turn was sent from: "issues" for the
-	// Issues page's agent, omitted for the main chat. The agents service picks
-	// that view's agent (prompt + tools). Pinned by @aep/agent-stream's View.
+	// Issues page's agent, "issue" for one issue's agent, omitted for the main
+	// chat. The agents service picks that view's agent (prompt + tools).
+	// Pinned by @aep/agent-stream's View.
 	View string `json:"view,omitempty"`
+	// IssueNumber is the issue an "issue" view turn is about; omitted for
+	// every other view.
+	IssueNumber int `json:"issueNumber,omitempty"`
 	// BranchNotes tell a main-chat turn what the other views' chats did since
 	// its conversation's previous turn: at most one per view, omitted when none
 	// ran. The agents service prepends each to the main agent's prompt. Pinned
