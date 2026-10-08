@@ -426,14 +426,32 @@ test("a caller that goes away leaves the turn running", () =>
     await until(() => edge.desk.status(turnId)?.status === "completed", "the turn to complete without its caller");
   }));
 
-test("keep-alive lines while the turn is quiet", () =>
-  withEdge({ models: [mockModel([{ kind: "text", text: "late" }], { delayMs: 200 })], keepAliveMs: 20 }, async (edge) => {
+test("keep-alive lines while the turn is quiet", () => {
+  // The turn stays quiet until the test has seen two keep-alives, so the count
+  // is awaited (bounded by a generous deadline), not sampled from a timed window.
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => (release = resolve));
+  return withEdge({ models: [mockModel([{ kind: "text", text: "late" }], { hold })], keepAliveMs: 20 }, async (edge) => {
     const res = await postTurnSocket(edge.turnSocket, { turnId: randomUUID(), project: PROJECT, kind: "start", credit: ANN });
-    const lines = (await res.rest()).map((l) => JSON.parse(l) as Record<string, unknown>);
-    assert.ok(lines.filter((f) => f.type === "keep-alive").length >= 2, "keep-alives");
+    const lines: Record<string, unknown>[] = [];
+    const deadline = Date.now() + 5_000;
+    try {
+      while (lines.filter((f) => f.type === "keep-alive").length < 2) {
+        const line = await Promise.race([
+          res.next(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("fewer than 2 keep-alive lines within 5s")), Math.max(0, deadline - Date.now())).unref()),
+        ]);
+        assert.ok(line, "the stream ended before two keep-alive lines");
+        lines.push(line);
+      }
+    } finally {
+      release();
+    }
+    for (let line = await res.next(); line; line = await res.next()) lines.push(line);
     assert.deepEqual(lines.at(-1), { type: "result", status: "completed" });
     assert.ok(lines.slice(0, -1).every((f) => f.type === "keep-alive"));
-  }));
+  });
+});
 
 test("refusals: invalid body 400, unknown project 404, no key 409, shutting down 503", async () => {
   await withEdge({}, async (edge) => {
