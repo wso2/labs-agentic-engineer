@@ -22,9 +22,9 @@ import (
 	"strings"
 )
 
-// Commands is the Task write surface: one operation, the dispatch leg of the
-// SRE/RCA alert handoff (AE-HANDOFF-DESIGN.md). The caller files an ordinary
-// GitHub issue first and then calls this to hand it to the coding agent.
+// Commands is the Task write surface: one operation, handing an existing
+// GitHub issue to the coding agent — from the console's Issue card, or by the
+// issue's own agent (hand_to_coding_agent).
 //
 // There is no execute/hold/unhold here any more. Work is dispatched by the RUN
 // SUPERVISOR over a milestone, not per issue, so the only write a human or an
@@ -48,9 +48,11 @@ func NewCommands(components ComponentEnsurer, adopter Adopter) *Commands {
 //
 // It is adoption, and nothing more: the issue body the caller wrote is left
 // exactly as it is (bodies are prose the agent reads, and nothing platform-side
-// parses them), the issue joins the DEPLOYED version's milestone, and an
+// parses them), the issue joins the DEPLOYED version's milestone armed, and an
 // incident run is started over that milestone unless one is already live — in
-// which case the live run picks the issue up at its next cycle boundary.
+// which case the live run picks the issue up at its next cycle boundary. An
+// issue adoption will not take (closed, or not the coding agent's) is refused
+// with the adopter's sentinel, which the route answers as a 409.
 //
 // componentName must name a component the platform already knows about. The
 // check is synchronous here so an unknown name (e.g. a caller's prefix-

@@ -420,7 +420,16 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 		if ms, ok := p.milestone(); ok {
 			target.MilestoneNumber, target.MilestoneTitle = ms.Number, ms.Title
 		}
-		if aerr := e.AdoptIssue(ctx, orgID, projectID, target); aerr != nil {
+		aerr := e.AdoptIssue(ctx, orgID, projectID, target)
+		switch {
+		case errors.Is(aerr, delivery.ErrIssueClosed), errors.Is(aerr, delivery.ErrNotCodingWork):
+			// An issue adoption will not take — closed, or another species' work,
+			// the platform's own validation task arriving through a PAT echo among
+			// them — is routine, and its arming may still wake the run that works
+			// it: on to the predicate below.
+			slog.DebugContext(ctx, "eventcore: not adopting", "repo", p.Repository.FullName,
+				"issue", p.Issue.Number, "reason", aerr)
+		case aerr != nil:
 			// Adoption problems are the human's to see, and the console dispatch
 			// path returns them synchronously. Failing the delivery here would only
 			// replay a label that is already applied.

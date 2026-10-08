@@ -6133,6 +6133,14 @@ components:
           - no_change_verdict
           - escalated
           type: string
+        milestoneNumber:
+          description: >-
+            The number of the milestone the issue is in: a version's, which the
+            coding agent works (handing an issue over puts it in the deployed
+            version's and arms it with the `aep` label). Omitted when the issue
+            is in none.
+          format: int64
+          type: integer
       required:
       - Number
       - Title

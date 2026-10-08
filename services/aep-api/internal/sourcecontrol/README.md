@@ -40,7 +40,7 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
-| `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.ErrNoDeployedVersion` with no deployed version |
+| `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.HandOffRefusedError` (no deployed version, a closed issue, not the coding agent's) in the words the user reads |
 | `issues.ComponentLister` | needs | the design's component names, sorted (spec's design, adapted in `app`) |
 | `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue` — the threads created before the close, never one started after it; must not wait on the calling turn nor use its ctx once it returns; a failure is logged, never the tool's. `close_issue` posts the reason as a comment before closing, and says so when it could not |
 

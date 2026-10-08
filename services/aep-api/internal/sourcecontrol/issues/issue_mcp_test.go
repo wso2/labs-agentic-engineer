@@ -303,12 +303,13 @@ func TestIssueMCPHandOffRefusesAnUnknownComponent(t *testing.T) {
 	}
 }
 
-// No deployed version: the tool error is the sentence the user needs.
-func TestIssueMCPHandOffWithNoDeployedVersion(t *testing.T) {
+// A refusal (no deployed version, a closed issue, an issue that is not the
+// coding agent's) is the tool error, in the sentence the user needs.
+func TestIssueMCPHandOffRefusedSaysWhy(t *testing.T) {
 	r := newIssueRig()
-	r.ports.promoteErr = fmt.Errorf("promote: %w", issues.ErrNoDeployedVersion)
-	text, isErr := r.call(t, issueScope, "hand_to_coding_agent", map[string]any{"component": "api"})
 	want := "Deploy a version first: the coding agent works in a deployed version's milestone."
+	r.ports.promoteErr = fmt.Errorf("promote: %w", issues.HandOffRefusedError{Reason: want})
+	text, isErr := r.call(t, issueScope, "hand_to_coding_agent", map[string]any{"component": "api"})
 	if !isErr || text != want {
 		t.Fatalf("got %q isError=%v, want the tool error %q", text, isErr, want)
 	}

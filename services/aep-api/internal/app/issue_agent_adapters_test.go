@@ -35,18 +35,23 @@ type refusingAdopter struct{ err error }
 
 func (a refusingAdopter) AdoptIssue(context.Context, string, string, int) error { return a.err }
 
-// The event plane's "no deployed version" reaches the issue agent as the
-// issues package's own sentinel; any other failure passes through as is.
-func TestIssueAgentPromoter_TranslatesNoDeployedVersion(t *testing.T) {
+// Every refusal of the event plane reaches the issue agent as the issues
+// package's own refusal, in the same words; any other failure passes through
+// as is.
+func TestIssueAgentPromoter_TranslatesRefusals(t *testing.T) {
 	promote := func(err error) error {
 		return issueAgentPromoter{commands: task.NewCommands(nil, refusingAdopter{err: err})}.
 			PromoteAndExecute(context.Background(), "acme", "expenses", "api", 7)
 	}
-	if err := promote(delivery.ErrNoDeployedMilestone); !errors.Is(err, issues.ErrNoDeployedVersion) {
-		t.Errorf("no deployed milestone: err = %v, want issues.ErrNoDeployedVersion", err)
+	for _, refusal := range []error{delivery.ErrNoDeployedMilestone, delivery.ErrIssueClosed, delivery.ErrNotCodingWork} {
+		var got issues.HandOffRefusedError
+		if err := promote(refusal); !errors.As(err, &got) || got.Reason != refusal.Error() {
+			t.Errorf("%v: err = %v, want issues.HandOffRefusedError in the same words", refusal, err)
+		}
 	}
 	other := errors.New("github down")
-	if err := promote(other); !errors.Is(err, other) || errors.Is(err, issues.ErrNoDeployedVersion) {
+	var refused issues.HandOffRefusedError
+	if err := promote(other); !errors.Is(err, other) || errors.As(err, &refused) {
 		t.Errorf("other failure: err = %v, want it passed through", err)
 	}
 	if err := promote(nil); err != nil {

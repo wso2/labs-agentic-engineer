@@ -301,10 +301,10 @@ func (a eventcoreComponents) EnsureComponent(ctx context.Context, orgID, project
 }
 
 // eventcoreAdopter adapts the event plane onto the task feature's Adopter port:
-// the SRE/RCA handoff's promote-from-issue leg hands a freshly filed issue to
-// the coding agent. It passes a BARE target — the caller just created the
-// issue, so it belongs to no milestone yet and adoption files it under the
-// deployed version's.
+// promote-from-issue (the console's Issue card, the issue agent's hand-off)
+// hands an issue to the coding agent. It passes a number-only target, so the
+// event plane reads the issue's labels and state, and files it under the
+// deployed version's milestone.
 type eventcoreAdopter struct{ events *eventcore.Events }
 
 func (a eventcoreAdopter) AdoptIssue(ctx context.Context, orgID, projectID string, issueNumber int) error {

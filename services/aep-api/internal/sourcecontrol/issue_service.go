@@ -508,7 +508,11 @@ func (s *issueService) SetIssueMilestone(ctx context.Context, orgID, projectID s
 	if err != nil {
 		return err
 	}
-	return s.github.SetIssueMilestone(ctx, owner, repoName, cred, number, milestoneNumber)
+	if err := s.github.SetIssueMilestone(ctx, owner, repoName, cred, number, milestoneNumber); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) { i.MilestoneNumber = milestoneNumber })
+	return nil
 }
 
 func (s *issueService) AddLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error {
@@ -521,7 +525,19 @@ func (s *issueService) AddLabels(ctx context.Context, orgID, projectID string, n
 	}
 	// Ensure each label exists first — GitHub silently drops unknown labels.
 	s.ensureLabels(ctx, owner, repoName, cred, labels)
-	return s.github.AddIssueLabels(ctx, owner, repoName, cred, number, labels)
+	if err := s.github.AddIssueLabels(ctx, owner, repoName, cred, number, labels); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) {
+		merged := slices.Clone(i.Labels) // listed copies share the old backing array
+		for _, label := range labels {
+			if !slices.Contains(merged, label) {
+				merged = append(merged, label)
+			}
+		}
+		i.Labels = merged
+	})
+	return nil
 }
 
 func (s *issueService) RemoveLabel(ctx context.Context, orgID, projectID string, number int, label string) error {

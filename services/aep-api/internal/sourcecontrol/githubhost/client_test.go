@@ -253,6 +253,22 @@ func TestListIssuesExcludesPullRequests(t *testing.T) {
 	}
 }
 
+// TestListIssuesReadsTheMilestone: an issue in a version's milestone says
+// which one; an issue in none reads 0.
+func TestListIssuesReadsTheMilestone(t *testing.T) {
+	c, _ := fakeIssuePages(t, func(int) string {
+		return `[{"number":2,"title":"in v1","state":"open","labels":[],"milestone":{"number":5,"title":"v1"}},` +
+			`{"number":1,"title":"bare","state":"open","labels":[],"milestone":null}]`
+	})
+	issues, err := c.ListIssues(context.Background(), "acme", "repo", stubCred{}, nil)
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	if len(issues) != 2 || issues[0].MilestoneNumber != 5 || issues[1].MilestoneNumber != 0 {
+		t.Fatalf("issues = %+v, want #2 in milestone 5 and #1 in none", issues)
+	}
+}
+
 // TestListIssuesFollowsPages: a full page means more follow, and the page
 // length (pull requests included) decides the walk, not the kept count.
 func TestListIssuesFollowsPages(t *testing.T) {

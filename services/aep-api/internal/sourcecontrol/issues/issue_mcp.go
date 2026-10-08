@@ -47,16 +47,19 @@ type IssueAgentPorts struct {
 }
 
 // Promoter hands an issue to the coding agent: it joins the deployed
-// version's milestone and a run picks it up. It answers an error matching
-// ErrNoDeployedVersion when the project has no deployed version.
+// version's milestone and a run picks it up. It answers a HandOffRefusedError
+// when the platform declines the issue for a reason the user can act on.
 type Promoter interface {
 	PromoteAndExecute(ctx context.Context, orgID, projectID, componentName string, issueNumber int) error
 }
 
-// ErrNoDeployedVersion is the Promoter's refusal when there is no deployed
-// version to hand the issue to. Its message is the sentence the user reads,
-// the same the REST promote route answers with its 409.
-var ErrNoDeployedVersion = errors.New("Deploy a version first: the coding agent works in a deployed version's milestone.")
+// HandOffRefusedError is the Promoter's refusal: no deployed version to hand
+// the issue to, a closed issue, or one the coding agent does not take on. Its
+// Reason is the sentence the user reads, the same the REST promote route
+// answers with its 409.
+type HandOffRefusedError struct{ Reason string }
+
+func (e HandOffRefusedError) Error() string { return e.Reason }
 
 // ComponentLister lists the project's design components by their real
 // (design) names, sorted; empty when the project has no design.
@@ -311,8 +314,9 @@ func handToCodingAgent(c issueCall, agent IssueAgentPorts, component string) {
 		return
 	}
 	if err := agent.Promoter.PromoteAndExecute(c.ctx, c.org, c.proj, match, c.number); err != nil {
-		if errors.Is(err, ErrNoDeployedVersion) {
-			c.fail(ErrNoDeployedVersion.Error())
+		var refused HandOffRefusedError
+		if errors.As(err, &refused) {
+			c.fail(refused.Reason)
 			return
 		}
 		c.failed("hand the issue to the coding agent", err)

@@ -539,6 +539,9 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 			Labels      []struct {
 				Name string `json:"name"`
 			} `json:"labels"`
+			Milestone *struct {
+				Number int `json:"number"`
+			} `json:"milestone"`
 			// PullRequest is present only on pull requests.
 			PullRequest *struct{} `json:"pull_request"`
 		}
@@ -553,7 +556,7 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 			for _, l := range r.Labels {
 				labelNames = append(labelNames, l.Name)
 			}
-			issues = append(issues, sourcecontrol.IssueInfo{
+			issue := sourcecontrol.IssueInfo{
 				Number:      r.Number,
 				Title:       r.Title,
 				Body:        r.Body,
@@ -562,7 +565,11 @@ func (c *Client) ListIssues(ctx context.Context, owner, repo string, cred secret
 				StateReason: r.StateReason,
 				ClosedAt:    r.ClosedAt,
 				Labels:      labelNames,
-			})
+			}
+			if r.Milestone != nil {
+				issue.MilestoneNumber = r.Milestone.Number
+			}
+			issues = append(issues, issue)
 		}
 		// Page length counts PRs too, so it — not len(issues) — decides the walk.
 		if len(raw) < milestonePageSize {
@@ -592,6 +599,9 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.
 		Labels      []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
+		Milestone *struct {
+			Number int `json:"number"`
+		} `json:"milestone"`
 	}
 	if err := c.getJSON(ctx, url, cred, &raw); err != nil {
 		if sourcecontrol.IsHTTPStatus(err, http.StatusNotFound) {
@@ -603,7 +613,7 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.
 	for _, l := range raw.Labels {
 		labelNames = append(labelNames, l.Name)
 	}
-	return &sourcecontrol.IssueInfo{
+	issue := &sourcecontrol.IssueInfo{
 		Number:      raw.Number,
 		Title:       raw.Title,
 		Body:        raw.Body,
@@ -612,7 +622,11 @@ func (c *Client) GetIssue(ctx context.Context, owner, repo string, cred secrets.
 		StateReason: raw.StateReason,
 		ClosedAt:    raw.ClosedAt,
 		Labels:      labelNames,
-	}, nil
+	}
+	if raw.Milestone != nil {
+		issue.MilestoneNumber = raw.Milestone.Number
+	}
+	return issue, nil
 }
 
 // AddIssueLabels adds labels to an existing issue via POST

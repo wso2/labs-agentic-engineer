@@ -40,10 +40,11 @@ func (resolver) Resolve(context.Context, string) (secrets.Credential, error) { r
 type host struct {
 	sourcecontrol.IssueOps
 	created sourcecontrol.CreateIssueRequest
+	listed  []sourcecontrol.IssueInfo
 }
 
-func (*host) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
-	return nil, nil
+func (h *host) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+	return h.listed, nil
 }
 func (*host) EnsureLabel(context.Context, string, string, secrets.Credential, string, string) error {
 	return nil
@@ -61,5 +62,23 @@ func TestCreateIssueRejectsHandoffFieldsWithoutIncidentContext(t *testing.T) {
 	apiError, ok := err.(*apierr.Error)
 	if !ok || apiError.Status != 400 {
 		t.Fatalf("invalid incident should be 400, got %v", err)
+	}
+}
+
+// A listed issue says which version's milestone it is in, and nothing when it
+// is in none: the console reads a handed-over issue from it.
+func TestListIssuesCarriesTheMilestone(t *testing.T) {
+	gh := &host{listed: []sourcecontrol.IssueInfo{
+		{Number: 2, Title: "in v1", State: "open", MilestoneNumber: 5},
+		{Number: 1, Title: "bare", State: "open"},
+	}}
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, gh, resolver{}))
+	res, err := h.ListIssues(context.Background(), gen.ListIssuesRequestObject{ProjectName: "shop"})
+	if err != nil {
+		t.Fatalf("ListIssues: %v", err)
+	}
+	out, ok := res.(gen.ListIssues200JSONResponse)
+	if !ok || len(out) != 2 || out[0].MilestoneNumber != 5 || out[1].MilestoneNumber != 0 {
+		t.Fatalf("got %+v, want #2 in milestone 5 and #1 in none", res)
 	}
 }

@@ -19,7 +19,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -31,14 +30,15 @@ import (
 
 // issueAgentPromoter is the issue agent's hand-off (scissues.Promoter) over the
 // task surface's promote command — the same one the REST promote route runs.
-// It translates the event plane's no-deployed-version refusal into the issues
-// package's own sentinel, so sourcecontrol never imports delivery.
+// It translates the event plane's refusals (delivery.AdoptionRefusal) into the
+// issues package's own, in the same words, so sourcecontrol never imports
+// delivery.
 type issueAgentPromoter struct{ commands *task.Commands }
 
 func (p issueAgentPromoter) PromoteAndExecute(ctx context.Context, orgID, projectID, componentName string, issueNumber int) error {
 	err := p.commands.PromoteAndExecute(ctx, orgID, projectID, componentName, issueNumber)
-	if errors.Is(err, delivery.ErrNoDeployedMilestone) {
-		return scissues.ErrNoDeployedVersion
+	if refusal := delivery.AdoptionRefusal(err); refusal != nil {
+		return scissues.HandOffRefusedError{Reason: refusal.Error()}
 	}
 	return err
 }

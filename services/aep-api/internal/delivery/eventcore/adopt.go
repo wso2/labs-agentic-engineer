@@ -53,6 +53,11 @@ type AdoptTarget struct {
 //
 // The rules, in order:
 //
+//   - A closed issue is refused (delivery.ErrIssueClosed), and so is one that
+//     is not the coding agent's to work (delivery.ErrNotCodingWork): another
+//     species' issue, or an incident classified as configuration-only. The
+//     webhook path logs the refusal; a hand-off answers it to the person.
+//   - An unarmed issue is armed: a task run works armed issues only.
 //   - An issue that already has a milestone keeps it. The human put it there.
 //   - A bare issue joins the deployed version's milestone — the version it is
 //     an incident against. With no deployed version there is nothing to attach
@@ -63,10 +68,10 @@ type AdoptTarget struct {
 //     one branch.
 //   - Otherwise an incident run starts over that milestone.
 //
-// Adoption does NOT stamp the arming label. The working set is read from the
-// milestone, and arming IS the human's act of adoption — inventing a second,
-// platform-authored path to the same state would make "who adopted this"
-// unanswerable.
+// Adoption stamps the arming label only where the issue lacks it. On the
+// webhook path the human's `aep` IS the adoption, so nothing is stamped; a
+// hand-off from the console or an agent is the person's act too, made through
+// the platform, and the label is what puts the issue in the run's working set.
 //
 // Nor does it stamp a KIND. An armed issue carrying none reads as a bug to every
 // working-set predicate (delivery.InDevWorkingSet), which is what a human
@@ -89,15 +94,16 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		target.Labels = issue.Labels
 		target.State = issue.State
 	}
+	// A run works open issues only.
+	if strings.EqualFold(target.State, "closed") {
+		return delivery.ErrIssueClosed
+	}
 	if sourcecontrol.HasIncidentLabel(target.Labels) {
-		if strings.EqualFold(target.State, "closed") {
-			return nil
-		}
 		// Task 3 owns classification; its durable identity namespace separates
 		// config-only records from code/mixed work without parsing issue prose.
 		for _, label := range target.Labels {
 			if strings.HasPrefix(strings.ToLower(label), "dedupe:sre-config-") {
-				return nil
+				return delivery.ErrNotCodingWork
 			}
 		}
 	}
@@ -105,14 +111,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 	// another species must not be pulled into a bug-fix run, and it must not be
 	// moved into the deployed version's milestone on the way there either.
 	if !delivery.AdoptableByATaskRun(target.Labels) {
-		slog.DebugContext(ctx, "eventcore: not adopting — this issue is another run species' work",
-			"issue", target.Number, "kind", delivery.KindOf(target.Labels))
-		return nil
-	}
-	if sourcecontrol.HasIncidentLabel(target.Labels) && !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
-		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
-			return err
-		}
+		return delivery.ErrNotCodingWork
 	}
 	milestone := MilestoneRef{Number: target.MilestoneNumber, Title: target.MilestoneTitle}
 	if milestone.Number == 0 {
@@ -131,6 +130,17 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 		}
 		slog.InfoContext(ctx, "eventcore: adopted a bare issue into the deployed version's milestone",
 			"issue", target.Number, "milestone", milestone.Number, "version", milestone.Title)
+	}
+	// Arm it, once it is in the milestone (so the echo of the label, on an
+	// install without an App, already reads the milestone): a task run's working
+	// set reads armed issues only, so an issue in the milestone without `aep`
+	// would never be worked. An issue adopted by webhook carries it already (the
+	// label is the trigger); one handed over from the console, by its agent or by
+	// the SRE handoff is armed here, by that hand-off.
+	if !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
+		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
+			return err
+		}
 	}
 
 	live, err := e.p.Runs.LiveRunForMilestone(ctx, orgID, projectID, milestone.Number)

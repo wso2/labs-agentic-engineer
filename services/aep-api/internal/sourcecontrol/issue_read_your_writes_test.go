@@ -67,6 +67,12 @@ func (g *laggingGitHub) EditIssueTitle(context.Context, string, string, secrets.
 func (g *laggingGitHub) EditIssueBody(context.Context, string, string, secrets.Credential, int, string) error {
 	return nil
 }
+func (g *laggingGitHub) AddIssueLabels(context.Context, string, string, secrets.Credential, int, []string) error {
+	return nil
+}
+func (g *laggingGitHub) SetIssueMilestone(context.Context, string, string, secrets.Credential, int, int) error {
+	return nil
+}
 
 // lagFixture is a service over a lagging GitHub with a controllable clock.
 type lagFixture struct {
@@ -259,6 +265,24 @@ func TestListIssues_RememberedIssueFollowsEdits(t *testing.T) {
 	got := f.only(t)
 	if got.Title != "new title" || got.Body != "new body" {
 		t.Errorf("after edits: title=%q body=%q", got.Title, got.Body)
+	}
+}
+
+// Adoption's writes — the arming label and the milestone — show too, so an
+// incident the SRE agent just filed and handed over reads as handed over.
+func TestListIssues_RememberedIssueFollowsAdoption(t *testing.T) {
+	f := newLagFixture()
+	n := f.file(t, "incident", "bug")
+
+	if err := f.svc.AddLabels(context.Background(), "org", "proj", n, []string{"aep", "bug"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.SetIssueMilestone(context.Background(), "org", "proj", n, 5); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	if len(got.Labels) != 2 || got.Labels[0] != "bug" || got.Labels[1] != "aep" || got.MilestoneNumber != 5 {
+		t.Errorf("after adoption: labels=%v milestone=%d", got.Labels, got.MilestoneNumber)
 	}
 }
 

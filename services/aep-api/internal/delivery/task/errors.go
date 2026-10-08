@@ -45,9 +45,6 @@ var (
 	// project (the one-active-plan-turn invariant, §6). Mapped to 409
 	// {code:"plan_in_progress"}.
 	ErrPlanInProgress = errors.New("a plan turn is already running for this project")
-	// ErrIssueClosed is returned when execute is requested on a closed issue
-	// (closed = no new dispatches, §4). Mapped to 409.
-	ErrIssueClosed = errors.New("issue is closed")
 	// ErrComponentNameRequired is returned by PromoteAndExecute when the caller
 	// omits the component name — a client input error, not a server fault, so
 	// the HTTP edge maps it to 400 rather than a generic 500.

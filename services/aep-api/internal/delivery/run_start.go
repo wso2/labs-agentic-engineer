@@ -57,7 +57,29 @@ var (
 	// build has no such version. Decided in the event plane, rendered by the task
 	// surface's promote route (409) and the issue agent's hand-off tool.
 	ErrNoDeployedMilestone = errors.New("Deploy a version first: the coding agent works in a deployed version's milestone.")
+	// ErrIssueClosed is adoption's refusal of a closed issue: a run works open
+	// issues only, so handing over a closed one would start work on nothing.
+	ErrIssueClosed = errors.New("This issue is closed.")
+	// ErrNotCodingWork is adoption's refusal of an issue another species of run
+	// works (the version's validation task, a dispatch gate, planned work — see
+	// AdoptableByATaskRun) or that asks for no code at all (an incident the SRE
+	// agent classified as configuration-only).
+	ErrNotCodingWork = errors.New("This issue is not one the coding agent takes on: the platform works this kind of issue another way.")
 )
+
+// AdoptionRefusal is the refusal err carries when adoption declined the issue
+// for a reason the person can act on — one of the sentinels above, whose text
+// is the sentence they read — or nil for any other failure. The promote route
+// answers it as a 409 and the issue agent's hand-off tool as its tool error,
+// so the two say the same thing.
+func AdoptionRefusal(err error) error {
+	for _, refusal := range []error{ErrNoDeployedMilestone, ErrIssueClosed, ErrNotCodingWork} {
+		if errors.Is(err, refusal) {
+			return refusal
+		}
+	}
+	return nil
+}
 
 // StartRunRequest asks the run supervisor for a run over one milestone.
 //

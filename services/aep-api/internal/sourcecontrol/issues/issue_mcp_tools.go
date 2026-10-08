@@ -83,7 +83,7 @@ func issueTools() []mcprpc.Tool {
 			Name: "hand_to_coding_agent",
 			Description: issueFixed + "Hand the issue to the coding agent: it joins the deployed version's milestone and a run works it. " +
 				"Ask the user which component first (the options are list_components). " +
-				"Fails when no version is deployed yet." + issueWrite,
+				"Fails, saying why, when no version is deployed yet, the issue is closed, or it is not one the coding agent takes on." + issueWrite,
 			InputSchema: object(map[string]any{
 				"component": str("The component the issue is about: one of list_components."),
 			}, "component"),
