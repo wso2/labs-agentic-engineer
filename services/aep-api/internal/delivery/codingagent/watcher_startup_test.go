@@ -59,7 +59,7 @@ func TestTick_StartupFailureSuspendsTheJob(t *testing.T) {
 	cycles := newWatchedCycles(c)
 	closedFirst := false
 	jobs := &fakeJobs{before: func() { _, closedFirst = cycles.finished["c1"] }}
-	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
 
 	w.Tick(context.Background())
 
@@ -89,13 +89,14 @@ func TestTick_StartupFailureSuspendsTheJob(t *testing.T) {
 	}
 }
 
-// A startup close of a pod that was never even created (no_pod_scheduled)
-// suspends the Job too: the Job could still create the pod later.
+// A startup close of a pod that was never even created (no_pod_scheduled: the
+// Job was applied, its pod never came) suspends the Job too: the Job could
+// still create the pod later.
 func TestTick_StartupFailureWithNoPodSuspendsTheJob(t *testing.T) {
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{}}
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: time.Now().UTC().Add(-20 * time.Minute)}}
 	cycles := newWatchedCycles(dispatchedCycle("c1", 20*time.Minute))
 	jobs := &fakeJobs{}
-	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
 	for i := 0; i < missingTicksToFail; i++ {
 		w.Tick(context.Background())
 	}
@@ -122,7 +123,7 @@ func TestTick_ClosedStartupFailedCycleIsSuspendedOnALaterTick(t *testing.T) {
 			cycles := newWatchedCycles(dispatchedCycle("c1", 20*time.Minute))
 			cycles.finished["c1"] = "startup_failed:Unschedulable" // the other replica's write
 			jobs := &fakeJobs{}
-			w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+			w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
 
 			if phase == "Pending" {
 				w.Tick(context.Background())
@@ -282,14 +283,15 @@ func TestTick_PodNoLongerStuckClearsTheStartupWait(t *testing.T) {
 
 // Nothing stuck, nothing written: an ordinary start (no reason yet, or the
 // normal ContainerCreating / PodInitializing), a node that stopped reporting
-// (Unknown), and a pod not found.
+// (Unknown), and no pod yet of an applied Job. (No Job at all is the
+// NotYetApplied wait: watcher_startup_clock_test.go.)
 func TestTick_NoStuckReasonWritesNoStartupWait(t *testing.T) {
 	cases := map[string]openchoreo.RuntimePod{
-		"pending, no reason": {Found: true, Name: "p1", Phase: "Pending"},
-		"container creating": {Found: true, Name: "p1", Phase: "Pending", WaitingReason: "ContainerCreating"},
-		"pod initializing":   {Found: true, Name: "p1", Phase: "Pending", WaitingReason: "PodInitializing"},
-		"unknown phase":      {Found: true, Name: "p1", Phase: "Unknown"},
-		"no pod":             {},
+		"pending, no reason":  {Found: true, Name: "p1", Phase: "Pending"},
+		"container creating":  {Found: true, Name: "p1", Phase: "Pending", WaitingReason: "ContainerCreating"},
+		"pod initializing":    {Found: true, Name: "p1", Phase: "Pending", WaitingReason: "PodInitializing"},
+		"unknown phase":       {Found: true, Name: "p1", Phase: "Unknown"},
+		"no pod, Job applied": {JobFound: true},
 	}
 	for name, pod := range cases {
 		t.Run(name, func(t *testing.T) {

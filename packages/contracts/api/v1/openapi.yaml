@@ -6430,30 +6430,35 @@ components:
     RunCycleStartupWait:
       additionalProperties: false
       description: >-
-        Why an OPEN cycle's agent has not started yet: its pod is stuck before
-        Running, as the platform's pod-truth watcher last saw it. Present only
-        while the cycle is open and its current attempt's pod is stuck; absent
-        once the pod runs or is merely starting, and once the cycle has ended
-        (an agent that never started then ends the cycle with an `agentReason`
-        of `startup_failed:<reason>`). Derived from the cycle record alone; no
-        cluster read answers it.
+        Why an OPEN cycle's agent has not started yet: the platform has not
+        applied its Job yet, or its pod is stuck before Running, as the
+        platform's pod-truth watcher last saw it. Present only while the cycle
+        is open and its current attempt waits so; absent once the pod runs or
+        is merely starting, and once the cycle has ended (an agent that never
+        started then ends the cycle with an `agentReason` of
+        `startup_failed:<reason>`, `startup_failed:not_applied` when the Job
+        was never applied). Derived from the cycle record alone; no cluster
+        read answers it.
       properties:
         failsAt:
           description: >-
             When the platform gives up on this attempt if the pod has still
-            not started: the attempt's dispatch plus the startup grace. The
+            not started: the startup grace (10 min) from when the attempt's
+            Job or pod was first seen to exist, or, while the Job has not been
+            applied, the apply cap (30 min) from the attempt's dispatch. The
             cycle then closes `startup_failed:<reason>`, its Job is suspended,
             and the run fails `agent-start-failed`.
           format: date-time
           type: string
         reason:
           description: >-
-            The pod's own waiting reason, verbatim from Kubernetes:
-            `Unschedulable` (the cluster has no room for the pod),
-            `ImagePullBackOff` / `ErrImagePull` (the image does not pull),
-            `CreateContainerConfigError` (a secret or config the pod needs is
-            not there yet), or another kubelet reason. A client maps the ones it
-            knows to plain words and shows any other as is.
+            `NotYetApplied` (the platform's own: its Job has not been applied
+            yet, so there is no pod), or else the pod's own waiting reason,
+            verbatim from Kubernetes: `Unschedulable` (the cluster has no room
+            for the pod), `ImagePullBackOff` / `ErrImagePull` (the image does
+            not pull), `CreateContainerConfigError` (a secret or config the pod
+            needs is not there yet), or another kubelet reason. A client maps
+            the ones it knows to plain words and shows any other as is.
           type: string
         since:
           description: When the watcher first saw this attempt's pod stuck.

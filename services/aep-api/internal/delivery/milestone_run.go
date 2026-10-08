@@ -109,8 +109,9 @@ const (
 	// on a succeeded run.
 	RunReasonRedispatchBudget = "redispatch-budget"
 	// RunReasonAgentStartFailed — the cycle's agent never started: its pod
-	// did not reach Running within CycleStartupGrace (no room in the cluster,
-	// an image that does not pull, a secret not yet synced), so the watcher
+	// did not reach Running by RunCycle.StartupDeadline (no room in the
+	// cluster, an image that does not pull, a secret not yet synced, a Job
+	// OpenChoreo never applied), so the watcher
 	// closed the cycle startup_failed and suspended its Job. Nothing ran and
 	// no pull request was opened. Its own class rather than
 	// redispatch-budget, because the fix is the cluster's, not the agent's,

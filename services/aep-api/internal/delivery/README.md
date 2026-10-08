@@ -454,8 +454,8 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   this catch that a classifier could not name?"
 - **Every terminal reason names exactly one failure class.** `redispatch-budget` is agent death (including
   a Job that exited without a pull request); `agent-start-failed` is an agent that never started (its pod
-  did not reach Running within the startup grace, so the watcher closed the cycle `startup_failed:*` and
-  suspended its Job): nothing ran, after one dispatch; `build-retrigger-budget` is a build that stayed red through
+  did not reach Running within the startup grace from its Job's or pod's creation, or its Job was never
+  applied within the 30-min apply cap, so the watcher closed the cycle `startup_failed:*` and suspended its Job): nothing ran, after one dispatch; `build-retrigger-budget` is a build that stayed red through
   its one automatic re-trigger with no fix issue to recover it; `deploy-budget` is a component that
   built and never came up, with no fix issue to recover it — a different class from a red build,
   because the code compiled and the platform could not run it; `fix-chain-budget` and `conflict-budget`

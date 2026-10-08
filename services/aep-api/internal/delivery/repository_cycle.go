@@ -70,13 +70,20 @@ type RunCycleRepository interface {
 	// NoteStartupWait records why the current attempt's pod is stuck before
 	// Running: the reason is overwritten, the since stamp is kept from the
 	// first note of the attempt. Guarded on the cycle being open. It does NOT
-	// touch updated_at: the startup grace of a row that predates
-	// dispatched_at is measured from it.
+	// touch updated_at: it is the attempt start (RunCycle.AttemptStart) of a
+	// row that predates dispatched_at.
 	NoteStartupWait(ctx context.Context, id, reason string, at time.Time) error
 
 	// ClearStartupWait forgets a recorded startup wait (the pod runs, or is no
 	// longer stuck). A no-op on a row with none. Does not touch updated_at.
 	ClearStartupWait(ctx context.Context, id string) error
+
+	// NoteStartupClock records when the current attempt's startup grace began
+	// (RunCycle.StartupClockAt), once: fenced on the attempt the caller read
+	// (a write from a tick that read attempt N lands on nothing after a
+	// re-dispatch to N+1), on no clock yet, and on the cycle being open.
+	// landed reports whether THIS call wrote it. Does not touch updated_at.
+	NoteStartupClock(ctx context.Context, id string, attempt int, at time.Time) (landed bool, err error)
 
 	// NotePodGone records when the cycle's pod was first seen gone, once
 	// (WHERE pod_gone_at IS NULL).
@@ -263,9 +270,9 @@ func (r *runCycleRepository) Append(ctx context.Context, cycle *RunCycle) error 
 }
 
 func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error) {
-	// The settle stamps and the startup wait describe one attempt's Job: a new
-	// attempt starts with none of them, and with its own dispatch time, in the
-	// same write that moves job_ref.
+	// The settle stamps, the startup wait and the start clock describe one
+	// attempt's Job: a new attempt starts with none of them, and with its own
+	// dispatch time, in the same write that moves job_ref.
 	return r.updateOpen(ctx, id, map[string]any{
 		"attempts":            gorm.Expr("attempts + 1"),
 		"job_ref":             jobRef,
@@ -274,6 +281,7 @@ func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string
 		"pod_gone_at":         nil,
 		"startup_wait_reason": "",
 		"startup_wait_since":  nil,
+		"startup_clock_at":    nil,
 	})
 }
 
@@ -291,9 +299,9 @@ func (r *runCycleRepository) MarkJobSuspended(ctx context.Context, id string) (b
 }
 
 // NoteStartupWait and ClearStartupWait write through UpdateColumns, which —
-// unlike Update/Updates — leaves updated_at alone: the startup grace of a row
-// without dispatched_at runs from updated_at, and a wait note must not restart
-// the clock it is reporting on.
+// unlike Update/Updates — leaves updated_at alone: updated_at is the attempt
+// start of a row without dispatched_at, and a wait note must not restart the
+// clock it is reporting on.
 func (r *runCycleRepository) NoteStartupWait(ctx context.Context, id, reason string, at time.Time) error {
 	return r.db.WithContext(ctx).Model(&RunCycle{}).
 		Where("id = ? AND ended_at IS NULL", id).
@@ -301,6 +309,16 @@ func (r *runCycleRepository) NoteStartupWait(ctx context.Context, id, reason str
 			"startup_wait_reason": reason,
 			"startup_wait_since":  gorm.Expr("COALESCE(startup_wait_since, ?)", at.UTC()),
 		}).Error
+}
+
+// NoteStartupClock writes through UpdateColumns for the same reason as
+// NoteStartupWait: updated_at is the attempt start of a row without
+// dispatched_at.
+func (r *runCycleRepository) NoteStartupClock(ctx context.Context, id string, attempt int, at time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND attempts = ? AND startup_clock_at IS NULL AND ended_at IS NULL", id, attempt).
+		UpdateColumn("startup_clock_at", at.UTC())
+	return res.RowsAffected > 0, res.Error
 }
 
 func (r *runCycleRepository) ClearStartupWait(ctx context.Context, id string) error {

@@ -54,6 +54,14 @@ type RuntimePod struct {
 	// any container still runs, or when the tree did not carry one). It tells a
 	// pod that ended before a re-dispatch from one still running at it.
 	FinishedAt time.Time
+	// JobFound says the same tree read carried a Job node: OpenChoreo has
+	// applied the binding's Job. JobCreatedAt is the newest Job node's creation
+	// time (zero when absent or not carried). Both are about the Job, not the
+	// pod, so they are set whether or not a Pod node was found: the watcher's
+	// start clock begins when the attempt's Job or pod exists, because Cloud
+	// OpenChoreo applies a release minutes after it is requested.
+	JobFound     bool
+	JobCreatedAt time.Time
 }
 
 // PodLogLine is one line of pod stdout with the timestamp the platform recorded.

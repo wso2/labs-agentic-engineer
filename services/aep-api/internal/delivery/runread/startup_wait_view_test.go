@@ -26,15 +26,15 @@ import (
 )
 
 // An open cycle whose pod is stuck carries startupWait straight from the row:
-// the reason, since when, and when the attempt fails (dispatch + grace) — no
-// cluster read.
+// the reason, since when, and when the attempt fails (the start clock plus the
+// grace) — no cluster read.
 func TestCycleView_StartupWaitFromTheRow(t *testing.T) {
 	t.Parallel()
 	dispatched := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 	since := dispatched.Add(30 * time.Second)
 	row := &delivery.RunCycle{
 		ID: "c1", Kind: delivery.CycleKindValidation, Attempts: 1,
-		DispatchedAt: &dispatched, UpdatedAt: dispatched,
+		DispatchedAt: &dispatched, UpdatedAt: dispatched, StartupClockAt: &dispatched,
 		StartupWaitReason: "Unschedulable", StartupWaitSince: &since,
 	}
 
@@ -42,6 +42,33 @@ func TestCycleView_StartupWaitFromTheRow(t *testing.T) {
 	want := gen.RunCycleStartupWait{Reason: "Unschedulable", Since: since, FailsAt: dispatched.Add(delivery.CycleStartupGrace)}
 	if got == nil || *got != want {
 		t.Fatalf("startupWait = %+v, want %+v", got, want)
+	}
+}
+
+// Before OpenChoreo has applied the Job the wait is NotYetApplied and the
+// attempt fails at the apply cap from its dispatch; once the watcher has seen
+// the Job (startup_clock_at), failsAt moves to the grace from that clock.
+func TestCycleView_FailsAtMovesFromTheApplyCapToTheGrace(t *testing.T) {
+	t.Parallel()
+	dispatched := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	since := dispatched.Add(30 * time.Second)
+	row := &delivery.RunCycle{
+		ID: "c1", Kind: delivery.CycleKindCoding, Attempts: 1,
+		DispatchedAt: &dispatched, UpdatedAt: dispatched,
+		StartupWaitReason: "NotYetApplied", StartupWaitSince: &since,
+	}
+	got := runread.CycleView(row, gen.RunCycleViewRecordingLive).StartupWait
+	if got == nil || got.Reason != "NotYetApplied" || !got.FailsAt.Equal(dispatched.Add(30*time.Minute)) {
+		t.Fatalf("not applied: startupWait = %+v, want NotYetApplied failing at dispatch + 30m", got)
+	}
+
+	clock := dispatched.Add(12 * time.Minute)
+	stuck := clock.Add(time.Minute)
+	row.StartupClockAt = &clock
+	row.StartupWaitReason, row.StartupWaitSince = "Unschedulable", &stuck
+	got = runread.CycleView(row, gen.RunCycleViewRecordingLive).StartupWait
+	if got == nil || !got.FailsAt.Equal(clock.Add(delivery.CycleStartupGrace)) {
+		t.Fatalf("applied: startupWait = %+v, want failsAt = clock + grace", got)
 	}
 }
 

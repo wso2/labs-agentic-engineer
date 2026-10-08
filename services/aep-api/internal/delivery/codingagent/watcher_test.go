@@ -95,6 +95,18 @@ type watchedCycles struct {
 	// ClearStartupWait calls per cycle.
 	waits  []startupWaitNote
 	clears map[string]int
+	// clocks is every NoteStartupClock call that landed, in order; refuseClock
+	// makes the next ones land on no row (another replica or a re-dispatch
+	// moved the row first).
+	clocks      []startupClockNote
+	refuseClock bool
+}
+
+// startupClockNote is one NoteStartupClock call that landed, recorded whole.
+type startupClockNote struct {
+	id      string
+	attempt int
+	at      time.Time
 }
 
 // startupWaitNote is one NoteStartupWait call, recorded whole.
@@ -116,6 +128,26 @@ func newWatchedCycles(rows ...delivery.RunCycle) *watchedCycles {
 func (c *watchedCycles) NoteStartupWait(_ context.Context, id, reason string, at time.Time) error {
 	c.waits = append(c.waits, startupWaitNote{id: id, reason: reason, at: at})
 	return nil
+}
+
+// NoteStartupClock applies the repository's fences — the attempt, the clock not
+// yet written, the cycle open — and writes the row in place, so the next tick
+// lists the clock as the real store would.
+func (c *watchedCycles) NoteStartupClock(_ context.Context, id string, attempt int, at time.Time) (bool, error) {
+	if c.refuseClock {
+		return false, nil
+	}
+	for i := range c.rows {
+		row := &c.rows[i]
+		if row.ID != id || row.Attempts != attempt || row.StartupClockAt != nil || row.EndedAt != nil {
+			continue
+		}
+		at := at
+		row.StartupClockAt = &at
+		c.clocks = append(c.clocks, startupClockNote{id: id, attempt: attempt, at: at})
+		return true, nil
+	}
+	return false, nil
 }
 
 func (c *watchedCycles) ClearStartupWait(_ context.Context, id string) error {
@@ -207,7 +239,7 @@ func newTestWatcher(rt openchoreo.RuntimeClient, cycles cycleWatchStore) *JobWat
 }
 
 func newTestWatcherWith(rt openchoreo.RuntimeClient, cycles cycleWatchStore, targets writeTargetResolver) *JobWatcher {
-	return NewJobWatcher(rt, cycles, targets, &fakeJobs{}, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	return NewJobWatcher(rt, cycles, targets, &fakeJobs{}, nil).WithPollInterval(time.Millisecond)
 }
 
 // resultLine is the runner's terminal settle line, carrying usage.
@@ -603,10 +635,11 @@ func TestTick_EmptySnapshotAfterThePodWasSeenIsNoVerdict(t *testing.T) {
 	}
 }
 
-// A pod that was never seen still gets the no-pod verdict past the grace, but
-// only once the empty snapshot has held for as many ticks as a sustained 404.
+// A pod that was never seen, of a Job that was applied, still gets the no-pod
+// verdict past the grace, but only once the empty snapshot has held for as
+// many ticks as a sustained 404.
 func TestTick_NoPodVerdictNeedsSustainedEmptySnapshots(t *testing.T) {
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{}}
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: time.Now().UTC().Add(-20 * time.Minute)}}
 	cycles := newWatchedCycles(dispatchedCycle("c11", 20*time.Minute))
 	w := newTestWatcher(rt, cycles)
 
@@ -823,7 +856,7 @@ func TestTick_SucceededPodIsSuspendedAfterUsageIsCaptured(t *testing.T) {
 	cycles := newWatchedCycles(c)
 	usageFirst := false
 	jobs := &fakeJobs{before: func() { _, usageFirst = cycles.usage["c1"] }}
-	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
 	if !usageFirst {
 		t.Fatal("usage must be captured before the Job is suspended")
 	}
@@ -890,7 +923,7 @@ func TestTick_SuspendedCycleWithNoPodIsNotAStartupFailure(t *testing.T) {
 	now := time.Now()
 	c.JobSuspendedAt = &now
 	cycles := newWatchedCycles(c)
-	w := NewJobWatcher(rt, cycles, testWriteTargets(), &fakeJobs{}, nil).WithIntervals(time.Millisecond, time.Minute)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), &fakeJobs{}, nil).WithPollInterval(time.Millisecond)
 	for i := 0; i < missingTicksToFail+1; i++ {
 		w.Tick(context.Background())
 	}
@@ -960,7 +993,7 @@ func TestTick_SuspendOfAGoneBindingIsMarkedNotAnnounced(t *testing.T) {
 func redispatched(c delivery.RunCycle, ago time.Duration) delivery.RunCycle {
 	at := time.Now().UTC().Add(-ago)
 	c.Attempts, c.DispatchedAt, c.UpdatedAt = 2, &at, at
-	c.JobSuspendedAt, c.PodGoneAt = nil, nil
+	c.JobSuspendedAt, c.PodGoneAt, c.StartupClockAt = nil, nil, nil
 	return c
 }
 
@@ -975,12 +1008,14 @@ func redispatched(c delivery.RunCycle, ago time.Duration) delivery.RunCycle {
 func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
 	logs := captureLogs(t)
 	old := time.Now().UTC().Add(-3 * time.Hour)
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old}}
+	// The Job is reused across attempts: it stays in the tree with attempt 1's
+	// creation time.
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old, JobFound: true, JobCreatedAt: old}}
 	c := dispatchedCycle("c1", 3*time.Hour)
 	c.Attempts = 1
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{}
-	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
 
 	// Attempt 1 ends: suspended and stamped (and its pod has been seen).
 	w.Tick(context.Background())
@@ -1029,7 +1064,7 @@ func TestTick_LeftoverPodFromThePreviousAttemptIsIgnored(t *testing.T) {
 	}
 	cycles := newWatchedCycles(redispatched(dispatchedCycle("c1", time.Minute), time.Minute))
 	jobs := &fakeJobs{}
-	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
 	if len(jobs.suspends) != 0 || cycles.suspended["c1"] {
 		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
 	}
@@ -1080,7 +1115,7 @@ func TestTick_RunningPodAtRedispatchIsTheCurrentAttempt(t *testing.T) {
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running", CreatedAt: created}}
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{}
-	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
 	for i := 0; i < missingTicksToFail+1; i++ {
 		w.Tick(context.Background())
 	}
@@ -1139,7 +1174,7 @@ func TestTick_SuspendStampedByAnotherCallerIsNotAnnouncedAgain(t *testing.T) {
 	c.Environment = "development"
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{before: func() { cycles.suspended["c1"] = true }}
-	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithIntervals(time.Millisecond, 10*time.Minute).Tick(context.Background())
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
 	if got := logsNamed(*logs, "codingagent.job_suspended"); len(got) != 0 {
 		t.Fatalf("job_suspended events = %+v, want none for a stamp another caller made", got)
 	}

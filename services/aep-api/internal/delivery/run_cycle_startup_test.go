@@ -40,25 +40,35 @@ func TestIsStartupFailure(t *testing.T) {
 	}
 }
 
-// The grace runs from the attempt's dispatch; a row that predates
-// dispatched_at falls back to its last write. The deadline the run view shows
-// is that start plus the grace the watcher applies.
+// Until the watcher has seen this attempt's Job or pod, the attempt is bounded
+// by the apply cap from its dispatch (a row that predates dispatched_at falls
+// back to its last write); once it has, by the startup grace from that start
+// clock. The run view shows the same deadline the watcher applies.
 func TestRunCycle_StartupDeadline(t *testing.T) {
 	t.Parallel()
 	dispatched := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
 	updated := dispatched.Add(3 * time.Minute)
 
 	c := delivery.RunCycle{DispatchedAt: &dispatched, UpdatedAt: updated}
-	if got := c.StartupGraceStart(); !got.Equal(dispatched) {
-		t.Fatalf("grace start = %v, want the dispatch %v", got, dispatched)
+	if got := c.AttemptStart(); !got.Equal(dispatched) {
+		t.Fatalf("attempt start = %v, want the dispatch %v", got, dispatched)
 	}
-	if got, want := c.StartupDeadline(), dispatched.Add(delivery.CycleStartupGrace); !got.Equal(want) {
-		t.Fatalf("deadline = %v, want %v", got, want)
+	if delivery.CycleApplyCap != 30*time.Minute || delivery.CycleStartupGrace != 10*time.Minute {
+		t.Fatalf("apply cap %v, grace %v: want 30m and 10m", delivery.CycleApplyCap, delivery.CycleStartupGrace)
+	}
+	if got, want := c.StartupDeadline(), dispatched.Add(delivery.CycleApplyCap); !got.Equal(want) {
+		t.Fatalf("no start clock: deadline = %v, want dispatch + apply cap %v", got, want)
+	}
+
+	clock := dispatched.Add(12 * time.Minute)
+	c.StartupClockAt = &clock
+	if got, want := c.StartupDeadline(), clock.Add(delivery.CycleStartupGrace); !got.Equal(want) {
+		t.Fatalf("start clock set: deadline = %v, want clock + grace %v", got, want)
 	}
 
 	legacy := delivery.RunCycle{UpdatedAt: updated}
-	if got := legacy.StartupGraceStart(); !got.Equal(updated) {
-		t.Fatalf("legacy grace start = %v, want updated_at %v", got, updated)
+	if got := legacy.AttemptStart(); !got.Equal(updated) {
+		t.Fatalf("legacy attempt start = %v, want updated_at %v", got, updated)
 	}
 }
 

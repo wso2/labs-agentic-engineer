@@ -89,8 +89,18 @@ func FailureReason(pod openchoreo.RuntimePod) string {
 	}
 }
 
+// The attempt whose Job OpenChoreo has not applied yet. Both are the
+// platform's own words, never a Kubernetes reason: NotYetApplied is the
+// startup wait recorded while the resource tree has no Job for the attempt,
+// and not_applied closes the cycle when that lasts past delivery.CycleApplyCap.
+const (
+	WaitNotYetApplied = "NotYetApplied"
+	ReasonNotApplied  = delivery.CycleReasonStartupFailedPrefix + "not_applied"
+)
+
 // StartupFailureReason explains a pod that never reached Running before the
-// watcher's startup grace expired. It prefers the pod's own waiting reason and
+// attempt's startup deadline (a Job never applied is ReasonNotApplied, set by
+// the watcher). It prefers the pod's own waiting reason and
 // falls back to the first Warning event, because a pod that was never created
 // has no status to read and its events are the only account of why.
 func StartupFailureReason(pod openchoreo.RuntimePod, events []openchoreo.RuntimeEvent) string {

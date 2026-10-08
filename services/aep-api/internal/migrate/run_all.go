@@ -285,6 +285,11 @@ func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 		// written before them has no wait to show). Appended last because the
 		// list is append-only.
 		ctxStep("phase30_run_cycle_startup_wait", RunPhase30RunCycleStartupWait),
+		// run_cycles gains the start clock: the startup grace counts from when
+		// the attempt's Job or pod exists, not from its dispatch. One nullable
+		// column, no backfill (a row without it is bounded by the apply cap).
+		// Appended last because the list is append-only.
+		ctxStep("phase31_run_cycle_startup_clock", RunPhase31RunCycleStartupClock),
 	}
 }
 

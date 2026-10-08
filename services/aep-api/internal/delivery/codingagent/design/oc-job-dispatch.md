@@ -184,11 +184,24 @@ Only a suspend that took effect logs `codingagent.job_suspended` (`cause` =
 `terminal`). Once a cycle is suspended or closed, a snapshot with no pod is the
 expected state, never an absent-pod or startup verdict.
 
-The watcher also suspends an agent that never started. Past the startup grace
-(`delivery.CycleStartupGrace`, 10 min from `dispatched_at`, or `updated_at` on
-a row without it) a pod not yet Running closes the cycle
-`startup_failed:<reason>[: <message>]`; the replica whose close won then
-suspends the Job (`cause` = `startup_failed`), whatever the pod is doing.
+The watcher also suspends an agent that never started. Its deadline is
+`RunCycle.StartupDeadline`, which the run view shows too. The startup grace
+(`delivery.CycleStartupGrace`, 10 min) counts from `startup_clock_at`: the
+creation of the attempt's pod, or before it its Job, as the watcher first sees
+it in the resource tree, and never earlier than `dispatched_at` (`updated_at`
+on a row without it), because a re-dispatch reuses the Job and its old
+creation time. Cloud OpenChoreo applies a release 8-13 min after it is
+requested, which is why the grace does not count from the dispatch. The clock
+is written once per attempt, fenced on `attempts`, `startup_clock_at IS NULL`
+and the cycle being open, so a tick that read attempt N writes nothing after a
+re-dispatch to N+1; it decides the deadline only once written. Until it is,
+the attempt is bounded by the apply cap (`delivery.CycleApplyCap`, 30 min from
+`dispatched_at`), past which a tree with no Job closes the cycle
+`startup_failed:not_applied`. Past the deadline a pod not yet Running closes
+the cycle `startup_failed:<reason>[: <message>]`; the replica whose close won
+then suspends the Job binding (`cause` = `startup_failed`), whatever the pod
+is doing, `not_applied` included: the suspend is a binding patch, so a Job
+OpenChoreo applies later is created suspended.
 Kubernetes deletes a suspended Job's active pods, Pending ones included, so
 the pod that would schedule once the cluster has room never starts an agent
 for the closed cycle. Any later tick that finds a cycle closed
@@ -204,11 +217,13 @@ While an open cycle's pod is Pending with a stuck waiting reason
 but the normal `ContainerCreating` / `PodInitializing`), the watcher records it
 on the row (`startup_wait_reason`, `startup_wait_since`), writing only when the
 reason changes and logging `codingagent.startup_wait {cycle, component,
-reason}`. A pod that runs, or is Pending and no longer stuck, clears it;
-`NoteDispatch` clears it for a new attempt. Neither write moves `updated_at`.
+reason}`. While the tree has no Job and no clock is written, the reason is the
+platform's own `NotYetApplied`; the Job appearing clears it. A pod that runs,
+or is Pending and no longer stuck, clears it; `NoteDispatch` clears it and
+`startup_clock_at` for a new attempt. None of these writes moves `updated_at`.
 The run view projects it as `RunCycleView.startupWait {reason, since, failsAt}`
-on an open cycle only, `failsAt` = grace start + grace, so the console shows
-the wait and its deadline without a cluster read.
+on an open cycle only, `failsAt` = `StartupDeadline`, so the console shows the
+wait and its deadline without a cluster read.
 
 The stamp belongs to the attempt, not the cycle. A landing-timeout re-dispatch
 reuses the cycle's Component (its name is stable per cycle and the 409 is
