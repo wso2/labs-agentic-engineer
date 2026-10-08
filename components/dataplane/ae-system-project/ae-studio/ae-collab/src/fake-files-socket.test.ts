@@ -41,6 +41,15 @@ function call(
 ): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : JSON.stringify(body);
+    // Settle only once the response has ended AND the request has finished
+    // writing: a server may answer (413) before a large body is fully written,
+    // and closing the server under that in-flight write surfaces as an
+    // uncaught EPIPE. The request `error` listener stays attached until both.
+    let reply: Reply | undefined;
+    let finished = false;
+    const settle = (): void => {
+      if (reply && finished) resolve(reply);
+    };
     const req = http.request(
       {
         socketPath,
@@ -52,17 +61,22 @@ function call(
         let raw = "";
         res.setEncoding("utf8");
         res.on("data", (c: string) => (raw += c));
-        res.on("end", () =>
-          resolve({
+        res.on("end", () => {
+          reply = {
             status: res.statusCode ?? 0,
             type: res.headers["content-type"] ?? "",
             retryAfter: res.headers["retry-after"] as string | undefined,
             body: raw ? JSON.parse(raw) : undefined,
-          }),
-        );
+          };
+          settle();
+        });
       },
     );
     req.on("error", reject);
+    req.on("finish", () => {
+      finished = true;
+      settle();
+    });
     req.end(payload);
   });
 }
