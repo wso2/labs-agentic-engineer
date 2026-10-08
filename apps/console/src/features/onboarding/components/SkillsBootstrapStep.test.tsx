@@ -135,4 +135,29 @@ describe("SkillsBootstrapStep while AE Studio starts", () => {
     fireEvent.click(screen.getByRole("button", { name: "Continue anyway" }));
     expect(onComplete).toHaveBeenCalledTimes(1);
   });
+  it("says AE Studio is taking longer than usual on a timeout, keeping Retry and Continue anyway", async () => {
+    studio = { data: { state: "failed", reason: "timeout" }, isPending: false, isFetching: false, isError: false };
+    renderStep();
+    await flushDeferred();
+    expect(screen.getByText("Starting AE Studio is taking longer than usual.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /This often means the cluster is short on room\. It keeps trying by itself; if this lasts, contact your platform administrator\./,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Continue anyway" }));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the couldn't-start copy on an error, with no word about room", async () => {
+    studio = { data: { state: "failed", reason: "error" }, isPending: false, isFetching: false, isError: false };
+    renderStep();
+    await flushDeferred();
+    expect(screen.getByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(screen.queryByText(/short on room/)).not.toBeInTheDocument();
+  });
 });

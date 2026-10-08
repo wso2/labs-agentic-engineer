@@ -63,15 +63,17 @@ for console turns, and a disagreement is settled here.
 ## AE Studio
 
 The organization's design workspace (the design agent, the Room). Named to
-the user only when it is upgrading, restarting or unavailable; never as a pod,
+the user only when it is upgrading, starting, restarting or unavailable; never as a pod,
 Resource or container.
 
 | Situation | Says |
 |---|---|
-| First visit while it upgrades | the whole console waits: **Upgrading AE Studio** · *This takes a minute or two.* |
-| Restarting after a settings change | a banner above the page: **AE Studio is restarting…**; the console stays usable |
-| Failed to start | full page: **AE Studio couldn't start** · **Try again** · **Open Settings**; Settings stays reachable |
-| Onboarding's skills step | waits inline: **Getting AE Studio ready…** |
+| First visit while it upgrades | the whole console waits: **Upgrading AE Studio** · *The console opens as soon as it is ready.* (no duration: a first install can take a quarter of an hour) |
+| Starting behind the console, never ready this session (hold capped, after Try again, after a failed first read) | a banner above the page: **AE Studio is starting…**; the console stays usable |
+| Restarting after a settings change (ready seen this session) | a banner above the page: **AE Studio is restarting…**; the console stays usable |
+| Not ready within the bound (`failed`, reason `timeout`) | full page: **Starting AE Studio is taking longer than usual.** · *This often means the cluster is short on room. It keeps trying by itself; if this lasts, contact your platform administrator.* · **Open Settings**; re-read every 30 s, so it turns ready by itself. "Short on room" is said only here: the platform cannot see the cause |
+| Failed to start (`failed`, reason `error` or none) | full page: **AE Studio couldn't start** · **Try again** · **Open Settings**; Settings stays reachable |
+| Onboarding's skills step | waits inline: **Getting AE Studio ready…**; on a `timeout`, the same taking-longer copy as a warning, with **Retry** and **Continue anyway** |
 | The spec or the builds, while AE Studio restarts (`ae_studio_unavailable`) | in place of the content, never a hold: **AE Studio is restarting — retrying…** |
 | The spec or the builds, GitHub not connected (`github_not_connected`) | **Connect GitHub to continue**, with **Connect GitHub** → Settings, GitHub |
 | The spec or the builds, AE Studio misconfigured (`ae_studio_misconfigured`) | **AE Studio is misconfigured — contact your administrator**, no retry |

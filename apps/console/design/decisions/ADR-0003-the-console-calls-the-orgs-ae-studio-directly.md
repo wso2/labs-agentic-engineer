@@ -36,26 +36,30 @@ talk to a second API whose error bodies differ from `aep-api`'s.
    (`features/shell/components/GatedShell.tsx`) nests the gates as
    `AuthGuard > OnboardingGate > AeStudioGate > Shell`, so the AE Studio gate
    runs only for an onboarded org. The answer is a `state` (`absent`,
-   `provisioning`, `ready`, `failed`) and, only when `ready`, `urls` for
-   `designAgent`, `collab` and `tools`.
+   `provisioning`, `ready`, `failed`), only when `ready` `urls` for
+   `designAgent`, `collab` and `tools`, and only when `failed` a `reason`
+   (`timeout`: not ready within the bound, cause unknown, still trying;
+   `error`: anything else).
 
 2. **What the gate shows follows the state and the session.**
 
    | State | Console |
    |---|---|
    | session's first answer is `provisioning` (an upgrade on visit) | the **hold**: the whole console waits on *Upgrading AE Studio*, for at most 5 min (`AE_STUDIO_HOLD_CAP_MS`), then the console with the banner |
-   | `provisioning` after `ready`, after the cap, after `failed`, or after a failed first read | the console with the **banner** *AE Studio is restarting…* above the page (`Shell`'s main column); only what AE Studio serves waits |
-   | `failed` | a full page, *AE Studio couldn't start*, with **Try again** (re-reads the state) and **Open Settings** |
+   | `provisioning` after `ready`, after the cap, after `failed`, or after a failed first read | the console with the **banner** above the page (`Shell`'s main column): *AE Studio is restarting…* once this session has seen `ready`, *AE Studio is starting…* before; only what AE Studio serves waits |
+   | `failed`, reason `timeout` | a full page, *Starting AE Studio is taking longer than usual*, with **Open Settings**; it gives way to the console by itself |
+   | `failed`, reason `error` or none | a full page, *AE Studio couldn't start*, with **Try again** (re-reads the state) and **Open Settings** |
    | `absent`, `ready`, first read in flight, or a failed read | the console, no hold |
 
    `/settings` is never held and never replaced by the failed page: a setting
    is the usual fix. A console shown on a failed first read is never pulled
-   back under the hold; a later `provisioning` is a restart. The copy is in the
+   back under the hold; a later `provisioning` shows the banner. The copy is in the
    lexicon's **AE Studio** section.
 
 3. **The state is polled only while it moves, and re-read on an outage.**
    `useAeStudio` refetches every 2 s while `provisioning`, every 5 s while the
-   read itself fails, and on window focus otherwise; the focus refetch also
+   read itself fails, every 30 s while `failed` with reason `timeout` (so the
+   page turns ready by itself), and on window focus otherwise; the focus refetch also
    starts a converge on the backend. `useReReadAeStudioOnOutage` re-reads it
    whenever a request finds AE Studio not serving: a failed query with a pod
    503 or no answer, or `aep-api`'s 503 `ae_studio_unavailable`; and a

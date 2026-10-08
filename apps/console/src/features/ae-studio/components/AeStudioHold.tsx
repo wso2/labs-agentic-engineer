@@ -19,20 +19,22 @@
 import type { PropsWithChildren } from "react";
 import { Box, Button, CircularProgress, Typography } from "@wso2/oxygen-ui";
 import { Link } from "@tanstack/react-router";
+import { SLOW_START_DETAIL, SLOW_START_TITLE } from "../model/slowStart";
 
-// The two pages AeStudioGate puts in place of the console. Full-viewport and
+// The three pages AeStudioGate puts in place of the console. Full-viewport and
 // centred like the onboarding gate's own loading and error states: the shell
 // is not rendered behind either, because nothing in it works yet.
 
 // The session's first answer was `provisioning` (an upgrade on visit): the
-// whole console waits here until AE Studio is ready.
+// whole console waits here until AE Studio is ready. It names no duration: a
+// first install on a busy cluster can take a quarter of an hour.
 export function AeStudioHold() {
   return (
     <FullScreen>
       <CircularProgress size={32} />
       <Typography variant="h6">Upgrading AE Studio</Typography>
       <Typography variant="body2" color="text.secondary">
-        This takes a minute or two.
+        The console opens as soon as it is ready.
       </Typography>
     </FullScreen>
   );
@@ -41,6 +43,24 @@ export function AeStudioHold() {
 // AE Studio failed to start. Try again re-reads the state (a GET is also what
 // starts a new converge); Settings stays reachable, since a setting is the
 // usual fix.
+// AE Studio has not started within its bound (`failed`, reason `timeout`):
+// the cause is hedged, and the gate keeps re-reading, so this page gives way
+// to the console by itself. No Try again: it is already trying.
+export function AeStudioSlowStart() {
+  return (
+    <FullScreen>
+      <CircularProgress size={32} />
+      <Typography variant="h6">{SLOW_START_TITLE}</Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 480 }}>
+        {SLOW_START_DETAIL}
+      </Typography>
+      <Button variant="text" component={Link} to="/settings">
+        Open Settings
+      </Button>
+    </FullScreen>
+  );
+}
+
 export function AeStudioFailed({
   onRetry,
   retrying,

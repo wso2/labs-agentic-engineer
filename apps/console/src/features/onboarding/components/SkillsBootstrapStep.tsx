@@ -27,6 +27,11 @@ import {
 import { Check, Sparkles } from "@wso2/oxygen-ui-icons-react";
 import { useSyncSkills } from "../../skills/api/skills";
 import { useAeStudio } from "../../ae-studio/api/queries";
+import {
+  isSlowStart,
+  SLOW_START_DETAIL,
+  SLOW_START_TITLE,
+} from "../../ae-studio/model/slowStart";
 
 // The model connect just before this step rolls the org's AE Studio, so the
 // step waits inline for it to be ready before bootstrapping. It releases only
@@ -52,6 +57,21 @@ export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) 
   let content: ReactNode;
   if (released.current) {
     content = <SkillsBootstrap onComplete={onComplete} />;
+  } else if (isSlowStart(studio.data)) {
+    // useAeStudio keeps re-reading a slow start, so the step releases by
+    // itself once AE Studio is ready.
+    content = (
+      <StepError
+        message={SLOW_START_TITLE}
+        severity="warning"
+        onRetry={() => void studio.refetch()}
+        retrying={studio.isFetching}
+        onContinue={onComplete}
+      >
+        {SLOW_START_DETAIL} Your skills catalogue can't be set up until it
+        starts.
+      </StepError>
+    );
   } else if (state === "failed") {
     content = (
       <StepError
@@ -160,12 +180,14 @@ function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
 // standing fallback).
 function StepError({
   message,
+  severity = "error",
   onRetry,
   retrying = false,
   onContinue,
   children,
 }: {
   message: string;
+  severity?: "error" | "warning";
   onRetry: () => void;
   retrying?: boolean;
   onContinue: () => void;
@@ -173,7 +195,7 @@ function StepError({
 }) {
   return (
     <>
-      <Alert severity="error" sx={{ width: "100%", textAlign: "left" }}>
+      <Alert severity={severity} sx={{ width: "100%", textAlign: "left" }}>
         {message}
       </Alert>
       <Typography variant="body2" color="text.secondary">

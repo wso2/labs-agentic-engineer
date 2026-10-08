@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
 import { isPodUnavailable, onPodOutage, setAeStudioUrls } from "../../../api/aeStudio";
 import { apiErrorCode, apiErrorMessage } from "../../../api/errors";
+import { isSlowStart, SLOW_START_REFETCH_MS } from "../model/slowStart";
 
 export const aeStudioKeys = { all: ["ae-studio"] as const };
 
@@ -45,8 +46,11 @@ export function useAeStudio() {
     },
     staleTime: 30_000,
     refetchOnWindowFocus: true,
-    refetchInterval: (q) =>
-      q.state.data?.state === "provisioning" ? 2000 : q.state.status === "error" ? 5000 : false,
+    refetchInterval: (q) => {
+      if (q.state.data?.state === "provisioning") return 2000;
+      if (q.state.status === "error") return 5000;
+      return isSlowStart(q.state.data) ? SLOW_START_REFETCH_MS : false;
+    },
   });
 }
 

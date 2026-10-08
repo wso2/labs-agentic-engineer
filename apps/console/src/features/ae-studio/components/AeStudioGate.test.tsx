@@ -27,7 +27,8 @@ import { setupServer } from "msw/node";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
 
-type AeStudioState = components["schemas"]["AeStudio"]["state"];
+type AeStudio = components["schemas"]["AeStudio"];
+type AeStudioState = AeStudio["state"];
 
 const BASE = "http://localhost/api/v1";
 
@@ -68,13 +69,15 @@ const { useConnectGitHubPat, useDisconnectGitProvider, useSaveAiSettings } = awa
 
 const server = setupServer();
 
-// Answers GET /ae-studio with each state in turn, then keeps answering the
-// last one.
-function mockAeStudio(states: AeStudioState[]) {
+// Answers GET /ae-studio with each state (or whole answer) in turn, then keeps
+// answering the last one. Returns how many reads it has answered.
+function mockAeStudio(states: (AeStudioState | AeStudio)[]) {
   let call = 0;
   server.use(
     http.get(`${BASE}/ae-studio`, () => {
-      const state = states[Math.min(call++, states.length - 1)];
+      const next = states[Math.min(call++, states.length - 1)];
+      if (typeof next !== "string") return HttpResponse.json(next);
+      const state = next;
       return HttpResponse.json(
         state === "ready"
           ? {
@@ -89,7 +92,12 @@ function mockAeStudio(states: AeStudioState[]) {
       );
     }),
   );
+  return () => call;
 }
+
+const SLOW_START_TITLE = "Starting AE Studio is taking longer than usual.";
+const SLOW_START_DETAIL =
+  "This often means the cluster is short on room. It keeps trying by itself; if this lasts, contact your platform administrator.";
 
 // The client of the latest render, so a test can drive a refetch.
 let queryClient: QueryClient;
@@ -131,7 +139,9 @@ describe("AeStudioGate", () => {
     mockAeStudio(["provisioning", "provisioning", "ready"]);
     renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>);
     expect(await screen.findByText("Upgrading AE Studio")).toBeInTheDocument();
-    expect(screen.getByText("This takes a minute or two.")).toBeInTheDocument();
+    // A first install on a busy cluster can take far longer than a minute or
+    // two, so the hold names no duration.
+    expect(screen.queryByText(/minute|second|hour/i)).not.toBeInTheDocument();
     expect(screen.queryByText("console")).not.toBeInTheDocument();
     await pollOnce();
     expect(screen.getByText("Upgrading AE Studio")).toBeInTheDocument();
@@ -158,7 +168,7 @@ describe("AeStudioGate", () => {
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
   });
 
-  it("a hold past its cap gives way to the console and the restarting banner while GET still says provisioning", async () => {
+  it("a hold past its cap gives way to the console and the starting banner while GET still says provisioning", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockAeStudio(["provisioning"]);
     renderWithProviders(
@@ -170,16 +180,17 @@ describe("AeStudioGate", () => {
     expect(screen.getByText("Upgrading AE Studio")).toBeInTheDocument();
     await act(() => vi.advanceTimersByTimeAsync(2000));
     expect(await screen.findByText("console")).toBeInTheDocument();
-    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is starting…")).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
     expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
     mockAeStudio(["ready"]);
     await pollOnce();
-    await waitFor(() => expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("AE Studio is starting…")).not.toBeInTheDocument());
     expect(screen.getByText("console")).toBeInTheDocument();
   });
 
-  it("Try again from failed into provisioning shows the console with the banner, never the failed page again", async () => {
+  it("Try again from failed into provisioning shows the console with the starting banner, never the failed page again", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     mockAeStudio(["failed"]);
     renderWithProviders(
@@ -190,12 +201,12 @@ describe("AeStudioGate", () => {
     mockAeStudio(["provisioning"]);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText("console")).toBeInTheDocument();
-    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is starting…")).toBeInTheDocument();
     // Every later provisioning poll keeps the console and the banner up.
     for (let i = 0; i < 3; i++) {
       await pollOnce();
       expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
-      expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+      expect(screen.getByText("AE Studio is starting…")).toBeInTheDocument();
     }
   });
 
@@ -205,6 +216,7 @@ describe("AeStudioGate", () => {
     await firstAnswer();
     expect(screen.getByText("console")).toBeInTheDocument();
     expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is starting…")).not.toBeInTheDocument();
     expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
   });
 
@@ -231,7 +243,7 @@ describe("AeStudioGate", () => {
 
   // The console is already up after a failed first read, so a provisioning
   // answer behind it is a restart to show, not a hold to pull over it.
-  it("a failed first read then provisioning shows the banner, not the hold", async () => {
+  it("a failed first read then provisioning shows the starting banner, not the hold", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let calls = 0;
     server.use(
@@ -252,11 +264,12 @@ describe("AeStudioGate", () => {
       expect(queryClient.getQueryData(aeStudioKeys.all)).toMatchObject({ state: "provisioning" }),
     );
     expect(screen.getByText("console")).toBeInTheDocument();
-    expect(screen.getByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.getByText("AE Studio is starting…")).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
   });
 
-  it("a later provisioning shows a banner, not a hold", async () => {
+  it("a later provisioning, after ready, shows the restarting banner, not a hold", async () => {
     mockAeStudio(["ready", "provisioning"]);
     renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>);
     expect(await screen.findByText("console")).toBeInTheDocument();
@@ -264,6 +277,7 @@ describe("AeStudioGate", () => {
     expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
     await act(() => queryClient.refetchQueries({ queryKey: aeStudioKeys.all }));
     expect(await screen.findByText("AE Studio is restarting…")).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is starting…")).not.toBeInTheDocument();
     expect(screen.getByText("console")).toBeInTheDocument();
     expect(screen.queryByText("Upgrading AE Studio")).not.toBeInTheDocument();
   });
@@ -287,6 +301,54 @@ describe("AeStudioGate", () => {
     cleanup();
     renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings" });
     expect(await screen.findByText("settings")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["error", { state: "failed", reason: "error" }],
+    ["no reason (an older server)", { state: "failed" }],
+  ] as [string, AeStudio][])("failed with %s keeps the couldn't-start page and stops reading", async (_, answer) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const reads = mockAeStudio([answer]);
+    renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+    expect(await screen.findByText("AE Studio couldn't start")).toBeInTheDocument();
+    expect(screen.queryByText(SLOW_START_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText(/short on room/)).not.toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(5 * 60_000));
+    expect(reads()).toBe(1);
+  });
+
+  // A timeout is a start the platform cannot explain: commonly no room in the
+  // cluster, which frees up on its own. The page says so and keeps reading,
+  // so it turns ready without a click.
+  it("failed with timeout says it is taking longer than usual and re-reads every 30 s until ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const reads = mockAeStudio([{ state: "failed", reason: "timeout" }]);
+    renderWithProviders(<AeStudioGate><AeStudioBanner /><div>console</div></AeStudioGate>, { route: "/projects" });
+    expect(await screen.findByText(SLOW_START_TITLE)).toBeInTheDocument();
+    expect(screen.getByText(SLOW_START_DETAIL)).toBeInTheDocument();
+    expect(screen.queryByText("AE Studio couldn't start")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open Settings" })).toHaveAttribute("href", "/settings");
+    expect(screen.queryByText("console")).not.toBeInTheDocument();
+    expect(reads()).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(29_000));
+    expect(reads()).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    await waitFor(() => expect(reads()).toBe(2));
+    expect(screen.getByText(SLOW_START_TITLE)).toBeInTheDocument();
+    mockAeStudio(["ready"]);
+    await act(() => vi.advanceTimersByTimeAsync(30_000));
+    expect(await screen.findByText("console")).toBeInTheDocument();
+    expect(screen.queryByText(SLOW_START_TITLE)).not.toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is restarting…")).not.toBeInTheDocument();
+    expect(screen.queryByText("AE Studio is starting…")).not.toBeInTheDocument();
+  });
+
+  it("failed with timeout leaves Settings reachable", async () => {
+    mockAeStudio([{ state: "failed", reason: "timeout" }]);
+    renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings" });
+    await firstAnswer();
+    expect(screen.getByText("settings")).toBeInTheDocument();
+    expect(screen.queryByText(SLOW_START_TITLE)).not.toBeInTheDocument();
   });
 });
 
