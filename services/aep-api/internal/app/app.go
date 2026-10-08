@@ -987,6 +987,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		IssuesMCP: scissues.NewUserMCPHandler(issueService, scissues.IssueAgentPorts{
 			Promoter:   issueAgentPromoter{commands: taskCommands},
 			Components: designComponents{store: artifactStore},
+			Threads:    genaiSvc,
 		}),
 
 		DB:                   db,
@@ -1408,6 +1409,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// router is a pointer held by the already-built controller, so a late Register
 	// (before serve) is picked up.
 	registerWebhook("issues", "closed", provisioningSvc.OnIssueClosed)
+	// A closed issue's chat thread goes with it, whoever closed it (round
+	// three §4); the issue agent's own close_issue removes it too (Threads on
+	// the issues MCP handler above).
+	registerWebhook("issues", "closed", issueThreadsOnClose{repos: repoLocator{db: db}, threads: genaiSvc}.OnIssueClosed)
 	// Deprovision a project's OC Resource model on project delete (OC does not
 	// cascade the logically-owned Resources/bindings).
 	projectService.SetResourceDeprovisioner(provisioningSvc)

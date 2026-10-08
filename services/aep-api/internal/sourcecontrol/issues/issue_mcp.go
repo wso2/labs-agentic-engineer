@@ -66,7 +66,10 @@ type ComponentLister interface {
 
 // IssueThreadRemover removes an issue's chat thread once the issue is closed.
 // It is called from inside that thread's running turn, so it must not wait on
-// that turn; it is idempotent.
+// that turn: it defers the removal to the turn's end. ctx is the tool call's
+// request context, cancelled once the call answers — a deferred removal must
+// not use it (detach with context.WithoutCancel or start a fresh, bounded
+// one). It is idempotent.
 type IssueThreadRemover interface {
 	RemoveIssueThread(ctx context.Context, orgID, projectID string, issueNumber int) error
 }
@@ -242,15 +245,22 @@ func editIssue(c issueCall, issues sourcecontrol.IssueService, args issueToolArg
 	c.done(fmt.Sprintf("Edited #%d.", c.number))
 }
 
-// closeIssue closes the issue with the reason as its closing comment, then
-// removes its chat thread. The close is what the user confirmed: a thread the
-// remover could not reach is logged, never the agent's failure.
+// closeIssue posts the reason as a comment, closes the issue, then removes
+// its chat thread. The close is what the user confirmed, so a reason comment
+// that could not be posted does not stop it — but the thread (the only other
+// place the reason lived) goes too, so the answer says the comment was lost.
+// A thread the remover could not reach is logged, never the agent's failure.
 func closeIssue(c issueCall, issues sourcecontrol.IssueService, threads IssueThreadRemover, reason string) {
 	if strings.TrimSpace(reason) == "" {
 		c.fail("reason is required: it is posted as the closing comment")
 		return
 	}
-	if err := issues.CloseIssue(c.ctx, c.org, c.proj, c.number, reason); err != nil {
+	commentErr := issues.CommentIssue(c.ctx, c.org, c.proj, c.number, reason)
+	if commentErr != nil {
+		slog.WarnContext(c.ctx, "issue agent: could not post the closing reason",
+			"org", c.org, "project", c.proj, "issue", c.number, "error", commentErr)
+	}
+	if err := issues.CloseIssue(c.ctx, c.org, c.proj, c.number, ""); err != nil {
 		c.failed("close the issue", err)
 		return
 	}
@@ -259,6 +269,10 @@ func closeIssue(c issueCall, issues sourcecontrol.IssueService, threads IssueThr
 			slog.ErrorContext(c.ctx, "issue agent: could not remove the closed issue's thread",
 				"org", c.org, "project", c.proj, "issue", c.number, "error", err)
 		}
+	}
+	if commentErr != nil {
+		c.done(fmt.Sprintf("Closed #%d; the reason comment could not be posted.", c.number))
+		return
 	}
 	c.done(fmt.Sprintf("Closed #%d.", c.number))
 }

@@ -158,6 +158,9 @@ type fakeAgents struct {
 	turnCount    int
 	requests     []recordedTurn
 	lastConvPath string
+
+	deleteStatus int      // DELETE /conversations/:id answer (default 204)
+	deletes      []string // every DELETE's conversation id, in order
 }
 
 type recordedTurn struct {
@@ -172,6 +175,7 @@ func newFakeAgents(t *testing.T) *fakeAgents {
 		turnStatus:       200,
 		convStatus:       200,
 		convBody:         `{"messages":[{"role":"user","content":"hi"}]}`,
+		deleteStatus:     http.StatusNoContent,
 		entered:          make(chan struct{}, 1),
 		release:          make(chan struct{}),
 		preHeaderEntered: make(chan struct{}, 1),
@@ -181,6 +185,12 @@ func newFakeAgents(t *testing.T) *fakeAgents {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/turns"):
 			f.handleTurn(w, r)
+		case r.Method == http.MethodDelete:
+			f.mu.Lock()
+			f.deletes = append(f.deletes, strings.TrimPrefix(r.URL.Path, "/conversations/"))
+			status := f.deleteStatus
+			f.mu.Unlock()
+			w.WriteHeader(status)
 		case r.Method == http.MethodGet:
 			f.mu.Lock()
 			f.lastConvPath = r.URL.Path
@@ -268,6 +278,13 @@ func (f *fakeAgents) sentTurn(t *testing.T, i int) recordedTurn {
 		t.Fatalf("agents saw %d turn request(s), want > %d", len(f.requests), i)
 	}
 	return f.requests[i]
+}
+
+// deleted is a copy of the conversation ids DELETEd so far.
+func (f *fakeAgents) deleted() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deletes...)
 }
 
 func (f *fakeAgents) turns(t *testing.T) int {
@@ -1737,6 +1754,7 @@ func (panicClient) Turn(context.Context, string, string, string, agentsvc.TurnRe
 func (panicClient) GetConversation(context.Context, string, string) (json.RawMessage, error) {
 	return nil, nil
 }
+func (panicClient) DeleteConversation(context.Context, string, string) error { return nil }
 
 // TestPanicBarrier_TurnFailsAndGuardReleases pins the detached-goroutine panic
 // barrier: a panic on the turn path does NOT crash the process — the turn is

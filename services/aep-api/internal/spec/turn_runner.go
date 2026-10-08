@@ -637,7 +637,10 @@ func withUsage(term TurnTerminal, m *agentfold.Manifest, contextTokens *int64) T
 // finishTurn stamps the terminal row state and emits the ONE terminal stream
 // event. A row that is no longer running (swept mid-run) keeps the sweep's
 // verdict — the runner does not overwrite it or emit a competing terminal.
+// Either way the turn is over, so a closed issue's thread removal that waited
+// for it runs last.
 func (s *Service) finishTurn(ctx context.Context, job turnJob, term TurnTerminal) {
+	defer s.removePendingThread(ctx, job)
 	ok, err := s.turns.Finish(ctx, job.turnID, term)
 	if err != nil {
 		slog.ErrorContext(ctx, "genai: finish turn row failed", "turn", job.turnID, "error", err)

@@ -42,7 +42,7 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
 | `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.ErrNoDeployedVersion` with no deployed version |
 | `issues.ComponentLister` | needs | the design's component names, sorted (spec's design, adapted in `app`) |
-| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue`; must not wait on the calling turn; a failure is logged, never the tool's |
+| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue`; must not wait on the calling turn nor use its ctx once it returns; a failure is logged, never the tool's. `close_issue` posts the reason as a comment before closing, and says so when it could not |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this

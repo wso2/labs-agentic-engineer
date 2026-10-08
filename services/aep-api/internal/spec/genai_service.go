@@ -334,6 +334,9 @@ type Service struct {
 	mcpBaseURL     string
 	finishHook     func(ctx context.Context, orgID, projectID, turnID, useCase, outcome string)
 	recorder       TurnActivityRecorder
+	// pendingRemovals are closed issues' threads waiting for their running
+	// turn to finish (issue_threads.go).
+	pendingRemovals pendingRemovals
 }
 
 // NewService wires the genai service.

@@ -18,7 +18,10 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -46,5 +49,66 @@ func TestIssueAgentPromoter_TranslatesNoDeployedVersion(t *testing.T) {
 	}
 	if err := promote(nil); err != nil {
 		t.Errorf("success: err = %v", err)
+	}
+}
+
+type fakeRepoLocator map[string][2]string
+
+func (l fakeRepoLocator) ByFullName(_ context.Context, fullName string) (string, string, error) {
+	return l[fullName][0], l[fullName][1], nil
+}
+
+type recordingThreadRemover struct {
+	calls []string
+	err   error
+}
+
+func (r *recordingThreadRemover) RemoveIssueThread(_ context.Context, org, project string, n int) error {
+	r.calls = append(r.calls, fmt.Sprintf("%s/%s#%d", org, project, n))
+	return r.err
+}
+
+// GitHub's issues.closed removes the closed issue's thread in the project its
+// repository backs — whoever closed it, the platform included. A repository
+// that is not one of ours, a pull request and a malformed delivery remove
+// nothing; a removal failure fails the delivery so GitHub redelivers it.
+func TestIssueThreadsOnClose(t *testing.T) {
+	locator := fakeRepoLocator{"acme/expenses": {"acme", "expenses"}}
+	payload := func(repo string, n int, pr bool) []byte {
+		p := map[string]any{"issue": map[string]any{"number": n}, "repository": map[string]any{"full_name": repo}}
+		if pr {
+			p["issue"].(map[string]any)["pull_request"] = map[string]any{"url": "x"}
+		}
+		b, _ := json.Marshal(p)
+		return b
+	}
+	cases := []struct {
+		name    string
+		payload []byte
+		want    []string
+	}{
+		{"known repo", payload("acme/expenses", 7, false), []string{"acme/expenses#7"}},
+		{"unknown repo", payload("someone/else", 7, false), nil},
+		{"pull request", payload("acme/expenses", 7, true), nil},
+		{"no number", payload("acme/expenses", 0, false), nil},
+		{"malformed", []byte("{"), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			threads := &recordingThreadRemover{}
+			h := issueThreadsOnClose{repos: locator, threads: threads}
+			if err := h.OnIssueClosed(context.Background(), "issues", "closed", tc.payload); err != nil {
+				t.Fatalf("OnIssueClosed: %v", err)
+			}
+			if !reflect.DeepEqual(threads.calls, tc.want) {
+				t.Fatalf("removals = %v, want %v", threads.calls, tc.want)
+			}
+		})
+	}
+
+	down := errors.New("db down")
+	h := issueThreadsOnClose{repos: locator, threads: &recordingThreadRemover{err: down}}
+	if err := h.OnIssueClosed(context.Background(), "issues", "closed", payload("acme/expenses", 7, false)); !errors.Is(err, down) {
+		t.Fatalf("removal failure: err = %v, want it returned", err)
 	}
 }

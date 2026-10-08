@@ -167,6 +167,15 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   ignored), and a spec scope or prototype feedback is refused with 400. Rehydrate is addressed by
   thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
   and the status poll read the main chat's newest turn only.
+- **A closed issue's thread is removed** (`issue_threads.go`). `RemoveIssueThread` deletes every
+  `project_conversations` row of the issue's `issue-<n>` use case (current and demoted) and then
+  each one's agents-service conversation (`DELETE /conversations/:id`; a failure is logged and the
+  rows go anyway — the agents store's TTL sweep reaps the orphan). Two triggers, so it is
+  idempotent: the issue agent's `close_issue` and GitHub's `issues.closed` webhook (app root, no
+  echo filter). A turn running on the thread is never interrupted: the removal is marked and the
+  turn's `finishTurn` performs it after the terminal write (mark-then-check / take-once, so exactly
+  one side removes). The mark lives in memory — aep-api is one replica; a restart drops it and the
+  rows stay until the next close (a closed issue's thread is refused anyway).
 - **The Issues outcome reaches the main chat** (`turn_runner.go`). An Issues turn's terminal
   manifest carries its `outcome` (`Filed #N: <title>` when it filed, else its last reply; ≤ 400 chars), stored on `agent_turns.outcome`.
   A main-chat dispatch reads `BranchOutcomes` — the Issues turns that FINISHED (`updated_at`) with

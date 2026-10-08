@@ -43,8 +43,10 @@ type issueRecorder struct {
 	issue    *sourcecontrol.IssueInfo
 	comments []sourcecontrol.IssueComment
 	err      error
-	calls    []string
-	boundOrg string
+	// commentErr fails CommentIssue alone (after recording the call).
+	commentErr error
+	calls      []string
+	boundOrg   string
 }
 
 func (f *issueRecorder) record(ctx context.Context, op, org, project string, n int, arg string) error {
@@ -68,7 +70,10 @@ func (f *issueRecorder) ListIssueComments(ctx context.Context, org, project stri
 }
 
 func (f *issueRecorder) CommentIssue(ctx context.Context, org, project string, n int, body string) error {
-	return f.record(ctx, "comment", org, project, n, body)
+	if err := f.record(ctx, "comment", org, project, n, body); err != nil {
+		return err
+	}
+	return f.commentErr
 }
 
 func (f *issueRecorder) EditIssueTitle(ctx context.Context, org, project string, n int, title string) error {
@@ -241,7 +246,7 @@ func TestIssueMCPWritesActOnTheClaimedIssueOnly(t *testing.T) {
 		{"edit_issue", map[string]any{"title": "New title"}, []string{"title acme/acme-expenses#7 New title"}},
 		{"edit_issue", map[string]any{"body": "New body"}, []string{"body acme/acme-expenses#7 New body"}},
 		{"edit_issue", map[string]any{"title": "T", "body": "B"}, []string{"title acme/acme-expenses#7 T", "body acme/acme-expenses#7 B"}},
-		{"close_issue", map[string]any{"reason": "Fixed in v2."}, []string{"close acme/acme-expenses#7 Fixed in v2.", "remove-thread acme/acme-expenses#7 "}},
+		{"close_issue", map[string]any{"reason": "Fixed in v2."}, []string{"comment acme/acme-expenses#7 Fixed in v2.", "close acme/acme-expenses#7 ", "remove-thread acme/acme-expenses#7 "}},
 		{"reopen_issue", nil, []string{"reopen acme/acme-expenses#7 "}},
 		{"hand_to_coding_agent", map[string]any{"component": "api"}, []string{"promote acme/acme-expenses#7 api"}},
 	}
@@ -336,7 +341,24 @@ func TestIssueMCPCloseWithoutARemover(t *testing.T) {
 	if text, isErr := callToolAs(t, h, issueScope, "close_issue", map[string]any{"reason": "Done."}); isErr {
 		t.Fatalf("close_issue failed: %s", text)
 	}
-	if want := []string{"close acme/acme-expenses#7 Done."}; !reflect.DeepEqual(rec.calls, want) {
+	if want := []string{"comment acme/acme-expenses#7 Done.", "close acme/acme-expenses#7 "}; !reflect.DeepEqual(rec.calls, want) {
 		t.Fatalf("calls = %v, want %v", rec.calls, want)
+	}
+}
+
+// The reason is posted before the close, so a lost comment is known: the
+// issue still closes (what the user confirmed) and its thread — the only other
+// place the reason lived — is still removed, but the answer says the comment
+// was not posted.
+func TestIssueMCPCloseSaysWhenTheReasonCommentWasLost(t *testing.T) {
+	r := newIssueRig()
+	r.issues.commentErr = errors.New("GitHub 502")
+	text, isErr := r.call(t, issueScope, "close_issue", map[string]any{"reason": "Fixed in v2."})
+	if isErr || text != "Closed #7; the reason comment could not be posted." {
+		t.Fatalf("got %q isError=%v, want the close answer naming the lost comment", text, isErr)
+	}
+	want := []string{"comment acme/acme-expenses#7 Fixed in v2.", "close acme/acme-expenses#7 ", "remove-thread acme/acme-expenses#7 "}
+	if !reflect.DeepEqual(r.issues.calls, want) {
+		t.Fatalf("calls = %v, want %v", r.issues.calls, want)
 	}
 }

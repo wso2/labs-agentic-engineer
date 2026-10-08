@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ProjectConversation is the project's chat thread pointer (#430): which
@@ -34,8 +35,9 @@ import (
 // Exactly one current row per scope, enforced by the partial unique index
 // ux_project_conversations_current (migrate/project_conversations.go — the
 // #420 admission pattern). Rotation demotes the current row and inserts a
-// fresh one; demoted rows survive as the multi-conversation future's history
-// and are never deleted here.
+// fresh one; demoted rows survive as the multi-conversation future's history.
+// The one deletion is a closed issue's: DeleteUseCase drops every thread of
+// its issue-<n> use case (issue_threads.go).
 type ProjectConversation struct {
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"conversationId"`
 	OrgID     string `gorm:"not null;index" json:"-"`
@@ -89,6 +91,11 @@ type ConversationRepository interface {
 	// current or demoted — for a read addressed by thread id alone
 	// (rehydrate); "" when id names none of them.
 	UseCaseOf(ctx context.Context, orgID, projectID, id string) (string, error)
+
+	// DeleteUseCase deletes every thread of the scope — current and demoted —
+	// and returns their ids (none when the scope has no thread). Removing a
+	// closed issue's thread; no other scope is touched.
+	DeleteUseCase(ctx context.Context, orgID, projectID, useCase string) ([]string, error)
 }
 
 type conversationRepository struct{ db *gorm.DB }
@@ -265,4 +272,20 @@ func (r *conversationRepository) UseCaseOf(ctx context.Context, orgID, projectID
 		return "", err
 	}
 	return useCases[0], nil
+}
+
+func (r *conversationRepository) DeleteUseCase(ctx context.Context, orgID, projectID, useCase string) ([]string, error) {
+	var deleted []ProjectConversation
+	err := r.db.WithContext(ctx).
+		Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}}}).
+		Where("org_id = ? AND project_id = ? AND use_case = ?", orgID, projectID, useCase).
+		Delete(&deleted).Error
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(deleted))
+	for _, row := range deleted {
+		ids = append(ids, row.ID)
+	}
+	return ids, nil
 }

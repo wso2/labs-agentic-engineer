@@ -143,6 +143,28 @@ func (m *memConversationRepo) UseCaseOf(_ context.Context, org, project, id stri
 	return "", nil
 }
 
+func (m *memConversationRepo) DeleteUseCase(_ context.Context, org, project, useCase string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	scope := m.key(org, project, useCase) + "/"
+	var ids []string
+	for k := range m.created {
+		if id, ok := strings.CutPrefix(k, scope); ok {
+			ids = append(ids, id)
+			delete(m.created, k)
+		}
+	}
+	delete(m.rows, m.key(org, project, useCase))
+	kept := m.demoted[:0]
+	for _, d := range m.demoted {
+		if !strings.HasPrefix(d, scope) {
+			kept = append(kept, d)
+		}
+	}
+	m.demoted = kept
+	return ids, nil
+}
+
 type conversationViewBody struct {
 	ConversationID string `json:"conversationId"`
 	Current        bool   `json:"current"`

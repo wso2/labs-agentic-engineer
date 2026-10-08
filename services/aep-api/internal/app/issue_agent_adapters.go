@@ -18,7 +18,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
@@ -37,4 +39,47 @@ func (p issueAgentPromoter) PromoteAndExecute(ctx context.Context, orgID, projec
 		return scissues.ErrNoDeployedVersion
 	}
 	return err
+}
+
+// issueThreadsOnClose removes a closed issue's chat thread on GitHub's
+// issues.closed webhook (round three §4) — whoever closed it: a user on
+// GitHub, a merged pull request, the SRE agent or the platform. Unlike the
+// event plane's issues handlers it has no echo filter: the removal is
+// idempotent, so the platform's own close (the issue agent's close_issue
+// already removed the thread) finds nothing left to do.
+type issueThreadsOnClose struct {
+	repos interface {
+		ByFullName(ctx context.Context, fullName string) (orgID, projectID string, err error)
+	}
+	threads scissues.IssueThreadRemover
+}
+
+func (h issueThreadsOnClose) OnIssueClosed(ctx context.Context, _, _ string, payload []byte) error {
+	var p struct {
+		Issue struct {
+			Number      int             `json:"number"`
+			PullRequest json.RawMessage `json:"pull_request"`
+		} `json:"issue"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	}
+	if err := json.Unmarshal(payload, &p); err != nil {
+		return nil // malformed delivery — ack, nothing to do
+	}
+	// A pull request has no issue thread.
+	if p.Issue.Number < 1 || p.Issue.PullRequest != nil || p.Repository.FullName == "" {
+		return nil
+	}
+	orgID, projectID, err := h.repos.ByFullName(ctx, p.Repository.FullName)
+	if err != nil {
+		return fmt.Errorf("resolve the closed issue's project: %w", err)
+	}
+	if projectID == "" {
+		return nil // not one of ours
+	}
+	if err := h.threads.RemoveIssueThread(ctx, orgID, projectID, p.Issue.Number); err != nil {
+		return fmt.Errorf("remove the closed issue's thread: %w", err)
+	}
+	return nil
 }

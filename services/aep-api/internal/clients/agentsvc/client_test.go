@@ -231,6 +231,34 @@ func TestGetConversation(t *testing.T) {
 	}
 }
 
+// DeleteConversation sends an org-fenced, M2M-authenticated DELETE; absent
+// (404) is the goal state, any other non-2xx is a typed upstream error.
+func TestDeleteConversation(t *testing.T) {
+	srv := newRecordingServer(t, http.StatusNoContent, "", "")
+	c := New(Config{BaseURL: srv.URL, Secret: "shh"})
+	if err := c.DeleteConversation(context.Background(), "cid-1", "org-o"); err != nil {
+		t.Fatalf("DeleteConversation: %v", err)
+	}
+	if srv.method != http.MethodDelete || srv.path != "/conversations/cid-1" {
+		t.Errorf("request = %s %s, want DELETE /conversations/cid-1", srv.method, srv.path)
+	}
+	if srv.headers.Get("X-Org-Id") != "org-o" || !strings.HasPrefix(srv.headers.Get("Authorization"), "Bearer ") {
+		t.Errorf("headers = %v, want X-Org-Id and a bearer", srv.headers)
+	}
+
+	gone := newRecordingServer(t, http.StatusNotFound, `{}`, "application/json")
+	if err := New(Config{BaseURL: gone.URL, Secret: "shh"}).DeleteConversation(context.Background(), "cid-1", "org-o"); err != nil {
+		t.Errorf("404: %v, want nil (already absent)", err)
+	}
+
+	refused := newRecordingServer(t, http.StatusForbidden, `{"error":"org"}`, "application/json")
+	err := New(Config{BaseURL: refused.URL, Secret: "shh"}).DeleteConversation(context.Background(), "cid-1", "org-o")
+	var ue *UpstreamError
+	if !errors.As(err, &ue) || ue.StatusCode != http.StatusForbidden {
+		t.Fatalf("403: got %v, want *UpstreamError 403", err)
+	}
+}
+
 // The connection rides the turn body in the shape @aep/agent-stream's
 // TurnConnection pins, its capabilities computed by modelconn.CapabilitiesOf.
 func TestConnectionFor_WireShape(t *testing.T) {

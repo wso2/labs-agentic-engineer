@@ -362,3 +362,76 @@ func TestConversationRepo_UseCaseOf(t *testing.T) {
 		}
 	}
 }
+
+// DeleteUseCase removes every thread of one use case — current and demoted —
+// and names them; every other scope's threads stay.
+func TestConversationRepo_DeleteUseCase(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	resolve := func(project, useCase string) string {
+		t.Helper()
+		row, err := repo.ResolveCurrent(ctx, "o1", project, useCase, "ada")
+		if err != nil {
+			t.Fatalf("ResolveCurrent %s/%s: %v", project, useCase, err)
+		}
+		return row.ID
+	}
+	demoted := resolve("p1", "issue-7")
+	current, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+	keep := map[string][2]string{
+		"main":     {"general", resolve("p1", "general")},
+		"issues":   {"issues", resolve("p1", "issues")},
+		"issue 8":  {"issue-8", resolve("p1", "issue-8")},
+		"issue 70": {"issue-70", resolve("p1", "issue-70")},
+	}
+	otherProject := resolve("p2", "issue-7")
+
+	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7")
+	if err != nil {
+		t.Fatalf("DeleteUseCase: %v", err)
+	}
+	if len(got) != 2 || !containsAll(got, demoted, current.ID) {
+		t.Fatalf("deleted = %v, want the demoted %s and current %s", got, demoted, current.ID)
+	}
+	for _, id := range []string{demoted, current.ID} {
+		if ok, err := repo.Exists(ctx, "o1", "p1", "issue-7", id); err != nil || ok {
+			t.Errorf("Exists(%s) = (%v, %v) after delete, want (false, nil)", id, ok, err)
+		}
+	}
+	for name, k := range keep {
+		if ok, err := repo.IsCurrent(ctx, "o1", "p1", k[0], k[1]); err != nil || !ok {
+			t.Errorf("%s thread gone after deleting issue-7: (%v, %v)", name, ok, err)
+		}
+	}
+	if ok, err := repo.IsCurrent(ctx, "o1", "p2", "issue-7", otherProject); err != nil || !ok {
+		t.Errorf("another project's issue-7 thread gone: (%v, %v)", ok, err)
+	}
+
+	// Idempotent: nothing left to delete.
+	again, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7")
+	if err != nil || len(again) != 0 {
+		t.Fatalf("second DeleteUseCase = (%v, %v), want (none, nil)", again, err)
+	}
+	// A later resolve mints a fresh thread.
+	if fresh := resolve("p1", "issue-7"); fresh == demoted || fresh == current.ID {
+		t.Fatalf("resolve after delete returned a deleted thread %s", fresh)
+	}
+}
+
+func containsAll(have []string, want ...string) bool {
+	set := map[string]bool{}
+	for _, h := range have {
+		set[h] = true
+	}
+	for _, w := range want {
+		if !set[w] {
+			return false
+		}
+	}
+	return true
+}
