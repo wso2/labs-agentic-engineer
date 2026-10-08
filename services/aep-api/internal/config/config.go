@@ -219,6 +219,12 @@ type Config struct {
 	// re-creates after the TTL never runs the runner again.
 	CodingAgentJobTTL time.Duration
 
+	// CodingAgentCPURequest is the CPU each coding-agent Job requests, a CPU
+	// quantity ("500m", "0.25", "1") no greater than CodingAgentCPUCeiling.
+	// Default 500m (CODING_AGENT_CPU_REQUEST), the ComponentType's own default;
+	// lower it on a CPU-starved dataplane. Memory is not configurable.
+	CodingAgentCPURequest string
+
 	// Temporal holds the workflow-engine connection settings for the devflow
 	// feature. Enabled iff HostPort is set — unset leaves aep-api fully
 	// functional with the workflow endpoints answering 503.

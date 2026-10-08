@@ -691,12 +691,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ocDispatcher := codingagent.NewOCDispatcher(componentClient, writeTargets).
 			WithImage(cfg.AgentRunnerImage).
 			WithOpenCodeImage(cfg.AgentRunnerImageOpenCode).
-			WithJobTTL(cfg.CodingAgentJobTTL)
+			WithJobTTL(cfg.CodingAgentJobTTL).
+			WithCPURequest(cfg.CodingAgentCPURequest)
 		codingExecutor.WithOCDispatch(ocDispatcher)
 		slog.Info("coding executor: OpenChoreo component dispatch path enabled",
 			"runnerImage", cfg.AgentRunnerImage,
 			"runnerImageOpenCode", cfg.AgentRunnerImageOpenCode,
-			"jobTTL", cfg.CodingAgentJobTTL.String())
+			"jobTTL", cfg.CodingAgentJobTTL.String(),
+			"cpuRequest", cfg.CodingAgentCPURequest)
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
 	// (the local plane sets GITHUB_REPO_VISIBILITY=private). Reuses the same

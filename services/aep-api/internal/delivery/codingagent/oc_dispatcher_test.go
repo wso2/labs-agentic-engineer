@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ type fakeOCSurface struct {
 	ensureTypeErr          error
 	simulateCreateConflict bool // mirrors ComponentClient 409 → GetComponent
 	componentUID           string
+	ensuredType            map[string]any
 }
 
 func (f *fakeOCSurface) note(op string) {
@@ -51,8 +53,11 @@ func (f *fakeOCSurface) note(op string) {
 	f.calls = append(f.calls, op)
 }
 
-func (f *fakeOCSurface) EnsureComponentType(_ context.Context, _ string, _ map[string]any) error {
+func (f *fakeOCSurface) EnsureComponentType(_ context.Context, _ string, body map[string]any) error {
 	f.note("ensure-type")
+	f.mu.Lock()
+	f.ensuredType = body
+	f.mu.Unlock()
 	return f.ensureTypeErr
 }
 
@@ -317,5 +322,18 @@ func TestDispatch_ReportsTheComponentUID(t *testing.T) {
 				t.Errorf("ComponentUID = %q, want uid-9", got.ComponentUID)
 			}
 		})
+	}
+}
+
+// The configured CPU request reaches the ComponentType ensured on dispatch.
+func TestDispatch_EnsuresTheTypeWithTheConfiguredCPURequest(t *testing.T) {
+	fake := &fakeOCSurface{}
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img").WithCPURequest("100m")
+	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
+		t.Fatal(err)
+	}
+	want := openchoreo.CodingAgentComponentType(openchoreo.CodingAgentResources{CPURequest: "100m"})
+	if !reflect.DeepEqual(fake.ensuredType, want) {
+		t.Fatal("ensured ComponentType does not carry the configured CPU request")
 	}
 }

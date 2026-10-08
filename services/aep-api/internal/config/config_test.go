@@ -212,3 +212,33 @@ func TestLoad_SREHandoff(t *testing.T) {
 		}
 	})
 }
+
+func TestLoad_CodingAgentCPURequest(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentCPURequest != "500m" {
+		t.Fatalf("default CodingAgentCPURequest = %q, want 500m", cfg.CodingAgentCPURequest)
+	}
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "250m")
+	if cfg, err = Load(); err != nil || cfg.CodingAgentCPURequest != "250m" {
+		t.Fatalf("Load = %q, %v; want 250m", cfg.CodingAgentCPURequest, err)
+	}
+	const secretish = "bogus-cpu-value-xyz"
+	for _, bad := range []string{secretish, "0", "-1", "4", "3001m", "1.5.2", "0m"} {
+		t.Setenv("CODING_AGENT_CPU_REQUEST", bad)
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("%q must fail Load", bad)
+		}
+		if !strings.Contains(err.Error(), "CODING_AGENT_CPU_REQUEST") {
+			t.Fatalf("%q: error must name the key: %v", bad, err)
+		}
+		if len(bad) > 5 && strings.Contains(err.Error(), bad) {
+			t.Fatalf("%q: error must not echo the value: %v", bad, err)
+		}
+	}
+}

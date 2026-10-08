@@ -42,7 +42,7 @@ func TestEnsureComponentType_Create(t *testing.T) {
 	defer srv.Close()
 
 	c := NewComponentClient(Config{BaseURL: srv.URL})
-	err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType())
+	err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType(CodingAgentResources{}))
 	if err != nil {
 		t.Fatalf("EnsureComponentType: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestEnsureComponentType_Create(t *testing.T) {
 // simulated without hand-writing a second copy of the whole spec.
 func storedSpec(t *testing.T, mutate func(props map[string]any)) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(CodingAgentComponentType()["spec"])
+	raw, err := json.Marshal(CodingAgentComponentType(CodingAgentResources{})["spec"])
 	if err != nil {
 		t.Fatalf("marshal desired spec: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestEnsureComponentType_ConflictLeavesACurrentTypeAlone(t *testing.T) {
 	srv := f.serve(t)
 
 	c := NewComponentClient(Config{BaseURL: srv.URL})
-	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType()); err != nil {
+	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType(CodingAgentResources{})); err != nil {
 		t.Fatalf("EnsureComponentType: %v", err)
 	}
 	if f.posts != 1 || f.gets != 1 {
@@ -183,7 +183,7 @@ func TestEnsureComponentType_ConflictConvergesAStaleType(t *testing.T) {
 	srv := f.serve(t)
 
 	c := NewComponentClient(Config{BaseURL: srv.URL})
-	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType()); err != nil {
+	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType(CodingAgentResources{})); err != nil {
 		t.Fatalf("EnsureComponentType: %v", err)
 	}
 	if f.posts != 1 || f.gets != 1 || f.puts() != 1 {
@@ -201,7 +201,7 @@ func TestEnsureComponentType_ConflictConvergesAStaleType(t *testing.T) {
 	// The write settled it: a second ensure over the now-current type is a
 	// read again, not a second write. Convergence must not be a per-dispatch
 	// rewrite loop.
-	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType()); err != nil {
+	if err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType(CodingAgentResources{})); err != nil {
 		t.Fatalf("second EnsureComponentType: %v", err)
 	}
 	if f.puts() != 1 {
@@ -237,7 +237,7 @@ func TestEnsureComponentType_ConflictSurfacesAFailedUpdate(t *testing.T) {
 	srv := f.serve(t)
 
 	c := NewComponentClient(Config{BaseURL: srv.URL})
-	err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType())
+	err := c.EnsureComponentType(context.Background(), "wc-abc", CodingAgentComponentType(CodingAgentResources{}))
 	if err == nil {
 		t.Fatal("a refused update must not be reported as a successful ensure")
 	}

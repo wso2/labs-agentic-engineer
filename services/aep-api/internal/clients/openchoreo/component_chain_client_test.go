@@ -624,7 +624,7 @@ const (
 // release cut before the suspend schema carries.
 func codingAgentReleaseFixture(t *testing.T, withSuspend bool) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(CodingAgentComponentType()["spec"])
+	raw, err := json.Marshal(CodingAgentComponentType(CodingAgentResources{})["spec"])
 	if err != nil {
 		t.Fatal(err)
 	}

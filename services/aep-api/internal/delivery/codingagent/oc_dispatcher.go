@@ -137,6 +137,8 @@ type OCDispatcher struct {
 	// jobTTLSeconds is rendered as each Component's ttlSecondsAfterFinished;
 	// 0 leaves the ComponentType's schema default.
 	jobTTLSeconds int
+	// resources tunes the ComponentType ensured before every dispatch.
+	resources openchoreo.CodingAgentResources
 }
 
 // runnerImage is one runtime's runner image and the deploy setting it comes
@@ -193,6 +195,13 @@ func (d *OCDispatcher) WithJobTTL(ttl time.Duration) *OCDispatcher {
 	return d
 }
 
+// WithCPURequest sets the CPU request default the ComponentType carries
+// (CODING_AGENT_CPU_REQUEST); empty keeps the schema default.
+func (d *OCDispatcher) WithCPURequest(quantity string) *OCDispatcher {
+	d.resources.CPURequest = quantity
+	return d
+}
+
 // Dispatch launches one cycle and reports the Component (= RunName) and the
 // environment its Job was bound into.
 //
@@ -210,7 +219,7 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		return OCDispatchResult{}, err
 	}
 
-	if err := d.oc.EnsureComponentType(ctx, in.OrgID, openchoreo.CodingAgentComponentType()); err != nil {
+	if err := d.oc.EnsureComponentType(ctx, in.OrgID, openchoreo.CodingAgentComponentType(d.resources)); err != nil {
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: ensure ComponentType: %w", err)
 	}
 

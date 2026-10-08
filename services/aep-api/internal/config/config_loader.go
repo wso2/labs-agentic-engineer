@@ -145,6 +145,8 @@ func Load() (Config, error) {
 		ObserverLogRetention: r.readOptionalDuration("OBSERVER_LOG_RETENTION", 72*time.Hour),
 		// Finished cycle Jobs are deleted after this; see Config.CodingAgentJobTTL.
 		CodingAgentJobTTL: r.readOptionalDuration("CODING_AGENT_JOB_TTL", 600*time.Second),
+		// See Config.CodingAgentCPURequest.
+		CodingAgentCPURequest: r.readOptionalCPU("CODING_AGENT_CPU_REQUEST", "500m", CodingAgentCPUCeilingMillicores),
 	}
 
 	if len(r.errors) > 0 {
@@ -380,6 +382,26 @@ func (r *configReader) readOptionalDuration(key string, defaultVal time.Duration
 		return defaultVal
 	}
 	return d
+}
+
+// readOptionalCPU returns the env's CPU quantity verbatim, defaultVal when
+// empty. A quantity that does not parse or exceeds maxMillicores records an
+// error naming the key only, never the value.
+func (r *configReader) readOptionalCPU(key, defaultVal string, maxMillicores int) string {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	m, err := ParseCPUMillicores(val)
+	switch {
+	case err != nil:
+		r.errors = append(r.errors, fmt.Errorf("%s: %w", key, err))
+		return defaultVal
+	case m > maxMillicores:
+		r.errors = append(r.errors, fmt.Errorf("%s: above the maximum of %dm", key, maxMillicores))
+		return defaultVal
+	}
+	return val
 }
 
 func (r *configReader) readOptionalBool(key string, defaultVal bool) bool {

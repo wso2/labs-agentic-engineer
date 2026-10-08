@@ -167,6 +167,10 @@ spec:
             # How long a finished cycle Job (and its pod) is kept (Go duration).
             - name: CODING_AGENT_JOB_TTL
               value: {{ .Values.codingAgentRunner.jobTTL | quote }}
+            {{- if .Values.codingAgentRunner.cpuRequest }}
+            - name: CODING_AGENT_CPU_REQUEST
+              value: {{ .Values.codingAgentRunner.cpuRequest | quote }}
+            {{- end }}
             {{- $ae := default dict .Values.aeStudio }}
             # AE Studio (all optional at boot; see values.yaml aeStudio).
             - name: AE_STUDIO_INTERNAL_CLIENT_ID

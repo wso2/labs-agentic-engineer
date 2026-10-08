@@ -861,7 +861,7 @@ func TestDispatch_CodingCycleCarriesTheThreeHourDeadline(t *testing.T) {
 // what OpenChoreo rejects against, so a deadline raised on this side alone would
 // not time a run out — it would fail the dispatch outright.
 func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
-	spec, _ := openchoreo.CodingAgentComponentType()["spec"].(map[string]any)
+	spec, _ := openchoreo.CodingAgentComponentType(openchoreo.CodingAgentResources{})["spec"].(map[string]any)
 	params, _ := spec["parameters"].(map[string]any)
 	schema, _ := params["openAPIV3Schema"].(map[string]any)
 	props, _ := schema["properties"].(map[string]any)

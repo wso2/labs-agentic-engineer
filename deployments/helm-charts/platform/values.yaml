@@ -148,6 +148,10 @@ codingAgentRunner:
   # ttlSecondsAfterFinished). The cycle's binding is suspended once the run is
   # over, so the Job OpenChoreo re-creates after the TTL never runs again.
   jobTTL: 600s
+  # CPU each cycle Job requests (CODING_AGENT_CPU_REQUEST): a positive CPU
+  # quantity such as 250m or 0.5, at most 3. Empty keeps the ComponentType's
+  # 500m. Lower it on a CPU-starved dataplane. Memory is not tunable.
+  cpuRequest: ""
 
 # Coding-agent dispatch wiring.
 #

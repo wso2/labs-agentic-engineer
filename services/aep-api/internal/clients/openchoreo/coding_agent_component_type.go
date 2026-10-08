@@ -16,7 +16,11 @@
 
 package openchoreo
 
-import "github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+import (
+	"slices"
+
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+)
 
 // CodingAgentComponentTypeName is the namespaced ComponentType name seeded
 // per org. Billing aliases key on this exact string (and job/coding-agent).
@@ -31,6 +35,29 @@ const CodingAgentDeadlineCeilingSeconds = 10800
 // CodingAgentComponentTypeRef is what a Component's spec.componentType.name
 // carries — {workloadType}/{typeName}. Matches OC's API name format.
 const CodingAgentComponentTypeRef = "job/coding-agent"
+
+// CodingAgentResources is the deploy-time tuning of the ComponentType. The zero
+// value renders the schema every org already has.
+type CodingAgentResources struct {
+	// CPURequest is the Job's CPU request default (CODING_AGENT_CPU_REQUEST).
+	// Empty or "500m" leaves the schema byte-for-byte as before:
+	// EnsureComponentType PUTs on any body difference. Memory is not tunable.
+	CPURequest string
+}
+
+// cpuRequestSchema renders the cpuRequest parameter. A default outside the base
+// enum is added to it so the schema accepts its own default.
+func (r CodingAgentResources) cpuRequestSchema() map[string]any {
+	enum := []any{"500m", "1"}
+	def := "500m"
+	if r.CPURequest != "" {
+		def = r.CPURequest
+		if !slices.Contains(enum, any(def)) {
+			enum = append([]any{def}, enum...)
+		}
+	}
+	return map[string]any{"type": "string", "default": def, "enum": enum}
+}
 
 // CodingAgentComponentType returns the desired namespaced ComponentType body
 // for EnsureComponentType. workloadType=job; ExternalSecrets from
@@ -49,7 +76,7 @@ const CodingAgentComponentTypeRef = "job/coding-agent"
 // copy would run the runner a second time. The `suspend` environmentConfig,
 // set true on the cycle's binding once the run is over (SuspendJobBinding), is
 // what makes the re-created Job inert: it is born suspended.
-func CodingAgentComponentType() map[string]any {
+func CodingAgentComponentType(res CodingAgentResources) map[string]any {
 	return map[string]any{
 		"apiVersion": "openchoreo.dev/v1alpha1",
 		"kind":       "ComponentType",
@@ -105,10 +132,7 @@ func CodingAgentComponentType() map[string]any {
 						// REQUESTS, so a bursting runner is squeezed back toward its
 						// 500m share as soon as anything else becomes runnable,
 						// rather than holding 3 cores against it.
-						"cpuRequest": map[string]any{
-							"type": "string", "default": "500m",
-							"enum": []any{"500m", "1"},
-						},
+						"cpuRequest": res.cpuRequestSchema(),
 						"cpuLimit": map[string]any{
 							"type": "string", "default": "3",
 							"enum": []any{"500m", "1", "2", "3"},
