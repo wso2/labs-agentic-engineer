@@ -1032,9 +1032,11 @@ func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
 	if len(jobs.suspends) != 1 || cycles.suspended["c1"] {
 		t.Fatalf("a pod from before the attempt must not suspend it: suspends %v, marked %v", jobs.suspends, cycles.suspended)
 	}
-	w.Tick(context.Background()) // the sustained no-pod verdict
-	if cycles.finished["c1"] != StartupFailureReason(openchoreo.RuntimePod{}, nil) {
-		t.Fatalf("finished = %v: attempt 2 never started, and attempt 1's pod must not hide it", cycles.finished)
+	w.Tick(context.Background()) // the sustained verdict, past the apply cap
+	// Only attempt 1's Job and pod are in the tree: nothing of attempt 2 was
+	// ever applied.
+	if cycles.finished["c1"] != ReasonNotApplied {
+		t.Fatalf("finished = %v: attempt 2 never started, and attempt 1's Job and pod must not hide it", cycles.finished)
 	}
 	causes := []string{}
 	for _, r := range logsNamed(*logs, "codingagent.job_suspended") {
@@ -1097,7 +1099,7 @@ func TestTick_FirstAttemptsPodIsNeverALeftover(t *testing.T) {
 func TestTick_PodWithinTheClockSkewIsTheCurrentAttempts(t *testing.T) {
 	c := redispatched(dispatchedCycle("c1", time.Minute), 0)
 	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded",
-		CreatedAt: c.DispatchedAt.Add(-podClockSkew / 2)}}
+		CreatedAt: c.DispatchedAt.Add(-dispatchClockSkew / 2)}}
 	jobs := &fakeJobs{}
 	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
 	if len(jobs.suspends) != 1 {
@@ -1112,7 +1114,9 @@ func TestTick_PodWithinTheClockSkewIsTheCurrentAttempts(t *testing.T) {
 func TestTick_RunningPodAtRedispatchIsTheCurrentAttempt(t *testing.T) {
 	c := redispatched(dispatchedCycle("c1", 3*time.Hour), time.Hour) // past the grace
 	created := time.Now().UTC().Add(-2 * time.Hour)
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running", CreatedAt: created}}
+	// Attempt 1's Job, still running its pod: older than the dispatch.
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running", CreatedAt: created,
+		JobFound: true, JobCreatedAt: created.Add(-time.Second)}}
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{}
 	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
@@ -1121,6 +1125,11 @@ func TestTick_RunningPodAtRedispatchIsTheCurrentAttempt(t *testing.T) {
 	}
 	if len(cycles.finished) != 0 || len(jobs.suspends) != 0 {
 		t.Fatalf("a running pod is present: finished %v, suspends %v", cycles.finished, jobs.suspends)
+	}
+	// The in-flight pod is this attempt's: it starts the clock (clamped to the
+	// dispatch), and nothing waits NotYetApplied.
+	if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(*c.DispatchedAt) || len(cycles.waits) != 0 {
+		t.Fatalf("clocks %+v, waits %+v", cycles.clocks, cycles.waits)
 	}
 
 	// It finishes after the dispatch: this attempt's terminal pod.

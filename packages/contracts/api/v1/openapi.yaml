@@ -6280,9 +6280,10 @@ components:
             platform's pod-truth watcher classified it — `timed_out` (the run
             deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed
             container), `startup_failed:<reason>: <message>` (the runner never
-            started: image pull, scheduling, or a secret that had not
-            materialised; the cycle's Job is then suspended, so its pod cannot
-            start later, and the run settles `agent-start-failed`) or
+            started: image pull, scheduling, a secret that had not
+            materialised, or `not_applied`, a Job the platform never applied
+            for the attempt; the cycle's Job is then suspended, so its pod
+            cannot start later, and the run settles `agent-start-failed`) or
             `job_not_found` (the runner's workload disappeared). Absent on every
             cycle that opened a pull request: there the pull request is the
             outcome.
@@ -6461,7 +6462,10 @@ components:
             the ones it knows to plain words and shows any other as is.
           type: string
         since:
-          description: When the watcher first saw this attempt's pod stuck.
+          description: >-
+            When the watcher first saw this attempt waiting: its Job not yet
+            applied, or its pod stuck. Kept when one wait turns into another
+            within the attempt.
           format: date-time
           type: string
       required:

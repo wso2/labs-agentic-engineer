@@ -190,8 +190,13 @@ The watcher also suspends an agent that never started. Its deadline is
 creation of the attempt's pod, or before it its Job, as the watcher first sees
 it in the resource tree, and never earlier than `dispatched_at` (`updated_at`
 on a row without it), because a re-dispatch reuses the Job and its old
-creation time. Cloud OpenChoreo applies a release 8-13 min after it is
-requested, which is why the grace does not count from the dispatch. The clock
+creation time. From attempt 2 a Job created more than `dispatchClockSkew`
+(30 s) before `dispatched_at` is attempt 1's, complete, and starts no pod:
+it counts as no Job yet (`NotYetApplied`, apply cap), and the Job OpenChoreo
+re-creates after its TTL starts the clock. That keeps `CODING_AGENT_JOB_TTL`
+plus OpenChoreo's re-create lag under the 30-min cap (600 s by default). Cloud
+OpenChoreo applies a release 8-13 min after it is requested, which is why the
+grace does not count from the dispatch. The clock
 is written once per attempt, fenced on `attempts`, `startup_clock_at IS NULL`
 and the cycle being open, so a tick that read attempt N writes nothing after a
 re-dispatch to N+1; it decides the deadline only once written. Until it is,
@@ -240,7 +245,7 @@ the watcher's startup grace reports the attempt.
 
 Attempt 1's finished pod stays in the reused binding's tree until its Job's
 TTL. From attempt 2 on, the watcher ignores a TERMINAL pod that was created and
-finished more than `podClockSkew` (30 s) before `dispatched_at`: it is neither
+finished more than `dispatchClockSkew` (30 s) before `dispatched_at`: it is neither
 the attempt's terminal pod (no suspend, no usage) nor its pod for the startup
 grace, and the in-memory absent/seen facts are kept per attempt. A Running or
 Pending pod from before the dispatch (attempt 1's agent outliving the 2 h

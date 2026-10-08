@@ -547,7 +547,7 @@ func attemptNumbers(cycle *delivery.RunCycle, groups []podGroup) []int {
 	}
 	top := currentAttempt(cycle)
 	if newest := groups[len(groups)-1]; top > 1 && cycle.DispatchedAt != nil && !newest.last.IsZero() &&
-		newest.last.Before(cycle.DispatchedAt.Add(-podClockSkew)) {
+		newest.last.Before(cycle.DispatchedAt.Add(-dispatchClockSkew)) {
 		top--
 	}
 	for i := range groups {

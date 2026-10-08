@@ -201,7 +201,7 @@ Checkpoint: `RUN`, `CYCLE_ID`, `JOB_REF`, `WORKFLOW_ID`, `PR_NUMBER`, merge sha.
 
 ## F1. An agent the cluster cannot start (local, single node, cordon)
 
-Run in place of 7v's validation, right after the dev run of P7 deploys. The node stays cordoned for about 11 minutes: uncordon first on any surprise. The cycle's startup grace is 10 minutes from the Job's creation (`failsAt`; locally the Job is applied at once, so about dispatch + 10 min).
+Run in place of 7v's validation, right after the dev run of P7 deploys. The node stays cordoned for about 11 minutes: uncordon first on any surprise. The cycle's startup grace is 10 minutes from the pod's creation, else the Job's, never before the dispatch (`failsAt`; locally the Job is applied at once, so about dispatch + 10 min).
 
 | # | Actor | Action | Pass check |
 |---|---|---|---|

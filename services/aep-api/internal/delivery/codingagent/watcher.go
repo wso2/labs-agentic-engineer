@@ -86,11 +86,11 @@ const (
 	// missingTicksToFail is B9's "sustained 404": one missing read is a race
 	// with a render or a delete, three consecutive ones are a fact.
 	missingTicksToFail = 3
-	// podClockSkew is how far a pod's creation time (the cluster's clock) may
-	// sit before the cycle's dispatch stamp (aep-api's clock) and still be the
-	// current attempt's pod. Beyond it, on a re-dispatched cycle, the pod is the
-	// previous attempt's leftover on the reused binding.
-	podClockSkew = 30 * time.Second
+	// dispatchClockSkew is how far a pod's or Job's creation time (the
+	// cluster's clock) may sit before the cycle's dispatch stamp (aep-api's
+	// clock) and still be the current attempt's. Beyond it, on a re-dispatched
+	// cycle, it is the previous attempt's leftover on the reused binding.
+	dispatchClockSkew = 30 * time.Second
 )
 
 // cycleWatchStore is the cycle state this watcher reads and writes. It is a
@@ -306,6 +306,12 @@ func (w *JobWatcher) checkCycle(ctx context.Context, cycle *delivery.RunCycle) {
 		// there.
 		pod = openchoreo.RuntimePod{JobFound: pod.JobFound, JobCreatedAt: pod.JobCreatedAt}
 	}
+	if isLeftoverJob(cycle, pod) {
+		// The previous attempt's Job on the reused binding: complete, so it
+		// starts no pod for this attempt, and OpenChoreo re-creates it only
+		// after its TTL. For this attempt it is "no Job yet".
+		pod.JobFound, pod.JobCreatedAt = false, time.Time{}
+	}
 	attempt := attemptKey(cycle)
 	if pod.Found {
 		w.seen[attempt] = true
@@ -382,7 +388,7 @@ func attemptKey(cycle *delivery.RunCycle) string {
 // Component, and attempt 1's pod stays in the tree until its Job's TTL).
 //
 // Only a TERMINAL pod can be a leftover, and only one that both started and
-// ended before this attempt was dispatched (less podClockSkew). A Running or
+// ended before this attempt was dispatched (less dispatchClockSkew). A Running or
 // Pending pod from before the dispatch is the Job still in flight — the same
 // Job cannot start a second pod — so it is watched as this attempt's: present
 // for the grace, captured and suspended at its terminal. A finish time the
@@ -397,8 +403,22 @@ func isLeftoverPod(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
 	if outcome := ClassifyPod(pod); outcome != OutcomeSucceeded && outcome != OutcomeFailed {
 		return false
 	}
-	cutoff := cycle.DispatchedAt.Add(-podClockSkew)
+	cutoff := cycle.DispatchedAt.Add(-dispatchClockSkew)
 	return pod.CreatedAt.Before(cutoff) && (pod.FinishedAt.IsZero() || pod.FinishedAt.Before(cutoff))
+}
+
+// isLeftoverJob reports whether the snapshot's Job is the previous attempt's:
+// from attempt 2, one created more than dispatchClockSkew before this
+// attempt's dispatch. A re-dispatch reuses the cycle's release and binding, so
+// attempt 1's Job stays in the tree, and its age says nothing about when this
+// attempt's pod can come. Attempt 1 is exempt for the same reason as in
+// isLeftoverPod (its dispatch is stamped after the launch), and so is a Job
+// whose creation time the tree did not carry.
+func isLeftoverJob(cycle *delivery.RunCycle, pod openchoreo.RuntimePod) bool {
+	if !pod.JobFound || cycle.Attempts <= 1 || cycle.DispatchedAt == nil || pod.JobCreatedAt.IsZero() {
+		return false
+	}
+	return pod.JobCreatedAt.Before(cycle.DispatchedAt.Add(-dispatchClockSkew))
 }
 
 // The causes a watcher suspend is announced with (codingagent.job_suspended
@@ -505,9 +525,9 @@ func (w *JobWatcher) checkStartupGrace(ctx context.Context, cycle *delivery.RunC
 }
 
 // noteStartupClock starts the attempt's startup grace the first time the tree
-// carries its pod, or before the pod its Job: at that pod's (else the Job's)
-// creation, never before the attempt's dispatch — a re-dispatch reuses the
-// cycle's Job, whose creation can be long before the new attempt. Written once
+// carries its pod, or before the pod its Job (leftovers of an earlier attempt
+// are already blanked): at that pod's (else the Job's) creation, never before
+// the attempt's dispatch. Written once
 // per attempt and fenced on the attempt this tick read, so a tick that lost a
 // race with a re-dispatch writes nothing. The clock decides the deadline only
 // once it has landed; a failed or lost write leaves this tick on the apply cap

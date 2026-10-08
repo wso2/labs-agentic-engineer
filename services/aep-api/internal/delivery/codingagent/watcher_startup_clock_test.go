@@ -165,34 +165,123 @@ func TestTick_StartupFailsNotAppliedPastTheApplyCap(t *testing.T) {
 	}
 }
 
-// A re-dispatch reuses the cycle's Component and Job, so attempt 2's tree
-// holds a Job created long before its dispatch, and attempt 1's finished pod.
-// The clock never starts before the attempt's dispatch: attempt 2 is not
-// failed at once, and the leftover pod is ignored as before.
-func TestTick_RedispatchOnAReusedJobStartsTheStartupClockAtTheDispatch(t *testing.T) {
-	old := time.Now().UTC().Add(-45 * time.Minute)
-	leftover := openchoreo.RuntimePod{
-		Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old.Add(time.Minute), FinishedAt: old.Add(15 * time.Minute),
-		JobFound: true, JobCreatedAt: old,
+// A re-dispatch reuses the cycle's Component and release, so attempt 2's tree
+// can still hold attempt 1's completed Job and its finished pod. That Job says
+// nothing about attempt 2 (Kubernetes never starts a new pod for a complete
+// Job; OpenChoreo re-creates it after its TTL): attempt 2 waits NotYetApplied
+// under the apply cap. The Job OpenChoreo re-creates after the dispatch is
+// attempt 2's and starts the clock; its pod stuck past the grace from it
+// closes the F1 way.
+func TestTick_StartupClockOnARedispatchIgnoresTheOldJob(t *testing.T) {
+	for name, tc := range map[string]struct {
+		sinceJob   time.Duration
+		wantClosed bool
+	}{
+		"grace - 1s": {delivery.CycleStartupGrace - time.Second, false},
+		"grace + 1s": {delivery.CycleStartupGrace + time.Second, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			now := time.Now().UTC()
+			newJob := now.Add(-tc.sinceJob)
+			c := attemptCycle("c1", 2, 11*time.Minute+tc.sinceJob) // the new Job comes 11 min after the dispatch
+			c.Environment = "development"
+			old := c.DispatchedAt.Add(-45 * time.Minute)
+			rt := &fakeRuntime{pod: openchoreo.RuntimePod{
+				Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old.Add(time.Minute), FinishedAt: old.Add(15 * time.Minute),
+				JobFound: true, JobCreatedAt: old,
+			}}
+			cycles := newWatchedCycles(c)
+			jobs := &fakeJobs{}
+			w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil)
+
+			for i := 0; i < missingTicksToFail+1; i++ {
+				w.Tick(context.Background())
+				noteWaitOnRow(cycles)
+			}
+			if len(cycles.finished) != 0 || len(jobs.suspends) != 0 || len(cycles.clocks) != 0 {
+				t.Fatalf("only the old Job: finished %v, suspends %v, clocks %+v", cycles.finished, jobs.suspends, cycles.clocks)
+			}
+			if len(cycles.waits) != 1 || cycles.waits[0].reason != WaitNotYetApplied {
+				t.Fatalf("waits = %+v, want one NotYetApplied", cycles.waits)
+			}
+			if want := c.DispatchedAt.Add(delivery.CycleApplyCap); !cycles.rows[0].StartupDeadline().Equal(want) {
+				t.Fatalf("deadline = %v, want dispatch + apply cap %v", cycles.rows[0].StartupDeadline(), want)
+			}
+
+			pod := unschedulablePod()
+			pod.CreatedAt, pod.JobFound, pod.JobCreatedAt = newJob, true, newJob
+			rt.pod = pod
+			w.Tick(context.Background())
+			if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(newJob) || cycles.clocks[0].attempt != 2 {
+				t.Fatalf("clocks = %+v, want one at the new Job's (and pod's) creation %v", cycles.clocks, newJob)
+			}
+			if !tc.wantClosed {
+				if len(cycles.finished) != 0 || len(jobs.suspends) != 0 {
+					t.Fatalf("inside the grace from the new Job: finished %v, suspends %v", cycles.finished, jobs.suspends)
+				}
+				return
+			}
+			if want := "startup_failed:Unschedulable: " + unschedulableMsg; cycles.finished["c1"] != want {
+				t.Fatalf("finished = %q, want %q", cycles.finished["c1"], want)
+			}
+			if !reflect.DeepEqual(jobs.suspends, []string{c.JobRef + "@development"}) {
+				t.Fatalf("suspends %v", jobs.suspends)
+			}
+		})
 	}
-	rt := &fakeRuntime{pod: leftover}
-	c := attemptCycle("c1", 2, 5*time.Minute)
+}
+
+// The re-created Job is seen before its pod: the clock starts at that Job's
+// creation, which is after the dispatch.
+func TestTick_StartupClockStartsAtAJobCreatedAfterTheRedispatch(t *testing.T) {
+	c := attemptCycle("c1", 2, 12*time.Minute)
+	newJob := c.DispatchedAt.Add(11 * time.Minute)
+	cycles := newWatchedCycles(c)
+	NewJobWatcher(&fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: newJob}}, cycles, testWriteTargets(), &fakeJobs{}, nil).
+		Tick(context.Background())
+	if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(newJob) {
+		t.Fatalf("clocks = %+v, want one at the new Job's creation %v", cycles.clocks, newJob)
+	}
+	if len(cycles.waits) != 0 || len(cycles.finished) != 0 {
+		t.Fatalf("waits %+v, finished %v", cycles.waits, cycles.finished)
+	}
+}
+
+// Attempt 2 with only attempt 1's Job past the apply cap: OpenChoreo never
+// re-created it for this attempt. Closed not_applied, and the Job binding is
+// suspended (R-7).
+func TestTick_StartupFailsNotAppliedOnARedispatchWithOnlyTheOldJob(t *testing.T) {
+	c := attemptCycle("c1", 2, delivery.CycleApplyCap+time.Second)
+	old := c.DispatchedAt.Add(-time.Hour)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: old}}
 	cycles := newWatchedCycles(c)
 	jobs := &fakeJobs{}
 	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil)
-
-	for i := 0; i < missingTicksToFail+1; i++ {
+	for i := 0; i < missingTicksToFail; i++ {
 		w.Tick(context.Background())
 	}
-
-	if len(cycles.finished) != 0 || len(jobs.suspends) != 0 {
-		t.Fatalf("attempt 2 dispatched 5 min ago: finished %v, suspends %v", cycles.finished, jobs.suspends)
+	if cycles.finished["c1"] != ReasonNotApplied {
+		t.Fatalf("finished = %v, want %s", cycles.finished, ReasonNotApplied)
 	}
-	if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(*c.DispatchedAt) || cycles.clocks[0].attempt != 2 {
-		t.Fatalf("clocks = %+v, want one at attempt 2's dispatch %v", cycles.clocks, *c.DispatchedAt)
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// Attempt 1 keeps the rule as it was: its dispatch is stamped after the launch,
+// so its own Job may be older than dispatched_at by more than the skew, and it
+// still starts the clock (clamped to the dispatch).
+func TestTick_StartupClockOnAttemptOneTakesAJobOlderThanTheDispatch(t *testing.T) {
+	c := attemptCycle("c1", 1, 5*time.Minute)
+	job := c.DispatchedAt.Add(-2 * time.Minute)
+	cycles := newWatchedCycles(c)
+	NewJobWatcher(&fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: job}}, cycles, testWriteTargets(), &fakeJobs{}, nil).
+		Tick(context.Background())
+	if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(*c.DispatchedAt) {
+		t.Fatalf("clocks = %+v, want one at the dispatch %v", cycles.clocks, *c.DispatchedAt)
 	}
 	if len(cycles.waits) != 0 {
-		t.Fatalf("the Job exists: no NotYetApplied wait, got %+v", cycles.waits)
+		t.Fatalf("attempt 1's Job is applied: waits %+v", cycles.waits)
 	}
 }
 

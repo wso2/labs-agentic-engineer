@@ -2620,13 +2620,13 @@ type RunCycleStartupWait struct {
 	// Reason `NotYetApplied` (the platform's own: its Job has not been applied yet, so there is no pod), or else the pod's own waiting reason, verbatim from Kubernetes: `Unschedulable` (the cluster has no room for the pod), `ImagePullBackOff` / `ErrImagePull` (the image does not pull), `CreateContainerConfigError` (a secret or config the pod needs is not there yet), or another kubelet reason. A client maps the ones it knows to plain words and shows any other as is.
 	Reason string `json:"reason"`
 
-	// Since When the watcher first saw this attempt's pod stuck.
+	// Since When the watcher first saw this attempt waiting: its Job not yet applied, or its pod stuck. Kept when one wait turns into another within the attempt.
 	Since time.Time `json:"since"`
 }
 
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
-	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised; the cycle's Job is then suspended, so its pod cannot start later, and the run settles `agent-start-failed`) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
+	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, a secret that had not materialised, or `not_applied`, a Job the platform never applied for the attempt; the cycle's Job is then suspended, so its pod cannot start later, and the run settles `agent-start-failed`) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
 	AgentReason string `json:"agentReason,omitempty"`
 
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
