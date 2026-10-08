@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -34,21 +35,23 @@ type IssueReader interface {
 	GetIssue(ctx context.Context, orgID, projectID string, number int) (*sourcecontrol.IssueInfo, error)
 }
 
-// errIssueReaderUnavailable means the service was assembled without an issue
-// reader yet an issue chat was addressed — a wiring bug, not a client error.
-var errIssueReaderUnavailable = errors.New("issue reader not configured")
+// ErrIssueReaderUnavailable means the service was assembled without an issue
+// reader (ServiceDeps.Issues is a nil-tolerated test seam) yet an issue chat
+// was addressed — a wiring bug, not a client error.
+var ErrIssueReaderUnavailable = errors.New("issue reader not configured")
 
-// chatUseCase admits a chat and names its use case. The issue view also needs
-// its issue to be the project's (sourcecontrol.ErrIssueNotFound otherwise) and
-// open (ErrIssueClosed otherwise), so a closed issue's thread is never
-// resolved, read or run — and never minted.
+// chatUseCase admits a chat for a thread to be resolved or a turn run on it,
+// and names its use case. The issue view also needs its issue to be the
+// project's (sourcecontrol.ErrIssueNotFound otherwise) and known to be open
+// (ErrIssueClosed otherwise), so a closed issue's thread is never minted or
+// run.
 func (s *Service) chatUseCase(ctx context.Context, orgID, projectID string, chat ChatScope) (string, error) {
 	useCase, err := useCaseFor(chat)
 	if err != nil || chat.View != ChatViewIssue {
 		return useCase, err
 	}
 	if s.issues == nil {
-		return "", errIssueReaderUnavailable
+		return "", ErrIssueReaderUnavailable
 	}
 	issue, err := s.issues.GetIssue(ctx, orgID, projectID, chat.IssueNumber)
 	if err != nil {
@@ -57,7 +60,8 @@ func (s *Service) chatUseCase(ctx context.Context, orgID, projectID string, chat
 	if issue == nil {
 		return "", fmt.Errorf("read issue #%d: %w", chat.IssueNumber, sourcecontrol.ErrIssueNotFound)
 	}
-	if issue.State == "closed" {
+	// Fail closed: only an issue known to be open has a thread.
+	if !strings.EqualFold(issue.State, "open") {
 		return "", ErrIssueClosed
 	}
 	return useCase, nil

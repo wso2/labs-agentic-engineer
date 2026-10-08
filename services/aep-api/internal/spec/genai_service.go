@@ -573,9 +573,11 @@ func (s *Service) TurnStatus(ctx context.Context, orgID, projectID, turnID strin
 	return turnStatusOf(t), nil
 }
 
-// ActiveTurn returns the running turn of one chat, or nil.
+// ActiveTurn returns the running turn of one chat, or nil. A read: it does
+// not ask whether an issue is open, so a turn still running after its issue
+// closed (the issue agent closing its own issue) stays reachable on reload.
 func (s *Service) ActiveTurn(ctx context.Context, orgID, projectID string, chat ChatScope) (*TurnStatus, error) {
-	useCase, err := s.chatUseCase(ctx, orgID, projectID, chat)
+	useCase, err := useCaseFor(chat)
 	if err != nil {
 		return nil, err
 	}

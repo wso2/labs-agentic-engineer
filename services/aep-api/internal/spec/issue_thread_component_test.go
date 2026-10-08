@@ -52,7 +52,7 @@ func newIssueRig(t *testing.T, convs *memConversationRepo, opts ...rigOption) *g
 	t.Helper()
 	base := []rigOption{
 		withConversations(convs),
-		withIssues(stubIssues{7: "open", 8: "open", 9: "closed"}),
+		withIssues(stubIssues{7: "open", 8: "open", 9: "closed", 10: ""}),
 	}
 	return newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"}, append(base, opts...)...)
 }
@@ -151,29 +151,31 @@ func TestIssueView_TurnRunsBesideIssuesTurn(t *testing.T) {
 	r.waitTerminal(t, issuesTurn)
 }
 
-// A closed issue has no thread: resolving, reading the active turn and sending
-// all answer 409 issue_closed, and nothing is minted or dispatched. An issue
-// the project does not have is a 404.
+// A closed issue has no thread: resolving and sending answer 409 issue_closed,
+// and nothing is minted or dispatched — nor for an issue whose state is not
+// known to be open. An issue the project does not have is a 404.
 func TestIssueView_ClosedOrMissingIssue(t *testing.T) {
 	convs := &memConversationRepo{}
 	r := newIssueRig(t, convs)
 	const anyThread = "00000000-0000-4000-8000-000000000099"
 
-	for _, path := range []string{conversationsPath() + issueQuery(9), turnPath("active") + issueQuery(9)} {
-		rec := r.h.AsOrg(testOrg).Get(path)
+	for _, n := range []int{9, 10} {
+		rec := r.h.AsOrg(testOrg).Get(conversationsPath() + issueQuery(n))
 		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "issue_closed") {
-			t.Errorf("GET %s: code %d body %s, want 409 issue_closed", path, rec.Code, rec.Body.String())
+			t.Errorf("GET conversations%s: code %d body %s, want 409 issue_closed", issueQuery(n), rec.Code, rec.Body.String())
+		}
+		rec = postTurnBody(t, r, anyThread, map[string]any{"instruction": "hi", "view": "issue", "issueNumber": n})
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "issue_closed") {
+			t.Errorf("POST to issue %d: code %d body %s, want 409 issue_closed", n, rec.Code, rec.Body.String())
 		}
 	}
-	rec := postTurnBody(t, r, anyThread, map[string]any{"instruction": "hi", "view": "issue", "issueNumber": 9})
-	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "issue_closed") {
-		t.Errorf("POST to closed issue: code %d body %s, want 409 issue_closed", rec.Code, rec.Body.String())
+	// The active-turn read is read-only: a closed issue's slot answers, empty.
+	if rec := r.h.AsOrg(testOrg).Get(turnPath("active") + issueQuery(9)); rec.Code != http.StatusNoContent {
+		t.Errorf("GET active%s: code %d, want 204 (%s)", issueQuery(9), rec.Code, rec.Body.String())
 	}
 
-	for _, path := range []string{conversationsPath() + issueQuery(404), turnPath("active") + issueQuery(404)} {
-		if rec := r.h.AsOrg(testOrg).Get(path); rec.Code != http.StatusNotFound {
-			t.Errorf("GET %s: code %d, want 404 (%s)", path, rec.Code, rec.Body.String())
-		}
+	if rec := r.h.AsOrg(testOrg).Get(conversationsPath() + issueQuery(404)); rec.Code != http.StatusNotFound {
+		t.Errorf("GET conversations%s: code %d, want 404 (%s)", issueQuery(404), rec.Code, rec.Body.String())
 	}
 	if rec := postTurnBody(t, r, anyThread, map[string]any{"instruction": "hi", "view": "issue", "issueNumber": 404}); rec.Code != http.StatusNotFound {
 		t.Errorf("POST to missing issue: code %d, want 404 (%s)", rec.Code, rec.Body.String())
@@ -187,6 +189,52 @@ func TestIssueView_ClosedOrMissingIssue(t *testing.T) {
 	}
 	if r.fake.turns(t) != 0 {
 		t.Error("agents dispatched for a closed or missing issue")
+	}
+}
+
+// A turn still running when its issue closes (the issue agent closed its own
+// issue) stays reachable through the active-turn read, so a reload reattaches.
+func TestIssueView_ActiveTurnOutlivesClosure(t *testing.T) {
+	issues := stubIssues{7: "open"}
+	r := newGenaiRig(t, map[string]string{"specs/requirements/prd.md": "# Reqs\n"},
+		withConversations(&memConversationRepo{}), withIssues(issues))
+	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	r.fake.gated = true
+
+	turnID := acceptedTurnID(t, postTurnBody(t, r, thread, map[string]any{
+		"instruction": "close it", "view": "issue", "issueNumber": 7,
+	}))
+	<-r.fake.entered
+	issues[7] = "closed"
+
+	if got := activeTurnID(t, r, issueQuery(7)); got != turnID {
+		t.Errorf("active%s after closure = %s, want the running turn %s", issueQuery(7), got, turnID)
+	}
+	close(r.fake.release)
+	r.waitTerminal(t, turnID)
+}
+
+// errIssues answers every read with one error.
+type errIssues struct{ err error }
+
+func (e errIssues) GetIssue(context.Context, string, string, int) (*sourcecontrol.IssueInfo, error) {
+	return nil, e.err
+}
+
+// The issue view's reads fail as what they are: a project with no repository
+// is a 404, a service assembled without an issue reader a 503.
+func TestIssueView_ReaderFailures(t *testing.T) {
+	seed := map[string]string{"specs/requirements/prd.md": "# Reqs\n"}
+	noRepo := newGenaiRig(t, seed, withConversations(&memConversationRepo{}),
+		withIssues(errIssues{fmt.Errorf("resolve: %w", sourcecontrol.ErrRepoNotFound)}))
+	if rec := noRepo.h.AsOrg(testOrg).Get(conversationsPath() + issueQuery(7)); rec.Code != http.StatusNotFound {
+		t.Errorf("repo not found: code %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+	unwired := newGenaiRig(t, seed, withConversations(&memConversationRepo{}))
+	if rec := unwired.h.AsOrg(testOrg).Get(conversationsPath() + issueQuery(7)); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("no issue reader: code %d, want 503 (%s)", rec.Code, rec.Body.String())
 	}
 }
 
@@ -210,6 +258,11 @@ func TestIssueView_Rejections(t *testing.T) {
 		{"no number", map[string]any{"instruction": "x", "view": "issue"}},
 		{"number on issues", map[string]any{"instruction": "x", "view": "issues", "issueNumber": 7}},
 		{"number on main", map[string]any{"instruction": "x", "issueNumber": 7}},
+		// The JSON arm is not schema-validated (create-turn also takes
+		// multipart), so a zero must not pass for "absent".
+		{"zero on main", map[string]any{"instruction": "x", "issueNumber": 0}},
+		{"zero on issues", map[string]any{"instruction": "x", "view": "issues", "issueNumber": 0}},
+		{"zero on issue", map[string]any{"instruction": "x", "view": "issue", "issueNumber": 0}},
 		{"scope", map[string]any{"instruction": "x", "view": "issue", "issueNumber": 7, "scope": map[string]any{"kind": "design-review"}}},
 	}
 	for _, tc := range cases {

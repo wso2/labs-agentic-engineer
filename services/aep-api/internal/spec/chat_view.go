@@ -56,14 +56,15 @@ const useCaseIssuePrefix = "issue-"
 
 var (
 	// ErrUnknownChatView rejects a view outside the enum (a 400). The edge's
-	// request validator already refuses one on the JSON and query arms; the
-	// multipart arm is parsed by hand, so this is the check that holds there.
+	// request validator refuses one on the query arms; create-turn's bodies
+	// are not schema-validated (the route also takes multipart, which the
+	// validator skips), so this is the check that holds there.
 	ErrUnknownChatView = errors.New("unknown chat view")
 	// ErrViewTurnFields rejects a turn that carries what its view cannot use:
 	// a spec scope or prototype feedback on an Issues or issue turn (a 400).
 	ErrViewTurnFields = errors.New("the issues chats take no scope or prototype feedback")
-	// ErrIssueNumber rejects an issue view without a positive issue number, or
-	// an issue number on any other view (a 400).
+	// ErrIssueNumber rejects an issue view without a positive issue number, an
+	// issue number on any other view, or a present one below 1 (a 400).
 	ErrIssueNumber = errors.New("issueNumber is required with view=issue (a positive integer) and refused with any other view")
 	// ErrIssueClosed refuses the issue view for a closed issue: a closed issue
 	// has no thread, so none is resolved, read or run (a 409 issue_closed).

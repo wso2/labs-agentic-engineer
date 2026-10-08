@@ -104,7 +104,11 @@ func (h *Handler) CreateTurn(ctx context.Context, request gen.CreateTurnRequestO
 	case request.JSONBody != nil:
 		in.Instruction = request.JSONBody.Instruction
 		in.Collab = request.JSONBody.Collab
-		in.Chat = chatScopeOf(request.JSONBody.View, request.JSONBody.IssueNumber)
+		chat, err := chatScopeOf(request.JSONBody.View, request.JSONBody.IssueNumber)
+		if err != nil {
+			return nil, mapGenAITurnError(ctx, err)
+		}
+		in.Chat = chat
 		aim, err := aimFromJSON(request.JSONBody.Anchor, string(request.JSONBody.Intent))
 		if err != nil {
 			return nil, err
@@ -159,8 +163,12 @@ func (h *Handler) GetTurn(ctx context.Context, request gen.GetTurnRequestObject)
 }
 
 func (h *Handler) GetActiveTurn(ctx context.Context, request gen.GetActiveTurnRequestObject) (gen.GetActiveTurnResponseObject, error) {
+	chat, err := chatScopeOf(request.Params.View, request.Params.IssueNumber)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
 	org := tenant.BoundOrgFromContext(ctx)
-	st, err := h.genai.ActiveTurn(ctx, org, request.ProjectName, chatScopeOf(request.Params.View, request.Params.IssueNumber))
+	st, err := h.genai.ActiveTurn(ctx, org, request.ProjectName, chat)
 	if err != nil {
 		return nil, mapGenAITurnError(ctx, err)
 	}
@@ -203,8 +211,12 @@ func (h *Handler) StreamTurn(ctx context.Context, request gen.StreamTurnRequestO
 // member converges on it. Plural-shaped so the multi-conversation future grows
 // the array instead of renaming the endpoint.
 func (h *Handler) ListConversations(ctx context.Context, request gen.ListConversationsRequestObject) (gen.ListConversationsResponseObject, error) {
+	chat, err := chatScopeOf(request.Params.View, request.Params.IssueNumber)
+	if err != nil {
+		return nil, mapGenAITurnError(ctx, err)
+	}
 	org := tenant.BoundOrgFromContext(ctx)
-	rows, err := h.genai.ListConversations(ctx, org, request.ProjectName, chatScopeOf(request.Params.View, request.Params.IssueNumber))
+	rows, err := h.genai.ListConversations(ctx, org, request.ProjectName, chat)
 	if err != nil {
 		return nil, mapGenAITurnError(ctx, err)
 	}
@@ -229,17 +241,23 @@ func (h *Handler) RotateConversation(ctx context.Context, request gen.RotateConv
 
 // chatScopeOf maps the contract's optional view and issue number onto the
 // feature's chat: an absent view is the main chat, an absent number zero. A
-// view outside the enum, or a number on the wrong view, passes through for
-// the service to refuse (ErrUnknownChatView / ErrIssueNumber → 400).
-func chatScopeOf(v *gen.ChatView, issueNumber *int) spec.ChatScope {
+// PRESENT number below 1 is refused here (ErrIssueNumber → 400), before it
+// could read as absent: no validator holds create-turn's JSON body to the
+// contract's minimum. A view outside the enum, or a number on the wrong view,
+// passes through for the service to refuse (ErrUnknownChatView /
+// ErrIssueNumber → 400).
+func chatScopeOf(v *gen.ChatView, issueNumber *int) (spec.ChatScope, error) {
 	var chat spec.ChatScope
 	if v != nil {
 		chat.View = spec.ChatView(*v)
 	}
 	if issueNumber != nil {
+		if *issueNumber < 1 {
+			return spec.ChatScope{}, spec.ErrIssueNumber
+		}
 		chat.IssueNumber = *issueNumber
 	}
-	return chat
+	return chat, nil
 }
 
 func conversationView(row spec.ProjectConversation) gen.ProjectConversationView {
@@ -435,7 +453,8 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		return mapped
 	}
 	switch {
-	case errors.Is(err, spec.ErrProjectRepoNotFound):
+	case errors.Is(err, spec.ErrProjectRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotFound):
+		// The second is the issue reader's (the issue view's open check).
 		return apierr.NotFound("project repository not found")
 	case errors.Is(err, spec.ErrTurnNotFound):
 		return apierr.NotFound("turn not found")
@@ -475,6 +494,11 @@ func mapGenAITurnError(ctx context.Context, err error) error {
 		// skills-repo arm above.
 		slog.ErrorContext(ctx, "genai turn: conversation store not configured", "error", err)
 		return apierr.ServiceUnavailable(spec.ErrConversationsUnavailable.Error())
+	case errors.Is(err, spec.ErrIssueReaderUnavailable):
+		// The same wiring-bug posture: the issue view was reached without
+		// the issue reader assembled.
+		slog.ErrorContext(ctx, "genai turn: issue reader not configured", "error", err)
+		return apierr.ServiceUnavailable(spec.ErrIssueReaderUnavailable.Error())
 	case errors.Is(err, gitfs.ErrDiskAdmission):
 		// New snapshot dests are refused at ≥90% workspace usage. Operator
 		// recovery (reap / prune), not a client bug — 503 with a sentence

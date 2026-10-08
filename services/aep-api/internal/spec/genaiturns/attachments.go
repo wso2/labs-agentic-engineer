@@ -182,8 +182,8 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 			if err != nil {
 				return out, err
 			}
-			// The contract's minimum (1), held here as the JSON arm's request
-			// validator holds it there.
+			// The contract's minimum (1): no validator reads create-turn's
+			// bodies, so each arm holds it (chatScopeOf for JSON).
 			n, err := strconv.Atoi(strings.TrimSpace(v))
 			if err != nil || n < 1 {
 				return out, apierr.BadRequest("issueNumber must be a positive integer")
@@ -200,9 +200,11 @@ func readMultipartTurn(body *multipart.Reader) (multipartTurn, error) {
 			continue
 		case attachmentsField:
 		default:
-			// Unknown parts are IGNORED, and this is a deliberate divergence
-			// from the JSON arm, which is strict (`additionalProperties: false`
-			// on TurnInputBody). Under strict parsing a rolling deploy in which
+			// Unknown parts are IGNORED. The contract declares both bodies strict
+			// (`additionalProperties: false`), but the edge validator skips
+			// create-turn's bodies (the route takes multipart) and the JSON arm
+			// decodes leniently, so neither arm refuses an unknown field today.
+			// Under strict parsing a rolling deploy in which
 			// the console ships a new field before the server knows it would 400
 			// every send; ignoring degrades gracefully instead. Relaxing the
 			// multipart schema to match is a contract decision, so it is left to
