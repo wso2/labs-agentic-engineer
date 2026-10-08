@@ -41,8 +41,12 @@ function connection(phase: RunProgressState["phase"]): string | null {
 function Session({ section, label, onRetry }: { section: RunProgressCycle; label: string; onRetry: () => void }) {
   const { cycle, events } = section;
   // A log the platform no longer keeps, or cannot read now, says so in place
-  // of its lines: an empty box would read as an agent that did nothing.
-  const missing = events.length === 0 && (cycle.recording === "expired" || cycle.recording === "unavailable");
+  // of its lines: an empty box would read as an agent that did nothing. The
+  // server still sends its "log is not available" notice for such a cycle, and
+  // lines drawn from that notice alone read as a hole in a kept log beside no
+  // reason. So the RECORDING decides, never the event count; a kept log with a
+  // hole keeps its lines and the inline gap notice.
+  const missing = cycle.recording === "expired" || cycle.recording === "unavailable";
   return (
     <Box sx={{ "& + &": { borderTop: 1, borderColor: "divider" } }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.75, py: 0.75 }}>

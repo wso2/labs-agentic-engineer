@@ -22,7 +22,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../generated/aep-api";
-import type { RunProgressState } from "../hooks/useRunProgress";
+import type { RunProgressState, StampedRunEvent } from "../hooks/useRunProgress";
 import { AgentLog } from "./AgentLog";
 
 // A build session's log says why it is empty when the platform knows: no
@@ -43,9 +43,25 @@ const cycle = (recording: Recording): RunCycleView => ({
   recording,
 });
 
-function renderLog(recording: Recording, reconnect = vi.fn()) {
+// What the server sends for a log it cannot serve (expired or unavailable):
+// the cycle frame AND one platform notice (seq -20, `code: gap`), never an
+// empty feed (aep-api codingagent cycle_feed.go, logsUnavailableRunEvent).
+const logsUnavailable: StampedRunEvent = {
+  cycleId: "c1",
+  attempt: 1,
+  ts: "2026-10-01T09:20:00Z",
+  seq: -20,
+  v: 2,
+  kind: "notice",
+  agentId: "lead",
+  level: "warn",
+  code: "gap",
+  detail: "This cycle's log is not available.",
+};
+
+function renderLog(recording: Recording, reconnect = vi.fn(), events: StampedRunEvent[] = []) {
   const progress: RunProgressState = {
-    cycles: [{ cycle: cycle(recording), events: [] }],
+    cycles: [{ cycle: cycle(recording), events }],
     settledState: "completed",
     phase: "ended",
     reconnect,
@@ -61,15 +77,17 @@ function renderLog(recording: Recording, reconnect = vi.fn()) {
 
 describe("a build session's log", () => {
   it("says it is no longer kept, instead of reading as an agent that wrote nothing", () => {
-    renderLog("expired");
-    expect(screen.getByText("This run's log is no longer kept (logs are kept for a few days)")).toBeInTheDocument();
+    renderLog("expired", vi.fn(), [logsUnavailable]);
+    expect(screen.getByRole("alert")).toHaveTextContent("This run's log is no longer kept (logs are kept for a few days)");
+    expect(screen.queryByText(/events are missing from this feed/)).not.toBeInTheDocument();
     expect(screen.queryByText("No output yet.")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("says it cannot be loaded right now, and Try again attaches afresh", () => {
-    const reconnect = renderLog("unavailable");
-    expect(screen.getByText("Couldn't load this run's log right now")).toBeInTheDocument();
+    const reconnect = renderLog("unavailable", vi.fn(), [logsUnavailable]);
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load this run's log right now");
+    expect(screen.queryByText(/events are missing from this feed/)).not.toBeInTheDocument();
     expect(screen.queryByText("No output yet.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(reconnect).toHaveBeenCalledOnce();
@@ -78,6 +96,12 @@ describe("a build session's log", () => {
   it.each(["kept", "live"] as const)("shows the lines of a %s log", (recording) => {
     renderLog(recording);
     expect(screen.getByText("No output yet.")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps the lines, with the inline gap notice, for a kept log with a hole", () => {
+    renderLog("kept", vi.fn(), [logsUnavailable]);
+    expect(screen.getByText(/events are missing from this feed/)).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
