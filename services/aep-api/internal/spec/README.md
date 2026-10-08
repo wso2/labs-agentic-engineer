@@ -168,13 +168,17 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   thread id alone, so it asks the thread store which use case the id belongs to. The kickoff guard
   and the status poll read the main chat's newest turn only.
 - **A closed issue's thread is removed** (`issue_threads.go`). `RemoveIssueThread` deletes every
-  `project_conversations` row of the issue's `issue-<n>` use case (current and demoted) and then
+  `project_conversations` row of the issue's `issue-<n>` use case (current and demoted) **created
+  before the event that caused it** — the close (`close_issue`: now; webhook: `issue.closed_at`), or
+  the reopen (`issue.updated_at`), else the delivery's first receipt (`webhook.ReceivedAt`, which a
+  replay still carries) — so a late reopen never takes the fresh thread started after it; then
   each one's agents-service conversation (`DELETE /conversations/:id`; a failure is logged and the
   rows go anyway — the agents store's TTL sweep reaps the orphan). Three triggers, so it is
   idempotent: the issue agent's `close_issue` and GitHub's `issues.closed` and `issues.reopened`
   webhooks (app root, no echo filter; a reopen removes whatever a lost close left, so a reopened
   issue always starts a fresh thread). A turn running on the thread is never interrupted: the
-  removal is marked **for that turn** and its end performs it — `finishTurn` after the terminal
+  removal is marked **for that turn**, with its bound (a second removal for the turn keeps the later
+  one), and its end performs it — `finishTurn` after the terminal
   write, or `TurnSweeper` failing it after a crash (`TurnSwept`) — mark-then-re-read / take-once,
   so exactly one side removes. A running row whose heartbeat is older than the sweep threshold is
   a dead turn: the removal runs now. A mark is taken only by its own turn; any other turn's end

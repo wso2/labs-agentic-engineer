@@ -44,7 +44,7 @@ type threadRowsStub struct {
 	deletes                []string
 }
 
-func (s *threadRowsStub) DeleteUseCase(_ context.Context, _, _, useCase string) ([]string, error) {
+func (s *threadRowsStub) DeleteUseCase(_ context.Context, _, _, useCase string, _ time.Time) ([]string, error) {
 	s.deletes = append(s.deletes, useCase)
 	return nil, nil
 }
@@ -70,8 +70,8 @@ func TestRemoveIssueThread_TurnEndedBeforeTheMark(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rows := &threadRowsStub{}
 			s := &Service{turns: tc.turns, conversations: rows}
-			s.pendingRemovals.mark(key, "turn-gone") // a stale mark from a dead turn
-			if err := s.RemoveIssueThread(context.Background(), "o", "p", 7); err != nil {
+			s.pendingRemovals.mark(key, "turn-gone", time.Now()) // a stale mark from a dead turn
+			if err := s.RemoveIssueThread(context.Background(), "o", "p", 7, time.Now()); err != nil {
 				t.Fatalf("RemoveIssueThread: %v", err)
 			}
 			if len(rows.deletes) != tc.wantDeletes {
@@ -79,29 +79,33 @@ func TestRemoveIssueThread_TurnEndedBeforeTheMark(t *testing.T) {
 			}
 			if tc.wantMarkFor == "" {
 				if _, marked := s.pendingRemovals.keys[key]; marked {
-					t.Errorf("a mark outlived the removal: %q", s.pendingRemovals.keys[key])
+					t.Errorf("a mark outlived the removal: %+v", s.pendingRemovals.keys[key])
 				}
 				return
 			}
-			if !s.pendingRemovals.take(key, tc.wantMarkFor) {
-				t.Errorf("no mark left for %s", tc.wantMarkFor)
+			if left, ok := s.pendingRemovals.take(key); !ok || left.turnID != tc.wantMarkFor {
+				t.Errorf("mark = %+v, want one for %s", left, tc.wantMarkFor)
 			}
 		})
 	}
 }
 
-// A mark is taken only by the turn it waited for; any other turn's end drops it.
+// A mark is bound to its turn: marking the same turn again keeps the later
+// bound (it covers both removals); a mark for another turn replaces a stale one.
 func TestPendingRemovals_BoundToTheirTurn(t *testing.T) {
 	var p pendingRemovals
-	p.mark("k", "turn-a")
-	if p.take("k", "turn-b") {
-		t.Fatal("turn-b took turn-a's removal")
+	early, late := time.Unix(100, 0), time.Unix(200, 0)
+	p.mark("k", "turn-a", late)
+	p.mark("k", "turn-a", early)
+	if got, ok := p.take("k"); !ok || got.turnID != "turn-a" || !got.before.Equal(late) {
+		t.Fatalf("take = %+v, want turn-a with the later bound", got)
 	}
-	if p.take("k", "turn-a") {
-		t.Fatal("the mark survived another turn's end")
+	if _, ok := p.take("k"); ok {
+		t.Fatal("a mark was taken twice")
 	}
-	p.mark("k", "turn-a")
-	if !p.take("k", "turn-a") || p.take("k", "turn-a") {
-		t.Fatal("turn-a's mark not taken exactly once")
+	p.mark("k", "turn-a", late)
+	p.mark("k", "turn-b", early)
+	if got, _ := p.take("k"); got.turnID != "turn-b" || !got.before.Equal(early) {
+		t.Fatalf("take = %+v, want turn-b's mark replacing turn-a's", got)
 	}
 }

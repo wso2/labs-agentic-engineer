@@ -143,21 +143,23 @@ func (m *memConversationRepo) UseCaseOf(_ context.Context, org, project, id stri
 	return "", nil
 }
 
-func (m *memConversationRepo) DeleteUseCase(_ context.Context, org, project, useCase string) ([]string, error) {
+func (m *memConversationRepo) DeleteUseCase(_ context.Context, org, project, useCase string, before time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	scope := m.key(org, project, useCase) + "/"
 	var ids []string
-	for k := range m.created {
-		if id, ok := strings.CutPrefix(k, scope); ok {
+	for k, created := range m.created {
+		if id, ok := strings.CutPrefix(k, scope); ok && created.Before(before) {
 			ids = append(ids, id)
 			delete(m.created, k)
 		}
 	}
-	delete(m.rows, m.key(org, project, useCase))
+	if row, ok := m.rows[m.key(org, project, useCase)]; ok && row.CreatedAt.Before(before) {
+		delete(m.rows, m.key(org, project, useCase))
+	}
 	kept := m.demoted[:0]
 	for _, d := range m.demoted {
-		if !strings.HasPrefix(d, scope) {
+		if _, live := m.created[d]; live {
 			kept = append(kept, d)
 		}
 	}

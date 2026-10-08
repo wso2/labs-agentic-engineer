@@ -197,7 +197,7 @@ func (c *webhookController) Receive(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	attempt := deliveryAttempt{
 		deliveryID: deliveryID, event: event, action: action, ocOrgID: ocOrgID,
-		attempt: res.Attempts, payload: body, source: "receiver",
+		attempt: res.Attempts, receivedAt: res.ReceivedAt, payload: body, source: "receiver",
 	}
 	async.Go(context.WithoutCancel(ctx), "webhook:"+event, func(ctx context.Context) {
 		c.runner.run(ctx, attempt)

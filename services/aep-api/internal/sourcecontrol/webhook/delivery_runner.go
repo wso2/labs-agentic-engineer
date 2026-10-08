@@ -38,7 +38,10 @@ type deliveryAttempt struct {
 	ocOrgID    string
 	// attempt is the claim's attempt number (1 for the receiver's own run).
 	attempt int
-	payload []byte
+	// receivedAt is the delivery's first receipt, whichever attempt this is;
+	// handlers read it with ReceivedAt.
+	receivedAt time.Time
+	payload    []byte
 	// source names who dispatched it ("receiver" or "replay"), for the logs.
 	source string
 }
@@ -71,7 +74,7 @@ func (r deliveryRunner) settled(ctx context.Context, attrs []any, err error) boo
 // from any request (the receiver passes context.WithoutCancel of its own).
 func (r deliveryRunner) run(ctx context.Context, a deliveryAttempt) {
 	started := time.Now()
-	handlerCtx, cancel := context.WithTimeout(ctx, handlerBudget)
+	handlerCtx, cancel := context.WithTimeout(WithReceivedAt(ctx, a.receivedAt), handlerBudget)
 	err := r.router.Dispatch(handlerCtx, a.event, a.payload)
 	cancel()
 
@@ -102,4 +105,20 @@ func (r deliveryRunner) run(ctx context.Context, a deliveryAttempt) {
 		return
 	}
 	slog.InfoContext(ctx, "webhook: processed", append(attrs, "result", "processed")...)
+}
+
+type receivedAtKey struct{}
+
+// WithReceivedAt carries a delivery's first receipt time to its handlers.
+func WithReceivedAt(ctx context.Context, at time.Time) context.Context {
+	return context.WithValue(ctx, receivedAtKey{}, at)
+}
+
+// ReceivedAt is when the delivery a handler runs for was first received — not
+// when this attempt runs, which for a replay can be much later. It is the
+// event time of last resort for a handler whose payload carries none; false
+// outside a delivery (or before its receipt was recorded).
+func ReceivedAt(ctx context.Context) (time.Time, bool) {
+	at, ok := ctx.Value(receivedAtKey{}).(time.Time)
+	return at, ok && !at.IsZero()
 }

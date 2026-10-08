@@ -64,14 +64,16 @@ type ComponentLister interface {
 	ListComponents(ctx context.Context, orgID, projectID string) ([]string, error)
 }
 
-// IssueThreadRemover removes an issue's chat thread once the issue is closed.
+// IssueThreadRemover removes an issue's chat thread once the issue is closed:
+// the threads created before the event that caused the removal (before;
+// close_issue passes its close), so none started after that event goes.
 // It is called from inside that thread's running turn, so it must not wait on
 // that turn: it defers the removal to the turn's end. ctx is the tool call's
 // request context, cancelled once the call answers — a deferred removal must
 // not use it (detach with context.WithoutCancel or start a fresh, bounded
 // one). It is idempotent.
 type IssueThreadRemover interface {
-	RemoveIssueThread(ctx context.Context, orgID, projectID string, issueNumber int) error
+	RemoveIssueThread(ctx context.Context, orgID, projectID string, issueNumber int, before time.Time) error
 }
 
 // issueCommentLimit is how many of the newest comments get_issue carries.
@@ -265,7 +267,7 @@ func closeIssue(c issueCall, issues sourcecontrol.IssueService, threads IssueThr
 		return
 	}
 	if threads != nil {
-		if err := threads.RemoveIssueThread(c.ctx, c.org, c.proj, c.number); err != nil {
+		if err := threads.RemoveIssueThread(c.ctx, c.org, c.proj, c.number, time.Now()); err != nil {
 			slog.ErrorContext(c.ctx, "issue agent: could not remove the closed issue's thread",
 				"org", c.org, "project", c.proj, "issue", c.number, "error", err)
 		}

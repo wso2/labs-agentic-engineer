@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
 	scissues "github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
 // issueAgentPromoter is the issue agent's hand-off (scissues.Promoter) over the
@@ -46,9 +48,12 @@ func (p issueAgentPromoter) PromoteAndExecute(ctx context.Context, orgID, projec
 // a user on GitHub, a merged pull request, the SRE agent or the platform. On
 // reopen, whatever a close left behind — a removal lost to a restart, or one
 // still waiting for a turn that died — so a reopened issue always starts a
-// fresh thread. Unlike the event plane's issues handlers it has no echo
-// filter: the removal is idempotent, so the platform's own close (the issue
-// agent's close_issue already removed the thread) finds nothing left to do.
+// fresh thread. Only threads created before the event go (eventTime): a
+// reopen delivered after the user already started the reopened issue's fresh
+// thread leaves that thread alone. Unlike the event plane's issues handlers it
+// has no echo filter: the removal is idempotent, so the platform's own close
+// (the issue agent's close_issue already removed the thread) finds nothing
+// left to do.
 type issueThreadRemoval struct {
 	repos interface {
 		ByFullName(ctx context.Context, fullName string) (orgID, projectID string, err error)
@@ -61,6 +66,8 @@ func (h issueThreadRemoval) OnIssueEvent(ctx context.Context, _, action string, 
 		Issue struct {
 			Number      int             `json:"number"`
 			PullRequest json.RawMessage `json:"pull_request"`
+			ClosedAt    *time.Time      `json:"closed_at"`
+			UpdatedAt   *time.Time      `json:"updated_at"`
 		} `json:"issue"`
 		Repository struct {
 			FullName string `json:"full_name"`
@@ -80,8 +87,30 @@ func (h issueThreadRemoval) OnIssueEvent(ctx context.Context, _, action string, 
 	if projectID == "" {
 		return nil // not one of ours
 	}
-	if err := h.threads.RemoveIssueThread(ctx, orgID, projectID, p.Issue.Number); err != nil {
+	at, err := eventTime(ctx, action, p.Issue.ClosedAt, p.Issue.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	if err := h.threads.RemoveIssueThread(ctx, orgID, projectID, p.Issue.Number, at); err != nil {
 		return fmt.Errorf("remove the %s issue's thread: %w", action, err)
 	}
 	return nil
+}
+
+// eventTime is when the issue was closed or reopened: the field GitHub sets
+// for that action — closed_at on a close; on a reopen closed_at is cleared and
+// updated_at is the reopen — else the delivery's first receipt, which a
+// replay still carries.
+func eventTime(ctx context.Context, action string, closedAt, updatedAt *time.Time) (time.Time, error) {
+	field, stamp := "updated_at", updatedAt
+	if action == "closed" {
+		field, stamp = "closed_at", closedAt
+	}
+	if stamp != nil && !stamp.IsZero() {
+		return *stamp, nil
+	}
+	if at, ok := webhook.ReceivedAt(ctx); ok {
+		return at, nil
+	}
+	return time.Time{}, fmt.Errorf("the %s issue has no event time: no %s and no delivery receipt", action, field)
 }

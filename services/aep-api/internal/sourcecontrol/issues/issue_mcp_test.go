@@ -99,6 +99,8 @@ type fakeAgentPorts struct {
 	components []string
 	promoteErr error
 	removeErr  error
+	// closedAt records the bound of the last thread removal.
+	closedAt *time.Time
 }
 
 func (p fakeAgentPorts) ListComponents(context.Context, string, string) ([]string, error) {
@@ -110,7 +112,10 @@ func (p fakeAgentPorts) PromoteAndExecute(_ context.Context, org, project, compo
 	return p.promoteErr
 }
 
-func (p fakeAgentPorts) RemoveIssueThread(_ context.Context, org, project string, n int) error {
+func (p fakeAgentPorts) RemoveIssueThread(_ context.Context, org, project string, n int, closedAt time.Time) error {
+	if p.closedAt != nil {
+		*p.closedAt = closedAt
+	}
 	*p.log = append(*p.log, fmt.Sprintf("remove-thread %s/%s#%d ", org, project, n))
 	return p.removeErr
 }
@@ -123,7 +128,7 @@ type issueRig struct {
 
 func newIssueRig() *issueRig {
 	rec := &issueRecorder{}
-	return &issueRig{issues: rec, ports: &fakeAgentPorts{log: &rec.calls, components: []string{"api", "web"}}}
+	return &issueRig{issues: rec, ports: &fakeAgentPorts{log: &rec.calls, components: []string{"api", "web"}, closedAt: new(time.Time)}}
 }
 
 func (r *issueRig) call(t *testing.T, scope auth.IssuesMCPScope, name string, args map[string]any) (string, bool) {
@@ -360,5 +365,18 @@ func TestIssueMCPCloseSaysWhenTheReasonCommentWasLost(t *testing.T) {
 	want := []string{"comment acme/acme-expenses#7 Fixed in v2.", "close acme/acme-expenses#7 ", "remove-thread acme/acme-expenses#7 "}
 	if !reflect.DeepEqual(r.issues.calls, want) {
 		t.Fatalf("calls = %v, want %v", r.issues.calls, want)
+	}
+}
+
+// The thread removal is bounded by the close itself: threads created before
+// it go, none started after it.
+func TestIssueMCPCloseBoundsTheRemovalByTheClose(t *testing.T) {
+	r := newIssueRig()
+	before := time.Now()
+	if text, isErr := r.call(t, issueScope, "close_issue", map[string]any{"reason": "Done."}); isErr {
+		t.Fatalf("close_issue failed: %s", text)
+	}
+	if got := *r.ports.closedAt; got.Before(before) || got.After(time.Now()) {
+		t.Fatalf("removal bound = %v, want the close (after %v)", got, before)
 	}
 }

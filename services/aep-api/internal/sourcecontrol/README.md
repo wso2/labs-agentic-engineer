@@ -42,7 +42,7 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
 | `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.ErrNoDeployedVersion` with no deployed version |
 | `issues.ComponentLister` | needs | the design's component names, sorted (spec's design, adapted in `app`) |
-| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue`; must not wait on the calling turn nor use its ctx once it returns; a failure is logged, never the tool's. `close_issue` posts the reason as a comment before closing, and says so when it could not |
+| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue` — the threads created before the close, never one started after it; must not wait on the calling turn nor use its ctx once it returns; a failure is logged, never the tool's. `close_issue` posts the reason as a comment before closing, and says so when it could not |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this
@@ -142,8 +142,10 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   replayed. The last failed attempt logs `webhook: delivery abandoned` and the row keeps its error.
   What a delivery past its window was for is `eventcore`'s reconcile sweeps' to heal
   (`webhook.ReplayHorizon` sets their grace). Every handler must stay idempotent: a replay re-runs
-  whatever the failed attempt got through. A routing failure is answered before anything is
-  persisted, so nothing replays it.
+  whatever the failed attempt got through, and a replay can run long after the event, so a handler
+  that needs the event's time reads the payload's own stamp, else `webhook.ReceivedAt(ctx)` — the
+  delivery's first receipt, carried by every attempt. A routing failure is answered before anything
+  is persisted, so nothing replays it.
 - **A stored delivery never carries a published credential.** Every verified webhook delivery's
   body is persisted to `webhook_payloads` — for audit, and as what the `Replayer` re-runs — so a comment the
   platform posts *on purpose* carrying credentials would land in the database in cleartext, the one

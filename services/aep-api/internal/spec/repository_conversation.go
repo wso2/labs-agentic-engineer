@@ -93,9 +93,11 @@ type ConversationRepository interface {
 	UseCaseOf(ctx context.Context, orgID, projectID, id string) (string, error)
 
 	// DeleteUseCase deletes every thread of the scope — current and demoted —
-	// and returns their ids (none when the scope has no thread). Removing a
-	// closed issue's thread; no other scope is touched.
-	DeleteUseCase(ctx context.Context, orgID, projectID, useCase string) ([]string, error)
+	// created before before, and returns their ids (none when the scope has no
+	// such thread). Removing a closed issue's thread: a thread started after
+	// the close or reopen that caused the removal stays, and no other scope is
+	// touched.
+	DeleteUseCase(ctx context.Context, orgID, projectID, useCase string, before time.Time) ([]string, error)
 }
 
 type conversationRepository struct{ db *gorm.DB }
@@ -274,11 +276,11 @@ func (r *conversationRepository) UseCaseOf(ctx context.Context, orgID, projectID
 	return useCases[0], nil
 }
 
-func (r *conversationRepository) DeleteUseCase(ctx context.Context, orgID, projectID, useCase string) ([]string, error) {
+func (r *conversationRepository) DeleteUseCase(ctx context.Context, orgID, projectID, useCase string, before time.Time) ([]string, error) {
 	var deleted []ProjectConversation
 	err := r.db.WithContext(ctx).
 		Clauses(clause.Returning{Columns: []clause.Column{{Name: "id"}}}).
-		Where("org_id = ? AND project_id = ? AND use_case = ?", orgID, projectID, useCase).
+		Where("org_id = ? AND project_id = ? AND use_case = ? AND created_at < ?", orgID, projectID, useCase, before).
 		Delete(&deleted).Error
 	if err != nil {
 		return nil, err

@@ -396,7 +396,7 @@ func TestConversationRepo_DeleteUseCase(t *testing.T) {
 		t.Fatalf("ResolveCurrent o2/p1/issue-7: %v", err)
 	}
 
-	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7")
+	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", time.Now())
 	if err != nil {
 		t.Fatalf("DeleteUseCase: %v", err)
 	}
@@ -421,13 +421,42 @@ func TestConversationRepo_DeleteUseCase(t *testing.T) {
 	}
 
 	// Idempotent: nothing left to delete.
-	again, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7")
+	again, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", time.Now())
 	if err != nil || len(again) != 0 {
 		t.Fatalf("second DeleteUseCase = (%v, %v), want (none, nil)", again, err)
 	}
 	// A later resolve mints a fresh thread.
 	if fresh := resolve("p1", "issue-7"); fresh == demoted || fresh == current.ID {
 		t.Fatalf("resolve after delete returned a deleted thread %s", fresh)
+	}
+}
+
+// DeleteUseCase takes only the threads created before its bound — the event
+// that caused the removal; a thread started after it stays, current.
+func TestConversationRepo_DeleteUseCaseKeepsLaterThreads(t *testing.T) {
+	t.Parallel()
+	repo := spec.NewConversationRepository(dbtest.New(t))
+	ctx := context.Background()
+
+	earlier, err := repo.ResolveCurrent(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("ResolveCurrent: %v", err)
+	}
+	reopened := time.Now()
+	later, err := repo.Rotate(ctx, "o1", "p1", "issue-7", "ada")
+	if err != nil {
+		t.Fatalf("Rotate: %v", err)
+	}
+
+	got, err := repo.DeleteUseCase(ctx, "o1", "p1", "issue-7", reopened)
+	if err != nil {
+		t.Fatalf("DeleteUseCase: %v", err)
+	}
+	if len(got) != 1 || got[0] != earlier.ID {
+		t.Fatalf("deleted = %v, want only the earlier thread %s", got, earlier.ID)
+	}
+	if ok, err := repo.IsCurrent(ctx, "o1", "p1", "issue-7", later.ID); err != nil || !ok {
+		t.Fatalf("the thread started after the bound: IsCurrent = (%v, %v), want it kept", ok, err)
 	}
 }
 

@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
 type refusingAdopter struct{ err error }
@@ -59,13 +61,39 @@ func (l fakeRepoLocator) ByFullName(_ context.Context, fullName string) (string,
 }
 
 type recordingThreadRemover struct {
-	calls []string
-	err   error
+	calls  []string
+	before []time.Time
+	err    error
 }
 
-func (r *recordingThreadRemover) RemoveIssueThread(_ context.Context, org, project string, n int) error {
+func (r *recordingThreadRemover) RemoveIssueThread(_ context.Context, org, project string, n int, before time.Time) error {
 	r.calls = append(r.calls, fmt.Sprintf("%s/%s#%d", org, project, n))
+	r.before = append(r.before, before)
 	return r.err
+}
+
+var (
+	closedAt   = time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC)
+	reopenedAt = time.Date(2026, 10, 8, 9, 30, 0, 0, time.UTC)
+	receivedAt = time.Date(2026, 10, 8, 9, 45, 0, 0, time.UTC)
+)
+
+// issuePayload is an issues.closed / issues.reopened body. GitHub sets
+// closed_at on a close and clears it on a reopen, whose updated_at is the
+// reopen; stamped=false leaves both out.
+func issuePayload(repo string, n int, pr bool, action string, stamped bool) []byte {
+	issue := map[string]any{"number": n}
+	if pr {
+		issue["pull_request"] = map[string]any{"url": "x"}
+	}
+	if stamped {
+		issue["closed_at"], issue["updated_at"] = closedAt, closedAt
+		if action == "reopened" {
+			issue["closed_at"], issue["updated_at"] = nil, reopenedAt
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"issue": issue, "repository": map[string]any{"full_name": repo}})
+	return b
 }
 
 // GitHub's issues.closed and issues.reopened remove the issue's thread in the
@@ -75,31 +103,25 @@ func (r *recordingThreadRemover) RemoveIssueThread(_ context.Context, org, proje
 // ledger's Replayer retries it (bounded attempts; the removal is idempotent).
 func TestIssueThreadRemoval(t *testing.T) {
 	locator := fakeRepoLocator{"acme/expenses": {"acme", "expenses"}}
-	payload := func(repo string, n int, pr bool) []byte {
-		p := map[string]any{"issue": map[string]any{"number": n}, "repository": map[string]any{"full_name": repo}}
-		if pr {
-			p["issue"].(map[string]any)["pull_request"] = map[string]any{"url": "x"}
-		}
-		b, _ := json.Marshal(p)
-		return b
-	}
+	ctx := webhook.WithReceivedAt(context.Background(), receivedAt)
 	cases := []struct {
-		name    string
-		payload []byte
-		want    []string
+		name string
+		repo string
+		n    int
+		pr   bool
+		want []string
 	}{
-		{"known repo", payload("acme/expenses", 7, false), []string{"acme/expenses#7"}},
-		{"unknown repo", payload("someone/else", 7, false), nil},
-		{"pull request", payload("acme/expenses", 7, true), nil},
-		{"no number", payload("acme/expenses", 0, false), nil},
-		{"malformed", []byte("{"), nil},
+		{"known repo", "acme/expenses", 7, false, []string{"acme/expenses#7"}},
+		{"unknown repo", "someone/else", 7, false, nil},
+		{"pull request", "acme/expenses", 7, true, nil},
+		{"no number", "acme/expenses", 0, false, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, action := range []string{"closed", "reopened"} {
 				threads := &recordingThreadRemover{}
 				h := issueThreadRemoval{repos: locator, threads: threads}
-				if err := h.OnIssueEvent(context.Background(), "issues", action, tc.payload); err != nil {
+				if err := h.OnIssueEvent(ctx, "issues", action, issuePayload(tc.repo, tc.n, tc.pr, action, true)); err != nil {
 					t.Fatalf("OnIssueEvent(%s): %v", action, err)
 				}
 				if !reflect.DeepEqual(threads.calls, tc.want) {
@@ -108,10 +130,53 @@ func TestIssueThreadRemoval(t *testing.T) {
 			}
 		})
 	}
+	threads := &recordingThreadRemover{}
+	if err := (issueThreadRemoval{repos: locator, threads: threads}).OnIssueEvent(ctx, "issues", "closed", []byte("{")); err != nil || len(threads.calls) != 0 {
+		t.Fatalf("malformed delivery: (%v, %v), want acked with no removal", err, threads.calls)
+	}
 
 	down := errors.New("db down")
 	h := issueThreadRemoval{repos: locator, threads: &recordingThreadRemover{err: down}}
-	if err := h.OnIssueEvent(context.Background(), "issues", "closed", payload("acme/expenses", 7, false)); !errors.Is(err, down) {
+	if err := h.OnIssueEvent(ctx, "issues", "closed", issuePayload("acme/expenses", 7, false, "closed", true)); !errors.Is(err, down) {
 		t.Fatalf("removal failure: err = %v, want it returned", err)
+	}
+}
+
+// The removal is bounded by the event that caused it: a close by closed_at, a
+// reopen by its updated_at (GitHub clears closed_at), and a payload without
+// the field by the delivery's first receipt. With neither, the delivery fails
+// rather than guess a bound.
+func TestIssueThreadRemoval_BoundedByTheEvent(t *testing.T) {
+	locator := fakeRepoLocator{"acme/expenses": {"acme", "expenses"}}
+	received := webhook.WithReceivedAt(context.Background(), receivedAt)
+	cases := []struct {
+		name    string
+		ctx     context.Context
+		action  string
+		stamped bool
+		want    time.Time
+	}{
+		{"close", received, "closed", true, closedAt},
+		{"reopen", received, "reopened", true, reopenedAt},
+		{"close without closed_at", received, "closed", false, receivedAt},
+		{"reopen without updated_at", received, "reopened", false, receivedAt},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			threads := &recordingThreadRemover{}
+			h := issueThreadRemoval{repos: locator, threads: threads}
+			if err := h.OnIssueEvent(tc.ctx, "issues", tc.action, issuePayload("acme/expenses", 7, false, tc.action, tc.stamped)); err != nil {
+				t.Fatalf("OnIssueEvent: %v", err)
+			}
+			if len(threads.before) != 1 || !threads.before[0].Equal(tc.want) {
+				t.Fatalf("removal bound = %v, want %v", threads.before, tc.want)
+			}
+		})
+	}
+
+	threads := &recordingThreadRemover{}
+	h := issueThreadRemoval{repos: locator, threads: threads}
+	if err := h.OnIssueEvent(context.Background(), "issues", "closed", issuePayload("acme/expenses", 7, false, "closed", false)); err == nil || len(threads.calls) != 0 {
+		t.Fatalf("no event time: (%v, %v), want an error and no removal", err, threads.calls)
 	}
 }

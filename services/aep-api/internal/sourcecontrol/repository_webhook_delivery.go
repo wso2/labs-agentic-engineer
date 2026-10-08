@@ -67,6 +67,10 @@ type PersistResult struct {
 	// Attempts is the attempt this claim is (1 for a fresh delivery). Zero
 	// when nothing was claimed.
 	Attempts int
+	// ReceivedAt is when the delivery was first received — this call for a
+	// fresh one, the original receipt for a duplicate. Zero when nothing was
+	// claimed.
+	ReceivedAt time.Time
 }
 
 // Persist atomically dedups + stores the delivery and the raw payload, and
@@ -105,7 +109,7 @@ func (s *DeliveryStore) Persist(ctx context.Context, deliveryID, ocOrgID, event,
 		}).Error; err != nil {
 			return PersistResult{}, fmt.Errorf("persist payload: %w", err)
 		}
-		return PersistResult{Created: true, Claimed: true, Attempts: 1}, nil
+		return PersistResult{Created: true, Claimed: true, Attempts: 1, ReceivedAt: now}, nil
 	}
 
 	// Conflict on PK (existing delivery). Look up to decide whether it was
@@ -127,7 +131,10 @@ func (s *DeliveryStore) Persist(ctx context.Context, deliveryID, ocOrgID, event,
 	if err != nil {
 		return PersistResult{}, err
 	}
-	return PersistResult{Claimed: claimed, Attempts: attempts}, nil
+	if !claimed {
+		return PersistResult{}, nil
+	}
+	return PersistResult{Claimed: true, Attempts: attempts, ReceivedAt: existing.ReceivedAt}, nil
 }
 
 // claim takes an unprocessed delivery's lease when nobody holds it, in one
@@ -173,6 +180,8 @@ type ClaimedDelivery struct {
 	Action     string
 	// Attempts is the attempt this claim is.
 	Attempts int
+	// ReceivedAt is when the delivery was first received.
+	ReceivedAt time.Time
 	// Payload is the stored body, which is the REDACTED copy
 	// (redactPublishedCredentials): a handler that reads a published-credential
 	// comment body sees the notice instead.
@@ -245,6 +254,7 @@ RETURNING delivery_id, oc_org_id, event, action, received_at, attempts`,
 			Event:      d.Event,
 			Action:     d.Action,
 			Attempts:   d.Attempts,
+			ReceivedAt: d.ReceivedAt,
 			Payload:    byID[d.DeliveryID],
 		}
 	}

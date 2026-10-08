@@ -38,6 +38,12 @@ func issueThreadID(n, uuid string) string {
 	return agentsvc.ConversationID(testOrg, testProj, "issue-"+n, uuid)
 }
 
+// eventNow is a close or reopen happening now: after every thread the test
+// has made so far, by more than the clock's resolution.
+func eventNow() time.Time {
+	return time.Now().Add(time.Millisecond)
+}
+
 // waitDeleted polls until the fake agents service has seen want deletes.
 func waitDeleted(t *testing.T, r *genaiRig, want int) []string {
 	t.Helper()
@@ -65,7 +71,7 @@ func TestRemoveIssueThread_RemovesOnlyThatIssuesThreads(t *testing.T) {
 	}
 	eight := listConversationsAt(t, r, conversationsPath()+issueQuery(8))[0].ConversationID
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 
@@ -89,7 +95,7 @@ func TestRemoveIssueThread_RemovesOnlyThatIssuesThreads(t *testing.T) {
 
 	// Idempotent: a second removal (the webhook after the agent's own close)
 	// finds nothing and deletes nothing.
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("second RemoveIssueThread: %v", err)
 	}
 	if n := len(r.fake.deleted()); n != 2 {
@@ -106,7 +112,7 @@ func TestRemoveIssueThread_AgentsDeleteFailureStillDropsRows(t *testing.T) {
 	ctx := context.Background()
 	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 	if got := r.fake.deleted(); len(got) != 1 {
@@ -133,7 +139,7 @@ func TestRemoveIssueThread_WaitsForTheRunningTurn(t *testing.T) {
 	}))
 	<-r.fake.entered
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 	if got := r.fake.deleted(); len(got) != 0 {
@@ -194,7 +200,7 @@ func TestRemoveIssueThread_SweptTurnTakesItsRemoval(t *testing.T) {
 	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
 	dead := crashedTurn(t, r, thread, 0)
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 	if ok, _ := convs.Exists(ctx, testOrg, testProj, "issue-7", thread); !ok {
@@ -211,7 +217,7 @@ func TestRemoveIssueThread_SweptTurnTakesItsRemoval(t *testing.T) {
 
 	// The reopen webhook finds nothing left; the issue's next read mints a
 	// fresh thread.
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("reopen RemoveIssueThread: %v", err)
 	}
 	if fresh := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID; fresh == thread {
@@ -238,7 +244,7 @@ func TestRemoveIssueThread_ReopenRemovesALeftoverThread(t *testing.T) {
 		t.Fatalf("an unmarked sweep removed the thread")
 	}
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("reopen RemoveIssueThread: %v", err)
 	}
 	if fresh := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID; fresh == thread {
@@ -256,7 +262,7 @@ func TestRemoveIssueThread_StaleHeartbeatRemovesNow(t *testing.T) {
 	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
 	crashedTurn(t, r, thread, 2*time.Minute)
 
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 	if got := r.fake.deleted(); !slices.Equal(got, []string{issueThreadID("7", thread)}) {
@@ -276,7 +282,7 @@ func TestRemoveIssueThread_AMarkNeverFiresOnAnotherTurn(t *testing.T) {
 	ctx := context.Background()
 	thread := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
 	first := crashedTurn(t, r, thread, 0)
-	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7); err != nil {
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
 		t.Fatalf("RemoveIssueThread: %v", err)
 	}
 	// The first turn ends without its finish taking the mark.
@@ -299,9 +305,57 @@ func TestRemoveIssueThread_AMarkNeverFiresOnAnotherTurn(t *testing.T) {
 	}
 }
 
+// A reopen's removal that lands after the user already started the reopened
+// issue's fresh thread — and a turn on it — takes only what predates the
+// reopen: the fresh thread and its turn are left alone.
+func TestRemoveIssueThread_LateReopenKeepsTheFreshThread(t *testing.T) {
+	convs := &memConversationRepo{}
+	r := newIssueRig(t, convs)
+	ctx := context.Background()
+	closed := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, eventNow()); err != nil {
+		t.Fatalf("close RemoveIssueThread: %v", err)
+	}
+	reopenedAt := time.Now().Add(-time.Millisecond) // the reopen, just before the visit
+	fresh := listConversationsAt(t, r, conversationsPath()+issueQuery(7))[0].ConversationID
+	if fresh == closed {
+		t.Fatalf("the reopened issue resumed its closed thread")
+	}
+
+	// The late reopen with no turn running: the fresh thread stays.
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, reopenedAt); err != nil {
+		t.Fatalf("reopen RemoveIssueThread: %v", err)
+	}
+	if ok, _ := convs.IsCurrent(ctx, testOrg, testProj, "issue-7", fresh); !ok {
+		t.Fatalf("a late reopen removed the thread started after it")
+	}
+
+	// The late reopen while a turn runs on the fresh thread: it waits for the
+	// turn, then still leaves the thread.
+	m := manifestPart(map[string]string{}, nil)
+	r.fake.manifest = &m
+	r.fake.gated = true
+	turnID := acceptedTurnID(t, postTurnBody(t, r, fresh, map[string]any{
+		"instruction": "carry on", "view": "issue", "issueNumber": 7,
+	}))
+	<-r.fake.entered
+	if err := r.svc.RemoveIssueThread(ctx, testOrg, testProj, 7, reopenedAt); err != nil {
+		t.Fatalf("reopen RemoveIssueThread mid-turn: %v", err)
+	}
+	close(r.fake.release)
+	r.waitTerminal(t, turnID)
+
+	if got := r.fake.deleted(); !slices.Equal(got, []string{issueThreadID("7", closed)}) {
+		t.Fatalf("agents deletes = %v, want only the closed thread", got)
+	}
+	if ok, _ := convs.IsCurrent(ctx, testOrg, testProj, "issue-7", fresh); !ok {
+		t.Errorf("the fresh thread was removed after its turn")
+	}
+}
+
 func TestRemoveIssueThread_RefusesANonPositiveNumber(t *testing.T) {
 	r := newIssueRig(t, &memConversationRepo{})
-	if err := r.svc.RemoveIssueThread(context.Background(), testOrg, testProj, 0); !errors.Is(err, spec.ErrIssueNumber) {
+	if err := r.svc.RemoveIssueThread(context.Background(), testOrg, testProj, 0, eventNow()); !errors.Is(err, spec.ErrIssueNumber) {
 		t.Fatalf("RemoveIssueThread(0) = %v, want ErrIssueNumber", err)
 	}
 }
