@@ -333,7 +333,7 @@ in [`cycle-status-and-logs.md`](cycle-status-and-logs.md).
 ## Settle: the Component is deleted once no pod is left
 
 Why the platform suspends first and deletes at settle is
-[ADR-0044](../../../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md);
+[ADR-0049](../../../../../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md);
 the lifecycle at a glance is in
 [cycle-status-and-logs.md](cycle-status-and-logs.md#the-lifecycle-of-a-cycles-job).
 

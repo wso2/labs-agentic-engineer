@@ -61,9 +61,20 @@ type planRig struct {
 	svc    *PlanService
 }
 
+// widgetsRef is proj1's repository as the plan service addresses it.
+var widgetsRef = aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}
+
+// newPlanRig seeds proj1's repository and, when versions names one, cuts the
+// version's tag on it: the pod resolves the plan turn's `at` against it.
 func newPlanRig(t *testing.T, versions planVersions) *planRig {
 	t.Helper()
 	pod := aestudiotest.New()
+	pod.SeedRepo(widgetsRef, map[string]string{"specs/requirements/prd.md": "# PRD\n"})
+	if versions.specTag != "" {
+		if err := pod.Tag(context.Background(), widgetsRef, sourcecontrol.TagSpec{Name: versions.specTag, Message: "Spec " + versions.specTag}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	issues := newFakeIssues()
 	row := &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"}
 	svc := NewPlanService(fakeRepos{repo: row}, versions, pod, issues, issues.writer())
@@ -89,7 +100,7 @@ func TestPlanMilestone_StartsAPlanTurnInThePod(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v1"})
 	call := r.plan(t)
 
-	if call.Ref != (aestudiotools.RepoRef{Org: "org1", Owner: "acme", Repo: "widgets", DefaultBranch: "main"}) {
+	if call.Ref != widgetsRef {
 		t.Errorf("ref = %+v, want the project's repository in org1", call.Ref)
 	}
 	req := call.Request
@@ -241,9 +252,9 @@ func TestPlanMilestone_WriteFailureIsAnError(t *testing.T) {
 // its component's claimed stories — zero LLM discretion on either.
 func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	r := newPlanRig(t, planVersions{specTag: "v2", scope: spec.BuildScope{
-		Tag: "v2", InScope: []int{1, 2},
-		StoryTitles:      map[int]string{1: "As a user, I want A.", 2: "As a user, I want B."},
-		ComponentStories: map[string][]int{"svc": {1, 2}},
+		Tag: "v2", InScope: []string{"F1.1", "F1.2"},
+		StoryTitles:      map[string]string{"F1.1": "As a user, I want A.", "F1.2": "As a user, I want B."},
+		ComponentStories: map[string][]string{"svc": {"F1.1", "F1.2"}},
 	}})
 	r.pod.ScriptTurn(taskOp(`{"ok":true,"op":"plan","component":"svc","title":"Build svc","dependsOn":[],"origin":"spec-plan","rationale":"core"}`))
 
@@ -254,7 +265,7 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	if scope.Tag != "v2" {
 		t.Errorf("scope tag = %q, want v2", scope.Tag)
 	}
-	if want := (aestudiotools.PlanStory{Number: 1, Title: "As a user, I want A.", Covered: false}); !slices.Contains(scope.Stories, want) {
+	if want := (aestudiotools.PlanStory{ID: "F1.1", Title: "As a user, I want A.", Covered: false}); !slices.Contains(scope.Stories, want) {
 		t.Errorf("scope missing the uncovered story: %+v", scope.Stories)
 	}
 
@@ -262,7 +273,41 @@ func TestPlanMilestone_DeltaScopeAndStamp(t *testing.T) {
 	if len(created) != 1 {
 		t.Fatalf("created %d issues, want 1", len(created))
 	}
-	if got := delivery.ParseServesStories(created[0].Body); fmt.Sprint(got) != "[1 2]" {
-		t.Errorf("stamped stories = %v, want [1 2] (body: %q)", got, created[0].Body)
+	if got := delivery.ParseServesStories(created[0].Body); fmt.Sprint(got) != "[F1.1 F1.2]" {
+		t.Errorf("stamped stories = %v, want [F1.1 F1.2] (body: %q)", got, created[0].Body)
+	}
+}
+
+// A version whose tag the repository does not have cannot be planned: the
+// pod refuses the turn (404 ref_not_found) before it starts, and the refusal
+// is permanent, so the planning activity does not retry it.
+func TestPlanIntoMilestone_AnUnknownVersionTagIsPermanent(t *testing.T) {
+	r := newPlanRig(t, planVersions{})
+	r.svc = NewPlanService(fakeRepos{repo: &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/acme/widgets", Status: "ready"}},
+		planVersions{specTag: "v4"}, r.pod, r.issues, r.issues.writer())
+	err := r.svc.PlanIntoMilestone(context.Background(), "org1", "proj1", 7)
+	if !errors.Is(err, sourcecontrol.ErrRefNotFound) || !sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v, want a permanent ErrRefNotFound", err)
+	}
+	if n := len(r.pod.TurnCalls()); n != 0 {
+		t.Fatalf("pod started %d turns, want none", n)
+	}
+}
+
+// The plan turn reads the version it plans, not main's tip (B2): the turn
+// names the version's tag as the commit the planner reads, so an edit made to
+// the spec after the version was cut never reaches it. It pins the tag with
+// or without a story scope (a scope-less first pass still plans the version).
+func TestPlanIntoMilestone_ReadsTheVersionNotMain(t *testing.T) {
+	r := newPlanRig(t, planVersions{specTag: "v2"})
+	if req := r.plan(t).Request; req.At != "tags/v2" || req.Scope != nil {
+		t.Errorf("scope-less plan: at = %q, scope = %+v, want tags/v2 and no scope", req.At, req.Scope)
+	}
+
+	r = newPlanRig(t, planVersions{specTag: "v3", scope: spec.BuildScope{
+		Tag: "v3", InScope: []string{"F1.1"}, StoryTitles: map[string]string{"F1.1": "As a user, I want A."},
+	}})
+	if req := r.plan(t).Request; req.At != "tags/v3" || req.Scope == nil || req.Scope.Tag != "v3" {
+		t.Errorf("scoped plan: at = %q, scope = %+v, want tags/v3 with the v3 scope", req.At, req.Scope)
 	}
 }

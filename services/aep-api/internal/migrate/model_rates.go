@@ -31,15 +31,8 @@ import (
 // thereafter — a price change is an UPDATE, and because USD is stamped at
 // capture (never re-derived), that change only affects work captured after it.
 //
-// Two rows on api.anthropic.com: the Anthropic format's default model
-// (claude-sonnet-5) and claude-haiku-4-5.
-//
-//   - claude-sonnet-5 (the default agent model) at its
-//     INTRODUCTORY rates, in force through 2026-08-31: input $2.00/MTok,
-//     output $10.00/MTok, cache-read ~0.1x input ($0.20), cache-write ~1.25x
-//     input ($2.50). The 2026-08-31 step-up to standard $3/$15 is the first
-//     intended ops override — a live demonstration of why history must not
-//     reprice.
+//   - claude-sonnet-5 stays seeded after the default moved on: orgs that chose
+//     it and runs captured on it still price.
 //   - claude-haiku-4-5 at standard rates ($1.00/$5.00, cache-read $0.10,
 //     cache-write $1.25). Pricing is
 //     all-or-nothing per capture (Stamper.SumCost), so an offered model with
@@ -60,6 +53,14 @@ import (
 // primary key that has not been widened yet.
 func RunModelRatesSeed(ctx context.Context, db *gorm.DB) error {
 	seeds := []modelcost.ModelRate{
+		{
+			Host:              modelconn.AnthropicHost,
+			ModelID:           "claude-sonnet-5-5",
+			InputPerMTok:      2.00,
+			OutputPerMTok:     10.00,
+			CacheReadPerMTok:  0.20,
+			CacheWritePerMTok: 2.50,
+		},
 		{
 			Host:              modelconn.AnthropicHost,
 			ModelID:           "claude-sonnet-5",

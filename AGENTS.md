@@ -14,7 +14,7 @@ SDLC platform built on OpenChoreo.
 | lint | `make lint` | eslint + golangci-lint |
 | typecheck | `make typecheck` | `tsc` + `go vet` |
 | license-check | `make license-check` | fail if any source lacks the Apache header |
-| deadcode (TS) | `make deadcode-ts-check` | knip over `@aep/ae-design-agent`, `@aep/ae-collab`, `@aep/playground`, `@aep/web-search` + `@aep/platform-idp-auth`; fails on any finding (`make deadcode-ts` reports without failing) |
+| deadcode (TS) | `make deadcode-ts-check` | knip over `@aep/ae-design-agent`, `@aep/ae-collab`, `@aep/playground`, `@aep/console`, `@aep/ui-theme`, the `@wso2/prototype-*` packages, `@aep/web-search` + `@aep/platform-idp-auth`; fails on any finding (`make deadcode-ts` reports without failing) |
 
 ## Coding Practices
 - Focus on writing maintainable code, clean testable code. 
@@ -28,6 +28,8 @@ SDLC platform built on OpenChoreo.
   `@knipkeep <reason>` JSDoc tag in TS, `//deadcode:keep` in Go. What each
   gate covers and why is in `knip.jsonc` and the `Makefile` of `services/aep-api` and of
   `ae-studio-tools`.
+- `skills/`, `.agents/skills/` and `AGENTS.md` files change through the
+  `writing-skills` loop: a proposal doc first, then the edits, logged in that doc.
 
 ## Design docs
 

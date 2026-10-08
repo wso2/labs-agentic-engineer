@@ -15,6 +15,7 @@
 #   make license-check  fail if any in-scope source is missing a header
 #   make check-image-names  fail if the chart's platform image lists disagree,
 #                     or release.yml's matrix and images.yml's IMAGES differ
+#   make e2e-walk     the live walk (tests/e2e) against dev-env; on demand only
 #   make tools        install pinned Go tools (golangci-lint)
 #   make clean        remove build output and caches
 
@@ -50,7 +51,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui typecheck license license-check check-image-names tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool
+.PHONY: install gen build dev test lint eval-ui eval-codegen typecheck license license-check check-image-names tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool e2e-walk
 
 install:
 	$(PNPM) install
@@ -120,6 +121,13 @@ eval-ui:
 eval-bal:
 	$(PNPM) --filter @aep/ballerina-evals eval $(if $(ARGS),-- $(ARGS),)
 
+# Codegen evals (evals/codegen): saved case → play code → play wire → walk → judge.
+# On demand, OAuth token only: policy in evals/codegen ADR-0002.
+#   make eval-codegen ARGS="run --case expense-claims --repeats 3"
+#   make eval-codegen ARGS="list" | ARGS="report"
+eval-codegen:
+	$(PNPM) --filter @aep/codegen-evals eval $(if $(ARGS),-- $(ARGS),)
+
 lint:
 	$(TURBO) run lint
 	@rc=0; for d in $(GO_MODULE_DIRS); do echo ">> golangci-lint $$d"; ( cd "$$d" && $(GOLANGCI) run ./... ) || rc=1; done; exit $$rc
@@ -139,6 +147,12 @@ check-image-names:
 
 tools:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
+
+# The live walk (tests/e2e/README.md): drives the new console through the
+# Acme Expenses example against a running dev-env with real agents. On demand
+# only, never part of `make test`; E2E_CREATE=1 lets it create a real project.
+e2e-walk:
+	bash tests/e2e/acme-expenses-walk.sh
 
 # TS dead-code gate (knip) — the counterpart of services/aep-api's Go
 # `deadcode-check`. Whole-program unused-export/file/dependency analysis, run with
@@ -209,9 +223,9 @@ workflow-skill:
 # The SRE agent (deployments/scripts/setup-sre.sh) then wires the OpenChoreo
 # SRE agent's alert → RCA → AE issue handoff onto the observability plane
 # (OpenSearch, Fluent Bit, the logs adapter) the cluster bring-up installed.
-# It uses the org's model connection key (an Anthropic one) as saved in the
-# Console, so its pod waits until that key is saved; re-run setup-sre.sh after
-# saving it.
+# Its model is SRE_LLM_API_KEY_FILE + SRE_LLM_MODEL, which `aectl sre install`
+# writes into the agent's Secret; without them the agent waits at 0 replicas
+# until a re-run of setup-sre.sh passes them.
 #
 #   WITH_OBSERVABILITY=0  skips the observability plane, and with it the SRE
 #                         agent (the agent has nothing to read alerts from)
@@ -343,7 +357,6 @@ dev-images:
 	# cache hit or not; re-importing an image the cluster already has is cheap.
 	k3d image import \
 		ghcr.io/wso2/aep/aep-api:dev-local \
-		ghcr.io/wso2/aep/aep-mcp-server:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
 		$$(jq -r '.builds[].tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON)) \
@@ -417,12 +430,11 @@ dev-update:
 	bash deployments/scripts/openbao-aep-api-auth.sh
 	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
-		--set aepMcpServer.image.repository=ghcr.io/wso2/aep/aep-mcp-server --set aepMcpServer.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
 		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
 		$(AE_STUDIO_IMAGE_SET)
 	./tools/aectl/aectl-skaffold platform sync-clients
-	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-mcp-server deployment/aep-console deployment/aep-tryit
+	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and
 # OpenCode, deployments/scripts/build-runner.sh), imports them into k3d, and

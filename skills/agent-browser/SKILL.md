@@ -26,6 +26,19 @@ version that is actually installed, so the verbs, flags and output formats are
 always the ones you have — which is why this file carries none of them.
 `agent-browser skills get core --full` adds the complete command reference.
 
+## Confirm each action
+
+`✓ Done` tells you that the command sent its input. It does not tell you that
+the page accepted it. After each action, read the result: the value, the
+address or the request.
+
+- `select` works only on a native `<select>`. For a different dropdown, click
+  it, then click the option.
+- A native date input ignores inserted text (`fill`, `keyboard type`). Click
+  each part (year, month, day) by its ref, then `press` its digits one key at a
+  time. Do not press Tab inside a date input: headless Chrome then repeats the
+  next key without end, and the page stops responding.
+
 ## What is already true on this platform
 
 - **The CLI and its browser are installed.** Confirm it once, with

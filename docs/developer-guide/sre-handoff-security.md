@@ -6,57 +6,51 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
 
 ## Secret boundaries
 
-- Anthropic keys are organization credentials managed through AE Console.
-- Runtime projection uses secret references and a file mount; the SRE image
-  reads `RCA_LLM_API_KEY_FILE`.
-- The key value must not be serialized into Helm values, ConfigMaps, logs, MCP
-  arguments, or documentation examples.
-- The MCP bearer token is separate from the Anthropic key and is used only to
-  let `aep-mcp-server` forward the caller identity to `aep-api`.
-- That bearer is a dedicated long-lived secret (`AEP_MCP_TOKEN` /
-  `AEP_MCP_DEFAULT_BEARER` on `aep-mcp-server`, `SRE_HANDOFF_TOKEN` on
-  `aep-api`), not a Thunder-issued JWT: the OpenChoreo SRE agent's generic
-  extensions loader resolves an MCP server's `headers` from `${VAR}` once at
-  process start and never refreshes them, so a short-lived Thunder token
-  would expire mid pod-lifetime. `aep-api` verifies it with a narrow,
-  disabled-by-default checker (`auth.SREHandoffVerifier`) scoped to exactly
-  the internal SRE ops (`/internal/v1/sre/…`: list/create issues, record an
-  RCA report) and bound to one configured org (`SRE_HANDOFF_ORG`). `/api/v1`
-  accepts user JWTs only and answers `401` to this bearer; no runner op
-  accepts it either.
-- The SRE agent never holds this bearer. Its `remediation/mcp.json` has no
-  `headers` entry because the extension loader will not send credentials to
-  a plaintext URL. `aep-mcp-server` applies it instead, as the fallback
-  `AEP_MCP_DEFAULT_BEARER` for requests without their own `Authorization`
-  header. The fallback is off unless configured; a blank value or a bare
-  `Bearer` scheme also leaves it off, and a malformed value stops the server
-  at startup.
-- While the fallback is on, any caller that reaches `aep-mcp-server` acts
-  with the handoff's rights (list/create issues in `SRE_HANDOFF_ORG`), so
-  each deployment limits who can reach the port.
-- Local dev (`make dev-env`, unless `WITH_SRE=0`) uses the k8s wiring in the next bullet:
-  `deployments/scripts/setup-sre.sh` generates a random value at
-  `aep/aep-mcp-token` once, keeps it across re-runs, and enables
-  `sreHandoff`. There is no built-in default. To rotate it, write a new
-  value with `aectl platform secret import --path aep/aep-mcp-token`, then
-  restart `aep-api` and `aep-mcp-server` once `aep-sre-handoff-secrets`
-  refreshes, since both read it only at pod start.
-- A full k8s install wires it through `deployments/helm-charts/platform`:
-  `values.yaml`'s `sreHandoff` block (`enabled`, default `false`; `org`;
-  `callerNamespace`; `callerPodLabels`), an `ExternalSecret` in
-  `templates/external-secrets/external-secrets.yaml` that reads the
-  `aep/aep-mcp-token` OpenBao path into `aep-sre-handoff-secrets`, the
-  `SRE_HANDOFF_TOKEN`/`SRE_HANDOFF_ORG` env vars in
-  `templates/aep-api/deployment.yaml`, and `AEP_MCP_DEFAULT_BEARER` in
-  `templates/aep-mcp-server/deployment.yaml` (one shared credential, not a
-  second secret to keep in sync). `templates/aep-mcp-server/networkpolicy.yaml`
-  then admits only pods matching `callerPodLabels` in `callerNamespace` (the
-  SRE agent's pods and namespace) to `aep-mcp-server`; this needs a CNI that
-  enforces NetworkPolicy. The `callerPodLabels` default is the SRE agent
-  Deployment's selector labels in the observability-plane chart `aectl`
-  installs; a different chart version may need a different component label.
-  Off by default. Enabling it requires a random value at that OpenBao path, for
-  example via `aectl platform secret import --path aep/aep-mcp-token`.
+- The SRE agent's model key is set at install: `aectl sre install` reads it
+  from `--llm-api-key-file`, checks it against the provider, and writes it
+  into the agent's Secret `sre-agent-aep` in the observability-plane
+  namespace (`RCA_LLM_API_KEY`, `RCA_MODEL_NAME`, `RCA_LLM_BASE_URL`). aep-api
+  never holds it. See
+  [`services/aep-api/design/sre-handoff.md`](../../services/aep-api/design/sre-handoff.md).
+- The key value must not be serialized into Helm values, ConfigMaps, logs,
+  MCP arguments, or documentation examples. `aectl` reads it only from a
+  file, never from a flag value, and sends it only to the https base URL
+  named, without following redirects.
+- The handoff key (`AEP_MCP_TOKEN`) is separate from the model key. `aectl`
+  generates it (32 random bytes) and writes it into `sre-agent-aep` and into
+  aep-api's Secret `sre-handoff`; a re-run reuses it, and
+  `--rotate-handoff-token` replaces it in both and restarts both sides.
+- It is a long-lived key, not a Thunder-issued JWT: the OpenChoreo SRE
+  agent's extensions loader resolves an MCP server's `headers` from `${VAR}`
+  once at process start and never refreshes them, so a short-lived token
+  would expire mid pod-lifetime. The agent's `remediation/mcp.json` sends it
+  as `Authorization: Bearer ${AEP_MCP_TOKEN}`.
+- aep-api checks it with `auth.SREHandoffVerifier` (a constant-time compare)
+  on exactly one mount, `POST /internal/v1/sre-handoff/mcp`, which serves only
+  `search_related_issues` and `create_issue`. It never widens what the Thunder
+  JWT verifier accepts, and the public issue operations refuse the fields only
+  the handoff may send. `/api/v1` accepts user JWTs only and answers `401` to
+  this key. Without `SRE_HANDOFF_TOKEN` the mount does not exist.
+- The key authenticates the agent, not an org. One agent serves every org on
+  its plane, so each call names its org, the alert's OpenChoreo `namespace`.
+  That value reaches aep-api through a model that reads pod logs, so it is
+  never trusted as given: before either tool reads or writes, aep-api asks the
+  observer, with its own service token, whether an alert fired in the last
+  hour for that namespace, project and component. No alert, or an
+  observer that cannot answer, and nothing is read or filed. The bound this
+  leaves: a prompt-injected agent can at most act on another component that
+  really alerted within the window.
+- The mount is reached from the agent only over **https**, through the
+  platform chart's `aep-api-sre-handoff` `HTTPRoute` on the OpenChoreo
+  control-plane gateway's `https` listener, matching that one path. The
+  extension loader sends `headers` only to https URLs, which is why a
+  plaintext route cannot carry the bearer. Inside the cluster aep-api's
+  Service is not restricted by a `NetworkPolicy` (a platform-wide gap), so
+  the key is the boundary there.
+- Local dev (`make dev-env`, unless `WITH_SRE=0`) runs the same path:
+  `deployments/scripts/setup-sre.sh` runs `aectl sre install
+  --platform-chart ...`, which writes both Secrets and sets
+  `sreAgent.enabled=true` on the platform release.
 
 ## Automation boundaries
 

@@ -30,7 +30,7 @@ No credential table keeps a value, a sealed copy, a preview or a vault path.
 ## Invariants
 
 - Postgres holds secret reference names, never a secret value
-  (`migrate` step `phase26_secrets_refs_only`; pinned by the migrate dbtest
+  (`migrate` step `phase29_secrets_refs_only`; pinned by the migrate dbtest
   `TestSchema_NoValueColumnsRemain`). The only sealed column is
   `test_users.password_sealed`.
 - Secret values never cross domain boundaries as plaintext on the wire — API

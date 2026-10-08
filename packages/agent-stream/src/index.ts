@@ -19,7 +19,7 @@
 /**
  * `@aep/agent-stream` — the single client-side consumption surface for the spec
  * agent's turn stream. Zero server-side dependencies (no Express, no AI SDK), so
- * the console, the evals, the playground, and the agents service all consume
+ * the console, the evals, the playground, and the design agent all consume
  * the wire through ONE definition. Moving `FileBundle` here brings the component
  * `design.json` write-gate with it, so any fold enforces the same schema for
  * free (§3/§12.4 of the migration decision record).
@@ -33,6 +33,7 @@ export type {
   OpOk,
   OpErr,
   OpResult,
+  PrototypeFinding,
   AddFileInput,
   EditFileInput,
   RemoveFileInput,
@@ -64,7 +65,10 @@ export type {
   TurnAnchor,
   TurnAnchorNode,
   TurnAim,
+  TurnScope,
   TurnAimIntent,
+  PrototypeFeedback,
+  PrototypeFeedbackRequest,
   ManifestPart,
   TurnUsage,
   Toolset,
@@ -89,10 +93,13 @@ export {
   isToolset,
   isSurface,
   isTurnSpec,
+  isPrototypeFeedback,
+  PROTOTYPE_FLOW_SKILL,
   isTurnAttachment,
   isTurnAttachmentsOrAbsent,
   isTurnConnection,
   isTurnAim,
+  isTurnScope,
   TURN_AIM_LIMITS,
 } from "./contracts/sse-events.js";
 export type {
@@ -143,6 +150,9 @@ export type { Equal } from "./type-equal.js";
 
 // --- The fold surface --------------------------------------------------------
 export { FileBundle, lf, FRONTMATTER_RE } from "./bundle.js";
+export type { PlannedWrite, WritePlan } from "./bundle.js";
+export { writeWithRenderCheck } from "./prototype-gate.js";
+export type { FileWrite, PrototypeFileTexts, PrototypeRenderCheck } from "./prototype-gate.js";
 export { toChange, applyToolCall, isFileMutationTool, opForTool, readToolInputPath } from "./change.js";
 
 // --- The component design.json write-gate (travels with FileBundle) ----------
@@ -160,6 +170,8 @@ export type { ComponentDependencyProblem } from "./component-dependencies.js";
 // --- The agent.afm.md structural write-gate (the ai-agent component kind) ---
 export {
   ATTACHMENT_CEILINGS,
+  GUARDRAIL_LIMITS,
+  PLATFORM_OWNED_GUARDRAIL_KEYS,
   ATTACHMENT_TYPES,
   checkAgentAfm,
   splitAfm,

@@ -216,6 +216,38 @@
             "maxFileSizeMB"
           ],
           "additionalProperties": false
+        },
+        "guardrails": {
+          "minItems": 1,
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "pattern": "^[a-z0-9-]{1,64}$"
+              },
+              "params": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "why": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              }
+            },
+            "required": [
+              "policy",
+              "params",
+              "why"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false

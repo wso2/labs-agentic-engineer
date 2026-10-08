@@ -25,7 +25,7 @@
  *   pnpm play <dir> requirements|design|chat → run one phase; exit code = result
  *   pnpm play <dir> tasks|code|check|undo    → later steps of the impl plan
  *
- * Flags: --idea "<text>", --target "<x>", --fresh, --silent, --restore, --yes,
+ * Flags: --idea "<text>", --scope F<n>|design-review, --fresh, --silent, --restore, --yes,
  * -h/--help. `code` also takes --host (run the coding agent as a bare host
  * process instead of the default Docker-image run — see engine/coding-run.ts).
  */
@@ -34,12 +34,14 @@ import "./devtools-default.js"; // MUST be first: sets AGENT_DEVTOOLS before the
 import { existsSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { stdout as output } from "node:process";
+import { isTurnScope, type TurnScope } from "@aep/agent-stream";
 import * as clack from "@clack/prompts";
 import { loadRepoSkills } from "./kit/skills.js";
 import { loadDotenv } from "@aep/ae-design-agent/shared/env";
 import {
   chatTurn,
   codeCommand,
+  evalSaveCommand,
   logCommand,
   designCommand,
   requirementsCommand,
@@ -50,6 +52,7 @@ import {
   type PhaseOutcome,
 } from "./commands.js";
 import { checkProject } from "./engine/check.js";
+import { WIRE_EXIT } from "./engine/wire/failure.js";
 import { wireCommand } from "./engine/wire/session.js";
 import { openSession, SKILLS_DIR } from "./engine/session.js";
 import { expandProjectPath, projectDirError } from "./paths.js";
@@ -63,9 +66,28 @@ import { readIdea, writeDescriptor } from "./state/descriptor.js";
 import { confirmCodingDir, confirmWireDir } from "./tui/consent.js";
 import type { WireOptions } from "./engine/wire/session.js";
 
-const COMMANDS = new Set(["requirements", "design", "tasks", "code", "wire", "chat", "check", "undo", "log", "menu"]);
+const COMMANDS = new Set([
+  "requirements",
+  "design",
+  "tasks",
+  "code",
+  "wire",
+  "chat",
+  "check",
+  "undo",
+  "log",
+  "menu",
+  "eval-save",
+]);
 
 /** Bare `play`, `play help`, or `-h/--help` → the one-screen command reference. */
+/** `--scope F2` or `--scope design-review`, as the console sends it; anything else is a usage error. */
+function scopeFlag(raw: string): TurnScope {
+  const scope = raw === "design-review" ? { kind: "design-review" } : { kind: "feature", feature: raw };
+  if (!isTurnScope(scope)) throw new Error(`--scope must be a feature ID (F2) or design-review, not "${raw}"`);
+  return scope;
+}
+
 function printUsage(): void {
   output.write(
     [
@@ -80,10 +102,12 @@ function printUsage(): void {
       "  pnpm play <dir> wire                      run the generated app locally, as a role, in a browser",
       "  pnpm play <dir> log [--slow|--thinking]   read the last coding run in detail (developer view)",
       '  pnpm play <dir> chat "<message>"          one-shot headless chat turn',
+      "  pnpm play <dir> eval-save <name>          save the pre-code specs/ + issues/ as a codegen eval case",
+      "                                            (evals/codegen; plans its checklist with a model)",
       "",
       "Flags:",
       '  --idea "<text>"   the project idea — captured into specs/.agentic-engineer.toml',
-      '  --target "<x>"    narrow the phase to one component/target',
+      "  --scope <s>       what the user is looking at: a feature (F2) or design-review",
       "  --fresh           reset the conversation before the run (wire: drop the database volume)",
       "  --silent          suppress live turn rendering",
       "  --restore         restore the latest undo snapshot before the run",
@@ -116,7 +140,7 @@ function printUsage(): void {
       "                            aep-runner-opencode:dev (AGENT_RUNNER_IMAGE_OPENCODE), docker",
       "                            mode only, API key only",
       "  AEP_AGENT_MODEL           the one model every call uses: the coding run's, and the",
-      "                            engineering agent's on an AEP_MODEL_* connection (default claude-sonnet-5)",
+      "                            engineering agent's on an AEP_MODEL_* connection (default claude-sonnet-5-5)",
       "",
       "Tracing: AI SDK DevTools is on by default — run `npx @ai-sdk/devtools` (port 4983).",
       "",
@@ -185,11 +209,17 @@ async function runHeadless(
       // discovery, ordering and fan-out (see its SKILL.md).
       outcome = await codeCommand(projectDir, opts, confirmCodingDir(projectDir));
       break;
-    case "wire":
+    case "wire": {
       // The one verb that ends with a browser open and a panel up: it holds the
       // terminal until you quit, and tears everything down on the way out.
-      outcome = await wireCommand(projectDir, wireOptions, confirmWireDir(projectDir));
+      const wired = await wireCommand(projectDir, wireOptions, confirmWireDir(projectDir));
+      if (!wired.ok) {
+        output.write(`✗ wire: ${wired.detail}\n`);
+        return WIRE_EXIT[wired.cause];
+      }
+      outcome = wired;
       break;
+    }
     case "undo":
       outcome = undoCommand(projectDir, opts);
       break;
@@ -219,6 +249,12 @@ async function runHeadless(
     }
     case "check":
       return printCheckFindings(projectDir) ? 0 : 1;
+    case "eval-save":
+      if (!commandArg) {
+        output.write("usage: play <dir> eval-save <name>\n");
+        return 1;
+      }
+      return evalSaveCommand(projectDir, commandArg);
     default:
       output.write(`"${command}" is not wired yet (see docs/design/playground.md §13)\n`);
       return 2;
@@ -286,7 +322,7 @@ async function main(): Promise<number> {
     args: process.argv.slice(2),
     options: {
       idea: { type: "string" },
-      target: { type: "string" },
+      scope: { type: "string" },
       fresh: { type: "boolean" },
       silent: { type: "boolean" },
       restore: { type: "boolean" },
@@ -315,7 +351,7 @@ async function main(): Promise<number> {
 
   const opts: CodeOptions = {
     ...(values.idea ? { idea: values.idea } : {}),
-    ...(values.target ? { target: values.target } : {}),
+    ...(values.scope ? { scope: scopeFlag(values.scope) } : {}),
     ...(values.fresh ? { fresh: true } : {}),
     ...(values.silent ? { silent: true } : {}),
     ...(values.restore ? { restore: true } : {}),

@@ -1195,7 +1195,7 @@ function OrphanGroup({
           return (
             <ScenarioRow
               key={key}
-              scenario={{ name: s.scenario, kind: "Scenario", line: s.line ?? 0, tags: [], negative: false, steps: [] }}
+              scenario={{ name: s.scenario, kind: "Scenario", line: s.line ?? 0, tags: [], negative: false, stories: [], steps: [] }}
               reported={s}
               hasRun
               awaiting={false}

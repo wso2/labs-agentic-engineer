@@ -201,3 +201,32 @@ test("cycle edges use the LATEST existing task per component (stale rendering ig
   const staleOnly = abcDesign({ "tasks/1.md": taskFile(1, "a", ["b"]) });
   assert.equal(new TaskPlan(staleOnly).planTask({ component: "b", title: "B", dependsOn: ["a"], rationale: "r" }).ok, false);
 });
+
+// --- B3: one Task per feature per component ---------------------------------
+
+test("planTask echoes the Task's feature and keeps it on the planned Task", () => {
+  const plan = new TaskPlan(DESIGN);
+  const res = plan.planTask({ component: "order-service", title: "Approvals in order-service", dependsOn: [], rationale: "r", feature: "F2" });
+  assert.equal(res.ok, true);
+  if (res.ok) assert.equal(res.feature, "F2");
+  assert.equal(plan.plannedTasks()[0]!.feature, "F2");
+});
+
+test("a component planned per feature keeps every Task's edges for the cycle check", () => {
+  const plan = new TaskPlan(DESIGN);
+  plan.planTask({ component: "order-service", title: "Claims in order-service", dependsOn: ["user-service"], rationale: "r", feature: "F1" });
+  plan.planTask({ component: "order-service", title: "Approvals in order-service", dependsOn: [], rationale: "r", feature: "F2" });
+  // The F2 Task names no edge, but F1's order-service → user-service still stands.
+  const res = plan.planTask({ component: "user-service", title: "Users", dependsOn: ["order-service"], rationale: "r", feature: "F1" });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.code, "DEPENDENCY_CYCLE");
+});
+
+test("updating one per-feature Task replaces its own edges, not its siblings'", () => {
+  const plan = new TaskPlan(DESIGN);
+  plan.planTask({ component: "order-service", title: "Claims in order-service", dependsOn: ["user-service"], rationale: "r", feature: "F1" });
+  plan.planTask({ component: "user-service", title: "Users", dependsOn: [], rationale: "r", feature: "F1" });
+  // Dropping F1's edge frees user-service to depend on order-service.
+  assert.equal(plan.updateTask({ ref: { title: "Claims in order-service" }, set: { dependsOn: [] } }).ok, true);
+  assert.equal(plan.updateTask({ ref: { title: "Users" }, set: { dependsOn: ["order-service"] } }).ok, true);
+});

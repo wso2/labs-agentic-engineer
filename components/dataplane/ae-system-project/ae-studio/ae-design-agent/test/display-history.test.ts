@@ -116,3 +116,15 @@ test("author is omitted, not empty, when the journal has none", () => {
   assert.deepEqual(out[0], { role: "user", content: "hi" });
   assert.ok(!("author" in (out[0] as object)));
 });
+
+test("a user row that sent a prototype review carries its batch", () => {
+  const prototypeFeedback = {
+    prototypeHash: "0".repeat(64),
+    component: "expense-web",
+    requests: [{ screenId: "screen.queue", roleId: "approver", stateId: "state.default", elementIds: [], text: "Sort oldest first" }],
+  };
+  const out = projectDisplayHistory(
+    conv([{ role: "user", content: PROMPT_2 }], [{ ...entry(0, "/prototype expense-web", AUTHOR), prototypeFeedback }]),
+  );
+  assert.deepEqual(out[0], { role: "user", content: "/prototype expense-web", author: AUTHOR, prototypeFeedback });
+});

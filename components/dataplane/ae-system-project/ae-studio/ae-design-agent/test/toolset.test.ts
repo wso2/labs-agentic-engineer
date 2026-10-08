@@ -84,3 +84,14 @@ test("files instructions are unchanged; task-plan instructions are a distinct mi
   assert.doesNotMatch(taskPlanInstructions, /task-planning skill/);
   assert.doesNotMatch(taskPlanInstructions, /editFile/); // the plan turn does not edit files
 });
+
+test("planTask carries the Task's feature through to the accumulator (B3)", async () => {
+  const p = new TaskPlan({ "specs/design/components/api/design.json": '{"name":"api"}\n' });
+  const planTask = buildTaskPlanTools(p).planTask!;
+  const out = await planTask.execute!(
+    { component: "api", title: "Approvals in the API", dependsOn: [], rationale: "r", feature: "F2" },
+    {} as never,
+  );
+  assert.equal((out as { feature?: string }).feature, "F2");
+  assert.equal(p.plannedTasks()[0]!.feature, "F2");
+});

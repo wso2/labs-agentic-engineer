@@ -47,7 +47,7 @@ var goldenStepOrder = []string{
 	"phase2_pra_schema",
 	"phase2_prc",
 	"org_secrets",
-	"phase23_org_secret_refs",
+	"phase26_org_secret_refs",
 	"per_org_secret_name",
 	"org_anthropic_credentials",
 	"phase3_thunder_org_uuid",
@@ -79,11 +79,14 @@ var goldenStepOrder = []string{
 	"phase19_model_connection",
 	"phase20_model_key_rename",
 	"phase21_ai_agent_model_endpoints",
-	"phase22_drop_activity_events",
-	"phase24_agent_turns_ledger",
-	"phase25_run_cycle_settling",
-	"phase26_secrets_refs_only",
-	"phase27_run_cycle_startup_wait",
+	"phase22_org_sre_model_connections",
+	"phase23_agent_guardrail_applications",
+	"phase24_drop_sre_model_connections",
+	"phase25_drop_activity_events",
+	"phase27_agent_turns_ledger",
+	"phase28_run_cycle_settling",
+	"phase29_secrets_refs_only",
+	"phase30_run_cycle_startup_wait",
 }
 
 // TestStepOrderGolden pins the ordered list. Steps is a pure builder, so this

@@ -38,6 +38,7 @@ import {
   startAndStreamTurn,
   TurnRefusedError,
   type StreamPart,
+  type TurnScope,
   type TurnStartBody,
 } from "@aep/agent-stream";
 import { filterTurnSnapshot } from "@aep/ae-design-agent/conversation/load-workspace";
@@ -55,8 +56,8 @@ export interface TurnSession extends ThreadSession {
 }
 
 export interface SpecTurnOptions {
-  /** The spec-bundle path this turn should write to, when one is pinned. */
-  target?: string;
+  /** What the user is looking at (S6): a feature, or the design review; absent = the whole product. */
+  scope?: TurnScope;
   /** Live rendering hook; every streamed part passes through it. */
   onPart?: (part: StreamPart) => void;
 }
@@ -104,7 +105,7 @@ export async function runSpecTurn(session: TurnSession, instruction: string, opt
   const { projectDir, ws, state } = session;
   const before = ws.readSpecFiles();
 
-  const body: TurnStartBody = { instruction, ...(opts.target ? { target: opts.target } : {}) };
+  const body: TurnStartBody = { instruction, ...(opts.scope ? { scope: opts.scope } : {}) };
 
   const parts: StreamPart[] = [];
   const toolCalls: StreamPart[] = [];

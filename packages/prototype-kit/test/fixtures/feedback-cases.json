@@ -1,0 +1,244 @@
+{
+  "$comment": "Prototype feedback batches, judged by @wso2/prototype-kit/feedback (test/feedback.test.ts), @aep/agent-stream's isPrototypeFeedback (test/turn-spec.test.ts) and the Go BFF (internal/spec/genaiturns). `batch` overrides top-level fields, `request` overrides the first request's (null removes the field), `fill` sets a field to `unit` repeated `count` times (elementIds: a one-id list; component: the batch's), `requestCount` repeats the first request. Rows with `component: true` judge the AEP batch's `component`, which the kit's submission has not. Lengths are UTF-16 code units.",
+  "limits": {
+    "requests": 50,
+    "text": 4000,
+    "id": 200
+  },
+  "base": {
+    "prototypeHash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "component": "expense-web",
+    "requests": [
+      {
+        "screenId": "screen.queue",
+        "flowId": "flow.approve",
+        "roleId": "approver",
+        "stateId": "state.default",
+        "elementIds": [
+          "btn.approve",
+          "tbl.expenses"
+        ],
+        "text": "Put the Approve button on the left."
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "valid batch",
+      "valid": true
+    },
+    {
+      "name": "valid whole-screen request with no flow",
+      "request": {
+        "flowId": null,
+        "elementIds": []
+      },
+      "valid": true
+    },
+    {
+      "name": "short hash",
+      "batch": {
+        "prototypeHash": "abc"
+      },
+      "valid": false
+    },
+    {
+      "name": "uppercase hash",
+      "batch": {
+        "prototypeHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      },
+      "valid": false
+    },
+    {
+      "name": "no requests",
+      "batch": {
+        "requests": []
+      },
+      "valid": false
+    },
+    {
+      "name": "requests at the limit",
+      "requestCount": 50,
+      "valid": true
+    },
+    {
+      "name": "requests over the limit",
+      "requestCount": 51,
+      "valid": false
+    },
+    {
+      "name": "request not an object",
+      "batch": {
+        "requests": [
+          "x"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "blank screen",
+      "request": {
+        "screenId": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "whitespace flow",
+      "request": {
+        "flowId": " "
+      },
+      "valid": false
+    },
+    {
+      "name": "blank role",
+      "request": {
+        "roleId": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "whitespace state",
+      "request": {
+        "stateId": "\t"
+      },
+      "valid": false
+    },
+    {
+      "name": "element ids not a list",
+      "request": {
+        "elementIds": "a"
+      },
+      "valid": false
+    },
+    {
+      "name": "blank element id",
+      "request": {
+        "elementIds": [
+          ""
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "missing text",
+      "request": {
+        "text": null
+      },
+      "valid": false
+    },
+    {
+      "name": "whitespace text",
+      "request": {
+        "text": "  \n"
+      },
+      "valid": false
+    },
+    {
+      "name": "text at the limit",
+      "fill": {
+        "field": "text",
+        "unit": "t",
+        "count": 4000
+      },
+      "valid": true
+    },
+    {
+      "name": "text over the limit",
+      "fill": {
+        "field": "text",
+        "unit": "t",
+        "count": 4001
+      },
+      "valid": false
+    },
+    {
+      "name": "astral text at the limit in UTF-16 code units",
+      "fill": {
+        "field": "text",
+        "unit": "😀",
+        "count": 2000
+      },
+      "valid": true
+    },
+    {
+      "name": "astral text over the limit in UTF-16 code units, under it in code points",
+      "fill": {
+        "field": "text",
+        "unit": "😀",
+        "count": 2001
+      },
+      "valid": false
+    },
+    {
+      "name": "id at the limit",
+      "fill": {
+        "field": "screenId",
+        "unit": "s",
+        "count": 200
+      },
+      "valid": true
+    },
+    {
+      "name": "id over the limit",
+      "fill": {
+        "field": "stateId",
+        "unit": "s",
+        "count": 201
+      },
+      "valid": false
+    },
+    {
+      "name": "astral element id at the limit in UTF-16 code units",
+      "fill": {
+        "field": "elementIds",
+        "unit": "😀",
+        "count": 100
+      },
+      "valid": true
+    },
+    {
+      "name": "astral element id over the limit in UTF-16 code units, under it in code points",
+      "fill": {
+        "field": "elementIds",
+        "unit": "😀",
+        "count": 101
+      },
+      "valid": false
+    },
+    {
+      "name": "astral flow id over the limit in UTF-16 code units",
+      "fill": {
+        "field": "flowId",
+        "unit": "𐍈",
+        "count": 101
+      },
+      "valid": false
+    },
+    {
+      "name": "blank component",
+      "batch": {
+        "component": " "
+      },
+      "component": true,
+      "valid": false
+    },
+    {
+      "name": "component that is not one path segment",
+      "batch": {
+        "component": "../design"
+      },
+      "component": true,
+      "valid": false
+    },
+    {
+      "name": "component over the id limit",
+      "fill": {
+        "field": "component",
+        "unit": "c",
+        "count": 201
+      },
+      "component": true,
+      "valid": false
+    }
+  ]
+}

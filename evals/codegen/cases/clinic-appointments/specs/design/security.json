@@ -1,0 +1,82 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "slots",
+      "component": "clinic-api",
+      "description": "Doctor availability slots",
+      "actions": [
+        { "handle": "browse", "description": "Every doctor's available slots" },
+        { "handle": "manage", "description": "The caller's own slots: list, publish, remove" }
+      ]
+    },
+    {
+      "resource": "appointments",
+      "component": "clinic-api",
+      "description": "Appointments",
+      "actions": [
+        { "handle": "read", "description": "The caller's own appointments" },
+        { "handle": "book", "description": "Book a slot for the caller" },
+        { "handle": "reschedule", "description": "Reschedule the caller's own appointment" },
+        { "handle": "cancel", "description": "Cancel the caller's own appointment" },
+        { "handle": "read-all", "description": "Every appointment" },
+        { "handle": "book-any", "description": "Book a slot for any patient" },
+        { "handle": "reschedule-any", "description": "Reschedule any appointment" },
+        { "handle": "cancel-any", "description": "Cancel any appointment" },
+        { "handle": "check-in", "description": "Check in any patient" }
+      ]
+    },
+    {
+      "resource": "schedule",
+      "component": "clinic-api",
+      "description": "A doctor's day",
+      "actions": [
+        { "handle": "read", "description": "The caller's own appointments as a doctor" }
+      ]
+    },
+    {
+      "resource": "notes",
+      "component": "clinic-api",
+      "description": "Visit notes, doctors only",
+      "actions": [
+        { "handle": "read", "description": "Notes on the caller's own appointments as a doctor" },
+        { "handle": "write", "description": "Write notes on the caller's own appointments as a doctor" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Patients", "description": "Clinic patients" },
+    { "name": "Doctors", "description": "Clinic doctors" },
+    { "name": "Receptionists", "description": "Clinic front-desk staff" }
+  ],
+  "roles": [
+    {
+      "name": "Patient",
+      "description": "Browses slots and manages their own appointments.",
+      "stories": [3, 4, 5, 6, 7, 13],
+      "grants": ["slots:browse", "appointments:read", "appointments:book", "appointments:reschedule", "appointments:cancel"],
+      "assignTo": ["Patients"]
+    },
+    {
+      "name": "Doctor",
+      "description": "Publishes slots, sees their day and writes visit notes.",
+      "stories": [1, 2, 10, 11, 12, 13],
+      "grants": ["slots:manage", "schedule:read", "notes:read", "notes:write"],
+      "assignTo": ["Doctors"]
+    },
+    {
+      "name": "Receptionist",
+      "description": "Books for patients and checks them in; cannot read visit notes.",
+      "stories": [8, 9, 13],
+      "grants": ["slots:browse", "appointments:read-all", "appointments:book-any", "appointments:reschedule-any", "appointments:cancel-any", "appointments:check-in"],
+      "assignTo": ["Receptionists"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-patient", "roles": ["Patient"] },
+    { "username": "test-patient-2", "roles": ["Patient"] },
+    { "username": "test-doctor", "roles": ["Doctor"] },
+    { "username": "test-doctor-2", "roles": ["Doctor"] },
+    { "username": "test-receptionist", "roles": ["Receptionist"] }
+  ]
+}

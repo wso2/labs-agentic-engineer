@@ -46,7 +46,7 @@ func TestStatusSnapshot_TwoHopsThenCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	seeded := len(f.Calls())
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, f)
 
 	snap, err := svc.StatusSnapshot(ctx, "default", "p")
 	if err != nil {

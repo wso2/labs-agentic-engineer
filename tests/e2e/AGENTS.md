@@ -1,9 +1,13 @@
 # AGENTS.md — tests/e2e
 
-End-to-end tests against the real stack. Every test maps to a user-facing flow
-in [`apps/console/PRD.md`](../../apps/console/PRD.md).
+End-to-end tests of the console (`apps/console`) against the real local stack.
 
 ## What is here
+
+- `acme-expenses-walk.sh`: the live walk of the running example, driven by
+  `agent-browser` from bash; steps 1–2 (sign-in, New project). How to run:
+  `README.md`. Add a step only once its screen is wired to aep-api; no
+  placeholders for steps that are not.
 
 - `ae-studio/`: the AE Studio dataplane scenario, fresh org to merged PR. It is a
   manual agent-browser run plus read-only check scripts; its checks are shell
@@ -47,9 +51,13 @@ in [`apps/console/PRD.md`](../../apps/console/PRD.md).
   token file holds a random stub token; `grep -c -F -f <token file> <trace>` must
   print `0`.
 
-## Playwright conventions (for Playwright specs)
+## Walk conventions (`acme-expenses-walk.sh` and later walks)
 
 - Run against the cluster from `deployments/` (`make dev-env` once, `make
-  dev-update` after each source edit); no mocked infra.
-- One spec per scenario; keep selectors resilient (roles/labels over CSS).
-- Verify flows manually with the `agent-browser` skill before writing the spec.
+  dev-update` after each source edit) — no mocked infra.
+- Locate by role and accessible name (`find role … --name … --exact`); CSS only
+  for an element with no role, with a comment saying why.
+- Every check waits with a timeout and fails with `step N failed: <what>`.
+- Anything that creates real resources (repositories, agent turns) stays behind
+  `E2E_CREATE=1` and is cleaned up in the exit trap.
+- Walk the flow by hand with agent-browser before scripting it.

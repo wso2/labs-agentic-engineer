@@ -1,0 +1,76 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "catalogue",
+      "component": "procurement-api",
+      "description": "Catalogue of requestable items",
+      "actions": [
+        { "handle": "read", "description": "Every catalogue item" },
+        { "handle": "manage", "description": "Add and edit catalogue items" }
+      ]
+    },
+    {
+      "resource": "requests",
+      "component": "procurement-api",
+      "description": "Purchase requests and their approval",
+      "actions": [
+        { "handle": "read", "description": "The caller's own requests" },
+        { "handle": "submit", "description": "Raise a request as the caller" },
+        { "handle": "read-all", "description": "Every request" },
+        { "handle": "approve", "description": "Approve any request within the caller's limit" },
+        { "handle": "reject", "description": "Reject any pending request" }
+      ]
+    },
+    {
+      "resource": "receipts",
+      "component": "procurement-api",
+      "description": "Goods receipts against approved orders",
+      "actions": [
+        { "handle": "create", "description": "Receive goods against any approved order" }
+      ]
+    },
+    {
+      "resource": "stock",
+      "component": "procurement-api",
+      "description": "Stock levels, ledger and low-stock view",
+      "actions": [
+        { "handle": "read", "description": "Every item's stock level, ledger and low-stock status" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Requesters", "description": "Staff who raise purchase requests" },
+    { "name": "Approvers", "description": "Staff with a purchase approval limit" },
+    { "name": "Warehouse Clerks", "description": "Staff who receive goods and watch stock" }
+  ],
+  "roles": [
+    {
+      "name": "Requester",
+      "description": "Browses the catalogue and raises and follows their own purchase requests.",
+      "stories": [1, 2, 3],
+      "grants": ["catalogue:read", "requests:read", "requests:submit"],
+      "assignTo": ["Requesters"]
+    },
+    {
+      "name": "Approver",
+      "description": "Reviews pending requests and approves or rejects them within the approval limit.",
+      "stories": [4, 5, 6],
+      "grants": ["requests:read-all", "requests:approve", "requests:reject"],
+      "assignTo": ["Approvers"]
+    },
+    {
+      "name": "Warehouse Clerk",
+      "description": "Receives goods against approved orders, views stock, ledger and low-stock items, and manages the item catalogue.",
+      "stories": [7, 8, 9, 10, 11, 12],
+      "grants": ["requests:read-all", "receipts:create", "stock:read", "catalogue:read", "catalogue:manage"],
+      "assignTo": ["Warehouse Clerks"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-requester", "roles": ["Requester"] },
+    { "username": "test-requester-2", "roles": ["Requester"] },
+    { "username": "test-approver", "roles": ["Approver"] },
+    { "username": "test-warehouse-clerk", "roles": ["Warehouse Clerk"] }
+  ]
+}

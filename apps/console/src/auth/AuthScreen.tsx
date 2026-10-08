@@ -18,16 +18,19 @@
 
 import { Box, Button, CircularProgress, Typography } from "@wso2/oxygen-ui";
 
-// Full-viewport auth transition screen: spinner while redirecting to or
-// returning from Thunder, message + retry when the handshake fails.
+// Full-viewport auth screen: spinner while redirecting to or returning from
+// Thunder, message + retry when the handshake fails, and the signed-out state.
 export function AuthScreen({
   label,
   error,
   onRetry,
+  onSignIn,
 }: {
   label: string;
   error?: string;
   onRetry?: () => void;
+  /** Signed out on purpose: say so and offer to sign in again. */
+  onSignIn?: () => void;
 }) {
   return (
     <Box
@@ -41,7 +44,14 @@ export function AuthScreen({
         bgcolor: "background.default",
       }}
     >
-      {error ? (
+      {onSignIn ? (
+        <>
+          <Typography variant="h6">You're signed out</Typography>
+          <Button variant="contained" onClick={onSignIn}>
+            Sign in
+          </Button>
+        </>
+      ) : error ? (
         <>
           <Typography variant="h6">Sign-in failed</Typography>
           <Typography variant="body2" color="text.secondary">

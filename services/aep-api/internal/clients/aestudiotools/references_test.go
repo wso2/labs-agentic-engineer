@@ -149,6 +149,69 @@ func TestPutReferences_Refusals(t *testing.T) {
 	})
 }
 
+func TestListReferences_ReadsTheStoredNames(t *testing.T) {
+	var org, method, path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path, org = r.Method, r.URL.Path, r.Header.Get("X-Impersonate-Org")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"names":["brief.pdf","sketch.png"]}`))
+	}))
+	defer srv.Close()
+	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
+	names, err := a.ListReferences(context.Background(), acmeGreeter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodGet || path != "/repos/acme/greeter/references" || org != "ou-123" {
+		t.Fatalf("request = %s %s org=%s", method, path, org)
+	}
+	if !slices.Equal(names, []string{"brief.pdf", "sketch.png"}) {
+		t.Fatalf("names = %v", names)
+	}
+}
+
+// None stored is an empty list, never nil: the caller serves it as JSON.
+func TestListReferences_NoneStoredIsEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"names":[]}`))
+	}))
+	defer srv.Close()
+	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
+	names, err := a.ListReferences(context.Background(), acmeGreeter)
+	if err != nil || names == nil || len(names) != 0 {
+		t.Fatalf("names = %#v, %v, want an empty list", names, err)
+	}
+}
+
+func TestListReferences_Refusals(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		status    int
+		code      string
+		want      error
+		permanent bool
+	}{
+		{name: "owner_not_allowed", status: 403, code: "owner_not_allowed", want: sourcecontrol.ErrOwnerNotAllowed, permanent: true},
+		{name: "disk_full", status: 503, code: "disk_full", want: sourcecontrol.ErrAEStudioUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeProblem(w, tc.status, tc.code, "")
+			}))
+			defer srv.Close()
+			a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
+			_, err := a.ListReferences(context.Background(), acmeGreeter)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if sourcecontrol.IsPermanent(err) != tc.permanent {
+				t.Fatalf("sourcecontrol.IsPermanent(%v) = %v, want %v", err, sourcecontrol.IsPermanent(err), tc.permanent)
+			}
+		})
+	}
+}
+
 // A 401 answered before any byte of the upload was sent (Expect:
 // 100-continue) is retried once with a fresh token, the same body.
 func TestPutReferences_RetriesAnUnsentUploadAfter401(t *testing.T) {

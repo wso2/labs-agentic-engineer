@@ -42,7 +42,17 @@
 
 import { randomUUID } from "node:crypto";
 import type { FilePart, LanguageModel } from "ai";
-import type { PlanContextFile, PlanScope, StreamPart, Surface, TurnAim, TurnAttachment, TurnSpec } from "@aep/agent-stream";
+import type {
+  PlanContextFile,
+  PlanScope,
+  PrototypeFeedback,
+  StreamPart,
+  Surface,
+  TurnAim,
+  TurnAttachment,
+  TurnScope,
+  TurnSpec,
+} from "@aep/agent-stream";
 import type { RoomPeer } from "../collab/room-peer.js";
 import type { SkillSource } from "../agents/main/skill-source.js";
 import { AttachmentRefusedError, fitAttachments, fitReferences, type UnreadableReference } from "../conversation/attachments.js";
@@ -57,12 +67,12 @@ import { runConversationTurn } from "../conversation/run-conversation-turn.js";
 import { stepContextOf } from "../conversation/step-context.js";
 import { codedErrorFrame, turnErrorFrame } from "../conversation/turn-error.js";
 import type { ThreadBook } from "../conversations/thread-book.js";
-import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "../prompts/turn.js";
+import { composeInstruction, eagerSkillsFor, scopeFactFor, toolsetFor, wantsRegisterDraftTool } from "../prompts/turn.js";
 import { connectionHost, type ModelConnection } from "../shared/model.js";
 import { projectSnapshotDir, skillsSnapshotDir } from "../shared/snapshot-path.js";
 import type { ConversationStore } from "../store/conversation-store.js";
 import { ToolsSocketError, type ProjectSnapshot, type ToolsSocket } from "../tools-socket/client.js";
-import { startTurnSummary, turnSpecFor } from "./start-spec.js";
+import { designFeaturesOf, startTurnSummary, turnSpecFor } from "./start-spec.js";
 import {
   DeskClosedError,
   errorClassOf,
@@ -103,6 +113,8 @@ export interface ServerTurnRequest {
   project: string;
   kind: "start" | "plan";
   credit: Credit;
+  /** Plan: the commit the planner reads the repository at (40-hex); absent, the default-branch tip. */
+  at?: string;
   /** Plan: the milestone and its stories' coverage. */
   scope?: PlanScope;
   /** Plan: the existing-Task renders. */
@@ -123,8 +135,11 @@ const START_COMMAND = "/start";
 export interface TurnInput {
   /** Verbatim; `/<skill>` commands are parsed here (`start-spec.ts`). */
   instruction: string;
-  target?: string;
+  /** What the user was looking at (S6); absent = the whole product. */
+  scope?: TurnScope;
   aim?: TurnAim;
+  /** A review batch on one prototype, valid only on a `/prototype` Room turn (`turn-input.ts` checks the body). */
+  prototypeFeedback?: PrototypeFeedback;
   /** Chat attachments, bytes base64 (`turn-input.ts` caps them). */
   attachments: TurnAttachment[];
 }
@@ -241,8 +256,11 @@ export class TurnStarter {
   /** Start a browser turn in the project's current thread; resolves to its turn id. */
   async startProjectTurn(req: { project: string; conversationId: string; input: TurnInput; credit: Credit }): Promise<string> {
     const conn = this.admissible(req.input);
+    // Only the Room's committer saves a revision: a batch on a roomless turn
+    // would be applied to a throwaway bundle and read as done.
+    if (req.input.prototypeFeedback && !this.deps.room) throw feedbackNeedsRoom();
     const lookup = await this.lookup(req.project);
-    const { spec, flow } = turnSpecFor(req.input.instruction, lookup);
+    const { spec, flow } = turnSpecFor(req.input.instruction, lookup, req.input.prototypeFeedback);
     const material = await this.material(req.input, spec, () => this.projectDirs(req.project, lookup), conn);
     const scope: Scope = { kind: "project", project: req.project };
     this.refuseBusy(scope);
@@ -321,7 +339,9 @@ export class TurnStarter {
     };
     const input: TurnInput = { instruction: req.scope ? `${PLAN_SUMMARY} (${req.scope.tag})` : PLAN_SUMMARY, attachments: [] };
     const conn = this.admissible(input);
-    const lookup = await this.lookup(req.project);
+    // The pin is a resolved sha (`edge/turn-socket.ts`): the lookup snapshots
+    // that commit, so the planner reads the version it plans, not the tip.
+    const lookup = await this.lookup(req.project, req.at);
     const material = await this.material(input, spec, () => this.projectDirs(req.project, lookup), conn);
     const scope: Scope = { kind: "project", project: req.project };
     this.refuseBusy(scope, req.turnId);
@@ -353,6 +373,7 @@ export class TurnStarter {
   /** Start a turn in a marketplace conversation (no project, no Room); the caller checked ownership. */
   async startMarketplaceTurn(req: { conversationId: string; input: TurnInput; credit: Credit }): Promise<string> {
     const conn = this.admissible(req.input);
+    if (req.input.prototypeFeedback) throw feedbackNeedsRoom();
     const { skillsSha } = await this.toolsCall(() => this.deps.tools.skills());
     const { spec, flow } = turnSpecFor(req.input.instruction, { references: [] });
     // The marketplace reads only the Org skills snapshot: it is both the
@@ -389,9 +410,23 @@ export class TurnStarter {
     return conn;
   }
 
-  private async lookup(project: string): Promise<ProjectSnapshot> {
+  /**
+   * The project's snapshot. `ref_not_found` is the request's fault only when
+   * it sent `at`: the pin names no commit, which a retry will not change.
+   * Without `at` it is the sidecar failing to read the tip it resolved.
+   */
+  private async lookup(project: string, at?: string): Promise<ProjectSnapshot> {
     if (!isProjectName(project)) throw new TurnStartError(404, "project_unknown", "no such project");
-    const found = await this.toolsCall(() => this.deps.tools.lookup(project));
+    const found = await this.toolsCall(async () => {
+      try {
+        return await this.deps.tools.lookup(project, at);
+      } catch (err) {
+        if (at !== undefined && err instanceof ToolsSocketError && err.code === "ref_not_found") {
+          throw new TurnStartError(400, "invalid_turn", "at names no commit of the project's repository");
+        }
+        throw err;
+      }
+    });
     if (!found) throw new TurnStartError(404, "project_unknown", "no such project");
     return found;
   }
@@ -483,9 +518,13 @@ export class TurnStarter {
       modelHost: connectionHost(l.conn),
       baseRef: l.material.baseRef,
       skillsRef: l.material.skillsRef,
+      ...designFeaturesFact(l.flow, l.spec),
     };
+    const scope = l.input.scope;
     const instruction = composeInstruction(l.spec, {
-      target: l.input.target,
+      // Composed after the snapshot read: a feature scope names its file,
+      // which only the turn's own files can say.
+      ...(scope ? { scope: scopeFactFor(scope, Object.keys(l.material.files)) } : {}),
       // D20 from the pod's last terminal facts: the last turn failed, or it
       // ran on another snapshot than this one.
       previousTurnFailed: last?.status === "failed",
@@ -516,7 +555,7 @@ export class TurnStarter {
     const roomScoped = l.roomProject !== undefined;
     const gates = { flow: l.flow, roomScoped };
     const toolset = toolsetFor(l.spec);
-    const eager = eagerSkillsFor(l.spec);
+    const eager = eagerSkillsFor(l.spec, l.input.scope);
     const m = l.material;
     const author = authorOf(l.credit);
     return async (emit, signal): Promise<TurnOutcome> => {
@@ -568,6 +607,11 @@ export class TurnStarter {
               // The names that reached the model, not the ones that were sent.
               ...(m.chatAttachments.length ? { attachments: m.chatAttachments.flatMap((p) => (p.filename ? [p.filename] : [])) } : {}),
               ...(l.input.aim ? { anchor: l.input.aim.anchor } : {}),
+              // Likewise the scope the instruction was composed from, and the
+              // review batch the flow carries, so a reloaded thread can say
+              // what each message was about.
+              ...(l.input.scope ? { scope: l.input.scope } : {}),
+              ...(l.spec.kind === "flow" && l.spec.prototypeFeedback ? { prototypeFeedback: l.spec.prototypeFeedback } : {}),
             },
             model,
             connection: l.conn,
@@ -611,6 +655,17 @@ export class TurnStarter {
       }
     };
   }
+}
+
+function feedbackNeedsRoom(): TurnStartError {
+  return new TurnStartError(400, "invalid_turn", "prototypeFeedback must be a Room turn: only the Room's committer saves the revision");
+}
+
+/** A design turn's feature IDs for its usage record; none for a bare `/design` or any other flow. */
+function designFeaturesFact(flow: string, spec: TurnSpec): { designFeatures?: string[] } {
+  if (flow !== "design") return {};
+  const ids = designFeaturesOf(spec);
+  return ids.length > 0 ? { designFeatures: ids } : {};
 }
 
 /** The turn's author: the credited user, named by `name` or else the id; none when the credit names no one. */

@@ -22,11 +22,13 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/projects"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo/repotest"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns/turnstest"
 )
 
@@ -303,5 +305,124 @@ func TestInternal_RepoPathParamPattern(t *testing.T) {
 	}
 	if !h.referencesStoreEmpty() {
 		t.Fatal("a refused path stored references")
+	}
+}
+
+// planRequest is a plan turn of greeter with the contract's full PlanScope
+// shape; at is left out when empty.
+func planRequest(turnID, at string) string {
+	pin := ""
+	if at != "" {
+		pin = `"at":"` + at + `",`
+	}
+	return `{"turnId":"` + turnID + `","project":"greeter","kind":"plan",` + pin +
+		`"credit":{"userId":"u1","name":"Ann","email":"ann@x"},` +
+		`"scope":{"tag":"v1","stories":[{"id":"F1.1","title":"Sign in","covered":false},{"id":"F2.3","covered":true}],` +
+		`"features":[{"id":"F1","name":"Accounts"},{"id":"F2","needs":["F1"]}],` +
+		`"productWide":[{"id":"P1","text":"Audit every write","appliesTo":["all"]},{"id":"P2","appliesTo":["F1"]}]},` +
+		`"taskContext":[{"path":"tasks/1.md","body":"open"}]}`
+}
+
+// relayedRequest decodes the one body the Turn socket received.
+func relayedRequest(t *testing.T, sock *turnstest.Server) map[string]any {
+	t.Helper()
+	reqs := sock.Requests()
+	if len(reqs) != 1 {
+		t.Fatalf("turn socket received %d requests, want 1", len(reqs))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(reqs[0], &m); err != nil {
+		t.Fatalf("relayed body %s: %v", reqs[0], err)
+	}
+	return m
+}
+
+// TestTurnsRelay_PlanAtIsResolvedBeforeTheTurn: a plan turn's at (a tag or a
+// sha) reaches the Turn socket as the commit it names, the rest of the
+// request unchanged, so the agent never resolves a ref and an edit after the
+// tag is not planned.
+func TestTurnsRelay_PlanAtIsResolvedBeforeTheTurn(t *testing.T) {
+	origin := repotest.NewOrigin(t, map[string]string{"specs/a.md": "v1"})
+	tagged := origin.HeadSHA(t)
+	origin.Tag(t, "v1", "Spec v1")
+	origin.Commit(t, map[string]string{"specs/a.md": "after v1"}, "edit after the version")
+	const id = "11111111-1111-5111-8111-111111111111"
+
+	for name, at := range map[string]string{"a tag": "tags/v1", "a sha": tagged} {
+		t.Run(name, func(t *testing.T) {
+			sock := turnstest.New(t, turnstest.Script{})
+			h := newHarness(t, withTurnSocket(sock), withProjects(greeterRepo), withGitOrigin(origin))
+			resp := h.postStream(turnsPath, h.m2m(), planRequest(id, at))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("got %d", resp.StatusCode)
+			}
+			_ = lastLine(t, resp)
+
+			got := relayedRequest(t, sock)
+			if got["at"] != tagged {
+				t.Fatalf("relayed at = %v, want the tagged commit %s", got["at"], tagged)
+			}
+			var sent map[string]any
+			if err := json.Unmarshal([]byte(planRequest(id, at)), &sent); err != nil {
+				t.Fatal(err)
+			}
+			delete(got, "at")
+			delete(sent, "at")
+			if !reflect.DeepEqual(got, sent) {
+				t.Fatalf("relayed %v, want the request unchanged but for at: %v", got, sent)
+			}
+		})
+	}
+
+	t.Run("no at is relayed without one", func(t *testing.T) {
+		sock := turnstest.New(t, turnstest.Script{})
+		h := newHarness(t, withTurnSocket(sock), withProjects(greeterRepo), withGitOrigin(origin))
+		resp := h.postStream(turnsPath, h.m2m(), planRequest(id, ""))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("got %d", resp.StatusCode)
+		}
+		_ = lastLine(t, resp)
+		if got := string(sock.Requests()[0]); got != planRequest(id, "") {
+			t.Fatalf("relayed %s, want the request byte for byte", got)
+		}
+	})
+}
+
+// TestTurnsRelay_PlanAtRefusals: an at the repository lacks is a permanent
+// 404 ref_not_found, a start turn may not pin, and a scope off the contract's
+// shape is refused; none starts a turn.
+func TestTurnsRelay_PlanAtRefusals(t *testing.T) {
+	origin := repotest.NewOrigin(t, map[string]string{"specs/a.md": "v1"})
+	origin.Tag(t, "v1", "Spec v1")
+	sock := turnstest.New(t, turnstest.Script{})
+	h := newHarness(t, withTurnSocket(sock), withProjects(greeterRepo), withGitOrigin(origin))
+	const id = "11111111-1111-5111-8111-111111111111"
+	start := strings.TrimSuffix(turnRequest(id), "}") + `,"at":"tags/v1"}`
+	for _, c := range []struct {
+		name, body string
+		status     int
+		code       string
+	}{
+		{"unknown tag", planRequest(id, "tags/v9"), 404, "ref_not_found"},
+		{"unknown sha", planRequest(id, strings.Repeat("ab", 20)), 404, "ref_not_found"},
+		{"a start turn with at", start, 400, "validation_failed"},
+		{"at neither a tag nor a sha", planRequest(id, "main"), 400, "validation_failed"},
+		{"a numbered story", strings.Replace(planRequest(id, "tags/v1"), `"id":"F1.1"`, `"number":1`, 1), 400, "validation_failed"},
+		{"a story id off the pattern", strings.Replace(planRequest(id, "tags/v1"), `"F1.1"`, `"1.1"`, 1), 400, "validation_failed"},
+		{"a feature id off the pattern", strings.Replace(planRequest(id, "tags/v1"), `"id":"F1","name"`, `"id":"f1","name"`, 1), 400, "validation_failed"},
+		{"an appliesTo off the pattern", strings.Replace(planRequest(id, "tags/v1"), `["all"]`, `["everything"]`, 1), 400, "validation_failed"},
+		{"an unknown scope field", strings.Replace(planRequest(id, "tags/v1"), `"tag":"v1",`, `"tag":"v1","x":1,`, 1), 400, "validation_failed"},
+	} {
+		resp := h.postStream(turnsPath, h.m2m(), c.body)
+		if resp.StatusCode != c.status {
+			t.Errorf("%s: got %d, want %d", c.name, resp.StatusCode, c.status)
+			continue
+		}
+		if got := responseCode(t, resp); got != c.code {
+			t.Errorf("%s: code %q, want %q", c.name, got, c.code)
+		}
+	}
+	if sock.Started() != 0 || len(sock.Requests()) != 0 {
+		t.Fatalf("started = %d, requests = %d: no refusal reaches the agent", sock.Started(), len(sock.Requests()))
 	}
 }

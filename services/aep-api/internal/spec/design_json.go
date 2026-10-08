@@ -80,9 +80,9 @@ type componentDesignJSON struct {
 	AppPath    string `json:"appPath,omitempty"`
 	Entrypoint string `json:"entrypoint,omitempty"`
 	Exposure   string `json:"exposure,omitempty"`
-	// Stories is the agent-authored list of PRD stories this component serves
-	// (#369) — the build gate's coverage check reads it.
-	Stories      []int            `json:"stories,omitempty"`
+	// Stories is the agent-authored list of story IDs ("F2.3") this component
+	// serves (#369) — the build gate's coverage check reads it.
+	Stories      []string         `json:"stories,omitempty"`
 	Description  string           `json:"description,omitempty"`
 	Endpoint     *endpointJSON    `json:"endpoint,omitempty"`
 	Dependencies []dependencyJSON `json:"dependencies"`
@@ -221,7 +221,7 @@ func parseComponentDesignJSON(dir, raw string) (DesignComponent, error) {
 		Buildpack:                  dj.Buildpack,
 		AppPath:                    dj.AppPath,
 		Exposure:                   dj.Exposure,
-		Stories:                    append([]int(nil), dj.Stories...),
+		Stories:                    append([]string(nil), dj.Stories...),
 		Description:                dj.Description,
 		Endpoint:                   toModelEndpoint(dj.Endpoint),
 		ComponentAgentInstructions: dj.ComponentAgentInstructions,

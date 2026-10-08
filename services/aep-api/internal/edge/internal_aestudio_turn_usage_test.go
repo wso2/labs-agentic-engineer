@@ -147,6 +147,29 @@ func TestTurnUsage_RecordsTheBatchUnderTheTokenOrg(t *testing.T) {
 	}
 }
 
+// A design turn's feature scope reaches the ledger as the pod sent it (the
+// store keeps it for design turns only; spec's ledger test owns that rule).
+func TestTurnUsage_CarriesTheDesignFeatures(t *testing.T) {
+	stack := newInternalStack(t)
+	ledger := &fakeTurnLedger{}
+	deps := stack.deps
+	deps.AEStudioRepositories = aeStudioProjects()
+	deps.TurnLedger = ledger
+	h := NewHandler(AppParams{InternalDeps: deps})
+
+	body := turnUsageBody(t,
+		turnRecordJSON(t, func(r map[string]any) { r["designFeatures"] = []string{"F1", "F12"} }),
+		turnRecordJSON(t, func(r map[string]any) { r["turnId"] = "11111111-2222-4333-8444-555555555555" }),
+	)
+	if rec := postTurnUsage(t, h, "Bearer "+stack.mintStudio("acme"), body); rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body %s)", rec.Code, rec.Body)
+	}
+	got := ledger.batches[0]
+	if !reflect.DeepEqual(got[0].DesignFeatures, []string{"F1", "F12"}) || got[1].DesignFeatures != nil {
+		t.Fatalf("design features = %v and %v, want [F1 F12] and none", got[0].DesignFeatures, got[1].DesignFeatures)
+	}
+}
+
 // Optional fields stay empty: a failed marketplace turn with no author, no
 // project and no context measure.
 func TestTurnUsage_OptionalFieldsStayEmpty(t *testing.T) {
@@ -281,6 +304,15 @@ func TestTurnUsage_Statuses(t *testing.T) {
 		{name: "running is not a finished status", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["status"] = "running" })), want: 400},
 		{name: "unknown kind", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["kind"] = "chat" })), want: 400},
 		{name: "unknown field", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["paths"] = []string{"a"} })), want: 400},
+		{name: "design feature not an F-id", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["designFeatures"] = []string{"F1", "G2"} })), want: 400},
+		{name: "design features as one line", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["designFeatures"] = []string{"/design F1 F2"} })), want: 400},
+		{name: "over 200 design features", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) {
+			ids := make([]string, 201)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("F%d", i+1)
+			}
+			r["designFeatures"] = ids
+		})), want: 400},
 		{name: "negative token count", body: turnUsageBody(t, turnRecordJSON(t, func(r map[string]any) { r["outputTokens"] = -1 })), want: 400},
 		// Postgres refuses a NUL byte in text on every attempt: a permanent
 		// refusal, so a 400 the sender drops rather than a 500 it retries.

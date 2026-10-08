@@ -1,0 +1,14 @@
+name: conference-planner
+description: "Conference planner: organizers create events with sessions and
+  rooms, speakers submit talk proposals, reviewers score them and organizers
+  accept or reject, attendees register for events and sessions with capacity
+  limits and a waitlist that promotes the next person when a seat frees up. Keep
+  registration (capacity, waitlist) in its own registration service that only
+  the events API calls; the web app calls only the events API. No email or
+  notifications, no file uploads or object storage, no scheduled or background
+  jobs, no external integrations or AI features."
+source:
+  project: conference-planner
+  snapshot: current
+  savedAt: 2026-10-04T11:43:11.947Z
+tags: []

@@ -17,25 +17,22 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL } from "@aep/agent-stream";
 import {
-  ASK_QUESTION_TOOL,
-  ASK_QUESTIONS_TOOL,
-  buildAnswerInstruction,
-  buildAnswersInstruction,
-} from "@aep/agent-stream";
-import {
-  answerableQuestionIds,
   applyNote,
   applySelection,
   extractStreamingQuestions,
+  isFreeTextOption,
   isQuestionAnswered,
-  isQuestionTool,
   normalizeAnswers,
   parseQuestionsInput,
-  pendingAnswerableQuestion,
+  serializeQuestionAnswer,
 } from "./questionCards";
 import type { QuestionAnswer } from "@aep/agent-stream";
-import type { ChatMessage } from "./chatStore";
+
+// Copied from the old console's agent-chat/questionCards.test.ts, less the typed
+// option actions (not parsed here) and the log-level answerability tests,
+// which moved with that logic to chatLog.test.ts.
 
 const SINGLE = {
   question: "Which auth flow?",
@@ -82,26 +79,7 @@ describe("parseQuestionsInput — ask_question (single)", () => {
 
   // A card degrades per OPTION, never per card: the agent's turn ends on the
   // question call, so a dropped card leaves the user staring at nothing while
-  // the conversation waits on them. The model's favourite malformation is an
-  // unlabeled free-text "Other" — the form offers free text anyway.
-  it("carries a well-formed typed action and drops a malformed one", () => {
-    const qs = parseQuestionsInput("ask_question", {
-      question: "How should I get its interface?",
-      options: [
-        { label: "Upload one", action: { kind: "upload-interface", dependency: "mail" } },
-        { label: "Proceed on your assumption", action: { kind: "accept-assumption", dependency: "mail" } },
-        { label: "Unknown kind", action: { kind: "delete-everything", dependency: "mail" } },
-        { label: "No dependency", action: { kind: "accept-assumption" } },
-      ],
-    });
-    expect(qs![0]!.options.map((o) => o.action)).toEqual([
-      { kind: "upload-interface", dependency: "mail" },
-      { kind: "accept-assumption", dependency: "mail" },
-      undefined,
-      undefined,
-    ]);
-  });
-
+  // the conversation waits on them.
   it("drops an option without a label and keeps the card", () => {
     expect(
       parseQuestionsInput(ASK_QUESTION_TOOL, {
@@ -236,6 +214,17 @@ describe("isQuestionAnswered / isFreeTextOption", () => {
     expect(isQuestionAnswered(OPTS, { selected: ["Web", "Escape"] })).toBe(true);
   });
 
+  // Seen on the live walk: "Fixed list: Laptop, Projector, Camera, Other"
+  // contains the word but is a real answer, and the card never let it send.
+  it("is an escape hatch only when the label opens with one", () => {
+    expect(isFreeTextOption({ label: "Other" })).toBe(true);
+    expect(isFreeTextOption({ label: "Something else — tell me" })).toBe(true);
+    expect(isFreeTextOption({ label: "Fixed list: Laptop, Projector, Camera, Other" })).toBe(false);
+    expect(isFreeTextOption({ label: "Per role, as the policy describes" })).toBe(false);
+    const fixed = { question: "q", options: [{ label: "Fixed list: Laptop, Projector, Camera, Other" }] };
+    expect(isQuestionAnswered(fixed, { selected: ["Fixed list: Laptop, Projector, Camera, Other"] })).toBe(true);
+  });
+
   it("keeps the parsed freeText flag off the wire", () => {
     const parsed = parseQuestionsInput(ASK_QUESTION_TOOL, {
       question: "q",
@@ -290,77 +279,24 @@ describe("answer editing while the batch streams (#335 regression)", () => {
   });
 });
 
-describe("isQuestionTool", () => {
-  it("recognizes both question tools and nothing else", () => {
-    expect(isQuestionTool(ASK_QUESTION_TOOL)).toBe(true);
-    expect(isQuestionTool(ASK_QUESTIONS_TOOL)).toBe(true);
-    expect(isQuestionTool("addFile")).toBe(false);
-    expect(isQuestionTool(undefined)).toBe(false);
-  });
-});
-
-describe("buildAnswerInstruction / buildAnswersInstruction (wire contract)", () => {
-  it("serializes a single selection", () => {
-    expect(buildAnswerInstruction("Which auth flow?", ["OIDC"])).toBe('Answer to "Which auth flow?": OIDC');
+describe("serializeQuestionAnswer (the next turn's instruction)", () => {
+  it("serializes one question's selection through the contract's builder", () => {
+    expect(serializeQuestionAnswer([SINGLE], [{ selected: ["OIDC"] }])).toBe('Answer to "Which auth flow?": OIDC');
   });
 
-  it("combines labels and a free-text note", () => {
-    expect(buildAnswerInstruction("Which?", ["A", "B"], "prefer A")).toBe('Answer to "Which?": A, B — prefer A');
+  it("carries typed text, trimmed, beside or instead of a selection", () => {
+    expect(serializeQuestionAnswer([SINGLE], [{ selected: [], freeText: "  SAML, sadly " }])).toBe(
+      'Answer to "Which auth flow?": SAML, sadly',
+    );
+    expect(serializeQuestionAnswer([SINGLE], [{ selected: ["OIDC"], freeText: "via Thunder" }])).toBe(
+      'Answer to "Which auth flow?": OIDC — via Thunder',
+    );
   });
 
-  it("serializes a batch as a bulleted list under the Answers: header", () => {
-    const out = buildAnswersInstruction([
-      { question: "Q1", selected: ["A"] },
-      { question: "Q2", selected: ["X", "Y"], freeText: "note" },
-    ]);
-    expect(out).toBe('Answers:\n- "Q1": A\n- "Q2": X, Y — note');
-  });
-});
-
-function question(id: string, answered = false): ChatMessage {
-  return {
-    id,
-    role: "question",
-    turnId: "t1",
-    toolCallId: `tc-${id}`,
-    questions: [SINGLE],
-    ...(answered ? { answers: [{ selected: ["OIDC"] }] } : {}),
-  };
-}
-
-function user(id: string, status: "completed" | "failed" = "completed"): ChatMessage {
-  return { id, role: "user", content: "text", status };
-}
-
-describe("answerableQuestionIds", () => {
-  it("keeps an unanswered trailing question answerable", () => {
-    expect(answerableQuestionIds([user("u1"), question("q1")])).toEqual(new Set(["q1"]));
-  });
-
-  it("excludes a question the card already answered", () => {
-    expect(answerableQuestionIds([question("q1", true)])).toEqual(new Set());
-  });
-
-  it("is superseded by any later delivered user message", () => {
-    expect(answerableQuestionIds([question("q1"), user("u2")])).toEqual(new Set());
-  });
-
-  it("is NOT superseded by a failed send — the agent never saw it", () => {
-    expect(answerableQuestionIds([question("q1"), user("u2", "failed")])).toEqual(new Set(["q1"]));
-  });
-
-  it("supersedes earlier questions but not later ones, in one pass", () => {
-    expect(answerableQuestionIds([question("q1"), user("u1"), question("q2")])).toEqual(new Set(["q2"]));
-  });
-});
-
-describe("pendingAnswerableQuestion", () => {
-  it("returns the newest answerable question", () => {
-    const q2 = question("q2");
-    expect(pendingAnswerableQuestion([question("q1"), user("u1"), q2])).toBe(q2);
-  });
-
-  it("returns undefined when a later user message superseded the question", () => {
-    expect(pendingAnswerableQuestion([question("q1"), user("u2")])).toBeUndefined();
+  it("serializes a batch as the Answers: list, one line per question", () => {
+    const second = { question: "Web or mobile?", options: [{ label: "Web" }, { label: "Mobile" }] };
+    expect(serializeQuestionAnswer([SINGLE, second], [{ selected: ["OIDC"] }, { selected: ["Web"] }])).toBe(
+      'Answers:\n- "Which auth flow?": OIDC\n- "Web or mobile?": Web',
+    );
   });
 });

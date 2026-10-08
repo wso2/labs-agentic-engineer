@@ -31,7 +31,7 @@ flowchart LR
 | `disconnectgithub` | disconnect cascade for the org's git provider | `POST .../config/git-provider/disconnect` |
 | `discoveridp` | OIDC discovery for a BYO IDP | `GET .../config/idp/discovery` |
 | `listorgs` | enumerate orgs (tenant-gate carve-out — no org ctx) | `GET /organizations` |
-| `aestudio` | install and converge the org's AE Studio ([ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
+| `aestudio` | install and converge the org's AE Studio ([ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)): its desired state, the Ensure over OpenChoreo, the status state machine; the tools pod's lookups behind `/internal/v1/ae-studio/` (`ProjectRepositories`: a project's repository; `SkillsRepositories`: the org's `_skills` repository, its library reconciled first) | `StudioConverger` · `AEStudioStatusReader` |
 
 *Flat in the domain root, outside the slices: the credential / anthropic / agent-settings /
 model-connection / idp services.*
@@ -162,7 +162,7 @@ model-connection / idp services.*
   fallback: an org with no `default-key` row (saved before the rows existed) resolves no key until
   it saves it again, and a subscription with no `coding-agent-key` row bills the connection's key
   (above).
-- **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0042](../../../../docs/decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
+- **The publisher client secret lives only in vault; builds and deploys only read** ([ADR-0047](../../../../docs/decisions/ADR-0047-an-org-secrets-value-lives-only-in-vault.md)).
   The gitpat submit's `EnsureClient(publisher)` is the one writer of the publisher app and its
   `ae-publisher-client` reference; the profile keeps `publisher_client_id` and
   `publisher_thunder_app_id`, never the secret or a reference to it. `POST /build` runs
@@ -206,7 +206,7 @@ model-connection / idp services.*
   but the OU ones, whose message names the operator action. OUs compare as UUIDs, whatever their case. With no converger or no secrets
   delivery the submit succeeds and logs `ae_studio_not_configured`. Nothing waits for the pod.
 - **A gitpat disconnect takes the org's AE Studio down before the credential goes** (`OrgDisconnectService`,
-  [ADR-0040](../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)): the repo hooks are unregistered through the pod while it still holds the
+  [ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)): the repo hooks are unregistered through the pod while it still holds the
   gitpat (best effort, `WebhookService.UnregisterOrg`); the Resource `ae-studio` is deleted
   (`aestudio.Service.Remove`, which holds the org's converges and waits out a running one until the
   cascade ends; OpenChoreo's finalizer takes its binding, release, pod, clones and reference documents

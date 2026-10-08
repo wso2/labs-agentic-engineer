@@ -16,7 +16,7 @@
 
 package aestudio
 
-// converge.go — the Ensure (ADR-0040), in order: Project ae-system →
+// converge.go — the Ensure (ADR-0045), in order: Project ae-system →
 // its ProjectReleaseBinding (creates the cell namespace) → ResourceType →
 // Resource → wait for its release → RRB pin. Each step reads what is there
 // first and writes only what differs, so a converge with nothing to do

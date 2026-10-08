@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Evaluation framework for the spec-flow agents: per-section (requirements, design, task generation) and chained evals over the real agents service, driven in-process through the playground's production-parity waist. Scenario briefs + rubrics are data (scenarios/*.yaml); scoring is deterministic checks + an LLM rubric judge with pass/review/fail bands.",
+  "description": "Evaluation framework for the spec-flow agents: per-section (requirements, design, task generation) and chained evals over the real design agent, driven in-process through the playground's production-parity waist. Scenario briefs + rubrics are data (scenarios/*.yaml); scoring is deterministic checks + an LLM rubric judge with pass/review/fail bands.",
   "scripts": {
     "eval": "evalite run",
     "eval:ui": "evalite serve",

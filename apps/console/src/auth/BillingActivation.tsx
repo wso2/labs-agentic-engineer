@@ -20,10 +20,10 @@ import { useEffect } from "react";
 import { ensureBillingSubscriptionActivated } from "../api/billing";
 
 /**
- * After a signed-in session exists, fire the cloud billing first-login
- * activation once (no-op when BILLING_API_BASE_URL is unset). Failures are
- * logged only — project create will still surface a 402 if activation never
- * succeeded.
+ * Sign-in's last step on WSO2 Cloud: once a session exists, activate the
+ * org's billing subscription, once (no call when `BILLING_API_BASE_URL` is
+ * unset). A failure is only logged: creating a project still answers 402 if
+ * activation never went through.
  */
 export function BillingActivation(): null {
   useEffect(() => {

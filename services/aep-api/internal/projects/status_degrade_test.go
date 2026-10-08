@@ -89,7 +89,7 @@ func projectServiceWithFake(t *testing.T, mut func(*aestudiotest.Fake)) *Service
 	repoSvc := &fakeRepoSvc{GetRepoFunc: func(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 		return row, nil
 	}}
-	svc := NewProjectService(nil, repoSvc, nil, spec.NewArtifactService(oneRepoRow{row: row}, pod), nil)
+	svc := NewProjectService(nil, repoSvc, nil, spec.NewArtifactService(oneRepoRow{row: row}, pod, pod), nil)
 	svc.SetStageSources(
 		fakeRunReader{rows: []delivery.MilestoneRun{devRun("v1", delivery.RunStateSucceeded)}},
 		fakeBindingsReader{items: []openchoreo.ReleaseBindingSummary{devBinding("api", "True", "Ready")}})

@@ -28,6 +28,7 @@ package mcpdiscovery
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
@@ -61,6 +62,26 @@ type OrgEndpointLister interface {
 // the installed cluster ResourceTypes a platform-resource dependency references.
 type ResourceTypeLister interface {
 	List(ctx context.Context) ([]dependencies.PlatformResourceType, error)
+}
+
+// GuardrailPolicy is one AI-gateway guardrail an agent of the org may declare
+// in its spec's x-aep.guardrails: what the org's gateway offers and the deploy
+// will accept, with the settings the spec may set (the platform-owned ones
+// already removed).
+type GuardrailPolicy struct {
+	Name        string          `json:"name"`
+	DisplayName string          `json:"displayName,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters"`
+	// Applies says where the platform applies it and for which agents.
+	Applies string `json:"applies"`
+}
+
+// GuardrailCatalogLister reads the guardrails the org's AI gateway offers —
+// the live catalog the deploy resolves a spec's guardrails against, so the
+// design picks exact policy names and settings instead of guessing them.
+type GuardrailCatalogLister interface {
+	GuardrailCatalog(ctx context.Context, org string) ([]GuardrailPolicy, error)
 }
 
 // GroupCatalogLister reads the GROUPS that already exist on the environment

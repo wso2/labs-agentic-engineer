@@ -5,7 +5,7 @@
 ## Context
 
 The console's Task row renders **the issue's newest non-machine comment, flattened
-to its first line** (`taskRowNote` in `apps/console/src/features/builds/lib/taskRow.ts`).
+to its first line** (`taskRowNote` in [`src/features/builds/lib/taskRow.ts` at `classic-console`](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/src/features/builds/lib/taskRow.ts)).
 The BFF drops the platform's own machine-branded comments on read
 (`commentViews` in `delivery/task/reads.go`), so that field carries "what a person
 wrote or an agent said" and nothing else. A live, per-issue status field already

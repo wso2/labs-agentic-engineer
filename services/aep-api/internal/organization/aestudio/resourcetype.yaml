@@ -14,7 +14,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# The ae-studio ResourceType (ADR-0040). Installed per org by aep-api (organization/aestudio), which embeds a byte copy made by go generate. parameters change per AE release or org (a new ResourceRelease, aep-api re-pins); environmentConfigs are install facts (an RRB PUT, no release).
+# The ae-studio ResourceType (ADR-0045). Installed per org by aep-api (organization/aestudio), which embeds a byte copy made by go generate. parameters change per AE release or org (a new ResourceRelease, aep-api re-pins); environmentConfigs are install facts (an RRB PUT, no release).
 
 apiVersion: openchoreo.dev/v1alpha1
 kind: ResourceType

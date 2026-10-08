@@ -27,18 +27,17 @@ import (
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
-
-	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// Every internal op names its caller in its tags. Read from the YAML,
-// not igen.GetSpec, because call-mcp-tool is excluded from generation.
+// Every internal op names its caller in its tags, and every internal route is
+// declared. Read from the YAML, not igen.GetSpec, because the two raw JSON-RPC
+// ops are excluded from generation.
 func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 	doc, err := openapi3.NewLoader().LoadFromFile("../../../../packages/contracts/api/internal/v1/openapi.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	callers := map[string]bool{"Runner": true, "AE Studio": true, "SRE": true}
+	callers := map[string]bool{"Runner": true, "AE Studio": true, "SRE Agent": true}
 	for path, item := range doc.Paths.Map() {
 		for method, op := range item.Operations() {
 			if len(op.Tags) == 0 {
@@ -51,8 +50,10 @@ func TestInternalSpec_TagsNameTheCaller(t *testing.T) {
 			}
 		}
 	}
-	if doc.Paths.Find("/mcp") == nil || doc.Paths.Find("/mcp").Post == nil {
-		t.Error("call-mcp-tool is not declared")
+	for _, raw := range []string{"/mcp", "/sre-handoff/mcp"} {
+		if doc.Paths.Find(raw) == nil || doc.Paths.Find(raw).Post == nil {
+			t.Errorf("POST %s is not declared", raw)
+		}
 	}
 }
 
@@ -139,12 +140,9 @@ func TestInternalBodyCap_PerOp(t *testing.T) {
 func TestInternalGate_RunsBeforeValidator(t *testing.T) {
 	s := newInternalStack(t)
 	deps := s.deps
-	deps.SREHandoff = auth.NewSREHandoffVerifier("s3cr3t", "acme")
 	for _, tc := range []struct{ name, method, path, bearer, body string }{
-		{"sre op, no bearer", http.MethodPost, "/internal/v1/sre/projects/p/issues", "", `{"title":1}`},
-		{"sre op, publisher token", http.MethodPost, "/internal/v1/sre/rca-reports", "Bearer " + s.mint("acme"), `{}`},
 		{"runner op, no bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "", ""},
-		{"runner op, sre bearer", http.MethodGet, "/internal/v1/runs/c/validation-context", "Bearer s3cr3t", ""},
+		{"runner op, SRE handoff key", http.MethodGet, "/internal/v1/runs/c/validation-context", "Bearer " + sreHandoffKey, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			validated := false
@@ -170,7 +168,7 @@ func TestInternalGate_RouteMissPassesThrough(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPost, "/internal/v1/mcp"},
 		{http.MethodGet, "/internal/v1/nope"},
-		{http.MethodDelete, "/internal/v1/sre/rca-reports"},
+		{http.MethodPost, "/internal/v1/sre-handoff/mcp"},
 	} {
 		called := false
 		next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })

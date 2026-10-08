@@ -17,26 +17,21 @@
  */
 
 import { createRootRoute } from "@tanstack/react-router";
-import { AppLayout } from "../layouts/AppLayout";
-import { AuthGuard } from "../auth/AuthGuard";
-import { OnboardingGate } from "../features/onboarding/components/OnboardingGate";
-import { AeStudioGate } from "../features/ae-studio/components/AeStudioGate";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { NotFoundPage } from "../components/NotFoundPage";
+import { GatedShell } from "../features/shell/components/GatedShell";
 
-// Everything renders behind the auth gate (issue #91): routes only ever
-// see a signed-in session. Behind it, the onboarding gate (issue #102,
-// ADR-0009) holds every route until the org's config is complete, and the
-// AE Studio gate holds them while the org's design workspace upgrades on a
-// first visit, or has failed to start (Settings excepted).
+// Everything renders behind the gates (GatedShell: auth, onboarding, AE
+// Studio), then the shell: rail, chat panel, and the main outlet.
 //
-// The app-level boundary is the last one the console owns. The shell's page
-// outlet and the chat panel have their own (AppLayout), so what reaches this
-// one is a throw in the gates or the shell itself, where nothing survives
-// anyway. It replaces the router's bare "Show Error" page with the same
-// retry-then-explain fallback the sections use; once the automatic attempts
-// are spent it says so and offers a reload, the one thing that fixes a
-// stale bundle after a deploy.
+// The app-level boundary is the last one the app owns. The shell's main
+// outlet and the chat panel have their own, so what reaches this one is a
+// throw in the gates or the shell itself. Once its automatic attempts are
+// spent it says so and offers a reload, the one thing that fixes a stale
+// bundle after a deploy.
 export const Route = createRootRoute({
+  // An address the console does not have draws in the shell's main area.
+  notFoundComponent: NotFoundPage,
   component: () => (
     <ErrorBoundary
       label="The console"
@@ -44,13 +39,7 @@ export const Route = createRootRoute({
       offerReload
       fallbackSx={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center" }}
     >
-      <AuthGuard>
-        <OnboardingGate>
-          <AeStudioGate>
-            <AppLayout />
-          </AeStudioGate>
-        </OnboardingGate>
-      </AuthGuard>
+      <GatedShell />
     </ErrorBoundary>
   ),
 });

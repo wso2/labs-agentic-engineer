@@ -361,3 +361,44 @@ func TestAMPAgentRegistrar_RegistersAtTheProjectsWriteTarget(t *testing.T) {
 		t.Fatalf("outcome = %+v, want one skipped agent (no binding)", out)
 	}
 }
+
+type orgRootTarget struct {
+	env string
+	err error
+}
+
+func (f orgRootTarget) OrgDefaultRoot(context.Context, string) (string, error) { return f.env, f.err }
+
+// The design agent's guardrail list has no project in hand, so it reads the
+// org's default pipeline root — the same environment an org-scoped read
+// resolves everywhere else.
+func TestGuardrailCatalog_ReadsTheOrgsDefaultWriteTarget(t *testing.T) {
+	bindings := &envBindings{}
+	c := guardrailCatalog{
+		gov:     agentgovernance.New(agentgovernance.Deps{Bindings: bindings}),
+		targets: orgRootTarget{env: "dev-b"},
+	}
+	got, err := c.GuardrailCatalog(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("GuardrailCatalog: %v", err)
+	}
+	if len(bindings.reads) != 1 || bindings.reads[0] != "dev-b" {
+		t.Fatalf("binding reads = %v, want [dev-b]", bindings.reads)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want an empty list (no binding)", got)
+	}
+}
+
+// An org whose default pipeline yields no write target has nowhere to govern
+// an agent: no guardrails to offer, which a design turn reads as such.
+func TestGuardrailCatalog_NoWriteTargetIsAnEmptyList(t *testing.T) {
+	c := guardrailCatalog{
+		gov:     agentgovernance.New(agentgovernance.Deps{Bindings: &envBindings{}}),
+		targets: orgRootTarget{err: &openchoreo.ErrNoWriteTarget{Org: "acme"}},
+	}
+	got, err := c.GuardrailCatalog(context.Background(), "acme")
+	if err != nil || len(got) != 0 {
+		t.Fatalf("got %v, %v; want an empty list", got, err)
+	}
+}

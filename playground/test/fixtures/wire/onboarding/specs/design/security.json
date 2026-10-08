@@ -42,28 +42,28 @@
     {
       "name": "HRCoordinator",
       "description": "Creates new hires, oversees onboarding across all departments, sets due dates and maintains the template.",
-      "stories": [1, 2, 3, 4, 5, 10, 12],
+      "stories": ["F1.1", "F1.2", "F1.3", "F1.4", "F1.5", "F1.10", "F1.12"],
       "grants": ["new-hires:create", "new-hires:read-all", "tasks:read", "tasks:read-all", "tasks:complete", "tasks:set-due-date", "templates:read", "templates:manage"],
       "assignTo": ["HRCoordinators"]
     },
     {
       "name": "ITOnboardingStaff",
       "description": "Completes IT onboarding tasks assigned to them.",
-      "stories": [6, 7, 10],
+      "stories": ["F1.6", "F1.7", "F1.10"],
       "grants": ["tasks:read", "tasks:complete"],
       "assignTo": ["ITStaff"]
     },
     {
       "name": "FacilitiesOnboardingStaff",
       "description": "Completes Facilities onboarding tasks assigned to them.",
-      "stories": [8, 9, 10],
+      "stories": ["F1.8", "F1.9", "F1.10"],
       "grants": ["tasks:read", "tasks:complete"],
       "assignTo": ["FacilitiesStaff"]
     },
     {
       "name": "HiringManagerRole",
       "description": "Views read-only onboarding progress for their own new hires.",
-      "stories": [11],
+      "stories": ["F1.11"],
       "grants": ["new-hires:read-team"],
       "assignTo": ["HiringManagers"]
     }

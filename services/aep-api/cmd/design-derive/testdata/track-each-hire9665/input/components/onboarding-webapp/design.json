@@ -1,0 +1,41 @@
+{
+  "name": "onboarding-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "onboarding-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "stories": [
+    "F1.1",
+    "F1.2",
+    "F1.3",
+    "F1.4",
+    "F1.5",
+    "F1.6",
+    "F1.7",
+    "F1.8",
+    "F1.9",
+    "F1.11",
+    "F1.12"
+  ],
+  "description": "Single-page app used by HR Coordinators, IT Staff, Facilities Staff and Hiring Managers to add new hires, work each department's onboarding checklist, set due dates, and view onboarding progress. All data comes from onboarding-api; this app holds no business logic or persistence of its own.",
+  "dependencies": [
+    {
+      "kind": "component",
+      "name": "onboarding-api"
+    },
+    {
+      "kind": "platform-resource",
+      "name": "user-auth",
+      "resourceType": "thunder-app"
+    }
+  ],
+  "skillsPinned": [
+    "wireframes",
+    "react-webapp",
+    "oxygen-ui-design-system",
+    "thunder-authentication"
+  ]
+}

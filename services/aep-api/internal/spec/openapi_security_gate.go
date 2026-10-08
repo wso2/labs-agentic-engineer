@@ -42,9 +42,9 @@ package spec
 //     does not have.
 
 import (
-	"slices"
 	"encoding/json"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 

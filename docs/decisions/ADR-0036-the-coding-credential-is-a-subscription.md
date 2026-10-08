@@ -142,7 +142,7 @@ The rules above hold with these changed facts:
 Decision 4's unit of work no longer writes credential bytes to Postgres or
 mirrors them after commit. The subscription token and the connection key are
 the org secrets `coding-agent-key` and `default-key`, whose values live only in
-vault ([ADR-0042](ADR-0042-an-org-secrets-value-lives-only-in-vault.md)); the
+vault ([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)); the
 save's write order is in
 [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md)'s 2026-10-06
 amendment. A save that succeeds has already written its reference, so

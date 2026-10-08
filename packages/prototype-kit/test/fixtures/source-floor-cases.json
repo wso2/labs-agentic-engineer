@@ -1,0 +1,163 @@
+{
+  "maxSourceLength": 262144,
+  "cases": [
+    {
+      "name": "valid: the kit and react",
+      "source": "import { defineApp, Text } from \"@wso2/prototype-kit\";\nimport { useState } from \"react\";\n\nexport default defineApp({ screens: {}, data: {} });\n",
+      "findings": []
+    },
+    {
+      "name": "valid: the automatic JSX runtime",
+      "source": "import { jsx } from \"react/jsx-runtime\";\nexport const a = jsx;\n",
+      "findings": []
+    },
+    {
+      "name": "valid: a type-only import is erased",
+      "source": "import type { Thing } from \"lodash\";\nexport const a = 1;\n",
+      "findings": []
+    },
+    {
+      "name": "valid: forbidden words inside strings are not imports",
+      "source": "export const a = \"import x from \\\"lodash\\\"\";\n",
+      "findings": []
+    },
+    {
+      "name": "valid: an empty module",
+      "source": "",
+      "findings": []
+    },
+    {
+      "name": "syntax error",
+      "source": "import { defineApp } from \"@wso2/prototype-kit\";\n\nexport default defineApp({ screens: {\n",
+      "findings": [
+        {
+          "code": "SYNTAX_ERROR",
+          "location": "line 4"
+        }
+      ]
+    },
+    {
+      "name": "import of another package",
+      "source": "import { defineApp } from \"@wso2/prototype-kit\";\nimport _ from \"lodash\";\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 2"
+        }
+      ]
+    },
+    {
+      "name": "import of a relative file",
+      "source": "import x from \"./other\";\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        }
+      ]
+    },
+    {
+      "name": "a side-effect import",
+      "source": "import \"left-pad\";\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        }
+      ]
+    },
+    {
+      "name": "an import of a react subpath",
+      "source": "import dom from \"react-dom\";\nimport c from \"react/compiler-runtime\";\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        },
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 2"
+        }
+      ]
+    },
+    {
+      "name": "a dynamic import, even of an allowed module",
+      "source": "export const load = () => import(\"react\");\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        }
+      ]
+    },
+    {
+      "name": "require, even of an allowed module",
+      "source": "const react = require(\"react\");\nexport default react;\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        }
+      ]
+    },
+    {
+      "name": "every forbidden import is listed, by line",
+      "source": "import a from \"one\";\nimport { defineApp } from \"@wso2/prototype-kit\";\nimport b from \"two\";\n",
+      "findings": [
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 1"
+        },
+        {
+          "code": "FORBIDDEN_IMPORT",
+          "location": "line 3"
+        }
+      ]
+    },
+    {
+      "name": "exactly the size cap",
+      "source": "export const a = 1;\n",
+      "findings": [],
+      "padTo": 262144
+    },
+    {
+      "name": "one over the size cap",
+      "source": "export const a = 1;\n",
+      "findings": [
+        {
+          "code": "SOURCE_TOO_LARGE",
+          "location": "(file)"
+        }
+      ],
+      "padTo": 262145
+    },
+    {
+      "name": "size counts UTF-16 code units: at the cap",
+      "source": "export const a = \"😀😀\";\n",
+      "findings": [],
+      "padTo": 262144
+    },
+    {
+      "name": "size counts UTF-16 code units: over the cap",
+      "source": "export const a = \"😀😀\";\n",
+      "findings": [
+        {
+          "code": "SOURCE_TOO_LARGE",
+          "location": "(file)"
+        }
+      ],
+      "padTo": 262145
+    },
+    {
+      "name": "too large wins over a forbidden import",
+      "source": "import a from \"one\";\n",
+      "findings": [
+        {
+          "code": "SOURCE_TOO_LARGE",
+          "location": "(file)"
+        }
+      ],
+      "padTo": 262145
+    }
+  ]
+}

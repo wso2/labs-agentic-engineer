@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 3,
+  "name": "Team Leave",
+  "entryScreen": "screen.my-leave",
+  "roles": [
+    { "id": "Employee", "name": "Employee" },
+    { "id": "Manager", "name": "Manager" }
+  ],
+  "states": [
+    { "id": "state.default", "name": "Default" },
+    { "id": "state.empty", "name": "Nothing to show" },
+    { "id": "state.validation-error", "name": "Validation errors" },
+    { "id": "state.failed", "name": "Could not load" }
+  ],
+  "screens": [
+    { "id": "screen.my-leave", "name": "My Leave", "roleIds": ["Employee"] },
+    { "id": "screen.new-request", "name": "New Request", "roleIds": ["Employee"] },
+    { "id": "screen.team-queue", "name": "Pending Requests", "roleIds": ["Manager"] },
+    { "id": "screen.request-detail", "name": "Request Detail", "roleIds": ["Manager"] },
+    { "id": "screen.team-history", "name": "Team History", "roleIds": ["Manager"] },
+    { "id": "screen.team-balances", "name": "Team Balances", "roleIds": ["Manager"] },
+    { "id": "screen.adjust-balance", "name": "Adjust Balance", "roleIds": ["Manager"] },
+    { "id": "screen.account", "name": "Account", "roleIds": ["Employee", "Manager"] },
+    { "id": "screen.settings", "name": "Settings", "roleIds": ["Employee", "Manager"] },
+    { "id": "screen.signed-out", "name": "Signed out", "roleIds": ["Employee", "Manager"] }
+  ],
+  "flows": [
+    {
+      "id": "flow.my-leave",
+      "name": "My leave",
+      "roleId": "Employee",
+      "screenIds": ["screen.my-leave", "screen.new-request"]
+    },
+    {
+      "id": "flow.team-approvals",
+      "name": "Team approvals",
+      "roleId": "Manager",
+      "screenIds": [
+        "screen.team-queue",
+        "screen.request-detail",
+        "screen.team-history",
+        "screen.team-balances",
+        "screen.adjust-balance"
+      ]
+    }
+  ]
+}

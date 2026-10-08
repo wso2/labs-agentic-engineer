@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 3,
+  "name": "Contacts",
+  "entryScreen": "screen.contacts",
+  "roles": [
+    { "id": "editor", "name": "Editor" },
+    { "id": "viewer", "name": "Viewer" }
+  ],
+  "states": [
+    { "id": "state.default", "name": "Default" },
+    { "id": "state.empty", "name": "Empty" }
+  ],
+  "screens": [
+    { "id": "screen.contacts", "name": "Contacts", "roleIds": ["editor", "viewer"] },
+    { "id": "screen.contact", "name": "Contact", "roleIds": ["editor", "viewer"] },
+    { "id": "screen.new", "name": "New contact", "roleIds": ["editor"] },
+    { "id": "screen.edit", "name": "Edit contact", "roleIds": ["editor"] },
+    { "id": "screen.settings", "name": "Settings", "roleIds": ["editor", "viewer"] }
+  ],
+  "flows": [
+    { "id": "flow.add", "name": "Add a contact", "roleId": "editor", "screenIds": ["screen.contacts", "screen.new", "screen.contact"] },
+    { "id": "flow.browse", "name": "Browse contacts", "roleId": "viewer", "screenIds": ["screen.contacts", "screen.contact"] }
+  ]
+}

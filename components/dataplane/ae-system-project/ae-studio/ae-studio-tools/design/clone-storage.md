@@ -92,7 +92,7 @@ Passes that do not exist, and why:
   ([route-groups.md](route-groups.md#how-a-request-names-its-repository)).
   Eviction takes it under pressure, and the next roll wipes it.
 - **Recordings.** Run feeds are read from the observer
-  ([ADR-0044](../../../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md)).
+  ([ADR-0049](../../../../../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md)).
 - **Leader flock.** `Recreate` means one pod, so one reaper.
 
 ## Clone
@@ -128,7 +128,8 @@ set to now, which is what "least recently used" reads.
 The files a user attaches when creating a project live in
 `references/<owner>/<repo>/`, uploaded by `aep-api` through
 `PUT /internal/v1/repos/{owner}/{repo}/references` (at most 10 files of
-5 MiB, readable types only; the set is replaced). They are a **temporary
+5 MiB, readable types only; the set is replaced) and listed by name through
+`GET` on the same path (sorted; empty when none are stored). They are a **temporary
 cache**: a roll loses them, and a project delete trashes them with the
 mirror. They are never committed.
 

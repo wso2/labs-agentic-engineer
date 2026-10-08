@@ -55,11 +55,17 @@ make ae-studio-check ORG=<org>
 make dev-runner
 ```
 
-`make dev-env` also enables the OpenChoreo SRE agent on the observability
-plane and wires its alert → RCA → AE issue handoff (`scripts/setup-sre.sh`),
-using the org's model connection key saved in the Console (an Anthropic key). `WITH_OBSERVABILITY=0`
-skips the plane and the SRE agent; `WITH_SRE=0` skips only the agent;
-`WITH_AGENT_MANAGER=0` is the lean profile for SRE work. See
+`make dev-env` also enables the stock OpenChoreo SRE agent (`v1.3.0`, no AE
+patch) on the observability plane and wires its alert → RCA → AE issue
+handoff (`scripts/setup-sre.sh`, `aectl sre install`). The agent speaks
+OpenAI-compatible chat completions only, so it has a model of its own, set at
+install (`SRE_LLM_API_KEY_FILE`/`SRE_LLM_MODEL`, passed to `aectl sre install
+--llm-api-key-file/--llm-model`) and written into its Secret; without one it
+waits at 0 replicas. Run on its own, `setup-sre.sh` needs the aectl platform
+config `make dev-env` imports: `aectl sre install` refuses without it, because
+its platform update re-applies the AE Studio values from it.
+`WITH_OBSERVABILITY=0` skips the plane and the SRE agent; `WITH_SRE=0` skips
+only the agent; `WITH_AGENT_MANAGER=0` is the lean profile for SRE work. See
 `docs/developer-guide/sre-handoff-runbook.md`.
 
 `make dev-env` builds `tools/aectl` as `aectl-skaffold` (git-ignored — this
@@ -296,6 +302,53 @@ credentials on a given cluster.
 For GitHub repo provisioning, connect a PAT (or GitHub App) at **Settings → Credentials → GitHub**.
 For AI generation, connect a model on the **AI agents** card under **Settings → Credentials** (Anthropic's API or any public https endpoint speaking the Anthropic or OpenAI-compatible format) — per-org, with no platform fallback.
 
+## After a host restart
+
+The k3d node containers restart themselves (Docker `unless-stopped`), so the
+cluster comes back when the container runtime does. Two things do not come
+back with it.
+
+**`host.k3d.internal` loses its address.** Every CoreDNS rewrite on the cluster
+answers with that name, and OpenChoreo's build chain addresses the local
+registry as `host.k3d.internal:10082`. k3d defines it at cluster CREATE, in the
+`coredns` ConfigMap's `NodeHosts` key — which `k3s-supervisor` owns and
+regenerates from node addresses on every node start, dropping k3d's line.
+`k3d cluster start` does not re-inject it; only a create does.
+
+Nothing reports this directly. Pods get NXDOMAIN for hostnames that resolve
+fine from the host, and it surfaces far away: `openchoreo-api` cannot fetch
+Thunder's JWKS, so every token is `INVALID_TOKEN` and callers see bare 401s;
+builds fail on an unreachable registry; `setup-environment-aigateway.sh` reads
+an empty list out of a 500 and reports `Environment 'development' is not
+registered in Agent Manager`.
+
+```bash
+bash deployments/scripts/restore-host-k3d-internal.sh check   # diagnose
+bash deployments/scripts/restore-host-k3d-internal.sh         # repair
+```
+
+It writes the name into `coredns-custom`, which no controller reconciles, so
+one run survives later restarts too. Re-running `make dev-env` does **not** fix
+this — nothing in that chain defines the name, and the cluster-create step it
+would come from is skipped on an existing cluster.
+
+**OpenBao forgets every platform secret.** It runs `bao server -dev`
+(in-memory) and its `postStart` re-seeds only OpenChoreo's own fixtures, so the
+`aep/*` paths `aectl platform install` writes are gone once that pod restarts.
+Re-running the install re-seeds them — but it generates a fresh
+`aep/postgres-password` while the Postgres PVC keeps the old one, and Postgres
+only honours `POSTGRES_PASSWORD` when it initialises an empty data directory.
+If `aep-api` then fails to reach its database, re-initialise it (this discards
+the AEP database). To keep the install and its secrets instead, restore the
+keys from their Kubernetes Secrets: [Local OpenBao wipe recovery](#local-openbao-wipe-recovery).
+
+```bash
+# foreground, so postgres-0 is gone before the PVC: pvc-protection holds a
+# claim that a running pod still mounts, and the delete below would hang
+kubectl -n wso2-aep delete statefulset postgres --cascade=foreground
+kubectl -n wso2-aep delete pvc data-postgres-0
+```
+
 ## Tear down
 
 ```bash
@@ -312,6 +365,11 @@ on it. If a Secret is already blank, recover the value from another copy.
 
 `aectl platform sync-clients` detects the wipe (a non-generated `aep/*` path is
 gone) and refuses.
+
+A host or colima restart causes this wipe and also drops `host.k3d.internal`
+from the cluster's DNS. Repair the name first with
+`deployments/scripts/restore-host-k3d-internal.sh`, which restores it in
+CoreDNS ([After a host restart](#after-a-host-restart)).
 
 **Do NOT run `make dev-env`, `aectl platform install` or `--reuse-secrets`.**
 `install` regenerates and overwrites every `aep/*` key (only Postgres is
@@ -356,8 +414,11 @@ Never `bao kv get` a multi-field document without `-field=<name>` piped to
    | `aep/thunder-admin/client-id`, `.../client-secret` | `aep-thunder-admin-creds` | `client-id`, `client-secret` |
    | `aep/postgres-password` | `postgres-secrets` | `POSTGRES_PASSWORD` |
    | `aep/thunder-clients/<name>` | `aep-thunder-secrets` (and `aep-ae-studio-internal-secrets` for `ae-studio-internal`) | `OC_WORKLOAD_PUBLISHER_SECRET`, `OC_OBSERVER_READER_SECRET`, `AEP_API_CLIENT_SECRET`, `BFF_TO_GIT_SERVICE_SECRET`, `BFF_TO_REMOTE_WORKER_SECRET`, `LOCAL_DEV_SEEDER_SECRET`, `THUNDER_SYSTEM_CLIENT_SECRET`, `OC_RCA_AGENT_SECRET`, `AE_STUDIO_INTERNAL_CLIENT_SECRET` (for `oc-workload-publisher`, `oc-observer-reader`, `aep-api-client`, `bff-git-service`, `bff-remote-worker`, `local-dev-seeder`, `system-client`, `openchoreo-rca-agent`, `ae-studio-internal`, in that order) |
-   | `aep/aep-mcp-token` | `aep-sre-handoff-secrets` | `SRE_HANDOFF_TOKEN` |
    | `aep/webhook-relay-seed` | `aep-webhook-relay` | `AE_STUDIO_WEBHOOK_RELAY_SEED` |
+
+   The SRE handoff key is not in OpenBao: `aectl sre install` keeps it in the
+   Kubernetes Secrets `sre-handoff` (`wso2-aep`) and `sre-agent-aep` (the
+   observability plane), so a wipe leaves it alone.
 
    Do NOT restore `aep/openbao-token`, `aep/task-signing-key` or
    `aep/webhook-secret`: nothing reads them any more, even if a Secret still
@@ -451,7 +512,7 @@ not something done from this repo.
 ### Rollout
 
 Do not run old and new aep-api replicas side by side. Migration step
-`phase26_secrets_refs_only` drops `org_secrets.value` and the other value and
+`phase29_secrets_refs_only` drops `org_secrets.value` and the other value and
 triplet columns that the old code still reads. The chart sets no update
 strategy, so Kubernetes does a rolling update. Scale to zero first, then
 upgrade:

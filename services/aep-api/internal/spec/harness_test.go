@@ -114,7 +114,7 @@ func newRig(t *testing.T, seed map[string]string) *rig {
 	pod := aestudiotest.New()
 	r := &rig{t: t, pod: pod, rec: rec, org: org, proj: proj}
 	pod.SeedRepo(r.repoRef(), seed)
-	r.svc = NewArtifactService(&stubRepoRepo{rec: rec}, pod)
+	r.svc = NewArtifactService(&stubRepoRepo{rec: rec}, pod, pod)
 	return r
 }
 
@@ -227,7 +227,7 @@ func blobSHA(content []byte) string {
 func validComponentDesignJSON(name string) string {
 	return `{"name":"` + name + `","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
-		`"stories":[1],"dependencies":[],"description":"a service"}`
+		`"stories":["F1.1"],"dependencies":[],"description":"a service"}`
 }
 
 // memRepos is a project-repository table holding one ready row: org's

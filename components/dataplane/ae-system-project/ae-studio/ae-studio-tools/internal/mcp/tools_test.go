@@ -27,6 +27,7 @@ func TestAllowedTools_Pinned(t *testing.T) {
 	want := []string{
 		"list_external_resources", "get_external_resource_schema", "list_org_endpoints",
 		"list_org_component_endpoints", "list_platform_resource_types", "list_groups",
+		"list_guardrail_policies",
 		"get_remote_git_file_contents", "search_remote_git_code",
 		"validate_openapi_spec", "fetch_openapi_spec", "slice_openapi_spec",
 	}

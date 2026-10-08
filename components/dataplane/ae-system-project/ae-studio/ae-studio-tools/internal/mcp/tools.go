@@ -17,7 +17,7 @@
 // Package mcp is the MCP socket's JSON-RPC server: the in-pod design
 // agent's only tool surface. It answers tools/list from the pinned local
 // descriptors, refuses tools/call of any name outside AllowedTools, runs the
-// two remote-git tools in the pod with the gitpat and forwards the other nine
+// two remote-git tools in the pod with the gitpat and forwards the other ten
 // to aep-api's /internal/v1/mcp with the org's ae-studio client token.
 package mcp
 
@@ -34,6 +34,7 @@ var AllowedTools = []string{
 	"list_org_component_endpoints",
 	"list_platform_resource_types",
 	"list_groups",
+	"list_guardrail_policies",
 	toolGetFileContents,
 	toolSearchCode,
 	"validate_openapi_spec",
@@ -41,7 +42,7 @@ var AllowedTools = []string{
 	"slice_openapi_spec",
 }
 
-// The two tools served in the pod (remote_git.go); the other nine go to
+// The two tools served in the pod (remote_git.go); the other ten go to
 // aep-api.
 const (
 	toolGetFileContents = "get_remote_git_file_contents"
@@ -133,6 +134,16 @@ func Tools() []Tool {
 		{
 			Name:        "list_groups",
 			Description: listGroupsDescription,
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			Name: "list_guardrail_policies",
+			Description: "List the AI-gateway guardrails an ai-agent of this organization may declare in its " +
+				"agent.afm.md `x-aep.guardrails`. Each entry is a policy this organization's gateway offers " +
+				"and the platform can apply: its exact `name` (the `policy` you write), a `description`, and " +
+				"`parameters` — the JSON Schema of the settings you may set in `params`. Path settings " +
+				"(jsonPath) are the platform's and are not listed. Call this before declaring a guardrail; " +
+				"declare only names it returns. An empty list means none can be applied here. Read-only.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{

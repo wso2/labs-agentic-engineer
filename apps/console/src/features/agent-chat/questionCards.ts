@@ -16,51 +16,36 @@
  * under the License.
  */
 
-// The pure half of the question cards (ADR-0012 / #270): parsing the
-// ask_question / ask_questions tool-call payloads off the wire into a uniform
-// list of questions, and deciding which cards are still answerable. The wire
-// tool names and answer serialization live in @aep/agent-stream (the contract);
-// this module stays free of React/store imports so it unit-tests standalone.
+// The pure half of the question cards (ADR-0012 / #270), copied from the
+// console's agent-chat/questionCards.ts: parsing the ask_question /
+// ask_questions tool-call payloads off the wire into a uniform list of
+// questions, and the answer form's rules. The wire tool names and the answer
+// serialization live in @aep/agent-stream (the contract). Not copied: the
+// options' typed `action`s (ADR-0028), which act on dependencies this app does
+// not show yet; an option carrying one renders as an ordinary option.
 
 import {
   ASK_QUESTION_TOOL,
   ASK_QUESTIONS_TOOL,
-  isQuestionTool,
   buildAnswerInstruction,
   buildAnswersInstruction,
   type AskQuestionInput,
-  type QuestionAnswer,
   type AskQuestionOption,
-  type QuestionOptionAction,
+  type QuestionAnswer,
 } from "@aep/agent-stream";
-import type { ChatMessage } from "./chatStore";
 
 /**
- * Parse one question object; null only when the QUESTION is malformed. Options
- * degrade individually: one the card cannot render (no label) or cannot tell
- * apart (a repeated label — labels are the selection identity on the card AND
- * in the serialized answer) is dropped and the rest still show. The turn ended
- * on this call and waits for the user, so a dropped card would leave them
- * facing a blank panel; a card short one option is answerable, and the form
- * always offers free text for whatever the missing option meant.
+ * Parse one question object; null only when the QUESTION is malformed. An
+ * option the card cannot render (no label) or cannot tell apart (a repeated
+ * label: labels are the selection identity on the card and in the answer) is
+ * dropped and the rest still show, since the turn ended on this call and waits
+ * for the user; the free answer covers whatever the missing option meant.
  */
-/** A well-formed typed action, or undefined — a malformed one is dropped, the option stays. */
-function parseOptionAction(raw: unknown): QuestionOptionAction | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
-  const a = raw as Record<string, unknown>;
-  if (typeof a.dependency !== "string" || !a.dependency) return undefined;
-  if (a.kind === "accept-assumption" || a.kind === "upload-interface") {
-    return { kind: a.kind, dependency: a.dependency };
-  }
-  return undefined;
-}
-
 function parseOneQuestion(value: unknown): AskQuestionInput | null {
   if (typeof value !== "object" || value === null) return null;
   const v = value as Record<string, unknown>;
   if (typeof v.question !== "string" || !v.question) return null;
-  // Empty options is a valid FREE-TEXT question (the form renders only the
-  // text field); a missing/non-array options is malformed.
+  // Empty options is a valid free-text question; a missing one is malformed.
   if (!Array.isArray(v.options)) return null;
   const options: AskQuestionOption[] = [];
   const seen = new Set<string>();
@@ -69,13 +54,11 @@ function parseOneQuestion(value: unknown): AskQuestionInput | null {
     const o = raw as Record<string, unknown>;
     if (typeof o.label !== "string" || !o.label || seen.has(o.label)) continue;
     seen.add(o.label);
-    const action = parseOptionAction(o.action);
     options.push({
       label: o.label,
       ...(typeof o.description === "string" ? { description: o.description } : {}),
       ...(o.recommended === true ? { recommended: true } : {}),
       ...(o.freeText === true ? { freeText: true } : {}),
-      ...(action ? { action } : {}),
     });
   }
   return {
@@ -87,11 +70,9 @@ function parseOneQuestion(value: unknown): AskQuestionInput | null {
 }
 
 /**
- * Parse an `ask_question` (single) or `ask_questions` (batch) tool-call input
- * — object or the provider's stringified JSON — into a uniform, non-empty list
- * of questions. Malformed parts drop individually — an option in
- * `parseOneQuestion`, a question in a batch here — and the card renders what
- * is left; null only when nothing renderable remains.
+ * Parse an `ask_question` (single) or `ask_questions` (batch) tool-call input,
+ * an object or the provider's stringified JSON, into a non-empty list of
+ * questions; null when nothing renderable remains.
  */
 export function parseQuestionsInput(toolName: string, input: unknown): AskQuestionInput[] | null {
   let value = input;
@@ -110,8 +91,6 @@ export function parseQuestionsInput(toolName: string, input: unknown): AskQuesti
     if (typeof value !== "object" || value === null) return null;
     const list = (value as Record<string, unknown>).questions;
     if (!Array.isArray(list)) return null;
-    // Same rule one level up: a malformed question drops, the form still
-    // renders the rest; only a form with nothing left in it is no card.
     const out: AskQuestionInput[] = [];
     for (const q of list) {
       const parsed = parseOneQuestion(q);
@@ -122,26 +101,15 @@ export function parseQuestionsInput(toolName: string, input: unknown): AskQuesti
   return null;
 }
 
-export { isQuestionTool };
-
 /**
- * Incrementally extract the COMPLETE question objects from a PARTIAL
- * `ask_questions` input buffer, so the form can render questions one by one
- * while the batch is still streaming (#270 latency follow-up: ~3/4 of the
- * new-project wait is this JSON streaming — the first question is on the wire
- * long before the tool-call frame closes).
- *
- * A string-aware brace scanner walks the `"questions": [...]` array and
- * JSON-parses each element the moment its object closes; elements that fail
- * `parseOneQuestion` are skipped (the final complete `tool-call` parse remains
- * the authority — its upsert replaces whatever streamed). Batch tool only: a
- * single `ask_question` input closes its one object only at the very end, so
- * there is nothing to reveal early.
+ * The COMPLETE question objects in a PARTIAL `ask_questions` input buffer, so
+ * a batch renders question by question while it streams (#270). A
+ * string-aware brace scanner walks the `"questions": [...]` array and parses
+ * each element as its object closes. The complete `tool-call` stays the
+ * authority: its card replaces whatever streamed. Batch tool only: a single
+ * `ask_question` closes its one object only at the very end.
  */
-export function extractStreamingQuestions(
-  toolName: string | undefined,
-  buf: string,
-): AskQuestionInput[] {
+export function extractStreamingQuestions(toolName: string | undefined, buf: string): AskQuestionInput[] {
   if (toolName !== ASK_QUESTIONS_TOOL) return [];
   const arr = buf.match(/"questions"\s*:\s*\[/);
   if (!arr) return [];
@@ -181,23 +149,22 @@ export function extractStreamingQuestions(
 }
 
 /**
- * Options whose selection implies TYPING the real answer, when the agent
- * didn't set the explicit `freeText` flag — "Other", "Something else",
- * "Type my own answer"… Heuristic drives FOCUS and the answered-check both:
- * a bare label like "Something else" with no typed text answers nothing.
+ * An option whose selection means TYPING the real answer, when the agent did
+ * not set the explicit `freeText` flag: "Other", "Something else"… A bare
+ * "Something else" with nothing typed answers nothing. Only a label that
+ * OPENS with the escape is one: "Fixed list: Laptop, Projector, Camera,
+ * Other" is a real answer that happens to contain the word.
  */
 export function isFreeTextOption(opt: AskQuestionOption): boolean {
   return (
     opt.freeText === true ||
-    /\b(other|something else|type (in|my)|describe|own answer|specify|custom)\b/i.test(opt.label)
+    /^\s*(other|something else|let me (type|describe)|type (in|my)|(my|your) own( answer)?|describe (it|my)|specify|custom)\b/i.test(opt.label)
   );
 }
 
 /**
- * One question's answered-ness — the submit gate. Free text always answers.
- * A selection answers UNLESS every selected option is a free-text escape
- * hatch (explicit flag or heuristic): "Something else" without the something
- * else is not an answer.
+ * One question's answered-ness, the submit gate. Typed text always answers; a
+ * selection answers unless every selected option is a free-text escape hatch.
  */
 export function isQuestionAnswered(q: AskQuestionInput, answer: QuestionAnswer | undefined): boolean {
   if ((answer?.freeText ?? "").trim().length > 0) return true;
@@ -211,12 +178,9 @@ export function isQuestionAnswered(q: AskQuestionInput, answer: QuestionAnswer |
 }
 
 /**
- * Answers aligned 1:1 with `questions`, padding slots the stored array lacks.
- * LOAD-BEARING while a batch streams (#335): the room's answers array is sized
- * to the questions that existed when the user first touched an answer, but the
- * batch keeps growing — every read and write must re-align to the CURRENT
- * question count, or edits to later questions silently vanish (the array is
- * mapped over, so an out-of-range index is simply never visited).
+ * Answers aligned 1:1 with `questions`. Load-bearing while a batch streams
+ * (#335): the list grows after the user starts answering, and every read and
+ * write must re-align to the current count or later answers vanish.
  */
 export function normalizeAnswers(
   questions: AskQuestionInput[],
@@ -225,11 +189,7 @@ export function normalizeAnswers(
   return questions.map((_, i) => answers?.[i] ?? { selected: [] });
 }
 
-/**
- * Toggle one option on question `qi`, returning the full re-aligned answers
- * array. Single-select replaces (and re-clicking clears); multi-select adds
- * and removes.
- */
+/** Toggle one option on question `qi`. Single-select replaces (re-clicking clears); multi-select adds and removes. */
 export function applySelection(
   questions: AskQuestionInput[],
   answers: QuestionAnswer[] | null | undefined,
@@ -251,7 +211,7 @@ export function applySelection(
   });
 }
 
-/** Set the free-text note on question `qi`, re-aligned to the question count. */
+/** Set the free-text answer on question `qi`. */
 export function applyNote(
   questions: AskQuestionInput[],
   answers: QuestionAnswer[] | null | undefined,
@@ -262,56 +222,17 @@ export function applyNote(
 }
 
 /**
- * Serialize a card's answer(s) into the next turn's plain-text instruction —
- * one definition shared by the chat hook and the collab banner. Single question
- * → `Answer to "…"`, batch → an `Answers:` list (the wire contract's builders).
+ * A card's answers as the next turn's plain-text instruction, through the
+ * contract's builders: one question → `Answer to "…": …`, several → an
+ * `Answers:` list. The agent reads it as an ordinary user message.
  */
-export function serializeQuestionAnswer(
-  questions: AskQuestionInput[],
-  answers: QuestionAnswer[],
-): string {
+export function serializeQuestionAnswer(questions: AskQuestionInput[], answers: QuestionAnswer[]): string {
+  const cleaned = normalizeAnswers(questions, answers).map((a) => ({
+    selected: a.selected,
+    ...(a.freeText?.trim() ? { freeText: a.freeText.trim() } : {}),
+  }));
   if (questions.length === 1) {
-    return buildAnswerInstruction(
-      questions[0]!.question,
-      answers[0]?.selected ?? [],
-      answers[0]?.freeText,
-    );
+    return buildAnswerInstruction(questions[0]!.question, cleaned[0]!.selected, cleaned[0]!.freeText);
   }
-  return buildAnswersInstruction(
-    questions.map((q, i) => ({
-      question: q.question,
-      selected: answers[i]?.selected ?? [],
-      ...(answers[i]?.freeText ? { freeText: answers[i]!.freeText } : {}),
-    })),
-  );
-}
-
-/**
- * The ids of question cards that still accept input: unanswered via the card
- * AND not superseded by any later user message that actually reached the server
- * (a `failed` send supersedes nothing — the agent never saw it). Single
- * backward pass, computed once per render; derived purely from the log, so
- * reloads and second tabs converge.
- */
-export function answerableQuestionIds(messages: ChatMessage[]): Set<string> {
-  const ids = new Set<string>();
-  let superseded = false;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.role === "user" && m.status !== "failed") superseded = true;
-    else if (m.role === "question" && !superseded && !m.answers) ids.add(m.id);
-  }
-  return ids;
-}
-
-/** Newest chat-log question that still accepts an answer, if any. */
-export function pendingAnswerableQuestion(
-  messages: ChatMessage[],
-): Extract<ChatMessage, { role: "question" }> | undefined {
-  const ids = answerableQuestionIds(messages);
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
-    if (m.role === "question" && m.questions.length && ids.has(m.id)) return m;
-  }
-  return undefined;
+  return buildAnswersInstruction(questions.map((q, i) => ({ question: q.question, ...cleaned[i]! })));
 }

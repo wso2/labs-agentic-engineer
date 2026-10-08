@@ -40,6 +40,7 @@ import (
 // ReferenceStore keeps a repository's reference documents (repo.Engine).
 type ReferenceStore interface {
 	PutReferences(ctx context.Context, r repo.OwnerRepo, docs []repo.ReferenceDoc) error
+	ListReferences(ctx context.Context, r repo.OwnerRepo) ([]string, error)
 }
 
 // referencesField is the multipart field repeated once per document.
@@ -66,6 +67,26 @@ func (s internalServer) PutRepoReferences(ctx context.Context, request gen.PutRe
 	return gen.PutRepoReferences204Response{}, nil
 }
 
+// ListRepoReferences answers the stored set's names, sorted as the store
+// lists them; a repository with no store answers an empty list. The owner
+// guard already refused a foreign owner, as for the upload.
+func (s internalServer) ListRepoReferences(ctx context.Context, request gen.ListRepoReferencesRequestObject) (gen.ListRepoReferencesResponseObject, error) {
+	store := repo.OwnerRepo{Owner: request.Owner, Repo: request.Repo}
+	names, err := s.refs.ListReferences(ctx, store)
+	if err != nil {
+		if errors.Is(err, repo.ErrDiskFull) {
+			logDiskFull(ctx, "list-references", store)
+			return gen.ListRepoReferences503ApplicationProblemPlusJSONResponse(
+				newProblem(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full")), nil
+		}
+		return nil, err
+	}
+	if names == nil {
+		names = []string{}
+	}
+	return gen.ListRepoReferences200JSONResponse{Names: names}, nil
+}
+
 // referencesProblem maps an upload failure to its answer. Anything not listed
 // is the generic 500 (writeResponseError logs it).
 func referencesProblem(ctx context.Context, store repo.OwnerRepo, err error) (gen.PutRepoReferencesResponseObject, error) {
@@ -81,12 +102,17 @@ func referencesProblem(ctx context.Context, store repo.OwnerRepo, err error) (ge
 		return gen.PutRepoReferences413ApplicationProblemPlusJSONResponse(
 			newProblem(http.StatusRequestEntityTooLarge, "payload_too_large", "the request body exceeds the size limit")), nil
 	case errors.Is(err, repo.ErrDiskFull):
-		slog.WarnContext(ctx, "files.disk_full", "op", "put-references", "repo", strings.ToLower(store.Owner+"/"+store.Repo))
+		logDiskFull(ctx, "put-references", store)
 		return gen.PutRepoReferences503ApplicationProblemPlusJSONResponse(
 			newProblem(http.StatusServiceUnavailable, "disk_full", "the studio's disk is full")), nil
 	default:
 		return nil, err
 	}
+}
+
+// logDiskFull logs a references op refused for a full disk.
+func logDiskFull(ctx context.Context, op string, store repo.OwnerRepo) {
+	slog.WarnContext(ctx, "files.disk_full", "op", op, "repo", strings.ToLower(store.Owner+"/"+store.Repo))
 }
 
 // readReferenceParts reads the upload part by part. Each document is read to

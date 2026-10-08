@@ -166,7 +166,7 @@ type Group struct {
 type Role struct {
 	Name         string   `json:"name"`
 	Description  string   `json:"description"`
-	Stories      []int    `json:"stories"`
+	Stories      []string `json:"stories"`
 	Grants       []string `json:"grants"`
 	AssignTo     []string `json:"assignTo,omitempty"`
 	Enrolment    string   `json:"enrolment,omitempty"`

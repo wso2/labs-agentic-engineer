@@ -19,7 +19,7 @@
 /**
  * The read-only task-plan context, parsed from the turn's `files` snapshot. ONE
  * definition of the convention documented in `contracts/task-tools.ts`: the
- * agents-service accumulator validates against these, and the Go assembler (phase
+ * design agent's accumulator validates against these, and the Go assembler (phase
  * 2) renders `tasks/<issueNumber>.md` to match them. Pure, no I/O.
  */
 

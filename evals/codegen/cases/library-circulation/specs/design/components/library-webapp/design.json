@@ -1,0 +1,17 @@
+{
+  "name": "library-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "library-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "circulation-api", "description": "The only backend the app calls: catalogue, loans, holds and fees." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Single React SPA with member screens (search, title detail, loans, holds, fees) and librarian screens (titles, copies, check out/in, holds queue, fees), gated by role. Signs in via SSO and calls only the circulation API. It holds no secrets and never calls the catalogue service.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

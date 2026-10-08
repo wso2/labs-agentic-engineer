@@ -1,0 +1,196 @@
+{
+  "features": [
+    {
+      "id": "F1",
+      "name": "Submit expenses",
+      "path": "features/F1-submit-expenses.md",
+      "needs": [],
+      "stories": [
+        {
+          "id": "F1.1",
+          "was": null,
+          "text": "As an employee, I photograph a receipt and the amount and date are filled in for me.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F1.2",
+          "was": null,
+          "text": "As an employee, I pick a category for each expense: meals, travel or supplies.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F1.3",
+          "was": null,
+          "text": "As an employee, I save expenses as a draft and submit them later as one claim.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F1.4",
+          "was": null,
+          "text": "As an employee, I see which of my claims are pending, approved or rejected.",
+          "needs": [
+            "F2"
+          ],
+          "assumed": false
+        }
+      ],
+      "toConfirm": 0,
+      "blocking": [],
+      "retired": []
+    },
+    {
+      "id": "F2",
+      "name": "Approvals",
+      "path": "features/F2-approvals.md",
+      "needs": [
+        "F1"
+      ],
+      "stories": [
+        {
+          "id": "F2.1",
+          "was": null,
+          "text": "As a manager, I see my team's pending claims in one list, oldest first.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F2.2",
+          "was": null,
+          "text": "As a manager, I approve or reject a claim with a reason.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F2.4",
+          "was": null,
+          "text": "As a manager going on leave, I name a deputy who approves in my place.",
+          "needs": [],
+          "assumed": true
+        },
+        {
+          "id": "F2.5",
+          "was": null,
+          "text": "As finance, I give a second approval on any claim over $1,000, after the manager.",
+          "needs": [],
+          "assumed": false
+        }
+      ],
+      "toConfirm": 2,
+      "blocking": [],
+      "retired": [
+        "F2.3"
+      ]
+    },
+    {
+      "id": "F3",
+      "name": "Payroll export",
+      "path": "features/F3-payroll-export.md",
+      "needs": [
+        "F2"
+      ],
+      "stories": [
+        {
+          "id": "F3.1",
+          "was": null,
+          "text": "As finance, I have approved claims sent to Xero every night.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F3.2",
+          "was": null,
+          "text": "As finance, I see which claims failed to sync and why.",
+          "needs": [],
+          "assumed": false
+        },
+        {
+          "id": "F3.3",
+          "was": null,
+          "text": "As finance, I resend a failed claim after fixing it.",
+          "needs": [],
+          "assumed": false
+        }
+      ],
+      "toConfirm": 0,
+      "blocking": [
+        {
+          "question": "Does finance post to one Xero organisation, or one per country?",
+          "options": [
+            "Finance posts every claim to one Xero organisation.",
+            "Each country has its own Xero organisation; a claim goes to the employee's country."
+          ]
+        }
+      ],
+      "retired": []
+    },
+    {
+      "id": "F4",
+      "name": "Spending reports",
+      "path": "features/F4-spending-reports.md",
+      "needs": [],
+      "stories": [],
+      "toConfirm": 0,
+      "blocking": [],
+      "retired": []
+    },
+    {
+      "id": "F5",
+      "name": "Mileage claims",
+      "path": "features/F5-mileage-claims.md",
+      "needs": [],
+      "stories": [
+        {
+          "id": "F5.1",
+          "was": "F2.3",
+          "text": "As a manager, I see the route and distance when I approve a mileage expense.",
+          "needs": [],
+          "assumed": false
+        }
+      ],
+      "toConfirm": 0,
+      "blocking": [],
+      "retired": []
+    }
+  ],
+  "productWide": [
+    {
+      "id": "P1",
+      "text": "Every approval, rejection and edit is recorded in an audit log.",
+      "appliesTo": [
+        "all"
+      ],
+      "assumed": false
+    },
+    {
+      "id": "P2",
+      "text": "Expense records are kept for 7 years.",
+      "appliesTo": [
+        "all"
+      ],
+      "assumed": false
+    },
+    {
+      "id": "P3",
+      "text": "Amounts are in the company currency, stored in cents.",
+      "appliesTo": [
+        "F1",
+        "F3"
+      ],
+      "assumed": true
+    },
+    {
+      "id": "P4",
+      "text": "Staff sign in with company SSO.",
+      "appliesTo": [
+        "all"
+      ],
+      "assumed": false
+    }
+  ],
+  "retiredFeatures": [
+    "F6"
+  ]
+}

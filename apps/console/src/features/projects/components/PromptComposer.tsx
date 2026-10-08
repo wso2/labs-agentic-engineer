@@ -16,34 +16,57 @@
  * under the License.
  */
 
-import { useState, type DragEvent } from "react";
-import {
-  Alert,
-  Box,
-  Button,
-  IconButton,
-  InputBase,
-  Stack,
-  Tooltip,
-} from "@wso2/oxygen-ui";
-import { Paperclip, Send } from "@wso2/oxygen-ui-icons-react";
-import { AttachmentCardStrip } from "../../../components/AttachmentCard";
+import { useState, type DragEvent, type Ref } from "react";
+import { Alert, Box, Button, IconButton, InputBase, Stack, Tooltip } from "@wso2/oxygen-ui";
+import { Paperclip, X } from "@wso2/oxygen-ui-icons-react";
 import {
   MAX_REFERENCE_FILES,
   REFERENCE_ACCEPT,
+  referenceTypeLabel,
   screenReferenceFiles,
   type RejectedFile,
-} from "../lib/referenceFiles";
+} from "../referenceFiles";
+
+/** One attached document in the composer's footer: its name, its type, and a remove control. */
+function Attachment({ name, onRemove }: { name: string; onRemove: () => void }) {
+  return (
+    <Box
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 0.5,
+        maxWidth: "100%",
+        minWidth: 0,
+        pl: 1.25,
+        pr: 0.25,
+        py: 0.25,
+        border: 1,
+        borderColor: "divider",
+        borderRadius: 2,
+        fontSize: "0.78125rem",
+      }}
+    >
+      <Box component="span" title={name} sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {name}
+      </Box>
+      <Box component="span" sx={{ color: "text.secondary", flexShrink: 0, "&::before": { content: '"· "' } }}>
+        {referenceTypeLabel(name)}
+      </Box>
+      <IconButton size="small" aria-label={`Remove ${name}`} onClick={onRemove} sx={{ p: 0.5 }}>
+        <X size={12} />
+      </IconButton>
+    </Box>
+  );
+}
 
 /**
- * The create view's prompt box (#383): one composer holding the typed idea and
- * its attached reference documents, replacing the old textarea + separate
- * dashed drop zone. The whole box is the drop target, so there is no second
- * affordance to find.
+ * New project's prompt box: the typed idea and its attached reference
+ * documents in one composer. The whole box is the drop target, so there is
+ * no second affordance to find.
  *
  * Screening (type, size, count, duplicate path) happens on selection; each
- * rejection surfaces as its own notice and clears on the next selection —
- * never a silent drop.
+ * rejection shows as its own notice and clears on the next selection, never a
+ * silent drop.
  */
 export function PromptComposer({
   prompt,
@@ -51,12 +74,15 @@ export function PromptComposer({
   files,
   onFilesChange,
   onSubmit,
+  inputRef,
 }: {
   prompt: string;
   onPromptChange: (value: string) => void;
   files: File[];
   onFilesChange: (files: File[]) => void;
   onSubmit: () => void;
+  /** The prompt's textarea, so an example card can hand focus back to it. */
+  inputRef?: Ref<HTMLTextAreaElement>;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const [rejected, setRejected] = useState<RejectedFile[]>([]);
@@ -86,92 +112,84 @@ export function PromptComposer({
         onDragLeave={() => setDragOver(false)}
         onDrop={drop}
         sx={{
-          p: 1.5,
-          borderRadius: 2,
-          border: "1px solid",
+          px: 1.75,
+          pt: 1.75,
+          pb: 1.25,
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          borderRadius: 3.5,
+          border: 1,
           borderColor: dragOver ? "primary.main" : "divider",
           bgcolor: dragOver ? "action.hover" : "background.paper",
           "&:focus-within": { borderColor: "primary.main" },
         }}
       >
-        <AttachmentCardStrip
-          names={files.map((f) => f.name)}
-          onRemove={(name) => onFilesChange(files.filter((f) => f.name !== name))}
-        />
         <InputBase
           value={prompt}
           onChange={(e) => onPromptChange(e.target.value)}
           placeholder="e.g. A service desk where employees raise IT requests and the team tracks them through to resolution"
           multiline
-          minRows={3}
+          minRows={4}
           autoFocus
           fullWidth
-          sx={{ px: 0.5, alignItems: "flex-start" }}
+          {...(inputRef && { inputRef })}
+          inputProps={{ "aria-label": "What do you want to build?" }}
+          sx={{ alignItems: "flex-start", fontSize: "0.9375rem", lineHeight: 1.5 }}
         />
-        <Stack
-          direction="row"
-          spacing={1}
-          sx={{ alignItems: "center", justifyContent: "space-between", mt: 1 }}
-        >
-          <Tooltip
-            title={
-              /* The hint the old drop zone spelled out in a paragraph. It has
-                 to stay reachable somewhere, and the attach control is where
-                 someone with reference material looks first.
-
-                 No extension list: it is 16 entries now, which turned a hint
-                 into a wall of text nobody reads. The file picker already
-                 filters by `accept`, and picking an unsupported file answers
-                 with a rejection notice naming the accepted set — so the list
-                 is available exactly where it matters, at the point of
-                 failure, rather than in front of everyone every time. */
-              `Attach reference documents — a PRD, notes, an API spec. Agents read them when deriving your requirements. Up to ${MAX_REFERENCE_FILES} files, 5 MB each.`
-            }
-          >
-            <IconButton component="label" size="small" aria-label="Attach reference documents">
-              <Paperclip size={18} />
-              <input
-                type="file"
-                accept={REFERENCE_ACCEPT}
-                multiple
-                hidden
-                onChange={(e) => {
-                  addFiles(e.target.files);
-                  // Same file re-selected after a remove must re-fire onChange.
-                  e.target.value = "";
-                }}
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", minWidth: 0 }}>
+            {files.map((file) => (
+              <Attachment
+                key={file.name}
+                name={file.name}
+                onRemove={() => onFilesChange(files.filter((f) => f.name !== file.name))}
               />
-            </IconButton>
-          </Tooltip>
-          <Button
-            variant="contained"
-            // Icon on both ends of the toolbar row: the paperclip opens the
-            // picker, this sends. Same shape as the Back button's startIcon
-            // elsewhere in the flow.
-            endIcon={<Send size={16} />}
-            disabled={!prompt.trim()}
-            onClick={onSubmit}
-          >
-            Start
+            ))}
+            {/* describeChild: the hint describes the button, and its own text
+                stays its name. */}
+            <Tooltip
+              describeChild
+              title={
+                // No extension list: the picker already filters by `accept`,
+                // and an unsupported file answers with a notice naming the
+                // accepted set, at the point where it matters.
+                `A PRD, notes, an API spec, a mockup. Agents read them when deriving your requirements. Up to ${MAX_REFERENCE_FILES} files, 5 MB each.`
+              }
+            >
+              <Button component="label" size="small" variant="outlined" startIcon={<Paperclip size={14} />}>
+                {files.length === 0 ? "Attach a document" : "Attach another"}
+                <input
+                  type="file"
+                  accept={REFERENCE_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    // The same file re-selected after a remove must re-fire onChange.
+                    e.target.value = "";
+                  }}
+                />
+              </Button>
+            </Tooltip>
+          </Box>
+          {/* Attaching is optional and documents alone are not a brief: the
+              typed idea stays the anchor, so only a prompt enables this. */}
+          <Button variant="contained" disabled={!prompt.trim()} onClick={onSubmit} sx={{ ml: "auto" }}>
+            Continue
           </Button>
-        </Stack>
+        </Box>
       </Box>
-      {/* Keyed and dismissed by position, not by name: one selection can reject
-          two files under the same name (a duplicate, or two oversized copies),
-          and name identity would collapse them into one notice and then close
-          both at once. */}
+      {/* Keyed and dismissed by position, not by name: one selection can
+          reject two files under the same name, and name identity would
+          collapse them into one notice and then close both at once. */}
       {rejected.map(({ name, reason }, index) => (
         <Alert
           key={`${index}-${name}`}
           severity="warning"
-          onClose={() =>
-            setRejected((prev) => prev.filter((_, i) => i !== index))
-          }
+          onClose={() => setRejected((prev) => prev.filter((_, i) => i !== index))}
         >
-          {/* The reason renders verbatim: lower-casing it turned "Larger than
-              5 MB" into "5 mb" and mangled the casing of the user's own file
-              name in the collision reason. */}
-          <strong>{name}</strong> was not attached — {reason}.
+          <strong>{name}</strong> was not attached: {reason}.
         </Alert>
       ))}
     </Stack>

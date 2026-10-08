@@ -24,7 +24,7 @@ import (
 
 // RunPhase20ModelKeyRename is a RETIRED tombstone. It copied every org's
 // sealed model key from the org_secrets value row `anthropic/key` to
-// `model/key`. Value rows are gone (phase26 deletes every row that names no
+// `model/key`. Value rows are gone (phase29 deletes every row that names no
 // reference); the key lives only in the vault, behind the org's default-key
 // reference. The step stays in the list because the list is frozen (a
 // removal would break the golden order).

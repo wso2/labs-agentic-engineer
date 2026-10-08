@@ -44,7 +44,7 @@ smoke.
 | | Question | Evidence |
 |---|---|---|
 | **Reach** | Did the arrow that names this screen bring you here, and does every `->` it draws land where it says? | the target's snapshot |
-| **Act** | Does every drawn control change something visible when used? A create is in the next list, a filter narrows, a toggle flips a row. | the snapshot after the action |
+| **Act** | Does every drawn control change something visible when used? A create is in the next list as that list opens, with no filter changed by hand; a filter narrows; a toggle flips a row. | the snapshot after the action |
 | **Request** | Did a change leave the page as the request the contract declares, with the status it declares? A row that flips and sends nothing is the one defect a build cannot see. | `agent-browser network requests` |
 
 ### Once per app
@@ -79,7 +79,7 @@ smoke.
   mock handler or a route guard to make it pass.
 - **Session** (an auth dependency): `?auth=out` on one entry screen runs the
   app's own guard and `signIn()` brings you back; then **Sign out** where the
-  navbar draws it leaves the screen through `signOut()`. The mock signs the
+  wireframe draws it leaves the screen through `signOut()`. The mock signs the
   next load in again, so the session being gone is outside; the click leaving
   the page is not.
 - **Probes**: submit one form empty; open one detail route with an id that does
@@ -114,7 +114,8 @@ Every item ends in exactly one:
   handle, so `Forbidden` is something you walk and see.
 
 An unreachable screen is **open**, naming the navigation that failed, never
-**done** read off the source.
+**done** read off the source. A fix does not remove or hide what the wireframe
+draws. If the app cannot fill a drawn element, the item is **open**.
 
 ## Progress
 

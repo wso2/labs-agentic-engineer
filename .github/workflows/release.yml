@@ -90,9 +90,6 @@ jobs:
           - name: ae-studio-tools
             dockerfile: components/dataplane/ae-system-project/ae-studio/ae-studio-tools/Dockerfile
             context: components/dataplane/ae-system-project/ae-studio/ae-studio-tools
-          - name: aep-mcp-server
-            dockerfile: services/aep-mcp-server/Dockerfile
-            context: .
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -210,9 +207,6 @@ jobs:
           yq -i '.aeStudio.images.designAgent = strenv(IMAGE_PREFIX) + "/ae-design-agent:" + strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aeStudio.images.collab = strenv(IMAGE_PREFIX) + "/ae-collab:" + strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aeStudio.images.studioTools = strenv(IMAGE_PREFIX) + "/ae-studio-tools:" + strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.repository = strenv(IMAGE_PREFIX) + "/aep-mcp-server"' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.aepMcpServer.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
           yq -i '.console.image.repository = strenv(IMAGE_PREFIX) + "/console"' /tmp/platform/values.yaml
           yq -i '.console.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
@@ -260,7 +254,6 @@ jobs:
           - \`ghcr.io/wso2/aep/ae-design-agent:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/ae-collab:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/ae-studio-tools:${{ inputs.version }}\`
-          - \`ghcr.io/wso2/aep/aep-mcp-server:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker-opencode:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`

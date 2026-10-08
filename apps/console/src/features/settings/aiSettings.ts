@@ -38,7 +38,6 @@
  */
 
 import type { components } from "../../generated/aep-api";
-import type { ModelReads } from "../../lib/attachments";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
 type ConfigPatch = components["schemas"]["ConfigPatch"];
@@ -115,16 +114,6 @@ export function aiSettingsFrom(config: ConfigProjection): AiSettings {
     availableRuntimes: agents.availableRuntimes,
     subscription: agents.subscription,
   };
-}
-
-/**
- * What the org's model reads, for the attachment pickers; null with no
- * connection (nothing is refused on the model's account then).
- */
-export function modelReads(config: ConfigProjection | undefined): ModelReads | null {
-  const llm = config?.llm;
-  if (!llm) return null;
-  return { model: llm.model, imageInput: llm.capabilities.imageInput, nativePdf: llm.capabilities.nativePdf };
 }
 
 /**

@@ -158,7 +158,8 @@ test("a client that rejoins with its existing doc does not get a second copy see
     const first = await join(room.pod, browserDoc);
     assert.equal(copies(browserDoc), 1, "first join seeds the room once");
     // The socket drops (redeploy / sleep / blip). The server unloads the room;
-    // the browser keeps its doc, exactly as useCollabSpec does.
+    // this client keeps its doc (the console's specRoom.ts throws its doc
+    // away and joins fresh; this test covers a client that keeps it).
     await first.leave();
 
     const second = await join(room.pod, browserDoc);

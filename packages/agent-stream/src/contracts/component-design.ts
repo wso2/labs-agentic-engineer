@@ -93,9 +93,9 @@ export interface ComponentDesign {
    * copied skill library stays loadable on demand. Per-component; the
    * coding runner materializes exactly these for a build of this component.
    */
-  /** PRD story numbers this component serves — AGENT-AUTHORED during
+  /** Story IDs ("F2.3") this component serves — AGENT-AUTHORED during
    *  enrichment (#369); the build gate's coverage check reads it. */
-  stories?: number[];
+  stories?: string[];
   skillsPinned?: string[];
 }
 

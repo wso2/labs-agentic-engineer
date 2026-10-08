@@ -74,16 +74,17 @@ func repoOps(h *harness, base string) map[string]func() *httptest.ResponseRecord
 		return func() *httptest.ResponseRecorder { return h.doJSON("POST", base+p, body) }
 	}
 	return map[string]func() *httptest.ResponseRecorder{
-		"get-head":        get("/head"),
-		"list-tree":       get("/tree?prefix=specs/"),
-		"read-file":       get("/files/specs/a.md"),
-		"read-file (one)": get("/files/README.md"),
-		"read-bundle":     get("/bundle?ext=.md"),
-		"list-tags":       get("/tags"),
-		"create-tag":      post("/tags", `{"name":"v1","message":"m"}`),
-		"create-commit":   post("/commits", `{"message":"m","writes":[{"path":"specs/b.md","content":"Yg==","baseSha":""}]}`),
-		"start-repo-turn": post("/turns", turnRequest("11111111-1111-5111-8111-111111111111")),
-		"mirror-skills":   post("/skills-mirror", `{"skillsRepo":{"owner":"acme-gh","repo":"org-skills"},"pinned":[]}`),
+		"get-head":             get("/head"),
+		"list-tree":            get("/tree?prefix=specs/"),
+		"read-file":            get("/files/specs/a.md"),
+		"read-file (one)":      get("/files/README.md"),
+		"read-bundle":          get("/bundle?ext=.md"),
+		"list-tags":            get("/tags"),
+		"create-tag":           post("/tags", `{"name":"v1","message":"m"}`),
+		"create-commit":        post("/commits", `{"message":"m","writes":[{"path":"specs/b.md","content":"Yg==","baseSha":""}]}`),
+		"start-repo-turn":      post("/turns", turnRequest("11111111-1111-5111-8111-111111111111")),
+		"mirror-skills":        post("/skills-mirror", `{"skillsRepo":{"owner":"acme-gh","repo":"org-skills"},"pinned":[]}`),
+		"list-repo-references": get("/references"),
 		"put-repo-references": func() *httptest.ResponseRecorder {
 			return h.putReferences(base+"/references", h.m2m(), false, refFile("notes.md", 10))
 		},

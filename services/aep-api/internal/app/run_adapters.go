@@ -24,8 +24,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/run"
+	"github.com/wso2/aep/aep-api/internal/delivery/runread"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 // The composition-root adapters behind the run supervisor's consumer ports.
@@ -114,8 +116,8 @@ func (a runRuns) BumpBudget(ctx context.Context, id string, counter delivery.Run
 	return err
 }
 
-func (a runRuns) SetValidationVerdict(ctx context.Context, id, verdict string, issue int) error {
-	_, err := a.runs.SetValidationVerdict(ctx, id, verdict, issue)
+func (a runRuns) SetValidationVerdict(ctx context.Context, id, verdict string, issue, regressions int) error {
+	_, err := a.runs.SetValidationVerdict(ctx, id, verdict, issue, regressions)
 	return err
 }
 
@@ -176,8 +178,8 @@ func (a runCycles) Finish(ctx context.Context, cycleID, mergeSHA string) error {
 	return err
 }
 
-func (a runCycles) SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int, digest string) error {
-	_, err := a.cycles.SetValidationVerdict(ctx, cycleID, verdict, issue, digest)
+func (a runCycles) SetValidationVerdict(ctx context.Context, cycleID, verdict string, issue int, digest string, regressions int) error {
+	_, err := a.cycles.SetValidationVerdict(ctx, cycleID, verdict, issue, digest, regressions)
 	return err
 }
 
@@ -220,48 +222,228 @@ func (a runBuilds) ListBuildRuns(ctx context.Context, orgID, projectID, componen
 //
 // The milestone is the minter's own concern — it rides the create, so there is
 // no assignment step here and no window in which the issue has no version. What
-// is left is a delegation plus the ref-pinned report read, which is the whole
-// reason this type exists at the boundary.
+// is left is the ref-pinned report read, and reading it as its version (B4):
+// within what the version built, and against the previous validated version —
+// which is the whole reason this type exists at the boundary.
 type runValidation struct {
 	projectFiles
-	svc *validation.Service
-}
-
-func (a runValidation) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error) {
-	return a.svc.EnsureValidationIssue(ctx, orgID, projectID, milestoneNumber)
-}
-
-func (a runValidation) Verdict(ctx context.Context, orgID, projectID, at string) (string, string, error) {
-	raw, err := a.report(ctx, orgID, projectID, at)
-	if err != nil {
-		return "", "", err
+	svc      *validation.Service
+	versions interface {
+		ValidationScope(ctx context.Context, orgID, projectID, version string) (spec.ValidationScope, bool, error)
 	}
-	// Both derived from the same bytes, in one read: the verdict the run stores, and
-	// the digest that tells a later attempt whether anything changed.
-	return validation.VerdictFromReport(raw), validation.ReportDigest(raw), nil
+	runs   delivery.MilestoneRunRepository
+	cycles delivery.RunCycleRepository
+}
+
+func (a runValidation) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int, version string) (int, error) {
+	vs, ok, err := a.scopeOf(ctx, orgID, projectID, version)
+	if err != nil {
+		return 0, err
+	}
+	var scope *validation.Scope
+	if ok {
+		scope = validation.NewScope(version, vs.Features, vs.HeldBack, nil)
+	}
+	return a.svc.EnsureValidationIssue(ctx, orgID, projectID, milestoneNumber, scope)
+}
+
+func (a runValidation) Verdict(ctx context.Context, orgID, projectID, version, at string) (string, string, int, error) {
+	j, err := a.judge(ctx, orgID, projectID, version, at)
+	if err != nil {
+		return "", "", 0, err
+	}
+	// All derived from the same read: the verdict the run stores, the digest that
+	// tells a later attempt whether anything changed, and how many failures broke
+	// what the previous version had working.
+	return j.Report.Verdict(), j.Report.Digest(), j.Regressions(), nil
 }
 
 func (a runValidation) CloseValidationIssue(ctx context.Context, orgID, projectID string, issue int, verdict string, repairs []int) error {
 	return a.svc.CloseValidationIssue(ctx, orgID, projectID, issue, verdict, repairs)
 }
 
-func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, at string) ([]int, error) {
-	raw, err := a.report(ctx, orgID, projectID, at)
+// FailuresOf satisfies build's Repairer: how many scenarios the version's
+// final validation attempt failed, within its scope.
+func (a runValidation) FailuresOf(ctx context.Context, orgID, projectID, version string) (int, error) {
+	j, ok, err := a.finalJudgement(ctx, orgID, projectID, version)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return len(j.Failures()), nil
+}
+
+// FileRepairs satisfies build's Repairer: the version's final failures become
+// the repair version's work, filed as the run would have filed them.
+func (a runValidation) FileRepairs(ctx context.Context, orgID, projectID string, milestoneNumber int, version string) error {
+	j, ok, err := a.finalJudgement(ctx, orgID, projectID, version)
+	if err != nil || !ok {
+		return err
+	}
+	_, err = a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, j)
+	return err
+}
+
+// finalJudgement is the version's final validation attempt, read as its
+// version; ok is false when it was never judged.
+func (a runValidation) finalJudgement(ctx context.Context, orgID, projectID, version string) (validation.Judgement, bool, error) {
+	if a.runs == nil || a.cycles == nil {
+		return validation.Judgement{}, false, nil
+	}
+	at, err := a.finalAttempt(ctx, orgID, projectID, version)
+	if err != nil || at == "" {
+		return validation.Judgement{}, false, err
+	}
+	j, err := a.judge(ctx, orgID, projectID, version, at)
+	return j, err == nil, err
+}
+
+// Standing satisfies runread's ValidationJudge: the same reading the run
+// made, for the console's per-feature view.
+func (a runValidation) Standing(ctx context.Context, orgID, projectID, version, at string) (runread.ValidationStanding, error) {
+	j, err := a.judge(ctx, orgID, projectID, version, at)
+	if err != nil {
+		return runread.ValidationStanding{}, err
+	}
+	var st runread.ValidationStanding
+	if j.Scope != nil {
+		st.Scoped, st.Features, st.HeldBack = true, j.Scope.Features, j.Scope.HeldBack
+	}
+	if j.Baseline != nil {
+		st.BaselineVersion, st.BaselineCommit = j.Baseline.Version, j.Baseline.Commit
+	}
+	st.Regressions, st.StillFailing = j.Standing()
+	return st, nil
+}
+
+func (a runValidation) MintRepairIssues(ctx context.Context, orgID, projectID string, milestoneNumber int, version, at string) ([]int, error) {
+	j, err := a.judge(ctx, orgID, projectID, version, at)
 	if err != nil {
 		return nil, err
 	}
-	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, raw)
+	return a.svc.MintRepairIssues(ctx, orgID, projectID, milestoneNumber, j)
 }
 
-// report reads the runner's committed report at a pinned commit. It is the ONE
-// reader of that file on the run path — the verdict and the repair issues are
-// separate activities, each deriving from ground truth on its own retry, but they
-// derive from the same read implementation so they can never disagree about which
-// bytes the attempt produced.
+// scopeOf is what the version validates. A version with no name (a run that
+// predates tags) validates the whole oracle, as one cut before selections does.
+func (a runValidation) scopeOf(ctx context.Context, orgID, projectID, version string) (spec.ValidationScope, bool, error) {
+	if version == "" || a.versions == nil {
+		return spec.ValidationScope{}, false, nil
+	}
+	return a.versions.ValidationScope(ctx, orgID, projectID, version)
+}
+
+// judge reads one attempt's report as its version: within the version's
+// built scope, and against the previous validated version's final report.
+//
+// It is the ONE reader on the run path — the verdict and the repair issues are
+// separate activities, each deriving from ground truth on its own retry, but
+// they derive from the same read so they can never disagree about which
+// scenarios the attempt failed or how each stood before.
+func (a runValidation) judge(ctx context.Context, orgID, projectID, version, at string) (validation.Judgement, error) {
+	j := validation.Judgement{Version: version}
+	vs, ok, err := a.scopeOf(ctx, orgID, projectID, version)
+	if err != nil {
+		return j, err
+	}
+	report, err := a.readAs(ctx, orgID, projectID, version, at, vs, ok)
+	if err != nil {
+		return j, err
+	}
+	j.Report, j.Built = report, vs.Built
+	if ok {
+		j.Scope = validation.NewScope(version, vs.Features, vs.HeldBack, nil)
+	}
+	j.Baseline, err = a.baseline(ctx, orgID, projectID, vs.Earlier)
+	return j, err
+}
+
+// readAs reads a report at a commit, narrowed to the version's scope with the
+// story tags of the oracle at that same commit.
+func (a runValidation) readAs(ctx context.Context, orgID, projectID, version, at string, vs spec.ValidationScope, scoped bool) (validation.Report, error) {
+	raw, err := a.report(ctx, orgID, projectID, at)
+	if err != nil {
+		return validation.Report{}, err
+	}
+	report := validation.ParseReport(raw)
+	if !scoped {
+		return report, nil
+	}
+	criteria, err := (acceptanceCriteria{a.projectFiles}).criteriaAt(ctx, orgID, projectID, at)
+	if err != nil {
+		return validation.Report{}, err
+	}
+	return report.Within(validation.NewScope(version, vs.Features, vs.HeldBack, criteria)), nil
+}
+
+// baseline is the previous validated version's final report: the newest
+// earlier version whose validation reached a verdict, read at the merge commit
+// of its last judged attempt and within that version's own scope. Versions
+// never validated are skipped; nil when none was.
+func (a runValidation) baseline(ctx context.Context, orgID, projectID string, earlier []string) (*validation.Baseline, error) {
+	if a.runs == nil || a.cycles == nil {
+		return nil, nil
+	}
+	for _, version := range earlier {
+		at, err := a.finalAttempt(ctx, orgID, projectID, version)
+		if err != nil {
+			return nil, err
+		}
+		if at == "" {
+			continue
+		}
+		vs, ok, err := a.scopeOf(ctx, orgID, projectID, version)
+		if err != nil {
+			return nil, err
+		}
+		report, err := a.readAs(ctx, orgID, projectID, version, at, vs, ok)
+		if err != nil {
+			return nil, err
+		}
+		return &validation.Baseline{Version: version, Commit: at, Report: report}, nil
+	}
+	return nil, nil
+}
+
+// finalAttempt is the merge commit of a version's last judged validation
+// attempt, or "" when it was never judged. Judged means a verdict read from a
+// report: skipped and unreported attempts judged nothing.
+func (a runValidation) finalAttempt(ctx context.Context, orgID, projectID, version string) (string, error) {
+	milestone, found, err := a.runs.MilestoneNumberForTag(ctx, orgID, projectID, version)
+	if err != nil || !found {
+		return "", err
+	}
+	rows, err := a.runs.ListByMilestone(ctx, orgID, projectID, milestone) // newest first
+	if err != nil {
+		return "", err
+	}
+	for _, r := range rows {
+		if r.Kind != delivery.RunKindValidation || !delivery.IsTerminalRunState(r.State) {
+			continue
+		}
+		cycles, err := a.cycles.ListByRun(ctx, orgID, r.ID) // oldest first
+		if err != nil {
+			return "", err
+		}
+		for i := len(cycles) - 1; i >= 0; i-- {
+			c := cycles[i]
+			if c.Kind == delivery.CycleKindValidation && c.MergeSHA != "" && judged(c.ValidationVerdict) {
+				return c.MergeSHA, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+func judged(verdict string) bool {
+	return verdict != "" && verdict != delivery.ValidationVerdictSkipped && verdict != delivery.ValidationVerdictUnreported
+}
+
+// report reads the runner's committed report at a pinned commit.
 //
 // An absent file is not an error: the validation cycle merged and committed no
 // report AT ITS OWN MERGE COMMIT, which is a fact about this run rather than a
-// stale read. Nil bytes are what VerdictFromReport maps to `unreported`.
+// stale read. Nil bytes are a report with nothing in it, whose verdict is
+// `unreported`.
 func (a runValidation) report(ctx context.Context, orgID, projectID, at string) ([]byte, error) {
 	content, _, found, err := a.readFile(ctx, orgID, projectID, at, validation.ReportFilePath)
 	if err != nil || !found {

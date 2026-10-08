@@ -1802,8 +1802,12 @@ paths:
                     `.jpeg`, `.gif`, `.webp`), and text read as workspace files
                     (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`,
                     `.xml`, `.html`, `.rst`). At most 10 documents, each at most
-                    5 MiB measured on the raw bytes. Office formats are not
-                    accepted — the models do not read them natively.
+                    5 MiB measured on the raw bytes. Office documents (`.docx`,
+                    `.xlsx`, `.pptx`) are converted to markdown on upload — the
+                    models do not read them natively — and stored as
+                    `<name>.md`: a Word document's headings, paragraphs and
+                    tables, a workbook's sheets as tables, a deck's slides. One
+                    that cannot be read is refused with 400.
                   items:
                     format: binary
                     type: string
@@ -2097,6 +2101,41 @@ paths:
       summary: Stream a milestone run's per-cycle agent progress as SSE
       tags:
       - Runs
+  /projects/{projectName}/spec/state:
+    get:
+      description: What the spec workspace needs that its documents do not say (N5). The
+        documents themselves are the collab room; the features, their stages, the ID index and
+        Next up are worked out from them in the console. This serves the rest — each designed
+        feature's basis (what its last design read, by the same reading the build gate uses, so
+        the console can say a design is out of date as the spec is edited) and the source
+        documents the user attached.
+      operationId: get-spec-state
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecState'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: Get the spec workspace's state
+      tags:
+      - Projects
   /projects/{projectName}/status:
     get:
       operationId: get-project-status
@@ -2153,6 +2192,41 @@ paths:
       security:
       - userJWT: []
       summary: List spec version tags
+      tags:
+      - Projects
+  /projects/{projectName}/versions:
+    get:
+      description: What each version built (B5) — the features it carried, each with its lines as
+        they were at the version's tag, and the product-wide requirements it carried — oldest
+        first. The console compares a feature's live lines with the version that last built it to
+        say what changed since. Only versions cut as a selection are listed; one cut before builds
+        were selections names nothing it built. A version's contents never change, so a reader
+        refetches only when a build starts.
+      operationId: list-project-versions
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          description: Project name (DNS-label slug)
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecVersionList'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+      security:
+      - userJWT: []
+      summary: List what each spec version built
       tags:
       - Projects
   /projects/{projectName}/tasks:
@@ -3253,11 +3327,59 @@ components:
             $ref: '#/components/schemas/BuildInputItem'
           type: array
           nullable: true
+        repair:
+          allOf:
+          - $ref: '#/components/schemas/BuildRepair'
+          x-go-type-skip-optional-pointer: false
+        selection:
+          $ref: '#/components/schemas/BuildSelection'
         version:
           description: The tag name to cut for this version. Empty takes the suggested one. Must be
             a valid tag name; a name already in use is a 409. Ignored when the spec tree is
             unchanged, because that build reuses the existing version.
           type: string
+      type: object
+    BuildRepair:
+      additionalProperties: false
+      description: >
+        A repair build (B4), "Fix" on a version whose validation failed. It cuts
+        `<of>.<n>` ("v1.1") at the fixed version's commit, so it builds the same
+        features from the same specs; the scenarios the fixed version's final
+        validation failed become its work as repair issues, and nothing is
+        planned. selection, version and inputs are ignored. A version with no
+        failing scenario refuses with 409.
+      properties:
+        of:
+          description: The version to fix ("v1"). A repair of a repair fixes the version it fixed.
+          type: string
+      required:
+      - of
+      type: object
+    BuildSelection:
+      additionalProperties: false
+      description: >
+        What this version builds (B1): the features the user picked, and any
+        product-wide requirement added since the last build that they picked on
+        its own. The server plans the rest — every unbuilt feature a picked one
+        needs, every unbuilt product-wide requirement that reaches one — and
+        holds back a story that needs a feature neither built nor in this build.
+        A feature whose design is out of date, that waits on an open dependency,
+        or that has not been interviewed cannot be built; picking one (or one a
+        pick needs) refuses the build with a FEATURE_NOT_BUILDABLE row naming
+        why. Absent, the build carries every feature that can be designed.
+      properties:
+        features:
+          items:
+            pattern: ^F[0-9]+$
+            type: string
+          type: array
+        productWide:
+          items:
+            pattern: ^P[0-9]+$
+            type: string
+          type: array
+      required:
+      - features
       type: object
     BuildResponse:
       additionalProperties: false
@@ -3414,6 +3536,10 @@ components:
             this says what went wrong in it — and cheap for the ledger, which is built from the
             run row that holds it.
           type: string
+        regressions:
+          description: How many scenarios the version's latest validation failed that passed in the
+            previous validated version (B4). Absent when none.
+          type: integer
         reason:
           description: The run's terminal reason for a failed version (empty otherwise), surfaced
             beside the Failed badge in the console. A cancelled version carries none — a person
@@ -4277,6 +4403,35 @@ components:
       - components
       - validation
       type: object
+    DeploymentGuardrail:
+      additionalProperties: false
+      description: >-
+        One declared guardrail and what the deploy did with it. `applied` is on
+        the agent's traffic; `partial` is applied without its reply-side check,
+        which the gateway does not enforce on streamed replies; `unavailable`
+        names a policy this environment's gateway does not offer; `invalid`
+        params failed the policy's schema; `conflict` means a guardrail of the
+        same policy was added in Agent Manager by hand and was left alone;
+        `failed` could not be written; `unsupported` needs an Anthropic-format
+        model connection.
+      properties:
+        policy:
+          type: string
+        reason:
+          type: string
+        status:
+          enum: [applied, partial, unavailable, invalid, conflict, failed, unsupported]
+          type: string
+          x-enum-varnames:
+          - GuardrailApplied
+          - GuardrailPartial
+          - GuardrailUnavailable
+          - GuardrailInvalid
+          - GuardrailConflict
+          - GuardrailFailed
+          - GuardrailUnsupported
+      required: [policy, status]
+      type: object
     Deployment:
       additionalProperties: false
       properties:
@@ -4287,6 +4442,15 @@ components:
             governed by Agent Manager and whose registration exists there;
             absent otherwise, including when the environment names no console.
           type: string
+        guardrails:
+          description: >-
+            What became of each guardrail the agent's spec declares
+            (x-aep.guardrails), as the last deploy to this environment left it.
+            Present only for an ai-agent governed by Agent Manager that
+            declares guardrails or once did; absent otherwise.
+          items:
+            $ref: '#/components/schemas/DeploymentGuardrail'
+          type: array
         componentName:
           type: string
         createdAt:
@@ -4971,8 +5135,8 @@ components:
     IssueInfo:
       additionalProperties: false
       description: 'One issue from list/search. Field names are CAPITALIZED on
-        the wire (historical shape the deployed aep-mcp-server parses — do not
-        "fix" without a coordinated MCP-server release).'
+        the wire (a historical shape the SRE handoff''s search tool answers too,
+        and the SRE agent''s skill reads — do not "fix" without changing both).'
       properties:
         Number:
           format: int64
@@ -7541,6 +7705,139 @@ components:
       required:
       - tags
       type: object
+    SpecState:
+      additionalProperties: false
+      properties:
+        designedFrom:
+          additionalProperties:
+            type: string
+          description: Each designed feature by ID, and the basis its last design read — its file's
+            lines by their words, then the product-wide items that reach it (reqspec.Basis, held to
+            the shared fixture's basis.json). A feature no design run covered is absent.
+          type: object
+        documents:
+          description: The source documents the user attached, by name.
+          items:
+            $ref: '#/components/schemas/SourceDocument'
+          type: array
+      required:
+      - designedFrom
+      - documents
+      type: object
+    SourceDocument:
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        pages:
+          description: How many pages it has; 0 when unknown.
+          type: integer
+        rows:
+          description: What it says, page by page, and where each point landed in the spec (S5);
+            empty until its coverage is worked out.
+          items:
+            $ref: '#/components/schemas/SourceDocumentRow'
+          type: array
+      required:
+      - id
+      - title
+      - pages
+      - rows
+      type: object
+    SourceDocumentRow:
+      additionalProperties: false
+      properties:
+        page:
+          type: string
+        says:
+          type: string
+        landedIn:
+          description: The spec line ID it landed in ("F2.4"), or null when it landed nowhere.
+          type: string
+          nullable: true
+          x-go-type: '*string'
+      required:
+      - page
+      - says
+      - landedIn
+      type: object
+    SpecVersionList:
+      additionalProperties: false
+      properties:
+        versions:
+          description: Oldest first.
+          items:
+            $ref: '#/components/schemas/SpecVersion'
+          type: array
+      required:
+      - versions
+      type: object
+    SpecVersion:
+      additionalProperties: false
+      description: What one version built.
+      properties:
+        name:
+          description: The version's name, the tag the build cut ("v2").
+          type: string
+        features:
+          description: Every feature the version carried, picked or pulled in, in ID order.
+          items:
+            $ref: '#/components/schemas/VersionFeature'
+          type: array
+        productWide:
+          description: The product-wide requirements it carried ("P1").
+          items:
+            type: string
+          type: array
+        heldBack:
+          description: Stories of carried features it did not build, as each waits on a feature
+            neither built nor in the version ("F1.3").
+          items:
+            type: string
+          type: array
+        fixes:
+          description: A repair build names the version it fixes ("v1.1" fixes "v1"); it builds the
+            same features. Absent for a version of its own.
+          type: string
+      required:
+      - name
+      - features
+      - productWide
+      - heldBack
+      type: object
+    VersionFeature:
+      additionalProperties: false
+      description: A feature as a version built it.
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        lines:
+          description: The feature's lines at the version's tag, in file order, headings left out.
+          items:
+            $ref: '#/components/schemas/VersionLine'
+          type: array
+      required:
+      - id
+      - name
+      - lines
+      type: object
+    VersionLine:
+      additionalProperties: false
+      description: One line of a feature's file. A line with its own ID ("F2.4") is followed by it, so
+        rewording it is an edit; one without (a decision) is known only by its words. Sources,
+        Needs/Applies-to clauses and the closing assumed/blocking tag are not words.
+      properties:
+        id:
+          type: string
+        words:
+          type: string
+      required:
+      - words
+      type: object
     TaskDetail:
       additionalProperties: false
       properties:
@@ -8176,6 +8473,38 @@ components:
       - milestoneNumber
       - state
       type: object
+    ValidationVersionScope:
+      additionalProperties: false
+      description: What a version validates (B4) — every feature built in it or an earlier version,
+        minus the stories no version has built yet. Absent for a version cut before builds were
+        selections, which validates its whole oracle; a scenario outside the scope was not run and
+        counts for nothing.
+      properties:
+        features:
+          items:
+            type: string
+          type: array
+        heldBack:
+          items:
+            type: string
+          type: array
+      required:
+      - features
+      - heldBack
+      type: object
+    ValidationBaseline:
+      additionalProperties: false
+      description: The previous validated version — the newest earlier version whose validation
+        reached a verdict — at its final attempt, which "was passing" compares with (B4).
+      properties:
+        version:
+          type: string
+        commit:
+          type: string
+      required:
+      - version
+      - commit
+      type: object
     ValidationSnapshot:
       additionalProperties: false
       description: >-
@@ -8200,6 +8529,26 @@ components:
           type: string
           nullable: true
           x-go-type: '*string'
+        scope:
+          allOf:
+          - $ref: '#/components/schemas/ValidationVersionScope'
+          x-go-type-skip-optional-pointer: false
+        baseline:
+          allOf:
+          - $ref: '#/components/schemas/ValidationBaseline'
+          x-go-type-skip-optional-pointer: false
+        regressions:
+          description: The failed scenarios that passed in the baseline, by key — the feature's ID,
+            the rule and the scenario, joined with " / " ("F2 / A manager sees pending claims / The
+            queue"). Empty when none, or with no baseline.
+          items:
+            type: string
+          type: array
+        stillFailing:
+          description: The failed scenarios that failed in the baseline too, keyed as regressions.
+          items:
+            type: string
+          type: array
       required:
       - commit
       - criteria

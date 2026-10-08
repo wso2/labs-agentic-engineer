@@ -99,7 +99,7 @@ func RunPhase19ModelConnection(ctx context.Context, db *gorm.DB) error {
 // createOrgModelConnections is the table organization.OrgModelConnection maps.
 // Raw SQL, not AutoMigrate, so the CHECKs on its enums hold. It holds no key,
 // preview or vault path; a table created by an earlier release still carries
-// those columns until phase26 drops them.
+// those columns until phase29 drops them.
 const createOrgModelConnections = `
 	CREATE TABLE IF NOT EXISTS org_model_connections (
 	  oc_org_id           TEXT PRIMARY KEY,
@@ -119,7 +119,7 @@ const createOrgModelConnections = `
 // backfillModelConnections writes a connection for every active default
 // credential. It reads no key column: a database that already ran this step
 // has no default row left (the subscription_only CHECK keeps it so), and
-// phase26 drops the preview and triplet columns an earlier release copied
+// phase29 drops the preview and triplet columns an earlier release copied
 // here. The model comes from org_agent_settings while that column still
 // exists.
 func backfillModelConnections(tx *gorm.DB) error {
@@ -155,7 +155,7 @@ func backfillModelConnections(tx *gorm.DB) error {
 // retireInactiveDefaults handles every org whose default credential is not
 // active (invalid or disconnected): it reads as having no connection. The
 // key bytes are deleted only while org_secrets still has its legacy key
-// column; phase26 renames it and deletes every value row.
+// column; phase29 renames it and deletes every value row.
 func retireInactiveDefaults(tx *gorm.DB) error {
 	const inactive = `SELECT oc_org_id FROM org_anthropic_credentials WHERE role = 'default' AND status <> 'active'`
 	stmts := []string{

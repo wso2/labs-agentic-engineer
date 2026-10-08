@@ -49,6 +49,12 @@
  *    byte-identical to before.
  *  - Ordering is unchanged: the ops still apply in call order (a provider
  *    serialises the tool_use blocks of one message), just earlier in wall-clock.
+ *  - An op may be asynchronous: a prototype write waits for the isolated render
+ *    check, seconds in a child process, and the service's event loop serves
+ *    other conversations meanwhile. While one is outstanding, later ops queue
+ *    behind it (no write is judged against a bundle another is about to
+ *    change), and `tapWrites` holds later frames, so the wire order is the
+ *    stream order. With no async op outstanding, everything stays synchronous.
  *
  * A turn that dies between an input-end and the SDK's execute leaves the bundle
  * holding an op the transcript has no result for. That is safe by construction:
@@ -66,9 +72,12 @@ import type { OpResult, StreamPart } from "@aep/agent-stream";
 export interface WriteOp {
   /** Parse the complete streamed args; `undefined` ⇒ the SDK will reject them too. */
   validate(args: unknown): unknown | undefined;
-  /** Apply the validated input to the bundle and return the bundle's verdict. */
-  apply(input: unknown): OpResult;
+  /** Apply the validated input to the bundle and return the bundle's verdict, now or once an async gate has ruled. */
+  apply(input: unknown): OpResult | Promise<OpResult>;
 }
+
+/** A verdict, or the promise of one from an op still running. */
+export type Verdict = OpResult | Promise<OpResult>;
 
 /** A call whose args have closed and whose op has run, awaiting its `tool-call`. */
 interface Pending {
@@ -78,7 +87,9 @@ interface Pending {
 
 export class WriteLedger {
   /** toolCallId → the verdict its op produced (the apply-once record). */
-  private readonly verdicts = new Map<string, OpResult>();
+  private readonly verdicts = new Map<string, Verdict>();
+  /** The last async op still running; later ops queue behind it. */
+  private outstanding: Promise<unknown> | null = null;
   /** Args accumulating for an in-flight call: id → tool + JSON buffer. */
   private readonly streaming = new Map<string, { toolName: string; buf: string }>();
   /** Applied, verdict not yet on the wire (it rides the call's `tool-call`). */
@@ -93,14 +104,24 @@ export class WriteLedger {
    * earlier apply already recorded for the same `toolCallId`. The only place a
    * file write reaches the bundle, whichever half of the loop gets here first.
    */
-  apply(toolCallId: string | undefined, toolName: string, input: unknown): OpResult {
+  apply(toolCallId: string | undefined, toolName: string, input: unknown): Verdict {
     const op = this.ops[toolName];
     if (!op) throw new Error(`WriteLedger: no write op registered for ${toolName}`);
     if (toolCallId !== undefined) {
       const already = this.verdicts.get(toolCallId);
       if (already) return already;
     }
-    const verdict = op.apply(input);
+    const verdict = this.outstanding ? this.outstanding.then(() => op.apply(input)) : op.apply(input);
+    if (verdict instanceof Promise) {
+      const settled = verdict.then(
+        () => undefined,
+        () => undefined,
+      );
+      this.outstanding = settled;
+      void settled.then(() => {
+        if (this.outstanding === settled) this.outstanding = null;
+      });
+    }
     if (toolCallId !== undefined) this.verdicts.set(toolCallId, verdict);
     return verdict;
   }
@@ -117,7 +138,7 @@ export class WriteLedger {
    * A call whose `tool-call` never arrives (a severed stream) is never marked
    * settled, so the SDK's frames — if any still come — are forwarded as they are.
    */
-  project(part: StreamPart): StreamPart[] {
+  project(part: StreamPart): StreamPart[] | Promise<StreamPart[]> {
     switch (part.type) {
       case "tool-input-start":
         if (part.id && part.toolName && this.ops[part.toolName]) {
@@ -149,17 +170,11 @@ export class WriteLedger {
         const verdict = id ? this.verdicts.get(id) : undefined;
         if (!id || !call || !verdict) break;
         this.pending.delete(id);
-        this.settled.add(id);
-        return [
-          part,
-          {
-            type: "tool-result",
-            toolCallId: id,
-            toolName: call.toolName,
-            input: call.input,
-            output: verdict,
-          },
-        ];
+        const settle = (output: OpResult): StreamPart[] => {
+          this.settled.add(id);
+          return [part, { type: "tool-result", toolCallId: id, toolName: call.toolName, input: call.input, output }];
+        };
+        return verdict instanceof Promise ? verdict.then(settle) : settle(verdict);
       }
 
       case "tool-result":
@@ -183,16 +198,54 @@ export class WriteLedger {
   }
 }
 
+/** A turn's `onEvent` wrapped by `tapWrites`, and how to wait for the frames it still holds. */
+export interface WriteTap {
+  forward: (part: StreamPart) => void;
+  /**
+   * Resolves once every frame forwarded so far has reached `onEvent` (a frame
+   * waits while an earlier write's async gate rules); rejects with the first
+   * error `onEvent` threw. Await it before anything that must follow the
+   * turn's frames, such as the terminal manifest.
+   */
+  drained: () => Promise<void>;
+}
+
 /**
  * Wrap a turn's `onEvent` so every write settles at its own call. ONE definition
  * of the wiring, shared by the turn orchestration and the tests that pin the
  * frame order — a second hand-rolled wrap is how the two would drift.
+ *
+ * Frames keep the stream's order. While a projection waits on an async verdict,
+ * every later frame queues behind it; otherwise a frame goes straight through.
  */
-export function tapWrites(
-  writes: WriteLedger,
-  onEvent: (part: StreamPart) => void,
-): (part: StreamPart) => void {
-  return (part) => {
-    for (const out of writes.project(part)) onEvent(out);
+export function tapWrites(writes: WriteLedger, onEvent: (part: StreamPart) => void): WriteTap {
+  let queue: Promise<void> | null = null;
+  let failure: { error: unknown } | null = null;
+  const emit = (parts: StreamPart[]) => {
+    for (const out of parts) onEvent(out);
+  };
+  const track = (next: Promise<void>) => {
+    queue = next.catch((error: unknown) => {
+      failure ??= { error };
+    });
+    const mine = queue;
+    void mine.then(() => {
+      if (queue === mine) queue = null;
+    });
+  };
+  return {
+    forward: (part) => {
+      if (queue) {
+        track(queue.then(async () => emit(await writes.project(part))));
+        return;
+      }
+      const projected = writes.project(part);
+      if (projected instanceof Promise) track(projected.then(emit));
+      else emit(projected);
+    },
+    drained: async () => {
+      while (queue) await queue;
+      if (failure) throw failure.error;
+    },
   };
 }

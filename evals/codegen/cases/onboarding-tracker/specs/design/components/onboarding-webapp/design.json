@@ -1,0 +1,17 @@
+{
+  "name": "onboarding-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "onboarding-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "component", "name": "onboarding-api" },
+    { "kind": "platform-resource", "name": "onboarding-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Internal staff single-page app for HR Coordinators, IT Staff, Facilities Staff, and Admins to manage new-hire onboarding: creating records, working department task queues, viewing the cross-department dashboard, and managing task templates. All data comes from onboarding-api; the app stores no files and sends no notifications.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

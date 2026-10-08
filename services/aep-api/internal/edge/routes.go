@@ -19,8 +19,9 @@
 // route group (never a "surface", which names a turn's narration reader),
 // mounted in routes() and opened by exactly one credential, whose verified
 // org the gate binds. /api/v1 takes the console's user JWT through the tenant
-// gate; /internal/v1 takes a machine credential per group (runs/, ae-studio/,
-// mcp, sre/) through internalGate's deny-by-default table. The gate table and
+// gate; /internal/v1 takes a machine credential per group (runs/, ae-studio/
+// through internalGate's deny-by-default table; mcp and sre-handoff/mcp
+// through their own gates). The gate table and
 // its reasons: services/aep-api/design/route-groups.md.
 package edge
 
@@ -55,7 +56,7 @@ func routes(p AppParams) []route {
 		{"/api/", "console", "user JWT, orgensure, tenant gate", publicChain(p)},
 		// One mount: the inner mux registers full paths (raw MCP routes and the
 		// generated ops), so a path it does not name 404s.
-		{internalV1 + "/", "coding runner (runs/, MCP), AE Studio tools pod (ae-studio/, MCP), aep-mcp-server (SRE handoff)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
+		{internalV1 + "/", "coding runner (runs/, MCP), AE Studio tools pod (ae-studio/, MCP), OpenChoreo SRE agent (sre-handoff/mcp)", "internal gate table (internal.go)", newInternalV1Handler(internalDeps)},
 	}
 }
 

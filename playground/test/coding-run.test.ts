@@ -21,7 +21,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   createTimelineRenderer,
@@ -29,12 +29,14 @@ import {
   FORWARDED_AGENT_SETTINGS,
   hostInvocation,
   resolveRuntime,
-  runnerImage,
   isFailedAgent,
   renderMergedTimeline,
+  runContainerName,
   toolJarOverlay,
   workingTreeToolJar,
 } from "../src/engine/coding-run.js";
+import { agentBrowserBinDir } from "../src/engine/agent-browser.js";
+import { runnerImage } from "../src/engine/runner-image.js";
 import { REPO_ROOT } from "../src/paths.js";
 import { formatEvent } from "@aep/progress-view";
 
@@ -526,9 +528,9 @@ test("docker mode mounts the working-tree bal library jar, or leaves the install
 // must come through untouched — the failure this guards is a well-meant PATH or
 // HOME edit that makes a host run read a different tool than a bare `bal library`
 // in the same shell would.
-test("host mode leaves the developer's own environment alone", () => {
+test("host mode leaves the developer's own environment alone, but for the pinned agent-browser", () => {
   const { env } = hostInvocation(invocationOpts, "/r");
-  assert.equal(env.PATH, process.env.PATH);
+  assert.equal(env.PATH, `${agentBrowserBinDir(join(REPO_ROOT, "playground"))}${delimiter}${process.env.PATH ?? ""}`);
   assert.equal(env.HOME, process.env.HOME);
 });
 
@@ -693,4 +695,13 @@ test("a hand-set search strategy is kept, and no connection means today's run", 
     const { args } = dockerInvocation(invocationOpts, "/r", "c1");
     assert.ok(args.includes("ANTHROPIC_API_KEY") && !args.includes("AEP_MODEL_WEB_SEARCH"));
   });
+});
+
+test("runContainerName: two projects started in the same millisecond get different containers", () => {
+  const stamp = "2026-10-04T06-26-17-346Z";
+  const a = runContainerName("/home/dev/.aep-evals/codegen/s1/expense-claims-sonnet-1", stamp);
+  const b = runContainerName("/home/dev/.aep-evals/codegen/s1/onboarding-tracker-sonnet-1", stamp);
+  assert.notEqual(a, b);
+  assert.equal(a, "aep-play-expense-claims-sonnet-1-2026-10-04T06-26-17-346Z");
+  assert.match(runContainerName("/tmp/my project!", stamp), /^aep-play-my-project--2026/);
 });

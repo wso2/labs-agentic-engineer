@@ -621,7 +621,7 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 	// A CLOSED cycle still accepts its verdict — the point of the different fence.
 	// The DIGEST rides the same write, and must: the fence below would reject any
 	// later attempt to add it.
-	got, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictFailed, 77, "digest-one")
+	got, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictFailed, 77, "digest-one", 0)
 	if err != nil || got == nil {
 		t.Fatalf("SetValidationVerdict on a closed cycle = (%+v, %v), want the row back", got, err)
 	}
@@ -634,7 +634,7 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 
 	// A second write is a no-op, not a rewrite: an attempt concludes once, so a
 	// repeat can only be an activity retry. (nil, nil) is the no-op contract.
-	again, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictPassed, 77, "digest-two")
+	again, err := cycles.SetValidationVerdict(ctx, cycle.ID, delivery.ValidationVerdictPassed, 77, "digest-two", 0)
 	if err != nil {
 		t.Fatalf("SetValidationVerdict(retry): %v", err)
 	}
@@ -666,7 +666,7 @@ func TestRunCycleRepository_SetValidationVerdictIsWriteOnceAfterClose(t *testing
 	}
 
 	// The closed vocabulary is enforced here too, so a typo cannot reach the column.
-	if _, err := cycles.SetValidationVerdict(ctx, cycle.ID, "kinda-passed", 77, ""); err == nil {
+	if _, err := cycles.SetValidationVerdict(ctx, cycle.ID, "kinda-passed", 77, "", 0); err == nil {
 		t.Fatal("SetValidationVerdict accepted an unknown verdict")
 	}
 }

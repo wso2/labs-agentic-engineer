@@ -77,7 +77,7 @@ func securityJSONV2(t *testing.T) []byte {
 		}},
 		"groups": []any{},
 		"roles": []any{map[string]any{
-			"name": "Viewer", "description": "Reads own claims.", "stories": []int{1},
+			"name": "Viewer", "description": "Reads own claims.", "stories": []string{"F1.1"},
 			"grants": []string{"claims:read"}, "assignTo": []string{"Viewers"},
 		}},
 		"testUsers": []any{map[string]any{"username": "test-viewer", "roles": []string{"Viewer"}}},

@@ -69,7 +69,8 @@ type Client interface {
 	// FindProvider looks the org's provider up by its handle and writes
 	// nothing; found is false when the org has none. It is the deploy path's
 	// read: a deploy holds no key, so it can bind a provider but never make
-	// one.
+	// one. Reading the guardrail catalog uses it too: that read must never
+	// write the provider, whose every update redeploys each proxy bound to it.
 	FindProvider(ctx context.Context, org, id string) (ref ProviderRef, found bool, err error)
 	// UpdateProviderCredential writes in's template, upstream, auth and key
 	// onto an EXISTING provider and never creates one; found is false when the
@@ -85,6 +86,12 @@ type Client interface {
 	// authenticates its OTLP export with. Unlike the two above it is NOT a
 	// stored key: see TracingToken.
 	IssueTracingToken(ctx context.Context, in TracingTokenRef) (TracingToken, error)
+
+	// ListPolicies, ReadBinding and WriteBindingPolicies carry an agent's
+	// guardrails (client_guardrails.go).
+	ListPolicies(ctx context.Context, org, providerUUID string) ([]PolicyDefinition, error)
+	ReadBinding(ctx context.Context, ref BindingRef) (Binding, error)
+	WriteBindingPolicies(ctx context.Context, ref BindingRef, b Binding, policies []BindingPolicy) error
 }
 
 // EnsureProviderInput is one org's LLM provider, as AEP declares it.

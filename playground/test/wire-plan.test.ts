@@ -121,7 +121,8 @@ test("a dependency wired mode cannot stand in for stops the run, and --skip is t
 
   const blocked = planBlockers(wire, TWO);
   assert.equal(blocked.length, 1);
-  assert.match(blocked[0] ?? "", /stripe .*--skip stripe/s);
+  assert.match(blocked[0]?.text ?? "", /stripe .*--skip stripe/s);
+  assert.equal(blocked[0]?.cause, "environment");
   assert.deepEqual(planBlockers(wire, TWO, ["stripe"]), []);
 });
 
@@ -135,8 +136,9 @@ test("an app whose mock mode predates wired mode is refused, not quietly left on
   // the one every app generated before this existed would hit.
   const blockers = planBlockers({ ...wire, services: [] }, join(FIXTURES, "two-services"));
   assert.equal(blockers.length, 1);
-  assert.match(blockers[0] ?? "", /predates wired mode/);
-  assert.match(blockers[0] ?? "", /mock-wired\.ts/);
+  assert.match(blockers[0]?.text ?? "", /predates wired mode/);
+  assert.match(blockers[0]?.text ?? "", /mock-wired\.ts/);
+  assert.equal(blockers[0]?.cause, "app");
 });
 
 test("a service with no Dockerfile has not been built yet, and the plan says so", async () => {
@@ -144,7 +146,9 @@ test("a service with no Dockerfile has not been built yet, and the plan says so"
   // Against a tree with nothing in it, so the app is missing too; this is about
   // the service half.
   const blockers = planBlockers(wire, join(FIXTURES, "nothing-here"));
-  assert.equal(blockers.filter((b) => /no Dockerfile.*coding phase/.test(b)).length, 1);
+  const missing = blockers.filter((b) => /no Dockerfile.*coding phase/.test(b.text));
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0]?.cause, "app");
 });
 
 test("ports skip what is already taken", async () => {

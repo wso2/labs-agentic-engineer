@@ -38,15 +38,16 @@ import (
 var ref = sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
 
 var (
-	_ sourcecontrol.RepoAdmin       = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.IssueOps        = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.WebhookOps      = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.Git             = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.TrashOps        = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.SkillsMirrorOps = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.ReferencesOps   = (*aestudiotest.Fake)(nil)
-	_ sourcecontrol.IdentityOps     = (*aestudiotest.Fake)(nil)
-	_ aestudiotools.Turns           = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.RepoAdmin        = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.IssueOps         = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.WebhookOps       = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.Git              = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.TrashOps         = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.SkillsMirrorOps  = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.ReferencesOps    = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.ReferenceListOps = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.IdentityOps      = (*aestudiotest.Fake)(nil)
+	_ aestudiotools.Turns            = (*aestudiotest.Fake)(nil)
 )
 
 func blobSHA(content string) string {
@@ -185,6 +186,9 @@ func TestFake_ReadsListBundleAndTags(t *testing.T) {
 	if err != nil || len(tags) != 1 || tags[0].Name != "v1" || tags[0].CommitHash != sha || tags[0].Message != "first" || tags[0].CreatedAt.IsZero() {
 		t.Fatalf("tags=%+v err=%v", tags, err)
 	}
+	if tags[0].Body != "" {
+		t.Fatalf("a subject-only annotation has body %q", tags[0].Body)
+	}
 	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "n.md", Content: "n"}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -199,6 +203,31 @@ func TestFake_ReadsListBundleAndTags(t *testing.T) {
 	}
 	if _, err := f.Head(ctx, sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "other"}, ""); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		t.Fatalf("unknown repo: err = %v", err)
+	}
+}
+
+// list-tags answers an annotation as git's for-each-ref splits it: message is
+// the subject (the first paragraph, its lines joined by a space), body the
+// rest, trimmed.
+func TestFake_ListTagsSplitsTheAnnotation(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "\nSpec v1\n\nFeatures: F1 F2\nHeld back: F2.4\n\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v2", Message: "Spec v2\nsecond line"}); err != nil {
+		t.Fatal(err)
+	}
+	tags, err := f.ListTags(ctx, ref, "")
+	if err != nil || len(tags) != 2 {
+		t.Fatalf("tags=%+v err=%v", tags, err)
+	}
+	if tags[0].Message != "Spec v1" || tags[0].Body != "Features: F1 F2\nHeld back: F2.4" {
+		t.Errorf("v1 = %q / %q", tags[0].Message, tags[0].Body)
+	}
+	if tags[1].Message != "Spec v2 second line" || tags[1].Body != "" {
+		t.Errorf("v2 = %q / %q", tags[1].Message, tags[1].Body)
 	}
 }
 
@@ -477,7 +506,7 @@ func TestFake_Turns(t *testing.T) {
 		aestudiotools.TurnEvent{Type: aestudiotools.EventTaskOp, Op: "plan"},
 		aestudiotools.TurnEvent{Type: aestudiotools.EventKeepAlive},
 	)
-	seq, err := f.StartTurn(context.Background(), ref, aestudiotools.TurnRequest{TurnID: "t-1", Kind: aestudiotools.TurnKindPlan})
+	seq, err := f.StartTurn(context.Background(), ref, aestudiotools.TurnRequest{TurnID: turnID, Kind: aestudiotools.TurnKindPlan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,7 +520,7 @@ func TestFake_Turns(t *testing.T) {
 	if !slices.Equal(types, []string{"task-op", "keep-alive", "result"}) {
 		t.Fatalf("events = %v, want the script then a completed result", types)
 	}
-	if calls := f.TurnCalls(); len(calls) != 1 || calls[0].Ref != ref || calls[0].Request.TurnID != "t-1" {
+	if calls := f.TurnCalls(); len(calls) != 1 || calls[0].Ref != ref || calls[0].Request.TurnID != turnID {
 		t.Fatalf("calls = %+v", calls)
 	}
 	f.FailOp(aestudiotest.OpStartTurn, aestudiotools.ErrTurnInProgress)
@@ -500,6 +529,111 @@ func TestFake_Turns(t *testing.T) {
 	}
 	if len(f.TurnCalls()) != 1 {
 		t.Fatal("a failed start is not recorded")
+	}
+}
+
+// turnID is a start-repo-turn turnId (the contract's format: uuid).
+const turnID = "0d1f8a8e-1f2a-4c1e-9a51-7a1d0e5a6b10"
+
+// StartTurn refuses what start-repo-turn's validator refuses (a permanent
+// 400 validation_failed): an `at` outside tags/<name> | sha or on a start
+// turn, a scope tag outside the ref-name characters, and story, feature and
+// product-wide IDs off their patterns. A turnId that is not a UUID or an
+// unknown kind is refused before any call, as the adapter does. A refused
+// start is not recorded.
+func TestFake_StartTurnRefusesWhatThePodRefuses(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "Spec v1"}); err != nil {
+		t.Fatal(err)
+	}
+	valid := func() aestudiotools.TurnRequest {
+		return aestudiotools.TurnRequest{
+			TurnID: turnID, Project: "greeter", Kind: aestudiotools.TurnKindPlan, At: "tags/v1",
+			Scope: &aestudiotools.PlanScope{
+				Tag:         "v1",
+				Stories:     []aestudiotools.PlanStory{{ID: "F1.1"}, {ID: "F12.30", Covered: true}},
+				Features:    []aestudiotools.PlanFeature{{ID: "F1"}, {ID: "F12", Needs: []string{"F1"}}},
+				ProductWide: []aestudiotools.PlanItem{{ID: "P1", AppliesTo: []string{"all"}}, {ID: "P2", AppliesTo: []string{"F1", "F12"}}},
+			},
+		}
+	}
+	if _, err := f.StartTurn(ctx, ref, valid()); err != nil {
+		t.Fatalf("a valid plan turn: %v", err)
+	}
+	start := aestudiotools.TurnRequest{TurnID: turnID, Project: "greeter", Kind: aestudiotools.TurnKindStart, Text: "idea"}
+	if _, err := f.StartTurn(ctx, ref, start); err != nil {
+		t.Fatalf("a valid start turn: %v", err)
+	}
+	for name, mutate := range map[string]func(*aestudiotools.TurnRequest){
+		"at a branch":         func(r *aestudiotools.TurnRequest) { r.At = "main" },
+		"at a short sha":      func(r *aestudiotools.TurnRequest) { r.At = "abc1234" },
+		"at on a start turn":  func(r *aestudiotools.TurnRequest) { r.Kind, r.Scope = aestudiotools.TurnKindStart, nil },
+		"scope tag with glob": func(r *aestudiotools.TurnRequest) { r.Scope.Tag = "v*" },
+		"empty scope tag":     func(r *aestudiotools.TurnRequest) { r.Scope.Tag = "" },
+		"story number":        func(r *aestudiotools.TurnRequest) { r.Scope.Stories[0].ID = "3" },
+		"story lower case":    func(r *aestudiotools.TurnRequest) { r.Scope.Stories[0].ID = "f1.1" },
+		"feature as story":    func(r *aestudiotools.TurnRequest) { r.Scope.Features[0].ID = "F1.1" },
+		"needs lower case":    func(r *aestudiotools.TurnRequest) { r.Scope.Features[1].Needs = []string{"f1"} },
+		"product-wide id":     func(r *aestudiotools.TurnRequest) { r.Scope.ProductWide[0].ID = "F1" },
+		"applies to All":      func(r *aestudiotools.TurnRequest) { r.Scope.ProductWide[0].AppliesTo = []string{"All"} },
+	} {
+		req := valid()
+		mutate(&req)
+		_, err := f.StartTurn(ctx, ref, req)
+		wantPod400(t, name, err)
+	}
+	for name, req := range map[string]aestudiotools.TurnRequest{
+		"turnId not a uuid": {TurnID: "t-1", Kind: aestudiotools.TurnKindPlan},
+		"unknown kind":      {TurnID: turnID, Kind: "chat"},
+	} {
+		if _, err := f.StartTurn(ctx, ref, req); err == nil || sourcecontrol.IsPermanent(err) {
+			t.Errorf("%s: err = %v, want the adapter's plain refusal", name, err)
+		}
+	}
+	// The pod resolves `at` before the turn starts: a tag or sha the
+	// repository lacks is 404 ref_not_found, permanent, and starts nothing.
+	for _, at := range []string{"tags/v9", "0000000000000000000000000000000000000000"} {
+		req := valid()
+		req.At = at
+		_, err := f.StartTurn(ctx, ref, req)
+		var se *aestudiotools.StatusError
+		if !errors.Is(err, sourcecontrol.ErrRefNotFound) || !errors.As(err, &se) || se.Status != 404 ||
+			se.Code != "ref_not_found" || !sourcecontrol.IsPermanent(err) {
+			t.Errorf("at %s: err = %v, want the adapter's permanent 404 ref_not_found", at, err)
+		}
+	}
+	if n := len(f.TurnCalls()); n != 2 {
+		t.Fatalf("%d turns recorded, want the 2 valid ones", n)
+	}
+}
+
+// ListReferences answers the names as the pod stores them: bare, lower-case,
+// sorted; none stored is an empty list.
+func TestFake_ListReferences(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	if names, err := f.ListReferences(ctx, ref); err != nil || names == nil || len(names) != 0 {
+		t.Fatalf("none stored: %#v, %v", names, err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, n := range []string{"Sketch One.PNG", `C:\docs\brief.pdf`} {
+		w, _ := mw.CreateFormFile("files", n)
+		_, _ = io.WriteString(w, n)
+	}
+	_ = mw.Close()
+	if err := f.PutReferences(ctx, ref, mw.FormDataContentType(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	names, err := f.ListReferences(ctx, sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "main"})
+	if err != nil || !slices.Equal(names, []string{"brief.pdf", "sketch-one.png"}) {
+		t.Fatalf("names = %v, %v", names, err)
+	}
+	f.FailOp(aestudiotest.OpListReferences, sourcecontrol.ErrOwnerNotAllowed)
+	if _, err := f.ListReferences(ctx, ref); !errors.Is(err, sourcecontrol.ErrOwnerNotAllowed) {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -525,6 +659,31 @@ func TestFake_References(t *testing.T) {
 	}
 	if got := f.References(ref); len(got) != 2 {
 		t.Fatalf("a refused upload changed the set: %v", got)
+	}
+}
+
+// Like the pod, the fake refuses a type the models cannot read (an Office
+// document reaches the pod only as the markdown aep-api converts it to) and a
+// document over the per-document limit, and then keeps the stored set.
+func TestFake_PutReferences_EnforcesThePodsRules(t *testing.T) {
+	for name, content := range map[string][]byte{
+		"policy.docx": []byte("PK"),
+		"big.pdf":     bytes.Repeat([]byte("a"), sourcecontrol.MaxReferenceBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := aestudiotest.New()
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			w, _ := mw.CreateFormFile("files", name)
+			_, _ = w.Write(content)
+			_ = mw.Close()
+			if err := f.PutReferences(context.Background(), ref, mw.FormDataContentType(), &buf); !errors.Is(err, sourcecontrol.ErrReferenceRejected) {
+				t.Fatalf("err = %v, want ErrReferenceRejected", err)
+			}
+			if got := f.References(ref); got != nil {
+				t.Fatalf("stored %v from a refused upload", got)
+			}
+		})
 	}
 }
 

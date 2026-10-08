@@ -20,7 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Conversation } from "../src/store/conversation-store.js";
 import { InMemoryConversationStore } from "../src/store/memory-store.js";
-import { THREAD_FALLBACK_BYTES, ThreadBook } from "../src/conversations/thread-book.js";
+import { MAX_UNUSED_THREADS, THREAD_FALLBACK_BYTES, ThreadBook } from "../src/conversations/thread-book.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WINDOW = 200_000;
@@ -204,4 +204,43 @@ test("resume adopts a kept thread id as the current thread; an open thread is ne
   assert.ok((await threads.history("p", "kept-id"))!.length > 0, "its history is served");
   // Once the project has a thread, resume answers it and changes nothing.
   assert.equal(threads.resume("p", "other-id").conversationId, "kept-id");
+});
+
+// Opening a thread resolves nothing, so any well-formed name mints an entry;
+// only threads no turn was admitted to are capped (a turn resolves its project).
+test("threads no turn was admitted to are capped pod-wide; past the cap the least recently used one goes", () => {
+  const { threads } = book();
+  const first = threads.current("p-0").conversationId;
+  const second = threads.current("p-1").conversationId;
+  for (let i = 2; i < MAX_UNUSED_THREADS; i++) threads.current(`p-${i}`);
+  assert.equal(threads.current("p-0").conversationId, first, "at the cap nothing is evicted, and a read is a use");
+  threads.current(`p-${MAX_UNUSED_THREADS}`);
+  assert.equal(threads.current("p-0").conversationId, first, "p-0 was used last, so p-1 went instead");
+  assert.notEqual(threads.current("p-1").conversationId, second, "p-1's thread was evicted; reading it opens a fresh one");
+});
+
+test("a thread a turn was admitted to is never evicted by the unused cap", async () => {
+  const { threads } = book();
+  const busy = threads.current("greeter").conversationId;
+  assert.equal(await threads.admit("greeter", busy, WINDOW), "ok");
+  for (let i = 0; i <= MAX_UNUSED_THREADS; i++) threads.current(`p-${i}`);
+  assert.equal(threads.current("greeter").conversationId, busy);
+  assert.deepEqual(await threads.history("greeter", busy), []);
+});
+
+test("an evicted unused thread is unknown: its sends are rotated, its history null", async () => {
+  const { threads } = book();
+  const gone = threads.current("p-0").conversationId;
+  for (let i = 1; i <= MAX_UNUSED_THREADS; i++) threads.current(`p-${i}`);
+  assert.equal(await threads.history("p-0", gone), null);
+  assert.equal(await threads.admit("p-0", gone, WINDOW), "rotated");
+});
+
+test("a rotated thread's replacement counts as unused until a turn is admitted", async () => {
+  const { threads } = book();
+  const used = threads.current("greeter").conversationId;
+  assert.equal(await threads.admit("greeter", used, WINDOW), "ok");
+  const fresh = (await threads.rotate("greeter")).conversationId;
+  for (let i = 0; i < MAX_UNUSED_THREADS; i++) threads.current(`p-${i}`);
+  assert.notEqual(threads.current("greeter").conversationId, fresh, "the fresh, turn-less thread was the oldest unused one");
 });

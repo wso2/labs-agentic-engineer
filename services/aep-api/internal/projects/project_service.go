@@ -63,6 +63,7 @@ type Service struct {
 	deprovisioner  resourceDeprovisioner  // dependency provisioning teardown; may be nil
 	identityClean  identityTeardown       // identity-provider teardown on delete; may be nil
 	runReader      milestoneRunRows       // build/deploy stage reads + delete purge (status_stages.go)
+	guardrails     guardrailRecords       // delete purge of the project's agent guardrail records
 	bindingsReader bindingsReader         // deploy stage: OC release bindings (status_stages.go)
 	specTurns      specTurnRows           // spec stage: newest agent turn (status_stages.go); may be nil
 	runAbandoner   runAbandoner           // run-supervisor teardown on delete; may be nil
@@ -521,6 +522,17 @@ func (s *Service) SetIdentityTeardown(t identityTeardown) {
 	s.identityClean = t
 }
 
+// guardrailRecords is the project's half of the agent guardrail records — which
+// guardrails AEP wrote to each agent's Agent Manager binding. See
+// SetGuardrailRecords.
+type guardrailRecords interface {
+	DeleteByProject(ctx context.Context, orgName, projectName string) error
+}
+
+// SetGuardrailRecords wires the guardrail records a project delete purges.
+// Optional: nil skips the purge.
+func (s *Service) SetGuardrailRecords(r guardrailRecords) { s.guardrails = r }
+
 func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string) error {
 	// Mark the repo row `deleting` before anything is torn down: from here no
 	// sweep lists the project and no hook id can land on its row, so the hook
@@ -665,6 +677,16 @@ func (s *Service) finishTeardown(ctx context.Context, orgName, projectName strin
 	if s.runReader != nil {
 		if err := s.runReader.DeleteByProject(ctx, orgName, projectName); err != nil {
 			slog.ErrorContext(ctx, "failed to purge milestone runs for project", "org", orgName, "project", projectName, "error", err)
+		}
+	}
+
+	// Purge the guardrail records — AEP's claim over the entries it wrote to
+	// each agent's Agent Manager binding. They are keyed by project and agent
+	// name, so a recreated same-named project would inherit them and treat an
+	// operator's same-named guardrail as AEP's own to remove. Best-effort.
+	if s.guardrails != nil {
+		if err := s.guardrails.DeleteByProject(ctx, orgName, projectName); err != nil {
+			slog.ErrorContext(ctx, "failed to purge guardrail records for project", "org", orgName, "project", projectName, "error", err)
 		}
 	}
 }

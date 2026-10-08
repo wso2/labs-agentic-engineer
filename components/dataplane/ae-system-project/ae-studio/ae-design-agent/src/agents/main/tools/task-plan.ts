@@ -54,14 +54,22 @@ export function buildTaskPlanTools(plan: TaskPlan, skills?: SkillSource): Record
   const tools: Record<string, Tool> = {
     [PLAN_TASK]: tool({
       description:
-        "Plan a new Task for ONE design component: what should be built/changed and its dependencies. component must " +
-        "be a known component; dependsOn lists component names (never issue numbers); title must be unique. Returns " +
+        "Plan a new Task for ONE feature in ONE design component (feature: \"F2\", or \"foundation\" for the component's " +
+        "shared setup and product-wide work): what should be built/changed and its dependencies. component must be a " +
+        "known component; dependsOn lists component names (never issue numbers); title must be unique. Returns " +
         "the normalized operation, or a self-correctable error (UNKNOWN_COMPONENT / DUPLICATE_TITLE / DEPENDENCY_CYCLE).",
       inputSchema: planTaskInputSchema,
       // Drop an undefined optional (the AI SDK widens optionals to `| undefined`;
       // the wire type keeps them exact) so the accumulator's contract stays clean.
-      execute: async ({ component, title, dependsOn, origin, rationale }): Promise<PlanTaskResult> =>
-        plan.planTask({ component, title, dependsOn, rationale, ...(origin ? { origin } : {}) }),
+      execute: async ({ component, title, dependsOn, origin, rationale, feature }): Promise<PlanTaskResult> =>
+        plan.planTask({
+          component,
+          title,
+          dependsOn,
+          rationale,
+          ...(origin ? { origin } : {}),
+          ...(feature ? { feature } : {}),
+        }),
     }),
 
     [UPDATE_TASK]: tool({

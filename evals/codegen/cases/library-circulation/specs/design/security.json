@@ -1,0 +1,73 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "catalogue",
+      "component": "circulation-api",
+      "description": "Titles and copies",
+      "actions": [
+        { "handle": "read", "description": "Search and view titles with availability" },
+        { "handle": "manage", "description": "Add, edit and remove titles; add, edit and withdraw copies" }
+      ]
+    },
+    {
+      "resource": "loans",
+      "component": "circulation-api",
+      "description": "Loans of copies",
+      "actions": [
+        { "handle": "read", "description": "The caller's own loans" },
+        { "handle": "borrow", "description": "Borrow a copy for the caller" },
+        { "handle": "read-all", "description": "Every loan" },
+        { "handle": "checkout", "description": "Check a copy out to any member" },
+        { "handle": "checkin", "description": "Check a copy in" }
+      ]
+    },
+    {
+      "resource": "holds",
+      "component": "circulation-api",
+      "description": "Holds queue",
+      "actions": [
+        { "handle": "read", "description": "The caller's own holds" },
+        { "handle": "place", "description": "Place a hold for the caller" },
+        { "handle": "cancel", "description": "Cancel the caller's own hold" },
+        { "handle": "read-all", "description": "Every hold in the queues" },
+        { "handle": "manage", "description": "Cancel any hold" }
+      ]
+    },
+    {
+      "resource": "fees",
+      "component": "circulation-api",
+      "description": "Late fees",
+      "actions": [
+        { "handle": "read", "description": "The caller's own fees" },
+        { "handle": "read-all", "description": "Every fee" },
+        { "handle": "manage", "description": "Mark any fee paid" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Library Members", "description": "Registered library members" },
+    { "name": "Librarians", "description": "Library staff who run circulation" }
+  ],
+  "roles": [
+    {
+      "name": "Member",
+      "description": "Searches the catalogue, borrows, places holds and sees their own loans and fees.",
+      "stories": [1, 2, 3, 4, 5, 6, 7],
+      "grants": ["catalogue:read", "loans:read", "loans:borrow", "holds:read", "holds:place", "holds:cancel", "fees:read"],
+      "assignTo": ["Library Members"]
+    },
+    {
+      "name": "Librarian",
+      "description": "Manages titles and copies, checks items out and in, and works the holds queue and fees.",
+      "stories": [8, 9, 10, 11, 12, 13],
+      "grants": ["catalogue:read", "catalogue:manage", "loans:read-all", "loans:checkout", "loans:checkin", "holds:read-all", "holds:manage", "fees:read-all", "fees:manage"],
+      "assignTo": ["Librarians"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-member", "roles": ["Member"] },
+    { "username": "test-member-2", "roles": ["Member"] },
+    { "username": "test-librarian", "roles": ["Librarian"] }
+  ]
+}

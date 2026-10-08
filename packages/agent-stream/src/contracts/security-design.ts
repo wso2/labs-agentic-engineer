@@ -155,8 +155,8 @@ export interface Role {
    * ensure rather than seeding it once.
    */
   description: string;
-  /** The PRD story numbers this role serves. At least one. */
-  stories: number[];
+  /** The story IDs ("F2.3") this role serves. At least one. */
+  stories: string[];
   /**
    * Catalog handles (`<resource>:<action>`) this role holds. At least one.
    * Every handle must exist in `permissions[]`. A role holding `X:read-all`

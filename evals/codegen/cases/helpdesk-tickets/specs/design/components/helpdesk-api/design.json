@@ -1,0 +1,17 @@
+{
+  "name": "helpdesk-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "helpdesk-api",
+  "entrypoint": "deployment/service",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" },
+    { "kind": "platform-resource", "name": "helpdesk-db", "resourceType": "postgres-cnpg", "description": "Stores tickets, comments and user profiles; owned exclusively by this service." }
+  ],
+  "description": "The single backend for the help desk: tickets, their lifecycle transitions, SLA due time computed from priority, the comment threads, the filterable queue and the list of assignable agents. It is one service because the requirements describe one API; it is reached through the gateway and verifies the signed assertion. It owns its own Postgres database (helpdesk-db) for all ticket, comment and user-profile data. It does not send notifications, accept uploads or run background jobs.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

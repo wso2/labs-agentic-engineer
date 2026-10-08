@@ -1,0 +1,20 @@
+title Procurement and Stock
+
+component procurement-webapp as "Procurement Web App" web-application
+component procurement-api as "Procurement API" service
+component inventory-service as "Inventory Service" service
+component procurement-db as "Procurement Database" database
+component inventory-db as "Inventory Database" database
+
+east user-auth as "Thunder Auth" identity-server
+
+north -> procurement-webapp
+north -> procurement-api
+west -> inventory-service
+
+procurement-webapp -> procurement-api
+procurement-webapp -> user-auth
+procurement-api -> inventory-service
+procurement-api -> user-auth
+procurement-api -> procurement-db
+inventory-service -> inventory-db

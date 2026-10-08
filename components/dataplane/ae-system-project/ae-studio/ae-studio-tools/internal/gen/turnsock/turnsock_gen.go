@@ -145,18 +145,46 @@ type PlanContextFile struct {
 	Path string `json:"path"`
 }
 
-// PlanScope The milestone a plan turn covers and which of its stories already have Tasks.
+// PlanFeature defines model for PlanFeature.
+type PlanFeature struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+
+	// Needs The carried features this one is built after, in ID order (one an earlier version built is left out).
+	Needs []string `json:"needs,omitempty"`
+}
+
+// PlanItem One product-wide item.
+type PlanItem struct {
+	// AppliesTo The feature IDs the item applies to, or the single entry `all`.
+	AppliesTo []string `json:"appliesTo,omitempty"`
+	ID        string   `json:"id"`
+	Text      string   `json:"text,omitempty"`
+}
+
+// PlanScope The spec version a plan turn covers, its stories and which of them already have Tasks, the features it carries and its product-wide items.
 type PlanScope struct {
+	// Features The features the version carries, in ID order, each with the carried features it is built after; the planner cuts one Task per feature per component.
+	Features []PlanFeature `json:"features,omitempty"`
+
+	// ProductWide The product-wide items the version carries, in ID order; each component's Foundation Task builds them.
+	ProductWide []PlanItem `json:"productWide,omitempty"`
+
+	// Stories Each story the version builds, in ID order.
 	Stories []PlanStory `json:"stories"`
-	Tag     string      `json:"tag"`
+
+	// Tag The version's tag name, describing the version to the planner. Not the pin and not checked against it; the turn's `at` is.
+	Tag string `json:"tag"`
 }
 
 // PlanStory defines model for PlanStory.
 type PlanStory struct {
 	// Covered The story already has Tasks, the planner leaves it alone.
-	Covered bool   `json:"covered"`
-	Number  int    `json:"number"`
-	Title   string `json:"title,omitempty"`
+	Covered bool `json:"covered"`
+
+	// ID The story's ID, F<feature>.<story>.
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
 }
 
 // Problem defines model for Problem.
@@ -218,6 +246,9 @@ type TurnInProgressCode string
 
 // TurnRequest Starts one turn that is not a browser chat turn, a kickoff (`start`) or a plan. Idempotent on turnId, a retry reattaches to the running turn. A different turnId while a turn runs is 409.
 type TurnRequest struct {
+	// At A plan turn only, the commit the planner reads the repository at, as a 40-hex sha. The studio sends it, resolved from the `at` aep-api gave it (`tags/<version>`), so the design agent never resolves a ref. Omitted, the default-branch tip. It is the pin and wins; scope.tag only describes the version and is not checked against it. The design agent refuses it on a start turn (400 invalid_turn), and answers 400 invalid_turn for a sha that names no commit of the project's repository.
+	At string `json:"at,omitempty"`
+
 	// Credit Who the turn's commits and records are credited to.
 	Credit TurnCredit      `json:"credit"`
 	Kind   TurnRequestKind `json:"kind"`
@@ -225,7 +256,7 @@ type TurnRequest struct {
 	// Project Project name (DNS-label slug)
 	Project string `json:"project"`
 
-	// Scope The milestone a plan turn covers and which of its stories already have Tasks.
+	// Scope The spec version a plan turn covers, its stories and which of them already have Tasks, the features it carries and its product-wide items.
 	Scope PlanScope `json:"scope,omitempty"`
 
 	// TaskContext The existing-Task renders of a plan turn. Platform state, not repository files.

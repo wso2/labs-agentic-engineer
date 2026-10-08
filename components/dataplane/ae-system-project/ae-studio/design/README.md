@@ -2,7 +2,7 @@
 
 One org's AE Studio is the Resource `ae-studio` of the Project `ae-system`, in
 the org's own namespace. `aep-api` installs the ResourceType per org and keeps
-it current ([ADR-0040](../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+it current ([ADR-0045](../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 The source is [`resourcetype.yaml`](../resourcetype.yaml); `aep-api` embeds a
 byte copy (`services/aep-api/internal/organization/aestudio/resourcetype.yaml`,
 copied by `go generate` and held equal by a drift test). The YAML is the authority for every exact value;
@@ -199,7 +199,7 @@ per org, both installs.
   `ae-system` and the ResourceType stay, and a reconnect converges a new
   Resource.
 - A first install on Cloud takes about 15 minutes, most of it OpenChoreo's
-  first converge (ADR-0040).
+  first converge (ADR-0045).
 
 ## Local vs Cloud
 
@@ -263,5 +263,5 @@ installs. A wrong value takes the only pod down, so `aep-api` sets it only
 from install config. The pod already carries the
 `dev.gvisor.spec.mount.<volume>.share: pod` annotations for its three socket
 dirs. What turning it on needs:
-[ADR-0040](../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)
+[ADR-0045](../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)
 decision 7.

@@ -1,0 +1,18 @@
+{
+  "name": "circulation-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "circulation-api",
+  "entrypoint": "deployment/service",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "catalogue-service", "description": "Searches titles, manages titles and copies, finds available copies and updates copy status on checkout, return and hold." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" },
+    { "kind": "platform-resource", "name": "circulation-db", "resourceType": "postgres-cnpg", "description": "Stores loans, holds and fees." }
+  ],
+  "description": "The only API the web app calls. Owns loans (14-day due date), holds queues, and late fees (0.25 per day overdue, computed at return), persisted in its own Postgres, and enforces borrowing rules (5-loan limit, no borrowing with unpaid fees, one hold per title). Proxies catalogue reads and librarian catalogue management to the catalogue service. Serves member /me/ operations and librarian operations behind the gateway. It does not store titles or copies and runs no background jobs.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

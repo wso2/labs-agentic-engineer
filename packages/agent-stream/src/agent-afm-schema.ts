@@ -82,6 +82,37 @@ const attachmentsSchema = z.strictObject({
   maxFileSizeMB: z.number().int().min(1).max(ATTACHMENT_CEILINGS.maxFileSizeMB),
 });
 
+/**
+ * `x-aep.guardrails` — AI-gateway policies applied to this agent's own model
+ * traffic at deploy (agentgovernance/guardrails.go). Any policy in the
+ * gateway's catalog may be named; its params are checked against the catalog
+ * at deploy, because this gate runs offline. The spec carries the use case
+ * only: the platform sets the policy version and every JSONPath, so a spec
+ * that sets one is refused. The Go gate (afmgate.go) mirrors this.
+ */
+export const GUARDRAIL_LIMITS = { maxGuardrails: 10, maxWhy: 300 } as const;
+export const PLATFORM_OWNED_GUARDRAIL_KEYS = ["jsonPath", "streamingJsonPath", "version", "paths"] as const;
+
+/** The first platform-owned key in params, at the top level or in request/response. */
+function ownedGuardrailKey(params: Record<string, unknown>): string | undefined {
+  for (const scope of [params, params.request, params.response]) {
+    if (scope && typeof scope === "object" && !Array.isArray(scope)) {
+      const hit = PLATFORM_OWNED_GUARDRAIL_KEYS.find((key) => key in scope);
+      if (hit) return hit;
+    }
+  }
+  return undefined;
+}
+
+const guardrailSchema = z.strictObject({
+  policy: z.string().regex(/^[a-z0-9-]{1,64}$/, "must be a lowercase policy name"),
+  params: z.record(z.string(), z.unknown()).superRefine((params, ctx) => {
+    const owned = ownedGuardrailKey(params);
+    if (owned) ctx.addIssue({ code: "custom", message: `must not set ${owned} — the platform sets it` });
+  }),
+  why: z.string().min(1).max(GUARDRAIL_LIMITS.maxWhy),
+});
+
 const frontMatterSchema = z.strictObject({
   spec_version: z.literal("0.4.0"),
   name: z.string().min(1),
@@ -96,6 +127,12 @@ const frontMatterSchema = z.strictObject({
       memory: z.strictObject({ type: z.enum(["client", "server"]) }).optional(),
       identity: z.strictObject({ mode: z.enum(["on-behalf-of", "agent"]) }).optional(),
       attachments: attachmentsSchema.optional(),
+      guardrails: z
+        .array(guardrailSchema)
+        .min(1)
+        .max(GUARDRAIL_LIMITS.maxGuardrails)
+        .refine((list) => new Set(list.map((g) => g.policy)).size === list.length, "must not repeat a policy")
+        .optional(),
     })
     .optional(),
 });

@@ -70,12 +70,16 @@ import {
   type RunEventView,
 } from "@aep/progress-view";
 import { createAgentTags, type AgentTags } from "./agent-tags.js";
+import { agentBrowserBinDir, agentBrowserProblem, withAgentBrowserFirst } from "./agent-browser.js";
 import { openCrewPane } from "./crew-pane.js";
 import { REPO_ROOT } from "../paths.js";
+import { runnerImage } from "./runner-image.js";
 import { CODING_CONNECTION_ENV, codingConnectionEnv } from "../kit/model-connection.js";
 import { DEFAULT_RUNTIME, runtimeNameFromEnv, UnsupportedRuntimeError, type RuntimeName } from "remote-worker/src/runtime/port.js";
 
 const LOCAL_ENTRY = join(REPO_ROOT, "runners", "remote-worker", "src", "local.ts");
+// The `agent-browser` a host run's mock walk drives: this package's pin.
+const AGENT_BROWSER_BIN = agentBrowserBinDir(join(REPO_ROOT, "playground"));
 const BUILD_RUNNER_SCRIPT = join(REPO_ROOT, "deployments", "scripts", "build-runner.sh");
 // Where the image keeps the skill library. Mounting the working tree over it is
 // what makes a skill edit — including the local-mode overlay — apply to the next
@@ -270,33 +274,23 @@ const IMAGE_AGENT_SESSION_DIR = "/home/aep/.claude/projects";
  */
 const IMAGE_OPENCODE_SESSION_DIR = "/home/aep/.local/share/opencode";
 
-/** What this harness has to know about one runtime to run it. */
+/**
+ * What this harness has to know about one runtime to run it, beside its image
+ * (`runner-image.ts`).
+ */
 interface RuntimeProfile {
-  /** The env var that overrides the image, and the image when it is unset. */
-  imageEnv: string;
-  defaultImage: string;
   /** Where the runtime keeps its session store inside the image. */
   sessionDir: string;
   /** Why it cannot start in this mode with this credential, or undefined. */
   refusal(mode: "docker" | "host", credential: CodingCredential | undefined): string | undefined;
 }
 
-/**
- * One entry per runtime the contract names. The OpenCode image is the Claude
- * Code one plus the `opencode` binary, the guard plugin and a pre-warmed home,
- * but a Claude Code run stays on its own image — the one a Claude Code org's
- * pods run.
- */
 const RUNTIME_PROFILES: Record<RuntimeName, RuntimeProfile> = {
   "claude-code": {
-    imageEnv: "AGENT_RUNNER_IMAGE",
-    defaultImage: "aep-runner:dev",
     sessionDir: IMAGE_AGENT_SESSION_DIR,
     refusal: () => undefined,
   },
   opencode: {
-    imageEnv: "AGENT_RUNNER_IMAGE_OPENCODE",
-    defaultImage: "aep-runner-opencode:dev",
     sessionDir: IMAGE_OPENCODE_SESSION_DIR,
     // The binary and the guard plugin live in the IMAGE, so there is no host
     // mode; and OpenCode authenticates with an API key only (Claude
@@ -312,11 +306,6 @@ const RUNTIME_PROFILES: Record<RuntimeName, RuntimeProfile> = {
     },
   },
 };
-
-export function runnerImage(runtime: RuntimeName, env: NodeJS.ProcessEnv = process.env): string {
-  const profile = RUNTIME_PROFILES[runtime];
-  return env[profile.imageEnv] || profile.defaultImage;
-}
 
 /**
  * The runtime this run gets, or why it cannot start in this mode with these
@@ -553,16 +542,21 @@ interface Invocation {
  */
 export function hostInvocation(opts: CodingRunOptions, runDir: string): Invocation {
   // Host mode has no image, so every tool a skill names comes off the developer's
-  // own machine — which is exactly what --host already means for `bal`, `go` and
-  // `agent-browser`, and now for `bal library` too: it is a `bal` tool, resolved
-  // out of `~/.ballerina`, so there is no PATH entry to point anywhere. What that
+  // own machine — which is exactly what --host already means for `bal` and `go`,
+  // and for `bal library` too: it is a `bal` tool, resolved out of
+  // `~/.ballerina`, so there is no PATH entry to point anywhere. What that
   // resolves to is reported by `hostToolAdvice`, not patched here.
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    AEP_LOCAL_PROJECT_DIR: opts.projectDir,
-    AEP_LOCAL_RUN_DIR: runDir,
-    AEP_LOCAL_SKILLS_DIR: opts.skillsDir,
-  };
+  //
+  // `agent-browser` is the exception: the pinned copy goes first on PATH (`agent-browser.ts`).
+  const env = withAgentBrowserFirst(
+    {
+      ...process.env,
+      AEP_LOCAL_PROJECT_DIR: opts.projectDir,
+      AEP_LOCAL_RUN_DIR: runDir,
+      AEP_LOCAL_SKILLS_DIR: opts.skillsDir,
+    },
+    AGENT_BROWSER_BIN,
+  );
   // A connection named by `AEP_MODEL_*` rides as a dispatch stamps it and
   // authenticates with ITS key, the developer's `AEP_MODEL_API_KEY`, already in
   // this env — never an Anthropic credential, which must not follow the run to
@@ -835,6 +829,16 @@ async function ensureRunnerImage(silent?: boolean): Promise<void> {
 }
 
 /**
+ * Names a run's container so its scratch can be copied out after it exits.
+ * The project dir name makes it unique across concurrent projects; anything
+ * outside Docker's `[a-zA-Z0-9_.-]` becomes `-`.
+ */
+export function runContainerName(projectDir: string, stamp: string): string {
+  const project = basename(projectDir).replace(/[^a-zA-Z0-9_.-]/g, "-");
+  return `aep-play-${project}-${stamp}`;
+}
+
+/**
  * Spawn one coding run over the WHOLE project; resolves with the exit code +
  * archived run dir. Success (`exitCode === 0`) means the session completed,
  * NOT that every issue got resolved — leaving some open is normal (mirrors
@@ -886,6 +890,13 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
       return { exitCode: 2, runDir };
     }
     await reapExitedRuns();
+  } else {
+    const problem = agentBrowserProblem(AGENT_BROWSER_BIN);
+    if (problem) {
+      progressLog.end();
+      if (!opts.silent) output.write(`  ✗ ${problem}\n`);
+      return { exitCode: 2, runDir };
+    }
   }
 
   // Which `bal library` this run reads, when that is not simply "the one the
@@ -904,9 +915,7 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
 
   if (!opts.silent && runtime !== DEFAULT_RUNTIME) output.write(`  ℹ runtime: ${runtime} (${runnerImage(runtime)})\n`);
 
-  // Names this run's container so its scratch can be copied out after it exits.
-  // The run dir's timestamp is already unique per run; `docker` accepts it as-is.
-  const containerName = mode === "docker" ? `aep-play-${stamp}` : "";
+  const containerName = mode === "docker" ? runContainerName(opts.projectDir, stamp) : "";
   const { command, args, env } =
     mode === "docker" ? dockerInvocation(opts, runDir, containerName) : hostInvocation(opts, runDir);
 
@@ -1003,11 +1012,16 @@ export async function runCodingAgent(opts: CodingRunOptions): Promise<CodingRunR
       void settle(signal ? 130 : (code ?? 2));
     });
 
-    // Ctrl-C: kill the child.
-    const onInt = (): void => {
+    // SIGTERM needs its own listener: without one Node exits at once, `settle`
+    // never runs, and the container is orphaned.
+    const onSignal = (): void => {
       child.kill("SIGTERM");
     };
-    process.once("SIGINT", onInt);
-    child.on("close", () => process.removeListener("SIGINT", onInt));
+    process.once("SIGINT", onSignal);
+    process.once("SIGTERM", onSignal);
+    child.on("close", () => {
+      process.removeListener("SIGINT", onSignal);
+      process.removeListener("SIGTERM", onSignal);
+    });
   });
 }

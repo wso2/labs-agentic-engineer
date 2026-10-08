@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -65,10 +66,27 @@ type RepoLookup interface {
 // unwraps *spec.SpecValidationError into the 422 detail, and
 // spec.ErrVersionNameTaken into the 409.
 type SpecTagger interface {
-	TagSpec(ctx context.Context, orgID, projectID, version string) (*spec.SpecSaveResult, error)
+	//
+	// pick is what the user picked (nil: every feature that can be designed);
+	// blocked names features an open dependency keeps out of this build.
+	TagSpec(ctx context.Context, orgID, projectID, version string, pick *reqspec.Pick, blocked map[string]string) (*spec.SpecSaveResult, error)
 	// BuildScopeAtTag reads the tag's story scope (#369): the milestone the
 	// claim mints is the version's.
 	BuildScopeAtTag(ctx context.Context, orgID, projectID, tag string) (spec.BuildScope, error)
+	// TagRepair cuts a repair version of `of` ("v1.1") at the same commit, so
+	// it builds the same features (B4).
+	TagRepair(ctx context.Context, orgID, projectID, of string) (string, error)
+}
+
+// Repairer is the validation side of a repair build (B4): what a version's
+// final validation failed, and the repair issues that become the repair
+// version's work.
+type Repairer interface {
+	// FailuresOf counts the scenarios the version's final validation attempt
+	// failed; 0 when it passed or was never judged.
+	FailuresOf(ctx context.Context, orgID, projectID, version string) (int, error)
+	// FileRepairs files one repair issue per such failure into the milestone.
+	FileRepairs(ctx context.Context, orgID, projectID string, milestoneNumber int, version string) error
 }
 
 // --- the milestone plan path's ports ------------------------------------------

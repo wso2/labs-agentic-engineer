@@ -16,654 +16,553 @@
  * under the License.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { StreamPart } from "@aep/agent-stream";
+import type { ConversationMessage } from "./api/conversation";
+import { ConversationRotatedError, TurnInProgressError, TurnStreamAttachError, type TurnStatus } from "./api/turns";
+import { createChatStore, type ChatApi } from "./chatStore";
+import type { TurnBody, TurnScope } from "./turnScope";
 
-// Node test env: the store only touches localStorage — a Map-backed stub
-// keeps the test out of jsdom.
-const backing = new Map<string, string>();
-globalThis.localStorage = {
-  getItem: (k: string) => backing.get(k) ?? null,
-  setItem: (k: string, v: string) => void backing.set(k, v),
-  removeItem: (k: string) => void backing.delete(k),
-  clear: () => backing.clear(),
-  key: (i: number) => [...backing.keys()][i] ?? null,
-  get length() {
-    return backing.size;
-  },
-} as Storage;
-import {
-  addMessage,
-  appendAssistantText,
-  chatKeyFor,
-  dropQuestionMessage,
-  upsertQuestionMessage,
-  withdrawnQuestionIds,
-  consumePendingSeed,
-  dropTurnOutput,
-  ensureUserMessage,
-  flushRoomBeforeDispatch,
-  getMessages,
-  hasDeterministicFlush,
-  notifyTurnEnd,
-  peekPendingSeed,
-  registerDeterministicFlush,
-  setPendingSeed,
-  settleUserMessage,
-  setTurnStatus,
-  subscribe,
-  subscribeSeed,
-  subscribeTurnEnd,
-  upsertToolMessage,
-  clearFailedSends,
-  removeMessage,
-  claimSendInFlight,
-  claimStreamFold,
-  hasLocalTurnActivity,
-  subscribeLocalTurnActivity,
-  SEED_ACTIVITY_TTL_MS,
-} from "./chatStore";
+// The store's rules, on a fake server: the turn lifecycle, one turn at a
+// time, the scope on every turn, reattaching after a reload, and a card's
+// answer going out as the next turn. Streams are real SSE bytes, read by the
+// real parser.
 
-let n = 0;
-function freshKey(): string {
-  n += 1;
-  return chatKeyFor("test-org", `proj-${n}`);
+const PROJECT = "acme";
+const F4: TurnScope = { kind: "feature", featureId: "F4" };
+const PRODUCT: TurnScope = { kind: "product" };
+
+/** A stream the test feeds frame by frame, and ends when it chooses. */
+function controlledStream() {
+  const encoder = new TextEncoder();
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
+  return {
+    body,
+    send: (part: StreamPart) => controller.enqueue(encoder.encode(`data: ${JSON.stringify(part)}\n\n`)),
+    end: () => {
+      controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+      controller.close();
+    },
+  };
 }
 
-beforeEach(() => localStorage.clear());
+/** A stream that plays these frames and ends. */
+function sse(parts: StreamPart[]): ReadableStream<Uint8Array> {
+  const s = controlledStream();
+  for (const p of parts) s.send(p);
+  s.end();
+  return s.body;
+}
 
-describe("chatStore", () => {
-  it("dropQuestionMessage removes only the card with that tool-call id", () => {
-    const key = freshKey();
-    const q = { question: "Which?", options: [{ label: "A" }] };
-    upsertQuestionMessage(key, { role: "question", turnId: "t1", toolCallId: "tc-bad", questions: [q] });
-    upsertQuestionMessage(key, { role: "question", turnId: "t1", toolCallId: "tc-good", questions: [q] });
-    dropQuestionMessage(key, "tc-bad");
-    expect(getMessages(key).map((m) => (m as { toolCallId?: string }).toolCallId)).toEqual(["tc-good"]);
-    // Unknown or empty ids are no-ops on the log…
-    dropQuestionMessage(key, "nope");
-    dropQuestionMessage(key, "");
-    expect(getMessages(key)).toHaveLength(1);
-    // …but every real withdrawal is remembered for the room mirror, including
-    // one whose prefix never reached the log.
-    expect([...withdrawnQuestionIds(key)].sort()).toEqual(["nope", "tc-bad"]);
-    expect(withdrawnQuestionIds(freshKey()).size).toBe(0);
+/** The design agent's status of a running turn; a platform turn names no author. */
+function running(turnId: string, instruction = ""): TurnStatus {
+  return {
+    turnId,
+    conversationId: "conv-1",
+    kind: "browser",
+    flow: "",
+    status: "running",
+    instruction,
+    authorId: "",
+    authorDisplayName: "",
+    createdAt: "2026-09-30T09:00:00Z",
+  };
+}
+
+function setup(
+  options: {
+    history?: ConversationMessage[];
+    active?: TurnStatus | null;
+    api?: Partial<ChatApi>;
+    beforeTurn?: (projectName: string) => Promise<void>;
+  } = {},
+) {
+  const started: TurnBody[] = [];
+  let next = 0;
+  const streams = new Map<string, ReadableStream<Uint8Array>>();
+  const api: ChatApi = {
+    conversationId: vi.fn(async () => "conv-1"),
+    history: vi.fn(async () => options.history ?? []),
+    activeTurn: vi.fn(async () => options.active ?? null),
+    startTurn: vi.fn(async (_p: string, _c: string, body: TurnBody) => {
+      started.push(body);
+      return `t${++next}`;
+    }),
+    turn: vi.fn(async () => null),
+    openStream: vi.fn(async (_p: string, turnId: string) => streams.get(turnId) ?? sse([{ type: "turn-completed" }])),
+    ...options.api,
+  };
+  const onAgentWrite = vi.fn();
+  const store = createChatStore({
+    api,
+    onAgentWrite,
+    pollDelay: () => 60_000,
+    ...(options.beforeTurn ? { beforeTurn: options.beforeTurn } : {}),
   });
+  const ended = vi.fn();
+  store.onTurnEnd(ended);
+  return { store, api, started, streams, onAgentWrite, ended, chat: () => store.get(PROJECT) };
+}
 
-  it("drops a stale question message with no questions[] on load (schema guard)", () => {
-    const key = freshKey();
-    // A log written by an older build: a `question` message before the
-    // questions[] shape. Must not crash the card renderer on load.
-    localStorage.setItem(
-      key,
-      JSON.stringify([
-        { id: "m1", role: "user", content: "grill me", status: "completed" },
-        { id: "m2", role: "question", turnId: "t1", toolCallId: "tc", question: "old?", options: [{ label: "A" }] },
-        { id: "m3", role: "question", turnId: "t1", toolCallId: "tc2", questions: [{ question: "new?", options: [{ label: "B" }] }] },
-      ]),
-    );
-    const msgs = getMessages(key);
-    expect(msgs.map((m) => m.id)).toEqual(["m1", "m3"]); // legacy question dropped, valid one kept
-  });
-
-  it("appends and notifies subscribers", () => {
-    const key = freshKey();
-    let notified = 0;
-    subscribe(key, () => (notified += 1));
-    addMessage(key, { role: "user", content: "hi", turnId: "t1", status: "in_flight" });
-    expect(getMessages(key)).toHaveLength(1);
-    expect(notified).toBe(1);
-  });
-
-  it("accumulates streamed text into one assistant message per turn", () => {
-    const key = freshKey();
-    appendAssistantText(key, "t1", "Hello ");
-    appendAssistantText(key, "t1", "world");
-    appendAssistantText(key, "t2", "next turn");
-    const msgs = getMessages(key);
-    expect(msgs).toHaveLength(2);
-    expect(msgs[0]).toMatchObject({ role: "assistant", content: "Hello world" });
-    expect(msgs[1]).toMatchObject({ role: "assistant", content: "next turn" });
-  });
-
-  it("marks the turn's user bubble on terminal", () => {
-    const key = freshKey();
-    addMessage(key, { role: "user", content: "do it", turnId: "t1", status: "in_flight" });
-    setTurnStatus(key, "t1", "completed");
-    expect(getMessages(key)[0]).toMatchObject({ status: "completed" });
-  });
-
-  it("dropTurnOutput removes streamed output but keeps the user bubble", () => {
-    const key = freshKey();
-    addMessage(key, { role: "user", content: "go", turnId: "t1", status: "in_flight" });
-    appendAssistantText(key, "t1", "partial");
-    addMessage(key, {
-      role: "tool",
-      turnId: "t1",
-      toolCallId: "c1",
-      status: "done",
-      op: "edit",
-      path: "requirements/prd.md",
-      ok: true,
+describe("loading a project's chat", () => {
+  it("reads the history into the chat and is ready, with no turn running", async () => {
+    const { store, chat } = setup({
+      history: [
+        { role: "user", content: "Staff submit expenses" },
+        { role: "assistant", content: [{ type: "text", text: "Five features." }] },
+      ],
     });
-    dropTurnOutput(key, "t1");
-    const msgs = getMessages(key);
-    expect(msgs).toHaveLength(1);
-    expect(msgs[0]?.role).toBe("user");
+    await store.open(PROJECT);
+    expect(chat().status).toBe("ready");
+    expect(chat().turn).toEqual({ phase: "idle" });
+    expect(chat().items.map((i) => i.kind)).toEqual(["user", "agent"]);
   });
 
-  it("upsertToolMessage inserts a streaming card then flips it to done in place", () => {
-    const key = freshKey();
-    const base = {
-      role: "tool" as const,
-      turnId: "t1",
-      toolCallId: "c1",
-      op: "add",
-      path: "specs/requirements/prd.md",
-      ok: true,
-    };
-    upsertToolMessage(key, { ...base, status: "streaming" });
-    expect(getMessages(key)).toHaveLength(1);
-    expect(getMessages(key)[0]).toMatchObject({ status: "streaming", op: "add" });
-    upsertToolMessage(key, { ...base, status: "done" });
-    const msgs = getMessages(key);
-    expect(msgs).toHaveLength(1); // same card, updated in place — no duplicate row
-    expect(msgs[0]).toMatchObject({ status: "done", op: "add" });
-  });
-
-  it("upsertToolMessage keeps distinct toolCallIds apart and never matches a blank id", () => {
-    const key = freshKey();
-    const mk = (toolCallId: string, path: string) => ({
-      role: "tool" as const, turnId: "t1", toolCallId, status: "done" as const, op: "add", path, ok: true,
-    });
-    upsertToolMessage(key, mk("c1", "a.md"));
-    upsertToolMessage(key, mk("c2", "b.md"));
-    upsertToolMessage(key, mk("", "c.md"));
-    upsertToolMessage(key, mk("", "d.md"));
-    expect(getMessages(key)).toHaveLength(4);
-  });
-
-  it("round-trips author through append and in-memory persist", () => {
-    const key = freshKey();
-    addMessage(key, {
-      role: "user",
-      content: "hi team",
-      turnId: "t1",
-      status: "in_flight",
-      author: { id: "u-sarah", displayName: "Sarah Perera" },
-    });
-    expect(getMessages(key)[0]).toMatchObject({
-      author: { id: "u-sarah", displayName: "Sarah Perera" },
-    });
-  });
-
-  it("loads a persisted author back from localStorage on first read", () => {
-    const key = freshKey();
-    localStorage.setItem(
-      key,
-      JSON.stringify([
-        {
-          id: "m-1",
-          role: "user",
-          content: "hey",
-          status: "completed",
-          author: { id: "u-2", displayName: "Bo" },
-        },
-      ]),
-    );
-    expect(getMessages(key)[0]).toMatchObject({
-      author: { id: "u-2", displayName: "Bo" },
-    });
-  });
-
-  it("loads legacy persisted messages with no author field intact", () => {
-    const key = freshKey();
-    localStorage.setItem(
-      key,
-      JSON.stringify([{ id: "m-1", role: "user", content: "hey", status: "completed" }]),
-    );
-    const [msg] = getMessages(key);
-    expect(msg).toMatchObject({ role: "user", content: "hey" });
-    expect((msg as { author?: unknown } | undefined)?.author).toBeUndefined();
-  });
-
-  // The conversation id is no longer minted here (#430): it is server-minted,
-  // stored against the project, and resolved via api/conversations.ts — the
-  // store keeps only the local display log.
-});
-
-// pendingSeed (#252 Task 5): the "Resolve via chat" action writes here from a
-// different subtree than the panel (dep card / drawer vs. AgentChatPanel,
-// siblings under AppLayout) — consumed exactly once, mirroring the ?generate=
-// one-shot-fire shape but sourced from the store since the seeded message is
-// per-click dynamic content, not a fixed enum signal.
-describe("pendingSeed", () => {
-  it("is absent until set, then consumed exactly once", () => {
-    const key = freshKey();
-    expect(peekPendingSeed(key)).toBeNull();
-    expect(consumePendingSeed(key)).toBeNull();
-
-    setPendingSeed(key, "resolve dependency A");
-    expect(peekPendingSeed(key)?.message).toBe("resolve dependency A");
-    expect(peekPendingSeed(key)?.message).toBe("resolve dependency A"); // peek doesn't clear
-
-    expect(consumePendingSeed(key)?.message).toBe("resolve dependency A");
-    expect(peekPendingSeed(key)).toBeNull();
-    expect(consumePendingSeed(key)).toBeNull(); // already consumed
-  });
-
-  it("keeps distinct project keys apart", () => {
-    const key1 = freshKey();
-    const key2 = freshKey();
-    setPendingSeed(key1, "for project 1");
-    expect(peekPendingSeed(key2)).toBeNull();
-    expect(consumePendingSeed(key1)?.message).toBe("for project 1");
-  });
-
-  it("notifies seed subscribers on set, and stops after unsubscribe", () => {
-    const key = freshKey();
-    let notified = 0;
-    const unsubscribe = subscribeSeed(key, () => (notified += 1));
-    setPendingSeed(key, "go");
-    expect(notified).toBe(1);
-    unsubscribe();
-    setPendingSeed(key, "go again");
-    expect(notified).toBe(1);
-  });
-
-  // Minor #2 (fix wave 1): consumePendingSeed used to clear the slot without
-  // notifying, so useHasPendingSeed's useSyncExternalStore snapshot could
-  // stay stuck `true` after the panel consumed the seed.
-  it("also notifies seed subscribers on consume, not just on set", () => {
-    const key = freshKey();
-    let notified = 0;
-    subscribeSeed(key, () => (notified += 1));
-    setPendingSeed(key, "go");
-    expect(notified).toBe(1);
-    consumePendingSeed(key);
-    expect(notified).toBe(2);
+  it("says why when the conversation cannot be read", async () => {
+    const { store, chat } = setup({ api: { history: async () => Promise.reject(new Error("Couldn't load the conversation")) } });
+    await store.open(PROJECT);
+    expect(chat()).toMatchObject({ status: "error", error: "Couldn't load the conversation" });
   });
 });
 
-// Turn-end bus (#252 Task 5): "a collab turn's terminal frame arrived" is
-// broadcast through this same key-scoped pub/sub (mirroring the message-log
-// subscribe() above) so both the chat panel's universal fallback and the
-// spec view's deterministic flush (different subtrees, only one of which
-// owns the collab connection) can react to the same event.
-describe("turn-end bus", () => {
-  it("notifies subscribers with the terminal status", () => {
-    const key = freshKey();
-    const seen: string[] = [];
-    subscribeTurnEnd(key, (status) => seen.push(status));
-    notifyTurnEnd(key, "completed");
-    notifyTurnEnd(key, "failed");
-    expect(seen).toEqual(["completed", "failed"]);
+describe("a turn's lifecycle", () => {
+  it("shows the message, runs the turn, folds its stream and ends idle", async () => {
+    const { store, streams, chat, ended } = setup();
+    await store.open(PROJECT);
+    const stream = controlledStream();
+    streams.set("t1", stream.body);
+
+    const sent = store.send(PROJECT, "  What is left to do?  ", PRODUCT);
+    expect(chat().turn).toEqual({ phase: "starting", instruction: "What is left to do?" });
+    expect(chat().items[0]).toMatchObject({ kind: "user", text: "What is left to do?", state: "sending" });
+    expect(await sent).toBe(true);
+    expect(chat().items[0]).toMatchObject({ state: "sent", turnId: "t1" });
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "running", turnId: "t1", instruction: "What is left to do?" }));
+
+    stream.send({ type: "text-delta", delta: "Two features " });
+    stream.send({ type: "text-delta", delta: "are left." });
+    await vi.waitFor(() => expect(chat().items[1]).toMatchObject({ kind: "agent", text: "Two features are left." }));
+    stream.send({ type: "turn-completed" });
+    stream.end();
+
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    expect(ended).toHaveBeenCalledWith(PROJECT, "completed");
   });
 
-  it("keeps distinct project keys apart", () => {
-    const key1 = freshKey();
-    const key2 = freshKey();
-    let key1Fired = false;
-    subscribeTurnEnd(key1, () => (key1Fired = true));
-    notifyTurnEnd(key2, "completed");
-    expect(key1Fired).toBe(false);
+  it("keeps a prototype review's batch on its row, and sends it typed", async () => {
+    const { store, streams, chat, started } = setup();
+    await store.open(PROJECT);
+    streams.set("t1", controlledStream().body);
+    const feedback = { prototypeHash: "a".repeat(64), component: "expense-web", requests: [{ screenId: "s", roleId: "r", stateId: "d", elementIds: [], text: "Wider" }] };
+    await store.send(PROJECT, "/prototype expense-web", { kind: "prototype", feedback });
+    expect(chat().items[0]).toMatchObject({ kind: "user", text: "/prototype expense-web", prototypeFeedback: feedback });
+    expect(started[0]).toMatchObject({ instruction: "/prototype expense-web", prototypeFeedback: feedback });
   });
 
-  it("stops notifying after unsubscribe", () => {
-    const key = freshKey();
-    let count = 0;
-    const unsubscribe = subscribeTurnEnd(key, () => (count += 1));
-    unsubscribe();
-    notifyTurnEnd(key, "completed");
-    expect(count).toBe(0);
-  });
-});
-
-// Deterministic-flush registration (#252 Task 5 fix wave 1, Important #1):
-// lets useTurnEndDependencyRefresh (the universal fallback, mounted on every
-// route) know whether useTurnEndFlush (the deterministic path, mounted only
-// in SpecView) is currently live for the same chat key, so the fallback can
-// skip its own immediate invalidate and avoid racing ahead of the
-// deterministic post-flush invalidate.
-describe("deterministic-flush registration", () => {
-  it("is false until registered, true while registered, false again after unregister", () => {
-    const key = freshKey();
-    expect(hasDeterministicFlush(key)).toBe(false);
-    const unregister = registerDeterministicFlush(key);
-    expect(hasDeterministicFlush(key)).toBe(true);
-    unregister();
-    expect(hasDeterministicFlush(key)).toBe(false);
-  });
-
-  it("keeps distinct keys apart", () => {
-    const key1 = freshKey();
-    const key2 = freshKey();
-    registerDeterministicFlush(key1);
-    expect(hasDeterministicFlush(key2)).toBe(false);
-  });
-
-  it("ref-counts overlapping registrations for the same key", () => {
-    const key = freshKey();
-    const unregisterA = registerDeterministicFlush(key);
-    const unregisterB = registerDeterministicFlush(key);
-    unregisterA();
-    expect(hasDeterministicFlush(key)).toBe(true); // one registration still live
-    unregisterB();
-    expect(hasDeterministicFlush(key)).toBe(false);
+  it("says why a turn failed, and ends it failed", async () => {
+    const { store, streams, chat, ended } = setup();
+    await store.open(PROJECT);
+    streams.set("t1", sse([{ type: "turn-failed", message: "The model refused." } as StreamPart]));
+    await store.send(PROJECT, "Go", PRODUCT);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "failed"));
+    expect(chat().items.at(-1)).toMatchObject({ kind: "error", text: "The model refused." });
   });
 });
 
-// The other direction (#575 follow-up): a turn about to be dispatched lands
-// the room first, so the base ref it pins is the text the agent will read
-// rather than whatever the committer last got round to.
-describe("the pre-dispatch flush", () => {
-  it("runs the owner's flush", async () => {
-    const key = freshKey();
-    const flush = vi.fn(async () => {});
-    const unregister = registerDeterministicFlush(key, flush);
-
-    await flushRoomBeforeDispatch(key);
-
-    expect(flush).toHaveBeenCalledTimes(1);
-    unregister();
+describe("a line posted from outside the chat", () => {
+  it("reads as the agent's, and survives the next turn's replay", async () => {
+    const { store, chat } = setup();
+    await store.open(PROJECT);
+    store.post(PROJECT, "v1 is building: Submit expenses, Approvals. Watch it here.");
+    expect(chat().items).toEqual([
+      { kind: "note", id: expect.any(String), text: "v1 is building: Submit expenses, Approvals. Watch it here." },
+    ]);
+    expect(await store.send(PROJECT, "What is left?", PRODUCT)).toBe(true);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    expect(chat().items.map((i) => i.kind)).toEqual(["note", "user"]);
   });
 
-  // Every surface but the spec workspace has no room at all, and a send there
-  // must not wait for anything.
-  it("is a no-op with no owner registered", async () => {
-    await expect(flushRoomBeforeDispatch(freshKey())).resolves.toBeUndefined();
+  it("carries the next steps it offers", async () => {
+    const { store, chat } = setup();
+    await store.open(PROJECT);
+    store.post(PROJECT, "v1 is building. Watch it here.", [{ kind: "open-build", label: "Open v1", version: "v1" }]);
+    expect(chat().items.at(-1)).toMatchObject({ actions: [{ kind: "open-build", version: "v1" }] });
+  });
+});
+
+describe("one turn at a time", () => {
+  it("refuses a second message while a turn runs, and takes one once it ends", async () => {
+    const { store, streams, api, chat } = setup();
+    await store.open(PROJECT);
+    const stream = controlledStream();
+    streams.set("t1", stream.body);
+    await store.send(PROJECT, "First", PRODUCT);
+
+    expect(await store.send(PROJECT, "Second", PRODUCT)).toBe(false);
+    expect(api.startTurn).toHaveBeenCalledTimes(1);
+    expect(chat().items.filter((i) => i.kind === "user")).toHaveLength(1);
+
+    stream.send({ type: "turn-completed" });
+    stream.end();
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    expect(await store.send(PROJECT, "Second", PRODUCT)).toBe(true);
   });
 
-  // A remount overlaps two registrations for one key; the newest is the live
-  // component, and the stale one's room is the one being torn down.
-  it("uses the newest owner", async () => {
-    const key = freshKey();
-    const stale = vi.fn(async () => {});
-    const live = vi.fn(async () => {});
-    const unregisterStale = registerDeterministicFlush(key, stale);
-    const unregisterLive = registerDeterministicFlush(key, live);
-
-    await flushRoomBeforeDispatch(key);
-
-    expect(live).toHaveBeenCalledTimes(1);
-    expect(stale).not.toHaveBeenCalled();
-    unregisterStale();
-    unregisterLive();
-  });
-
-  // The room's own banner (D6) reports a committer that cannot land. A send
-  // does not: the user pressed Enter, and the worst this costs is the reading
-  // the turn would have had without the flush at all.
-  it("does not fail a send when the room will not land", async () => {
-    const key = freshKey();
-    const unregister = registerDeterministicFlush(key, async () => {
-      throw new Error("the committer is down");
+  it("when the server says a turn is already running, marks the message not sent and shows that turn", async () => {
+    const { store, api, chat } = setup({
+      api: { startTurn: async () => Promise.reject(new TurnInProgressError("t9")) },
     });
+    await store.open(PROJECT);
+    expect(await store.send(PROJECT, "Hello?", PRODUCT)).toBe(false);
+    expect(chat().items[0]).toMatchObject({ kind: "user", state: "failed" });
+    expect(chat().items[1]).toMatchObject({ kind: "error" });
+    await vi.waitFor(() => expect(api.openStream).toHaveBeenCalledWith(PROJECT, "t9", 0, expect.anything()));
+  });
+});
 
-    await expect(flushRoomBeforeDispatch(key)).resolves.toBeUndefined();
-    unregister();
+describe("a thread that was replaced", () => {
+  it("when the server says the thread was replaced, follows the new one and sends the message there", async () => {
+    let current = "conv-1";
+    const { store, api, chat } = setup({
+      api: {
+        conversationId: vi.fn(async () => current),
+        startTurn: vi.fn(async (_p: string, conversationId: string) => {
+          if (conversationId !== current) throw new ConversationRotatedError();
+          return "t1";
+        }),
+      },
+    });
+    await store.open(PROJECT);
+    current = "conv-2";
+
+    expect(await store.send(PROJECT, "/prototype expense-web", PRODUCT)).toBe(true);
+    expect(api.startTurn).toHaveBeenLastCalledWith(PROJECT, "conv-2", expect.anything());
+    expect(api.history).toHaveBeenLastCalledWith(PROJECT, "conv-2");
+    expect(chat().items[0]).toMatchObject({ kind: "user", text: "/prototype expense-web", state: "sent", turnId: "t1" });
   });
 
-  it("gives up on a flush that hangs, rather than holding the message", async () => {
+  it("follows a thread a teammate started, and a send meanwhile goes to it instead of being dropped", async () => {
     vi.useFakeTimers();
     try {
-      const key = freshKey();
-      const unregister = registerDeterministicFlush(key, () => new Promise<void>(() => {}));
-
-      let settled = false;
-      const pending = flushRoomBeforeDispatch(key).then(() => {
-        settled = true;
+      // A teammate started a new thread, and a turn is running in it.
+      let active: TurnStatus | null = null;
+      let current = "conv-1";
+      const { store, api, chat } = setup({
+        api: { activeTurn: vi.fn(async () => active), conversationId: vi.fn(async () => current) },
       });
-      await vi.advanceTimersByTimeAsync(2_999);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await pending;
-      expect(settled).toBe(true);
-      unregister();
+      const stop = store.watch(PROJECT);
+      await vi.waitFor(() => expect(chat().status).toBe("ready"));
+      current = "conv-2";
+      active = { ...running("t5"), conversationId: "conv-2" };
+      await vi.advanceTimersByTimeAsync(60_000);
+      active = null;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(api.history).toHaveBeenLastCalledWith(PROJECT, "conv-2");
+
+      expect(await store.send(PROJECT, "Hello", PRODUCT)).toBe(true);
+      expect(api.startTurn).toHaveBeenCalledWith(PROJECT, "conv-2", expect.anything());
+      stop();
     } finally {
       vi.useRealTimers();
     }
   });
 });
 
-// #562: the two writes a turn nobody in this browser sent depends on.
-describe("chatStore — an optimistic send, and a turn this browser didn't send", () => {
-  // The send paints BEFORE the dispatch answers, so the row starts with no
-  // turn id and is settled once one comes back.
-  it("settles an optimistic row with the turn it became", () => {
-    const key = freshKey();
-    const id = addMessage(key, { role: "user", content: "tidy the spec", status: "in_flight" });
+describe("the scope on every turn", () => {
+  it("scopes a feature's turn to its ID, and the whole product to no scope", async () => {
+    const { store, started, chat } = setup();
+    await store.open(PROJECT);
+    await store.send(PROJECT, "Add a yearly view", F4);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    await store.send(PROJECT, "Where are we?", PRODUCT);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    await store.send(PROJECT, "Tighten the layout", { kind: "design" });
 
-    settleUserMessage(key, id, { turnId: "t1" });
-
-    const row = getMessages(key)[0];
-    expect(row).toMatchObject({ role: "user", turnId: "t1", status: "in_flight" });
-  });
-
-  // The row the user is already looking at becomes the failed one — a second
-  // copy beside it would read as two sends.
-  it("fails the same row rather than adding another", () => {
-    const key = freshKey();
-    const id = addMessage(key, { role: "user", content: "tidy the spec", status: "in_flight" });
-
-    settleUserMessage(key, id, { failed: true });
-
-    expect(getMessages(key)).toHaveLength(1);
-    expect(getMessages(key)[0]).toMatchObject({ status: "failed" });
-  });
-
-  it("paints the row that started a turn this browser did not send", () => {
-    const key = freshKey();
-    ensureUserMessage(key, {
-      role: "user",
-      content: "/start an expense tracker",
-      turnId: "t1",
-      status: "in_flight",
-      author: { id: "them@x.com", displayName: "Them" },
+    expect(started[0]).toEqual({
+      instruction: "Add a yearly view",
+      scope: { kind: "feature", feature: "F4" },
     });
+    expect(started[1]).toEqual({ instruction: "Where are we?" });
+    expect(started[2]).toEqual({ instruction: "Tighten the layout", scope: { kind: "design-review" } });
+  });
+});
 
-    expect(getMessages(key)[0]).toMatchObject({
-      content: "/start an expense tracker",
-      author: { id: "them@x.com", displayName: "Them" },
+describe("reattaching after a reload", () => {
+  // A long turn overflowed its replay buffer: the pod refuses the replay
+  // (409 replay_truncated) and the fold waits on the turn's status. Nothing
+  // of the turn was folded, so its reply comes from the persisted history.
+  it("shows the persisted reply of a turn it could only watch through its status", async () => {
+    const reply: ConversationMessage[] = [
+      { role: "user", content: "Earlier" },
+      { role: "user", content: "Design everything." },
+      { role: "assistant", content: [{ type: "text", text: "Designed five components." }] },
+    ];
+    const history = vi.fn<ChatApi["history"]>().mockResolvedValueOnce([{ role: "user", content: "Earlier" }]).mockResolvedValue(reply);
+    const { store, chat, ended } = setup({
+      active: running("t7", "Design everything."),
+      api: {
+        history,
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t7", "Design everything."), status: "completed" }),
+      },
     });
+    await store.open(PROJECT);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(chat().items.map((i) => (i.kind === "agent" ? i.text : i.kind))).toContain("Designed five components."));
+    expect(chat().turn).toEqual({ phase: "idle" });
   });
 
-  // Every path that reaches it runs more than once — mount, the poll, and a
-  // re-attach after a dropped stream.
-  it("is idempotent on the turn id", () => {
-    const key = freshKey();
-    const row = {
-      role: "user" as const,
-      content: "/start an expense tracker",
-      turnId: "t1",
-      status: "in_flight" as const,
+  it("keeps this browser's own rows (the unsent message and why) across a status-learned end", async () => {
+    const theirs: ConversationMessage[] = [
+      { role: "user", content: "Design everything." },
+      { role: "assistant", content: [{ type: "text", text: "Designed five components." }] },
+    ];
+    const history = vi.fn<ChatApi["history"]>().mockResolvedValueOnce([]).mockResolvedValue(theirs);
+    const { store, chat, ended } = setup({
+      api: {
+        history,
+        startTurn: async () => Promise.reject(new TurnInProgressError("t9")),
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t9", "Design everything."), status: "completed" }),
+      },
+    });
+    await store.open(PROJECT);
+    store.post(PROJECT, "v1 is building.");
+    expect(await store.send(PROJECT, "Hello?", PRODUCT)).toBe(false);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(chat().items.map((i) => (i.kind === "agent" ? i.text : i.kind))).toContain("Designed five components."));
+    expect(chat().items).toMatchObject([
+      { kind: "user", text: "Design everything." },
+      { kind: "agent", text: "Designed five components." },
+      { kind: "note", text: "v1 is building." },
+      { kind: "user", text: "Hello?", state: "failed" },
+      { kind: "error" },
+    ]);
+  });
+
+  it("does not read the history again for a turn whose stream it folded to the end", async () => {
+    const { store, api, streams, ended } = setup({ active: running("t7", "Hi") });
+    streams.set("t7", sse([{ type: "text-delta", delta: "Hello." }, { type: "turn-completed" }]));
+    await store.open(PROJECT);
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    expect(api.history).toHaveBeenCalledTimes(1);
+  });
+
+  it("finds the running turn, shows the message that started it, and folds it from the start", async () => {
+    const { store, streams, chat, ended } = setup({
+      history: [{ role: "user", content: "Earlier" }],
+      active: running("t7", "Interview Spending reports."),
+    });
+    streams.set("t7", sse([{ type: "text-delta", delta: "Two questions." }, { type: "turn-completed" }]));
+    await store.open(PROJECT);
+
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    expect(chat().items).toMatchObject([
+      { kind: "user", text: "Earlier" },
+      { kind: "user", text: "Interview Spending reports.", turnId: "t7" },
+      { kind: "agent", text: "Two questions." },
+    ]);
+  });
+
+  it("applies each of the agent's file writes once, though a reattach replays them", async () => {
+    const write: StreamPart = {
+      type: "tool-result",
+      toolName: "editFile",
+      toolCallId: "w1",
+      input: { path: "specs/requirements/features/F4-spending-reports.md", oldString: "a", newString: "b" },
+      output: { ok: true, op: "edit", path: "specs/requirements/features/F4-spending-reports.md" },
     };
-    ensureUserMessage(key, row);
-    ensureUserMessage(key, row);
-
-    expect(getMessages(key)).toHaveLength(1);
-  });
-
-  // The sender's own row already carries the id, so re-attaching to their own
-  // turn must not duplicate what they typed.
-  it("leaves the sender's own row alone", () => {
-    const key = freshKey();
-    const id = addMessage(key, { role: "user", content: "mine", status: "in_flight" });
-    settleUserMessage(key, id, { turnId: "t1" });
-
-    ensureUserMessage(key, {
-      role: "user",
-      content: "mine",
-      turnId: "t1",
-      status: "in_flight",
+    // The first attach's stream is cut before the turn's end, which is still running.
+    const { store, api, onAgentWrite, chat } = setup({
+      active: running("t7"),
+      api: { startTurn: async () => Promise.reject(new TurnInProgressError("t7")) },
     });
+    vi.mocked(api.openStream).mockImplementation(async () => sse([write]));
+    await store.open(PROJECT);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
 
-    expect(getMessages(key)).toHaveLength(1);
+    // A send meets the same turn, which is attached again and replayed from its start.
+    vi.mocked(api.openStream).mockImplementation(async () => sse([write, { type: "turn-completed" }]));
+    await store.send(PROJECT, "Hello?", F4);
+    await vi.waitFor(() => expect(api.openStream).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+
+    expect(onAgentWrite).toHaveBeenCalledTimes(1);
+    expect(chat().items.filter((i) => i.kind === "activity")).toHaveLength(1);
   });
 });
 
-// A send refused before it started (409 turn_in_progress): its words go back
-// into the composer, so its row leaves the log rather than turning failed.
-describe("removeMessage", () => {
-  it("withdraws exactly the addressed row", () => {
-    const key = "aep.chat.v1.acme.remove-message";
-    const kept = addMessage(key, { role: "user", content: "earlier", status: "completed" });
-    const withdrawn = addMessage(key, { role: "user", content: "hello", status: "in_flight" });
+describe("answering a question card", () => {
+  const ask: StreamPart = {
+    type: "tool-call",
+    toolCallId: "q1",
+    toolName: "ask_question",
+    input: { question: "Who reads the reports?", options: [{ label: "Finance only" }, { label: "Everyone" }] },
+  };
 
-    removeMessage(key, withdrawn);
+  async function asked(scope: TurnScope = F4) {
+    const t = setup();
+    await t.store.open(PROJECT);
+    t.streams.set("t1", sse([ask, { type: "turn-completed" }]));
+    await t.store.send(PROJECT, "Interview Spending reports.", scope);
+    await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
+    const card = t.chat().items.find((i) => i.kind === "question")!;
+    return { ...t, card };
+  }
 
-    expect(getMessages(key).map((m) => m.id)).toEqual([kept]);
+  it("sends the answer as the next turn, in the asking turn's scope, and keeps it on the item", async () => {
+    const { store, started, chat, card } = await asked();
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Finance only"] }])).toBe(true);
+    expect(started[1]).toMatchObject({
+      instruction: 'Answer to "Who reads the reports?": Finance only',
+      scope: { kind: "feature", feature: "F4" },
+    });
+    expect(chat().items.find((i) => i.id === card.id)).toMatchObject({ answers: [{ selected: ["Finance only"] }] });
+  });
+
+  it("answers a question the whole product's turn asked with no scope", async () => {
+    const { store, started, card } = await asked(PRODUCT);
+    await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }]);
+    expect(started[1]).not.toHaveProperty("scope");
+  });
+
+  it("carries a free answer typed into the card", async () => {
+    const { store, started, card } = await asked();
+    await store.answer(PROJECT, card.id, [{ selected: [], freeText: "Finance and the board" }]);
+    expect(started[1]?.instruction).toBe('Answer to "Who reads the reports?": Finance and the board');
+  });
+
+  it("leaves the card answerable when the answer could not be sent", async () => {
+    const { store, api, chat, card } = await asked();
+    vi.mocked(api.startTurn).mockRejectedValueOnce(new Error("Network down"));
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }])).toBe(false);
+    expect(chat().items.find((i) => i.id === card.id)).not.toHaveProperty("answers");
+  });
+
+  it("takes no answer for a card a later message already answered", async () => {
+    const { store, api, chat, card } = await asked();
+    await store.send(PROJECT, "Finance only, please", F4);
+    await vi.waitFor(() => expect(chat().turn).toEqual({ phase: "idle" }));
+    expect(await store.answer(PROJECT, card.id, [{ selected: ["Everyone"] }])).toBe(false);
+    expect(api.startTurn).toHaveBeenCalledTimes(2);
   });
 });
 
-describe("clearFailedSends", () => {
-  // A fresh key per case: the store caches logs in a module-level Map, so
-  // clearing localStorage alone would not reset it.
-  let n = 0;
-  let KEY = "";
-  beforeEach(() => {
-    n += 1;
-    KEY = `aep.chat.v1.acme.failed-sends-${n}`;
+describe("announcing the questions a turn asks (the Questions card opens on them)", () => {
+  const ask: StreamPart = {
+    type: "tool-call",
+    toolCallId: "q1",
+    toolName: "ask_question",
+    input: { question: "Who reads the reports?", options: [{ label: "Finance only" }, { label: "Everyone" }] },
+  };
+
+  it("announces a question a turn sent from here asked, once", async () => {
+    const t = setup();
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    await t.store.open(PROJECT);
+    t.streams.set("t1", sse([ask, ask, { type: "turn-completed" }]));
+    await t.store.send(PROJECT, "Interview Spending reports.", F4);
+    await vi.waitFor(() => expect(t.chat().turn).toEqual({ phase: "idle" }));
+    expect(asked).toHaveBeenCalledTimes(1);
+    expect(asked).toHaveBeenCalledWith(PROJECT, "t1:q:q1");
   });
 
-  it("drops the failed user row and the error row a refused send left", () => {
-    // Both are LOCAL-ONLY: the rehydrate re-appends them after the server
-    // history on every refocus, so without a bound a failure stays pinned below
-    // newer turns forever and reads as a retry.
-    addMessage(KEY, { role: "user", content: "went nowhere", status: "failed" });
-    addMessage(KEY, { role: "error", content: "Failed to reach the agent." });
-    clearFailedSends(KEY);
-    expect(getMessages(KEY)).toEqual([]);
+  it("announces the question of a turn sent from here whose end it learned from the status", async () => {
+    const asked = vi.fn();
+    const history = vi
+      .fn<ChatApi["history"]>()
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        { role: "user", content: "Interview Spending reports." },
+        { role: "assistant", content: [ask] },
+      ]);
+    const t = setup({
+      api: {
+        history,
+        openStream: async () => Promise.reject(new TurnStreamAttachError(409, "replay_truncated")),
+        turn: async () => ({ ...running("t1", "Interview Spending reports."), status: "completed" }),
+      },
+    });
+    t.store.onQuestionsAsked(asked);
+    await t.store.open(PROJECT);
+    await t.store.send(PROJECT, "Interview Spending reports.", F4);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    await vi.waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
+    const card = t.chat().items.find((i) => i.kind === "question");
+    expect(card).toMatchObject({ turnId: "t1" });
+    expect(asked).toHaveBeenCalledWith(PROJECT, card!.id);
   });
 
-  it("keeps delivered rows — only the failure is history", () => {
-    addMessage(KEY, { role: "user", content: "landed", turnId: "t1", status: "completed" });
-    addMessage(KEY, { role: "assistant", turnId: "t1", content: "done" });
-    addMessage(KEY, { role: "user", content: "went nowhere", status: "failed" });
-    clearFailedSends(KEY);
-    expect(getMessages(KEY).map((m) => m.role)).toEqual(["user", "assistant"]);
-    expect(getMessages(KEY)[0]).toMatchObject({ content: "landed" });
+  it("announces nothing for a turn found running that this browser did not start", async () => {
+    const t = setup({ active: running("t7", "Interview Spending reports.") });
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    t.streams.set("t7", sse([ask, { type: "turn-completed" }]));
+    await t.store.open(PROJECT);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
+    expect(t.chat().items.some((i) => i.kind === "question")).toBe(true);
+    expect(asked).not.toHaveBeenCalled();
   });
 
-  it("keeps an in-flight row, which has not failed", () => {
-    addMessage(KEY, { role: "user", content: "running", turnId: "t2", status: "in_flight" });
-    clearFailedSends(KEY);
-    expect(getMessages(KEY)).toHaveLength(1);
-  });
-
-  it("is a no-op when there is nothing to drop", () => {
-    addMessage(KEY, { role: "user", content: "landed", turnId: "t1", status: "completed" });
-    const before = getMessages(KEY);
-    clearFailedSends(KEY);
-    // Same array identity: a needless persist would remount the whole log.
-    expect(getMessages(KEY)).toBe(before);
+  it("announces the kickoff's questions once this browser claimed it (it created the project)", async () => {
+    const t = setup({ active: running("t7", "/start") });
+    const asked = vi.fn();
+    t.store.onQuestionsAsked(asked);
+    t.store.claimKickoff(PROJECT);
+    t.streams.set("t7", sse([ask, { type: "turn-completed" }]));
+    await t.store.open(PROJECT);
+    await vi.waitFor(() => expect(t.ended).toHaveBeenCalled());
+    expect(asked).toHaveBeenCalledWith(PROJECT, "t7:q:q1");
   });
 });
 
-// #635: the chain a submitted send rides from form to turn — seed waiting,
-// dispatch in flight, stream being folded. Any stage live means this browser
-// holds evidence of a turn the status endpoint may not report yet.
-describe("local turn activity", () => {
-  it("is live through each stage of a send, and collapses when the last releases", () => {
-    const key = freshKey();
-    expect(hasLocalTurnActivity(key)).toBe(false);
-
-    setPendingSeed(key, "answers");
-    expect(hasLocalTurnActivity(key)).toBe(true);
-
-    // Consumption hands over to the send claim with no dead stage between.
-    const releaseSend = claimSendInFlight(key);
-    consumePendingSeed(key);
-    expect(hasLocalTurnActivity(key)).toBe(true);
-
-    const releaseFold = claimStreamFold(key);
-    releaseSend();
-    expect(hasLocalTurnActivity(key)).toBe(true);
-
-    releaseFold();
-    expect(hasLocalTurnActivity(key)).toBe(false);
+describe("the held kickoff", () => {
+  it("is sent once the conversation turns out empty", async () => {
+    const { store, started } = setup();
+    store.seed(PROJECT, "/start");
+    await vi.waitFor(() => expect(started).toEqual([{ instruction: "/start" }]));
   });
 
-  it("collapses when a send dies before a turn exists", () => {
-    const key = freshKey();
-    const release = claimSendInFlight(key);
-    expect(hasLocalTurnActivity(key)).toBe(true);
-    release();
-    expect(hasLocalTurnActivity(key)).toBe(false);
+  it("is dropped when the conversation already started", async () => {
+    const { store, api } = setup({ history: [{ role: "user", content: "/start An idea" }] });
+    store.seed(PROJECT, "/start");
+    await store.open(PROJECT);
+    await Promise.resolve();
+    expect(api.startTurn).not.toHaveBeenCalled();
   });
 
-  it("notifies on every edge: seed set/consumed, claim taken/released", () => {
-    const key = freshKey();
-    let fired = 0;
-    const unsubscribe = subscribeLocalTurnActivity(key, () => {
-      fired += 1;
-    });
-    setPendingSeed(key, "answers");
-    consumePendingSeed(key);
-    const release = claimSendInFlight(key);
-    release();
-    expect(fired).toBe(4);
-
-    unsubscribe();
-    setPendingSeed(key, "again");
-    expect(fired).toBe(4);
-    consumePendingSeed(key);
-  });
-
-  it("keeps distinct keys apart", () => {
-    const key1 = freshKey();
-    const key2 = freshKey();
-    const release = claimSendInFlight(key1);
-    expect(hasLocalTurnActivity(key2)).toBe(false);
-    release();
-  });
-
-  // The seed is the one stage with no failure path of its own: its consumer
-  // sits behind gates an outage can hold shut, and an unconsumed seed would
-  // pin a working state that HIDES Retry. So only the seed's contribution
-  // expires — and expiry is an edge subscribers hear about, or the pane
-  // would hold the stale state until an unrelated re-render.
-  describe("seed TTL", () => {
-    beforeEach(() => vi.useFakeTimers());
-    afterEach(() => vi.useRealTimers());
-
-    it("expires a waiting seed from the signal, and notifies the edge", () => {
-      const key = freshKey();
-      let fired = 0;
-      const unsubscribe = subscribeLocalTurnActivity(key, () => {
-        fired += 1;
-      });
-      setPendingSeed(key, "answers");
-      expect(hasLocalTurnActivity(key)).toBe(true);
-      const firedBeforeExpiry = fired;
-
-      vi.advanceTimersByTime(SEED_ACTIVITY_TTL_MS);
-      expect(hasLocalTurnActivity(key)).toBe(false);
-      expect(fired).toBe(firedBeforeExpiry + 1);
-
-      // The seed itself is untouched by the lapse — still there to consume.
-      expect(peekPendingSeed(key)).toEqual({ message: "answers", guarded: false });
-      unsubscribe();
-      consumePendingSeed(key);
-    });
-
-    it("does not expire the claims — their release paths own their end", () => {
-      const key = freshKey();
-      const release = claimSendInFlight(key);
-      vi.advanceTimersByTime(SEED_ACTIVITY_TTL_MS * 2);
-      expect(hasLocalTurnActivity(key)).toBe(true);
-      release();
-    });
-
-    it("a fresh seed restarts the clock", () => {
-      const key = freshKey();
-      setPendingSeed(key, "first");
-      vi.advanceTimersByTime(SEED_ACTIVITY_TTL_MS - 1000);
-      setPendingSeed(key, "second");
-      vi.advanceTimersByTime(2000);
-      expect(hasLocalTurnActivity(key)).toBe(true);
-      vi.advanceTimersByTime(SEED_ACTIVITY_TTL_MS);
-      expect(hasLocalTurnActivity(key)).toBe(false);
-      consumePendingSeed(key);
-    });
+  it("waits for a kickoff that is running, then is dropped", async () => {
+    const { store, api, ended } = setup({ active: running("t5", "/start An idea") });
+    store.seed(PROJECT, "/start");
+    await vi.waitFor(() => expect(ended).toHaveBeenCalled());
+    expect(api.startTurn).not.toHaveBeenCalled();
   });
 });
+
+// The room is committed before a turn starts, so the commit the turn records
+// as its base holds what its agent reads (seen on the live walk: a design
+// recorded the stubs it never read, and every feature read out of date).
+describe("before a turn", () => {
+  it("commits the room first, and a failure to commit does not stop the turn", async () => {
+    const order: string[] = [];
+    const { store, api } = setup({
+      beforeTurn: async () => {
+        order.push("flush");
+        throw new Error("room offline");
+      },
+      api: {
+        startTurn: vi.fn(async () => {
+          order.push("start");
+          return "t1";
+        }),
+      },
+    });
+    await store.open(PROJECT);
+    expect(await store.send(PROJECT, "Design F1.", PRODUCT)).toBe(true);
+    expect(order).toEqual(["flush", "start"]);
+    expect(api.startTurn).toHaveBeenCalledOnce();
+  });
+});
+

@@ -62,9 +62,6 @@ func (s *designService) DerivePlatformResourceFactsAtHead(ctx context.Context, o
 	if err != nil {
 		return err
 	}
-	if err := rejectUnknownResourceTypes(designFile.Components, markers); err != nil {
-		return err
-	}
 	if _, err := s.persistPlatformResourceDerivation(ctx, orgID, projectID, designFile, markers); err != nil {
 		return err
 	}
@@ -76,29 +73,37 @@ func (s *designService) DerivePlatformResourceFactsAtHead(ctx context.Context, o
 	return nil
 }
 
-// persistPlatformResourceDerivation runs every derivation over designFile's
-// components and, for each component whose DERIVED state changed, commits the
-// updated design.json to main via the committed-truth write surface (the same
-// designFileCommitter port + per-component SplitDesign render CollectSpec uses).
-// Only changed components are written, so a re-save that derives the same values
-// commits nothing — the derivations are re-run on every save (they must be, since
-// a rename or a catalog change moves them), and without this an unchanged design
-// would churn a commit each time.
+// DerivedDesignFile is one file under specs/design/ that the derivation pass
+// changed, rendered exactly as it is committed.
+type DerivedDesignFile struct {
+	// Path is relative to DesignDir, with forward slashes
+	// (`components/<name>/design.json`, `dependencies/<name>/dependency.json`).
+	Path string
+	// Content is the canonical render: SplitDesign for a component,
+	// the dependency-definition codec for a lifted definition.
+	Content string
+	// CreateOnly marks a definition lifted from a legacy component (ADR-0027):
+	// it is written only when no file exists at Path yet. Every other entry
+	// replaces a component design.json that must already exist.
+	CreateOnly bool
+}
+
+// DerivePlatformResourceFacts derives a design's platform facts in place and
+// returns the design files that changed, rendered.
 //
-// Returns (true, nil) when at least one commit landed — the caller must then
-// re-resolve HEAD (its designFile + any pinned commitSHA are now stale), the
-// same convention SaveAndProceed's auto-fetch-on-save step already follows.
-// Returns a non-nil error (wrapping ErrEndUserAuthConflict) with NO commit
-// attempted when deriveEndUserAuth rejects the design — the save must stop
-// there, exactly like the unresolved-dependency proceed-gate. Wiring derivation
-// cannot reject: an underivable dependency is an absent wiring the coding agent
-// reports, not a design the platform refuses to save.
+// types is the installed resource-type catalog; nil or empty skips the
+// membership check (the disabled-catalog path) and qualifies nothing. projectID
+// is the OC name prefix of every derived ref and scoped component name.
 //
-// A nil fileCommitter (degraded boot — mirrors CollectSpec) is a best-effort
-// no-op after a successful derivation: designFile.Components is still mutated
-// in place so THIS response reflects the derived value, but nothing is
-// persisted, so it will not survive to the next independent design read.
-func (s *designService) persistPlatformResourceDerivation(ctx context.Context, orgID, projectID string, designFile *DesignFile, types map[string]CRTType) (bool, error) {
+// Errors: ErrUnknownResourceType, or ErrEndUserAuthConflict on an explicit
+// conflicting service-required. On an error nothing in designFile is mutated
+// and no file is returned. A component is returned only when its DERIVED state
+// changed or it is a legacy carrier (whose re-render is the migration), so a
+// second run over its own output returns nothing.
+func DerivePlatformResourceFacts(designFile *DesignFile, types map[string]CRTType, projectID string) ([]DerivedDesignFile, error) {
+	if err := rejectUnknownResourceTypes(designFile.Components, types); err != nil {
+		return nil, err
+	}
 	// Snapshot COPIES of the derived state (never the pointers): both derivations
 	// mutate through the pointers/slices the components already hold, so capturing
 	// a pointer here would alias the post-mutation value and the change-detection
@@ -108,61 +113,84 @@ func (s *designService) persistPlatformResourceDerivation(ctx context.Context, o
 		before[i] = snapshotDerived(c)
 	}
 	if err := deriveEndUserAuth(designFile.Components, types); err != nil {
-		return false, fmt.Errorf("%w: %v", ErrEndUserAuthConflict, err)
+		return nil, fmt.Errorf("%w: %v", ErrEndUserAuthConflict, err)
 	}
 	deriveDependencyWiring(designFile.Components, types, projectID)
-	if s.fileCommitter == nil {
-		return false, nil
-	}
 
 	legacy := make(map[string]bool, len(designFile.LegacyCarriers))
 	for _, name := range designFile.LegacyCarriers {
 		legacy[name] = true
 	}
-	var writes []DesignFileWrite
+	var files []DerivedDesignFile
 	for i := range designFile.Components {
 		// A component still carrying an external dependency's definition
 		// fields is re-rendered as a bare reference — that drop is the
-		// migration (ADR-0027), and the lifted definitions are written below.
+		// migration (ADR-0027), and the lifted definitions are returned below.
 		if derivedStateEqual(before[i], snapshotDerived(designFile.Components[i])) && !legacy[designFile.Components[i].Name] {
 			continue
 		}
 		comp := designFile.Components[i]
 		rendered, rerr := SplitDesign(&DesignFile{Components: []DesignComponent{comp}})
 		if rerr != nil {
-			return false, fmt.Errorf("render component %q design.json: %w", comp.Name, rerr)
+			return nil, fmt.Errorf("render component %q design.json: %w", comp.Name, rerr)
 		}
 		designSub := "components/" + comp.Name + "/design.json"
 		content, ok := rendered[designSub]
 		if !ok {
-			return false, fmt.Errorf("render component %q design.json: %q missing from split", comp.Name, designSub)
+			return nil, fmt.Errorf("render component %q design.json: %q missing from split", comp.Name, designSub)
 		}
-		designFull := DesignDir + "/" + designSub
-		_, sha, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, designFull)
-		if rerr != nil {
-			return false, fmt.Errorf("read %q for CAS: %w", designFull, rerr)
-		}
-		if !exists {
-			return false, fmt.Errorf("component %q design.json missing on disk", comp.Name)
-		}
-		writes = append(writes, DesignFileWrite{Path: designFull, Content: content, BaseSHA: sha})
+		files = append(files, DerivedDesignFile{Path: designSub, Content: content})
 	}
-	// Definitions lifted from legacy components have no file yet: write them,
+	// Definitions lifted from legacy components have no file yet: return them,
 	// so the directory exists before the next read strips the components.
 	for _, def := range designFile.Dependencies {
-		definitionFull := DesignDir + "/" + dependencyDesignKey(def.Name)
-		_, _, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, definitionFull)
-		if rerr != nil {
-			return false, fmt.Errorf("read %q for CAS: %w", definitionFull, rerr)
-		}
-		if exists {
-			continue
-		}
 		body, err := marshalDependencyDefinitionJSON(def.Name, def)
 		if err != nil {
-			return false, fmt.Errorf("render dependency %q: %w", def.Name, err)
+			return nil, fmt.Errorf("render dependency %q: %w", def.Name, err)
 		}
-		writes = append(writes, DesignFileWrite{Path: definitionFull, Content: string(body)})
+		files = append(files, DerivedDesignFile{Path: dependencyDesignKey(def.Name), Content: string(body), CreateOnly: true})
+	}
+	return files, nil
+}
+
+// persistPlatformResourceDerivation runs DerivePlatformResourceFacts over
+// designFile and commits the files it returns to main via the committed-truth
+// write surface (the same designFileCommitter port CollectSpec uses).
+//
+// Returns (true, nil) when at least one commit landed — the caller must then
+// re-resolve HEAD (its designFile + any pinned commitSHA are now stale).
+// Returns a non-nil error (wrapping ErrUnknownResourceType or
+// ErrEndUserAuthConflict) with NO commit attempted when the derivation refuses
+// the design; the save stops there (ADR-0041).
+//
+// A nil fileCommitter (degraded boot) commits nothing; designFile is still
+// mutated in place.
+func (s *designService) persistPlatformResourceDerivation(ctx context.Context, orgID, projectID string, designFile *DesignFile, types map[string]CRTType) (bool, error) {
+	derived, err := DerivePlatformResourceFacts(designFile, types, projectID)
+	if err != nil {
+		return false, err
+	}
+	if s.fileCommitter == nil {
+		return false, nil
+	}
+
+	var writes []DesignFileWrite
+	for _, f := range derived {
+		full := DesignDir + "/" + f.Path
+		_, sha, exists, rerr := s.fileCommitter.ReadFile(ctx, orgID, projectID, full)
+		if rerr != nil {
+			return false, fmt.Errorf("read %q for CAS: %w", full, rerr)
+		}
+		if f.CreateOnly {
+			if !exists {
+				writes = append(writes, DesignFileWrite{Path: full, Content: f.Content})
+			}
+			continue
+		}
+		if !exists {
+			return false, fmt.Errorf("%s missing on disk", f.Path)
+		}
+		writes = append(writes, DesignFileWrite{Path: full, Content: f.Content, BaseSHA: sha})
 	}
 	if len(writes) == 0 {
 		return false, nil

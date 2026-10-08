@@ -17,15 +17,18 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 	"github.com/wso2/aep/ae-studio-tools/internal/problem"
+	"github.com/wso2/aep/ae-studio-tools/internal/repo"
 	"github.com/wso2/aep/ae-studio-tools/internal/turns"
 )
 
@@ -46,11 +49,12 @@ type TurnRelay interface {
 	Serve(w http.ResponseWriter, r *http.Request, t turns.Turn)
 }
 
-// startRepoTurn checks that the project is this repository's, then hands
-// the turn to the relay. The project resolves through aep-api, in this pod's
-// org; owner/repo must be its repository (GitHub names, compared
-// case-insensitively), else 404 project_unknown: a caller cannot run a turn
-// for a project against another repository.
+// startRepoTurn checks that the project is this repository's, resolves a
+// plan turn's at to its commit, then hands the turn to the relay. The
+// project resolves through aep-api, in this pod's org; owner/repo must be its
+// repository (GitHub names, compared case-insensitively), else 404
+// project_unknown: a caller cannot run a turn for a project against another
+// repository.
 func (s internalServer) startRepoTurn(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -67,16 +71,63 @@ func (s internalServer) startRepoTurn(w http.ResponseWriter, r *http.Request) {
 		writeRequestError(w, r, err)
 		return
 	}
+	if req.At != "" && req.Kind != gen.TurnRequestKindPlan {
+		problem.Write(w, http.StatusBadRequest, "validation_failed", "only a plan turn reads the repository at a pinned commit")
+		return
+	}
 	rep, err := s.projects.Resolve(r.Context(), req.Project)
 	if err != nil {
 		_ = filesProblem(r.Context(), "start-repo-turn", req.Project, err).write(w)
 		return
 	}
-	if !strings.EqualFold(rep.Owner, r.PathValue("owner")) || !strings.EqualFold(rep.Repo, r.PathValue("repo")) {
+	owner, name := r.PathValue("owner"), r.PathValue("repo")
+	if !strings.EqualFold(rep.Owner, owner) || !strings.EqualFold(rep.Repo, name) {
 		problem.Write(w, http.StatusNotFound, "project_unknown", "the project is not this repository's")
 		return
 	}
+	if req.At != "" {
+		sha, err := s.ResolveAt(r.Context(), owner, name, rep.DefaultBranch, req.At)
+		if err != nil {
+			writeGitProblem(w, r, owner, name, err)
+			return
+		}
+		if body, err = pinTurnAt(body, sha); err != nil {
+			writeResponseError(w, r, err)
+			return
+		}
+	}
 	s.turns.Serve(w, r, turns.Turn{ID: req.TurnID.String(), Project: req.Project, Kind: string(req.Kind), Body: body})
+}
+
+// pinTurnAt is the request with its at replaced by sha, the commit it names:
+// the Turn socket's at is a resolved commit, so the agent never resolves a
+// ref. Every other member is relayed as sent.
+func pinTurnAt(body []byte, sha string) (turns.Body, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(body, &members); err != nil {
+		return nil, err
+	}
+	members["at"] = json.RawMessage(strconv.Quote(sha))
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false) // the text members stay as sent
+	if err := enc.Encode(members); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(out.Bytes(), []byte("\n")), nil
+}
+
+// writeGitProblem answers a failure to resolve a turn's at as the git ops
+// answer it (repo.Problem).
+func writeGitProblem(w http.ResponseWriter, r *http.Request, owner, name string, err error) {
+	p, perr := repo.Problem(r.Context(), "start-repo-turn", owner, name, err)
+	if perr != nil {
+		writeResponseError(w, r, perr)
+		return
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(p.Status)
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 // StartRepoTurn satisfies the generated interface only: startRepoTurn

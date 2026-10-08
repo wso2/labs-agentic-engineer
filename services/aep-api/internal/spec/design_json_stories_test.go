@@ -27,12 +27,12 @@ import (
 // have the next save silently strip the field (the preflight regression that
 // motivated this: `json: unknown field "stories"`).
 func TestComponentDesignJSON_StoriesRoundTrip(t *testing.T) {
-	raw := `{"name":"api","type":"service","language":"Go","buildpack":"docker","appPath":"api","entrypoint":"deployment/service","exposure":"intranet","stories":[1,2,4],"dependencies":[],"description":"d"}`
+	raw := `{"name":"api","type":"service","language":"Go","buildpack":"docker","appPath":"api","entrypoint":"deployment/service","exposure":"intranet","stories":["F1.1","F1.2","F2.1"],"dependencies":[],"description":"d"}`
 	comp, err := parseComponentDesignJSON("api", raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if !reflect.DeepEqual(comp.Stories, []int{1, 2, 4}) {
+	if !reflect.DeepEqual(comp.Stories, []string{"F1.1", "F1.2", "F2.1"}) {
 		t.Fatalf("stories = %v", comp.Stories)
 	}
 	out, err := marshalComponentDesignJSON("api", comp)

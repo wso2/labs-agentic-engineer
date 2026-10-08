@@ -39,7 +39,7 @@ import { ensureKeypair, mintAssertion, roleTokens, subjectFor, WIRE_HEADER, WIRE
 import { entryUrl, findEntry, roleEntries } from "../src/engine/wire/roles.js";
 import { numberedEntries, panelRows, readyLine, resolveKey } from "../src/engine/wire/panel.js";
 import { boundaryDenial, deniedTools } from "../src/engine/wire/agents/guard.js";
-import { needsInstall } from "../src/engine/wire/webapp.js";
+import { needsInstall, stampHostInstall, type InstallHost } from "../src/engine/wire/webapp.js";
 import { delay, isPortBusy, startGroup, stopGroup } from "../src/engine/wire/runtime.js";
 import { sessionProcessExists } from "../src/engine/wire/state.js";
 import type { WireRole } from "../src/engine/wire/plan.js";
@@ -267,24 +267,39 @@ test("a live session is told apart from one that died hard, by its own pid", () 
 
 // --- the host ---------------------------------------------------------------
 
-test("node_modules built inside the runner image is not an install on this host", () => {
+const MAC: InstallHost = { platform: "darwin", arch: "arm64", abi: "137" };
+
+/** A tree as some install left it: npm's hidden lockfile plus whatever packages. */
+function installedTree(): string {
   const app = mkdtempSync(join(tmpdir(), "wire-app-"));
-  assert.equal(needsInstall(app, "darwin", "arm64"), true, "nothing installed at all");
+  mkdirSync(join(app, "node_modules"), { recursive: true });
+  writeFileSync(join(app, "node_modules", ".package-lock.json"), '{"lockfileVersion":3}');
+  return app;
+}
 
-  mkdirSync(join(app, "node_modules", "@rollup", "rollup-linux-x64-gnu"), { recursive: true });
-  assert.equal(needsInstall(app, "darwin", "arm64"), true, "installed somewhere else");
-  assert.equal(needsInstall(app, "linux", "x64"), false, "installed here");
+test("node_modules installed anywhere but this host is reinstalled, whatever the bundler", () => {
+  const empty = mkdtempSync(join(tmpdir(), "wire-app-"));
+  assert.equal(needsInstall(empty, MAC), true, "nothing installed at all");
 
-  // ARCHITECTURE COUNTS, and the platform alone cannot answer this: a Linux x64
-  // install on a Linux arm64 host matches on "linux" and is still the wrong
-  // binary. Vite then dies on the missing optional dependency this whole check
-  // exists to pre-empt, so reading it as "installed here" is the one answer that
-  // must not happen.
-  assert.equal(needsInstall(app, "linux", "arm64"), true, "right platform, wrong architecture");
+  const container = installedTree();
+  mkdirSync(join(container, "node_modules", "@rolldown", "binding-linux-arm64-gnu"), { recursive: true });
+  assert.equal(needsInstall(container, MAC), true, "a container install leaves no stamp");
 
-  const plain = mkdtempSync(join(tmpdir(), "wire-app-"));
-  mkdirSync(join(plain, "node_modules"), { recursive: true });
-  assert.equal(needsInstall(plain, "darwin", "arm64"), false, "no rollup: nothing platform-specific to get wrong");
+  const plain = installedTree();
+  assert.equal(needsInstall(plain, MAC), true, "no native package at all is still not proof of a host install");
+});
+
+test("a tree this host installed is kept until the host or the tree changes", () => {
+  const app = installedTree();
+  stampHostInstall(app, MAC);
+  assert.equal(needsInstall(app, MAC), false, "installed here");
+
+  assert.equal(needsInstall(app, { ...MAC, arch: "x64" }), true, "right platform, wrong architecture");
+  assert.equal(needsInstall(app, { ...MAC, platform: "linux" }), true, "wrong platform");
+  assert.equal(needsInstall(app, { ...MAC, abi: "127" }), true, "another Node ABI: compiled addons do not load");
+
+  writeFileSync(join(app, "node_modules", ".package-lock.json"), '{"lockfileVersion":3,"packages":{}}');
+  assert.equal(needsInstall(app, MAC), true, "reinstalled by something else since");
 });
 
 test("stopping a dev server reaps the processes underneath it", async () => {

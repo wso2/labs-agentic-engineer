@@ -56,7 +56,7 @@ func (f *fakeValidationContext) ValidationContext(_ context.Context, cycleID, or
 type internalStack struct {
 	handler http.Handler
 	// deps is what handler was built from, so a test can extend the runner
-	// wiring (e.g. with the SRE handoff deps) and build its own handler.
+	// wiring and build its own handler.
 	deps InternalDeps
 	// mint signs an org's publisher client token (the runner's credential).
 	mint func(org string) string
@@ -83,6 +83,16 @@ const pubIssuer, pubAudPrefix = "platform-idp", "aep-publisher-"
 // orgWithoutStudioClient is the one org recordedStudioClients has no
 // ae-studio client recorded for.
 const orgWithoutStudioClient = "no-client"
+
+// sreHandoffKey is the stack's install-time SRE handoff key: it opens
+// sre-handoff/mcp and nothing else.
+const sreHandoffKey = "s3cr3t-sre-handoff-key-of-32-chars"
+
+// sreHandoffMCPReached stands in for the SRE MCP handler: a 200 here means the
+// request got past the handoff verifier.
+var sreHandoffMCPReached = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+})
 
 // recordedStudioClients records ae-studio-<org> for every org but
 // orgWithoutStudioClient.
@@ -170,6 +180,8 @@ func newInternalStack(t *testing.T) internalStack {
 		RunnerAuth:        auth.NewRunnerAuthorizer(verifier, lookup),
 		ValidationContext: stack.context,
 		StudioClients:     studioClients,
+		SREHandoffAuth:    auth.NewSREHandoffVerifier(sreHandoffKey),
+		SREHandoffMCP:     sreHandoffMCPReached,
 	}
 	stack.handler = NewHandler(AppParams{InternalDeps: stack.deps})
 	return stack

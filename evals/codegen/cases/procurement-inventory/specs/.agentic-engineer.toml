@@ -1,0 +1,5 @@
+apiVersion = "agentic-engineer/v1"
+name = "procurement-inventory"
+createdAt = "2026-10-04T11:37:21.442Z"
+idea = "Procurement and stock: requesters raise purchase requests for catalogue items, approvers approve or reject them within their approval limit, warehouse clerks receive goods against approved orders, which raises stock; every stock change is a ledger entry, and a low-stock view lists items below their reorder level. Keep stock (items, levels, ledger) in its own inventory service that only the procurement API calls; the web app calls only the procurement API. No email or notifications, no file uploads or object storage, no scheduled or background jobs, no external integrations or AI features."
+

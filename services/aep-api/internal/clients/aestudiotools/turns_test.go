@@ -123,7 +123,7 @@ func TestStartTurn_StreamsEventsInOrderKeepAlivesIncluded(t *testing.T) {
 	if c, _ := body["credit"].(map[string]any); c["userId"] != "u-1" || c["name"] != "Ada" || c["email"] != "ada@example.com" {
 		t.Fatalf("credit = %v", body["credit"])
 	}
-	for _, absent := range []string{"scope", "taskContext"} {
+	for _, absent := range []string{"scope", "taskContext", "at"} {
 		if _, ok := body[absent]; ok {
 			t.Fatalf("a start turn must not send %q (the spec refuses an empty scope): %v", absent, body)
 		}
@@ -135,8 +135,13 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	srv := ndjsonServer(t, &body, `{"type":"result","status":"completed"}`)
 	a := newAdapter(t, fixedTarget(srv.URL, "ou-123"), &countingTokens{})
 	req := TurnRequest{
-		TurnID: turnID, Project: "greeter", Kind: "plan",
-		Scope:       &PlanScope{Tag: "m1", Stories: []PlanStory{{Number: 1, Title: "Greet", Covered: true}, {Number: 2}}},
+		TurnID: turnID, Project: "greeter", Kind: "plan", At: "tags/m1",
+		Scope: &PlanScope{
+			Tag:         "m1",
+			Stories:     []PlanStory{{ID: "F1.1", Title: "Greet", Covered: true}, {ID: "F2.1"}},
+			Features:    []PlanFeature{{ID: "F1", Name: "Greeting"}, {ID: "F2", Needs: []string{"F1"}}},
+			ProductWide: []PlanItem{{ID: "P1", Text: "Log in", AppliesTo: []string{"all"}}},
+		},
 		TaskContext: []PlanContextFile{{Path: "tasks/1.md", Body: "# one"}},
 	}
 	seq, err := a.StartTurn(context.Background(), acmeGreeter, req)
@@ -148,7 +153,10 @@ func TestStartTurn_PlanSendsScopeAndTaskContext(t *testing.T) {
 	}
 	raw, _ := json.Marshal(body)
 	for _, want := range []string{
-		`"scope":{"stories":[{"covered":true,"number":1,"title":"Greet"},{"covered":false,"number":2}],"tag":"m1"}`,
+		`"at":"tags/m1"`,
+		`"scope":{"features":[{"id":"F1","name":"Greeting"},{"id":"F2","needs":["F1"]}],` +
+			`"productWide":[{"appliesTo":["all"],"id":"P1","text":"Log in"}],` +
+			`"stories":[{"covered":true,"id":"F1.1","title":"Greet"},{"covered":false,"id":"F2.1"}],"tag":"m1"}`,
 		`"taskContext":[{"body":"# one","path":"tasks/1.md"}]`,
 	} {
 		if !strings.Contains(string(raw), want) {
@@ -174,6 +182,9 @@ func TestStartTurn_Refusals(t *testing.T) {
 		{name: "503 agent_unavailable", reply: func(w http.ResponseWriter) { writeProblem(w, 503, "agent_unavailable", "") }, want: sourcecontrol.ErrAEStudioUnavailable},
 		{name: "502 from the gateway", reply: func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) }, want: sourcecontrol.ErrAEStudioUnavailable},
 		{name: "404 project_unknown", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "project_unknown", "") }, want: sourcecontrol.ErrRepoNotFound, permanent: true},
+		// The plan's `at` names no tag or commit the pod knows: nothing started,
+		// and a retry cannot change it (unlike a read's ref_not_found).
+		{name: "404 ref_not_found", reply: func(w http.ResponseWriter) { writeProblem(w, 404, "ref_not_found", "tags/v9") }, want: sourcecontrol.ErrRefNotFound, permanent: true},
 		{name: "409 no_default_key", reply: func(w http.ResponseWriter) { writeProblem(w, 409, "no_default_key", "") }, code: "no_default_key", permanent: true},
 		{name: "400 validation_failed", reply: func(w http.ResponseWriter) { writeProblem(w, 400, "validation_failed", "kind") }, code: "validation_failed", permanent: true},
 		{name: "502 agent_error", reply: func(w http.ResponseWriter) { writeProblem(w, 502, "agent_error", "") }, code: "agent_error"},

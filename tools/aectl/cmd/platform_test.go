@@ -201,10 +201,10 @@ func setValidUpdateConfig(t *testing.T) {
 
 // `platform update` (and so `make dev-update`) must carry every pair install
 // derives, or an install that predates them never converges (checkpoint red-B-1).
-func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
+func TestHelmUpgradeArgs_CarriesAEStudioValues(t *testing.T) {
 	setValidUpdateConfig(t)
 
-	got, err := buildUpdateArgs()
+	got, err := helmUpgradeArgs(updateConfigFromFlags())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestBuildUpdateArgs_CarriesAEStudioValues(t *testing.T) {
 // renders on the defaults of the chart the release was installed with, so a
 // default a newer chart adds never reaches an existing install (for example
 // aeStudio.webhookRelay.image). --reset-values still opts out of the reuse.
-func TestBuildUpdateArgs_ValueStrategy(t *testing.T) {
+func TestHelmUpgradeArgs_ValueStrategy(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		reset bool
@@ -239,7 +239,7 @@ func TestBuildUpdateArgs_ValueStrategy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setValidUpdateConfig(t)
 			updateResetValues = tc.reset
-			got, err := buildUpdateArgs()
+			got, err := helmUpgradeArgs(updateConfigFromFlags())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -259,12 +259,12 @@ func TestBuildUpdateArgs_ValueStrategy(t *testing.T) {
 // The relay switch follows the config on update both ways; the relay image is
 // never set by aectl: it is the chart's own default (values.yaml, the single
 // source of the gosmee digest), which --reset-then-reuse-values applies.
-func TestBuildUpdateArgs_WebhookRelay(t *testing.T) {
+func TestHelmUpgradeArgs_WebhookRelay(t *testing.T) {
 	for _, enabled := range []bool{true, false} {
 		t.Run(fmt.Sprintf("enabled=%t", enabled), func(t *testing.T) {
 			setValidUpdateConfig(t)
 			viper.Set("ae_studio.webhook_relay.enabled", enabled)
-			got, err := buildUpdateArgs()
+			got, err := helmUpgradeArgs(updateConfigFromFlags())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -283,24 +283,28 @@ func TestBuildUpdateArgs_WebhookRelay(t *testing.T) {
 }
 
 // Missing or partial aectl config must fail loudly, not derive http/empty
-// values the upgrade would write over a working install.
-func TestBuildUpdateArgs_RejectsMissingConfig(t *testing.T) {
+// values the upgrade would write over a working install. platformUpdate runs
+// this check first, for `platform update` and `sre install` alike.
+func TestRequireAEStudioConfig_RejectsMissingConfig(t *testing.T) {
 	setValidUpdateConfig(t)
+	if err := requireAEStudioConfig(); err != nil {
+		t.Fatalf("valid config: %v", err)
+	}
 	viper.Reset()
-	if _, err := buildUpdateArgs(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
+	if err := requireAEStudioConfig(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
 		t.Fatalf("empty config: want error naming thunder.namespace, got %v", err)
 	}
 	viper.Set("thunder.url", "http://thunder:8090")
-	if _, err := buildUpdateArgs(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
+	if err := requireAEStudioConfig(); err == nil || !strings.Contains(err.Error(), "thunder.namespace") {
 		t.Fatalf("partial config: want error naming thunder.namespace, got %v", err)
 	}
 }
 
 // aeStudioOverrides precede the user's --set, so an explicit override wins.
-func TestBuildUpdateArgs_UserSetOverridesAEStudio(t *testing.T) {
+func TestHelmUpgradeArgs_UserSetOverridesAEStudio(t *testing.T) {
 	setValidUpdateConfig(t)
 	updateHelmSets = []string{"aeStudio.gatewayHost=custom.example.com"}
-	got, err := buildUpdateArgs()
+	got, err := helmUpgradeArgs(updateConfigFromFlags())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,8 +28,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -41,10 +43,6 @@ const (
 	// codeMissingDesign — the design layout gate failed at its root
 	// (specs/design/design.cell absent).
 	codeMissingDesign = "MISSING_DESIGN"
-	// codeDesignOutdated — the requirements moved after this design was
-	// derived from them (#575). The only gate that refuses a design for being
-	// WRONG rather than incomplete.
-	codeDesignOutdated = "DESIGN_OUTDATED"
 )
 
 // SpecValidationError is the aggregate build-gate rejection: the spec at the
@@ -116,32 +114,50 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return nil, err
 	}
+	acceptanceFiles, err := s.readBundleAtCommit(ctx, ref, commit, acceptanceBundle)
+	if err != nil {
+		return nil, err
+	}
 	slog.InfoContext(ctx, "spec save: commit read",
 		"project", projectID, "repo", ref.Owner+"/"+ref.Repo, "commit", commit,
 		"pinned", req.CommitSHA != "", "requirementsFiles", len(reqFiles), "designFiles", len(designFiles))
 
-	// Hard gate: the whole spec must be buildable BEFORE any tag is cut.
-	if verr := validateSpecBundles(reqFiles, designFiles); verr != nil {
-		slog.WarnContext(ctx, "spec save: hard gate failed",
-			"project", projectID, "commit", commit, "error", verr)
-		return nil, verr
-	}
-
-	// …and it must be the design the user actually asked for (#575). An
-	// outdated design is the one thing that blocks a build on grounds of being
-	// WRONG rather than incomplete: building it hands the coding agents
-	// something the user has already changed their mind about. It joins the
-	// same refusal list every other unmet condition uses, so the console
-	// renders it with the rest and Build stays clickable — the click re-checks.
-	if verr := s.staleDesignRefusal(ctx, ref, orgID, projectID, commit); verr != nil {
-		slog.WarnContext(ctx, "spec save: the design is behind the requirements",
-			"project", projectID, "commit", commit)
-		return nil, verr
-	}
-
 	tags, err := s.listVersionTags(ctx, ref)
 	if err != nil {
 		return nil, fmt.Errorf("list tags: %w", err)
+	}
+
+	// What this version carries (B1): the user's pick, the unbuilt features it
+	// needs and the unbuilt product-wide items that reach it, planned against
+	// what earlier versions built. A feature whose design is out of date
+	// (#575, per feature) or that waits on an open dependency (E2) cannot be
+	// carried: building it would hand the coding agents something the user has
+	// already changed their mind about, or cannot yet reach. Every other
+	// feature builds.
+	spec := reqspec.Parse(reqFiles)
+	unavailable := map[string]string{}
+	if s.designRuns != nil {
+		if runs, rerr := s.designRuns(ctx, orgID, projectID); rerr == nil {
+			for id, why := range s.staleFeatures(ctx, ref, projectID, runs, reqFiles) {
+				unavailable[id] = why
+			}
+		}
+	}
+	for id, why := range req.Blocked {
+		if _, ok := unavailable[id]; !ok {
+			unavailable[id] = why
+		}
+	}
+	plan, planErr := planVersion(spec, builtSoFar(tags), req.Pick, unavailable)
+
+	// Hard gate: what this version carries must be buildable BEFORE any tag
+	// is cut. It runs even when the pick was refused, so one save reports
+	// every reason at once.
+	gateErr := validateSpecBundles(reqFiles, designFiles, acceptanceFiles, storySet(spec, plan), plan.Features)
+	if verr := joinValidation(planErr, gateErr); verr != nil {
+		slog.WarnContext(ctx, "spec save: hard gate failed",
+			"project", projectID, "commit", commit, "error", verr)
+		return nil, verr
 	}
 
 	// Unchanged detection over the WHOLE specs/ tree (not just requirements —
@@ -154,7 +170,9 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 		if cerr != nil {
 			return nil, cerr
 		}
-		if same {
+		// The same tree is the same version only when it carries the same
+		// scope: building F3 next to an unchanged spec is a new version.
+		if latestPlan, ok := parseScope(latest.Body); same && (!ok || samePlan(latestPlan, plan)) {
 			slog.InfoContext(ctx, "spec save: unchanged — specs/ matches latest tag",
 				"project", projectID, "tag", latest.Name, "commit", commit)
 			return &SpecSaveResult{
@@ -173,7 +191,11 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	} else if verr := ValidateVersionName(tagName); verr != nil {
 		return nil, fmt.Errorf("%w: %w", ErrVersionNameInvalid, verr)
 	}
-	if err := s.createVersionTag(ctx, ref, &tags, &tagName, req.Message, commit, !named); err != nil {
+	message := scopeBody(plan)
+	if req.Message != "" {
+		message = req.Message + "\n\n" + message
+	}
+	if err := s.createVersionTag(ctx, ref, &tags, &tagName, message, commit, !named); err != nil {
 		return nil, err
 	}
 
@@ -199,10 +221,14 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 // promises a buildable spec.
 const specGateDisabled = false
 
-// validateSpecBundles is the shared whole-spec gate: the requirements main doc
-// must exist and the design bundle must pass the design hard gate. All
-// failures aggregate into ONE *SpecValidationError with repo-relative paths.
-func validateSpecBundles(reqFiles, designFiles map[string]string) error {
+// validateSpecBundles is the shared spec gate: the requirements main doc must
+// exist, its IDs must hold, the design bundle must pass the design hard gate,
+// and the acceptance files' story tags must hold (keys of each bundle relative
+// to its directory). inScope (story IDs) and features are what the version
+// carries: only their stories must be claimed by the design and on an
+// acceptance rule. All failures aggregate into ONE *SpecValidationError with
+// repo-relative paths.
+func validateSpecBundles(reqFiles, designFiles, acceptanceFiles map[string]string, inScope map[string]bool, features []string) error {
 	if specGateDisabled {
 		return nil
 	}
@@ -212,6 +238,13 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 			Path:    RequirementsDir + "/" + requirementsMainFile,
 			Code:    codeMissingRequirements,
 			Message: "prd.md missing — populate the PRD before building",
+		})
+	}
+	// The requirements' own IDs (skills/prd-contract, "IDs"): one home each,
+	// never reused, and every feature a need or an Applies to names is live.
+	for _, p := range reqspec.Parse(reqFiles).Problems() {
+		files = append(files, FileValidationError{
+			Path: RequirementsDir + "/" + p.Path, Code: p.Code, Message: p.Message,
 		})
 	}
 	if err := validateDesignBundle(designFiles); err != nil {
@@ -234,11 +267,12 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 	// The build gate (#369) runs only once the basic layout gates pass — its
 	// checks presuppose a PRD and a design tree to read.
 	if len(files) == 0 {
-		for _, f := range validateBuildGate(reqFiles, designFiles) {
+		for _, f := range validateBuildGate(reqFiles, designFiles, inScope) {
 			files = append(files, FileValidationError{
 				Path: DesignDir + "/" + f.Path, Code: f.Code, Message: f.Message,
 			})
 		}
+		files = append(files, acceptanceFindings(reqspec.Parse(reqFiles), acceptanceFiles, features)...)
 	}
 	if len(files) > 0 {
 		return &SpecValidationError{Files: files}
@@ -246,48 +280,83 @@ func validateSpecBundles(reqFiles, designFiles map[string]string) error {
 	return nil
 }
 
-// staleDesignRefusal refuses a build whose design predates the requirements it
-// was derived from, as an ordinary gate failure.
+// staleFeatures names each feature whose design predates its requirements
+// (#575; per feature since E1), with the reason in words. Such a feature
+// cannot be built until a design run covers it again; every other feature's
+// design stands.
+//
+// A feature's design is made from its file and the product-wide items that
+// reach it (reqspec.Basis). The run that designed it is the newest completed
+// design run that covered it — one that named it (`/design F1 F2`), or a bare
+// `/design`, which covered every feature designable at the commit it read.
+// When the feature's basis then and now differ, its design is out of date. A
+// feature no run has designed is not out of date: it has no design, which the
+// coverage check reports.
 //
 // Nothing is stored to answer this: every commit is a permanent snapshot and
-// every agent turn records the commit it read the project at, so the
-// requirements as the last design run saw them are still there to compare
-// against. That is what makes the answer available for projects that predate
-// the check entirely, and leaves nothing to fall out of sync.
+// every agent turn records the commit it read the project at.
 //
-// Silent when the resolver is unwired, when no design run is on record, or when
-// the baseline commit is unreadable. The first two mean the question does not
-// apply; the third is the one judgment call — a build refused because an old
-// commit has been garbage-collected would be unfixable by the user, and the
-// staleness it might have caught is visible in the rail either way.
-func (s *artifactService) staleDesignRefusal(
-	ctx context.Context, ref sourcecontrol.RepoRef, orgID, projectID, commit string,
-) error {
-	if s.designBaseline == nil {
+// Empty when the resolver is unwired or no design run is on record. A run
+// whose commit is unreadable is skipped: a build refused because an old commit
+// has been garbage-collected would be unfixable by the user.
+func (s *artifactService) staleFeatures(
+	ctx context.Context, ref sourcecontrol.RepoRef, projectID string, runs []DesignRun, reqFiles map[string]string,
+) map[string]string {
+	if len(runs) == 0 {
 		return nil
 	}
-	base, err := s.designBaseline(ctx, orgID, projectID)
-	if err != nil || base == "" {
-		return nil
+	read := map[string]map[string]string{}
+	filesAt := func(commit string) map[string]string {
+		if files, ok := read[commit]; ok {
+			return files
+		}
+		files, err := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
+		if err != nil {
+			slog.WarnContext(ctx, "spec save: a design run's commit is unreadable; its features' staleness unchecked",
+				"project", projectID, "base", commit, "error", err)
+			files = nil
+		}
+		read[commit] = files
+		return files
 	}
-	wasEntries, _, err := s.git.List(ctx, ref, base)
-	if err != nil {
-		slog.WarnContext(ctx, "spec save: the last design run's commit is unreadable; staleness unchecked",
-			"project", projectID, "base", base, "error", err)
-		return nil
+	stale := map[string]string{}
+	for _, f := range reqspec.Parse(reqFiles).Features {
+		if !f.Designable() {
+			continue
+		}
+		was := designedFrom(runs, f.ID, filesAt)
+		if was == nil || reqspec.Basis(was, f.ID) == reqspec.Basis(reqFiles, f.ID) {
+			continue
+		}
+		stale[f.ID] = fmt.Sprintf("it has changed since it was designed — update the design for %s first", f.ID)
 	}
-	nowEntries, _, err := s.git.List(ctx, ref, commit)
-	if err != nil {
-		return fmt.Errorf("list tree at %s: %w", commit, err)
+	return stale
+}
+
+// designedFrom is the requirements the newest run that designed a feature
+// read, or nil when no readable run designed it.
+func designedFrom(runs []DesignRun, featureID string, filesAt func(commit string) map[string]string) map[string]string {
+	for _, run := range runs {
+		if run.Features != nil {
+			if !slices.Contains(run.Features, featureID) {
+				continue
+			}
+			if files := filesAt(run.BaseRef); files != nil {
+				return files
+			}
+			continue
+		}
+		files := filesAt(run.BaseRef)
+		if files == nil {
+			continue
+		}
+		for _, f := range reqspec.Parse(files).Features {
+			if f.ID == featureID && f.Designable() {
+				return files
+			}
+		}
 	}
-	if RequirementsFingerprint(wasEntries) == RequirementsFingerprint(nowEntries) {
-		return nil
-	}
-	return &SpecValidationError{Files: []FileValidationError{{
-		Path:    DesignDir + "/" + designRootFile,
-		Code:    codeDesignOutdated,
-		Message: "the requirements have changed since this design was written — update the design before building",
-	}}}
+	return nil
 }
 
 // specTreeUnchanged reports whether the specs/ subtrees at the two commits are

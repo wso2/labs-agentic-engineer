@@ -369,7 +369,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	body := resp.Body.String()
 	m := decodeCfg(t, resp.Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["kind"] != "anthropic" || llm["baseURL"] != "https://api.anthropic.com/v1" || llm["model"] != "claude-sonnet-5" {
+	if llm["kind"] != "anthropic" || llm["baseURL"] != "https://api.anthropic.com/v1" || llm["model"] != "claude-sonnet-5-5" {
 		t.Fatalf("llm projection drifted: %v", llm)
 	}
 	gp := m["gitProvider"].(map[string]any)

@@ -42,6 +42,7 @@ package thunder
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -210,13 +211,19 @@ func New(cfg Config) AdminClient {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &client{
+	c := &client{
 		baseURL:      strings.TrimRight(cfg.BaseURL, "/"),
 		systemID:     cfg.ClientID,
 		systemSecret: cfg.ClientSecret,
 		systemAud:    cfg.SystemResourceIdentifier,
-		httpClient:   hc,
+		now:          time.Now,
 	}
+	// A shallow copy, so the eviction hook is this client's and never a
+	// side-effect on an http.Client the caller handed in and still uses.
+	wrapped := *hc
+	wrapped.Transport = &tokenEvictingTransport{next: hc.Transport, client: c}
+	c.httpClient = &wrapped
+	return c
 }
 
 type client struct {
@@ -229,6 +236,8 @@ type client struct {
 	mu          sync.Mutex
 	cachedToken string
 	tokenExpiry time.Time
+	// now is the clock the token cache is judged by; time.Now outside tests.
+	now func() time.Time
 
 	muOU      sync.Mutex
 	defaultOU string
@@ -249,7 +258,7 @@ type client struct {
 func (c *client) getSystemToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.cachedToken != "" && time.Now().Before(c.tokenExpiry) {
+	if c.cachedToken != "" && c.now().Before(c.tokenExpiry) {
 		return c.cachedToken, nil
 	}
 
@@ -258,16 +267,100 @@ func (c *client) getSystemToken(ctx context.Context) (string, error) {
 		return "", err
 	}
 	c.cachedToken = token
-	const skew = 30
-	switch {
-	case expiresIn > skew:
-		c.tokenExpiry = time.Now().Add(time.Duration(expiresIn-skew) * time.Second)
-	case expiresIn > 0:
-		c.tokenExpiry = time.Now().Add(time.Duration(expiresIn) * time.Second)
-	default:
-		c.tokenExpiry = time.Now().Add(time.Minute)
-	}
+	c.tokenExpiry = systemTokenExpiry(token, expiresIn, c.now())
 	return token, nil
+}
+
+// systemTokenExpiry is when the cache stops trusting a token: the earlier of
+// the token's own `exp` and now+expires_in, less a skew — so a renew is in
+// flight before Thunder starts refusing it.
+//
+// The result carries NO monotonic reading (Round(0)), which makes every later
+// Before() a wall-clock comparison. time.Now() also holds a monotonic reading
+// and Before() prefers it when both sides have one — exactly wrong here:
+// Thunder judges the token by wall time, and a process that was paused (its VM
+// asleep) sees its monotonic clock stand still while the wall clock, and the
+// token's expiry, run on. The token's own `exp` is the server's verdict rather
+// than a duration this side has to count down correctly.
+func systemTokenExpiry(token string, expiresIn int, now time.Time) time.Time {
+	const skew = 30 * time.Second
+	now = now.Round(0)
+	var until time.Time
+	switch {
+	case expiresIn > 0:
+		until = now.Add(time.Duration(expiresIn) * time.Second)
+	default:
+		until = now.Add(time.Minute)
+	}
+	if exp, ok := tokenExp(token); ok && exp.Before(until) {
+		until = exp
+	}
+	if until.Sub(now) > skew {
+		return until.Add(-skew)
+	}
+	return until
+}
+
+// tokenExp reads a JWT's `exp` claim as wall-clock time. An opaque token, or
+// one without the claim, answers false and the caller falls back to expires_in.
+func tokenExp(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return time.Time{}, false
+	}
+	var claims struct {
+		Exp float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || claims.Exp <= 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(claims.Exp), 0), true
+}
+
+// tokenEvictingTransport is the one place the cache learns that Thunder has
+// stopped honouring the system token. Every admin call in this package sends
+// the token as a bearer through this client, so a 401 answered to THAT bearer
+// is evicted here, once, for all of them — the next call mints afresh instead
+// of failing for the rest of the cached lifetime.
+//
+// Why this can happen with a token the cache still thinks is valid: the
+// identity provider may have restarted and dropped the tokens it issued, or
+// the process may have been paused (a laptop's VM asleep) so that the wall
+// clock ran on while its own clock did not. Neither is visible from inside;
+// the 401 is the only signal, so it is honoured. A 403 is not: that is a
+// scope or registration problem a fresh token would carry unchanged.
+type tokenEvictingTransport struct {
+	next   http.RoundTripper
+	client *client
+}
+
+func (t *tokenEvictingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	next := t.next
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	resp, err := next.RoundTrip(req)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		if bearer, ok := strings.CutPrefix(req.Header.Get("Authorization"), "Bearer "); ok {
+			t.client.evictSystemToken(bearer)
+		}
+	}
+	return resp, err
+}
+
+// evictSystemToken drops the cached system token if it is the one given, so a
+// concurrent mint that already replaced it is not thrown away as well.
+func (c *client) evictSystemToken(token string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if token != "" && c.cachedToken == token {
+		c.cachedToken = ""
+		c.tokenExpiry = time.Time{}
+	}
 }
 
 func (c *client) fetchSystemToken(ctx context.Context) (string, int, error) {

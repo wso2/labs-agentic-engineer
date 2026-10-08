@@ -26,10 +26,10 @@
  * a section before deciding to continue; the .eval.ts scorers only extract.
  */
 
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openSession } from "@aep/playground/src/engine/session.js";
-import { DESIGN_COMMAND, START_COMMAND } from "@aep/contracts/commands";
+import { DESIGN_COMMAND, interviewCommand, START_COMMAND } from "@aep/contracts/commands";
 
 // The design flow, sent verbatim as the console sends it: the design agent
 // parses the command and composes the wording.
@@ -39,8 +39,8 @@ const designTurn = DESIGN_COMMAND;
 function startTurn(idea: string): string {
   return `${START_COMMAND} ${idea.trim()}`;
 }
-import { PROJECTS_HOME } from "./config.js";
-import { prepareProject, readProjectFile } from "./project.js";
+import { FIXTURES_DIR, PROJECTS_HOME } from "./config.js";
+import { listRequirementFiles, prepareProject, readProjectFile } from "./project.js";
 import type { ChainScenario, DesignScenario, RequirementsScenario, Rubric, TasksScenario } from "./scenario.js";
 import { decisionsDigest, type SimAnswer } from "./sim-user.js";
 import { runConversationalSection, type SectionRunResult } from "./drivers/conversational.js";
@@ -77,7 +77,9 @@ const clip = (s: string): string =>
   s.length > CLIP ? `${s.slice(0, CLIP)}\n…(clipped at ${CLIP} characters — later files were NOT judged)` : s;
 
 function requirementsArtifact(projectDir: string): string {
-  return readProjectFile(projectDir, "specs/requirements/prd.md");
+  return listRequirementFiles(projectDir)
+    .map((rel) => `--- ${rel} ---\n${readProjectFile(projectDir, rel)}`)
+    .join("\n\n");
 }
 
 function designArtifact(projectDir: string): string {
@@ -206,18 +208,66 @@ function finishRun(
   };
 }
 
+/**
+ * Copy the attached documents where the platform overlays them. The design
+ * agent reads them from its workspace snapshot of that folder, so the kickoff
+ * names nothing.
+ */
+function attachReferences(projectDir: string, names: string[]): void {
+  for (const name of names) {
+    mkdirSync(join(projectDir, "specs/requirements/references"), { recursive: true });
+    cpSync(join(FIXTURES_DIR, "references", name), join(projectDir, `specs/requirements/references/${name}`));
+  }
+}
+
+/** A feature file's ID: `F2` for specs/requirements/features/F2-approvals.md. */
+const FEATURE_FILE_ID = /^specs\/requirements\/features\/(F\d+)-[^/]+\.md$/;
+
+/**
+ * The requirements section as the console runs it: the product pass (`/start`)
+ * writes the product page and a stub per feature, then each feature is
+ * interviewed on its own (`/interview F<n>`), in ID order, in the same
+ * conversation. One section result: the turns, questions and answers of all
+ * of them, finished only when every one finished.
+ */
+async function runRequirementsSection(
+  session: Awaited<ReturnType<typeof openSession>>,
+  projectDir: string,
+  brief: RequirementsScenario["brief"],
+): Promise<SectionRunResult> {
+  attachReferences(projectDir, brief.references ?? []);
+  const runs = [await runConversationalSection(session, "requirements", startTurn(brief.idea), brief)];
+  if (!runs[0]!.error) {
+    const features = listRequirementFiles(projectDir).flatMap((f) => FEATURE_FILE_ID.exec(f)?.[1] ?? []);
+    for (const id of features) {
+      const run = await runConversationalSection(session, "requirements", interviewCommand(id), brief);
+      runs.push(run);
+      if (run.error) break;
+    }
+  }
+  const error = runs.find((r) => r.error)?.error;
+  return {
+    section: "requirements",
+    records: runs.flatMap((r) => r.records),
+    questionsAsked: runs.reduce((n, r) => n + r.questionsAsked, 0),
+    finishedInterview: runs.every((r) => r.finishedInterview),
+    answers: runs.flatMap((r) => r.answers),
+    ...(error ? { error } : {}),
+  };
+}
+
 export async function runRequirementsScenario(sc: RequirementsScenario, runName: string): Promise<EvalRunOutput> {
   const projectDir = prepareProject(runName);
   const session = await openSession(projectDir, {});
   let run: SectionRunResult;
   try {
-    run = await runConversationalSection(session, "requirements", startTurn(sc.brief.idea), sc.brief);
+    run = await runRequirementsSection(session, projectDir, sc.brief);
   } finally {
     await session.close();
   }
   const outcome = await scoreConversational(projectDir, run, sc.rubric, []);
   return finishRun("requirements-section", sc.brief.name, runName, run.records, [outcome], {
-    "specs/requirements/prd.md": requirementsArtifact(projectDir),
+    "specs/requirements/": requirementsArtifact(projectDir),
   });
 }
 
@@ -238,7 +288,7 @@ export async function runDesignScenario(sc: DesignScenario, runName: string): Pr
 
 export async function runTasksScenario(sc: TasksScenario, runName: string): Promise<EvalRunOutput> {
   const projectDir = prepareProject(runName, sc.fixture);
-  const run = await runTaskPlanSection(projectDir);
+  const run = await runTaskPlanSection(projectDir, sc.scope);
   const outcome = await scoreTasks(projectDir, run, sc.rubric);
   return finishRun("tasks-section", sc.name, runName, run.records, [outcome], {
     "issues/": tasksArtifact(projectDir),
@@ -256,7 +306,7 @@ export async function runChainScenario(sc: ChainScenario, runName: string): Prom
   let designSkipped = false;
   let requirementsAnswers: SimAnswer[] = [];
   try {
-    const req = await runConversationalSection(session, "requirements", startTurn(sc.brief.idea), sc.brief);
+    const req = await runRequirementsSection(session, projectDir, sc.brief);
     records.push(...req.records);
     requirementsAnswers = req.answers;
     const reqOutcome = await scoreConversational(projectDir, req, sc.rubrics.requirements, []);
@@ -286,7 +336,7 @@ export async function runChainScenario(sc: ChainScenario, runName: string): Prom
   }
 
   return finishRun("chain", sc.brief.name, runName, records, outcomes, {
-    "specs/requirements/prd.md": requirementsArtifact(projectDir),
+    "specs/requirements/": requirementsArtifact(projectDir),
     "specs/design/": designArtifact(projectDir),
     "issues/": tasksArtifact(projectDir),
   });

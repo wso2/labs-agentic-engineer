@@ -28,15 +28,17 @@
  * projection, and the turn facts (`TurnSpec`, `TurnAim`, `TurnAttachment`).
  *
  * Ownership: this module is the leaf source of truth for the wire, published by
- * the `@aep/agent-stream` package so the producer (the agents service SSE
- * route), the fold consumers (evals, playground, console), and the BFF share ONE
- * definition. The domain (`bundle.ts`) and the agents-service `tool.ts` import
+ * the `@aep/agent-stream` package so the producer (the design agent's `/v1`
+ * edge) and the fold consumers (evals, playground, console) share ONE
+ * definition. The domain (`bundle.ts`) and the design agent's `tool.ts` import
  * these types and their Zod schemas carry a compile-time drift guard asserting
  * they stay assignable to the `*Input` types here — so there is no
  * hand-maintained parallel copy. This stream is NOT part of the generated
  * OpenAPI contracts in `packages/contracts` (raw AI SDK frames aren't
  * OpenAPI-representable); the package stays free of any AI-SDK dependency.
  */
+
+import { MAX_FEEDBACK_ID, parseFeedbackSubmission, type FeedbackRequest, type FeedbackSubmission } from "@wso2/prototype-kit/feedback";
 
 // --- Result payloads (the `tool-result.output` value) -----------------------
 
@@ -55,6 +57,7 @@ export type ErrCode =
   | "INVALID_JSON"
   | "SCHEMA_VIOLATION"
   | "INVALID_DSL"
+  | "INVALID_PROTOTYPE"
   | "INVALID_OPENAPI"
   | "INVALID_DIAGRAM"
   | "UNKNOWN_PARTICIPANT"
@@ -81,7 +84,19 @@ export interface OpOk {
   status: "applied" | "already-applied" | "noop";
 }
 
-/** A failed op. Keeps the self-correction payload (candidates / count). */
+/**
+ * One finding of the prototype check (`@wso2/prototype-kit`): a stable code, the
+ * file it is in, where in that file, and what to change. Declared here, not
+ * imported, so this wire contract stays free of the kit.
+ */
+export interface PrototypeFinding {
+  code: string;
+  file: "prototype.json" | "prototype.tsx";
+  location: string;
+  message: string;
+}
+
+/** A failed op. Keeps the self-correction payload (candidates / count / findings). */
 export interface OpErr {
   ok: false;
   path: string;
@@ -91,6 +106,8 @@ export interface OpErr {
   /** Populated for NOT_UNIQUE / NOT_FOUND to steer one-step re-anchoring. */
   candidates?: MatchCandidate[];
   count?: number;
+  /** Populated for INVALID_PROTOTYPE: every finding the prototype check reported. */
+  findings?: PrototypeFinding[];
 }
 
 export type OpResult = OpOk | OpErr;
@@ -191,7 +208,7 @@ export interface AskQuestionOption {
 
 /**
  * The `ask_question` tool input — a single structured question. WIRE source of
- * truth; drift-guarded against the agents-service Zod schema.
+ * truth; drift-guarded against the design agent's Zod schema.
  */
 export interface AskQuestionInput {
   question: string;
@@ -288,7 +305,7 @@ export const DECLARE_PLAN_TOOL = "declare_plan" as const;
  * The `declare_plan` tool input. WIRE source of truth.
  *
  * NOT yet drift-guarded: the tool is registered — with the Zod schema and the
- * `Equal<>` assert every other input here carries — when the agents-service
+ * `Equal<>` assert every other input here carries — when the design agent's
  * half lands via the handshake. Until then the console renders this shape from
  * typed mocks and no producer emits it.
  */
@@ -385,18 +402,21 @@ export interface Change {
 /**
  * What a turn is FOR, as facts rather than prose. The caller states the intent
  * and the values only it can know (the captured idea, the milestone scope);
- * the agents service turns that into instruction text. No caller composes
+ * the design agent turns that into instruction text. No caller composes
  * prompt wording — that is the whole point of this type.
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
  *  - `flow`  — a `/<command>`: load a skill and follow it, with the user's
  *              trailing text (if any) riding along. `skill` carries the
  *              command's TOKEN as typed; most tokens are the skill name, and
- *              the few that name a branch of one instead resolve in the agents
- *              service, which is where wording lives. `references` names the
+ *              the few that name a branch of one instead resolve in the design
+ *              agent, which is where wording lives. `references` names the
  *              attached reference documents exactly as on `start` — a flow
  *              generates artifacts (wireframes above all) that must be
  *              grounded in an attached sketch or spec.
+ *              `prototypeFeedback` rides only the `prototype` flow: a reviewer's
+ *              batch of requests on one prototype, which turns the flow from
+ *              "generate every prototype" into "revise this one".
  *  - `start` — the project kickoff. `idea` is what the user asked for, read by
  *              the BFF from `specs/.agentic-engineer.toml` — a dot-led path
  *              stripped from every turn snapshot, so the agent cannot read it
@@ -411,9 +431,46 @@ export interface Change {
  */
 export type TurnSpec =
   | { kind: "chat"; text: string }
-  | { kind: "flow"; skill: string; text?: string; references?: string[] }
+  | { kind: "flow"; skill: string; text?: string; references?: string[]; prototypeFeedback?: PrototypeFeedback }
   | { kind: "start"; idea?: string; references?: string[] }
   | { kind: "plan"; scope?: PlanScope; taskContext?: PlanContextFile[] };
+
+/** The flow a `prototypeFeedback` batch may ride: the `/prototype` command's token. */
+export const PROTOTYPE_FLOW_SKILL = "prototype";
+
+/**
+ * One reviewer request on a prototype: where it was made (screen, flow, role,
+ * display state), which elements it is about (empty means the whole screen) and
+ * the reviewer's words, verbatim. The kit's request (`@wso2/prototype-kit/feedback`).
+ */
+export type PrototypeFeedbackRequest = FeedbackRequest;
+
+/**
+ * A batch of review requests on ONE web-application prototype, revised in a
+ * single `/prototype` turn: the kit's feedback submission plus the `component`
+ * the batch is about. The caller forwards it as facts; the design agent alone
+ * words it.
+ */
+export interface PrototypeFeedback extends FeedbackSubmission {
+  /** The web-application component, as named under `specs/design/components/`. */
+  component: string;
+}
+
+/** A component name as one path segment of `specs/design/components/<component>/`. */
+const PROTOTYPE_COMPONENT_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/**
+ * Runtime guard for an untrusted feedback batch: the kit's submission rules
+ * (shape, limits, counted in UTF-16 code units) plus the component. Refused
+ * whole, never trimmed: a batch the agent applied only in part would read as
+ * sent and done.
+ */
+export function isPrototypeFeedback(v: unknown): v is PrototypeFeedback {
+  if (v === null || typeof v !== "object") return false;
+  const { component } = v as Record<string, unknown>;
+  if (typeof component !== "string" || component.length > MAX_FEEDBACK_ID || !PROTOTYPE_COMPONENT_RE.test(component)) return false;
+  return "submission" in parseFeedbackSubmission(v);
+}
 
 /** The turn kinds a `TurnSpec` may declare (the server's pre-stream 400 check). */
 export const TURN_KINDS = ["chat", "flow", "start", "plan"] as const;
@@ -470,6 +527,26 @@ export interface TurnAim {
 }
 
 export type TurnAimIntent = "change" | "discuss";
+
+/**
+ * A turn's scope (S6): what the user was looking at when they sent it — a
+ * feature's file open in the spec, or the design review. Absent means the
+ * whole product. It focuses the turn and fences nothing: the agent may change
+ * any file the message implies, and every edit lands directly.
+ */
+export type TurnScope = { kind: "feature"; feature: string } | { kind: "design-review" };
+
+const FEATURE_ID = /^F[0-9]+$/;
+
+export function isTurnScope(v: unknown): v is TurnScope {
+  if (v === null || typeof v !== "object") return false;
+  const s = v as Record<string, unknown>;
+  const keys = Object.keys(s);
+  if (s.kind === "feature") {
+    return typeof s.feature === "string" && FEATURE_ID.test(s.feature) && keys.every((k) => k === "kind" || k === "feature");
+  }
+  return s.kind === "design-review" && keys.every((k) => k === "kind");
+}
 
 /**
  * One chat attachment (#428): conversation-scoped model content the user
@@ -665,7 +742,15 @@ export function isTurnAim(v: unknown): v is TurnAim {
 export interface PlanScope {
   /** The spec tag the milestone is pinned to. */
   tag: string;
-  stories: { number: number; title?: string; covered: boolean }[];
+  /** Each in-scope story by its ID ("F2.3"). */
+  stories: { id: string; title?: string; covered: boolean }[];
+  /**
+   * The features the version carries, in ID order, each with the carried
+   * features it waits on: one Task per feature per component (B3).
+   */
+  features?: { id: string; name?: string; needs?: string[] }[];
+  /** The product-wide items the version carries: each component's Foundation Task builds them. */
+  productWide?: { id: string; text?: string; appliesTo?: string[] }[];
 }
 
 /** One existing-Task render passed as read-only planning context. */
@@ -690,7 +775,7 @@ export function isSurface(v: unknown): v is Surface {
 }
 
 /**
- * The registrable tool sets. NOT a wire field: the agents service derives the
+ * The registrable tool sets. NOT a wire field: the design agent derives the
  * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files), so a
  * caller cannot ask for a tool set that disagrees with what its turn is for.
  */
@@ -722,7 +807,16 @@ export function isTurnSpec(v: unknown): v is TurnSpec {
     case "chat":
       return str(t.text) && (t.text as string).trim() !== "";
     case "flow":
-      return str(t.skill) && (t.skill as string).trim() !== "" && optStr(t.text) && optStrArr(t.references);
+      return (
+        str(t.skill) &&
+        (t.skill as string).trim() !== "" &&
+        optStr(t.text) &&
+        optStrArr(t.references) &&
+        // A batch is the prototype flow's alone: on any other skill it would be
+        // instructions the flow's playbook never reads.
+        (t.prototypeFeedback === undefined ||
+          (t.skill === PROTOTYPE_FLOW_SKILL && isPrototypeFeedback(t.prototypeFeedback)))
+      );
     case "start":
       return optStr(t.idea) && optStrArr(t.references);
     case "plan":
@@ -738,15 +832,39 @@ function isPlanScopeOrAbsent(v: unknown): boolean {
   const s = v as Record<string, unknown>;
   if (typeof s.tag !== "string") return false;
   if (!Array.isArray(s.stories)) return false;
-  return s.stories.every((row) => {
+  const storiesOk = s.stories.every((row) => {
     if (row === null || typeof row !== "object") return false;
     const r = row as Record<string, unknown>;
     return (
-      typeof r.number === "number" &&
+      typeof r.id === "string" &&
       typeof r.covered === "boolean" &&
       (r.title === undefined || typeof r.title === "string")
     );
   });
+  return (
+    storiesOk &&
+    isRowsOrAbsent(s.features, (r) => optionalString(r.name) && optionalStrings(r.needs)) &&
+    isRowsOrAbsent(s.productWide, (r) => optionalString(r.text) && optionalStrings(r.appliesTo))
+  );
+}
+
+/** Absent, or an array of rows that each carry a string `id` and pass `rest`. */
+function isRowsOrAbsent(v: unknown, rest: (r: Record<string, unknown>) => boolean): boolean {
+  if (v === undefined) return true;
+  if (!Array.isArray(v)) return false;
+  return v.every((row) => {
+    if (row === null || typeof row !== "object") return false;
+    const r = row as Record<string, unknown>;
+    return typeof r.id === "string" && rest(r);
+  });
+}
+
+function optionalString(v: unknown): boolean {
+  return v === undefined || typeof v === "string";
+}
+
+function optionalStrings(v: unknown): boolean {
+  return v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string"));
 }
 
 function isPlanContextOrAbsent(v: unknown): boolean {
@@ -796,8 +914,8 @@ export interface ManifestPart {
   /** Paths mutated this turn that are no longer present at turn end. */
   deleted: string[];
   /**
-   * The turn's token spend (#249). Present on every manifest the agents
-   * service emits today; optional so older producers/recorded streams stay
+   * The turn's token spend (#249). Present on every manifest the design
+   * agent emits today; optional so older producers/recorded streams stay
    * valid. Manifest-only ⇒ a failed/severed turn carries no usage (v1).
    */
   usage?: TurnUsage;

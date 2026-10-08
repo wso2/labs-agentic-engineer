@@ -19,7 +19,7 @@ compile error, not a runtime surprise.
 | `services/` | long-lived deployables (Go + TS) | yes |
 | `components/` | deployables arranged as they are deployed: `dataplane/ae-system-project/ae-studio/` is the per-org AE Studio; `controlplane/` and `dataplane/user-project/` are placeholders | yes (`ae-studio`: per org, by `aep-api`) |
 | `runners/` | one-shot / job images | as jobs |
-| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette`, `platform-idp-auth`, `web-search`, `agent-eval`, `bal-library-tool` | no |
+| `packages/` | shared libraries: `contracts`, `clients`, `ui`, `agent-stream`, `collab-doc`, `design-projection`, `excalidraw-dsl`, `progress-view`, `sse-cassette`, `platform-idp-auth`, `web-search`, `agent-eval`, `bal-library-tool`, `prototype-kit`, `prototype-theme-default`, `prototype-theme-oxygen`, `prototype-cli` | no |
 | `skills/` | the authored skill library, seeded and reconciled into each org's own repo | no — delivered as content |
 | `playground/` | local harness that runs the real agents against a plain directory (no cluster, no GitHub, no database) | no |
 | `evals/` | on-demand evaluation suites for the platform's agents (`spec-agents`: per-section + chained evals over the real design agent; see its README) | no — never in CI |
@@ -50,7 +50,7 @@ compile error, not a runtime surprise.
   agent, collab) is gitignored and regenerated as a build prestep.
 - An org secret's value lives only in the vault; Postgres keeps the name of
   the reference that holds it
-  ([ADR-0042](decisions/ADR-0042-an-org-secrets-value-lives-only-in-vault.md)).
+  ([ADR-0047](decisions/ADR-0047-an-org-secrets-value-lives-only-in-vault.md)).
 
 ## Identity and gateways
 
@@ -77,7 +77,7 @@ The org's AE Studio does not sit behind `aep-api`: each of its containers
 verifies Platform IdP tokens itself, one gate per route group, and the only
 claim it checks is the org. `aep-api` calls the pod as an install-wide AE-only
 client naming the org; the pod calls `aep-api` back with its org's own clients
-([ADR-0041](decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+([ADR-0046](decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md)).
 
 ## Design work: the organization's AE Studio
 
@@ -97,14 +97,14 @@ containers, the design agent, the collaboration server and `ae-studio-tools`
 ResourceType per org and keeps the Resource current (a new release reaches an
 org the next time someone opens its console); the pod holds the org's GitHub
 token and webhook secret, and `aep-api` holds neither
-([ADR-0040](decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([ADR-0045](decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 
 The console calls the three hosts directly. `aep-api` reaches the pod only
 through `ae-studio-tools` `/internal/v1`, for every git operation it needs.
 GitHub delivers each repository's webhooks to the pod, which verifies the
 signature and forwards the delivery to `aep-api`; `aep-api` persists it,
 replays it and runs the sweeps
-([ADR-0043](decisions/ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md)).
+([ADR-0048](decisions/ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md)).
 Inside the pod the containers talk over Unix sockets, and the mount is the
 gate. Resources, routes, env and converge:
 [`ae-studio/design/README.md`](../components/dataplane/ae-system-project/ae-studio/design/README.md).
@@ -120,6 +120,33 @@ The build graph (`turbo` + `go.work`) wires every consumer's `build`/`typecheck`
 behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
 `docs/decisions/ADR-0001-tooling-and-naming.md`.
 
+## Prototype kit and CLI
+
+Clickable prototypes are React on a fixed kit, run in a sandbox
+([ADR-0042](decisions/ADR-0042-a-prototype-is-react-on-a-fixed-kit-in-a-sandbox.md)).
+Three public packages, usable with no AEP: `@wso2/prototype-kit` (the API a
+`prototype.tsx` imports, the manifest schema, the static and isolated render
+checks, review feedback, the sandboxed frame host and the theme build helper),
+`@wso2/prototype-theme-default` (plain React + CSS) and `@wso2/prototype-cli`
+(`prototype init | check | preview | export`). `@wso2/prototype-theme-oxygen`
+draws the same kit on Oxygen UI's layout kit with the console's own theme
+(`@aep/ui-theme`, `packages/ui/theme`), so AEP's prototypes look like the
+console and other WSO2 products.
+The manifest's JSON Schema is committed at `packages/prototype-kit/schema/prototype-manifest.schema.json`; the
+kit reference an agent writes against is generated to
+`packages/prototype-kit/reference.md`. Each package's `design/README.md` has
+the details.
+
+In AEP the Prototype stage follows Design. The console's Design card offers
+Make prototype, which sends `/prototype`; the `prototype` skill has the agent
+write `specs/design/components/<c>/prototype.{json,tsx}` into the Room (ae-collab),
+gated on write by the design agent's file tool (the manifest and source rules
+plus an isolated render check) and again when a build cuts the version
+(aep-api's save gate, `internal/spec/save_gate.go`). The reviewer opens it full screen in the
+console, annotates, and Send all returns the requests as a typed
+`prototypeFeedback` on the next `/prototype` turn
+([console design note](../apps/console/design/prototype-review.md)).
+
 ## Service map
 
 - [`aep-api`](../services/aep-api/README.md) — Go BFF; persists and replays
@@ -131,7 +158,6 @@ behind `gen`, and CI runs `gen` + `git diff --exit-code` to catch staleness. See
   — TS Yjs collaboration server (the Room), in the org's AE Studio.
 - [`ae-studio-tools`](../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/AGENTS.md)
   — Go git, GitHub and webhook container, in the org's AE Studio.
-- `aep-mcp-server` — MCP surface for the SRE/RCA handoff.
 - `runners/` (job image) — TS Claude Agent SDK one-shot pod; one Debian image serves
   both task kinds (ADR-0012).
 - `console` (app) — React frontend.
@@ -159,7 +185,7 @@ mechanism is
 pod's own log while the cycle's pod exists, the observer by the cycle's
 Component UID once the pod is gone. The log is **observability, not ledger**:
 `run_cycles` stays the record, and `RunCycleView.recording` says what can be
-served ([ADR-0044](decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+served ([ADR-0049](decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md),
 which supersedes
 [ADR-0027](decisions/ADR-0027-run-recordings-are-observability-not-ledger.md)
 on where a feed is kept).

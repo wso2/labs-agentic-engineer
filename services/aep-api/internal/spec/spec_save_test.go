@@ -24,22 +24,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// validSpecSeed is a buildable spec: a PRD with a User Stories section, a
+// validSpecSeed is a buildable spec: a feature file with a story, a
 // design.cell declaring the components, and a valid design bundle (root + one
 // enriched component claiming the story, with its type artifact) — everything
 // the layout gates AND the build gate (#369) demand.
 func validSpecSeed() map[string]string {
 	return map[string]string{
-		"specs/requirements/prd.md":                "# PRD\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n",
+		"specs/requirements/prd.md":                "# PRD\n\n## Features\n\n- F1 [Core](features/F1-core.md)\n",
+		"specs/requirements/features/F1-core.md":   "# Core\n\n## User Stories\n\n- F1.1 As a user, I want the thing, so that value.\n",
 		"specs/design/design.cell":                 "component svc service\n",
 		"specs/design/components/svc/design.md":    "---\ntype: service\n---\n# svc\n",
 		"specs/design/components/svc/design.json":  validComponentDesignJSON("svc"),
@@ -237,7 +241,7 @@ func TestSaveSpec_LegacyDesignTagsExcluded(t *testing.T) {
 	r.tag("v1", specTagSubject+"v1")
 	r.tag("v1-1", "legacy design rev")
 	r.tag("v1-2", "legacy design rev")
-	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD v2\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n"}, "spec edit")
+	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD v2\n\n## Features\n\n- F1 [Core](features/F1-core.md)\n"}, "spec edit")
 
 	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
 	if err != nil {
@@ -271,16 +275,20 @@ func TestSaveSpec_AtProvidedCommit_TagsThatCommit(t *testing.T) {
 func TestBuildScopeAtTag(t *testing.T) {
 	t.Parallel()
 	seed := validSpecSeed()
-	seed["specs/requirements/prd.md"] = "# PRD\n\n## User Stories\n\n1. As a user, I want A, so that a.\n2. As a user, I want B, so that b.\n7. As a user, I want S, so that s.\n"
+	seed["specs/requirements/features/F1-core.md"] = "# Core\n\n## User Stories\n\n- F1.1 As a user, I want A, so that a.\n- F1.2 As a user, I want B, so that b.\n"
+	seed["specs/requirements/features/F2-notify.md"] = "# Notify\n\n## User Stories\n\n- F2.1 As a user, I want S, so that s.\n"
+	// A reference document is the user's source material, never a story source.
+	seed["specs/requirements/references/brief.md"] = "- F3.1 As a user, I want R, so that r.\n"
 	seed["specs/design/design.cell"] = "component svc service\ncomponent notify-svc service\n"
-	// svc claims stories 1, 2 and a junk number the PRD never defines;
-	// notify-svc claims 7. The scope reads the claims from each design.json.
+	// svc claims F1.2 and F1.1 (out of order); notify-svc claims F2.1. The
+	// scope reads the claims from each design.json. (A claim of an ID the
+	// requirements do not define is refused by the gate before any tag.)
 	seed["specs/design/components/svc/design.json"] = `{"name":"svc","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
-		`"stories":[1,2,9],"dependencies":[],"description":"a service"}`
+		`"stories":["F1.2","F1.1"],"dependencies":[],"description":"a service"}`
 	seed["specs/design/components/notify-svc/design.json"] = `{"name":"notify-svc","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
-		`"stories":[7],"dependencies":[],"description":"a service"}`
+		`"stories":["F2.1"],"dependencies":[],"description":"a service"}`
 	// A declared service owes the same artifacts as svc, or the layout gate
 	// refuses the save before any scope is read.
 	seed["specs/design/components/notify-svc/design.md"] = "---\ntype: service\n---\n# notify-svc\n"
@@ -301,15 +309,19 @@ func TestBuildScopeAtTag(t *testing.T) {
 	if scope.MilestoneTitle() != "v1" {
 		t.Errorf("MilestoneTitle() = %q, want the tag", scope.MilestoneTitle())
 	}
-	if fmt.Sprint(scope.InScope) != "[1 2 7]" {
+	if fmt.Sprint(scope.InScope) != "[F1.1 F1.2 F2.1]" {
 		t.Errorf("inScope = %v", scope.InScope)
 	}
-	if scope.StoryTitles[1] == "" || scope.StoryTitles[7] == "" {
+	if scope.StoryTitles["F1.1"] != "As a user, I want A, so that a." || scope.StoryTitles["F2.1"] == "" {
 		t.Errorf("story titles = %v", scope.StoryTitles)
 	}
-	// Claims are filtered to PRD stories (the junk 9 is dropped).
-	if fmt.Sprint(scope.ComponentStories["svc"]) != "[1 2]" || fmt.Sprint(scope.ComponentStories["notify-svc"]) != "[7]" {
+	// Claims are put in ID order.
+	if fmt.Sprint(scope.ComponentStories["svc"]) != "[F1.1 F1.2]" || fmt.Sprint(scope.ComponentStories["notify-svc"]) != "[F2.1]" {
 		t.Errorf("componentStories = %v", scope.ComponentStories)
+	}
+	// A version cut without a pick carries every feature with stories (B3).
+	if fmt.Sprint(scope.Features) != "[{F1 Core []} {F2 Notify []}]" {
+		t.Errorf("features = %v", scope.Features)
 	}
 }
 
@@ -332,7 +344,7 @@ func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
 func TestCommitSHA_OnlyAFullLowercaseShaReachesThePod(t *testing.T) {
 	t.Parallel()
 	f := aestudiotest.New()
-	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f)
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, f)
 	ctx := context.Background()
 	full := strings.Repeat("a", 40)
 	for _, sha := range []string{full[:7], strings.ToUpper(full), full + "aa"} {
@@ -391,7 +403,7 @@ func TestSaveSpec_SuggestedNameCollision_RecomputesToNextName(t *testing.T) {
 	// wants a tag but must skip the taken v1 and land v2.
 	r.tag("v1", specTagSubject+"v1")
 	r.seed(map[string]string{
-		"specs/requirements/prd.md": "# PRD\n\n## User Stories\n\n1. As a user, I want the thing, so that value.\n\nmoved on\n",
+		"specs/requirements/prd.md": "# PRD\n\n## Features\n\n- F1 [Core](features/F1-core.md)\n\nmoved on\n",
 	}, "draft edit")
 
 	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
@@ -499,5 +511,199 @@ func TestBuildScopeAtTag_RefusesANameNoVersionCouldCarry(t *testing.T) {
 		if _, err := r.svc.BuildScopeAtTag(ctx, r.org, r.proj, name); !errors.Is(err, ErrInvalidVersionTag) {
 			t.Errorf("BuildScopeAtTag(%q) err = %v, want ErrInvalidVersionTag", name, err)
 		}
+	}
+}
+
+// A design goes out of date per feature (E1): a change to one feature's
+// words refuses the build naming that feature, and leaves every other
+// feature's design standing.
+func TestSaveSpec_DesignOutOfDatePerFeature(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/requirements/features/F2-notify.md"] = "# Notify\n\n## User Stories\n\n- F2.1 As a user, I want S, so that s.\n"
+	seed["specs/design/components/svc/design.json"] = `{"name":"svc","type":"service","version":"1.0.0","language":"go",` +
+		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
+		`"stories":["F1.1","F2.1"],"dependencies":[],"description":"a service"}`
+	r := newRig(t, seed)
+	designedAt := r.headSHA()
+	r.svc.SetDesignRunsResolver(func(context.Context, string, string) ([]DesignRun, error) {
+		// One bare `/design` at the seed: it covered every designable feature.
+		return []DesignRun{{BaseRef: designedAt}}, nil
+	})
+
+	// Confirming nothing, touching only the product page: no feature moved.
+	r.seed(map[string]string{"specs/requirements/prd.md": "# PRD\n\nA new problem statement.\n"}, "frame edit")
+	if _, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
+		t.Fatalf("a product-page edit refused the build: %v", err)
+	}
+
+	r.seed(map[string]string{
+		"specs/requirements/features/F2-notify.md": "# Notify\n\n## User Stories\n\n- F2.1 As a user, I want S by Slack, so that s.\n",
+	}, "F2 edit")
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var ve *SpecValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("want the stale feature refused, got %v", err)
+	}
+	if len(ve.Files) != 1 || ve.Files[0].Code != codeFeatureNotBuildable || ve.Files[0].Path != "specs/requirements/features/F2-notify.md" {
+		t.Fatalf("want only F2 out of date, got %+v", ve.Files)
+	}
+
+	// A later `/design F2` at the new commit designs F2 again; F1 keeps its
+	// design from the first run.
+	redesignedAt := r.headSHA()
+	r.svc.SetDesignRunsResolver(func(context.Context, string, string) ([]DesignRun, error) {
+		return []DesignRun{{BaseRef: redesignedAt, Features: []string{"F2"}}, {BaseRef: designedAt}}, nil
+	})
+	if _, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{}); err != nil {
+		t.Fatalf("after F2's update the build was refused: %v", err)
+	}
+}
+
+// A design turn's ledger Summary holds the feature IDs it designed ("F1 F2").
+// Rows the in-process engine wrote hold the `/design F1 F2` line instead, which
+// reads the same. No IDs is nil: every feature designable at the run's commit.
+func TestDesignedFeatures(t *testing.T) {
+	for summary, want := range map[string][]string{
+		"":                        nil,
+		"F1 F2":                   {"F1", "F2"},
+		"F2 F10 F2":               {"F2", "F10"},
+		"  F3  ":                  {"F3"},
+		"/design":                 nil,
+		"/design F1 F2":           {"F1", "F2"},
+		"/design F2, F10 and F2":  {"F2", "F10"},
+		"/design the whole thing": nil,
+		"F1x Fo":                  nil,
+	} {
+		if got := DesignedFeatures(summary); !reflect.DeepEqual(got, want) {
+			t.Errorf("DesignedFeatures(%q) = %v, want %v", summary, got, want)
+		}
+	}
+}
+
+// A version is a selection (B1): a pick builds what it carries, records it in
+// the tag, and the version's scope is exactly those stories. A stale feature
+// the pick does not touch stands aside; a new pick on the same tree is a new
+// version.
+func TestSaveSpec_ABuildIsASelection(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/requirements/features/F2-notify.md"] = "# Notify\n\n## Purpose\n\nTells people.\n\nNeeds: F1.\n\n## User Stories\n\n- F2.1 As a user, I want S, so that s.\n"
+	seed["specs/design/components/svc/design.json"] = `{"name":"svc","type":"service","version":"1.0.0","language":"go",` +
+		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
+		`"stories":["F1.1","F2.1"],"dependencies":[],"description":"a service"}`
+	r := newRig(t, seed)
+	ctx := context.Background()
+
+	v1, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{Pick: &reqspec.Pick{Features: []string{"F1"}}})
+	if err != nil {
+		t.Fatalf("pick F1: %v", err)
+	}
+	scope, err := r.svc.BuildScopeAtTag(ctx, r.org, r.proj, v1.Tag)
+	if err != nil || fmt.Sprint(scope.InScope) != "[F1.1]" {
+		t.Fatalf("v1 scope = %v (%v), want F1's story only", scope.InScope, err)
+	}
+
+	// Same tree, a new pick: F2 needs F1, which v1 built, so F2 alone.
+	v2, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{Pick: &reqspec.Pick{Features: []string{"F2"}}})
+	if err != nil {
+		t.Fatalf("pick F2: %v", err)
+	}
+	if v2.Tag == v1.Tag || v2.Status != SpecSaveApproved {
+		t.Fatalf("a new pick on the same tree reused %s: %+v", v1.Tag, v2)
+	}
+	scope, _ = r.svc.BuildScopeAtTag(ctx, r.org, r.proj, v2.Tag)
+	if fmt.Sprint(scope.InScope) != "[F2.1]" {
+		t.Fatalf("v2 scope = %v, want F2's story only", scope.InScope)
+	}
+
+	// What each version built, oldest first, with each feature's lines as the
+	// version's tag holds them (B5).
+	versions, err := r.svc.ListVersions(ctx, r.org, r.proj)
+	if err != nil {
+		t.Fatalf("ListVersions: %v", err)
+	}
+	if len(versions) != 2 || versions[0].Name != v1.Tag || versions[1].Name != v2.Tag {
+		t.Fatalf("versions = %+v, want %s then %s", versions, v1.Tag, v2.Tag)
+	}
+	if f := versions[1].Features; len(f) != 1 || f[0].ID != "F2" || f[0].Name != "Notify" ||
+		fmt.Sprint(f[0].Lines) != "[{ Tells people.} {F2.1 F2.1 As a user, I want S, so that s.}]" {
+		t.Errorf("v2 built %+v", f)
+	}
+
+	// What v2 validates (B4): everything built so far, and the version before
+	// it to compare with.
+	vs, ok, err := r.svc.ValidationScope(ctx, r.org, r.proj, v2.Tag)
+	if err != nil || !ok || fmt.Sprint(vs.Features) != "[F1 F2]" || fmt.Sprint(vs.Built) != "[F2 Notify]" ||
+		fmt.Sprint(vs.Earlier) != "["+v1.Tag+"]" {
+		t.Errorf("ValidationScope(%s) = %+v, %v, %v", v2.Tag, vs, ok, err)
+	}
+
+	// The same pick again on the same tree is the same version.
+	again, err := r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{Pick: &reqspec.Pick{Features: []string{"F2"}}})
+	if err != nil || again.Status != SpecSaveUnchanged || again.Tag != v2.Tag {
+		t.Fatalf("the same pick again = %+v (%v), want %s unchanged", again, err, v2.Tag)
+	}
+
+	// An open dependency keeps its feature out; the pick that needs it is refused.
+	_, err = r.svc.SaveSpec(ctx, r.org, r.proj, SaveRequest{
+		Pick:    &reqspec.Pick{Features: []string{"F2"}},
+		Blocked: map[string]string{"F2": "it waits on xero — no provider chosen yet"},
+	})
+	var ve *SpecValidationError
+	if !errors.As(err, &ve) || len(ve.Files) != 1 || ve.Files[0].Code != codeFeatureNotBuildable ||
+		ve.Files[0].Message != "F2 Notify: it waits on xero — no provider chosen yet" {
+		t.Fatalf("blocked pick = %v", err)
+	}
+}
+
+func TestScopeBodyRoundTrips(t *testing.T) {
+	plan := reqspec.BuildPlan{Features: []string{"F1", "F2"}, ProductWide: []string{"P1"}, HeldBack: []string{"F2.4"}}
+	got, ok := parseScope("Build\n\n" + scopeBody(plan))
+	if !ok || !samePlan(got, plan) {
+		t.Fatalf("parseScope = %+v, %v", got, ok)
+	}
+	if _, ok := parseScope("Build"); ok {
+		t.Fatal("a body with no scope parsed as one")
+	}
+}
+
+// The save gate reads the acceptance oracle through the pod (API-7): one
+// read-bundle of the Gherkin files under specs/validation/acceptance/, kept
+// flat. A rule set that leaves a story uncovered refuses the build; a
+// nested or non-Gherkin file in that directory is not the oracle.
+func TestSaveSpec_ReadsTheAcceptanceOracleThroughThePod(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/requirements/features/F1-core.md"] = "# Core\n\n## User Stories\n\n" +
+		"- F1.1 As a user, I want the thing, so that value.\n- F1.2 As a user, I want more, so that value.\n"
+	seed["specs/validation/acceptance/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F1.1\n  Rule: a\n"
+	seed["specs/validation/acceptance/old/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F9.9\n  Rule: x\n"
+	seed["specs/validation/acceptance/notes.md"] = "@story-F7.1\n"
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var ve *SpecValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want the uncovered story refused", err)
+	}
+	var got []string
+	for _, f := range ve.Files {
+		if strings.HasPrefix(f.Code, "ACCEPTANCE_") {
+			got = append(got, f.Path+" "+f.Code)
+		}
+	}
+	if want := []string{"specs/validation/acceptance/F1-core.feature " + codeAcceptanceUncoveredStory}; !slices.Equal(got, want) {
+		t.Fatalf("findings = %v, want %v (only the flat Gherkin file is the oracle)", got, want)
+	}
+
+	var reads []sourcecontrol.BundleFilter
+	for _, c := range r.pod.Calls() {
+		if c.Op == aestudiotest.OpReadBundle && c.Filter.Prefix == "specs/validation/acceptance/" {
+			reads = append(reads, c.Filter)
+		}
+	}
+	if len(reads) != 1 || !slices.Equal(reads[0].Exts, []string{".feature"}) || len(reads[0].Paths) != 0 {
+		t.Fatalf("acceptance reads = %+v, want one read of .feature under the acceptance prefix", reads)
 	}
 }

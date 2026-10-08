@@ -152,7 +152,7 @@ type RunCycleRepository interface {
 	// recorded separately could never land on a cycle that already has a verdict.
 	//
 	// Returns (nil, nil) when the cycle is absent or already carries a verdict.
-	SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string) (*RunCycle, error)
+	SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string, regressions int) (*RunCycle, error)
 
 	// LatestValidationDigest returns the newest recorded report digest among the
 	// given runs' validation cycles, or "" when none of them recorded one.
@@ -405,7 +405,7 @@ func (r *runCycleRepository) FinishAgentFailed(ctx context.Context, id, reason s
 	return r.getByID(ctx, id)
 }
 
-func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string) (*RunCycle, error) {
+func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdict string, issue int, digest string, regressions int) (*RunCycle, error) {
 	if !ValidationVerdicts[verdict] {
 		return nil, fmt.Errorf("run cycle: unknown validation verdict %q", verdict)
 	}
@@ -415,9 +415,10 @@ func (r *runCycleRepository) SetValidationVerdict(ctx context.Context, id, verdi
 		Model(&RunCycle{}).
 		Where("id = ? AND (validation_verdict IS NULL OR validation_verdict = '')", id).
 		Updates(map[string]any{
-			"validation_verdict": verdict,
-			"validation_issue":   issue,
-			"validation_digest":  digest,
+			"validation_verdict":     verdict,
+			"validation_issue":       issue,
+			"validation_digest":      digest,
+			"validation_regressions": regressions,
 		})
 	if res.Error != nil {
 		return nil, res.Error

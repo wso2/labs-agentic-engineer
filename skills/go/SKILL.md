@@ -16,8 +16,8 @@ download a toolchain and will not compile C.
 ## Development flow
 
 1. **Scaffold** — `go.mod` (module path = app folder name, `go 1.25`),
-   `main.go`, `Dockerfile`, per Layout. `workload.yaml` follows your prompt — as
-   given when it carries one, else per the component contract.
+   `main.go`, `Dockerfile`, per Layout. `workload.yaml` per the component
+   contract.
 2. **Implement** — handlers, store, models. Every rule under Constraints is a
    build- or runtime-failure if broken, not a style preference. The
    platform-wide rules (port, no required env vars, error shape, dependency

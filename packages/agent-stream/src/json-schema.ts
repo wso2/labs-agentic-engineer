@@ -18,7 +18,7 @@
 
 /**
  * Publish the shared Zod schemas as JSON Schema so the Go BFF validates against
- * the SAME definitions the agents service uses — one schema, not two hand-kept
+ * the SAME definitions the design agent uses — one schema, not two hand-kept
  * copies (§8 of the migration decision record; §10.3 of tasks-github-native).
  *
  *  - `componentDesignJsonSchema` — the design.json write/save gate. The one

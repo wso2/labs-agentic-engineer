@@ -21,6 +21,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -33,9 +34,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/delivery/agentgovernance"
+	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
+	"github.com/wso2/aep/aep-api/internal/projects"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -143,6 +146,98 @@ func (s ampEndpointStore) StoredAMPModelEndpoint(ctx context.Context, ocOrgID, c
 
 func (s ampEndpointStore) RecordAMPModelEndpoint(ctx context.Context, ocOrgID, component, environment, endpoint string) error {
 	return s.repo.Put(ctx, ocOrgID, component, environment, endpoint)
+}
+
+// ampGuardrailStore records which guardrails AEP wrote to each governed agent's
+// binding, and what became of each declared one, in organization's
+// agent_guardrail_applications.
+type ampGuardrailStore struct {
+	repo organization.AgentGuardrailApplicationRepository
+}
+
+func (s ampGuardrailStore) Get(ctx context.Context, key agentgovernance.GuardrailRecordKey) ([]string, bool, error) {
+	row, err := s.repo.Get(ctx, key.Org, key.Project, key.Component, key.Environment)
+	if err != nil || row == nil {
+		return nil, false, err
+	}
+	return row.AppliedNames, true, nil
+}
+
+func (s ampGuardrailStore) Put(ctx context.Context, key agentgovernance.GuardrailRecordKey, owned []string, outcomes []agentgovernance.GuardrailOutcome) error {
+	raw, err := json.Marshal(outcomes)
+	if err != nil {
+		return err
+	}
+	return s.repo.Put(ctx, organization.AgentGuardrailApplication{
+		OcOrgID: key.Org, Project: key.Project, Component: key.Component, Environment: key.Environment,
+		AppliedNames: owned, Outcomes: raw,
+	})
+}
+
+// guardrailOutcomeReader serves the Deployments page the guardrail outcomes
+// the govern stage recorded, per environment.
+type guardrailOutcomeReader struct {
+	repo organization.AgentGuardrailApplicationRepository
+}
+
+func (r guardrailOutcomeReader) GuardrailOutcomes(ctx context.Context, org, project, component string) (map[string][]projects.GuardrailOutcome, error) {
+	rows, err := r.repo.ListForComponent(ctx, org, project, component)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string][]projects.GuardrailOutcome, len(rows))
+	for _, row := range rows {
+		var recorded []agentgovernance.GuardrailOutcome
+		if err := json.Unmarshal(row.Outcomes, &recorded); err != nil {
+			return nil, fmt.Errorf("guardrail outcomes for %s/%s in %s: %w", project, component, row.Environment, err)
+		}
+		if len(recorded) == 0 {
+			continue
+		}
+		list := make([]projects.GuardrailOutcome, 0, len(recorded))
+		for _, o := range recorded {
+			list = append(list, projects.GuardrailOutcome{Policy: o.Policy, Status: string(o.Status), Reason: o.Reason})
+		}
+		out[row.Environment] = list
+	}
+	return out, nil
+}
+
+// guardrailCatalog serves the design agent's list_guardrail_policies tool from
+// the governor's view of the org's gateway catalog.
+//
+// The tool has no project in hand, so the environment is the org's default
+// pipeline root — the read every org-scoped question resolves to.
+type guardrailCatalog struct {
+	gov     *agentgovernance.Governor
+	targets orgDefaultRoot
+}
+
+// orgDefaultRoot is the one method guardrailCatalog uses;
+// openchoreo.WriteTargets satisfies it.
+type orgDefaultRoot interface {
+	OrgDefaultRoot(ctx context.Context, org string) (string, error)
+}
+
+func (c guardrailCatalog) GuardrailCatalog(ctx context.Context, org string) ([]mcpdiscovery.GuardrailPolicy, error) {
+	env, err := c.targets.OrgDefaultRoot(ctx, org)
+	var nwt *openchoreo.ErrNoWriteTarget
+	if errors.As(err, &nwt) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("resolve the org's write target: %w", err)
+	}
+	entries, err := c.gov.GuardrailCatalog(ctx, org, env)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]mcpdiscovery.GuardrailPolicy, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, mcpdiscovery.GuardrailPolicy{Name: e.Name, DisplayName: e.DisplayName, Description: e.Description,
+			Parameters: e.Parameters, Applies: e.Applies})
+	}
+	return out, nil
 }
 
 // ampComponentKinds answers what kind each of a project's components is, read

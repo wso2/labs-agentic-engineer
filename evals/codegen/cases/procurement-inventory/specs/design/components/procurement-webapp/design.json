@@ -1,0 +1,17 @@
+{
+  "name": "procurement-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "procurement-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "procurement-api", "description": "The only backend the web app calls: catalogue, requests, approvals, receipts and stock views." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Single browser surface for Requesters, Approvers and Warehouse Clerks, with role-specific screens including catalogue management for clerks. Deploys separately as the only user-facing surface. Calls only the procurement API; never the inventory service.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

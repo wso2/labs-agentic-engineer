@@ -184,8 +184,11 @@ func TestGitOps_RequestAndReply(t *testing.T) {
 		},
 		{
 			name: "list tags", method: "GET", path: "/repos/acme/greeter/tags", query: "local=true&prefix=v",
-			reply: `{"tags":[{"name":"v1","commitHash":"` + sha40 + `","message":"rel","createdAt":"2026-01-02T03:04:05Z"},{"name":"v0","commitHash":"` + sha40 + `"}]}`,
-			want:  []sourcecontrol.TagInfo{{Name: "v1", CommitHash: sha40, Message: "rel", CreatedAt: created}, {Name: "v0", CommitHash: sha40}},
+			reply: `{"tags":[{"name":"v1","commitHash":"` + sha40 + `","message":"rel","body":"Features: F1 F2\nHeld back: F2.4","createdAt":"2026-01-02T03:04:05Z"},{"name":"v0","commitHash":"` + sha40 + `"}]}`,
+			want: []sourcecontrol.TagInfo{
+				{Name: "v1", CommitHash: sha40, Message: "rel", Body: "Features: F1 F2\nHeld back: F2.4", CreatedAt: created},
+				{Name: "v0", CommitHash: sha40},
+			},
 			call: func(ctx context.Context, a *Adapter) (any, error) {
 				return a.ListTags(ctx, trunkRef, "v", sourcecontrol.Local())
 			},

@@ -66,7 +66,7 @@ const GLOSSARIES: Record<RuntimeName, string> = {
     "The roles your workflow names, and the tools that play them in this session:",
     "",
     "- **fan-out tool**: `Agent` — `run_in_background: true` for a builder",
-    "- **wait tool**: `TaskOutput` with `block: true` — one call per agent you dispatched",
+    "- **wait tool**: none. End your turn. A finished agent wakes you with its report.",
     "- **stop tool**: `TaskStop`, for an agent that has run away",
     "- **task list**: `TaskCreate` and `TaskUpdate`",
     "- **edit**: `Edit`, `Write` · **shell**: `Bash`",
@@ -87,7 +87,8 @@ const GLOSSARIES: Record<RuntimeName, string> = {
       ' "dispatch in the background" means issue every `task` call of the wave as PARALLEL tool calls' +
       " in ONE message. They run at the same time and each returns its builder's report when that" +
       " builder finishes; you are held until the slowest one does.",
-    "- **wait tool**: none is needed. Each `task` call IS the wait: its result is the report.",
+    "- **wait tool**: none. Each `task` call IS the wait: its result is the report. Your fan-out is foreground," +
+      " so ending your turn does not apply here.",
     "- **stop tool**: none in this session; a task you no longer need is left to finish",
     "- **task list**: `todowrite`",
     "- **edit**: `edit`, `write` · **shell**: `bash`",

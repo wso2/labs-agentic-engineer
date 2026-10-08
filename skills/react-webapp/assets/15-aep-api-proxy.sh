@@ -20,7 +20,13 @@
 
 set -e
 
-CONF=/etc/nginx/conf.d/default.conf
+# The root filesystem is read-only in the cloud, so the conf is rendered from
+# its baked-in template into /dev/shm/nginx, the directory nginx.conf includes
+# and keeps its pid and temp files in (see nginx.conf).
+RUNTIME_DIR=/dev/shm/nginx
+CONF="$RUNTIME_DIR/default.conf"
+mkdir -p "$RUNTIME_DIR"
+cp /etc/nginx/aep/default.conf "$CONF"
 
 DNS_RESOLVERS="$(awk '/^nameserver/ {print $2}' /etc/resolv.conf | tr '\n' ' ' | sed 's/ $//')"
 if [ -z "$DNS_RESOLVERS" ]; then

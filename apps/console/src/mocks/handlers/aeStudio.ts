@@ -51,3 +51,26 @@ export const aeStudioHandlers = [
     );
   }),
 ];
+
+const READ_REFUSALS = {
+  restarting: { status: 503, code: "ae_studio_unavailable", message: "AE Studio is not ready — try again in a few seconds" },
+  github: { status: 409, code: "github_not_connected", message: "GitHub is not connected for this organization — connect GitHub to continue" },
+  misconfigured: { status: 503, code: "ae_studio_misconfigured", message: "AE Studio is not configured on this platform — contact your platform admin" },
+} as const;
+
+/**
+ * aep-api's refusal of a read it serves through AE Studio (the spec state,
+ * the versions), when the scenario knob asks for one, else null:
+ *   localStorage.setItem('aep:mock:aeStudio:reads', 'restarting' | 'github' | 'misconfigured')
+ * A restart carries Retry-After, as aep-api's does.
+ */
+export function aeStudioReadRefusal(): Response | null {
+  const v = localStorage.getItem("aep:mock:aeStudio:reads");
+  const refusal = v && v in READ_REFUSALS ? READ_REFUSALS[v as keyof typeof READ_REFUSALS] : null;
+  if (!refusal) return null;
+  return HttpResponse.json(
+    { code: refusal.code, message: refusal.message },
+    { status: refusal.status, ...(v === "restarting" ? { headers: { "Retry-After": "5" } } : {}) },
+  );
+}
+

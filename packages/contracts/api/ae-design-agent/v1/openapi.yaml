@@ -114,7 +114,10 @@ paths:
       description: |-
         The instruction is sent verbatim; the pod parses `/<skill>` flow commands.
         Send JSON, or multipart when the turn carries chat attachments. At most
-        10 files, each at most 5 MiB, 15 MiB of raw bytes in total.
+        10 files, each at most 5 MiB, 15 MiB of raw bytes in total. A turn
+        carrying `target` (retired by `scope`) is refused in either form. A
+        multipart turn carrying a `prototypeFeedback` part is refused (400):
+        the review batch is JSON only, so send it without attachments.
       tags:
       - Turns
       parameters:
@@ -132,6 +135,8 @@ paths:
                 contentType: application/json
               files:
                 contentType: application/octet-stream
+              scope:
+                contentType: application/json
             schema:
               $ref: '#/components/schemas/TurnInputMultipart'
       responses:
@@ -319,6 +324,8 @@ paths:
                 contentType: application/json
               files:
                 contentType: application/octet-stream
+              scope:
+                contentType: application/json
             schema:
               $ref: '#/components/schemas/TurnInputMultipart'
       responses:
@@ -562,7 +569,9 @@ components:
     ConversationMessage:
       type: object
       additionalProperties: false
-      description: One rehydrated message of a conversation's history.
+      description: One rehydrated message of a conversation's history. A user
+        message carries the scope it was sent with and, when it sent a prototype
+        review, its `prototypeFeedback`, so a reloaded thread reads as it was sent.
       required:
       - role
       properties:
@@ -578,9 +587,13 @@ components:
         content:
           description: The message body as recorded. Untyped, it is model-shaped
             and varies by role.
+        prototypeFeedback:
+          $ref: '#/components/schemas/PrototypeFeedbackInput'
         role:
           type: string
           description: Who the message is from, as recorded.
+        scope:
+          $ref: '#/components/schemas/TurnScope'
     ConversationMessageAuthor:
       type: object
       additionalProperties: false
@@ -645,9 +658,15 @@ components:
             the pod parses them.
         intent:
           $ref: '#/components/schemas/TurnIntent'
-        target:
-          type: string
-          description: Optional target (e.g. a doc type)
+        prototypeFeedback:
+          allOf:
+          - $ref: '#/components/schemas/PrototypeFeedbackInput'
+          description: A prototype review batch. Valid only when `instruction` is
+            `/prototype`, alone or followed by the batch's own `component`, on a
+            project turn the pod runs in the Room (only the Room's committer saves
+            the revision), and never together with `anchor`/`intent`. JSON only.
+        scope:
+          $ref: '#/components/schemas/TurnScope'
     TurnInputMultipart:
       type: object
       additionalProperties: false
@@ -669,8 +688,8 @@ components:
           type: string
         intent:
           $ref: '#/components/schemas/TurnIntent'
-        target:
-          type: string
+        scope:
+          $ref: '#/components/schemas/TurnScope'
     TurnIntent:
       type: string
       description: What the user wants done with `anchor`. `change` rewrites the
@@ -679,6 +698,102 @@ components:
       enum:
       - change
       - discuss
+    TurnScope:
+      type: object
+      additionalProperties: false
+      description: What the user was looking at when they sent the message, a
+        feature's file (`feature`, with its ID) or the design review
+        (`design-review`). Absent means the whole product. A scope focuses the
+        turn and fences nothing; the pod composes it into the instruction once
+        the snapshot is read and journals it on the message.
+      required:
+      - kind
+      properties:
+        feature:
+          type: string
+          pattern: ^F[0-9]+$
+          description: The feature's ID (`F2`) when `kind` is `feature`; absent otherwise.
+        kind:
+          type: string
+          enum:
+          - feature
+          - design-review
+    PrototypeFeedbackInput:
+      type: object
+      additionalProperties: false
+      description: A batch of review requests on ONE web-application prototype,
+        revised in a single `/prototype` turn. The shape and limits mirror the
+        prototype kit's feedback submission (`@wso2/prototype-kit/feedback`)
+        plus `component`. Lengths are counted in UTF-16 code units, as the kit
+        counts them.
+      required:
+      - prototypeHash
+      - component
+      - requests
+      properties:
+        component:
+          type: string
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+          description: The web application, as named under `specs/design/components/`.
+        prototypeHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: The revision the reviewer looked at, the kit's 64-character
+            lowercase hex hash.
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/PrototypeFeedbackRequest'
+    PrototypeFeedbackRequest:
+      type: object
+      additionalProperties: false
+      description: One reviewer request, made on one screen in one role and display state.
+      required:
+      - screenId
+      - roleId
+      - stateId
+      - elementIds
+      - text
+      properties:
+        elementIds:
+          type: array
+          description: The ids of the elements the request is about, in selection
+            order. Empty means the whole screen.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: \S
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+          description: The flow the reviewer was walking; absent for free navigation.
+        roleId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        screenId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        stateId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          pattern: \S
+          description: The reviewer's words, verbatim.
     TurnOutputBody:
       type: object
       additionalProperties: false

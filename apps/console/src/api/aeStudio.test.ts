@@ -28,19 +28,18 @@ vi.mock("../auth/token", () => ({
 }));
 
 const {
+  AE_STUDIO_RESTARTING,
   AeStudioNotReadyError,
-  StudioToolsError,
+  PodRequestError,
   designAgent,
-  isStudioToolsUnavailable,
+  designAgentCall,
+  isPodUnavailable,
+  onPodOutage,
   setAeStudioUrls,
-  studioTools,
-  studioToolsRead,
-  studioToolsRetryDelay,
 } = await import("./aeStudio");
 
-const TOOLS = "http://ae-studio-tools.mock";
 const DESIGN = "http://ae-design-agent.mock";
-const URLS = { tools: TOOLS, designAgent: DESIGN };
+const URLS = { designAgent: DESIGN };
 const server = setupServer();
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
@@ -50,37 +49,10 @@ afterEach(() => {
 });
 afterAll(() => server.close());
 
-const listFiles = (projectName: string) =>
-  studioToolsRead("Failed to load the spec files", (tools) =>
-    tools.GET("/projects/{projectName}/files", { params: { path: { projectName } } }),
+const activeTurn = () =>
+  designAgentCall("Couldn't reach the agent", (agent) =>
+    agent.GET("/projects/{projectName}/turns/active", { params: { path: { projectName: "p" } } }),
   );
-
-describe("studioTools()", () => {
-  it("throws AeStudioNotReadyError until AE Studio's URLs arrive, and again once they are cleared", () => {
-    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
-    setAeStudioUrls(URLS);
-    expect(() => studioTools()).not.toThrow();
-    setAeStudioUrls(null);
-    expect(() => studioTools()).toThrow(AeStudioNotReadyError);
-  });
-
-  it("keeps one client per tools origin and swaps it when the origin changes", () => {
-    setAeStudioUrls(URLS);
-    const first = studioTools();
-    setAeStudioUrls(URLS);
-    expect(studioTools()).toBe(first);
-    setAeStudioUrls({ ...URLS, tools: "http://other-tools.mock" });
-    expect(studioTools()).not.toBe(first);
-  });
-
-  it("calls the pod's /v1 API", async () => {
-    setAeStudioUrls(URLS);
-    server.use(
-      http.get(`${TOOLS}/v1/projects/p/files`, () => HttpResponse.json([{ path: "specs/a.md", sha: "1", size: 1 }])),
-    );
-    await expect(listFiles("p")).resolves.toEqual([{ path: "specs/a.md", sha: "1", size: 1 }]);
-  });
-});
 
 describe("designAgent()", () => {
   it("throws AeStudioNotReadyError until AE Studio's URLs arrive, and again once they are cleared", () => {
@@ -91,12 +63,12 @@ describe("designAgent()", () => {
     expect(() => designAgent()).toThrow(AeStudioNotReadyError);
   });
 
-  it("keeps its client while only the tools origin moves, and swaps it when its own origin does", () => {
+  it("keeps one client per origin and swaps it when the origin changes", () => {
     setAeStudioUrls(URLS);
     const first = designAgent();
-    setAeStudioUrls({ ...URLS, tools: "http://other-tools.mock" });
+    setAeStudioUrls(URLS);
     expect(designAgent()).toBe(first);
-    setAeStudioUrls({ ...URLS, designAgent: "http://other-design.mock" });
+    setAeStudioUrls({ designAgent: "http://other-design.mock" });
     expect(designAgent()).not.toBe(first);
   });
 
@@ -108,68 +80,85 @@ describe("designAgent()", () => {
     });
     expect(response.status).toBe(204);
   });
+
+  it("not being ready reads as AE Studio restarting, and is not an outage of the pod", () => {
+    const err = new AeStudioNotReadyError();
+    expect(err.message).toBe(AE_STUDIO_RESTARTING);
+    expect(isPodUnavailable(err)).toBe(false);
+  });
 });
 
-describe("studioToolsRead failures", () => {
-  it("carries the problem's code, detail and status", async () => {
+describe("designAgentCall", () => {
+  it("hands the answer back as openapi-fetch read it", async () => {
     setAeStudioUrls(URLS);
     server.use(
-      http.get(`${TOOLS}/v1/projects/p/files`, () =>
+      http.get(`${DESIGN}/v1/projects/p/turns/active`, () =>
         HttpResponse.json(
           { type: "about:blank", title: "Not Found", status: 404, detail: "project p is unknown", code: "project_unknown" },
           { status: 404, headers: { "Content-Type": "application/problem+json" } },
         ),
       ),
     );
-    const err = await listFiles("p").catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(StudioToolsError);
-    expect(err).toMatchObject({ message: "project p is unknown", code: "project_unknown", status: 404 });
-    expect(isStudioToolsUnavailable(err)).toBe(false);
+    const outages = vi.fn();
+    const off = onPodOutage(outages);
+    const { error, response } = await activeTurn();
+    off();
+    expect(response.status).toBe(404);
+    expect(error).toMatchObject({ code: "project_unknown" });
+    expect(outages).not.toHaveBeenCalled();
   });
 
-  it("reads Retry-After from a 503 and calls it unavailable", async () => {
+  it("tells the outage listeners about a 503, and still hands the answer back", async () => {
     setAeStudioUrls(URLS);
     server.use(
-      http.get(`${TOOLS}/v1/projects/p/files`, () =>
+      http.get(`${DESIGN}/v1/projects/p/turns/active`, () =>
         HttpResponse.json(
-          { type: "about:blank", title: "Service Unavailable", status: 503, code: "aep_api_unavailable" },
+          { type: "about:blank", title: "Service Unavailable", status: 503, code: "shutting_down" },
           { status: 503, headers: { "Retry-After": "7" } },
         ),
       ),
     );
-    const err = await listFiles("p").catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: "aep_api_unavailable", status: 503, retryAfterMs: 7000 });
-    expect(isStudioToolsUnavailable(err)).toBe(true);
+    const outages = vi.fn();
+    const off = onPodOutage(outages);
+    const { response } = await activeTurn();
+    off();
+    expect(response.status).toBe(503);
+    expect(outages).toHaveBeenCalledTimes(1);
   });
 
-  it("calls a network failure unavailable", async () => {
+  it("throws a PodRequestError for no answer at all, and tells the outage listeners", async () => {
     setAeStudioUrls(URLS);
-    server.use(http.get(`${TOOLS}/v1/projects/p/files`, () => HttpResponse.error()));
-    const err = await listFiles("p").catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(StudioToolsError);
-    expect(err).toMatchObject({ message: "Failed to load the spec files", status: undefined });
-    expect(isStudioToolsUnavailable(err)).toBe(true);
+    server.use(http.get(`${DESIGN}/v1/projects/p/turns/active`, () => HttpResponse.error()));
+    const outages = vi.fn();
+    const off = onPodOutage(outages);
+    const err = await activeTurn().catch((e: unknown) => e);
+    off();
+    expect(err).toBeInstanceOf(PodRequestError);
+    expect(err).toMatchObject({ message: "Couldn't reach the agent", status: undefined });
+    expect(isPodUnavailable(err)).toBe(true);
+    expect(outages).toHaveBeenCalledTimes(1);
   });
 
-  it("is not ready, not unavailable, before the URLs arrive", async () => {
-    const err = await listFiles("p").catch((e: unknown) => e);
+  it("is not ready before the URLs arrive, and tells no one", async () => {
+    const outages = vi.fn();
+    const off = onPodOutage(outages);
+    const err = await activeTurn().catch((e: unknown) => e);
+    off();
     expect(err).toBeInstanceOf(AeStudioNotReadyError);
-    expect(isStudioToolsUnavailable(err)).toBe(false);
+    expect(outages).not.toHaveBeenCalled();
   });
 });
 
-describe("studioToolsRetryDelay", () => {
-  const unavailable = (retryAfterMs?: number) =>
-    new StudioToolsError({ code: "disk_full", title: "Service Unavailable" }, "x", { status: 503, retryAfterMs });
-
-  it("waits Retry-After on a 503, 5 s without one", () => {
-    expect(studioToolsRetryDelay(0, unavailable(7000))).toBe(7000);
-    expect(studioToolsRetryDelay(0, unavailable())).toBe(5000);
+describe("PodRequestError", () => {
+  it("carries the problem's code, detail, status and Retry-After", () => {
+    const err = new PodRequestError({ code: "project_unknown", detail: "project p is unknown" }, "x", { status: 404 });
+    expect(err).toMatchObject({ message: "project p is unknown", code: "project_unknown", status: 404 });
+    expect(isPodUnavailable(err)).toBe(false);
   });
 
-  it("backs off like react-query's default otherwise", () => {
-    expect(studioToolsRetryDelay(0, new Error("x"))).toBe(1000);
-    expect(studioToolsRetryDelay(2, new Error("x"))).toBe(4000);
-    expect(studioToolsRetryDelay(10, new Error("x"))).toBe(30_000);
+  it("says a 503 the way the console says a restart, keeping its code and Retry-After", () => {
+    const err = new PodRequestError({ code: "shutting_down", detail: "draining" }, "x", { status: 503, retryAfterMs: 7000 });
+    expect(err).toMatchObject({ message: AE_STUDIO_RESTARTING, code: "shutting_down", status: 503, retryAfterMs: 7000 });
+    expect(isPodUnavailable(err)).toBe(true);
   });
 });

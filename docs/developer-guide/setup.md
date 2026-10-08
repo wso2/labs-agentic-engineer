@@ -39,7 +39,15 @@ All driven from the root `Makefile` (the single entry point):
 
 ## Local stack
 
-Two steps, both in `deployments/`: `scripts/setup.sh` installs the k3d cluster and
-everything under it (OpenChoreo, Thunder, Temporal), and `scripts/start.sh` runs
-the AEP services as containers. The root README has the walkthrough; the
-`deployments/` README documents both this and the in-cluster Skaffold flow.
+One step: `make dev-env`. It runs `deployments/scripts/setup-env-for-aectl.sh`
+(k3d cluster, OpenChoreo, ThunderID, OpenBao), builds this checkout's service
+images, and installs the platform onto them with `aectl`. Everything runs
+in-cluster — there is no host-container path any more. `make dev-update`
+rebuilds and rolls just the images whose sources changed.
+
+After a host restart the cluster comes back by itself, but `host.k3d.internal`
+does not, and in-cluster hostname resolution fails in ways that surface as
+unrelated 401s. Diagnose and repair with
+`deployments/scripts/restore-host-k3d-internal.sh check|apply`; the
+`deployments/` README's "After a host restart" section explains why, and covers
+the OpenBao secrets that are also lost on restart.

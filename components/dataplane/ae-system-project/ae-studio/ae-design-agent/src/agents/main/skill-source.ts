@@ -83,7 +83,7 @@ export type LoadedReference = { content: string } | { binary: true } | undefined
 export type SkillLoadResult = LoadedSkillBody | { refused: true } | undefined;
 
 /**
- * The audience this service reads skills as. The agents service IS the design
+ * The audience this service reads skills as. The design agent IS the design
  * agent — the coding agent runs in the remote-worker runner and never calls
  * here — so the audience is a property of the process, not of a request.
  */

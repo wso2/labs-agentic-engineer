@@ -1,0 +1,80 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "events",
+      "component": "events-api",
+      "description": "Events, rooms and sessions",
+      "actions": [
+        { "handle": "manage", "description": "Create and edit every event, room and session" }
+      ]
+    },
+    {
+      "resource": "proposals",
+      "component": "events-api",
+      "description": "Talk proposals, scoring and decisions",
+      "actions": [
+        { "handle": "submit", "description": "Submit a proposal as the caller" },
+        { "handle": "read", "description": "The caller's own proposals" },
+        { "handle": "read-all", "description": "Every proposal of an event with its scores" },
+        { "handle": "review", "description": "Score any proposal" },
+        { "handle": "decide", "description": "Accept or reject any proposal and schedule it" }
+      ]
+    },
+    {
+      "resource": "registrations",
+      "component": "events-api",
+      "description": "Event and session registrations",
+      "actions": [
+        { "handle": "register", "description": "Register the caller for an event or session" },
+        { "handle": "read", "description": "The caller's own registrations" },
+        { "handle": "cancel", "description": "Cancel the caller's own registration" },
+        { "handle": "read-all", "description": "Every registration and waitlist of a session" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "Conference Organizers", "description": "People who run conferences" },
+    { "name": "Conference Speakers", "description": "People who submit talks" },
+    { "name": "Conference Reviewers", "description": "People who score proposals" },
+    { "name": "Conference Attendees", "description": "People who attend conferences" }
+  ],
+  "roles": [
+    {
+      "name": "Organizer",
+      "description": "Builds events, decides proposals and watches registrations.",
+      "stories": [1, 2, 3, 7, 8, 15],
+      "grants": ["events:manage", "proposals:read-all", "proposals:decide", "registrations:read-all"],
+      "assignTo": ["Conference Organizers"]
+    },
+    {
+      "name": "Speaker",
+      "description": "Submits talk proposals and follows their outcome.",
+      "stories": [4, 5],
+      "grants": ["proposals:submit", "proposals:read"],
+      "assignTo": ["Conference Speakers"]
+    },
+    {
+      "name": "Reviewer",
+      "description": "Reads and scores proposals.",
+      "stories": [6],
+      "grants": ["proposals:read-all", "proposals:review"],
+      "assignTo": ["Conference Reviewers"]
+    },
+    {
+      "name": "Attendee",
+      "description": "Browses, registers, joins waitlists and cancels.",
+      "stories": [9, 10, 11, 12, 13, 14],
+      "grants": ["registrations:register", "registrations:read", "registrations:cancel"],
+      "assignTo": ["Conference Attendees"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-organizer", "roles": ["Organizer"] },
+    { "username": "test-speaker", "roles": ["Speaker"] },
+    { "username": "test-speaker-2", "roles": ["Speaker"] },
+    { "username": "test-reviewer", "roles": ["Reviewer"] },
+    { "username": "test-attendee", "roles": ["Attendee"] },
+    { "username": "test-attendee-2", "roles": ["Attendee"] }
+  ]
+}

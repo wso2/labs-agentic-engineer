@@ -131,6 +131,7 @@ func TestModelRatesSeed_NeverClobbersAnOpsRow_DB(t *testing.T) {
 		{"api.anthropic.com", "claude-haiku-4-5", 1, 5}, // re-seeded beside the other host's row
 		{"openrouter.ai", "claude-haiku-4-5", 7, 70},    // untouched
 		{"api.anthropic.com", "claude-sonnet-5", 3, 15}, // the ops override survives
+		{"api.anthropic.com", "claude-sonnet-5-5", 2, 10},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("model_rates = %+v, want %+v", got, want)

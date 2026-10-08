@@ -21,95 +21,55 @@ import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
 import type { components } from "../../../generated/aep-api";
 
+// One component build's log, read through the server's cursor, copied from
+// the old console (features/builds/hooks/useBuildLog.ts). A finished build
+// answers complete on the first read; a running one answers incomplete, and
+// each later read starts from the cursor the last one returned. Read only
+// while its row is open, so a page of closed logs costs nothing.
+
 type BuildLogEntry = components["schemas"]["BuildLogEntry"];
 
-/** How often a still-running build's log is re-read from its cursor. */
 const TAIL_POLL_MS = 2_000;
 
 export interface BuildLogState {
   entries: BuildLogEntry[];
-  /** True once the build is terminal and the log will not grow again. */
+  /** The build is over and the log will not grow. */
   complete: boolean;
-  /** True while a read is in flight and nothing has arrived yet. */
   loading: boolean;
   error: string | undefined;
 }
 
-/**
- * One build's log, read through the server's cursor.
- *
- * The same code path serves a live build and a finished one — that is the whole
- * point of a cursor rather than a stream. A terminal build answers complete on
- * the first read and is never asked again; a running build answers incomplete,
- * and each subsequent read starts from the previous response's `nextCursor` and
- * appends. A complete response carrying nothing is the honest "no log retained"
- * answer, and the caller renders it as such rather than as an error.
- *
- * Reads only while `open`, because a log is opened on demand: a page with four
- * collapsed builds must cost nothing.
- */
-export function useBuildLog(
-  projectName: string,
-  componentName: string,
-  buildName: string,
-  open: boolean,
-): BuildLogState {
-  const [state, setState] = useState<BuildLogState>({
-    entries: [],
-    complete: false,
-    loading: false,
-    error: undefined,
-  });
-  // The cursor lives in a ref, not state: advancing it must not itself trigger
-  // a render, and the poll effect must never re-run just because it moved.
+export function useBuildLog(projectName: string, componentName: string, buildName: string): BuildLogState {
+  const [state, setState] = useState<BuildLogState>({ entries: [], complete: false, loading: true, error: undefined });
   const cursor = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    if (!open) return;
-
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-
-    // A different build behind the same drawer starts a fresh log.
     cursor.current = undefined;
     setState({ entries: [], complete: false, loading: true, error: undefined });
 
     const read = async () => {
-      const { data, error } = await client.GET(
-        "/projects/{projectName}/components/{componentName}/builds/{buildName}/logs",
-        {
-          params: {
-            path: { projectName, componentName, buildName },
-            query: cursor.current ? { since: cursor.current } : {},
-          },
+      const { data, error } = await client.GET("/projects/{projectName}/components/{componentName}/builds/{buildName}/logs", {
+        params: {
+          path: { projectName, componentName, buildName },
+          query: cursor.current ? { since: cursor.current } : {},
         },
-      );
+      });
       if (cancelled) return;
-
       if (error || data === undefined) {
-        setState((prev) => ({
-          ...prev,
-          loading: false,
-          error: apiErrorMessage(error, "Failed to load the build log"),
-        }));
-        return; // Stop polling: a failing read will keep failing.
+        // A failing read keeps failing: stop rather than poll it.
+        setState((prev) => ({ ...prev, loading: false, error: apiErrorMessage(error, "Failed to load the build log") }));
+        return;
       }
-
-      // Only advance on a cursor the server actually returned — a page with no
-      // timestamped entry leaves the previous cursor standing rather than
-      // rewinding to the start of the log.
       if (data.nextCursor) cursor.current = data.nextCursor;
-
       setState((prev) => ({
         entries: [...prev.entries, ...(data.logs ?? [])],
         complete: data.complete,
         loading: false,
         error: undefined,
       }));
-
-      if (!data.complete) {
-        timer = setTimeout(() => void read(), TAIL_POLL_MS);
-      }
+      if (!data.complete) timer = setTimeout(() => void read(), TAIL_POLL_MS);
     };
 
     void read();
@@ -117,7 +77,7 @@ export function useBuildLog(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [projectName, componentName, buildName, open]);
+  }, [projectName, componentName, buildName]);
 
   return state;
 }

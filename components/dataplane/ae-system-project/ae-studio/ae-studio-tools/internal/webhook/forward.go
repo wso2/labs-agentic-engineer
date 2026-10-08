@@ -56,7 +56,7 @@ type ingester interface {
 }
 
 // Forwarder hands a verified delivery to aep-api's ingest-webhook-event
-// (ADR-0043), synchronously: there is no buffer in the pod. GitHub
+// (ADR-0048), synchronously: there is no buffer in the pod. GitHub
 // does not redeliver by itself: a 503 marks the delivery failed, and it is
 // redelivered only by hand (or by an API call), so what aep-api did not take
 // waits there.

@@ -16,59 +16,62 @@
 
 package auth
 
-// SREHandoffVerifier closes the credential gap the SRE-agent handoff design
-// left open (docs/design/draft/2026-09-17-sre-agent-extensions-handoff.md §7):
-// aep-mcp-server forwards the OpenChoreo SRE agent's bearer straight through
-// to aep-api, but that bearer can never be a normal Thunder user/service JWT —
-// the generic OC extensions loader (agents/sre-agent/src/extensions/config.py)
-// resolves an MCP server's `headers` from `${VAR}` ONCE at process start and
-// never refreshes them, so a short-lived Thunder OAuth token would expire mid
-// pod-lifetime. This is a dedicated, long-lived, narrowly-scoped shared
-// secret instead — the S2S analogue of PublisherTokenVerifier/RunnerAuthorizer,
-// not a widening of the Thunder JWT verifier.
+// SREHandoffVerifier authenticates the OpenChoreo SRE agent on aep-api's SRE
+// handoff MCP surface. The agent cannot present a Thunder JWT: its extensions
+// loader (agents/sre-agent/src/extensions/config.py) resolves an MCP server's
+// `headers` from `${VAR}` once at process start and never refreshes them, so
+// a short-lived token would expire mid pod-lifetime. The credential is
+// instead one long-lived random key that `aectl sre install` generates and
+// writes into both aep-api's Secret and the agent's. One observability plane
+// runs one SRE agent with one static header, so one key is all it can carry.
+// The key authenticates the agent, not an org: each tool call names its org,
+// and the tools verify that claim against the observer's recorded alerts.
 //
-// Disabled by default (secure default): both Secret and Org must be
-// configured, or every presented bearer is rejected and every
-// /internal/v1/sre/… op answers 401 (the internal gate in edge/internal.go).
-// No other route accepts this credential.
+// It guards exactly one mount, the SRE handoff MCP surface, and is never a
+// substitute for Thunder JWT verification anywhere else.
 
-import "crypto/subtle"
+import (
+	"crypto/subtle"
+	"log/slog"
+	"net/http"
+)
 
-// SREHandoffVerifier verifies aep-mcp-server's forwarded SRE-handoff bearer
-// and resolves the one org it is scoped to. One verifier instance is scoped
-// to exactly one org, matching today's one-install-per-org deployment model
-// (aectl sre install, docker-compose) — see the type's doc comment.
+// SREHandoffVerifier checks the SRE agent's bearer against the install-time
+// handoff key.
 type SREHandoffVerifier struct {
-	secret string
-	org    string
+	token []byte
 }
 
-// NewSREHandoffVerifier builds a verifier bound to org. Returns nil when
-// secret or org is empty, so an unconfigured deployment leaves the SRE
-// handoff shortcut entirely absent rather than failing open.
-func NewSREHandoffVerifier(secret, org string) *SREHandoffVerifier {
-	if secret == "" || org == "" {
+// NewSREHandoffVerifier returns a verifier for token, or nil when token is
+// empty: an installation without the SRE handoff has no surface to guard.
+func NewSREHandoffVerifier(token string) *SREHandoffVerifier {
+	if token == "" {
 		return nil
 	}
-	return &SREHandoffVerifier{secret: secret, org: org}
+	return &SREHandoffVerifier{token: []byte(token)}
 }
 
-// Verify checks bearer (the raw `Authorization` header value, e.g.
-// "Bearer <token>") against the configured secret in constant time and
-// returns synthetic Claims carrying the bound org on success. The edge's sre/
-// gate stamps them with auth.WithClaims and binds their org as the request's
-// tenant.
-func (v *SREHandoffVerifier) Verify(bearer string) (*Claims, bool) {
+// Verify reports whether bearer (the raw `Authorization` header value) is
+// "Bearer <key>", comparing the key in constant time. A nil verifier rejects.
+func (v *SREHandoffVerifier) Verify(bearer string) bool {
 	if v == nil {
-		return nil, false
+		return false
 	}
 	const prefix = "Bearer "
 	if len(bearer) <= len(prefix) || bearer[:len(prefix)] != prefix {
-		return nil, false
+		return false
 	}
-	token := bearer[len(prefix):]
-	if subtle.ConstantTimeCompare([]byte(token), []byte(v.secret)) != 1 {
-		return nil, false
-	}
-	return &Claims{Subject: "sre-handoff", ClientID: "aep-mcp-server", OuHandle: v.org}, true
+	return subtle.ConstantTimeCompare([]byte(bearer[len(prefix):]), v.token) == 1
+}
+
+// Middleware answers 401 unless the request carries the handoff key.
+func (v *SREHandoffVerifier) Middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !v.Verify(r.Header.Get("Authorization")) {
+			slog.WarnContext(r.Context(), "sre handoff auth rejected")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

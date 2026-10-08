@@ -11,7 +11,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -27,7 +26,6 @@ import (
 const (
 	AeStudioCCScopes  aeStudioCCContextKey  = "aeStudioCC.Scopes"
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
-	SreHandoffScopes  sreHandoffContextKey  = "sreHandoff.Scopes"
 )
 
 // Defines values for AEStudioTurnRecordKind.
@@ -114,27 +112,6 @@ func (e AEStudioWebhookEventResultResult) Valid() bool {
 	}
 }
 
-// Defines values for IssueInfoAttentionReason.
-const (
-	IssueInfoAttentionReasonEscalated       IssueInfoAttentionReason = "escalated"
-	IssueInfoAttentionReasonNoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
-	IssueInfoAttentionReasonUnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
-)
-
-// Valid indicates whether the value is a known member of the IssueInfoAttentionReason enum.
-func (e IssueInfoAttentionReason) Valid() bool {
-	switch e {
-	case IssueInfoAttentionReasonEscalated:
-		return true
-	case IssueInfoAttentionReasonNoChangeVerdict:
-		return true
-	case IssueInfoAttentionReasonUnverifiedFix:
-		return true
-	default:
-		return false
-	}
-}
-
 // AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
 type AEStudioCompletedDependency struct {
 	Definition string         `json:"definition"`
@@ -182,19 +159,26 @@ type AEStudioTurnRecord struct {
 	Author *AEStudioTurnRecordAuthor `json:"author,omitempty"`
 
 	// BaseRef The repo snapshot sha the turn read.
-	BaseRef             string                 `json:"baseRef"`
-	CacheCreationTokens int64                  `json:"cacheCreationTokens"`
-	CacheReadTokens     int64                  `json:"cacheReadTokens"`
-	Code                string                 `json:"code,omitempty"`
-	ContextTokens       int64                  `json:"contextTokens,omitempty"`
-	ConversationID      openapi_types.UUID     `json:"conversationId"`
-	FinishedAt          time.Time              `json:"finishedAt"`
-	Flow                string                 `json:"flow"`
-	InputTokens         int64                  `json:"inputTokens"`
-	Kind                AEStudioTurnRecordKind `json:"kind"`
-	Model               string                 `json:"model"`
-	ModelHost           string                 `json:"modelHost"`
-	OutputTokens        int64                  `json:"outputTokens"`
+	BaseRef             string             `json:"baseRef"`
+	CacheCreationTokens int64              `json:"cacheCreationTokens"`
+	CacheReadTokens     int64              `json:"cacheReadTokens"`
+	Code                string             `json:"code,omitempty"`
+	ContextTokens       int64              `json:"contextTokens,omitempty"`
+	ConversationID      openapi_types.UUID `json:"conversationId"`
+
+	// DesignFeatures The features a `design` turn designed, as the `/design F1 F2`
+	// line named them. Absent or empty means every feature designable
+	// at baseRef (a bare `/design`). Send it only on a `design` turn:
+	// on any other flow it is ignored, not refused, so one record never
+	// costs the batch. The ledger stores the IDs only, never the line.
+	DesignFeatures []string               `json:"designFeatures,omitempty"`
+	FinishedAt     time.Time              `json:"finishedAt"`
+	Flow           string                 `json:"flow"`
+	InputTokens    int64                  `json:"inputTokens"`
+	Kind           AEStudioTurnRecordKind `json:"kind"`
+	Model          string                 `json:"model"`
+	ModelHost      string                 `json:"modelHost"`
+	OutputTokens   int64                  `json:"outputTokens"`
 
 	// Project Absent on a marketplace turn.
 	Project string                   `json:"project,omitempty"`
@@ -254,39 +238,6 @@ type ComponentEndpoint struct {
 	URL       string `json:"url"`
 }
 
-// CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. componentName and actionStatuses carry the SRE incident handoff context; they do not declare issue-create outcomes.
-type CreateIssueRequest struct {
-	// ActionStatuses Ordered per-action statuses from the incident handoff. A null entry is meaningful and preserves the action's position when it has no status.
-	ActionStatuses []*string `json:"actionStatuses,omitempty"`
-	Body           string    `json:"body"`
-
-	// ComponentName Component affected by the incident.
-	ComponentName string   `json:"componentName,omitempty"`
-	DedupeKey     string   `json:"dedupeKey,omitempty"`
-	Labels        []string `json:"labels,omitempty"`
-	Title         string   `json:"title"`
-}
-
-// CreateRcaAgentReportRequest Write-side request for a new RCA-agent alert report (issue
-type CreateRcaAgentReportRequest struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
-	Classification string     `json:"classification"`
-	Component      string     `json:"component,omitempty"`
-	Deployed       bool       `json:"deployed,omitempty"`
-	DeployedAt     *time.Time `json:"deployedAt,omitempty"`
-
-	// Diagnosis Full RCA diagnosis + remediation content (markdown)
-	Diagnosis    string `json:"diagnosis"`
-	Dispatched   bool   `json:"dispatched,omitempty"`
-	IssueExcerpt string `json:"issueExcerpt,omitempty"`
-	IssueNumber  *int64 `json:"issueNumber,omitempty"`
-	IssueTitle   string `json:"issueTitle,omitempty"`
-	IssueURL     string `json:"issueUrl,omitempty"`
-	Project      string `json:"project"`
-	Summary      string `json:"summary"`
-	Title        string `json:"title"`
-}
-
 // Error Flat error envelope returned by every non-2xx response.
 type Error struct {
 	// Code Machine-readable error code (stable slug).
@@ -305,82 +256,6 @@ type ErrorDetail struct {
 	Message string `json:"message"`
 }
 
-// IssueInfo One issue from list/search. Field names are CAPITALIZED on the wire (historical shape the deployed aep-mcp-server parses — do not "fix" without a coordinated MCP-server release).
-type IssueInfo struct {
-	Body   string   `json:"Body"`
-	Labels []string `json:"Labels"`
-	Number int64    `json:"Number"`
-	State  string   `json:"State"`
-
-	// StateReason Provider-supplied reason for the issue state, when available.
-	StateReason string `json:"StateReason,omitempty"`
-	Title       string `json:"Title"`
-	URL         string `json:"URL"`
-
-	// AttentionReason Console attention state. Omitted when the issue needs no attention.
-	AttentionReason IssueInfoAttentionReason `json:"attentionReason,omitempty"`
-}
-
-// IssueInfoAttentionReason Console attention state. Omitted when the issue needs no attention.
-type IssueInfoAttentionReason string
-
-// IssueResult Server-derived issue-create outcome. deduped=true means an open issue with the same dedupeKey already existed — number/url refer to it. Callers never supply classification, suppression, reopening, adoption, or recurrence outcomes.
-type IssueResult struct {
-	// Adopted True when the server adopted the incident into an existing issue.
-	Adopted bool `json:"adopted,omitempty"`
-
-	// AdoptionError Server-derived reason adoption did not complete, when present.
-	AdoptionError string `json:"adoptionError,omitempty"`
-
-	// Classification Server-derived incident classification.
-	Classification string `json:"classification,omitempty"`
-	Deduped        bool   `json:"deduped,omitempty"`
-	NodeID         string `json:"nodeId"`
-	Number         int64  `json:"number"`
-
-	// RecurrenceCount Server-derived count of recorded recurrences for this incident.
-	RecurrenceCount int64 `json:"recurrenceCount,omitempty"`
-
-	// Reopened True when the server reopened a matching closed issue.
-	Reopened bool `json:"reopened,omitempty"`
-
-	// Suppressed True when the server suppressed creation for this incident.
-	Suppressed bool   `json:"suppressed,omitempty"`
-	URL        string `json:"url"`
-}
-
-// RcaAgentReport An RCA report from the OpenChoreo SRE/RCA-agent handoff (console issues
-type RcaAgentReport struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
-	Classification string    `json:"classification"`
-	Component      string    `json:"component,omitempty"`
-	CreatedAt      time.Time `json:"createdAt"`
-
-	// Deployed Whether the resulting fix has been deployed (Verify Fix threshold, not merely PR-merged)
-	Deployed   bool       `json:"deployed"`
-	DeployedAt *time.Time `json:"deployedAt,omitempty"`
-
-	// Diagnosis Full RCA diagnosis + remediation content (markdown)
-	Diagnosis string `json:"diagnosis"`
-
-	// Dispatched Whether the coding agent has been dispatched for the linked issue (false in issue-only/manual-dispatch mode until a human dispatches)
-	Dispatched bool   `json:"dispatched"`
-	ID         string `json:"id"`
-
-	// IssueExcerpt Short excerpt of the linked GitHub issue; absent when no issue was created
-	IssueExcerpt string `json:"issueExcerpt,omitempty"`
-
-	// IssueNumber GitHub issue number created by the handoff; also the Task key (see /projects/{projectName}/tasks/{issueNumber}); absent when the handoff was config-only
-	IssueNumber *int64 `json:"issueNumber,omitempty"`
-	IssueTitle  string `json:"issueTitle,omitempty"`
-	IssueURL    string `json:"issueUrl,omitempty"`
-	Project     string `json:"project"`
-
-	// Summary Short RCA summary; the console truncates this further for list rows
-	Summary string `json:"summary"`
-	Title   string `json:"title"`
-}
-
 // ValidationContextResponse The deployed endpoints a validation run drives. Generated as igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf, so the edge's internal handler projects the delivery domain's own struct onto this wire shape (the same decoupling as every wire projection here).
 // It carries no oracle path; the runner already knows where the oracle is.
 type ValidationContextResponse struct {
@@ -393,8 +268,8 @@ type aeStudioCCContextKey string
 // publisherCCContextKey is the context key for publisherCC security scheme
 type publisherCCContextKey string
 
-// sreHandoffContextKey is the context key for sreHandoff security scheme
-type sreHandoffContextKey string
+// sreHandoffKeyContextKey is the context key for sreHandoffKey security scheme
+type sreHandoffKeyContextKey string
 
 // IngestWebhookEventParams defines parameters for IngestWebhookEvent.
 type IngestWebhookEventParams struct {
@@ -405,15 +280,6 @@ type IngestWebhookEventParams struct {
 	XGitHubEvent string `json:"X-GitHub-Event"`
 }
 
-// SreListIssuesParams defines parameters for SreListIssues.
-type SreListIssuesParams struct {
-	// Labels Comma-separated GitHub labels to filter by
-	Labels string `form:"labels,omitempty" json:"labels,omitempty"`
-
-	// Q Keyword search over issue title/body, ranked by distinct-term overlap (title weighted double), capped at 25. Recall-biased — used to surface related issues before filing a new one.
-	Q string `form:"q,omitempty" json:"q,omitempty"`
-}
-
 // CompleteAeStudioDependenciesJSONRequestBody defines body for CompleteAeStudioDependencies for application/json ContentType.
 type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletionsRequest
 
@@ -422,12 +288,6 @@ type RecordTurnUsageJSONRequestBody = AEStudioTurnUsageRequest
 
 // IngestWebhookEventJSONRequestBody defines body for IngestWebhookEvent for application/json ContentType.
 type IngestWebhookEventJSONRequestBody = AEStudioWebhookEvent
-
-// SreCreateIssueJSONRequestBody defines body for SreCreateIssue for application/json ContentType.
-type SreCreateIssueJSONRequestBody = CreateIssueRequest
-
-// SreCreateRcaReportJSONRequestBody defines body for SreCreateRcaReport for application/json ContentType.
-type SreCreateRcaReportJSONRequestBody = CreateRcaAgentReportRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
@@ -449,15 +309,6 @@ type ServerInterface interface {
 	// Fetch a validation run's deployed endpoints (runner callback)
 	// (GET /runs/{cycleId}/validation-context)
 	RunnerValidationContext(w http.ResponseWriter, r *http.Request, cycleID string)
-	// List/search GitHub issues on a project's repo (SRE handoff)
-	// (GET /sre/projects/{projectName}/issues)
-	SreListIssues(w http.ResponseWriter, r *http.Request, projectName string, params SreListIssuesParams)
-	// Create a GitHub issue on a project's repo (SRE handoff)
-	// (POST /sre/projects/{projectName}/issues)
-	SreCreateIssue(w http.ResponseWriter, r *http.Request, projectName string)
-	// Record a new RCA-agent alert report (SRE handoff)
-	// (POST /sre/rca-reports)
-	SreCreateRcaReport(w http.ResponseWriter, r *http.Request)
 }
 
 // ServerInterfaceWrapper converts contexts to parameters.
@@ -667,119 +518,6 @@ func (siw *ServerInterfaceWrapper) RunnerValidationContext(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
-// SreListIssues operation middleware
-func (siw *ServerInterfaceWrapper) SreListIssues(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "projectName" -------------
-	var projectName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "projectName", r.PathValue("projectName"), &projectName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, SreHandoffScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	// Parameter object where we will unmarshal all parameters from the context
-	var params SreListIssuesParams
-
-	// ------------- Optional query parameter "labels" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "labels", r.URL.Query(), &params.Labels, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "labels"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "labels", Err: err})
-		}
-		return
-	}
-
-	// ------------- Optional query parameter "q" -------------
-
-	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
-	if err != nil {
-		var requiredError *runtime.RequiredParameterError
-		if errors.As(err, &requiredError) {
-			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
-		} else {
-			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
-		}
-		return
-	}
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SreListIssues(w, r, projectName, params)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SreCreateIssue operation middleware
-func (siw *ServerInterfaceWrapper) SreCreateIssue(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "projectName" -------------
-	var projectName string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "projectName", r.PathValue("projectName"), &projectName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectName", Err: err})
-		return
-	}
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, SreHandoffScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SreCreateIssue(w, r, projectName)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// SreCreateRcaReport operation middleware
-func (siw *ServerInterfaceWrapper) SreCreateRcaReport(w http.ResponseWriter, r *http.Request) {
-
-	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, SreHandoffScopes, []string{})
-
-	r = r.WithContext(ctx)
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.SreCreateRcaReport(w, r)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -906,9 +644,6 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/turn-usage", wrapper.RecordTurnUsage)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/webhook-events", wrapper.IngestWebhookEvent)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/runs/{cycleId}/validation-context", wrapper.RunnerValidationContext)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sre/projects/{projectName}/issues", wrapper.SreListIssues)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sre/projects/{projectName}/issues", wrapper.SreCreateIssue)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sre/rca-reports", wrapper.SreCreateRcaReport)
 
 	return m
 }
@@ -1197,125 +932,6 @@ func (response RunnerValidationContextdefaultJSONResponse) VisitRunnerValidation
 	return err
 }
 
-type SreListIssuesRequestObject struct {
-	ProjectName string `json:"projectName"`
-	Params      SreListIssuesParams
-}
-
-type SreListIssuesResponseObject interface {
-	VisitSreListIssuesResponse(w http.ResponseWriter) error
-}
-
-type SreListIssues200JSONResponse []IssueInfo
-
-func (response SreListIssues200JSONResponse) VisitSreListIssuesResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SreListIssuesdefaultJSONResponse struct {
-	Body       Error
-	StatusCode int
-}
-
-func (response SreListIssuesdefaultJSONResponse) VisitSreListIssuesResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SreCreateIssueRequestObject struct {
-	ProjectName string `json:"projectName"`
-	Body        *SreCreateIssueJSONRequestBody
-}
-
-type SreCreateIssueResponseObject interface {
-	VisitSreCreateIssueResponse(w http.ResponseWriter) error
-}
-
-type SreCreateIssue200JSONResponse IssueResult
-
-func (response SreCreateIssue200JSONResponse) VisitSreCreateIssueResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SreCreateIssuedefaultJSONResponse struct {
-	Body       Error
-	StatusCode int
-}
-
-func (response SreCreateIssuedefaultJSONResponse) VisitSreCreateIssueResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SreCreateRcaReportRequestObject struct {
-	Body *SreCreateRcaReportJSONRequestBody
-}
-
-type SreCreateRcaReportResponseObject interface {
-	VisitSreCreateRcaReportResponse(w http.ResponseWriter) error
-}
-
-type SreCreateRcaReport201JSONResponse RcaAgentReport
-
-func (response SreCreateRcaReport201JSONResponse) VisitSreCreateRcaReportResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(201)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
-type SreCreateRcaReportdefaultJSONResponse struct {
-	Body       Error
-	StatusCode int
-}
-
-func (response SreCreateRcaReportdefaultJSONResponse) VisitSreCreateRcaReportResponse(w http.ResponseWriter) error {
-
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(response.StatusCode)
-	_, err := buf.WriteTo(w)
-	return err
-}
-
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
 	// Complete dependency stubs from a save (AE Studio tools pod)
@@ -1336,15 +952,6 @@ type StrictServerInterface interface {
 	// Fetch a validation run's deployed endpoints (runner callback)
 	// (GET /runs/{cycleId}/validation-context)
 	RunnerValidationContext(ctx context.Context, request RunnerValidationContextRequestObject) (RunnerValidationContextResponseObject, error)
-	// List/search GitHub issues on a project's repo (SRE handoff)
-	// (GET /sre/projects/{projectName}/issues)
-	SreListIssues(ctx context.Context, request SreListIssuesRequestObject) (SreListIssuesResponseObject, error)
-	// Create a GitHub issue on a project's repo (SRE handoff)
-	// (POST /sre/projects/{projectName}/issues)
-	SreCreateIssue(ctx context.Context, request SreCreateIssueRequestObject) (SreCreateIssueResponseObject, error)
-	// Record a new RCA-agent alert report (SRE handoff)
-	// (POST /sre/rca-reports)
-	SreCreateRcaReport(ctx context.Context, request SreCreateRcaReportRequestObject) (SreCreateRcaReportResponseObject, error)
 }
 
 type StrictHandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error)
@@ -1547,201 +1154,87 @@ func (sh *strictHandler) RunnerValidationContext(w http.ResponseWriter, r *http.
 	}
 }
 
-// SreListIssues operation middleware
-func (sh *strictHandler) SreListIssues(w http.ResponseWriter, r *http.Request, projectName string, params SreListIssuesParams) {
-	var request SreListIssuesRequestObject
-
-	request.ProjectName = projectName
-	request.Params = params
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SreListIssues(ctx, request.(SreListIssuesRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SreListIssues")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SreListIssuesResponseObject); ok {
-		if err := validResponse.VisitSreListIssuesResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// SreCreateIssue operation middleware
-func (sh *strictHandler) SreCreateIssue(w http.ResponseWriter, r *http.Request, projectName string) {
-	var request SreCreateIssueRequestObject
-
-	request.ProjectName = projectName
-
-	var body SreCreateIssueJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SreCreateIssue(ctx, request.(SreCreateIssueRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SreCreateIssue")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SreCreateIssueResponseObject); ok {
-		if err := validResponse.VisitSreCreateIssueResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
-// SreCreateRcaReport operation middleware
-func (sh *strictHandler) SreCreateRcaReport(w http.ResponseWriter, r *http.Request) {
-	var request SreCreateRcaReportRequestObject
-
-	var body SreCreateRcaReportJSONRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
-		return
-	}
-	request.Body = &body
-
-	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.SreCreateRcaReport(ctx, request.(SreCreateRcaReportRequestObject))
-	}
-	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "SreCreateRcaReport")
-	}
-
-	response, err := handler(r.Context(), w, r, request)
-
-	if err != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(SreCreateRcaReportResponseObject); ok {
-		if err := validResponse.VisitSreCreateRcaReportResponse(w); err != nil {
-			sh.options.ResponseErrorHandlerFunc(w, r, err)
-		}
-	} else if response != nil {
-		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
-	}
-}
-
 // Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
 // Stored as a slice of fixed-width chunks rather than one concatenated
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"1HztcuO4cvatdOk9VSO9IWXv7JytxFOplNfjOevsx0zZs2dTWU1GENmSsCYBLgBa1plyVS4iV5grSXUD",
-	"ICmJsi3v1+wvWyIINIDuB083uvVxkOmy0gqVs4OTjwObLbEU/O/p+ZWrc6nPdFkV6DB/hRWqHFW2psci",
-	"z6WTWonirdEVGifRDk7morCYDHK0mZEVPR+cDN4ohCz2AtbVszFMc5xLxT1MwWBViAwtuCXy82cW8ma0",
-	"8U9WK8i0cqjcS5jOZYF2CoVQOczQyhxBOpDKvy1KHqyUbjxIBlVHto+Ddkz65NYVDk4G1hmpFoO7ZMAd",
-	"0xPpsOR//mJwPjgZ/L+jdpWOwhIdxfV5LQukt0N3whixps+VcEs/aHct3u2fIb2QgLBgUbHwWwLeJQOD",
-	"P9fSYD44+dH3n3TnFGfwvnlVz37CzJE0Udp2E8O+Sq3sgfsZ52BBYJWKSra7mwDtCm3EShgl1cLCXBvA",
-	"GzRrfoe2yuk6W2IOw1YptAGl3Wh3y5omB+9Ln972bFOU8+D+f/Av7va5tU/tDDqDHbxFl/hzjdY9Yada",
-	"NfMbsDLSoQU9B63IXm4QnAYBldEkye4WhAf9uhweBtu7QZC842O4cFDW1sEMC60WNAQ1cfoa1TML2iwS",
-	"wMIivDh+AcPGcoWyKzRkBEJBra6VXqk4htcO4RwaGv2/fhTpP47Tf3k/DP+k7z8eJ198dhe/H/3bX3aN",
-	"KBn4+e/O5tRBqa2DL1545U5gpmuVSxJ+iaBrx5/B4EJaZ9ZgUOSW9X2OLlvSmhLQiaKATCjIRG2RRH4S",
-	"mpTi9sK/98WLZFBKFT599oC2xc1q5nmfpvFgh2nUKYG1Tg0WwskbBEIcRi5eCOksfP/udfrPEa77DJof",
-	"9AJwhMxHAV/s6L4JvvWrcYmVttJpsz54tmE9n1n4m3Rf1TOevu+LsZpU4/Qc/HDgtC4sVDqHrNAKLfSd",
-	"Qvzoe1P0LkGOc1EX7ksjVLbsbaFXCs2u+gbx+CkMa4uGQFWbhVDyH4IajcjmSV6awrjPNOjB3p7biYMS",
-	"JT58QHlBQ6/bM0vaZbhvA9/VRl1ipk3+BM5BB6Olg8bVRjW7VWC+QAPWaeM3CC5yLCtNygRaceOLfHfb",
-	"RO2W2jzWjlvBT/17yeA2XeiUZpraa1mluvJTSSstlaMt5YncJYOZsHhJQ/QBLq0mWCUqu9QO7FJ4XK2N",
-	"YkDq3ddMZEs8M8hq8I4gmGc016YUbnAykMp98aJ9kcRZoGnevESRH/aWzrFXd9lmb92BnakbNJZlv8g3",
-	"XqprmffNN278qdtonguHqZMl9r5T6FWvzFJV9WESX0vFcqKqSzKEmdEry6ZwLbNrPZ+TbhVCdTS/Ha7U",
-	"OfZDAz/5Stt+7NS1O1TOvQf76cwGYxBQCnONjvk5a9ke4BDWk+o4Z7FA5VI0hlXfOoOiTHPJLMgua5fr",
-	"FRFW1nwlit6lsNeyKOxeS3hjFuCbHGoP1gnjDlMP64SrbXeGXV43F7LAvHcSHk4eobZb6Bne29H/oF5B",
-	"YRvBWtTorlt3qhtmEfWsq1Wbqr6lUbtQ0A8rjwPz0wZL74X0TQCWea/i02H0MGngFeemD0n4vRULfDrd",
-	"NjxB5tcb54/dPVFC04M9j86huMEUPzs+PoQqxuHvW5Do5BxKm5RW6Vw4UZBbh4QkxI2ZJw4jgU4zXUly",
-	"GZsvSmlt52OtDIpsKWYFJkTEbmSOJs11VpcELp51532PaiVuhCzozV6fcs/xVKKlzf81uGlOKBL7u3eF",
-	"cbbU+vr8JpDi7ZUM7Gvlm0El1oUWeQJ4KzJXrInVhCaM2cRnXmFWCCI3Sk9UO3Xig4GE2QSshhtRyJyN",
-	"FxR56GAwOIfSeUde2olaoEIjyEkXFn6yWo0vxepbPzPqheB2KVReoIEFOk+yZmvqxjOu9UQJY+QNdsE4",
-	"LESHFQ1OBlu971umS7R1caht/rAU5Ixm5GXqObmXUi3Q0rxyLOQNmnWfhcaRIurn0laC9W6QDJZY0J+8",
-	"rgqZCYc9B8COzXGHfQpxFg3+XOVMCQ+ExwYwetW37vU3ekIVvgv/Qq+YhPd4YW39RJDkV8Fp7zpqH7Zr",
-	"3Sx2TiDHvK7wa1xDKa7RQhZOGZAtV6/IxalQgeQeh4WYYZGiIuPLRwkHnjKtstoYai4KNC5qqh1DM9nv",
-	"fOAhB5HREFd8oNKYwpg1S3d1eQ5SZTKnfqgHPZ9D4LIvWcUh14R0kHvT8yKlLDWHDjJdYs8JsDnirvm/",
-	"MTkazGmqqW8LNoo3N7pk6bYlG8MpqLooAJUza5AWShSE4vO64HlWBi2amxBv9f0+I7fV8h7CakmLSv0R",
-	"hIQRNyIZ1D2B6+DEmRp7WM+eBk3Ubabz9R4PobMruwvSGAmI+Rwzst7ZemMVeglfo069Y7LibB7DB0/I",
-	"SVc8gob4ZmH++83rMhOnC0a6Shv3NDv7gaA85fC48R2wRQhQuILLs9OUKXowC8MDwZD1tidiIayVc8K4",
-	"EDvfHIosLi3wBouEzGIuF/FTKW/phObwrkL43//+H7Do4p5FU2JJeh3XezEtx6rQa+zSwpnWBQrVfXoP",
-	"y79fjTfPpv9P74zf0YvUuRQLpa3ssdnXZHqXZ6fQtIF/AoMl5tJDWAhcwZBcK/KDRr0q2x40vdPjnTq/",
-	"zdBU/avDDb6ry5mPFu34g3smH/3Drdn7t2K37/Zoe3i8L7jVcTh3Hay6LIXpN9BHGlcb+4xmFjtNtlW4",
-	"u4N9ZnjOjuthBve6EA7Y4wVUN1joiiyPuL9HKX8JQsz4+e0tGLSVVj5C3E9PN3v/VmRLqTAlp5a2LYxE",
-	"jWFoHX9li3ox2gOATsiiT1slFrm3VgiNGCY63JAHso+OZPPSveKu+u5bOhx7U5Kv6lKo7emF1g8HGx/B",
-	"uLuCHUat5rRIB3oMW/L5Lu4XkJnRhZrrJ8Q6PQdiTlBI644sCpMtx8D7ywFbC0RMzk7fXrw7/ebiP89f",
-	"Re61kgZhuJTWaSMzUYBdigr5UcRQvugrsypl3mCgEoYoCMF5ID6TwVzeTgawkm6pawcCMq1NLhV7Dt+e",
-	"vY2vGixQ2D637Mt9nOCbX+F8vgcIdwNjRMj64Y2fXDbRrs19eBv9UFtXVSExBx8XY4NijsKbRHwKE8+y",
-	"Gjd1/OBxdJcM9sPu95ff9H4vHB01Uqt9Mp9pZXWB0DT04o3hTSkdbR2L2QqvEHNmhc0LJHn0jmp1g0bO",
-	"JeYf5vKWpqQ/ZEuhFvjhBk0uGZzRZqIgtXjYXQq7FmeeeB3x043b1OjHXpN6kr94xeqa5sieay+hj25K",
-	"/q+0X8yy+d6y45SQObR5Ca1XIwoCujXgrWQXlCxJ8WSPalOAwTka8pHInT8TBXkswUdn3VrD5nmW8NcG",
-	"reUPBkkEqRYJiNzfMzAHM+idoexen4Te8KxjK7pFk2zUIZhzaL3piEjlNC0Ez06qhV+MDoh3eEwUsDlx",
-	"792GYFDxJchlzvATg7HBrNjD8b7Ag0b1ELndVoQ4yc337nE79hA4pXO82BPSPASs2k0903VfDGlrAhm1",
-	"Aj0PkUpe1NiDDVAl7YY/9SgpSOUerTaxOV8wOGI2C8gKbaOl9etKVPJHD9O+0EYQeme4O9ajAiYq4hO1",
-	"bra0D4g2PbpD46mKHYrgpDWO/5sK1dlSG9RwdXl+1Pp00a8aZgHdeU3tn8Wv8yh70PVM1xXcjvuhW6IJ",
-	"F990EJCuzeUthzdmiKplOcO/0+m1htfyFtzSoF3qIk8YYEo0WKzh7WVaollgPupVmkf4nJ+uj7l/3TLN",
-	"aTBRueKyNW83BKeQ6jqaMAxZl0GGszDVqlgflULVokjju1CS/1IrJwsQsCQXoO3X9i/ynnugbYd4CwSX",
-	"ZDroH8dEiCBuiJ9zBy9B+MtPhhKl4zkuQgwSey+ct3zt3vyJwJ+4Uexry2BegihCRP2dsNdwjWsYWkQ4",
-	"Cq6tPfoY/vtOlHh35IS9tkcfO8PfjTZn0DVHnoQ3Y9qLRwD7HxgE6Ns+0vjQ5GVQTI9vztQqE44jmtLC",
-	"vDasu6SW5A2B0Svbt2+PDCzw5WEbXWjx6cBIQ7J5fdCAVt+B8ffGAT/zgebLEDB4WgqgBzgMVwsWRNfD",
-	"N7WCnNiBHcPfutc9coFqvFcSGCoNjYKM+BSgN3zin3ViDQIKFPMk3hNhvsBndPL6W//m3iiqd3A6/XUM",
-	"5LoUkrMFV+SWmDpzoBVnEkrr3Vbvqg47DDvTdVUwWtkQceGGYQSa7RINjsYTdeE4xC/5ogy0EVlIZfO6",
-	"ZWqliOAGpn6t9MqSTRnvGof2sodBN6v86Jvd3bufh7JK2zF2lYcMiSiddOsrGiDwegx5sWf0aYbCoHkd",
-	"7f/ff3g32NWcWuWEVYVE5cj3IbYkRWF9GmdEUW0Wz2wnCc63n6ihwNTyV+mkPj7+PNNmwf/gKIElFox+",
-	"0tm+/LmXsWeQXim0wolyS+FC9/R9Q2A54fQdtyLXqBHU329EKY5AV3aiRJZh5dpE5Urnz2z3Ja2gzKqX",
-	"wd8SURF09Yz3mveMjyRewhZWls5VDHD1rJB2iebgla7QpDTnpoe9a/8YOazBrzzy9+CpE05mzYBXl+fN",
-	"KeG7g+HV5fmHr06/e/Xm9esP7958ff7dKNkKAz0sxB3nT817kgpD5ngXDKhTmWHqdBr+BVubuchwDBcE",
-	"WXUu2XeVFkofDbXJRPlt6pwGJxxj5TXMkrCLC+FwJdapyG/ITi3mYzhndCDDFf4GbKKcWFgOlrFeZux4",
-	"w/CSFSBp9TShBRs1qGYrzGI2MEGEnih6lf4VHf9d1G5Jm0gHlQ8MCNi78xO11+yGjUL67OMyq0ZJxxL3",
-	"mt19fW5aSadfbWBoDfqvyb5GoUrjAQViCyZrY74dLFkUK7G2EF3RxpOJUaOOGcadozYTFW+wOENpPFET",
-	"FS7FfFQznGV0aC2EVNb5I4I3hstEdL5OM1FV/i613fSJGn4G38ovCYpCbsQIZjjXBkGodXNAmdon8ATC",
-	"MDg9fwsXUXGvnl/B6duLQTK4QWO9fn82Ph4fc15ehUpUcnAy+Hx8PP7cp7AvGZGP2kVvk/TTbLMuowoJ",
-	"f7un+jbudpKPWfv8KclRRp+aH087MVFbRQEnBHMxr52rBIZTg1bXJsOxwfmUnKAmz2ZESiE4tYQ/s7dh",
-	"RObYdBjWp/QMlVAZjn0335ti6rVeafIhlrBG2sm2hKSS4UbaS8IX31GIVlVIk6KopJ0TFbPvQx4Bi/TM",
-	"QkwGgiFhkU28bWWw1NbZBP5K2+5tWMD3l99MVLbUFhVJzzlx4PPfSG2DJvp8o8jZaaH5QCIn0Xpt91uy",
-	"kK6jyOFk2jjKGF6a3Y9HmjdFaUnd25PNn1TTQGCmsaqCu9Fz7qmhT8MXxy9AE/ddSYvJRMUFz4UTozGc",
-	"+s3156hQ5NjOurVZZKLeeeD1njZPphNFUjQaFMt7XtK/Rjr0fdJaaUf6xqU+RCCVNg3YThRngMUZTMk+",
-	"7VGOVi5UawIS7ZFHLlInD11HW8VSU189MlEvjo9hSr1+kIpRYEpm2tj3Rc5hDD+LtEXG7mADz6zQungD",
-	"0alREJXP7ZFaHf0UIuietT02W+/ecp67TV7nTI38hSfYDADPj49/H5m8MFtXS193ihJ+NTF8rLdnuPig",
-	"JbCDkx83qeuP7+/edxzFQSzz2q5zCgkyAfqGPTDJ0QWxsESnm8eD9zR6B5n3eN5mo6Rkgb8Eo7UKnkpQ",
-	"w5cgHVwjVj6Dj9NsD0eRLXp8ynjd1GpRT7lGb6/kX/nKKwsvjl8k7Y2F8EVNbNxNcw7r75rZAl3HwsJg",
-	"aWeh6OgzokSHxvK+7lyfsXjMv4avvrtKOTHH32pzdvLgJCZY+qTfQWdLBtt2lHSU8ZdWjZHK/eZGuVus",
-	"9Kc0yEu0urjBtqLQ32P1FFD9Aqv0Ke6/qhUG1iddrJB0vsZgoraLDPQcBOd0bxgq3GunRHQeZ6iRENG3",
-	"KpNFkMTPIYhSyJkRdJ7OpbHOxz+qQri5NmVTE7GUzHetZJ/JcfiP+RFRVMx9AbVUIN0oId8aWxDYGbBd",
-	"6DFXbDaxRZqpzxNU+HKi/nr8efssSAmZrgt/TTfDdlr5Qwjih94EkE/JCF8cv/jtDfDdxhr3bMefBQ7u",
-	"UalfgANkhWkdU3Ce4iuRh2dB3zRXRE35Rqwjsnz8TZThnHGGMk9Z/YXIgSfzRO1Y/Gb94dRX/ky9T0bt",
-	"mhgk1ywyS7/mEJbSbqIIrRxZ3EpmSBTfv/TMtj7D5q14su1CdFyXyHZetoPHjJ7WAyEvYacurKkXYBY+",
-	"hh88nqxjNyEFqVMw7v2FWOTtfwGgVRMPSbBa6gJhxndFvHDz2qIXioGIRlUajF7R47AWu8jihUg76vLb",
-	"kv6dQqJHEf3nPQUgHK3E/HcDnNOnbtifAIl4XptVWb8Ae0JJToo38ddTnoI/BjOUN1xz08FEifZZJEw0",
-	"yESFWxGJNonhskipCFPlQglXG2yRjAuEfCGODyEw0k0UimzZBtyayxZ+b4kGE1+qxUkarLuJt7Y4ViPK",
-	"GmTOHfMC+KLwx2LhRPWzn4miDmY6X0eU42soB6GCCIaxUim1aKQo5D8wH510i5AsLNAxeFjsTn/jammz",
-	"CNwtsfST5AsE0YRh84lyaF3K5fSdKwKDucgc5hyJJIn9EuziKm/eMwvDaVUXxYewotMEplVtl9NkoqZ8",
-	"Wfoh02WJip/4ZA1uI9ViOmp+WWHaOfbn1B0tuQ8ITRR7TZ2BvcZ1FeplGxki6JyoTn8fglVPA6C6pU/b",
-	"CkfOGF5hU+WUh8TRDUWg06r5GM+ryujMZ99EYvn8+BimTU/TxN/rrJbaIqAwhUTDmYVl5fzosij4AsYH",
-	"kWElJMeTnfZc0hlJm9R2/xymSyzy6RjeNJOVrp1Js5iNtnCF7ESJuQuGE36DZMidtRe20xEdir7Sl29M",
-	"WXdZAJitm0CmTxcJMUJ/gzCGL3VO5lpXJPhzDj3CsDHeUNM3UaW4lWVdjnbPL1+rlm5AzkP+dNN/116H",
-	"/5H679NX4dtwd8C5anCNXAXHrvYSRc5XOsHZ3nnzXpe7lOobVAu37Baitvfre4VtwaQjK5f9jR6W7Dys",
-	"y1PFev/bsoKNWs8/KPTXU0i5hwW0R8P8fuMedix6xDQgUJk/QPCr1so7+UnDDTvmS614AS3UDvAMPYT4",
-	"qfxuXl6zwJ54EaltPaQW1PlmZge2R588+7pgBOMTqiEfW7XNzQocysnKrBqcfKT/TK3s0cdsnRV4kd8d",
-	"tTkuaSjX7MSJtjwEvlRNe954AGbb9BjgcQllO/kjdATMRHbNR1CmKyKemlNlQqPw1kYIp6O6HJsKffFt",
-	"kL+DyeMvahGHFEQt3354d3r19YeLV56E7eYSeMbVRHHDNffLJjGnOaQDCfJyRUc4/nAXM/+FDzn5FnNU",
-	"Ge4J0IaduBeSf89Y6/6sqk821rqRTrJtVa+RHOPtZC7/44LbKV/DLY3sWpRPcQjmZA3uu/YIicT7jMga",
-	"TAtpXdomHP9BEf8HCceZLkuRWiQBXYtFvhY4lKcTI5ytoyA/157zBElC1fBBg36N6xX5oL46y/tcPi+U",
-	"EwuOyPFJwAhOS52tCQecVJlLHZqSmxeigiE3hhXKxZJ/v0DXswJHBA0c8RUOnv91DJdIO53OpLChwoRD",
-	"J07HtBrgX3GL+bpNBHwuff4cFwprheM9C/Dz4Le04kflzbUVcw+WgH2q5t3N0tq27m/aSr6NJGXrf5pp",
-	"80cTOGMrJuF0bfvq8nzw/i5pohO7JusTWtOm+PsTsdnfiI33/ILF78zFu1Vpf0rF9EsIYkMrn6CU8bQx",
-	"mUh9dctGHG2vprbtB7+ljvT/DMOjlOWzX02Urcqhng08C4UJn7jShPjr/T9Acb+68HDmJiIT12gNjmIG",
-	"6dHNZ4O793f/FwAA//8=",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

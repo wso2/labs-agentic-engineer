@@ -336,8 +336,28 @@ func (f *Fake) Tag(_ context.Context, ref sourcecontrol.RepoRef, spec sourcecont
 	if err != nil {
 		return err
 	}
-	st.tags[spec.Name] = sourcecontrol.TagInfo{Name: spec.Name, CommitHash: c.sha, Message: spec.Message, CreatedAt: f.tick()}
+	subject, body := splitAnnotation(spec.Message)
+	st.tags[spec.Name] = sourcecontrol.TagInfo{Name: spec.Name, CommitHash: c.sha, Message: subject, Body: body, CreatedAt: f.tick()}
 	return nil
+}
+
+// splitAnnotation splits a tag message as list-tags answers it (git's
+// contents:subject and contents:body): the subject is the first paragraph,
+// its lines joined by a space; the body is the rest, trimmed.
+func splitAnnotation(msg string) (subject, body string) {
+	lines := strings.Split(strings.TrimSpace(msg), "\n")
+	end := len(lines)
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "" {
+			end = i
+			break
+		}
+	}
+	subject = strings.Join(lines[:end], " ")
+	if end < len(lines) {
+		body = strings.TrimSpace(strings.Join(lines[end:], "\n"))
+	}
+	return subject, body
 }
 
 // Commit applies req on the tip in one commit, or answers

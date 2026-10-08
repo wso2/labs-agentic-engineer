@@ -44,5 +44,5 @@ consumer's Task lists its providers in `dependsOn`) and as the rationale text.
 
 Only `aep-api`, through `ae-studio-tools` `/internal/v1` (AE-only M2M), which
 relays the request onto the Turn socket; on the socket the mount is the gate and
-no request carries a token ([ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md)).
+no request carries a token ([ADR-0046](../../../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md)).
 The model is the org's connection from the pod env, like every other turn.

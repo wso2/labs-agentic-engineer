@@ -1,0 +1,50 @@
+{
+  "name": "@wso2/prototype-theme-oxygen",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "The Oxygen prototype theme: every @wso2/prototype-kit component on @wso2/oxygen-ui, so a prototype looks like a WSO2 product, with its prebuilt frame and check runtimes.",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./frame-runtime.js": "./dist/frame-runtime.js",
+    "./check-runtime.js": "./dist/check-runtime.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsx scripts/build-runtimes.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "pnpm run build && vitest run",
+    "test:browser": "pnpm run build && vitest run --config vitest.browser.config.ts",
+    "dev": "echo \"@wso2/prototype-theme-oxygen: no dev server\""
+  },
+  "dependencies": {
+    "@aep/ui-theme": "workspace:*",
+    "@wso2/oxygen-ui": "0.14.0",
+    "@wso2/oxygen-ui-icons-react": "0.14.0",
+    "@wso2/prototype-kit": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "@wso2/prototype-cli": "workspace:*",
+    "esbuild": "^0.28.1",
+    "playwright": "1.61.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

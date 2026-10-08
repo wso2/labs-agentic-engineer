@@ -1,31 +1,42 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  // Dead-code report for the AE Studio TS containers, the playground and two
+  // Dead-code report for the AE Studio TS containers, the playground, the
+  // console, the prototype kit, themes and CLI, the console's theme, and two
   // shared packages (scope below).
   // The TS counterpart of services/aep-api/scripts/deadcode.sh. Run via
   // `--production` so *.test.ts never count as consumers (the Go "no -test").
   //
-  // Scope: @aep/ae-design-agent, @aep/ae-collab and @aep/playground, plus two
-  // shared packages: @aep/web-search (web search for the agents service and
-  // the runner's `aep-web` MCP server) and @aep/platform-idp-auth (the
-  // Platform IdP token check of the AE Studio pod's TS containers); every
-  // other pnpm workspace is ignored. knip AUTO-DETECTS entries (agents via its package.json `exports`
+  // Scope: @aep/ae-design-agent, @aep/ae-collab and @aep/playground; @aep/console
+  // (gated since its first commit, as console-next); the prototype packages
+  // (@wso2/prototype-kit, -theme-default, -theme-oxygen, -cli) with the theme they
+  // share with the console (@aep/ui-theme); and two shared packages:
+  // @aep/web-search (web search for the design agent and the runner's `aep-web`
+  // MCP server) and @aep/platform-idp-auth (the Platform IdP token check of the
+  // AE Studio pod's TS containers). Every other pnpm workspace is ignored.
+  // knip AUTO-DETECTS entries (the design agent via its package.json `exports`
   // map, the playground via its `play: tsx src/cli.ts` script) — do NOT add a
-  // per-workspace `entry`/`project` override, it silently breaks detection.
+  // per-workspace `entry`/`project` override for those two, it silently breaks
+  // detection. The workspaces that do carry one say why below.
   "ignoreWorkspaces": [
     "apps/*",
+    "!apps/console",
     "evals/*",
     "packages/*",
     "!packages/web-search",
     "!packages/platform-idp-auth",
+    "!packages/prototype-kit",
+    "!packages/prototype-theme-default",
+    "!packages/prototype-theme-oxygen",
+    "!packages/prototype-cli",
     "packages/ui/*",
+    "!packages/ui/theme",
     "runners/*",
-    "services/aep-api",
-    "services/aep-mcp-server"
+    "services/aep-api"
   ],
   // Each package keeps tests + shared fixtures in its own `test/` dir (never in
-  // the shipped `src/` tree), which knip recognises as test-scope and strips
-  // under --production — so test-only code is excluded with no carve-out here.
+  // the shipped `src/` tree). knip strips the *.test.ts files under
+  // --production, but not the helpers and fixtures they import; those
+  // directories are listed below where a package has them.
   // Root stray files are out of scope. mock-model is a published test seam
   // (`@aep/ae-design-agent` package.json exports); only *.test.ts / playground tests
   // import it, which --production strips — retain deliberately. So is
@@ -41,8 +52,43 @@
     "scripts/**",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
     "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/tools-socket/fake.ts",
-    "skills/**"
+    "skills/**",
+    // The prototype CLI's and the Oxygen theme's test harnesses (spawned bin,
+    // browser-lane commands) and fixtures are reached only from *.test.ts
+    // files, which --production strips, so knip would report them as unused
+    // files. The packages' scripts/ run from package.json scripts (tsx), not
+    // imports.
+    "packages/prototype-cli/test/**",
+    "packages/prototype-theme-oxygen/test/**",
+    // The kit's shared feedback table reader, imported by its own,
+    // @aep/agent-stream's and the design agent's turn-input feedback tests.
+    "packages/prototype-kit/test/feedback-cases.ts",
+    "packages/prototype-*/scripts/**",
+    // The design agent's `gen` script (package.json) pastes the kit reference
+    // into the prototype skill; the freshness test imports the same module,
+    // which --production strips.
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/scripts/**"
   ],
+  "workspaces": {
+    // @wso2/prototype-cli: the host app (src/host) is reached by no import;
+    // scripts/build-host.ts bundles src/host/main.tsx into dist/host/host.js,
+    // which `preview` serves and `export` inlines. main.tsx is that entry, so
+    // the host stays gated. The package.json `bin` is detected as well.
+    // The `!` suffix marks entries and project files as production ones,
+    // which is all `--production` reads.
+    "packages/prototype-cli": {
+      "entry": ["src/host/main.tsx!"]
+    },
+    // @aep/console: TanStack file routes are consumed only by the generated
+    // route tree, which is gitignored and so invisible to knip; each route file is
+    // an entry instead. The test setup and the verbatim-served public/ files are
+    // not production source.
+    "apps/console": {
+      "entry": ["src/main.tsx!", "src/routes/**/*.tsx!"],
+      "project": ["src/**/*.{ts,tsx}!"],
+      "ignore": ["public/**", "src/test-setup.ts"]
+    }
+  },
   // An export used within its own file is not dead — this codebase deliberately
   // exports internal helpers so unit tests can drive them directly. Only truly
   // orphaned exports are reported.
@@ -53,5 +99,12 @@
   "tags": ["-knipkeep"],
   // `tsx` is a devDependency used only by dev/start scripts; --production drops
   // devDeps, so knip flags it as an "unlisted binary". Not real dead code.
-  "ignoreBinaries": ["tsx"]
+  "ignoreBinaries": ["tsx"],
+  // The CLI resolves its default theme by name at run time
+  // (createRequire(...).resolve("@wso2/prototype-theme-default/check-runtime.js")),
+  // so no import names it; the dependency is what makes it installed.
+  // The design agent resolves the Oxygen theme's check runtime by name too
+  // (resolveTheme("@wso2/prototype-theme-oxygen", ...) in the prototype render
+  // check), and the image builds the package because of this dependency.
+  "ignoreDependencies": ["@wso2/prototype-theme-default", "@wso2/prototype-theme-oxygen"]
 }

@@ -78,7 +78,7 @@ const (
 	// starts before the pod exists: OpenChoreo first renders and applies
 	// the release (8 to 12 min per release on Cloud), then the pod starts
 	// (the slowest container's startupProbe allows 40 x 5 s = 200 s). A
-	// first install on Cloud takes about 15 min (ADR-0040), so a release
+	// first install on Cloud takes about 15 min (ADR-0045), so a release
 	// still applying or a pod still starting is never called failed.
 	notReadyBound = 20 * time.Minute
 	// settleGrace is how long after a successful converge a terminal Ready
@@ -133,7 +133,7 @@ type Deps struct {
 	OC OC
 }
 
-// Service installs and converges each org's AE Studio (ADR-0040).
+// Service installs and converges each org's AE Studio (ADR-0045).
 type Service struct {
 	cfg        config.AEStudioConfig
 	orgSecrets interface {

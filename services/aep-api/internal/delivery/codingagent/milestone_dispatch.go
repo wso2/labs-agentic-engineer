@@ -130,6 +130,7 @@ func milestoneDispatchShape(req delivery.MilestoneDispatch, repoURL string) (dis
 			milestoneNumber: req.MilestoneNumber,
 			milestoneTitle:  req.MilestoneTitle,
 			validationIssue: req.IssueNumber,
+			specTag:         req.SpecTag,
 		}, nil
 	}
 	if req.MilestoneNumber <= 0 {
@@ -141,6 +142,7 @@ func milestoneDispatchShape(req delivery.MilestoneDispatch, repoURL string) (dis
 		deadline:        codingDeadlineSeconds,
 		milestoneNumber: req.MilestoneNumber,
 		milestoneTitle:  req.MilestoneTitle,
+		specTag:         req.SpecTag,
 	}, nil
 }
 

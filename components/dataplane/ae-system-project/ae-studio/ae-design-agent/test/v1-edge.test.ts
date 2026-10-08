@@ -138,6 +138,15 @@ test("no key: turn POST answers problem no_default_key", () =>
     assert.equal(edge.tools.lookups.length, 0, "refused before the lookup");
   }));
 
+test("ref_not_found from a lookup the chat turn sent without `at` is the sidecar's 503 tools_unavailable, not a 400 about `at`", () =>
+  withEdge({}, async (edge) => {
+    edge.tools.failNextLookup("ref_not_found");
+    const res = await startTurn(edge, await edge.token());
+    assert.equal(res.status, 503);
+    assert.equal((await json(res)).code, "tools_unavailable");
+    assert.deepEqual(edge.tools.lookups, [{ project: PROJECT }], "the chat turn sent no at");
+  }));
+
 test("a snapshot that will not read is 500 internal with a fixed detail; the log names the class only (R2-M6)", () =>
   withEdge({}, async (edge) => {
     rmSync(join(edge.snapshotsDir, "projects", PROJECT, HEAD), { recursive: true, force: true });
@@ -391,3 +400,25 @@ test("an idle stream gets keep-alives, and closing the pod ends an attached stre
     }
     await closed;
   }));
+
+test("a design turn's usage record names the features its /design line scoped; a bare /design or another flow names none", async () => {
+  const edge = await startEdge({ models: [1, 2, 3].map(() => mockModel([{ kind: "text", text: "ok" }])) });
+  try {
+    const tok = await edge.token();
+    for (const instruction of ["/design F2 F1 F2", "/design", "/refine F2"]) {
+      const res = await startTurn(edge, tok, { instruction });
+      await streamOf(edge, tok, ((await res.json()) as { turnId: string }).turnId);
+    }
+    await until(() => edge.tools.usage.length === 3, "three usage records");
+    assert.deepEqual(
+      edge.tools.usage.map((r) => [r.flow, r.designFeatures]),
+      [
+        ["design", ["F2", "F1"]],
+        ["design", undefined],
+        ["refine", undefined],
+      ],
+    );
+  } finally {
+    await edge.close();
+  }
+});

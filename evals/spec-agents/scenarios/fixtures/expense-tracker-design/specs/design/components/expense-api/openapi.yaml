@@ -1,0 +1,241 @@
+openapi: 3.0.3
+info:
+  title: Expense API
+  version: 0.1.0
+servers:
+  - url: /
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /oauth2/authorize
+          tokenUrl: /oauth2/token
+          scopes:
+            claims:read: The caller's own claims
+            claims:read-all: Every claim
+            claims:submit: File a new claim
+            claims:approve: Approve a submitted claim
+            claims:reject: Reject a submitted claim with a reason
+            reports:read: Monthly total of approved claims
+  schemas:
+    ExpenseClaim:
+      type: object
+      required: [id, employeeId, description, amount, claimDate, status]
+      properties:
+        id: { type: string }
+        employeeId: { type: string }
+        description: { type: string }
+        amount: { type: number, format: double }
+        claimDate: { type: string, format: date }
+        status: { type: string, enum: [submitted, approved, rejected] }
+        reason: { type: string, nullable: true, description: set only when rejected }
+        decidedAt: { type: string, format: date-time, nullable: true }
+    NewExpenseClaim:
+      type: object
+      required: [description, amount, claimDate]
+      properties:
+        description: { type: string }
+        amount: { type: number, format: double }
+        claimDate: { type: string, format: date }
+    RejectClaim:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+    MonthlyReport:
+      type: object
+      required: [month, total]
+      properties:
+        month: { type: string, description: "calendar month, e.g. 2026-09" }
+        total: { type: number, format: double, description: sum of approved claims that month }
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: integer, description: HTTP or application error code }
+        message: { type: string, description: short human-readable label }
+        description: { type: string, description: detailed explanation }
+        moreInfo: { type: string, description: URI to documentation }
+security:
+  - oauth2: []
+paths:
+  /me/claims:
+    get:
+      operationId: listMyClaims
+      summary: The caller's own claims
+      security:
+        - oauth2: [claims:read]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: The caller's claims
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExpenseClaim' }
+    post:
+      operationId: submitExpenseClaim
+      summary: File a new expense claim
+      security:
+        - oauth2: [claims:submit]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewExpenseClaim' }
+      responses:
+        '201':
+          description: Claim filed as submitted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExpenseClaim' }
+        '400':
+          description: Missing or invalid claim fields
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /me/claims/{claimId}:
+    get:
+      operationId: getMyClaim
+      summary: A claim of the caller's, with its decision and reason
+      security:
+        - oauth2: [claims:read]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExpenseClaim' }
+        '404':
+          description: No such claim of the caller's
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /claims:
+    get:
+      operationId: listAllClaims
+      summary: Every claim, for the approval queue
+      security:
+        - oauth2: [claims:read-all]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [submitted, approved, rejected] }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        '200':
+          description: Every claim matching the filter
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count, data]
+                properties:
+                  count: { type: integer }
+                  next: { type: string, nullable: true }
+                  previous: { type: string, nullable: true }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExpenseClaim' }
+  /claims/{claimId}/approve:
+    post:
+      operationId: approveExpenseClaim
+      summary: Approve a submitted claim
+      security:
+        - oauth2: [claims:approve]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Claim approved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExpenseClaim' }
+        '400':
+          description: The claim is not submitted, so it cannot be decided again
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /claims/{claimId}/reject:
+    post:
+      operationId: rejectExpenseClaim
+      summary: Reject a submitted claim with a reason
+      security:
+        - oauth2: [claims:reject]
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RejectClaim' }
+      responses:
+        '200':
+          description: Claim rejected
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExpenseClaim' }
+        '400':
+          description: The claim is not submitted, so it cannot be decided again
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404':
+          description: No such claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /reports/monthly:
+    get:
+      operationId: getMonthlyReport
+      summary: Monthly total of approved claims
+      security:
+        - oauth2: [reports:read]
+      parameters:
+        - name: month
+          in: query
+          required: true
+          schema: { type: string, description: "calendar month, e.g. 2026-09" }
+      responses:
+        '200':
+          description: The month's total of approved claims
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MonthlyReport' }

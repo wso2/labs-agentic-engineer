@@ -154,7 +154,7 @@ message is what model APIs themselves do for small per-message files.
 ## Amendment 2026-10-06 — AE Studio
 
 The design agent's own conversations live in memory in `ae-design-agent`, the
-org's AE Studio container ([ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)):
+org's AE Studio container ([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)):
 one current thread per project (`src/conversations/thread-book.ts`) over the
 in-memory store (`src/store/memory-store.ts`), lost when the pod rolls. The
 store it cites above as the proven prototype is therefore proven for its

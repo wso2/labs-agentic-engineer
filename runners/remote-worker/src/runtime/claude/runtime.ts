@@ -108,7 +108,7 @@ export const AGENT_SETTING_SOURCES = ["project"] as const;
  * coincidence: a default the platform cannot price would blank the cost of every
  * run made by every org that never opened the setting.
  */
-export const CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5";
+export const CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-5-5";
 
 /**
  * The CLI's model pins, every one bound to the organization's one model.

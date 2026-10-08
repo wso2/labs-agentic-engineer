@@ -211,6 +211,19 @@ type ReferencesOps interface {
 	PutReferences(ctx context.Context, ref RepoRef, contentType string, body io.Reader) error
 }
 
+// MaxReferenceBytes is the pod's per-document limit on a reference upload
+// (put-repo-references: "each at most 5 MiB"). The pod is the authority;
+// aep-api reads it only where it must hold a part whole (an Office document
+// it converts before streaming).
+const MaxReferenceBytes = 5 << 20
+
+// ReferenceListOps lists the names of a project's stored reference
+// documents (bare, lower-case, sorted; empty, never nil, when none are
+// stored).
+type ReferenceListOps interface {
+	ListReferences(ctx context.Context, ref RepoRef) ([]string, error)
+}
+
 // IdentityOps reads the GitHub user the org's gitpat belongs to.
 type IdentityOps interface {
 	GitHubIdentity(ctx context.Context, org string) (*GitHubUser, error)

@@ -26,23 +26,20 @@
 # only runs them in the order the handoff needs. See
 # docs/developer-guide/sre-handoff-runbook.md.
 #
-#   1. the shared handoff bearer at aep/aep-mcp-token, generated once. Re-runs
-#      keep it: aep-api and aep-mcp-server read it from one Secret at pod start,
-#      so rotating it here would leave running pods on the old value.
-#   2. `aectl platform update --set sreHandoff.enabled=true`, which wires that
-#      bearer into both services and locks aep-mcp-server's ingress to the SRE
-#      agent's pods (docs/developer-guide/sre-handoff-security.md).
-#   3. the observability-alert-rule ClusterTrait the chart's ComponentTypes
+#   1. the observability-alert-rule ClusterTrait the chart's ComponentTypes
 #      allow but `aectl platform install` does not apply (deployments/README.md).
-#   4. `aectl sre install`, which enables the SRE agent on the observability
-#      plane setup-env-for-aectl.sh installed (at that plane's chart version,
-#      with the SRE image override), mounts the AE extension, and points the
-#      agent at the org's model connection key as saved in the AE Console
-#      (an Anthropic key: the SRE image calls Anthropic).
+#   2. `aectl sre install`, which enables the SRE agent on the
+#      observability plane setup-env-for-aectl.sh installed (at that plane's
+#      chart version, with the stock ghcr.io/openchoreo/sre-agent image) and
+#      mounts the AE remediation extension. It writes the agent's model and
+#      the handoff key into the agent's Secret, and the key into aep-api's.
 #
-# The SRE agent has no key of its own: until the org's model connection is saved
-# in the Console, its pod waits for it. Save the key, then re-run this script
-# (only step 4 then changes anything).
+# Set SRE_LLM_API_KEY_FILE (path to a file holding an OpenAI-compatible key)
+# and SRE_LLM_MODEL (and SRE_LLM_BASE_URL) to give the agent its model; this
+# is the only place it is set, and re-running with a changed key or model
+# rotates it — see "Set the SRE model" in
+# docs/developer-guide/sre-handoff-runbook.md. Without them the agent waits
+# at 0 replicas, and a re-run without them keeps the model it has.
 #
 # Every step is idempotent.
 
@@ -64,9 +61,12 @@ elif [ -x "$REPO_ROOT/tools/aectl/aectl-skaffold" ]; then
 else
     AECTL="$(command -v aectl || true)"
 fi
-PLATFORM_CHART="${PLATFORM_CHART:-$REPO_ROOT/deployments/helm-charts/platform}"
-HANDOFF_SECRET="aep-sre-handoff-secrets"
 ALERT_RULE_TRAIT="$REPO_ROOT/deployments/manifests/api-platform/observability-alert-rule-trait.yaml"
+# `aectl sre install` uses this to pin the platform chart when it flips
+# sreAgent.* on the platform release (via its own internal `aectl platform
+# update` call) — the same local chart `make dev-env` installed the release
+# from, so that step never drifts it to an unpinned GHCR "latest".
+PLATFORM_CHART="${PLATFORM_CHART:-$REPO_ROOT/deployments/helm-charts/platform}"
 
 kubectl() { command kubectl --context "$CLUSTER_CONTEXT" "$@"; }
 fail() { echo "❌ $1" >&2; [ $# -gt 1 ] && echo "   $2" >&2; exit 1; }
@@ -88,51 +88,23 @@ kubectl get deployment aep-api -n "$AEP_NS" &>/dev/null \
     || fail "aep-api is not installed in $AEP_NS" "run aectl platform install first (make dev-env)"
 kubectl get deployment observer -n "$OBS_NS" &>/dev/null \
     || fail "no observability plane in $OBS_NS" "setup-env-for-aectl.sh installs it unless WITH_OBSERVABILITY=0"
-command -v openssl &>/dev/null || fail "openssl is required to generate the handoff bearer"
 
-TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
-chmod 700 "$TMP_DIR"
-
-# import_secret <path> <value>: `aectl platform secret import` reads the value
-# from a file so it never appears in the process list.
-import_secret() {
-    local file="$TMP_DIR/value"
-    (umask 077 && printf '%s' "$2" > "$file")
-    "$AECTL" platform secret import --path "$1" --value-file "$file"
-    rm -f "$file"
-}
-
-# ── 1. Shared handoff bearer ───────────────────────────────────────────────
-if kubectl get secret "$HANDOFF_SECRET" -n "$AEP_NS" &>/dev/null; then
-    echo "🔐 Keeping the existing handoff bearer (aep/aep-mcp-token)"
-else
-    echo "🔐 Generating the handoff bearer at aep/aep-mcp-token"
-    import_secret aep/aep-mcp-token "$(openssl rand -hex 32)"
-fi
-
-# ── 2. Enable the chart's sreHandoff block ─────────────────────────────────
-echo "⚙️  Enabling sreHandoff on the platform release"
-"$AECTL" platform update --namespace "$AEP_NS" --platform-chart "$PLATFORM_CHART" \
-    --set sreHandoff.enabled=true
-
-echo "⏳ Waiting for $HANDOFF_SECRET to sync"
-for _ in $(seq 1 60); do
-    kubectl get secret "$HANDOFF_SECRET" -n "$AEP_NS" &>/dev/null && break
-    sleep 2
-done
-kubectl get secret "$HANDOFF_SECRET" -n "$AEP_NS" &>/dev/null \
-    || fail "$HANDOFF_SECRET did not sync" "kubectl -n $AEP_NS describe externalsecret $HANDOFF_SECRET"
-kubectl rollout status deployment/aep-api -n "$AEP_NS" --timeout=300s
-kubectl rollout status deployment/aep-mcp-server -n "$AEP_NS" --timeout=300s
-
-# ── 3. Alert-rule trait ────────────────────────────────────────────────────
+# ── 1. Alert-rule trait ────────────────────────────────────────────────────
 echo "📐 Applying the observability-alert-rule ClusterTrait"
 kubectl apply -f "$ALERT_RULE_TRAIT"
 
-# ── 4. SRE agent on the observability plane ─────────────────────────────────
+# ── 2. SRE agent on the observability plane ─────────────────────────────────
 echo "🤖 Running aectl sre install"
-"$AECTL" sre install --namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT"
+SRE_INSTALL_ARGS=(--namespace "$AEP_NS" --obs-namespace "$OBS_NS" --assets-root "$REPO_ROOT" \
+    --platform-chart "$PLATFORM_CHART")
+# The SRE agent's model: only when both the key file and model are set (aectl
+# itself requires the pair together; leaving either unset here keeps the
+# model the agent already has, same as not passing the flags at all).
+if [ -n "${SRE_LLM_API_KEY_FILE:-}" ] && [ -n "${SRE_LLM_MODEL:-}" ]; then
+    SRE_INSTALL_ARGS+=(--llm-api-key-file "$SRE_LLM_API_KEY_FILE" --llm-model "$SRE_LLM_MODEL")
+    [ -n "${SRE_LLM_BASE_URL:-}" ] && SRE_INSTALL_ARGS+=(--llm-base-url "$SRE_LLM_BASE_URL")
+fi
+"$AECTL" sre install "${SRE_INSTALL_ARGS[@]}"
 
 echo ""
 echo "✅ SRE handoff wired. Runbook: docs/developer-guide/sre-handoff-runbook.md"

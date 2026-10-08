@@ -106,6 +106,27 @@ type ValidationCycleReader interface {
 //
 // nil → the snapshot operation answers 503, the degraded-boot contract this
 // slice's other optional collaborators follow.
+// ValidationJudge reads one attempt as its version (B4): within what the
+// version built, and against the previous validated version.
+type ValidationJudge interface {
+	Standing(ctx context.Context, orgID, projectID, version, at string) (ValidationStanding, error)
+}
+
+// ValidationStanding is an attempt as its version reads it.
+type ValidationStanding struct {
+	// Scoped is false for a version that validates its whole oracle.
+	Scoped   bool
+	Features []string
+	HeldBack []string
+	// BaselineVersion is empty when no earlier version was validated.
+	BaselineVersion string
+	BaselineCommit  string
+	// Regressions and StillFailing key the failures by how they stood in the
+	// baseline ("F2 / rule / scenario").
+	Regressions  []string
+	StillFailing []string
+}
+
 type ValidationSnapshotReader interface {
 	// ReportAt returns the committed report at `at`, found=false when the
 	// attempt committed none. An empty `at` reads the branch tip.

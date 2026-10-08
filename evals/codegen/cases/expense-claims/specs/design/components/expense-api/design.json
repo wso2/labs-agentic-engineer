@@ -1,0 +1,17 @@
+{
+  "name": "expense-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "expense-api",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "expense-db", "resourceType": "postgres-cnpg" },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Owns expense claims, employee/manager relationships, and payroll export batches. Exposes claim submission, edit and withdrawal for employees, team-scoped approval/rejection for managers, and approved-claim export for finance. Does not send email or store any file attachments — no object storage dependency.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  "skillsPinned": ["openapi-conventions", "ballerina", "api-management", "thunder-authentication"]
+}

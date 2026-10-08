@@ -1,0 +1,5 @@
+apiVersion = "agentic-engineer/v1"
+name = "clinic-appointments"
+createdAt = "2026-10-04T11:37:21.441Z"
+idea = "Clinic appointments: doctors publish their availability as time slots, patients book, reschedule or cancel an appointment (no double booking, no cancellation within 2 hours of the start), receptionists book for patients and check them in, and doctors see their day and write visit notes that only doctors can read. One web app and one API service. No email or notifications, no file uploads or object storage, no scheduled or background jobs, no external integrations or AI features."
+

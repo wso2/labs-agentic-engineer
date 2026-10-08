@@ -1,0 +1,60 @@
+// A prototype: one component per screen in prototype.json, and the mock data
+// they share. Import only from "react" and "@wso2/prototype-kit"; give every
+// element a stable id. Run `prototype check` after each change.
+
+import { Button, EmptyState, Field, Form, Heading, Screen, Table, defineApp, useCollection, useDisplayState, useNav, useToday } from "@wso2/prototype-kit";
+
+interface Task {
+  id: string;
+  title: string;
+  due: string;
+}
+
+function Tasks() {
+  const state = useDisplayState();
+  const tasks = useCollection<Task>("tasks");
+  const rows = state === "state.empty" ? [] : tasks.items;
+  return (
+    <Screen>
+      <Heading id="heading.tasks" text="Tasks" actions={<Button id="btn.new-task" label="New task" emphasis="primary" to="screen.new-task" />} />
+      <Table
+        id="table.tasks"
+        columns={["Task", "Due"]}
+        rows={rows.map((t) => ({ id: `row.${t.id}`, cells: [t.title, t.due] }))}
+        empty={<EmptyState id="empty.tasks" title="No tasks yet" text="Tasks you add appear here." />}
+      />
+    </Screen>
+  );
+}
+
+function NewTask() {
+  const tasks = useCollection<Task>("tasks");
+  const nav = useNav();
+  const today = useToday();
+  return (
+    <Screen>
+      <Heading id="heading.new-task" text="New task" />
+      <Form
+        id="form.new-task"
+        onSubmit={(values) => {
+          tasks.create({ title: values["title"] ?? "", due: values["due"] || today });
+          nav.go("screen.tasks");
+        }}
+        actions={<Button id="btn.save-task" label="Save" emphasis="primary" submit />}
+      >
+        <Field id="field.title" name="title" label="Title" required />
+        <Field id="field.due" name="due" label="Due" type="date" />
+      </Form>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  screens: { "screen.tasks": Tasks, "screen.new-task": NewTask },
+  data: {
+    tasks: [
+      { id: "tasks-1", title: "Draft the launch plan", due: "2026-01-20" },
+      { id: "tasks-2", title: "Review the pricing page", due: "2026-01-22" },
+    ],
+  },
+});

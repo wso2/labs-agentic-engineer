@@ -26,7 +26,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startTurnSummary, turnSpecFor } from "../src/turns/start-spec.js";
+import { designFeaturesOf, startTurnSummary, turnSpecFor } from "../src/turns/start-spec.js";
 
 const REFS = { references: ["z-notes.md", "brief.pdf"] };
 const PATHS = ["specs/requirements/references/brief.pdf", "specs/requirements/references/z-notes.md"];
@@ -85,4 +85,38 @@ test("startTurnSummary appends the resolved idea to a bare /start only", () => {
   assert.equal(startTurnSummary("/start", { kind: "start" }), "/start");
   assert.equal(startTurnSummary("/design x", { kind: "flow", skill: "design", text: "x" }), "/design x");
   assert.equal(startTurnSummary("hi", { kind: "chat", text: "hi" }), "hi");
+});
+
+test("/interview F<n> (main's interview command shape) is the interview flow with the feature as its text", () => {
+  assert.deepEqual(turnSpecFor("/interview F3", REFS), {
+    spec: { kind: "flow", skill: "interview", text: "F3", references: PATHS },
+    flow: "interview",
+  });
+});
+
+test("a review batch rides the /prototype flow it was sent with", () => {
+  const batch = {
+    prototypeHash: "0".repeat(64),
+    component: "web",
+    requests: [{ screenId: "s", roleId: "r", stateId: "st", elementIds: [], text: "t" }],
+  };
+  assert.deepEqual(turnSpecFor("/prototype web", { references: [] }, batch), {
+    spec: { kind: "flow", skill: "prototype", text: "web", prototypeFeedback: batch },
+    flow: "prototype",
+  });
+});
+
+test("designFeaturesOf: the /design line's feature IDs in order, deduplicated; none for a bare /design or another flow", () => {
+  const of = (raw: string) => designFeaturesOf(turnSpecFor(raw, { references: [] }).spec);
+  assert.deepEqual(of("/design F2 F1, F2 and F10"), ["F2", "F1", "F10"]);
+  assert.deepEqual(of("/design"), []);
+  assert.deepEqual(of("/design the checkout"), []);
+  assert.deepEqual(of("/refine F2"), []);
+  assert.deepEqual(of("please /design F1"), []);
+  // f1, F1.2's story part and an ID past the record's 16-character cap never reach the record.
+  assert.deepEqual(of("/design f1 F1.2 F12345678901234567"), ["F1"]);
+  const many = Array.from({ length: 250 }, (_, i) => `F${i}`).join(" ");
+  const capped = of(`/design ${many}`);
+  assert.equal(capped.length, 200);
+  assert.equal(capped[199], "F199");
 });

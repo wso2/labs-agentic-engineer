@@ -26,6 +26,36 @@ type GovernAgentInput struct {
 	ProjectID   string
 	Component   string
 	Environment string
+	// Guardrails are the AI-gateway policies the agent's spec declares
+	// (x-aep.guardrails), read from the design the deploy already holds. The
+	// governor applies them to this agent's own binding; nil declares none.
+	Guardrails []GuardrailDeclaration
+	// AgentInstructions is the agent's prompt body. Every request carries it,
+	// so a guardrail that reads the whole request must not block on it.
+	AgentInstructions string
+	// GuardrailsUnreadable says the agent's spec could not be read, so what it
+	// declares is unknown — which is not the same as declaring nothing. The
+	// governor leaves the binding's guardrails as they are rather than strip
+	// every one it applied.
+	GuardrailsUnreadable bool
+	// AgentUsesTools and AgentTakesFiles say whether the agent declares tools
+	// or file uploads: with either, a model call's last message is not always
+	// the user's text, which decides where a guardrail can read it.
+	AgentUsesTools  bool
+	AgentTakesFiles bool
+	// AgentToolText is the text the agent's tool definitions are built from
+	// (spec.AgentToolText), which a tool-using agent sends with every request:
+	// a whole-request block that matches it would refuse every call.
+	AgentToolText []string
+}
+
+// GuardrailDeclaration is one declared guardrail: a gateway policy by name,
+// its use-case params, and why the agent needs it. The version and JSONPaths
+// are the governor's to add.
+type GuardrailDeclaration struct {
+	Policy string
+	Params map[string]any
+	Why    string
 }
 
 // GovernAgentOutcome distinguishes "governed" from "deliberately not governed".

@@ -455,7 +455,7 @@ func TestApply_ScaffoldSkipsAComponentInTheBatch(t *testing.T) {
 
 // The authored `stories` claim survives a later cell save.
 func TestApply_AuthoredStoriesSurviveCellSave(t *testing.T) {
-	enriched := `{"name":"lunch-api","type":"service","version":"0.1.0","language":"Go","buildpack":"docker","appPath":"lunch-api","entrypoint":"deployment/service","exposure":"intranet","dependencies":[],"description":"hand-written","stories":[9]}`
+	enriched := `{"name":"lunch-api","type":"service","version":"0.1.0","language":"Go","buildpack":"docker","appPath":"lunch-api","entrypoint":"deployment/service","exposure":"intranet","dependencies":[],"description":"hand-written","stories":["F1.9"]}`
 	a, origin := newApplier(t, map[string]string{"specs/design/components/lunch-api/design.json": enriched})
 	if _, _, err := a.Apply(ctx, "greeter", files.ApplyRequest{Writes: []files.WriteOp{
 		{Path: "specs/design/design.cell", Content: "component lunch-api service\ncomponent lunch-web web-application\n"},
@@ -466,7 +466,7 @@ func TestApply_AuthoredStoriesSurviveCellSave(t *testing.T) {
 	if err := json.Unmarshal([]byte(origin.FileAt(t, repotest.Branch, "specs/design/components/lunch-api/design.json")), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if got := fmt.Sprint(parsed["stories"]); got != "[9]" || parsed["description"] != "hand-written" {
+	if got := fmt.Sprint(parsed["stories"]); got != "[F1.9]" || parsed["description"] != "hand-written" {
 		t.Errorf("cell save clobbered enrichment: %v", parsed)
 	}
 }

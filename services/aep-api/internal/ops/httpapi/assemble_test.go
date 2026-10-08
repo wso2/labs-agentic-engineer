@@ -37,7 +37,6 @@ import (
 
 type fakeRepo struct{}
 
-func (fakeRepo) Create(context.Context, *ops.RcaAgentReport) error { return nil }
 func (fakeRepo) Get(context.Context, string, string) (*ops.RcaAgentReport, error) {
 	return nil, nil
 }

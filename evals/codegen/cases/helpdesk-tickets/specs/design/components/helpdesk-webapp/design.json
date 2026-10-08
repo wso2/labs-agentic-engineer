@@ -1,0 +1,17 @@
+{
+  "name": "helpdesk-webapp",
+  "type": "web-application",
+  "version": "0.1.0",
+  "language": "TypeScript",
+  "buildpack": "docker",
+  "appPath": "helpdesk-webapp",
+  "entrypoint": "deployment/web-application",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "helpdesk-api", "description": "Loads and changes tickets, comments and the queue." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "One React single-page app for all three roles (Employee, Support Agent, Team Lead): ticket raising and tracking, the agent queue and ticket workspace, and the team-lead queue view. It signs users in via SSO and calls helpdesk-api; role-specific screens are gated by the operation each loads. It holds no data of its own and no secrets.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "skillsPinned": ["wireframes", "react-webapp", "oxygen-ui-design-system", "thunder-authentication"]
+}

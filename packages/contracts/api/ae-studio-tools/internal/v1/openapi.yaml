@@ -115,7 +115,9 @@ paths:
           $ref: '#/components/responses/Problem'
         '404':
           description: 'The project is not one of this repository''s (problem code:
-            project_unknown).'
+            project_unknown), or a plan turn''s `at` names no tag or commit the
+            repository has (problem code: ref_not_found; permanent, nothing is
+            started).'
           content:
             application/problem+json:
               schema:
@@ -142,6 +144,46 @@ paths:
         '503':
           $ref: '#/components/responses/Problem'
   /repos/{owner}/{repo}/references:
+    get:
+      operationId: list-repo-references
+      summary: List the names of a project's stored reference documents
+      description: |-
+        The names the stored set's files carry (as put-repo-references stored
+        them), sorted; empty when none are stored. Read from the studio's
+        store, never from git or GitHub. The owner must be the org's connected
+        GitHub account, else 403 owner_not_allowed. Like put-repo-references
+        it has no 502: the owner check compares with the connected account
+        the studio is configured with and calls no one.
+      tags:
+      - Repos
+      parameters:
+      - $ref: '#/components/parameters/ImpersonateOrg'
+      - $ref: '#/components/parameters/Owner'
+      - $ref: '#/components/parameters/Repo'
+      responses:
+        '200':
+          description: The stored documents' names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReferenceList'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '401':
+          $ref: '#/components/responses/Problem'
+        '403':
+          description: 'The gate refused the caller, or the owner is not the org''s
+            connected GitHub account (problem code: owner_not_allowed).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 'Not serving right now (problem codes: disk_full, idp_unavailable).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
     put:
       operationId: put-repo-references
       summary: Replace a project's stored reference documents
@@ -1785,6 +1827,12 @@ components:
         message:
           type: string
           description: The annotated tag's subject; absent for a lightweight tag
+        body:
+          type: string
+          description: The annotated tag's message after its subject (git's
+            contents:body), trimmed; absent for a lightweight tag or an
+            annotation that is a subject alone. A spec version records its
+            build selection here.
         createdAt:
           type: string
           format: date-time
@@ -1993,6 +2041,19 @@ components:
           - plan
         credit:
           $ref: '#/components/schemas/TurnCredit'
+        at:
+          type: string
+          description: A plan turn only, the commit the planner reads the
+            repository at, as the git reads' `at` names one; aep-api sends
+            `tags/<version>` so an edit made after the version is not planned.
+            Omitted, the default-branch tip. The studio resolves it to a commit
+            sha (as a git read resolves `at`) before the turn starts, and passes
+            the sha on the Turn socket's `at`; a tag or sha the repository does
+            not have is 404 ref_not_found and no turn starts. It is the pin and
+            wins; scope.tag only describes the version and is not checked
+            against it. A start turn that sends it is refused (400
+            validation_failed).
+          pattern: ^(tags/[A-Za-z0-9._/-]{1,200}|[0-9a-f]{40})$
         scope:
           $ref: '#/components/schemas/PlanScope'
         taskContext:
@@ -2022,32 +2083,90 @@ components:
     PlanScope:
       type: object
       additionalProperties: false
-      description: The milestone a plan turn covers and which of its stories
-        already have Tasks.
+      description: The spec version a plan turn covers, its stories and which
+        of them already have Tasks, the features it carries and its
+        product-wide items.
       required:
       - tag
       - stories
       properties:
         tag:
           type: string
+          description: The version's tag name, describing the version to the
+            planner. Not the pin and not checked against it; the turn's `at`
+            is.
+          pattern: ^[A-Za-z0-9._/-]{1,200}$
         stories:
           type: array
+          description: Each story the version builds, in ID order.
           items:
             $ref: '#/components/schemas/PlanStory'
+        features:
+          type: array
+          description: The features the version carries, in ID order, each
+            with the carried features it is built after; the planner cuts one
+            Task per feature per component.
+          items:
+            $ref: '#/components/schemas/PlanFeature'
+        productWide:
+          type: array
+          description: The product-wide items the version carries, in ID
+            order; each component's Foundation Task builds them.
+          items:
+            $ref: '#/components/schemas/PlanItem'
     PlanStory:
       type: object
       additionalProperties: false
       required:
-      - number
+      - id
       - covered
       properties:
-        number:
-          type: integer
+        id:
+          type: string
+          description: The story's ID, F<feature>.<story>.
+          pattern: ^F[0-9]+\.[0-9]+$
         title:
           type: string
         covered:
           type: boolean
           description: The story already has Tasks, the planner leaves it alone.
+    PlanFeature:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          pattern: ^F[0-9]+$
+        name:
+          type: string
+        needs:
+          type: array
+          description: The carried features this one is built after, in ID
+            order (one an earlier version built is left out).
+          items:
+            type: string
+            pattern: ^F[0-9]+$
+    PlanItem:
+      type: object
+      additionalProperties: false
+      description: One product-wide item.
+      required:
+      - id
+      properties:
+        id:
+          type: string
+          pattern: ^P[0-9]+$
+        text:
+          type: string
+        appliesTo:
+          type: array
+          description: The feature IDs the item applies to, or the single
+            entry `all`.
+          items:
+            type: string
+            pattern: ^(F[0-9]+|all)$
     PlanContextFile:
       type: object
       additionalProperties: false
@@ -2135,6 +2254,18 @@ components:
           format: date-time
           description: With code provider_limit, when the model provider said its
             limit resets, if it said.
+    ReferenceList:
+      type: object
+      additionalProperties: false
+      required:
+      - names
+      properties:
+        names:
+          type: array
+          maxItems: 10
+          description: The stored documents' bare, lower-case file names, sorted.
+          items:
+            type: string
     ReferenceUpload:
       type: object
       additionalProperties: false

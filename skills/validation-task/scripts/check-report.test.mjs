@@ -125,3 +125,82 @@ test("a nonzero exit on any step must say what was there instead", () => {
   assert.equal(code, 2, `a nonzero exit with no observed must fail:\n${out}`);
   assert.match(out, /carries no `observed` and the command exited nonzero/);
 });
+
+// A version validates its built scope (B4): a feature designed but not built,
+// and a rule whose stories wait on a feature nobody built, are not run — and a
+// report that answers them reports on code this version did not build.
+const CLAIMS = `Feature: F1 Claims
+
+  @story-F1.1
+  Rule: A claim needs a receipt
+
+    Scenario: Submitting with a receipt
+      When Ann submits a claim
+      Then it is listed
+`;
+const APPROVALS = `Feature: F2 Approvals
+
+  @story-F2.1
+  Rule: A manager sees pending claims
+
+    Scenario: The queue
+      When Sam opens the queue
+      Then the claim is there
+
+  @story-F2.4
+  Rule: A deputy approves in the manager's place
+
+    Scenario: Deputy approves
+      When Dee approves
+      Then the claim is approved
+`;
+
+function checkScoped(entries, args) {
+  const dir = mkdtempSync(join(tmpdir(), "acc-scope-"));
+  try {
+    mkdirSync(join(dir, "specs/validation/acceptance"), { recursive: true });
+    mkdirSync(join(dir, "tests/acceptance"), { recursive: true });
+    writeFileSync(join(dir, "specs/validation/acceptance/F1-claims.feature"), CLAIMS);
+    writeFileSync(join(dir, "specs/validation/acceptance/F2-approvals.feature"), APPROVALS);
+    const entry = ([feature, file, line, rule, scenario]) => ({
+      feature,
+      featureFile: `specs/validation/acceptance/${file}`,
+      line,
+      rule,
+      scenario,
+      outcome: "passed",
+      steps: [WHEN, THEN],
+    });
+    writeFileSync(
+      join(dir, "tests/acceptance/report.json"),
+      JSON.stringify({ schemaVersion: 2, commit: "abc123", isolation: "own data", scenarios: entries.map(entry) }),
+    );
+    try {
+      return { code: 0, out: execFileSync("node", [CHECKER, dir, ...args], { encoding: "utf8" }) };
+    } catch (e) {
+      return { code: e.status, out: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const CLAIM_ENTRY = ["F1 Claims", "F1-claims.feature", 6, "A claim needs a receipt", "Submitting with a receipt"];
+const QUEUE_ENTRY = ["F2 Approvals", "F2-approvals.feature", 6, "A manager sees pending claims", "The queue"];
+
+test("--features expects only the built features' scenarios", () => {
+  const { code, out } = checkScoped([CLAIM_ENTRY], ["--features", "F1"]);
+  assert.equal(code, 0, out);
+  assert.equal(checkScoped([CLAIM_ENTRY], []).code, 2, "unscoped, F2's scenarios are missing");
+});
+
+test("--held-back drops a rule whose every story is held back", () => {
+  const { code, out } = checkScoped([CLAIM_ENTRY, QUEUE_ENTRY], ["--features", "F1,F2", "--held-back", "F2.4"]);
+  assert.equal(code, 0, out);
+});
+
+test("an entry outside the scope is a breach", () => {
+  const { code, out } = checkScoped([CLAIM_ENTRY, QUEUE_ENTRY], ["--features", "F1"]);
+  assert.equal(code, 2);
+  assert.match(out, /no such scenario/);
+});

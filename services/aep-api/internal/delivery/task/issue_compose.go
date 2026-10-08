@@ -30,6 +30,10 @@ import (
 // The one structured thing a body still carries is a REFERENCE: the issue
 // numbers of the Tasks this one depends on, so the agent can follow them.
 
+// foundation is the feature a component's shared Task names: its setup and the
+// product-wide requirements the version carries (B3).
+const foundation = "foundation"
+
 // plannedTask is one Task's facts as the plan tap tracks them: what the planner
 // said at creation, plus whatever a later updateTask patched. The tap
 // re-renders the whole body from this state on every patch, so a body is always
@@ -37,6 +41,9 @@ import (
 type plannedTask struct {
 	// Component is the design component this Task builds.
 	Component string
+	// Feature is the feature it builds there ("F2"), or "foundation" (B3);
+	// empty when the planner named none.
+	Feature string
 	// AppPath is the component's source directory relative to the repo root,
 	// resolved from the design. Empty when the design does not pin one (the
 	// component builds from the repo root) or no design reader is wired.
@@ -51,13 +58,26 @@ type plannedTask struct {
 	Body      string
 }
 
-// composeTaskBody renders a Task's issue body. issueFor resolves a design
-// component name to the issue number planned for it this run, reporting false
-// when the platform has no issue for it (a forward reference the planner emits
-// before the dependency's own Task, or a component outside this plan). An
-// unresolved dependency is still named, by component — losing the ordering hint
-// entirely would be worse than a name the agent can search for.
-func composeTaskBody(p plannedTask, issueFor func(component string) (int, bool)) string {
+// taskLink is one "Depends on" line: the issue the platform resolved, or, when
+// it has none yet, the name the agent can search for.
+type taskLink struct {
+	Number int
+	Name   string
+}
+
+// taskBrief is what a body states beyond the planner's facts: the feature's
+// words and the product-wide requirements the Task must honour, both from the
+// version's scope.
+type taskBrief struct {
+	FeatureName string
+	ProductWide []string
+}
+
+// composeTaskBody renders a Task's issue body. links are its dependencies in
+// order, already resolved to issues where the platform has one; an unresolved
+// one is still named — losing the ordering hint entirely would be worse than a
+// name the agent can search for.
+func composeTaskBody(p plannedTask, brief taskBrief, links []taskLink) string {
 	var sb strings.Builder
 	if r := strings.TrimSpace(p.Rationale); r != "" {
 		sb.WriteString(r)
@@ -66,19 +86,26 @@ func composeTaskBody(p plannedTask, issueFor func(component string) (int, bool))
 	if c := strings.TrimSpace(p.Component); c != "" {
 		fmt.Fprintf(&sb, "**Component:** `%s`\n", c)
 	}
+	switch {
+	case p.Feature == foundation:
+		sb.WriteString("**Feature:** foundation — the component's shared setup and product-wide requirements\n")
+	case p.Feature != "" && brief.FeatureName != "":
+		fmt.Fprintf(&sb, "**Feature:** %s %s\n", p.Feature, brief.FeatureName)
+	case p.Feature != "":
+		fmt.Fprintf(&sb, "**Feature:** %s\n", p.Feature)
+	}
+	if len(brief.ProductWide) > 0 {
+		fmt.Fprintf(&sb, "**Product-wide:** %s\n", strings.Join(brief.ProductWide, ", "))
+	}
 	if ap := strings.TrimSpace(p.AppPath); ap != "" {
 		fmt.Fprintf(&sb, "**App Path:** `%s`\n", ap)
 	}
-	for _, dep := range p.DependsOn {
-		dep = strings.TrimSpace(dep)
-		if dep == "" {
+	for _, l := range links {
+		if l.Number > 0 {
+			fmt.Fprintf(&sb, "Depends on #%d\n", l.Number)
 			continue
 		}
-		if n, ok := issueFor(dep); ok && n > 0 {
-			fmt.Fprintf(&sb, "Depends on #%d\n", n)
-			continue
-		}
-		fmt.Fprintf(&sb, "Depends on the `%s` task\n", dep)
+		fmt.Fprintf(&sb, "Depends on the %s task\n", l.Name)
 	}
 	if b := strings.TrimSpace(p.Body); b != "" {
 		sb.WriteString("\n")

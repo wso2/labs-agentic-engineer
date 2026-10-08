@@ -246,7 +246,7 @@ func TestEnsureValidationIssue_CreatesFormattedIssue(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	if _, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone); err != nil {
+	if _, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil); err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
 	if len(iss.created) != 1 {
@@ -328,7 +328,7 @@ func TestEnsureValidationIssue_ReturnsTheNumberItMinted(t *testing.T) {
 	iss := &fakeIssues{} // the milestone reads empty, always
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestEnsureValidationIssue_NumberlessCreateIsAnError(t *testing.T) {
 	iss := &fakeIssues{numberless: true}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err == nil {
 		t.Fatal("want an error when the create reports no number, got nil")
 	}
@@ -362,7 +362,7 @@ func TestEnsureValidationIssue_ReusesTheVersionsOwnOpenIssue(t *testing.T) {
 	}}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
@@ -405,7 +405,7 @@ func TestEnsureValidationIssue_ReopensTheClosedIssueForARepeatAttempt(t *testing
 	}}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
@@ -429,7 +429,7 @@ func TestEnsureValidationIssue_DoesNotReuseAnotherVersionsIssue(t *testing.T) {
 	}}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestEnsureValidationIssue_RefusesWithoutAMilestone(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", 0)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", 0, nil)
 	if err == nil {
 		t.Fatal("want an error with no milestone, got nil")
 	}
@@ -466,7 +466,7 @@ func TestEnsureValidationIssue_SkipsWhenCriteriaAbsent(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{found: false})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}
@@ -482,7 +482,7 @@ func TestEnsureValidationIssue_SkipsWhenCriteriaMalformed(t *testing.T) {
 	iss := &fakeIssues{}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(`{"requirements": []}`), found: true})
 
-	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(context.Background(), "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue (malformed should skip, not error): %v", err)
 	}
@@ -516,7 +516,7 @@ func TestValidationTaskLifecycle_ReopenThenCloseWalksOneIssue(t *testing.T) {
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
 	// Attempt 1: mint, judge, close.
-	first, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	first, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone, nil)
 	if err != nil || first == 0 {
 		t.Fatalf("EnsureValidationIssue(attempt 1) = (%d, %v)", first, err)
 	}
@@ -528,7 +528,7 @@ func TestValidationTaskLifecycle_ReopenThenCloseWalksOneIssue(t *testing.T) {
 	}
 
 	// Attempt 2: the same issue, reopened.
-	second, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	second, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue(attempt 2): %v", err)
 	}
@@ -586,7 +586,7 @@ func TestValidationTaskLifecycle_CloseBeforeTheMergeStandsAndDoesNotDuplicate(t 
 	}
 
 	// The next attempt reopens the ONE issue rather than filing a second.
-	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue after a close: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestValidationTaskLifecycle_AClosedTaskIsReopenedNotRefiled(t *testing.T) {
 	iss := &fakeIssues{byMilestone: map[int][]sourcecontrol.IssueInfo{thisMilestone: {closed}}}
 	svc := newSvc(iss, fakeCriteria{raw: []byte(sampleCriteria), found: true})
 
-	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone)
+	number, err := svc.EnsureValidationIssue(ctx, "org", "proj", thisMilestone, nil)
 	if err != nil {
 		t.Fatalf("EnsureValidationIssue: %v", err)
 	}

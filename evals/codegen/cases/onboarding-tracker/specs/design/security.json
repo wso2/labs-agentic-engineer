@@ -1,0 +1,102 @@
+{
+  "version": 3,
+  "permissions": [
+    {
+      "resource": "onboarding-records",
+      "component": "onboarding-api",
+      "description": "A new hire's onboarding record and its overall status",
+      "actions": [
+        { "handle": "create", "description": "Start a new onboarding record" },
+        { "handle": "read-all", "description": "Every onboarding record, with per-department task status" },
+        { "handle": "manage", "description": "Add, edit or remove individual tasks on a record" },
+        { "handle": "complete", "description": "Mark a record complete once every task is done" }
+      ]
+    },
+    {
+      "resource": "it-tasks",
+      "component": "onboarding-api",
+      "description": "IT department's tasks across all new hires",
+      "actions": [
+        { "handle": "read", "description": "Every IT task, overdue flagged" },
+        { "handle": "update", "description": "Change an IT task's status" }
+      ]
+    },
+    {
+      "resource": "facilities-tasks",
+      "component": "onboarding-api",
+      "description": "Facilities department's tasks across all new hires",
+      "actions": [
+        { "handle": "read", "description": "Every Facilities task, overdue flagged" },
+        { "handle": "update", "description": "Change a Facilities task's status" }
+      ]
+    },
+    {
+      "resource": "hr-tasks",
+      "component": "onboarding-api",
+      "description": "HR department's tasks across all new hires",
+      "actions": [
+        { "handle": "read", "description": "Every HR task, overdue flagged" },
+        { "handle": "update", "description": "Change an HR task's status" }
+      ]
+    },
+    {
+      "resource": "task-templates",
+      "component": "onboarding-api",
+      "description": "The standard per-department checklist used to seed new onboarding records",
+      "actions": [
+        { "handle": "manage", "description": "Create, edit or remove a task template" }
+      ]
+    }
+  ],
+  "groups": [
+    { "name": "HR Coordinators", "description": "HR staff who run new-hire onboarding" },
+    { "name": "IT Staff", "description": "IT team members who provision new-hire equipment and access" },
+    { "name": "Facilities Staff", "description": "Facilities team members who prepare desks, badges and parking" },
+    { "name": "Onboarding Admins", "description": "Staff who maintain the standard onboarding task templates" }
+  ],
+  "roles": [
+    {
+      "name": "HRCoordinator",
+      "description": "Creates onboarding records, manages exceptions, tracks the cross-department dashboard and closes onboarding out.",
+      "stories": [1, 2, 3, 4, 9, 11],
+      "grants": [
+        "onboarding-records:create",
+        "onboarding-records:read-all",
+        "onboarding-records:manage",
+        "onboarding-records:complete",
+        "it-tasks:read",
+        "facilities-tasks:read",
+        "hr-tasks:read",
+        "hr-tasks:update"
+      ],
+      "assignTo": ["HR Coordinators"]
+    },
+    {
+      "name": "ITStaff",
+      "description": "Views and updates IT department tasks across all new hires.",
+      "stories": [5, 6, 10],
+      "grants": ["it-tasks:read", "it-tasks:update"],
+      "assignTo": ["IT Staff"]
+    },
+    {
+      "name": "FacilitiesStaff",
+      "description": "Views and updates Facilities department tasks across all new hires.",
+      "stories": [7, 8, 10],
+      "grants": ["facilities-tasks:read", "facilities-tasks:update"],
+      "assignTo": ["Facilities Staff"]
+    },
+    {
+      "name": "Admin",
+      "description": "Maintains the standard per-department onboarding task templates.",
+      "stories": [12],
+      "grants": ["task-templates:manage"],
+      "assignTo": ["Onboarding Admins"]
+    }
+  ],
+  "testUsers": [
+    { "username": "test-hrcoordinator", "roles": ["HRCoordinator"] },
+    { "username": "test-itstaff", "roles": ["ITStaff"] },
+    { "username": "test-facilitiesstaff", "roles": ["FacilitiesStaff"] },
+    { "username": "test-admin", "roles": ["Admin"] }
+  ]
+}

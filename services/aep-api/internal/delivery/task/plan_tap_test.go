@@ -33,6 +33,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 func newTestTap(issues *fakeIssues) *planTap {
@@ -507,5 +508,79 @@ func TestPlanTap_TheGoldenStreamMintsAndUpdates(t *testing.T) {
 	}
 	if st := tap.state[tap.titleToNumber["add the greeting endpoint"]]; st.Rationale != "Stories 1 and 2 both need it." {
 		t.Fatalf("state = %+v, want the golden updateTask's rationale applied", st)
+	}
+}
+
+func planFeatureOK(component, feature, title string, deps ...string) string {
+	depsJSON := "[]"
+	if len(deps) > 0 {
+		depsJSON = `["` + strings.Join(deps, `","`) + `"]`
+	}
+	return fmt.Sprintf(`{"ok":true,"op":"plan","component":%q,"title":%q,"dependsOn":%s,"origin":"spec-plan","rationale":"do it","feature":%q}`, component, title, depsJSON, feature)
+}
+
+// A version is cut into one Task per feature per component, plus a foundation
+// Task per component (B3). Each Task serves only its own feature's stories,
+// names the product-wide requirements it honours, and depends on its
+// component's foundation, its component's Tasks for the features it needs, and
+// the same feature's Task in each component it calls.
+func TestPlanTap_PerFeatureTasksLinkInDependencyOrder(t *testing.T) {
+	issues := newFakeIssues()
+	tap := newTestTap(issues)
+	tap.withScope(spec.BuildScope{
+		ComponentStories: map[string][]string{
+			"api": {"F1.1", "F1.2", "F2.1"},
+			"web": {"F1.1", "F2.1", "F2.2"},
+		},
+		Features: []spec.ScopeFeature{
+			{ID: "F1", Name: "Submit a claim"},
+			{ID: "F2", Name: "Approvals", Needs: []string{"F1"}},
+		},
+		ProductWide: []spec.ScopeItem{
+			{ID: "P1", Text: "Amounts in the user's currency", AppliesTo: []string{"all"}},
+			{ID: "P2", Text: "Approvers are audited", AppliesTo: []string{"F2"}},
+		},
+	})
+
+	if err := tap.Stream(turn(
+		taskOp(planFeatureOK("api", "foundation", "Set up the API")),
+		taskOp(planFeatureOK("api", "F1", "Claims in the API")),
+		taskOp(planFeatureOK("api", "F2", "Approvals in the API")),
+		taskOp(planFeatureOK("web", "F1", "Claims in the web app", "api")),
+		taskOp(planFeatureOK("web", "F2", "Approvals in the web app", "api")),
+	), noAbort); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(issues.created) != 5 {
+		t.Fatalf("expected 5 issues, got %d", len(issues.created))
+	}
+	num := func(i int) int { return 100 + i }
+	cases := []struct {
+		i            int
+		stories      []string
+		want, absent []string
+	}{
+		{0, nil, []string{"**Feature:** foundation", "**Product-wide:** P1, P2"}, []string{"Depends on"}},
+		{1, []string{"F1.1", "F1.2"}, []string{"**Feature:** F1 Submit a claim", "**Product-wide:** P1\n", fmt.Sprintf("Depends on #%d", num(0))}, []string{"P2"}},
+		{2, []string{"F2.1"}, []string{"**Product-wide:** P1, P2", fmt.Sprintf("Depends on #%d", num(0)), fmt.Sprintf("Depends on #%d", num(1))}, nil},
+		{3, []string{"F1.1"}, []string{fmt.Sprintf("Depends on #%d", num(1))}, []string{fmt.Sprintf("#%d", num(0))}},
+		{4, []string{"F2.1", "F2.2"}, []string{fmt.Sprintf("Depends on #%d", num(3)), fmt.Sprintf("Depends on #%d", num(2))}, nil},
+	}
+	for _, c := range cases {
+		body := issues.created[c.i].Body
+		if got := delivery.ParseServesStories(body); strings.Join(got, ",") != strings.Join(c.stories, ",") {
+			t.Errorf("task %d serves %v, want %v", c.i, got, c.stories)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(body, w) {
+				t.Errorf("task %d body missing %q:\n%s", c.i, w, body)
+			}
+		}
+		for _, a := range c.absent {
+			if strings.Contains(body, a) {
+				t.Errorf("task %d body carries %q:\n%s", c.i, a, body)
+			}
+		}
 	}
 }

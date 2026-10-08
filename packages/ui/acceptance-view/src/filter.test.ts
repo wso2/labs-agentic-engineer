@@ -129,6 +129,14 @@ describe("deriveTags", () => {
     // @story-10 must not sort between 1 and 2, which a string sort would do.
     expect(deriveTags([FEATURE])).toEqual(["@negative", "@story-2", "@story-10", "@capability"]);
   });
+
+  it("orders a feature's story IDs part by part", () => {
+    const feature = parseFeatureFile(
+      "specs/validation/acceptance/F2-approvals.feature",
+      ["Feature: F2 Approvals", "", "  @story-F2.10", "  Rule: a", "", "  @story-F2.9 @story-F10.1", "  Rule: b", ""].join("\n"),
+    )!;
+    expect(deriveTags([feature])).toEqual(["@story-F2.9", "@story-F2.10", "@story-F10.1"]);
+  });
 });
 
 describe("deriveStatuses", () => {

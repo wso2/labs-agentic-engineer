@@ -29,8 +29,13 @@ describe("query retry for aep-api failures", () => {
     expect(queryRetry(6, unavailable())).toBe(false);
     expect(queryRetry(2, new Error("boom"))).toBe(true);
     expect(queryRetry(3, new Error("boom"))).toBe(false);
-    // Not connected is not a blip: the ordinary budget.
-    expect(queryRetry(3, new ApiRequestError({ code: "github_not_connected" }, "x"))).toBe(false);
+  });
+
+  it("does not retry what only the user or an administrator can fix", () => {
+    // A retry cannot connect GitHub or fix the configuration: the notice shows at once.
+    expect(queryRetry(0, new ApiRequestError({ code: "github_not_connected" }, "x"))).toBe(false);
+    expect(queryRetry(0, new ApiRequestError({ code: "ae_studio_misconfigured" }, "x"))).toBe(false);
+    expect(queryRetry(0, { code: "github_not_connected" })).toBe(false);
   });
 
   it("waits the server's Retry-After on ae_studio_unavailable, 5 s without one", () => {

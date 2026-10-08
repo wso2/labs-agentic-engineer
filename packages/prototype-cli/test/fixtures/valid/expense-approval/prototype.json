@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 3,
+  "name": "Expense approvals",
+  "entryScreen": "screen.queue",
+  "roles": [
+    {
+      "id": "approver",
+      "name": "Approver"
+    },
+    {
+      "id": "employee",
+      "name": "Employee"
+    },
+    {
+      "id": "finance",
+      "name": "Finance admin"
+    }
+  ],
+  "states": [
+    {
+      "id": "state.default",
+      "name": "Default"
+    },
+    {
+      "id": "state.invalid",
+      "name": "Validation errors"
+    },
+    {
+      "id": "state.empty",
+      "name": "Nothing to show"
+    },
+    {
+      "id": "state.failed",
+      "name": "Integration failed"
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.queue",
+      "name": "Approval queue",
+      "roleIds": [
+        "approver",
+        "finance"
+      ]
+    },
+    {
+      "id": "screen.detail",
+      "name": "Expense detail",
+      "roleIds": [
+        "approver",
+        "finance"
+      ]
+    },
+    {
+      "id": "screen.new",
+      "name": "New expense",
+      "roleIds": [
+        "employee"
+      ]
+    },
+    {
+      "id": "screen.mine",
+      "name": "My expenses",
+      "roleIds": [
+        "employee"
+      ]
+    },
+    {
+      "id": "screen.reports",
+      "name": "Reports",
+      "roleIds": [
+        "finance"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.approve",
+      "name": "Approve an expense",
+      "roleId": "approver",
+      "screenIds": [
+        "screen.queue",
+        "screen.detail"
+      ]
+    },
+    {
+      "id": "flow.submit",
+      "name": "Submit an expense",
+      "roleId": "employee",
+      "screenIds": [
+        "screen.new",
+        "screen.mine"
+      ]
+    },
+    {
+      "id": "flow.month-end",
+      "name": "Month-end review",
+      "roleId": "finance",
+      "screenIds": [
+        "screen.reports",
+        "screen.detail"
+      ]
+    }
+  ]
+}

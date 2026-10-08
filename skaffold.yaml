@@ -65,6 +65,7 @@ build:
     - image: ghcr.io/wso2/aep/aep-api
       custom:
         buildCommand: |
+          set -eu
           docker build \
             --build-context skills=./skills \
             -f services/aep-api/Dockerfile \
@@ -79,11 +80,6 @@ build:
             - skills/**
           ignore:
             - services/aep-api/bin/**
-
-    - image: ghcr.io/wso2/aep/aep-mcp-server
-      context: .
-      docker:
-        dockerfile: services/aep-mcp-server/Dockerfile
 
     - image: ghcr.io/wso2/aep/console
       context: .

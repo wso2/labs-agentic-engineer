@@ -32,27 +32,6 @@ aepApi:
     baseURL: ""
     tokenSecret: ""
 
-# Streamable-HTTP MCP server wrapping aep-api's issue-create + coding-agent
-# dispatch endpoints. The OpenChoreo SRE/RCA agent calls it (AE_API_URL) during
-# the alert->RCA->AEP handoff so it can file issues + dispatch without holding
-# AE's GitHub credentials. Stateless; forwards the caller's bearer to aep-api,
-# which enforces org-scoped auth. Deployed by default (tiny); exercised once the
-# SRE stack is installed via `aep sre install`.
-aepMcpServer:
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/aep-mcp-server
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 3400
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "256Mi"
-
 console:
   replicas: 1
   image:
@@ -262,44 +241,37 @@ postgres:
       cpu: "500m"
       memory: "512Mi"
 
+# The OpenChoreo SRE agent's handoff into AE (config.SREHandoffConfig). Off by
+# default; `aectl sre install` turns it on. aep-api then serves the agent's two
+# MCP tools, which search and file a project's issues, at
+# /internal/v1/sre-handoff/mcp, and attaches the default "error -> RCA" alert
+# rule to service components. One SRE agent serves every org on its plane, so
+# each call names its org (the alert's namespace), and aep-api acts only after
+# the observer (observer.baseURL, read with aepApi.serviceAuth) confirms that
+# alert really fired.
+#
+# The agent authenticates with one random key that aectl generates and writes
+# into tokenSecret (key `token`) here and into the agent's own Secret on the
+# observability plane. tokenHash is that key's sha256, which aectl sets so a
+# rotated key rolls aep-api: env read from a Secret is fixed at pod start.
+#
+# The route reaches aep-api over https through the OpenChoreo control-plane
+# gateway (templates/aep-api/sre-handoff-route.yaml): the agent's extension
+# loader sends its Authorization header only to https URLs. mcpHostname must
+# fall under the gateway's https listener hostname and certificate SANs, and
+# `aectl sre install --mcp-hostname` must name the same host.
+sreAgent:
+  enabled: false
+  tokenSecret: "sre-handoff"
+  tokenHash: ""
+  mcpHostname: "aep-mcp.openchoreo.localhost"
+
 # Temporal workflow engine that drives the devflow workflows. aep-api runs the
 # worker in-process and dials the frontend below. Backed by the postgres
 # StatefulSet above (dedicated temporal / temporal_visibility databases), so
 # workflow state is durable across Temporal pod restarts. enabled=false turns
 # the whole feature off (no server deployed, no TEMPORAL_* env on aep-api, and
 # /devflows answers 503).
-# SRE-agent handoff credential (auth.SREHandoffVerifier, the /internal/v1/sre/…
-# gate in internal/edge/internal.go). Off by default — most installs don't run
-# the OpenChoreo SRE agent. Enabling requires a random value at the
-# aep/aep-mcp-token OpenBao path (seed it with
-# `aectl platform secret import --path aep/aep-mcp-token`, or locally
-# deployments/scripts/setup-sre.sh, which also enables this block). aep-api
-# and aep-mcp-server share that one credential.
-# org is not secret — it's the one org this aep-api's SRE
-# integration is scoped to, matching today's one-install-per-org model. See
-# docs/developer-guide/sre-handoff-security.md.
-#
-# Enabling also gives aep-mcp-server that credential as its fallback bearer
-# (AEP_MCP_DEFAULT_BEARER), because the SRE extension cannot send an
-# Authorization header over the plaintext in-cluster URL, and adds a
-# NetworkPolicy that only admits pods matching callerPodLabels in
-# callerNamespace (the SRE agent's namespace, aectl sre install
-# --obs-namespace) to aep-mcp-server.
-#
-# callerPodLabels defaults to the SRE agent Deployment's selector labels in the
-# openchoreo-observability-plane chart 1.2.0+ (component sre-agent), the plane
-# setup-env-for-aectl.sh installs and `aectl sre install` enables the agent on.
-# Selector labels are immutable on a Deployment, so every SRE pod carries them.
-# A plane `aectl sre install` installs itself at its --obs-plane-version default
-# (1.0.1-hotfix.1) names the component ai-rca-agent; set it accordingly there.
-sreHandoff:
-  enabled: false
-  org: "default"
-  callerNamespace: "openchoreo-observability-plane"
-  callerPodLabels:
-    app.kubernetes.io/name: openchoreo-observability-plane
-    app.kubernetes.io/component: sre-agent
-
 temporal:
   enabled: true
   # Temporal namespace aep-api connects to; auto-setup registers it on startup.

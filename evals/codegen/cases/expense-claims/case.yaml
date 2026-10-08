@@ -1,0 +1,8 @@
+name: expense-claims
+description: Employees submit expense claims, managers approve them, and finance
+  exports approved claims to payroll, no email/notifiactions, no object storage
+source:
+  project: expense-claims
+  snapshot: 2026-09-17T09-24-32-848Z
+  savedAt: 2026-10-03T14:24:19.012Z
+tags: []

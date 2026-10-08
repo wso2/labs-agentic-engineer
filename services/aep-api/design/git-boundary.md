@@ -3,7 +3,7 @@
 `aep-api` holds no git state and no GitHub credential. Every git read, commit,
 tag and GitHub call goes to the org's AE Studio pod, which holds the org's
 gitpat and its clones
-([ADR-0040](../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+([ADR-0045](../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 This note is `aep-api`'s side of that hop: the credential, the ports, what
 each failure means to each caller. The pod's side (its gates, its problem
 codes, its clones) is in
@@ -115,5 +115,5 @@ them](../../../components/dataplane/ae-system-project/ae-studio/ae-studio-tools/
 | Plan (`delivery/task`) | `StartTurn` in a Temporal activity | `ErrTurnInProgress` and unavailable are retried, each attempt with a fresh turn id; misconfigured is non-retryable |
 | Run supervisor and validation (`delivery`) | issues, milestones, pull requests, reads at a sha | `sourceControlErr`: unavailable retries, absent fails permanent |
 | Eventcore handlers and sweeps (`delivery/eventcore`) | issues, milestone counts, pull requests, design reads, hook repair | a handler 5xx is replayed, then swept; the hook repair skips an org whose pod is absent or unavailable this pass |
-| SRE issue writes (`/internal/v1/sre/…`) | issues | 503 or 409 to the SRE caller, no fallback |
+| SRE issue writes (`/internal/v1/sre-handoff/mcp`) | issues | a tool error to the SRE agent, no fallback |
 | Credential validator (`organization`) | `GitHubIdentity` | GitHub's 401/403/404 on the gitpat is unauthorized; anything else, the pod's state included, skips the tick |

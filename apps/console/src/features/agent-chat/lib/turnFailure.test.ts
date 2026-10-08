@@ -38,7 +38,7 @@ describe("turnFailureText", () => {
     );
   });
 
-  it("shows the agents service's sentence for a truncated write", () => {
+  it("shows the design agent's sentence for a truncated write", () => {
     const message = "The model's output limit (8192 tokens per step) cut off addFile for specs/prd.md before it finished, so nothing was written.";
     expect(turnFailureText({ code: "output_truncated", message }, NOW)).toBe(message);
   });

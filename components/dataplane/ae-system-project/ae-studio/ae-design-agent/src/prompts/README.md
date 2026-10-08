@@ -44,7 +44,7 @@ for what went wrong with that and why this shape is expected to hold.
   fact extraction; it yields a token, not a sentence. Which skill that token
   loads, and which branch of it, IS wording (`COMMAND_FLOWS` in `turn.ts`): a
   command names the user's intent, a skill names an engineer-facing playbook,
-  and deciding that `/feature` means "the amend skill, add-a-feature branch" is
+  and deciding that `/feature` means "the refine skill, add-a-feature branch" is
   a sentence about to be written.
 - **Skill bodies** — org-authored, read from the turn's `_skills` snapshot
   (`conversation/load-workspace.ts`). A skill is guidance; this directory is the

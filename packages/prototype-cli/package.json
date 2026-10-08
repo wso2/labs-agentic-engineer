@@ -1,0 +1,41 @@
+{
+  "name": "@wso2/prototype-cli",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "The prototype CLI: init, check, preview and export a sandboxed React prototype written against @wso2/prototype-kit.",
+  "bin": {
+    "prototype": "./dist/bin.js"
+  },
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "templates"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsx scripts/build-host.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.host.json",
+    "lint": "eslint .",
+    "test": "pnpm run build && vitest run",
+    "test:browser": "pnpm run build && vitest run --config vitest.browser.config.ts",
+    "dev": "echo \"@wso2/prototype-cli: no dev server\""
+  },
+  "dependencies": {
+    "@wso2/prototype-kit": "workspace:*",
+    "@wso2/prototype-theme-default": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "@vitest/browser": "4.1.10",
+    "@vitest/browser-playwright": "4.1.10",
+    "esbuild": "^0.28.1",
+    "playwright": "1.61.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tsx": "^4.21.0",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

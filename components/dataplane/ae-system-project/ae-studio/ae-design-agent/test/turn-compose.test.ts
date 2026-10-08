@@ -29,7 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SURFACES } from "@aep/agent-stream";
-import { composeInstruction, eagerSkillsFor, toolsetFor, wantsRegisterDraftTool } from "../src/prompts/turn.js";
+import { composeInstruction, eagerSkillsFor, scopeFactFor, scopeNote, toolsetFor, wantsRegisterDraftTool } from "../src/prompts/turn.js";
 
 /** The platform skill library this monorepo publishes to every org. */
 const SKILLS_DIR = path.resolve(fileURLToPath(import.meta.url), "../../../../../../../skills");
@@ -47,14 +47,102 @@ test("flow points at the skill, with the user's trailing text after a blank line
   assert.ok(
     composeInstruction({ kind: "flow", skill: "design" }).startsWith("Load the design skill and follow it."),
   );
-  const withText = composeInstruction({ kind: "flow", skill: "amend", text: "add an actor" });
-  assert.ok(withText.startsWith("Load the amend skill and follow it.\n\nadd an actor"));
+  const withText = composeInstruction({ kind: "flow", skill: "interview", text: "F2" });
+  assert.ok(withText.startsWith("Load the interview skill and follow it.\n\nF2"));
   // Whitespace-only trailing text is not text.
   assert.ok(
-    composeInstruction({ kind: "flow", skill: "amend", text: "   " }).startsWith(
-      "Load the amend skill and follow it.\n\nSpec sources",
+    composeInstruction({ kind: "flow", skill: "interview", text: "   " }).startsWith(
+      "Load the interview skill and follow it.\n\nSpec sources",
     ),
   );
+});
+
+test("/design names the features this run designs, and bare designs every designable one", () => {
+  assert.ok(
+    composeInstruction({ kind: "flow", skill: "design", text: "F1 F2" }).startsWith(
+      "Load the design skill and follow it.\n\nDesign these features: F1 F2",
+    ),
+  );
+  assert.ok(
+    composeInstruction({ kind: "flow", skill: "design" }).startsWith("Load the design skill and follow it.\n\nSpec sources"),
+  );
+});
+
+test("/prototype loads its skill and the brief, and trailing component names follow the brief", () => {
+  const bare = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.ok(bare.startsWith("Load the prototype skill and follow it.\n\nGenerate the prototype of each web-application"));
+  // The brief names what to read and what to write.
+  assert.match(bare, /specs\/design\/design\.cell/);
+  assert.match(bare, /specs\/design\/security\.json/);
+  assert.match(bare, /specs\/design\/components\/<component>\/prototype\.json/);
+  assert.match(bare, /manifest\) first and then prototype\.tsx/);
+  assert.match(bare, /Spec sources live under specs\//);
+
+  const named = composeInstruction({ kind: "flow", skill: "prototype", text: "approvals-portal" });
+  const brief = named.indexOf("Generate the prototype of each web-application");
+  assert.ok(brief > 0 && named.indexOf("\n\napprovals-portal") > brief, "component names come after the brief");
+
+  // A flow with no brief is unchanged.
+  assert.ok(!composeInstruction({ kind: "flow", skill: "design" }).includes("Generate the prototype"));
+});
+
+const FEEDBACK = {
+  prototypeHash: "b".repeat(64),
+  component: "approvals-portal",
+  requests: [
+    {
+      screenId: "screen.queue",
+      flowId: "flow.approve",
+      roleId: "approver",
+      stateId: "state.default",
+      elementIds: ["btn.approve", "tbl.expenses"],
+      text: "Put the Approve button on the left.\nMake it `primary`.",
+    },
+    { screenId: "screen.detail", roleId: "employee", stateId: "state.empty", elementIds: [], text: "Say why it is empty" },
+  ],
+};
+
+test("a /prototype turn with feedback is a revision of that one prototype, not a generation", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: FEEDBACK });
+  assert.ok(out.startsWith('Load the prototype skill and follow it.\n\nRevise the prototype of the web-application "approvals-portal"'));
+  assert.ok(!out.includes("Generate the prototype of each web-application"));
+  // The files it may change, and the revision the reviewer saw.
+  assert.match(out, /specs\/design\/components\/approvals-portal\/prototype\.json/);
+  assert.match(out, /specs\/design\/components\/approvals-portal\/prototype\.tsx/);
+  assert.match(out, /change only those two files/);
+  assert.ok(out.includes("b".repeat(64)));
+  // Stable ids, and an answer per request.
+  assert.match(out, /Keep every manifest key and element id you do not need to change/);
+  assert.match(out, /answering each request by its number, as applied .* or declined/);
+});
+
+test("the revision brief lists each request's place and element ids and quotes its text verbatim", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: FEEDBACK });
+  assert.match(
+    out,
+    /Request 1\nWhere: screen "screen\.queue", flow "flow\.approve", role "approver", display state "state\.default"\nElements \(ids\): btn\.approve, tbl\.expenses\nThe reviewer wrote:\n> Put the Approve button on the left\.\n> Make it `primary`\./,
+  );
+  // No flow, no element: the request is about the whole screen.
+  assert.match(out, /Request 2\nWhere: screen "screen\.detail", role "employee", display state "state\.empty"\nElements: none selected/);
+  assert.match(out, /> Say why it is empty/);
+  assert.match(out, /made 2 requests below/);
+  assert.match(composeInstruction({ kind: "flow", skill: "prototype", prototypeFeedback: { ...FEEDBACK, requests: [FEEDBACK.requests[1]!] } }), /made one request below/);
+});
+
+test("a /prototype turn without feedback is unchanged", () => {
+  const out = composeInstruction({ kind: "flow", skill: "prototype" });
+  assert.match(out, /Generate the prototype of each web-application/);
+  assert.doesNotMatch(out, /Revise the prototype/);
+});
+
+test("/prototype inlines the skills that read the design and say how an Oxygen screen is composed", () => {
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "prototype" }), [
+    "prototype",
+    "cell-design",
+    "security-design",
+    "openapi-conventions",
+    "oxygen-ui-design-system",
+  ]);
 });
 
 test("the resolve command carries the user's answer after the dependency's name, verbatim", () => {
@@ -78,40 +166,39 @@ test("the resolve command carries the user's answer after the dependency's name,
 
 /**
  * A command names the user's intent (`/feature`), a skill names an
- * engineer-facing playbook (`amend`). The three scoped edits are branches of
- * one playbook, so the command resolves to that skill AND says which branch —
+ * engineer-facing playbook (`refine`). The console's older commands are doors
+ * into that one loop, so each resolves to the skill AND says which branch —
  * carrying whatever the user clicked as the branch's subject, which is what
  * makes a lens on the PRD a complete instruction rather than a menu item the
  * user has to finish from memory (#579).
  */
 test("a command that names a branch resolves to the skill and says which branch", () => {
   const feature = composeInstruction({ kind: "flow", skill: "feature", text: "receipt scanning" });
-  assert.ok(feature.startsWith("Load the amend skill and follow it.\n\nAdd a feature: receipt scanning"));
+  assert.ok(feature.startsWith("Load the refine skill and follow it.\n\nAdd a feature: receipt scanning"));
 
   const actor = composeInstruction({ kind: "flow", skill: "actor", text: "Finance reviewer" });
-  assert.ok(actor.startsWith("Load the amend skill and follow it.\n\nAdd an actor: Finance reviewer"));
+  assert.ok(actor.startsWith("Load the refine skill and follow it.\n\nAdd an actor: Finance reviewer"));
 
   // Fired bare (the header's "+ Feature", where there is no line to carry) the
   // branch still arrives; the skill interviews for the subject.
   const bare = composeInstruction({ kind: "flow", skill: "feature" });
-  assert.ok(bare.startsWith("Load the amend skill and follow it.\n\nAdd a feature."));
+  assert.ok(bare.startsWith("Load the refine skill and follow it.\n\nAdd a feature."));
+
+  // `/settle` on a clicked line carries the line; bare, it walks the Open Questions.
+  const settle = composeInstruction({ kind: "flow", skill: "settle", text: "A rejected claim goes back." });
+  assert.ok(settle.startsWith("Load the refine skill and follow it.\n\nSettle this point: A rejected claim goes back."));
+  assert.ok(
+    composeInstruction({ kind: "flow", skill: "settle" }).startsWith(
+      "Load the refine skill and follow it.\n\nSettle the Open Questions, one at a time.",
+    ),
+  );
 });
 
 test("a branch command inlines the skill it resolves to, not its own token", () => {
-  for (const token of ["feature", "actor"]) {
-    assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: token }), [
-      "amend",
-      "grilling",
-      "prd-contract",
-    ]);
+  for (const token of ["feature", "actor", "amend", "settle", "refine"]) {
+    assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: token }), ["refine", "grilling", "prd-contract"]);
   }
-  // `/settle` is its own skill, so nothing is remapped — but it revises the
-  // same document and carries the same two supporting skills.
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "settle" }), [
-    "settle",
-    "grilling",
-    "prd-contract",
-  ]);
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "interview" }), ["interview", "grilling", "prd-contract"]);
 });
 
 /**
@@ -180,11 +267,40 @@ test("flow lists the reference documents, and lists NOTHING when there are none"
   assert.doesNotMatch(bare, /reference document/i);
 });
 
-test("target is rendered by the service, never formatted by the caller", () => {
-  const out = composeInstruction({ kind: "chat", text: "tighten the spec" }, { target: "specs/requirements/prd.md" });
-  assert.ok(out.endsWith("(target: specs/requirements/prd.md)"));
-  // Absent or blank → no suffix at all.
-  assert.doesNotMatch(composeInstruction({ kind: "chat", text: "x" }, { target: "  " }), /\(target:/);
+const APPROVALS = "specs/requirements/features/F2-approvals.md";
+
+test("a feature scope leads the instruction, names the file, and fences nothing (S6)", () => {
+  const scope = { kind: "feature", feature: "F2", file: APPROVALS } as const;
+  const out = composeInstruction({ kind: "chat", text: "deputies can approve up to 500" }, { scope });
+  assert.ok(out.startsWith(`The user is looking at feature F2, whose file is ${APPROVALS}`));
+  assert.match(out, /Read specs\/requirements\/prd\.md and that file before you change anything\./);
+  assert.match(out, /fences nothing/);
+  assert.match(out, /deputies can approve up to 500/);
+  // Unscoped → byte-identical to a turn sent before scopes existed.
+  assert.equal(composeInstruction({ kind: "chat", text: "x" }, {}), composeInstruction({ kind: "chat", text: "x" }));
+  assert.doesNotMatch(composeInstruction({ kind: "chat", text: "x" }), /looking at/);
+});
+
+test("a feature with no file yet is still named, with where its file goes", () => {
+  const out = scopeNote({ kind: "feature", feature: "F7", file: null });
+  assert.match(out, /feature F7, whose file \(specs\/requirements\/features\/F7-<name>\.md\) is not in the requirements yet/);
+  assert.doesNotMatch(out, /that file before/);
+});
+
+test("the design review scope reads the message as about the design", () => {
+  assert.match(scopeNote({ kind: "design-review" }), /^The user is in the design review/);
+});
+
+test("scopeFactFor finds a feature's file by its ID, never a longer ID's", () => {
+  const paths = [
+    "specs/requirements/prd.md",
+    "specs/requirements/features/F20-audit.md",
+    APPROVALS,
+    "specs/requirements/features/F2-approvals/notes.md",
+  ];
+  assert.deepEqual(scopeFactFor({ kind: "feature", feature: "F2" }, paths), { kind: "feature", feature: "F2", file: APPROVALS });
+  assert.deepEqual(scopeFactFor({ kind: "feature", feature: "F3" }, paths), { kind: "feature", feature: "F3", file: null });
+  assert.deepEqual(scopeFactFor({ kind: "design-review" }, paths), { kind: "design-review" });
 });
 
 test("a failed previous turn leads the instruction (D20)", () => {
@@ -195,16 +311,16 @@ test("a failed previous turn leads the instruction (D20)", () => {
 });
 
 test("headless forbids the question tools, and trails everything else", () => {
-  const out = composeInstruction({ kind: "start", idea: "a shop" }, { target: "specs/requirements/prd.md", headless: true });
+  const out = composeInstruction({ kind: "start", idea: "a shop" }, { headless: true });
   assert.match(out, /do not call ask_question or ask_questions/);
-  assert.ok(out.indexOf("(target:") < out.indexOf("No interview is possible"), "modifiers trail the body");
+  assert.ok(out.indexOf("Spec sources live under specs/") < out.indexOf("No interview is possible"), "headless trails the body");
 });
 
-test("plan carries no spec-paths rule and no target — it writes no spec files", () => {
-  const out = composeInstruction({ kind: "plan" }, { target: "specs/requirements/prd.md" });
+test("plan carries no spec-paths rule and no scope — it writes no spec files", () => {
+  const out = composeInstruction({ kind: "plan" }, { scope: { kind: "feature", feature: "F2", file: APPROVALS } });
   assert.ok(out.startsWith("Plan the implementation Tasks for this project."));
   assert.doesNotMatch(out, /Spec sources live under specs\//);
-  assert.doesNotMatch(out, /\(target:/);
+  assert.doesNotMatch(out, /looking at feature/);
 });
 
 test("plan scope marks each story COVERED or NEEDS TASKS", () => {
@@ -213,14 +329,29 @@ test("plan scope marks each story COVERED or NEEDS TASKS", () => {
     scope: {
       tag: "spec-v3",
       stories: [
-        { number: 1, title: "Sign in", covered: true },
-        { number: 4, covered: false },
+        { id: "F1.1", title: "Sign in", covered: true },
+        { id: "F2.4", covered: false },
       ],
     },
   });
   assert.match(out, /## Milestone scope \(spec spec-v3\)/);
-  assert.match(out, /- Story 1: Sign in — COVERED/);
-  assert.match(out, /- Story 4 — NEEDS TASKS/, "a story with no title still gets a row");
+  assert.match(out, /- Story F1\.1: Sign in — COVERED/);
+  assert.match(out, /- Story F2\.4 — NEEDS TASKS/, "a story with no title still gets a row");
+});
+
+test("plan scope lists the version's features with their needs, and its product-wide items", () => {
+  const out = composeInstruction({
+    kind: "plan",
+    scope: {
+      tag: "v2",
+      stories: [{ id: "F2.1", title: "Approve a claim", covered: false }],
+      features: [{ id: "F1", name: "Submit a claim" }, { id: "F2", name: "Approvals", needs: ["F1"] }],
+      productWide: [{ id: "P1", text: "Amounts in the user's currency", appliesTo: ["all"] }],
+    },
+  });
+  assert.match(out, /- F1 Submit a claim\n- F2 Approvals — needs F1/);
+  assert.match(out, /- P1: Amounts in the user's currency \(applies to all\)/);
+  assert.ok(out.indexOf("- F2 Approvals") < out.indexOf("- Story F2.1"), "features come before the stories");
 });
 
 test("an empty scope renders nothing", () => {
@@ -247,9 +378,16 @@ test("plan context is sorted by path, so the same inputs give the same prompt", 
 
 test("eager skills are derived from the flow, not supplied by the caller", () => {
   assert.deepEqual(eagerSkillsFor({ kind: "start" }), ["start", "grilling", "prd-contract"]);
-  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "amend" }), ["amend", "grilling", "prd-contract"]);
-  // Only a chat turn names no skill — its instruction is the user's own words.
+  assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "interview" }), ["interview", "grilling", "prd-contract"]);
+  // A chat turn names no skill — its instruction is the user's own words —
+  // unless it was sent with a feature open: then it is the refine loop (S4).
   assert.deepEqual(eagerSkillsFor({ kind: "chat", text: "x" }), []);
+  assert.deepEqual(eagerSkillsFor({ kind: "chat", text: "x" }, { kind: "design-review" }), []);
+  assert.deepEqual(eagerSkillsFor({ kind: "chat", text: "x" }, { kind: "feature", feature: "F2" }), [
+    "refine",
+    "grilling",
+    "prd-contract",
+  ]);
 });
 
 /**
@@ -269,11 +407,16 @@ test("the instructed skill is always inlined, whatever the flow", () => {
 /**
  * The PRD contract is a SIBLING skill, not a `start` reference: the model read the
  * `start` playbook, saw it cited, and spent a `loadSkillReference` step before the
- * first question on a document it would not write until the next turn. `amend`
- * writes against the same contract without wanting the cold-start playbook.
+ * first question on a document it would not write until the next turn.
+ * `interview` and `refine` write against the same contract without wanting the
+ * cold-start playbook.
  */
 test("both PRD-writing flows carry the contract as a skill, not a reference", () => {
-  for (const turn of [{ kind: "start" } as const, { kind: "flow", skill: "amend" } as const]) {
+  for (const turn of [
+    { kind: "start" } as const,
+    { kind: "flow", skill: "interview" } as const,
+    { kind: "flow", skill: "refine" } as const,
+  ]) {
     assert.ok(eagerSkillsFor(turn).includes("prd-contract"));
   }
   assert.ok(!fs.existsSync(path.join(SKILLS_DIR, "start", "references", "prd-contract.md")));
@@ -288,7 +431,7 @@ test("the design flow inlines its whole lineup, in lineup order", () => {
   assert.deepEqual(eagerSkillsFor({ kind: "flow", skill: "design" }), [
     "design",
     // The design flow interviews at design altitude (#578), so the question
-    // mechanics are inlined here exactly as they are on start and amend.
+    // mechanics are inlined here exactly as they are on start and interview.
     "grilling",
     "cell-design",
     "architecture",
@@ -313,9 +456,11 @@ test("every eager skill name exists in the platform skill library", () => {
   const turns = [
     { kind: "start" } as const,
     { kind: "plan" } as const,
-    { kind: "flow", skill: "amend" } as const,
+    { kind: "flow", skill: "interview" } as const,
+    { kind: "flow", skill: "refine" } as const,
     { kind: "flow", skill: "settle" } as const,
     { kind: "flow", skill: "design" } as const,
+    { kind: "flow", skill: "prototype" } as const,
     // The branch commands resolve to a platform skill, so they are checked too.
     { kind: "flow", skill: "feature" } as const,
     { kind: "flow", skill: "actor" } as const,
@@ -333,7 +478,7 @@ test("every eager skill name exists in the platform skill library", () => {
 test("`organization` is never eager — it rides the system prompt on every turn", () => {
   for (const turn of [
     { kind: "start" } as const,
-    { kind: "flow", skill: "amend" } as const,
+    { kind: "flow", skill: "refine" } as const,
     { kind: "flow", skill: "design" } as const,
   ]) {
     assert.ok(!eagerSkillsFor(turn).includes("organization"), `${JSON.stringify(turn)} must not inline it twice`);

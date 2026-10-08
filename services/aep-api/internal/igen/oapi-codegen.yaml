@@ -6,10 +6,12 @@
 # embedded-spec: the edge's request validator and body cap load the contract
 # from GetSpec() (internal/edge/validator.go), exactly as /api/v1 does.
 #
-# exclude-operation-ids: call-mcp-tool is declared so the spec lists every
-# internal route, but its handler is mcpdiscovery's raw JSON-RPC handler, not a
-# strict-server method. oapi-codegen drops excluded ops before it embeds the
-# spec, so GetSpec() lacks /mcp: MCP bodies are capped but not schema-validated.
+# exclude-operation-ids: call-mcp-tool and call-sre-handoff-mcp-tool are
+# declared so the spec lists every internal route, but their handlers are raw
+# JSON-RPC handlers (mcpdiscovery, sourcecontrol/issues), not strict-server
+# methods. oapi-codegen drops excluded ops before it embeds the spec, so
+# GetSpec() lacks both paths: their bodies are capped but not schema-validated,
+# and the internal gate passes them through to their own verifiers.
 #
 # compatibility.preserve-original-operation-id-casing-in-embedded-spec: the
 # edge keys the per-op body caps (internalBodyCaps) by the contract's
@@ -34,3 +36,4 @@ output-options:
   name-normalizer: ToCamelCaseWithInitialisms
   exclude-operation-ids:
   - call-mcp-tool
+  - call-sre-handoff-mcp-tool

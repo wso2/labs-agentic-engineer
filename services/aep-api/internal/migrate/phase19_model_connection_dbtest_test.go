@@ -51,13 +51,13 @@ func (s legacySecrets) Get(ctx context.Context, org, key string) ([]byte, error)
 }
 
 // preModelConnectionShape rebuilds the schema phase19 starts from on a
-// migrated test database: the secret columns of the releases before phase26,
+// migrated test database: the secret columns of the releases before phase29,
 // org_anthropic_credentials may hold a default row, org_agent_settings has
 // its model column, and org_model_connections does not exist. Tests of
 // earlier steps call it so their pre-state seeds are legal.
 func preModelConnectionShape(t *testing.T, db *gorm.DB) {
 	t.Helper()
-	prePhase26Shape(t, db)
+	prePhase29Shape(t, db)
 	for _, stmt := range []string{
 		`ALTER TABLE org_anthropic_credentials DROP CONSTRAINT IF EXISTS org_anthropic_credentials_subscription_only`,
 		`ALTER TABLE org_agent_settings ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'claude-sonnet-5'`,
@@ -161,7 +161,7 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 		t.Fatalf("active connection:\n got %+v\nwant %+v", got, want)
 	}
 	// The key's sealed bytes go with the same boot: they name no reference,
-	// so phase26 deletes them.
+	// so phase29 deletes them.
 	if n := count(t, db, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'active'`); n != 0 {
 		t.Fatalf("active org's key bytes = %d rows, want 0", n)
 	}

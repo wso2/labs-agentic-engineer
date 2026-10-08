@@ -37,7 +37,7 @@ rubric:
       weight: 2
     - item: "specs/design/security.json is written at version 3 with a permissions catalog of handles and descriptions and no ownership field — which rows an operation reaches is its path in openapi.yaml"
       weight: 2
-    - item: Exactly two roles, named Employee and Approver, each citing the PRD story numbers it serves, and each assigned to an organisation group (the Approver reusing the directory's existing Finance group rather than inventing one)
+    - item: Exactly two roles, named Employee and Approver, each citing the story IDs it serves (F1.1, F2.3, …), and each assigned to an organisation group (the Approver reusing the directory's existing Finance group rather than inventing one)
       weight: 2
     - item: "The service's openapi.yaml puts the employee's own claims under /me/claims (guarded by claims:read) and every claim at /claims (guarded by claims:read-all): two operations, two handles, no handle guarding both sides of /me/"
       weight: 3

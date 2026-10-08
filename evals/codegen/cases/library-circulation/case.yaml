@@ -1,0 +1,14 @@
+name: library-circulation
+description: "Library circulation: members search the catalogue, borrow copies,
+  place holds and see their loans and fees; librarians manage titles and copies,
+  check items out and in, and work the holds queue. A loan has a due date; a
+  late return computes a fee. Keep the catalogue (titles, copies) in its own
+  catalogue service that only the circulation API calls; the web app calls only
+  the circulation API. No email or notifications, no file uploads or object
+  storage, no scheduled or background jobs, no external integrations or AI
+  features."
+source:
+  project: library-circulation
+  snapshot: current
+  savedAt: 2026-10-04T11:43:14.306Z
+tags: []

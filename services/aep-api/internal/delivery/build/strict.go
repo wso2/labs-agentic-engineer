@@ -52,6 +52,18 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 	if err != nil {
 		return BuildList{}, fmt.Errorf("list builds: %w", err)
 	}
+	// The regression count is the newest JUDGED attempt's: a validation run
+	// with a verdict, which is not the version's newest run whenever a repair
+	// is in flight.
+	regressions := map[string]int{}
+	judged := map[string]bool{}
+	for i := range rows {
+		tag := rows[i].SpecTag()
+		if rows[i].Kind == delivery.RunKindValidation && rows[i].ValidationVerdict != "" && !judged[tag] {
+			judged[tag] = true
+			regressions[tag] = rows[i].ValidationRegressions
+		}
+	}
 	seen := make(map[string]bool, len(rows))
 	builds := make([]BuildSummary, 0, len(rows))
 	for i := range rows {
@@ -84,6 +96,7 @@ func (s *Service) List(ctx context.Context, orgID, projectID string) (BuildList,
 			// Only a run that IS waiting may explain a wait. A reason left on a
 			// row that has moved on would read as a hang that is not happening.
 			WaitingReason: waitingReasonFor(row.State, row.WaitingReason),
+			Regressions:   regressions[tag],
 		})
 	}
 	return BuildList{Builds: builds}, nil

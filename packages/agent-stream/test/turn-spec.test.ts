@@ -25,7 +25,9 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isTurnSpec } from "../src/contracts/sse-events.js";
+import { isPrototypeFeedback, isTurnSpec } from "../src/contracts/sse-events.js";
+// The feedback table the kit and the Go BFF assert too (prototype-kit/test/fixtures/feedback-cases.json).
+import { feedbackBatch, feedbackTable } from "../../prototype-kit/test/feedback-cases.js";
 
 test("accepts each well-formed kind", () => {
   assert.ok(isTurnSpec({ kind: "chat", text: "add a returns policy" }));
@@ -66,15 +68,17 @@ test("plan scope and task context are validated when present", () => {
   assert.ok(
     isTurnSpec({
       kind: "plan",
-      scope: { tag: "spec-v3", stories: [{ number: 1, title: "Sign in", covered: false }] },
+      scope: { tag: "spec-v3", stories: [{ id: "F1.1", title: "Sign in", covered: false }] },
       taskContext: [{ path: "tasks/1.md", body: "# Task" }],
     }),
   );
   // A story row without `covered` would silently plan over already-covered work.
   assert.equal(
-    isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ number: 1 }] } }),
+    isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ id: "F1.1" }] } }),
     false,
   );
+  // A numeric story row is the pre-feature shape; stories are IDs ("F1.1") now.
+  assert.equal(isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ number: 1, covered: true }] } }), false);
   assert.equal(isTurnSpec({ kind: "plan", scope: { tag: 2, stories: [] } }), false);
   assert.equal(isTurnSpec({ kind: "plan", scope: { tag: "t" } }), false);
   assert.equal(isTurnSpec({ kind: "plan", taskContext: [{ path: "tasks/1.md" }] }), false);
@@ -82,9 +86,45 @@ test("plan scope and task context are validated when present", () => {
 });
 
 test("a title is optional on a story row", () => {
-  assert.ok(isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ number: 3, covered: true }] } }));
+  assert.ok(isTurnSpec({ kind: "plan", scope: { tag: "t", stories: [{ id: "F1.3", covered: true }] } }));
 });
 
 test("unknown extra keys are tolerated", () => {
   assert.ok(isTurnSpec({ kind: "start", idea: "x", futureField: true }));
+});
+
+const HASH = "a".repeat(64);
+const request = (over: Record<string, unknown> = {}) => ({
+  screenId: "orders",
+  flowId: "checkout",
+  roleId: "customer",
+  stateId: "default",
+  elementIds: ["orders.submit"],
+  text: "Move this button to the left",
+  ...over,
+});
+const feedback = (over: Record<string, unknown> = {}) => ({
+  prototypeHash: HASH,
+  component: "storefront",
+  requests: [request()],
+  ...over,
+});
+const feedbackFlow = (batch: unknown, skill = "prototype") => ({ kind: "flow", skill, prototypeFeedback: batch });
+
+test("accepts a well-formed feedback batch on the prototype flow", () => {
+  assert.ok(isTurnSpec(feedbackFlow(feedback())));
+  assert.ok(isPrototypeFeedback(feedback({ requests: [request({ flowId: undefined, elementIds: [] })] })));
+});
+
+test("refuses a feedback batch on any other skill", () => {
+  assert.equal(isTurnSpec(feedbackFlow(feedback(), "design")), false);
+});
+
+test("judges every row of the feedback table the kit and the Go BFF share", () => {
+  for (const row of feedbackTable.cases) {
+    const batch = feedbackBatch(row);
+    assert.equal(isPrototypeFeedback(batch), row.valid, row.name);
+    assert.equal(isTurnSpec(feedbackFlow(batch)), row.valid, row.name);
+  }
+  assert.equal(isPrototypeFeedback("x"), false);
 });

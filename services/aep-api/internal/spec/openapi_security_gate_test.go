@@ -548,7 +548,7 @@ func securityDesignBundle(t *testing.T) map[string]string {
 		gateComponentDir + "openapi.yaml":   p6Spec(t),
 		securityspec.BundleKey:              catalog(t),
 		"components/other/openapi.yaml":     "openapi: 3.0.3\n",
-		"components/other/design.json":      enriched("other", "service", "1"),
+		"components/other/design.json":      enriched("other", "service", "F1.1"),
 		"dependencies/billing/openapi.yaml": p6Spec(t),
 	}
 }

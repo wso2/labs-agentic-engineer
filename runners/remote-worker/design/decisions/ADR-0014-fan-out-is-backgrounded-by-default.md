@@ -91,6 +91,11 @@ fail at startup the way a missing anchor does.
    your instructions"). `systemPromptAppend` in `lib/runner.ts` is that order,
    exported so it is a test rather than a comment.
 
+   *Amended 2026-10-05.* The wait role resolves per runtime: on Claude Code it is
+   no tool (the lead ends its turn and a finished builder wakes it, where a
+   blocking wait would hold the lead off every other report); on OpenCode it is
+   the foreground `task` call itself (ADR-0015).
+
    A second runtime is one more entry in `GLOSSARIES` and nothing else. This is
    deliberately *not* the runtime port: spawning, translating and settling a
    session is a larger seam, and `runtime/claude/translate.ts` is its other

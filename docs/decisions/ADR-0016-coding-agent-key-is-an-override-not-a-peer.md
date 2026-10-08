@@ -14,7 +14,7 @@ different consumers, and they are not equivalent:
 
 | Consumer | How it reads the key |
 |---|---|
-| Design agent | `EffectiveKey` → `X-Anthropic-Key` header → `createModel` per turn (later the model connection's key, [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md), read from the AE Studio pod's env since [ADR-0040](ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)) |
+| Design agent | `EffectiveKey` → `X-Anthropic-Key` header → `createModel` per turn (later the model connection's key, [ADR-0038](ADR-0038-an-organization-has-one-model-connection.md), read from the AE Studio pod's env since [ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)) |
 | Coding agent | SM-API triplet → per-run ExternalSecret → runner `ANTHROPIC_API_KEY` |
 | Coding agent (workflow plane) | `ApplyWPSecret` → `anthropic-credentials` Secret → ClusterWorkflow |
 | RCA agent | `pushExternalSecret` → `RCA_LLM_API_KEY` ExternalSecret |

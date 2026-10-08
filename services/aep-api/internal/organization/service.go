@@ -337,7 +337,6 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
 	}
-
 	// 3. Persist phase — probes already passed, so these are writes over
 	//    freshly-validated inputs. Ordered card → gitProvider → idp.
 	sections := []string{}

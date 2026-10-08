@@ -21,16 +21,16 @@ package spec
 // platform verifies, mechanically:
 //
 //   - design.cell exists and its facts parse;
-//   - every PRD story is claimed by at least one component — each component's
-//     design.json carries the `stories` it serves, and the union must cover
-//     the PRD's User Stories list (the coverage check — the anti-disappearance
-//     net that keeps requirements from silently vanishing between PRD and
-//     design);
+//   - every story is claimed by at least one component — each component's
+//     design.json carries the story IDs it serves (`F2.3`), and the union must
+//     cover every story the feature files define (the coverage check — the
+//     anti-disappearance net that keeps requirements from silently vanishing
+//     between requirements and design);
 //   - every deployable component is ENRICHED (its design.json moved off the
 //     scaffold placeholder, a language decided) and carries its type-mandated
 //     artifact (service → openapi.yaml, web-application → wireframes.dsl);
 //   - a design with END-USER SIGN-IN carries specs/design/security.json, it parses,
-//     and every story its roles cite is a real PRD story. The platform creates
+//     and every story its roles cite is a real story. The platform creates
 //     the roles and test users that file declares when the tag is built, so a
 //     design that signs users in but declares no roles ships an app whose
 //     role-gated behaviour nothing can exercise.
@@ -43,22 +43,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/platform/securityspec"
 )
 
 // Build-gate error codes (join the designspec/save vocabulary the console
 // renders).
 const (
-	codeMissingDesignCell        = "MISSING_DESIGN_CELL"
-	codeInvalidDesignCell        = "INVALID_DESIGN_CELL"
-	codeMissingUserStories       = "MISSING_USER_STORIES"
-	codeUncoveredStory           = "UNCOVERED_STORY"
+	codeMissingDesignCell  = "MISSING_DESIGN_CELL"
+	codeInvalidDesignCell  = "INVALID_DESIGN_CELL"
+	codeMissingUserStories = "MISSING_USER_STORIES"
+	codeUncoveredStory     = "UNCOVERED_STORY"
+	// codeStaleStoryCitation — a design.json cites a story the requirements
+	// do not have: retired (the message names its replacement) or unknown.
+	codeStaleStoryCitation       = "STALE_STORY_CITATION"
 	codeUnenrichedComponent      = "UNENRICHED_COMPONENT"
 	codeMissingComponentArtifact = "MISSING_COMPONENT_ARTIFACT"
 	// codeMissingRolesDocument — the design has sign-in but declares no roles.
@@ -66,7 +66,7 @@ const (
 	// codeInvalidRolesDocument — security.json does not parse, or breaks a
 	// referential rule the platform depends on at build time.
 	codeInvalidRolesDocument = "INVALID_ROLES_DOCUMENT"
-	// codeUnknownRoleStory — a role cites a PRD story that does not exist.
+	// codeUnknownRoleStory — a role cites a story the requirements do not define.
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
 )
 
@@ -96,7 +96,9 @@ const scaffoldPlaceholderMarker = "Scaffolded from design.cell"
 // relative to specs/requirements/) and the design bundle (keys relative to
 // specs/design/). It returns FileValidationError rows (repo-relative paths are
 // stamped by the caller) — empty means the gate passes.
-func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidationError {
+//
+// inScope is the story IDs the version carries: only they must be claimed.
+func validateBuildGate(reqFiles, designFiles map[string]string, inScope map[string]bool) []FileValidationError {
 	cellSource, ok := designFiles[DesignRootFile]
 	if !ok || strings.TrimSpace(cellSource) == "" {
 		return []FileValidationError{{
@@ -111,32 +113,43 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 
 	var errs []FileValidationError
 
-	// Coverage: every PRD story claimed by some component's design.json. An
-	// unparseable story list is its own refusal — a silently empty set would
+	// Coverage: every story claimed by some component's design.json. A spec
+	// with no readable stories is its own refusal — a silently empty set would
 	// disarm the whole check.
-	prdStories := parsePRDStories(reqFiles[requirementsMainFile])
-	if len(prdStories) == 0 {
+	stories := reqspec.Parse(reqFiles).Stories()
+	if len(stories) == 0 {
 		errs = append(errs, FileValidationError{
 			Path: DesignRootFile, Code: codeMissingUserStories,
-			Message: "the PRD yields no stories to cover — its `## User Stories` section must hold a numbered `N. As a …` list",
+			Message: "the requirements hold no stories to cover — each feature's stories go in the `## User Stories` of its features/F<n>-<slug>.md, one `- F<n>.<m> As a …` line each",
 		})
 	}
-	claimed := map[int]bool{}
-	for _, stories := range componentStoryClaims(facts, designFiles) {
-		for _, n := range stories {
-			claimed[n] = true
+	defined := map[string]bool{}
+	for _, st := range stories {
+		defined[st.ID] = true
+	}
+	spec := reqspec.Parse(reqFiles)
+	claimed := map[string]bool{}
+	for _, c := range facts.Components {
+		for _, id := range designJSONStories(designFiles["components/"+c.ID+"/design.json"]) {
+			claimed[id] = true
+			if !defined[id] {
+				errs = append(errs, FileValidationError{
+					Path: "components/" + c.ID + "/design.json", Code: codeStaleStoryCitation,
+					Message: fmt.Sprintf("`stories` cites %s — %s", id, notAStory(spec, id, "cite")),
+				})
+			}
 		}
 	}
-	for _, n := range slices.Sorted(maps.Keys(prdStories)) {
-		if !claimed[n] {
+	for _, st := range stories {
+		if inScope[st.ID] && !claimed[st.ID] {
 			errs = append(errs, FileValidationError{
 				Path: DesignRootFile, Code: codeUncoveredStory,
-				Message: fmt.Sprintf("story %d is in the PRD but no component's design.json lists it in `stories` — extend the design or drop the story", n),
+				Message: fmt.Sprintf("story %s is in the requirements but no component's design.json lists it in `stories` — extend the design or drop the story", st.ID),
 			})
 		}
 	}
 
-	errs = append(errs, validateRolesDocument(designFiles, prdStories)...)
+	errs = append(errs, validateRolesDocument(designFiles, spec)...)
 
 	// The openapi.yaml SECURITY gate over EVERY component (task 1.6). The save
 	// gate runs the same rules per file, but a save only ever holds the siblings
@@ -213,8 +226,13 @@ func validateBuildGate(reqFiles, designFiles map[string]string) []FileValidation
 // and the gate needs no cluster round-trip and no hardcoded resourceType name.
 //
 // The story cross-check lives here rather than in securityspec because only the
-// gate sees the PRD: securityspec validates one file, this validates the bundle.
-func validateRolesDocument(designFiles map[string]string, prdStories map[int]string) []FileValidationError {
+// gate sees the requirements: securityspec validates one file, this validates
+// the bundle.
+func validateRolesDocument(designFiles map[string]string, spec reqspec.Spec) []FileValidationError {
+	stories := map[string]bool{}
+	for _, st := range spec.Stories() {
+		stories[st.ID] = true
+	}
 	raw, present := designFiles[securityspec.BundleKey]
 	hasRoles := present && strings.TrimSpace(raw) != ""
 
@@ -258,16 +276,15 @@ func validateRolesDocument(designFiles map[string]string, prdStories map[int]str
 		})
 	}
 
-	// Every cited story is a real one. A role pointing at a story the PRD does
-	// not have means the design and the requirements have drifted, and the
-	// permissions it grants trace to nothing.
+	// Every cited story is a real one. A role pointing at a story the
+	// requirements do not have means the design and the requirements have
+	// drifted, and the permissions it grants trace to nothing.
 	for _, role := range doc.Roles {
-		for _, n := range role.Stories {
-			if _, ok := prdStories[n]; !ok {
+		for _, id := range role.Stories {
+			if !stories[id] {
 				errs = append(errs, FileValidationError{
 					Path: securityspec.BundleKey, Code: codeUnknownRoleStory,
-					Message: fmt.Sprintf("role %q cites story %d, which the PRD does not define — "+
-						"cite a real story or drop it", role.Name, n),
+					Message: fmt.Sprintf("role %q cites story %s — %s", role.Name, id, notAStory(spec, id, "cite")),
 				})
 			}
 		}
@@ -299,12 +316,29 @@ func hasEndUserSignIn(designFiles map[string]string) bool {
 	return false
 }
 
+// notAStory says why a cited ID is not one of the requirements' stories, and
+// what to cite instead when the requirements say. verb is what the citing
+// file does with a story: a design.json cites one, an acceptance file tags one.
+func notAStory(spec reqspec.Spec, id, verb string) string {
+	c := spec.Cite(id)
+	switch {
+	case c.Status == reqspec.Live:
+		return fmt.Sprintf("%s is not a story; %s the stories it holds", id, verb)
+	case c.Status == reqspec.Retired && c.Replacement != "":
+		return c.Describe(id) + "; " + verb + " " + c.Replacement
+	case c.Status == reqspec.Retired:
+		return c.Describe(id) + "; drop it"
+	default:
+		return c.Describe(id) + "; " + verb + " a real story or drop it"
+	}
+}
+
 // componentStoryClaims maps each cell component to the stories its design.json
 // claims — the ONE claims read both the gate (coverage union) and
 // BuildScopeAtTag (per-component scope) consume, so they can never disagree on
 // where claims come from.
-func componentStoryClaims(facts *CellFacts, designFiles map[string]string) map[string][]int {
-	out := map[string][]int{}
+func componentStoryClaims(facts *CellFacts, designFiles map[string]string) map[string][]string {
+	out := map[string][]string{}
 	for _, c := range facts.Components {
 		if stories := designJSONStories(designFiles["components/"+c.ID+"/design.json"]); len(stories) > 0 {
 			out[c.ID] = stories
@@ -313,67 +347,24 @@ func componentStoryClaims(facts *CellFacts, designFiles map[string]string) map[s
 	return out
 }
 
-// designJSONStories reads the `stories` list a component's design.json claims.
+// designJSONStories reads the story IDs a component's design.json claims.
 // Malformed JSON or a missing field yields nothing — the design write-gates
 // own rejecting bad JSON; this reader only collects claims.
-func designJSONStories(content string) []int {
+func designJSONStories(content string) []string {
 	if strings.TrimSpace(content) == "" {
 		return nil
 	}
 	var doc struct {
-		Stories []int `json:"stories"`
+		Stories []string `json:"stories"`
 	}
 	if err := json.Unmarshal([]byte(content), &doc); err != nil {
 		return nil
 	}
-	out := make([]int, 0, len(doc.Stories))
-	for _, n := range doc.Stories {
-		if n > 0 {
-			out = append(out, n)
+	out := make([]string, 0, len(doc.Stories))
+	for _, id := range doc.Stories {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
 		}
 	}
 	return out
-}
-
-// storyLinePattern matches one numbered PRD story line: "7. As a member, ...".
-// Leading whitespace is tolerated — markdown authors indent list items — and
-// the title must contain a non-whitespace character; both rules mirror the
-// console's cut-drawer preview (parsePrdStories), which must compute the same
-// story set this gate does.
-var storyLinePattern = regexp.MustCompile(`(?m)^\s*(\d+)\.\s+(\S.*)$`)
-
-// parsePRDStories extracts story number → title from the PRD's
-// "## User Stories" section ("N. <title>" lines).
-func parsePRDStories(prd string) map[int]string {
-	out := map[int]string{}
-	for _, m := range storyLinePattern.FindAllStringSubmatch(markdownSection(prd, "User Stories"), -1) {
-		n, err := strconv.Atoi(m[1])
-		if err != nil || n <= 0 {
-			continue
-		}
-		out[n] = strings.TrimSpace(m[2])
-	}
-	return out
-}
-
-// markdownSection returns the body of the `## <title>` section (up to the next
-// `## ` heading), "" when absent.
-func markdownSection(doc, title string) string {
-	lines := strings.Split(doc, "\n")
-	var body []string
-	in := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") {
-			if in {
-				break
-			}
-			in = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), title)
-			continue
-		}
-		if in {
-			body = append(body, line)
-		}
-	}
-	return strings.Join(body, "\n")
 }

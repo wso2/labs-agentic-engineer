@@ -1,0 +1,5 @@
+interface:
+  display_name: "Comment Debt"
+  short_description: "Find comment debt in a diff"
+policy:
+  allow_implicit_invocation: false

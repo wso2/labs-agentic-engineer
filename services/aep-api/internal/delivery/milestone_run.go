@@ -491,6 +491,9 @@ type MilestoneRun struct {
 	// Written by the run that JUDGED, so it is zero on a dev run (which files the
 	// task but records no judgement) and on a task run.
 	ValidationIssue int `gorm:"not null;default:0" json:"validationIssue,omitempty"`
+	// ValidationRegressions counts the latest attempt's failures that passed in
+	// the previous validated version (B4) — the ledger row's "1 regression".
+	ValidationRegressions int `gorm:"not null;default:0" json:"validationRegressions,omitempty"`
 
 	// CancelRequestedAt is when a human asked for this run to stop — the DURABLE
 	// half of cancel, written by the cancel surface before it signals.

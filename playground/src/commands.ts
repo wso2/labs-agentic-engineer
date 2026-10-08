@@ -23,15 +23,17 @@
  * `PhaseOutcome` the CLI maps to an exit code.
  */
 
+import { spawn } from "node:child_process";
 import { stdout as output } from "node:process";
 import { renderPart, renderSummary } from "./kit/render.js";
-import type { StreamPart } from "@aep/agent-stream";
+import type { StreamPart, TurnScope } from "@aep/agent-stream";
 import { designGate, requirementsGate, tasksGate, type GateResult } from "./engine/gates.js";
 import { openSession, type OpenOptions, type PlaygroundSession } from "./engine/session.js";
 import { pendingQuestions, type PendingQuestions } from "./engine/questions.js";
 import { runSpecTurn, type SpecTurnResult } from "./engine/turn.js";
 import { runPlanTurn } from "./engine/plan-turn.js";
 import { runCodingAgent } from "./engine/coding-run.js";
+import { deriveDesign, type DeriveOutcome } from "./engine/design-derive.js";
 import { renderLogView, resolveRunDir, type LogView } from "./engine/log-read.js";
 import { SKILLS_DIR } from "./engine/session.js";
 import { FsIssueStore, type FoldOutcome } from "./ports/issue-store.js";
@@ -39,6 +41,7 @@ import { projectSlug } from "./ports/spec-workspace.js";
 import { loadProjectState, saveProjectState } from "./state/project.js";
 import { readIdea, writeDescriptor } from "./state/descriptor.js";
 import { restoreUndoSnapshot, takeUndoSnapshot } from "./state/undo.js";
+import { REPO_ROOT } from "./paths.js";
 
 export interface PhaseOutcome {
   ok: boolean;
@@ -46,8 +49,8 @@ export interface PhaseOutcome {
 }
 
 export interface PhaseOptions extends OpenOptions {
-  /** `--target <x>` → production's `\n\n(target: x)` suffix. */
-  target?: string;
+  /** `--scope F2|design-review` → the turn's scope, as the console sends it (S6). */
+  scope?: TurnScope;
   /** `--idea "<text>"` seeds/replaces the stored create prompt (requirements). */
   idea?: string;
   /** Quiet streaming (tests); default renders parts live. */
@@ -80,7 +83,7 @@ async function runPhaseTurn(projectDir: string, instruction: string, opts: Phase
   try {
     const onPart = onPartFor(opts);
     const result = await runSpecTurn(session, instruction, {
-      ...(opts.target ? { target: opts.target } : {}),
+      ...(opts.scope ? { scope: opts.scope } : {}),
       ...(onPart ? { onPart } : {}),
     });
     return report(result, opts);
@@ -173,6 +176,8 @@ export interface CodeOptions extends PhaseOptions {
   yes?: boolean;
   /** Override the skill library the run reads (tests). */
   codingSkillsDir?: string;
+  /** Override the pre-tag design derivation (tests). */
+  deriveDesign?: (projectDir: string) => Promise<DeriveOutcome>;
   /** `--host`: bare `npx tsx` on the host instead of the default Docker-image run. */
   host?: boolean;
   /** `--api-key`: with `--host`, authenticate with `ANTHROPIC_API_KEY` rather than your Claude login. */
@@ -187,7 +192,8 @@ export interface CodeOptions extends PhaseOptions {
  * works the whole project, not one issue at a time — the `aep` skill
  * discovers its own working set from `issues/` and decides ordering and
  * fan-out itself (see its SKILL.md). This command's only jobs are the
- * MANDATORY undo snapshot and spawning the run.
+ * MANDATORY undo snapshot, production's pre-tag design derivation (ADR-0003)
+ * and spawning the run.
  *
  * Exit code tracks whether the session completed, not whether every issue
  * got resolved — leaving issues open for a later run is normal (mirrors
@@ -219,6 +225,17 @@ export async function codeCommand(
   }
   const snapshot = takeUndoSnapshot(projectDir); // mandatory (§12), once per session
   if (!opts.silent) output.write(`  ⛑ undo snapshot: ${snapshot}\n`);
+
+  // Production's pre-tag derivation (ADR-0003); after the snapshot so `--restore` undoes it.
+  const derived = await (opts.deriveDesign ?? deriveDesign)(projectDir);
+  if (!derived.ok) return { ok: false, detail: derived.detail };
+  if (!opts.silent) {
+    output.write(
+      derived.changed.length > 0
+        ? `  ⚙ derived wiring: ${derived.changed.join(", ")}\n`
+        : "  ⚙ derived wiring: no change\n",
+    );
+  }
 
   const result = await runCodingAgent({
     projectDir,
@@ -263,6 +280,31 @@ export function undoCommand(projectDir: string, opts: PhaseOptions): PhaseOutcom
 }
 
 /**
+ * `play <dir> eval-save <name>` — save this project as a codegen eval case.
+ *
+ * Spawns, never imports, the evals CLI: `evals/*` import the playground.
+ * Withholds ANTHROPIC_API_KEY: evals authenticate with the OAuth token only.
+ */
+export function evalSaveCommand(projectDir: string, name: string): Promise<number> {
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
+  return new Promise((resolve) => {
+    const child = spawn(
+      "pnpm",
+      ["--filter", "@aep/codegen-evals", "eval", "--", "save", "--from", projectDir, "--name", name],
+      { cwd: REPO_ROOT, env, stdio: "inherit" },
+    );
+    child.on("error", (err) => {
+      output.write(`✗ eval-save: ${err.message}\n`);
+      resolve(2);
+    });
+    child.on("close", (code, signal) => {
+      resolve(signal ? 130 : (code ?? 2));
+    });
+  });
+}
+
+/**
  * One chat turn on the project's current thread (shared session), sent
  * verbatim: a `/<command>` line runs that flow.
  * When the agent ends the turn on a HITL question tool-call (console ADR-0012 /
@@ -276,7 +318,7 @@ export async function chatTurn(
 ): Promise<PhaseOutcome & { pending?: PendingQuestions }> {
   const onPart = onPartFor(opts);
   const result = await runSpecTurn(session, instruction, {
-    ...(opts.target ? { target: opts.target } : {}),
+    ...(opts.scope ? { scope: opts.scope } : {}),
     ...(onPart ? { onPart } : {}),
   });
   const outcome = report(result, opts);

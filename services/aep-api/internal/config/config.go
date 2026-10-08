@@ -61,16 +61,11 @@ type Config struct {
 	// line, and pass through. Read from TENANT_GATE_MODE; unset ⇒ enforce.
 	TenantGateMode string
 
-	// SREHandoffToken and SREHandoffOrg configure the long-lived credential
-	// aep-mcp-server forwards on behalf of the OpenChoreo SRE agent for the
-	// /internal/v1/sre/… ops only (internal/edge/internal.go's sre/ gate).
-	// Both must be set together — either empty leaves the verifier disabled
-	// (secure default) and every sre/ op answers 401. /api/v1 never accepts
-	// this credential. Read from SRE_HANDOFF_TOKEN /
-	// SRE_HANDOFF_ORG. Never a ConfigMap value — Secret only, same posture
-	// as every other credential in this file.
-	SREHandoffToken string
-	SREHandoffOrg   string
+	// SREHandoff configures the OpenChoreo SRE agent's handoff into AE: the
+	// key it authenticates with, which `aectl sre install` sets. Read from
+	// SRE_HANDOFF_TOKEN (from a Secret only). Each tool call names its org,
+	// which aep-api verifies against the observer's recorded alerts.
+	SREHandoff SREHandoffConfig
 
 	// TryItCallbackURL is the platform tester's OAuth callback, registered as a
 	// redirect URI on every project's sign-in resource so a client that is not
@@ -459,3 +454,11 @@ type TemporalConfig struct {
 
 // Enabled reports whether the Temporal integration is configured.
 func (t TemporalConfig) Enabled() bool { return t.HostPort != "" }
+
+// SREHandoffConfig is the SRE handoff's key. It is never logged.
+type SREHandoffConfig struct {
+	Token string
+}
+
+// Enabled reports whether the SRE handoff is configured.
+func (c SREHandoffConfig) Enabled() bool { return c.Token != "" }

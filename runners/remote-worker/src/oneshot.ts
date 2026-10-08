@@ -106,6 +106,10 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
   // status line. A garbage value is the one case worth refusing: posting to
   // whatever issue "12abc" truncates to would put this run's lines on a
   // stranger's ticket.
+  // B2 — the version this run builds; absent on runs admitted before it rode
+  // the dispatch, which then read specs/ from main as before.
+  const specTag = process.env.AEP_SPEC_TAG || "";
+
   const issueEnv = process.env.AEP_VALIDATION_ISSUE ?? "";
   const validationIssue = issueEnv === "" ? 0 : Number(issueEnv);
   if (!Number.isSafeInteger(validationIssue) || validationIssue < 0) {
@@ -137,6 +141,7 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
       mcpToken: undefined,
       taskKind,
       validationIssue: validationIssue > 0 ? validationIssue : undefined,
+      specTag: specTag || undefined,
       // OFF unless a human opts this pod in. The sinks are files in a workspace
       // nothing collects, so in the cluster they are write-only — and the debug
       // log holds prompt text. The opt-in exists because a stall that only

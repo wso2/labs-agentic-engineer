@@ -1,6 +1,6 @@
 ---
 name: acceptance-criteria
-description: Use when generating the acceptance criteria — write specs/validation/acceptance/<slug>.feature, the Gherkin acceptance criteria, from the requirement prose alone.
+description: Use when generating the acceptance criteria — write specs/validation/acceptance/F<n>-<slug>.feature, one Gherkin file per feature, from the requirements alone, for the features a design run designs.
 metadata:
   aep:
     kind: platform
@@ -20,8 +20,11 @@ becomes a check the product was never asked to pass.
 
 ## Input — the requirement ONLY
 
-Read `specs/requirements/prd.md` — the numbered User Stories are the spine, and
-the Actors section names the people your scenarios are about.
+Write criteria for the features this design run designs (`/design F1 F2`
+names them; a bare `/design` means every feature it designs). For each, read
+its file under `specs/requirements/features/` — its User Stories are the spine
+— plus `specs/requirements/prd.md`, whose Actors section names the people your
+scenarios are about, and the product-wide items that apply to it.
 
 **Do not read** the design bundle (`design.cell`, `domain-model.md`, `flows/`),
 `openapi.yaml`, wireframes, or any source code. The specification must be
@@ -29,15 +32,16 @@ independent of the work it will grade.
 
 ## Output — Gherkin under `specs/validation/acceptance/`
 
-Write `specs/validation/acceptance/<slug>.feature`, one file per capability (use `addFile`;
-replace the contents if the file already exists). A capability usually spans
-several user stories — group by what a reader would call one area of the
-product, not one file per story and not one file per screen.
+Write one file per feature: `specs/validation/acceptance/F<n>-<slug>.feature`,
+named as the feature's own file is (`features/F1-rounds.md` →
+`acceptance/F1-rounds.feature`). Use `addFile`, replacing the contents if the
+file already exists; a feature whose design this run updates gets its file
+rewritten. Its `Feature:` line is the feature's ID and name.
 
 ```gherkin
-Feature: Lunch rounds
+Feature: F1 Lunch rounds
 
-  @story-1
+  @story-F1.1
   Rule: Only one round may be open at a time
 
     @negative
@@ -46,7 +50,7 @@ Feature: Lunch rounds
       When Olivia tries to open a round for "Riverside Kitchen"
       Then she is told a round is already open
 
-  @story-1 @story-4
+  @story-F1.1 @story-F1.4
   Rule: Any signed-in teammate may open the day's round
 
     Scenario: Opening the day's first round
@@ -65,27 +69,28 @@ Feature: Lunch rounds
 
 | Element | Rule |
 |---|---|
-| `Feature:` | One capability. Name it as a reader of the product would. |
+| `Feature:` | The feature's ID and name: `Feature: F1 Lunch rounds`. One file per feature. |
 | `Rule:` | One thing the product must do, in one sentence. This is **your inference** — the PRD has no rules section — so state it plainly enough that a reviewer can reject it. Carry its constraint (see below). |
-| `@story-N` on a `Rule:` | The PRD story numbers the rule comes from. Every rule carries at least one. Every story number in the PRD appears on some rule. |
+| `@story-F<n>.<m>` on a `Rule:` | The IDs of the stories the rule comes from — this feature's stories only. Every rule carries at least one. Every story of the feature appears on some rule; the build refuses a retired or unknown ID, and an uncovered story. |
 | `Scenario:` | One concrete illustration of its rule. Name the distinguishing circumstance, not the steps. |
 | `@negative` | On any scenario whose outcome is the system **refusing, rejecting, or limiting**. See below for where it goes. |
 | Steps | `Given` present-tense state · `When` the one action · `Then` the observable outcome. |
 
 ### Regenerating over an existing set
 
-Story numbers are permanent by contract, so a tag stays correct across
+Story IDs are permanent by contract, so a tag stays correct across
 regeneration. Read what is already in `specs/validation/acceptance/` before writing.
 
-- **Keep the existing file names.** Renaming a capability because you would
-  phrase it differently this time leaves the old file on disk, so its rules are
-  now stated twice and every count is wrong. Reuse the name; change the contents.
+- **Keep the file named after its feature.** A renamed feature renames its
+  file (the ID stays); a retired feature's file goes. A file that is not named
+  `F<n>-<slug>.feature` is from before features — remove it once every rule it
+  held lives in a feature's file.
 - **Keep rules that still hold, and their wording.** Rewrite only what the
   requirement actually changed.
-- **A file whose capability no longer exists must go** — `removeFile` it rather
-  than leaving it orphaned.
-- **Each rule lives in exactly one file.** If a rule reads as though it belongs
-  to two capabilities, the capabilities are drawn wrong.
+- **Each rule lives in exactly one file**, the file of the feature whose
+  stories it comes from. A product-wide requirement has no file of its own:
+  where it shapes a feature's stories, state it as that feature's rule, tagged
+  with that feature's stories.
 
 ## Authoring discipline
 

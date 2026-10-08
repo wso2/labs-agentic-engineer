@@ -25,11 +25,11 @@ import "time"
 //
 // The identity is (org_id, id): the pod chooses the turn id (the kickoff's is
 // deterministic, uuidv5 of org/project), so another org's row with the same
-// id must never stand in for this org's (migrate's phase24 moved the primary
+// id must never stand in for this org's (migrate's phase27 moved the primary
 // key off id alone). OrgID leads so the key serves org-scoped reads.
 //
 // Older rows came from aep-api's in-process turn engine;
-// phase24 gave them a kind and a start time and dropped the columns only that
+// phase27 gave them a kind and a start time and dropped the columns only that
 // engine wrote.
 type AgentTurn struct {
 	OrgID     string `gorm:"primaryKey;index;not null" json:"-"`
@@ -41,7 +41,7 @@ type AgentTurn struct {
 	ConversationID string `gorm:"index;not null" json:"conversationId"`
 
 	// Kind is what started the turn in AE Studio: browser | kickoff | plan
-	// (TurnKind*). The ledger's rows carry it from record-turn-usage; phase24
+	// (TurnKind*). The ledger's rows carry it from record-turn-usage; phase27
 	// derived it for the rows the in-process engine wrote.
 	Kind string `gorm:"type:text;not null;default:'browser'" json:"-"`
 
@@ -70,9 +70,11 @@ type AgentTurn struct {
 	ResetAt *time.Time `json:"-"`
 
 	// Who sent the turn: the pod's credit (the verified caller's subject and
-	// display name). Summary is the transcript line the in-process engine
-	// stored for its turns; ledger rows leave it empty. All empty for a turn
-	// nobody sent (a kickoff with no credit, a marketplace turn).
+	// display name); both empty for a turn nobody sent (a kickoff with no
+	// credit, a marketplace turn). Summary holds a design turn's feature IDs,
+	// space-joined ("F1 F2"; empty = every designable feature), read back by
+	// DesignedFeatures; empty on every other ledger row. Rows the in-process
+	// engine wrote hold the transcript line there instead.
 	Summary           string `gorm:"type:text" json:"-"`
 	AuthorID          string `gorm:"type:text" json:"-"`
 	AuthorDisplayName string `gorm:"type:text" json:"-"`
@@ -102,7 +104,7 @@ type AgentTurn struct {
 
 	// StartedAt and FinishedAt are when the turn ran, as the AE Studio pod
 	// that ran it reported (record-turn-usage). For rows the in-process
-	// engine wrote, phase24 set StartedAt from created_at; FinishedAt is nil.
+	// engine wrote, phase27 set StartedAt from created_at; FinishedAt is nil.
 	StartedAt  time.Time  `json:"-"`
 	FinishedAt *time.Time `json:"-"`
 

@@ -3,9 +3,9 @@
 One rule shapes the container: **one prefix per caller, one gate per
 prefix.** A Unix socket counts as a prefix: it has one client container and
 one gate, the mount. The trust model is
-[ADR-0041](../../../../../../docs/decisions/ADR-0041-ae-studio-checks-platform-idp-tokens-itself.md);
+[ADR-0046](../../../../../../docs/decisions/ADR-0046-ae-studio-checks-platform-idp-tokens-itself.md);
 the webhook route is
-[ADR-0043](../../../../../../docs/decisions/ADR-0043-github-delivers-each-repositorys-webhooks-to-ae-studio.md).
+[ADR-0048](../../../../../../docs/decisions/ADR-0048-github-delivers-each-repositorys-webhooks-to-ae-studio.md).
 The mount tables are `internal/edge/routes.go` (`Routes`,
 `FilesSocketRoutes`, `MCPSocketRoutes`); the gates are `internal/auth/verify.go`.
 
@@ -17,7 +17,7 @@ stable `code`; the MCP socket's tool and method refusals are JSON-RPC errors
 
 | Prefix | Caller | Check, in order | Refusals |
 |---|---|---|---|
-| `/v1/` (port 8082) | the browser (console) | Platform IdP user JWT: RS256, exact `iss` (`AE_IDP_ISSUER`), `exp`, `aud` in `AE_USER_AUDIENCES`, a `sub`, not a `client_credentials` token; then the org rule: `ouId` = `AE_ORG_ID` and `ouHandle` = `AE_ORG_HANDLE`. Then the contract validator. | 401 `unauthenticated` (with `WWW-Authenticate`), 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `path_invalid` |
+| `/v1/` (port 8082) | a signed-in user's browser client (the console has no caller: it reads spec files from the Room) | Platform IdP user JWT: RS256, exact `iss` (`AE_IDP_ISSUER`), `exp`, `aud` in `AE_USER_AUDIENCES`, a `sub`, not a `client_credentials` token; then the org rule: `ouId` = `AE_ORG_ID` and `ouHandle` = `AE_ORG_HANDLE`. Then the contract validator. | 401 `unauthenticated` (with `WWW-Authenticate`), 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `path_invalid` |
 | `/internal/v1/` (port 8082) | `aep-api` | Body cap per operation (1 MiB, `create-commit` 16 MiB, `start-repo-turn` 4 MiB, `put-repo-references` 80 MiB), ahead of the gate. AE-only M2M: `client_credentials`, `aud` contains and `client_id` equals `AE_M2M_CLIENT_ID`, no `ouId` claim; then `X-Impersonate-Org` = `AE_ORG_ID`. Then the validator, then the owner guard: a `/internal/v1/repos/{owner}/{repo}/…` owner must equal `AE_GITHUB_OWNER` (case-insensitive; unset refuses all). | 413 `payload_too_large`, 401 `unauthenticated`, 403 `org_mismatch`, 503 `idp_unavailable` + `Retry-After: 5`, 400 `validation_failed`, 403 `owner_not_allowed` |
 | `POST /webhooks/github` (port 8082) | GitHub, or the local `webhook-relay` | 8 deliveries in flight, body 25 MiB, body read within 10 s, then `X-Hub-Signature-256` against `GITHUB_WEBHOOK_SECRET` (current secret only). No token. | 503 `busy`, 413 `payload_too_large`, 408 `request_timeout`, 400 `body_unreadable`, 401 `signature_invalid` |
 | Files socket `AE_FILES_SOCKET` | `ae-collab` | The mount. 40 s per request (inside `ae-collab`'s 45 s call deadline), 25 MiB body, then the validator. | 413 `payload_too_large`, 400 `path_invalid` |
@@ -48,7 +48,11 @@ A user token never clears `/internal/v1`: the M2M gate needs a
   cache. 404 there is `project_unknown`. The Files socket contract has no
   owner or repo field at all, so a request naming one is refused before any
   lookup. The turns op names its project in the body and its owner/repo must
-  be that project's repository.
+  be that project's repository. A plan turn's `at` (`tags/<version>` or a
+  sha) is resolved there, before the turn starts, and the Turn socket gets
+  the commit sha in its place (404 `ref_not_found` when the repository lacks
+  it, nothing started); a start turn may not send one (400
+  `validation_failed`).
 - **Why the browser and the sockets cannot name a repository:** the gitpat
   reaches every repository its GitHub user can reach, including non-AE
   repositories under the same owner, personal ones and other GitHub orgs. A
@@ -70,7 +74,7 @@ ref. A user's write goes to `aep-api`, which uses `/internal/v1`.
 
 The container holds one `aep-api` credential, the org's `ae-studio-<org>`
 client (`AE_STUDIO_CLIENT_ID`, `AE_STUDIO_CLIENT_SECRET`), minted at
-`AE_IDP_TOKEN_URL` (ADR-0041 decision 5). It is used for:
+`AE_IDP_TOKEN_URL` (ADR-0046 decision 5). It is used for:
 
 - `/internal/v1/ae-studio/*`: project and skills repository lookups,
   dependency completions, turn usage, the webhook forward;
@@ -89,7 +93,7 @@ not the delivery, so it reads as unavailable.
 ## MCP tool allow-list
 
 `AllowedTools` (`internal/mcp/tools.go`, pinned by `TestAllowedTools_Pinned`)
-holds 11 names. `tools/list` answers exactly these, locally. `tools/call` of
+holds 12 names. `tools/list` answers exactly these, locally. `tools/call` of
 any other name is JSON-RPC `-32602`; a method other than `initialize`,
 `tools/list` and `tools/call` is `-32601`.
 
@@ -100,10 +104,10 @@ any other name is JSON-RPC `-32602`; a method other than `initialize`,
   (name and arguments only): `list_external_resources`,
   `get_external_resource_schema`, `list_org_endpoints`,
   `list_org_component_endpoints`, `list_platform_resource_types`,
-  `list_groups`, `validate_openapi_spec`, `fetch_openapi_spec`,
-  `slice_openapi_spec`.
+  `list_groups`, `list_guardrail_policies`, `validate_openapi_spec`,
+  `fetch_openapi_spec`, `slice_openapi_spec`.
 
-The nine forwarded descriptors match `aep-api`'s
+The ten forwarded descriptors match `aep-api`'s
 `internal/dependencies/mcpdiscovery/mcp_tools.go`; the two remote-git ones match the
 coding runner's `runners/remote-worker/src/lib/remote_git.ts`. A change to a
 tool changes all three.
@@ -170,7 +174,7 @@ Levels: `I` info, `W` warn, `E` error.
 | `mcp.upstream_failed` | W | `method`, **raw `error`** (from the `aep-api` client) | `aep-api` could not answer a forwarded call (502 `aep_api_unavailable`) |
 | `repo.clone` | I | `repo`, `mode` (`bare`), `ms` | a cold clone finished |
 | `files.git_failed` | W | `op`, `project`, `repo`, `class` (git) | a Files op's git failure (502 `github_error`) |
-| `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload met a full disk (503 `disk_full`) |
+| `files.disk_full` | W | `op`, `project` or `repo` | a Files op or a reference upload or list met a full disk (503 `disk_full`) |
 | `files.not_fast_forward` | W | `op`, `project` | a Files save lost every CAS retry to concurrent writers (409 `not_fast_forward`) |
 | `files.identity_unavailable` | W | `class` (`rate_limited`, `status`, `canceled`, `transport`), `status` | the gitpat identity could not be read for a save; the engine commits as its default identity |
 | `files.completions_unavailable` | W | `project`, `stubs`, `misconfigured` | `aep-api`'s dependency completions failed; the save carries a warning per stub |

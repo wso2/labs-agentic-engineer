@@ -46,7 +46,8 @@ fi
 
 # 1.5: every removed route answers its status with a valid user token. The
 # rows mirror removedRoutes in services/aep-api/internal/edge/routes_test.go
-# plus the older removals below it.
+# plus the older removals below it. Together they cover every path main's
+# packages/contracts/api/v1/openapi.yaml had at f8fda3a4b that this branch's lacks.
 p=${P:-x}
 routes=(
   "GET /api/v1/projects/$p/files 404"

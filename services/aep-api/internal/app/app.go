@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2/aep/aep-api/internal/app/crtcatalog"
 	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
@@ -71,6 +72,7 @@ import (
 	projectshttpapi "github.com/wso2/aep/aep-api/internal/projects/httpapi"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	schttpapi "github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
+	scissues "github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 	"github.com/wso2/aep/aep-api/internal/spec"
 	spechttpapi "github.com/wso2/aep/aep-api/internal/spec/httpapi"
@@ -134,16 +136,18 @@ type Seam struct {
 // ImpersonateOrgResolver / SecretsProvider arrive via seam (nil = off).
 // Wiring order is load-bearing: several constructors read the value a prior
 // one produced; the comments call out the couplings.
+
+// designRunsConsidered bounds how far back the build gate looks for the run
+// that designed each feature. A feature last designed further back than this
+// many design runs is treated as never designed: the coverage check still
+// reports it if its stories are unclaimed.
+const designRunsConsidered = 50
+
 func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	var err error
 	if err := openchoreo.ValidateResourceLabels(seam.ResourceLabels); err != nil {
 		return nil, fmt.Errorf("openchoreo resource labels: %w", err)
 	}
-	// The SRE handoff credential, when configured, is both the edge's sre/ gate
-	// verifier (InternalDeps.SREHandoff) and the signal that the SRE loop is
-	// wired (auto-RCA below). Build it here only: a second instance would let
-	// the gate and auto-RCA disagree.
-	sreHandoff := authn.NewSREHandoffVerifier(cfg.SREHandoffToken, cfg.SREHandoffOrg)
 	db := in.DB
 
 	// Skills are repo-backed now (one private org-skills repo per org —
@@ -290,7 +294,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, orgSecretRepo, in.RateStamper).
 		WithSecretRefWriter(secretRefWriter).
 		WithSecretReferences(modelAccessSecretRefClient)
-	// Each org's AE Studio (ADR-0040): its status reads and its converge go
+	// Each org's AE Studio (ADR-0045): its status reads and its converge go
 	// out as aep-api's own identity wherever the install impersonates orgs
 	// (aeStudioOC).
 	aeStudio := aestudio.New(aestudio.Deps{
@@ -308,7 +312,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// A project's repository content is read through its org's pod, and the
 	// version tag is cut there. aep-api's own commits and tags name no
 	// author, committer or tagger: the pod uses its gitpat identity.
-	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools)
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools, studioTools)
 	projFiles := projectFiles{git: studioTools, repos: repoRepo}
 	// Every GitHub call — repositories, issues, milestones, pull requests,
 	// hooks — goes to the org's pod through the same adapter; the project's
@@ -459,16 +463,23 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// …and the status poll reports whether it is still running, which is the
 	// one thing the git-derived spec fields cannot say.
 	projectService.SetSpecTurnSource(turnRepo)
-	// The build gate's staleness input (#575): the commit the newest successful
-	// design run read the project at. A build whose requirements have moved
-	// past its design is refused with the rest of the gate's conditions — the
-	// one refusal that is about the design being WRONG rather than incomplete.
-	artifactSvcGit.SetDesignBaselineResolver(func(ctx context.Context, orgID, projectID string) (string, error) {
-		last, err := turnRepo.NewestCompletedFlow(ctx, orgID, projectID, "design")
-		if err != nil || last == nil {
-			return "", err
+	// The build gate's staleness input (#575, per feature since E1): the
+	// completed design runs, latest-finished first — the commit each read and
+	// the features it named. A build whose feature has moved past its design is
+	// refused with the rest of the gate's conditions — the one refusal that is
+	// about the design being WRONG rather than incomplete.
+	artifactSvcGit.SetDesignRunsResolver(func(ctx context.Context, orgID, projectID string) ([]spec.DesignRun, error) {
+		turns, err := turnRepo.CompletedFlows(ctx, orgID, projectID, spec.FlowDesign, designRunsConsidered)
+		if err != nil {
+			return nil, err
 		}
-		return last.BaseRef, nil
+		runs := make([]spec.DesignRun, 0, len(turns))
+		for _, t := range turns {
+			// A design turn's Summary holds the feature IDs the pod reported
+			// for it; none means every feature designable at its commit.
+			runs = append(runs, spec.DesignRun{BaseRef: t.BaseRef, Features: spec.DesignedFeatures(t.Summary)})
+		}
+		return runs, nil
 	})
 
 	// The Task-keyed log endpoint (issue number → newest execution by default,
@@ -821,8 +832,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// beside the publisher token; runs/ never does.
 	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
 
-	// One RCA-report store: the SRE handoff writes through it (sre/ ops) and
-	// the ops domain reads through it (console Alerts).
+	// The RCA-report store the ops domain reads through (console Alerts). No
+	// writer is wired since the SRE handoff moved to its MCP tools; see
+	// internal/ops/README.md.
 	rcaReports := ops.NewRepository(db)
 
 	// Validation-context runner callback: resolves the run's deployed endpoint
@@ -831,6 +843,25 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		validationCycleLocator{repo: runCycleRepo},
 		validationEndpointResolver{store: artifactStore, comp: componentService},
 	)
+
+	// The OpenChoreo SRE agent's handoff: its two MCP tools search and file
+	// issues, authenticated by the install-time key. Each call names its org,
+	// which the tools verify against the observer's recorded alerts with
+	// aep-api's own service identity, so the handoff needs both; a key without
+	// them is refused at boot rather than serving tools that cannot check what
+	// they act on. Unconfigured leaves both nil and the surface unmounted. It
+	// is also the signal that the SRE loop is wired (auto-RCA below).
+	var sreHandoffAuth *authn.SREHandoffVerifier
+	var sreHandoffMCP http.Handler
+	if cfg.SREHandoff.Enabled() {
+		if cfg.Observability.BaseURL == "" || seam.AuthProvider == nil {
+			return nil, fmt.Errorf("SRE_HANDOFF_TOKEN is set, but the handoff verifies every call against the observer: it needs OBSERVER_URL and the service credential (SERVICE_AUTH_*)")
+		}
+		sreHandoffAuth = authn.NewSREHandoffVerifier(cfg.SREHandoff.Token)
+		sreHandoffMCP = scissues.NewSREMCPHandler(issueService,
+			observability.NewAlertQuerier(cfg.Observability.BaseURL, seam.AuthProvider))
+		slog.Info("SRE handoff enabled", "observer", cfg.Observability.BaseURL)
+	}
 
 	// Controllers
 	params := edge.AppParams{
@@ -841,10 +872,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		InternalDeps: edge.InternalDeps{
 			RunnerAuth:        runnerAuth,
 			ValidationContext: validationContextSvc,
-			// The one verifier built above; auto-RCA reads the same instance.
-			SREHandoff: sreHandoff,
-			Issues:     issueService,
-			RcaReports: rcaReports,
+			// The SRE handoff MCP built above (both nil when unconfigured);
+			// auto-RCA reads the same verifier.
+			SREHandoffAuth: sreHandoffAuth,
+			SREHandoffMCP:  sreHandoffMCP,
 			// The AE Studio tools pod presents its org's ae-studio-<org>
 			// client token on every ae-studio/ op and on MCP (mcpRoutes).
 			StudioClients:        studioClientVerifier,
@@ -1064,7 +1095,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// consumer-side so design holds only a narrow ResourceTypesByName port. When
 	// the design declares a platform-resource dependency and this catalog is
 	// unreachable, the save fails closed (ErrResourceCatalogUnavailable → 503).
-	designService.SetResourceCatalog(crtTypeCatalog{resourceTypeCatalog})
+	designService.SetResourceCatalog(crtcatalog.New(resourceTypeCatalog))
 
 	// Read-time org-service dependency resolution (dependency-management Phase 5):
 	// the same endpoint catalog that backs the MCP list_org_endpoints tool marks
@@ -1096,9 +1127,20 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The public build surface: its InputsCoordinator runs pre-tag work (collect
 	// external specs, derive end-user auth), derives unset external authoring from
 	// the design, and carries the provision payload into the dev workflow.
+	// The project's single validation task. The RUN mints it, at
+	// deployed-green: minting it at plan time would put an issue in the working
+	// set that nothing can work until every component is deployed.
+	validationSvc := validation.NewService(validation.Deps{
+		Issues:   issueService,
+		Writer:   deliveryIssues,
+		Criteria: acceptanceCriteria{projFiles},
+	})
 	buildSvc := build.NewService(build.Deps{
 		Repos:  repoFullNameLookup{repos: repoRepo},
 		Tagger: buildSpecTagger{art: artifactSvcGit},
+		// A repair build (B4) reads the fixed version's final validation the
+		// way the run read it, and files its failures as the run would have.
+		Repairs: runValidation{projectFiles: projFiles, svc: validationSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
 		Coord: build.NewInputsCoordinator(
 			designService,                          // SpecCollector (CollectSpec)
 			buildDesignDeriver{svc: designService}, // DesignFactDeriver (sentinel translation)
@@ -1186,7 +1228,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// files are the oracle.
 	validationReads := runread.NewValidationReads(milestoneRunRepo, runCycleRepo,
 		acceptanceCriteria{projFiles}).
-		WithRecordings(agentProgressReader)
+		WithRecordings(agentProgressReader).
+		// The same reading of an attempt the run made (B4): the judge needs no
+		// minter, only the reads.
+		WithJudge(runValidation{projectFiles: projFiles, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo})
 
 	deliveryDeps := deliveryhttpapi.Deps{
 		BuildSvc:     buildSvc,
@@ -1213,14 +1258,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return nil, fmt.Errorf("assemble delivery domain: %w", err)
 	}
 	params.Deps.Delivery = deliveryHandlers
-	// The project's single validation task. The RUN mints it, at
-	// deployed-green: minting it at plan time would put an issue in the working
-	// set that nothing can work until every component is deployed.
-	validationSvc := validation.NewService(validation.Deps{
-		Issues:   issueService,
-		Writer:   deliveryIssues,
-		Criteria: acceptanceCriteria{projFiles},
-	})
 	// A planned Task's prose body names the App Path the agent works in — the
 	// same component → appPath read the merged-PR build fan-out matches against.
 	taskPlan.SetComponentPaths(designComponents{store: artifactStore})
@@ -1349,6 +1386,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// deployment takes, so the workflow's promote, Converge's drift repair and a
 	// config change's redeploy are all covered by construction.
 	agentComponentKinds := ampComponentKinds{store: artifactStore}
+	guardrailApplications := organization.NewAgentGuardrailApplicationRepository(db)
+	// A project delete purges them: they are keyed by project and agent name, so
+	// a recreated same-named project must not inherit AEP's claim over a binding.
+	projectService.SetGuardrailRecords(guardrailApplications)
 	agentGovernor := agentgovernance.New(agentgovernance.Deps{
 		AMP: ampClientFactory{cfg: agentmanager.Config{
 			TokenURL:     cfg.AgentManager.TokenURL,
@@ -1368,8 +1409,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// Only ai-agent components are governed; a wave's services and web apps
 		// are left alone.
 		Kinds: agentComponentKinds,
+		// Which guardrails AEP wrote to each agent's binding, so it manages
+		// only its own entries there.
+		Guardrails: ampGuardrailStore{repo: guardrailApplications},
 	})
 	deploymentService.SetGovernor(agentGovernor)
+	// The design agent's list_guardrail_policies tool reads the same live
+	// catalog the deploy resolves a spec's guardrails against.
+	params.MCPGuardrailCatalog = guardrailCatalog{gov: agentGovernor, targets: writeTargets}
 	// The BUILD-TIME half of the same governor: the version's `provision` gate
 	// registers this version's agents before the coding agent is dispatched, so
 	// an Agent Manager that cannot serve the build fails it at PLANNING rather
@@ -1398,6 +1445,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}); ok {
 		cs.SetAgentRecordNamer(agentgovernance.AgentRecordName)
 	}
+	// ...and says what the last deploy did with each guardrail the agent's
+	// spec declares, from the record the govern stage keeps.
+	if cs, ok := componentService.(interface {
+		SetGuardrailOutcomes(projects.GuardrailOutcomeReader)
+	}); ok {
+		cs.SetGuardrailOutcomes(guardrailOutcomeReader{repo: guardrailApplications})
+	}
 	// Endpoint deploy-wait: after OC Ready, a component that advertises an
 	// external URL stays pending until that URL answers. OC reports Ready when
 	// the control plane is done, which on a cloud plane is minutes before a
@@ -1416,11 +1470,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The default auto-RCA alert rule exists to start the SRE loop (an error
 	// log → an alert → the OpenChoreo SRE agent's RCA → handed back to this
 	// platform), so it is attached only where that loop is wired: the SRE
-	// handoff is configured. It is two writes, the trait on the Component and
-	// its per-environment config on the binding, so both writers take the one
-	// value. The deploy re-asserts the Component before it cuts a release: a
+	// handoff is configured (sreHandoffAuth above). It is two
+	// writes, the trait on the Component and its per-environment config on the
+	// binding, so both writers take the one value. The deploy re-asserts the Component before it cuts a release: a
 	// release freezes the Component's traits, and the build wrote them earlier.
-	autoRCAEnabled := sreHandoff != nil
+	autoRCAEnabled := sreHandoffAuth != nil
 	deploymentService.SetAutoRCAEnabled(autoRCAEnabled)
 	deploymentService.SetComponentEnsurer(componentService)
 	autoRCA, ok := componentService.(projects.AutoRCASwitch)
@@ -1516,7 +1570,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			PRs:        issueService,
 			Design:     designComponents{store: artifactStore},
 			Builds:     runBuilds{oc: componentClient},
-			Validation: runValidation{projectFiles: projFiles, svc: validationSvc},
+			Validation: runValidation{projectFiles: projFiles, svc: validationSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
 			// The coding executor launches the cycle's runner Job and answers with
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.

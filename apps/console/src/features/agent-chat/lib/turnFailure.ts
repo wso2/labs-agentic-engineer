@@ -20,10 +20,11 @@
 // agent could name (TurnStatus.code — the model provider's usage limit, a
 // write the output limit cut off) is phrased from its fields, so a provider
 // limit says whose plan is spent and when to try again, in the reader's own
-// time zone; anything else shows the message the platform recorded.
+// time zone; anything else shows the message the platform recorded. Copied
+// from the old console's agent-chat/lib/turnFailure.ts.
 
 import type { components } from "../../../generated/ae-design-agent";
-import { resetStamp } from "../../../lib/resetStamp";
+import { resetStamp } from "../../../lib/stamp";
 
 type TurnStatus = components["schemas"]["TurnStatus"];
 
@@ -36,7 +37,7 @@ export function turnFailureText(f: TurnFailure, now: Date = new Date()): string 
     const when = f.resetAt ? `Try again after ${resetStamp(f.resetAt, now)}.` : "Try again later.";
     return `${whose} usage limit is reached. ${when}`;
   }
-  // output_truncated: the agents service's own sentence already names the
+  // output_truncated: the design agent's own sentence already names the
   // limit and the file, and there is no time in it to localise.
   return f.message || "The agent turn failed.";
 }

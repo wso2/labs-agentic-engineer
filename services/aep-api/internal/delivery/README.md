@@ -716,7 +716,7 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   exists, then from the observability plane (see `cycle_feed.go`), and keeps the producer's `seq` through
   both sources so a viewer sees no duplicate and no hole across the switch. `run_cycles` stays the system
   of record, and `RunCycleView.recording` (`live | kept | expired | unavailable`) tells a console what can
-  actually be served ([ADR-0044](../../../../docs/decisions/ADR-0044-a-finished-runs-feed-is-read-from-the-observer.md),
+  actually be served ([ADR-0049](../../../../docs/decisions/ADR-0049-a-finished-runs-feed-is-read-from-the-observer.md),
   [`codingagent/design/cycle-status-and-logs.md`](codingagent/design/cycle-status-and-logs.md)).
   The v1 VERSION build-progress stream still derives per viewer from the pod, then the archive, then a
   synthetic "logs unavailable" marker (`CycleProgress`, resolved once by `resolveCycleLog`), and keeps its

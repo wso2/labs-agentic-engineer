@@ -15,12 +15,11 @@
 // under the License.
 
 // COMPONENT tier: the issue create/search surface behind the real handler
-// chain. This surface backs the SRE/RCA alert handoff via the deployed
-// aep-mcp-server (AE-HANDOFF-DESIGN.md) — it was accidentally dropped at the
-// contract-first cutover and restored; these tests pin it to the contract so
-// it cannot silently vanish again. The wire quirk matters: list items use
-// CAPITALIZED keys (Number/Title/…), create's result lowercase — exactly what
-// the MCP client parses.
+// chain. It was accidentally dropped at the contract-first cutover and
+// restored; these tests pin it to the contract so it cannot silently vanish
+// again. The wire quirk matters: list items use CAPITALIZED keys
+// (Number/Title/…), create's result lowercase — the same shapes the SRE
+// handoff's MCP tools answer (issues/sre_mcp.go), which the agent's skill reads.
 //
 // External test package: the harness imports api, which imports sourcecontrol.
 package sourcecontrol_test

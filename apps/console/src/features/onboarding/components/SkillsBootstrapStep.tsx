@@ -25,7 +25,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Check, Sparkles } from "@wso2/oxygen-ui-icons-react";
-import { useSyncSkills } from "../../settings/api/queries";
+import { useSyncSkills } from "../../skills/api/skills";
 import { useAeStudio } from "../../ae-studio/api/queries";
 
 // The model connect just before this step rolls the org's AE Studio, so the
@@ -97,8 +97,8 @@ export function SkillsBootstrapStep({ onComplete }: { onComplete: () => void }) 
 // Auto-runs the skills bootstrap the moment it mounts (#102 decision):
 // POST /skills/sync creates the org's skills repo if missing and pushes the
 // platform's built-in skills. Failure is non-blocking — sync is idempotent
-// (Retry) and Settings' Sync control is the standing fallback (Continue
-// anyway).
+// (Retry) and the Skills page's Take updates is the standing fallback
+// (Continue anyway).
 function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
   const sync = useSyncSkills();
   // Deferred one-shot, not a bare mutate() in the effect: firing a mutation
@@ -156,8 +156,8 @@ function SkillsBootstrap({ onComplete }: { onComplete: () => void }) {
 }
 
 // The step's error area: what went wrong, why it matters (children), then
-// Retry or carry on without skills (Settings → Skills → Sync is the standing
-// fallback).
+// Retry or carry on without skills (the Skills page's Take updates is the
+// standing fallback).
 function StepError({
   message,
   onRetry,
@@ -177,8 +177,8 @@ function StepError({
         {message}
       </Alert>
       <Typography variant="body2" color="text.secondary">
-        {children} You can retry now, or continue and run{" "}
-        <strong>Sync</strong> from Settings → Skills later — agents won't
+        {children} You can retry now, or continue and use{" "}
+        <strong>Take updates</strong> on the Skills page later — agents won't
         have skills until it succeeds.
       </Typography>
       <Box sx={{ display: "flex", gap: 1.5 }}>

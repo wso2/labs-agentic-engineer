@@ -37,6 +37,7 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
 | Port | Dir | Peer · contract |
 |---|---|---|
 | `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`) — every read (bundles, trees, files, tags, the status snapshot: local head + local tags, then sha-addressed reads the adapter caches) and every write: the version tag (`Tag`), the skills library and the descriptor (`Commit` through `sourcecontrol.CommitRetrying`: each attempt reads the base, a conflict re-reads, 3 tries); no author or tagger is sent, the pod uses its gitpat identity |
+| `sourcecontrol.ReferenceListOps` | needs | the pod's list-repo-references — the attached documents' names `GET /projects/{p}/spec/state` lists (the pod's store, not git) |
 | `SkillMirrorPort` (= `sourcecontrol.SkillsMirrorOps`) · `RepoService` | needs | the pod's mirror-skills (the project `.claude/skills` copy; the copy rule is the pod's) · the skills repo row, provisioned on first use |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
@@ -138,16 +139,32 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
 - **The references upload** (`files/references.go`) — a pass-through to the org's pod, which stores and
   validates the documents. The strict server hands over a `*multipart.Reader`, so each `files` part is
   re-streamed through an `io.Pipe` (same field, name and content type, never buffered whole); a body
-  that breaks off aborts the pod's upload. The held kickoff fires only on the pod's `2xx`.
-- **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
-  design was written?" is answered by reading the requirements at the commit the newest successful
-  `/design` turn recorded reading the project at, and comparing that reduction against today's —
-  `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
-  stamped, so nothing falls out of sync, and the question is answerable for projects predating the
-  check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
-  the project's Room and the Room's committer (`ae-collab`) commits them later, carrying no turn id and no author — there
-  is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
-  refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
+  that breaks off aborts the pod's upload. The one exception is an Office document (`.docx`, `.xlsx`,
+  `.pptx`, `officetext.Extensions`): the models do not read it and the pod does not store it, so it is
+  held whole up to the pod's per-document limit (`sourcecontrol.MaxReferenceBytes`, 5 MiB), converted
+  by `platform/officetext` and streamed as `<name>.md`. The markdown is held to the same limit while it
+  is built, since a small zip can expand into far more text. One over the limit, one whose markdown
+  would be, or one that does not convert is a 400 that aborts the upload, so the pod stores nothing.
+  The conversion runs on the copy goroutine, which net/http does not recover, so a converter panic is
+  recovered there as the "could not be read" 400 and logged as `references.office_conversion_panicked`
+  with the panic's class only (its value can carry document text). The held kickoff fires only on the pod's
+  `2xx`.
+- **Design staleness is derived per feature, never stored** (#575, E1). A feature's design is out
+  of date when its basis (`reqspec.Basis`: its file plus the product-wide items that reach it) differs
+  between today and the commit the run that last designed it read. That run is the newest completed
+  design run (`CompletedFlows`, latest-finished first, the last 50) that covered the feature: one
+  that named it (`/design F1 F2`, the IDs in the run's ledger `Summary`), or a bare `/design`, which
+  covered every feature designable at its commit (`designedFrom`). `SaveSpec` (`staleFeatures`)
+  marks each such feature unavailable: a build that carries or needs it (no pick carries every
+  designable feature) is refused `FEATURE_NOT_BUILDABLE` ("update the design for F<n> first"); a
+  pick that leaves it out builds without it. `GET /spec/state` (`SpecState.DesignedFrom`) reports the same per-feature basis, so the
+  console's "out of date" and the gate's agree. A run whose commit is unreadable is skipped. The
+  status poll's `designOutdated` flag is coarser and display-only: the whole requirements tree
+  (`RequirementsFingerprint`, path + blob sha) now versus at the newest completed design run
+  (`NewestCompletedFlow`, the run that finished last, as `CompletedFlows` orders them). Nothing is stamped because a turn NEVER commits: its file changes stream
+  to the project's Room and the Room's committer (`ae-collab`) commits them later with no turn id
+  and no author, so there is no moment the platform controls and no way to tell that flush from a
+  hand edit. Only the run's base commit and the feature IDs it named are recorded.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
   `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
   read and written through the org's AE Studio pod (`sourcecontrol.Git`). aep-api's own writes are
@@ -159,15 +176,19 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
   writes each record once (`ON CONFLICT (org_id, id) DO NOTHING`, so a resent batch changes nothing) with
   its `kind` (`browser | kickoff | plan`), `started_at`/`finished_at`, and `cost_usd` stamped at
-  ingest from the `(host, model)` rate then in force. `created_at` is the turn's start, so
-  `Newest`/`NewestCompletedFlow` order ledger rows by when the turn ran, whatever order they
-  arrive in. The edge refuses the whole batch with 404 when any record names a project outside
+  ingest from the `(host, model)` rate then in force. `summary` holds a design turn's feature IDs
+  (the record's `designFeatures`, space-joined: `F1 F2`; empty = every designable feature, read back
+  by `DesignedFeatures`) and is empty on every other turn: the field is ignored off a design turn,
+  and the line the user typed never reaches aep-api. `created_at` is the turn's start, so
+  `Newest` orders ledger rows by when the turn ran, whatever order they arrive in;
+  `NewestCompletedFlow` and `CompletedFlows` order by when the run finished
+  (`COALESCE(finished_at, created_at)`): of two overlapping runs, the one that finished last wrote last. The edge refuses the whole batch with 404 when any record names a project outside
   the token's org; a record with no project (a marketplace turn) is stored under
   `project_id = ''`. The primary key is `(org_id, id)`: the pod chooses turn ids (the kickoff's
   is uuidv5 of `org/project`, which anyone can compute), so another org's row with the same id
   never stands in for this org's record. Nothing runs here: whether a turn is running right now is
   the pod's to say. Rows written by aep-api's former in-process turn engine were reshaped by
-  migrate's `phase24_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
+  migrate's `phase27_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
   and dropped that engine's columns, guard index and `project_conversations`.
 
 ## Invariants — don't break
@@ -195,8 +216,8 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
   through its own connection mechanism — ordering it would refuse two services that call each other.
   ADR-0019.
 - **`CRTType` is a projection, not a re-export.** design-save reads the dependencies resource-type catalog
-  through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by a root
-  adapter — the spec domain names the dependencies domain nowhere.
+  through the `resourceTypeCatalog` port in spec's OWN vocabulary (`CRTType`), mapped by
+  `internal/app/crtcatalog` — the spec domain names the dependencies domain nowhere.
 - **Design save DERIVES two platform facts, in one pass over one catalog call** (`derive.go`, ADR-0013):
   `exposesAPI.auth` off a resource type's role marker (`derive_auth.go`), and each `platform-resource` /
   `external` dependency's `wiring` — the OC ref plus output→env-var mapping the coding agent copies into
@@ -218,6 +239,10 @@ in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-s
     disabled path does not reject every build. Membership is against the live catalog map, never
     a hardcoded type name (ADR-0007). Wiring derivation still treats an unknown type as "not
     derivable yet"; the membership pass is a separate gate before persist.
+  - **One implementation, two callers.** `DerivePlatformResourceFacts` is the pure pass (membership,
+    auth, wiring, change detection, render) and returns the changed files; the build path commits them,
+    and `cmd/design-derive` writes them to a directory for the playground (playground ADR-0003). Neither
+    re-implements a rule; `cmd/design-derive`'s oracle test pins its output to files a build committed.
 - **A component `openapi.yaml` is judged against its two siblings, at save AND at build**
   (`openapi_security_gate.go`). A component behind end-user sign-in declares the `oauth2` scheme and
   the document default `security: [{oauth2: []}]`; each operation's `security` is absent, `[]`

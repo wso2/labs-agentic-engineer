@@ -20,6 +20,10 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 
+// The API through the port-forwarded aep-api, or any aep-api the variable names.
+// Only the API is proxied: chat turns and the spec Room go from the browser
+// straight to the org's AE Studio, at the URLs GET /api/v1/ae-studio names
+// (its CORS allow-list has http://localhost:8090).
 const apiTarget = process.env.API_PROXY_TARGET || "http://localhost:9090";
 
 export default defineConfig({
@@ -38,12 +42,17 @@ export default defineConfig({
   optimizeDeps: {
     include: ["@wso2/oxygen-ui-icons-react > lucide-react"],
   },
+  // As the old console's: the design viewers (Excalidraw's canvas) read these
+  // Node globals.
   define: {
     global: "globalThis",
     "process.env": {},
   },
   server: {
     port: 8090,
+    // A fixed port: sign-in redirects back to it, so http://localhost:8090/callback
+    // must be a redirect URI of aep-console-client.
+    strictPort: true,
     proxy: {
       "/aep-api-service": {
         target: apiTarget,

@@ -1,0 +1,31 @@
+{
+  "name": "@aep/ui-theme",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The one Oxygen UI theme AEP draws with: the console's colours over Oxygen's base, shared by the console and the Oxygen prototype theme so they cannot drift.",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "dev": "echo \"@aep/ui-theme: no dev server\""
+  },
+  "peerDependencies": {
+    "@wso2/oxygen-ui": "0.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "@types/react": "19.1.6",
+    "@types/react-dom": "19.0.2",
+    "@wso2/oxygen-ui": "0.14.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "typescript": "5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

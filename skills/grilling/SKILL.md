@@ -17,9 +17,10 @@ you cannot proceed safely" restraint does not apply.
 
 This skill owns the question tools and nothing else — it has **no artifact
 contract**, so fired on its own it produces well-formed questions with nowhere
-to put the answers. The document belongs to a flow skill: `start` for
-requirements from an idea, `amend` for a scoped change to them, `design` for
-the design. Each loads this one for the mechanics.
+to put the answers. The document belongs to a flow skill: `start` for the
+product pass from an idea, `interview` for one feature, `refine` for a change
+to the requirements, `design` for the design. Each loads this one for the
+mechanics.
 
 Reached directly, hand it back: name the flow that covers what the user wants,
 and let them fire it.

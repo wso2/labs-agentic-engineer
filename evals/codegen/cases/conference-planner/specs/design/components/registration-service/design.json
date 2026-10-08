@@ -1,0 +1,17 @@
+{
+  "name": "registration-service",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "registration-service",
+  "entrypoint": "deployment/service",
+  "exposure": "intranet",
+  "dependencies": [
+    { "kind": "platform-resource", "name": "registration-db", "resourceType": "postgres-cnpg", "description": "Stores session capacities, registrations and the ordered waitlist." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "Own deployable for registration, as the requirements demand: it holds session capacity, confirmed seats and the ordered waitlist in its own Postgres, and promotes the next waitlisted person when a seat frees. Called only by the events API; it never calls other components. Does not know events, proposals or roles beyond ids.",
+  "stories": [10, 11, 12, 13, 14, 15],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

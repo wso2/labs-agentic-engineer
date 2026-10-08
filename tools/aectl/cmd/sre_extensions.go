@@ -26,7 +26,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -37,14 +36,23 @@ type sreExtensionAssets struct {
 	RootHint string
 }
 
-// Asset paths relative to an AE repository checkout. The skill is read from
-// aep-mcp-server's tree (its canonical source) so the MCP tools and the SRE
-// agent's instructions cannot drift apart.
+// Asset paths relative to an AE repository checkout. The skill sits beside the
+// remediation extension's other files; aep-api's handoff tool descriptions
+// (internal/sourcecontrol/issues/sre_mcp_tools.go) are written against it.
 const (
 	sreAssetMCPJSON   = "deployments/sre-agent-extensions/remediation/mcp.json"
 	sreAssetContext   = "deployments/sre-agent-extensions/remediation/CONTEXT.md"
-	sreAssetSkillMD   = "services/aep-mcp-server/skills/coding-agent-handoff/SKILL.md"
+	sreAssetSkillMD   = "deployments/sre-agent-extensions/remediation/skills/coding-agent-handoff/SKILL.md"
 	sreAssetsRootFlag = "--assets-root"
+)
+
+// The sre-agent-extensions ConfigMap and its keys, shared by the ConfigMap
+// aectl applies and the volume the post-renderer mounts it through.
+const (
+	sreExtensionsConfigMap  = "sre-agent-extensions"
+	sreExtensionsKeyMCPJSON = "mcp.json"
+	sreExtensionsKeyContext = "CONTEXT.md"
+	sreExtensionsKeySkillMD = "SKILL.md"
 )
 
 // loadSreExtensionAssets reads the remediation extension from explicitRoot
@@ -124,11 +132,11 @@ func renderMCPJSON(mcpJSON, mcpURL string) string {
 
 func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, ns string, assets sreExtensionAssets, mcpURL string) error {
 	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{Name: "sre-agent-extensions", Namespace: ns},
+		ObjectMeta: metav1.ObjectMeta{Name: sreExtensionsConfigMap, Namespace: ns},
 		Data: map[string]string{
-			"mcp.json":   renderMCPJSON(assets.MCPJSON, mcpURL),
-			"CONTEXT.md": assets.Context,
-			"SKILL.md":   assets.SkillMD,
+			sreExtensionsKeyMCPJSON: renderMCPJSON(assets.MCPJSON, mcpURL),
+			sreExtensionsKeyContext: assets.Context,
+			sreExtensionsKeySkillMD: assets.SkillMD,
 		},
 	}
 	if _, err := client.CoreV1().ConfigMaps(ns).Create(ctx, cm, metav1.CreateOptions{}); err != nil {
@@ -140,57 +148,4 @@ func applyExtensionsConfigMap(ctx context.Context, client kubernetes.Interface, 
 		}
 	}
 	return nil
-}
-
-// mountSREAgentRuntime patches the SRE deployment with the extension mount,
-// the Anthropic key file, and the MCP URL (the same mcpURL rendered into
-// mcp.json by applyExtensionsConfigMap). It carries no MCP credential: the
-// extension loader will not send an Authorization header to the plaintext
-// in-cluster URL, so aep-mcp-server applies the handoff bearer itself (the
-// platform chart's sreHandoff block). The AEP_MCP_TOKEN delete directive
-// removes the unused credential that earlier aectl versions injected.
-//
-// The Anthropic key volume is required: a pod that cannot mount the org's key
-// waits for it instead of accepting an alert and failing inside the analysis.
-func mountSREAgentRuntime(ctx context.Context, client kubernetes.Interface, ns, deployName, mcpURL string) error {
-	patch := `{
-		"spec": {"template": {"spec": {
-			"volumes": [
-				{
-					"name": "sre-agent-extensions",
-					"configMap": {
-						"name": "sre-agent-extensions",
-						"items": [
-							{"key": "mcp.json", "path": "remediation/mcp.json"},
-							{"key": "CONTEXT.md", "path": "remediation/CONTEXT.md"},
-							{"key": "SKILL.md", "path": "remediation/skills/coding-agent-handoff/SKILL.md"}
-						]
-					}
-				},
-				{
-					"name": "anthropic-key",
-					"secret": {
-						"secretName": "rca-agent-anthropic-secret",
-						"optional": false,
-						"defaultMode": 256
-					}
-				}
-			],
-			"containers": [{
-				"name": "` + deployName + `",
-				"volumeMounts": [
-					{"name": "sre-agent-extensions", "mountPath": "/etc/openchoreo/sre-agent", "readOnly": true},
-					{"name": "anthropic-key", "mountPath": "/etc/rca-agent/anthropic", "readOnly": true}
-				],
-				"env": [
-					{"name": "EXTENSIONS_DIR", "value": "/etc/openchoreo/sre-agent"},
-					{"name": "RCA_LLM_API_KEY_FILE", "value": "/etc/rca-agent/anthropic/RCA_LLM_API_KEY"},
-					{"name": "AEP_MCP_URL", "value": "` + mcpURL + `"},
-					{"name": "AEP_MCP_TOKEN", "$patch": "delete"}
-				]
-			}]
-		}}}
-	}`
-	_, err := client.AppsV1().Deployments(ns).Patch(ctx, deployName, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
-	return err
 }

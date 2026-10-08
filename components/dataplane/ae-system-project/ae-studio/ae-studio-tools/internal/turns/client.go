@@ -41,7 +41,8 @@ const startHeaderTimeout = 30 * time.Second
 var ErrSocketUnavailable = errors.New("turn socket unavailable")
 
 // Body is a TurnRequest as JSON, already validated against the contract. It
-// is forwarded byte for byte: re-encoding the generated model would send an
+// is forwarded as sent, but for a plan turn's at, which the edge has replaced
+// with the commit it names: re-encoding the generated model would send an
 // empty scope object on every start turn.
 type Body []byte
 

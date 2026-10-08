@@ -10,9 +10,10 @@ metadata:
 Every section below is **settled** — this organization has already decided it.
 Anything not below is open: interview for it normally.
 
-- **In an interview** (start, amend): answer from the settled section and move
-  on, recording it as a plain Product Decision in the PRD — no special tag. The
-  user can override it in chat like any other decision, and the override wins.
+- **In an interview** (start, interview, refine): answer from the settled
+  section and move on, recording it as a line carrying the source tag
+  `[org default]` (prd-contract). The user can override it in chat like any
+  other decision, and the override wins.
 - **At design time**: a settled section pins its provider or technology
   outright. A settled capability gets no suggestions list — it is a given,
   not a choice left to the user.
@@ -58,7 +59,7 @@ specification:** what the design system requires is stated in that skill and is
 never restated here, so the two can never disagree.
 
 To adopt a different design system, change the name above and make sure a skill
-by that name exists (see "Swapping the UI design system" in `skills/AGENTS.md`).
+by that name exists.
 Those are the only edits — nothing else in the library names a design system.
 Leave this section empty to run with no design system at all; web-app builds
 then carry only the stack skills.

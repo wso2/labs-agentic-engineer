@@ -1,6 +1,6 @@
 ---
 name: design
-description: Use when generating a project's design from its PRD — the /design flow that turns specs/requirements/prd.md into the cell-first design under specs/design/, then mints the validation criteria. Also the flow for converging an existing design onto an amended PRD.
+description: Use when generating a project's design from its PRD — the /design flow that turns the requirements under specs/requirements/ into the cell-first design under specs/design/, then mints the validation criteria. Also the flow for converging an existing design onto an amended PRD.
 metadata:
   aep:
     kind: platform
@@ -9,17 +9,38 @@ metadata:
 
 # Design
 
-The design step: derive the complete design of the PRD from
-`specs/requirements/prd.md`, cell-first. The design covers EVERY story the
-PRD defines. The build gate checks the result mechanically — every story
-claimed by some component's design.json, every component enriched — so the
-way to a clean Build is to follow the order below.
+The design step: derive the complete design of the PRD from the requirements
+under `specs/requirements/` — the product page `prd.md`, one file per feature
+under `features/`, and `product-wide.md` (`prd-contract`) — cell-first. The
+build gate checks the result mechanically — every story claimed by some
+component's design.json, every component enriched — so the way to a clean
+Build is to follow the order below.
+
+## Which features this run designs
+
+Design works per feature. A feature is **designable** once it has been
+interviewed (it has stories) and no `*blocking*` question in its Open
+Questions stops it; a stub and a blocked feature are left out, and say so in a
+line.
+
+- `/design F1 F2` names the features: design those, and leave every other
+  feature's part of the design as it is — shared components change only where
+  the named features need them to.
+- A bare `/design` designs every designable feature.
+- Lines tagged `*assumed*` are designed **as written**. Seeing an assumption in
+  a flow or a screen is the quickest way for the user to judge it; do not
+  stop to ask about one, and do not leave it out.
+
+The build checks each feature against the requirements the run that designed
+it read: a feature whose words change after its design is out of date until a
+run designs it again, and every other feature's design stands.
 
 ## The PRD is the brief
 
-Design FROM `specs/requirements/prd.md`, and do not widen or narrow the scope:
-what the PRD says is what gets designed. A missing or empty PRD means the user
-needs `/start` first — stop and say so.
+Design FROM those files, and do not widen or narrow the scope: what the PRD
+says is what gets designed. No `prd.md` means the user needs `/start` first,
+and no designable feature means a feature's interview comes first
+(`/interview F<n>`) — stop and say so.
 
 **Ask at design altitude.** A call this step has to make and only the user can
 settle — which provider, which of two shapes the PRD deliberately left open —
@@ -80,9 +101,9 @@ turn — apply them directly, and load one only if you find you do not have it.
    when it lands.
 2. **Component enrichment** (`architecture`) — the component set now exists, so
    `declare_plan` the per-component files before writing them. Fill each
-   component's design.json: language (org Tech stack default first), the PRD
-   `stories` it serves (every story the PRD defines must be claimed by some
-   component — the build gate checks coverage), dependencies (discover before
+   component's design.json: language (org Tech stack default first), the
+   `stories` it serves, by ID (`"F2.3"`; every story the feature files define
+   must be claimed by some component — the build gate checks coverage), dependencies (discover before
    you invent), description, pinned skills. A dependency is a cell node: a
    database or cache you introduce here goes into design.cell first
    (`component <id> as "…" database`, inside the cell) — the cell is the
@@ -140,16 +161,25 @@ turn — apply them directly, and load one only if you find you do not have it.
    `grants` against a design it could only intend; the operations the screens
    in each role's flow load are decidable only here. Walk each flow, open the
    contract behind each screen, and make sure the role holds the handle of the
-   operation each screen loads. Re-emit the file only if a grant changes. Skip
+   operation each screen loads. Make sure also that each field the screen
+   draws (a column, a value, a name in a select or a list) comes from that
+   operation, or from one list operation that each role loading the screen
+   may call. A field that no operation gives is a gap in the contract, and the
+   build cannot change the contract: add the field now to the response of the
+   operation that the screen loads (a name next to its id). Do not widen a
+   scope to close the gap. The service fills a name from its own records,
+   never from a name that the client sends. Re-emit a file only if it
+   changes. Skip
    the step only when step 5 wrote no security.json at all. No gate refuses a
    role that is one handle short — the build's mock walk is what catches it, as
    a hidden screen — so this pass is where it is cheap.
 8. **The acceptance oracle** — mint it LAST. A design without one is
    unfinished — never skip this.
-   - `acceptance-criteria` → `specs/validation/acceptance/<slug>.feature`, one per
-     capability.
+   - `acceptance-criteria` → `specs/validation/acceptance/F<n>-<slug>.feature`,
+     one per feature this run designs.
 
-   Authored from the PRD alone, so it is independent of everything above.
+   Authored from the requirements alone, so it is independent of everything
+   above.
 
 Order binds only where a step reads an earlier one's result: the cell before
 enrichment (the platform scaffolds each design.json from it),
@@ -161,7 +191,8 @@ in ONE step, not a step each.
 
 ## Regeneration and the delta pass
 
-A design already exists → CONVERGE it to the current PRD: update what
+A design already exists → CONVERGE it to the current PRD, for the features
+this run designs: update what
 drifted, remove what the PRD no longer calls for, keep what holds. A legacy
 `specs/design/design.md` (the retired single-file overview) is not part of
 the design any more — `removeFile` it and put its content where it now

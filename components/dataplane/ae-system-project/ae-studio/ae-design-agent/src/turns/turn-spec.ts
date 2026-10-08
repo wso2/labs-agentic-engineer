@@ -43,6 +43,12 @@ export function designOrRoomTurn(turn: TurnGateInputs): boolean {
 }
 
 /**
+ * The requirements flows: the kickoff, the per-feature interview
+ * (`/interview F<n>`), and `refine` with the commands that resolve to it.
+ */
+const REQUIREMENTS_FLOWS: ReadonlySet<string> = new Set(["start", "interview", "refine", "feature", "actor", "amend", "settle"]);
+
+/**
  * The MCP discovery gate: every `designOrRoomTurn`, plus the requirements
  * flows wherever they run. A requirements interview records a registered
  * external resource as a given instead of asking which service to use, so it
@@ -50,6 +56,5 @@ export function designOrRoomTurn(turn: TurnGateInputs): boolean {
  * design-turn affair.
  */
 export function catalogTurn(turn: TurnGateInputs): boolean {
-  if (designOrRoomTurn(turn)) return true;
-  return turn.flow === "start" || turn.flow === "amend" || turn.flow === "settle";
+  return designOrRoomTurn(turn) || REQUIREMENTS_FLOWS.has(turn.flow);
 }

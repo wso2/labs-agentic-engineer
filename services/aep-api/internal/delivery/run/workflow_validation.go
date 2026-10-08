@@ -85,7 +85,7 @@ func (l *loop) judgeVersion(ctx workflow.Context) (RunResult, error) {
 	if issue == 0 {
 		// No acceptance oracle — nothing to validate, which is itself a verdict. It
 		// belongs to no cycle: none was opened.
-		if verr := l.setVerdict(ctx, noCycle, delivery.ValidationVerdictSkipped, ""); verr != nil {
+		if verr := l.setVerdict(ctx, noCycle, ValidationOutcome{Verdict: delivery.ValidationVerdictSkipped}); verr != nil {
 			return l.result(), verr
 		}
 		return l.settle(ctx, delivery.RunStateSucceeded, "")
@@ -116,7 +116,7 @@ func (l *loop) judgeVersion(ctx workflow.Context) (RunResult, error) {
 		// The verdict and its digest are ONE write, against the cycle that produced
 		// them — see SetValidationVerdict, whose write-once fence is what makes the
 		// pairing mandatory rather than tidy.
-		if verr := l.setVerdict(ctx, l.cycleID, out.Verdict, out.Digest); verr != nil {
+		if verr := l.setVerdict(ctx, l.cycleID, out); verr != nil {
 			return l.result(), verr
 		}
 
@@ -250,7 +250,9 @@ func (l *loop) readValidationHistory(ctx workflow.Context) (ValidationHistory, e
 
 func (l *loop) ensureValidationIssue(ctx workflow.Context) (int, error) {
 	var issue int
-	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).EnsureValidationIssue, l.milestoneRef()).Get(ctx, &issue)
+	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).EnsureValidationIssue, ValidationIssueInput{
+		OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, MilestoneNumber: l.in.MilestoneNumber, Version: l.version(),
+	}).Get(ctx, &issue)
 	return issue, err
 }
 
@@ -281,15 +283,25 @@ func (l *loop) closeValidationIssue(ctx workflow.Context) error {
 // The issue is persisted because it otherwise lives only here, in workflow state —
 // so once Temporal retention lapses a settled run would carry a verdict with no
 // way back to the criteria, the pull request, or the runner's own summary.
-func (l *loop) setVerdict(ctx workflow.Context, cycleID, verdict, digest string) error {
+func (l *loop) setVerdict(ctx workflow.Context, cycleID string, out ValidationOutcome) error {
 	if err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).SetValidationVerdict,
 		SetValidationVerdictInput{
-			RunID: l.in.RunID, CycleID: cycleID, Verdict: verdict, Digest: digest, Issue: l.st.ValidationIssue,
+			RunID: l.in.RunID, CycleID: cycleID, Verdict: out.Verdict, Digest: out.Digest,
+			Issue: l.st.ValidationIssue, Regressions: out.Regressions,
 		}).Get(ctx, nil); err != nil {
 		return err
 	}
-	l.st.ValidationVerdict = verdict
+	l.st.ValidationVerdict = out.Verdict
 	return nil
+}
+
+// version is the version this run judges: its tag, or — on a run admitted
+// before rows carried one — the milestone's title, which is the tag.
+func (l *loop) version() string {
+	if l.in.Tag != "" {
+		return l.in.Tag
+	}
+	return l.in.MilestoneTitle
 }
 
 // readVerdict reads the report the validation cycle just merged, pinned to that
@@ -303,7 +315,7 @@ func (l *loop) setVerdict(ctx workflow.Context, cycleID, verdict, digest string)
 func (l *loop) readVerdict(ctx workflow.Context) (ValidationOutcome, error) {
 	var out ValidationOutcome
 	err := workflow.ExecuteActivity(activityCtx(ctx), (*Activities).ReadValidationVerdict,
-		ValidationReportRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, At: l.mergeSHA}).Get(ctx, &out)
+		ValidationReportRef{OrgID: l.in.OrgID, ProjectID: l.in.ProjectID, Version: l.version(), At: l.mergeSHA}).Get(ctx, &out)
 	return out, err
 }
 
@@ -324,6 +336,7 @@ func (l *loop) mintRepairIssues(ctx workflow.Context, issue int) ([]int, error) 
 			OrgID:           l.in.OrgID,
 			ProjectID:       l.in.ProjectID,
 			MilestoneNumber: l.in.MilestoneNumber,
+			Version:         l.version(),
 			At:              l.mergeSHA,
 		}).Get(ctx, &filed)
 	if err != nil {

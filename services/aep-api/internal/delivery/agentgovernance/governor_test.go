@@ -44,19 +44,30 @@ type fakeAMP struct {
 	creates          int
 	credentialWrites int
 	agentIn          agentmanager.EnsureAgentInput
-	configIn agentmanager.EnsureModelConfigInput
-	keyRef   agentmanager.ModelKeyRef
-	proxyURL string
-	keys     []string
-	issued   bool
-	rotated  bool
-	calls    int
-	err      error
+	configIn         agentmanager.EnsureModelConfigInput
+	keyRef           agentmanager.ModelKeyRef
+	proxyURL         string
+	keys             []string
+	issued           bool
+	rotated          bool
+	calls            int
+	err              error
 
 	tracingRef    agentmanager.TracingTokenRef
 	tracingMints  int
 	tracingExpiry int64
 	tracingErr    error
+
+	// Guardrails: the catalog the gateway offers, the binding as stored, and
+	// every policies write that reached Agent Manager.
+	catalog    []agentmanager.PolicyDefinition
+	catalogErr error
+	// catalogOf is the provider UUID the last catalog read named.
+	catalogOf      string
+	binding        agentmanager.Binding
+	bindingErr     error
+	policyWrites   [][]agentmanager.BindingPolicy
+	policyWriteErr error
 }
 
 // newFakeAMP is an Agent Manager that answers the way the real one does.
@@ -988,4 +999,22 @@ func TestGovernSurvivesATracingTokenFailure(t *testing.T) {
 	if keys.writes != 1 {
 		t.Errorf("model key writes = %d, want the model key still stored", keys.writes)
 	}
+}
+
+func (f *fakeAMP) ListPolicies(_ context.Context, _, providerUUID string) ([]agentmanager.PolicyDefinition, error) {
+	f.catalogOf = providerUUID
+	return f.catalog, f.catalogErr
+}
+
+func (f *fakeAMP) ReadBinding(context.Context, agentmanager.BindingRef) (agentmanager.Binding, error) {
+	return f.binding, f.bindingErr
+}
+
+func (f *fakeAMP) WriteBindingPolicies(_ context.Context, _ agentmanager.BindingRef, _ agentmanager.Binding, policies []agentmanager.BindingPolicy) error {
+	if f.policyWriteErr != nil {
+		return f.policyWriteErr
+	}
+	f.policyWrites = append(f.policyWrites, policies)
+	f.binding.Policies = policies
+	return nil
 }

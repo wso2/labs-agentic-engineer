@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -96,7 +97,10 @@ func NewService(d Deps) *Service {
 // directions: the issue carried NO arming label so it would stay out of the
 // working set, and the auto-merge policy then had to name it a second time by
 // hand or its pull request never landed. Both now read the kind.
-func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int) (int, error) {
+//
+// scope is what the version validates (B4); nil validates the whole oracle,
+// as a version cut before builds were selections does.
+func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID string, milestoneNumber int, scope *Scope) (int, error) {
 	if milestoneNumber <= 0 {
 		// A validation issue with no version is the state this refuses to create:
 		// invisible to every milestone-scoped read, and belonging to no ledger.
@@ -111,7 +115,12 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 		// pass re-mints once it exists.
 		return 0, nil
 	}
-	sum, err := validateAcceptance(files)
+	run := scope.files(files)
+	if len(run) == 0 {
+		// The version built no feature the oracle covers: nothing to judge.
+		return 0, nil
+	}
+	sum, err := validateAcceptance(run)
 	if err != nil {
 		// An unusable oracle is the design agent's bug, not a reason to fail the
 		// save; skip and let a corrected pass re-mint.
@@ -140,7 +149,7 @@ func (s *Service) EnsureValidationIssue(ctx context.Context, orgID, projectID st
 
 	number, _, cerr := s.writer.Mint(ctx, orgID, projectID, delivery.IssueSpec{
 		Title:  validationTitle,
-		Body:   rationale(sum) + "\n\n" + renderScope(files, sum),
+		Body:   rationale(sum) + "\n\n" + renderScope(run, notRun(files, run), sum, scope),
 		Labels: []string{delivery.LabelAgentWork, delivery.KindValidation},
 		// The version pin RIDES the create — one call, so the issue is never
 		// versionless, not even for the beat a follow-up patch would take.
@@ -297,7 +306,11 @@ func plural(n int, noun string) string {
 // oracle was a JSON table nobody could read in the repo, so the issue rendered
 // it; a `.feature` file is already the readable artifact, and copying it here
 // would give the agent two versions of the specification that can disagree.
-func renderScope(files []AcceptanceCriteriaFile, sum acceptanceSummary) string {
+//
+// With a scope (B4) it names the version's built scope: only the built
+// features' files, what is deliberately not run, and the arguments that
+// narrow the report checker to the same scope.
+func renderScope(files, skipped []AcceptanceCriteriaFile, sum acceptanceSummary, scope *Scope) string {
 	var b strings.Builder
 	w := func(lines ...string) {
 		for _, l := range lines {
@@ -323,13 +336,44 @@ func renderScope(files []AcceptanceCriteriaFile, sum acceptanceSummary) string {
 		w(fmt.Sprintf("- `%s`", f.Path))
 	}
 	w("")
+	if scope != nil && (len(skipped) > 0 || len(scope.HeldBack) > 0) {
+		w(fmt.Sprintf("## Not run in %s", scope.Version),
+			"These are designed but not built yet. Do not drive them, and do not report them.",
+			"")
+		for _, f := range skipped {
+			w(fmt.Sprintf("- `%s` — not built yet", f.Path))
+		}
+		if len(scope.HeldBack) > 0 {
+			w(fmt.Sprintf("- rules tagged only with %s — those stories wait on a feature that is not built yet", strings.Join(scope.HeldBack, ", ")))
+		}
+		w("")
+	}
 
 	w(
 		"Per-component design docs: `specs/design/components/<name>/design.json` (OpenAPI contract, when present, alongside as `openapi.yaml`); system design: `specs/design/design.cell` (architecture), `specs/design/domain-model.md` (entities), `specs/design/flows/` (key flows).",
 		"",
 		"## Report",
-		fmt.Sprintf("Commit `%s` — one entry per scenario in the feature files, including the ones you could not drive.", ReportFilePath),
+		fmt.Sprintf("Commit `%s` — one entry per scenario in the feature files above, including the ones you could not drive.", ReportFilePath),
 	)
+	if scope != nil {
+		args := "--features " + strings.Join(scope.Features, ",")
+		if len(scope.HeldBack) > 0 {
+			args += " --held-back " + strings.Join(scope.HeldBack, ",")
+		}
+		w("", fmt.Sprintf("Check it against this version's scope: run the report checker with `%s`.", args))
+	}
 
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// notRun are the acceptance files the version leaves out: designed features
+// it has not built.
+func notRun(all, run []AcceptanceCriteriaFile) []AcceptanceCriteriaFile {
+	var out []AcceptanceCriteriaFile
+	for _, f := range all {
+		if !slices.ContainsFunc(run, func(r AcceptanceCriteriaFile) bool { return r.Path == f.Path }) {
+			out = append(out, f)
+		}
+	}
+	return out
 }

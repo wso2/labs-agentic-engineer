@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 3,
+  "name": "Demo",
+  "entryScreen": "screen.home",
+  "roles": [
+    {
+      "id": "user",
+      "name": "User"
+    },
+    {
+      "id": "admin",
+      "name": "Admin"
+    }
+  ],
+  "states": [
+    {
+      "id": "state.default",
+      "name": "Default"
+    },
+    {
+      "id": "state.empty",
+      "name": "Empty"
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.home",
+      "name": "Home",
+      "roleIds": [
+        "user",
+        "admin"
+      ]
+    },
+    {
+      "id": "screen.home",
+      "name": "Admin",
+      "roleIds": [
+        "admin"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.admin",
+      "name": "Administer",
+      "roleId": "admin",
+      "screenIds": [
+        "screen.home",
+        "screen.admin"
+      ]
+    }
+  ]
+}

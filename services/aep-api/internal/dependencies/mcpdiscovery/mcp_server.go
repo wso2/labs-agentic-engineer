@@ -17,23 +17,21 @@
 package mcpdiscovery
 
 import (
-	"encoding/json"
-	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/mcprpc"
 )
 
 // MCP discovery server. aep-api hosts a minimal Model Context Protocol server
-// over JSON-RPC (Streamable-HTTP transport, non-streaming single-response form:
-// the client POSTs a JSON-RPC request and we answer with application/json). The
-// coding runner and the AE Studio tools pod connect as MCP clients and the LLM
-// calls the exposed read-only tools so it proposes dependencies against
-// resources/endpoints that ALREADY exist in the org instead of inventing
-// names/shapes. The two remote-git tools (get_remote_git_file_contents,
-// search_remote_git_code) are not served here: the runner and the tools pod
-// serve them in-process with the org's own GitHub credential.
+// (platform/mcprpc: JSON-RPC over Streamable HTTP, one request, one
+// application/json answer). The coding runner and the AE Studio tools pod
+// connect as MCP clients and the LLM calls the exposed read-only tools so it
+// proposes dependencies against resources/endpoints that ALREADY exist in the
+// org instead of inventing names/shapes. The two remote-git tools
+// (get_remote_git_file_contents, search_remote_git_code) are not served here:
+// the runner and the tools pod serve them in-process with the org's own GitHub
+// credential.
 //
 // Read-only tools (see mcp_tools.go):
 //   - list_external_resources        → every registered external resource + its config-key schema
@@ -45,6 +43,7 @@ import (
 //   - validate_openapi_spec          → validate + normalize an OpenAPI doc the caller already has
 //   - fetch_openapi_spec             → SSRF-hardened fetch of an OpenAPI doc by URL, then validate + normalize
 //   - slice_openapi_spec             → cut the named operations + their schemas out of a provider's OpenAPI doc
+//   - list_guardrail_policies        → the AI-gateway guardrails an ai-agent of the org may declare
 //
 // Mounted at POST /internal/v1/mcp behind auth.MCPGate, which binds the acting
 // org onto the request context from a verified publisher client token
@@ -53,27 +52,6 @@ import (
 // ONLY from that context — never
 // the path/body/header (the source read it from an {orgHandle} path; that is
 // banned here).
-
-const mcpProtocolVersion = "2024-11-05"
-
-type jsonrpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"` // absent for notifications
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
-}
-
-type jsonrpcResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
-}
-
-type jsonrpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
 
 // mcpHandler holds the read-only ports the JSON-RPC MCP server exposes.
 type mcpHandler struct {
@@ -85,6 +63,7 @@ type mcpHandler struct {
 	normalizeSpec SpecNormalizer
 	fetchSpec     SpecFetcher
 	sliceSpec     SpecSlicer
+	guardrails    GuardrailCatalogLister
 }
 
 // NewMCPHandler returns the JSON-RPC MCP handler over the external-resource
@@ -94,16 +73,17 @@ type mcpHandler struct {
 // The acting org is resolved from the request context (bound by the auth
 // middleware), never from the request itself. A nil external-resource reader
 // makes the surface unavailable (503 — it is the surface's core catalog). A
-// nil orgEndpoints/resourceTypes/groupCatalog degrades that one tool to an
-// empty result; a nil validateSpec/normalizeSpec/fetchSpec/sliceSpec makes the
-// spec tool that needs it return a tool error.
+// nil orgEndpoints/resourceTypes/groupCatalog/guardrails degrades that one
+// tool to an empty result; a nil validateSpec/normalizeSpec/fetchSpec/sliceSpec
+// makes the spec tool that needs it return a tool error.
 func NewMCPHandler(
 	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, gc GroupCatalogLister,
 	vs SpecValidator, ns SpecNormalizer, fs SpecFetcher, ss SpecSlicer,
+	gl GuardrailCatalogLister,
 ) http.Handler {
 	h := &mcpHandler{
 		resources: er, orgEndpoints: ep, resourceTypes: rt, groupCatalog: gc,
-		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs, sliceSpec: ss,
+		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs, sliceSpec: ss, guardrails: gl,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.resources == nil {
@@ -119,78 +99,16 @@ func NewMCPHandler(
 			return
 		}
 
-		var req jsonrpcRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeRPCError(w, nil, -32700, "parse error")
-			return
-		}
-
-		// Notifications (no id) get a 202 with no body — e.g. notifications/initialized.
-		if len(req.ID) == 0 {
-			w.WriteHeader(http.StatusAccepted)
-			return
-		}
-
-		switch req.Method {
-		case "initialize":
-			writeRPCResult(w, req.ID, map[string]any{
-				"protocolVersion": mcpProtocolVersion,
-				"capabilities":    map[string]any{"tools": map[string]any{}},
-				"serverInfo":      map[string]any{"name": "aep-dependencies", "version": "1.0.0"},
-			})
-		case "ping":
-			writeRPCResult(w, req.ID, map[string]any{})
-		case "tools/list":
-			writeRPCResult(w, req.ID, map[string]any{"tools": mcpTools()})
-		case "tools/call":
+		mcprpc.Server{
+			Name: "aep-dependencies", Version: "1.0.0", Tools: mcpTools(),
 			// Tool executions act on the org's behalf with the BFF's own OC
 			// service identity. Without this marker the OC transport would see
 			// the request's MCP bearer (aud aep-api-mcp — OUR token, not an OC
 			// one) as a forwardable user JWT and every OC-backed lookup would
 			// 401, silently emptying the catalogs (caught live in E2E S3).
-			handleToolCall(w, r.WithContext(auth.WithServiceIdentity(r.Context())), h, orgHandle, req)
-		default:
-			writeRPCError(w, req.ID, -32601, "method not found: "+req.Method)
-		}
+			Call: func(w http.ResponseWriter, r *http.Request, req mcprpc.Request) {
+				handleToolCall(w, r.WithContext(auth.WithServiceIdentity(r.Context())), h, orgHandle, req)
+			},
+		}.Serve(w, r)
 	})
-}
-
-// ---- JSON-RPC / MCP write helpers ------------------------------------------
-
-func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
-	writeJSON(w, jsonrpcResponse{JSONRPC: "2.0", ID: id, Result: result})
-}
-
-func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, msg string) {
-	writeJSON(w, jsonrpcResponse{JSONRPC: "2.0", ID: id, Error: &jsonrpcError{Code: code, Message: msg}})
-}
-
-// writeToolText returns a successful tools/call result with a single text block.
-func writeToolText(w http.ResponseWriter, id json.RawMessage, text string) {
-	writeRPCResult(w, id, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
-	})
-}
-
-// writeToolError returns a tools/call result flagged isError (MCP tool-level error).
-func writeToolError(w http.ResponseWriter, id json.RawMessage, text string) {
-	writeRPCResult(w, id, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": text}},
-		"isError": true,
-	})
-}
-
-func writeJSON(w http.ResponseWriter, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Error("mcp: encode response", "error", err)
-	}
-}
-
-func mustJSON(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return fmt.Sprintf("{\"error\":%q}", err.Error())
-	}
-	return string(b)
 }

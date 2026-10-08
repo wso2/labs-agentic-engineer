@@ -233,7 +233,7 @@ func (l *loop) deliverVersion(ctx workflow.Context) (RunResult, error) {
 		return l.result(), err
 	}
 	if issue == 0 {
-		if verr := l.setVerdict(ctx, noCycle, delivery.ValidationVerdictSkipped, ""); verr != nil {
+		if verr := l.setVerdict(ctx, noCycle, ValidationOutcome{Verdict: delivery.ValidationVerdictSkipped}); verr != nil {
 			return l.result(), verr
 		}
 		return l.settle(ctx, delivery.RunStateSucceeded, "")

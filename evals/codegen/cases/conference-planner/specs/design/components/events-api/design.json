@@ -1,0 +1,18 @@
+{
+  "name": "events-api",
+  "type": "service",
+  "version": "0.1.0",
+  "language": "Ballerina",
+  "buildpack": "docker",
+  "appPath": "events-api",
+  "entrypoint": "deployment/service",
+  "exposure": "internet",
+  "dependencies": [
+    { "kind": "component", "name": "registration-service", "description": "Delegates seat reservation, waitlist, cancellation and promotion; forwards the caller's token." },
+    { "kind": "platform-resource", "name": "events-db", "resourceType": "postgres-cnpg", "description": "Stores events, rooms, sessions, proposals and scores." },
+    { "kind": "platform-resource", "name": "user-auth", "resourceType": "thunder-app" }
+  ],
+  "description": "The public API of the product: events, rooms, sessions, proposals, scores, decisions, and the caller-facing registration operations. Owns role-based authorization and persists its data in its own Postgres. Registration state (capacity, waitlist) is never held here; every seat operation goes through the registration service. Does not send notifications or run background jobs.",
+  "stories": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  "skillsPinned": ["openapi-conventions", "ballerina", "thunder-authentication", "api-management"]
+}

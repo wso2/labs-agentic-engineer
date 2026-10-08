@@ -77,7 +77,7 @@ func TestConfigLLM_TheOldBodyConnectsWithTheFormatDefaults(t *testing.T) {
 	}
 	llm := llmOf(t, resp.Body.Bytes())
 	caps, _ := llm["capabilities"].(map[string]any)
-	if llm["kind"] != "anthropic" || llm["baseURL"] != "https://api.anthropic.com/v1" || llm["model"] != "claude-sonnet-5" ||
+	if llm["kind"] != "anthropic" || llm["baseURL"] != "https://api.anthropic.com/v1" || llm["model"] != "claude-sonnet-5-5" ||
 		llm["priced"] != true || llm["updatedBy"] != "componenttest-user" {
 		t.Fatalf("llm = %v, want Anthropic's API on its default model, priced, saved by the caller", llm)
 	}

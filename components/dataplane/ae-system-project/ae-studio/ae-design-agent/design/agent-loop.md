@@ -9,7 +9,7 @@ rationale is [ADR-0001](./ADR-0001-anchored-file-edits.md); tool *semantics* liv
 A user sends a natural-language instruction; the agent **streams proposed changes**
 token-by-token (markdown + YAML + OpenAPI). The agent writes its file edits into the
 project's Room as a live peer (`src/collab/room-peer.ts`); the Room's committer is the
-only writer to the repo ([root ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)).
+only writer to the repo ([root ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
 
 **A turn starts detached and is watched over a replayable stream.** Start, watch,
 retention and the per-project lock: [turn-runtime.md](turn-runtime.md). A follow-up
@@ -30,7 +30,7 @@ reviewable change, and `applyToolCall` folds the streamed calls through the cano
 | **Whole-aggregate save, last-write-wins** | history is append-only, so the saved array only grows |
 | **Caller-supplied id + lazy create** | the caller owns its id namespace; resume is free |
 | **Raw `StreamPart` on the wire** (no envelope) | FE+BE ship together; `tool-result` already carries everything `toChange` needs |
-| **Snapshot read per turn from `AE_SNAPSHOTS_DIR`** (read-only; the Room's live files win for a Room turn, references always from the snapshot) | the agent writes no repo and no disk; the Room's committer saves ([root ADR-0040](../../../../../../docs/decisions/ADR-0040-design-work-runs-in-the-organizations-ae-studio.md)) |
+| **Snapshot read per turn from `AE_SNAPSHOTS_DIR`** (read-only; the Room's live files win for a Room turn, references always from the snapshot) | the agent writes no repo and no disk; the Room's committer saves ([root ADR-0045](../../../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)) |
 | **Human-between-turns** (`stopWhen` only, no approval pause) | restart-safe, persistence-aligned, no long-lived per-human promises |
 | **The model is built per turn from the org's connection** (`AE_MODEL_CONNECTION` + `ANTHROPIC_API_KEY` in the pod env, read once at boot; none → `no_default_key`; the playground and local dev fall back to Anthropic's own API on `AGENT_MODEL`) | the organization has one connection (format, URL, key, model) for every agent ([root ADR-0038](../../../../../../docs/decisions/ADR-0038-an-organization-has-one-model-connection.md)), and a change reaches the pod when `aep-api` converges the pod's env (capabilities computed there, `modelconn.CapabilitiesOf`); each turn builds the model from the connection (`createModel`, one branch per format). The service checks a model id's shape only; whether the host serves it is the host's answer. `AGENT_MODEL` is only the default for a caller that names none (the playground, local dev) |
 | **OpenCode Go requests carry the conversation ID** (`x-opencode-session`) | Go uses a stable session header for routing and prompt caching. The provider seam adds it and an AEP user agent only for the OpenAI-compatible `https://opencode.ai/zen/go/v1` endpoint; other connections keep their existing headers. |
@@ -46,3 +46,23 @@ reviewable change, and `applyToolCall` folds the streamed calls through the cano
 | **The INSTRUCTED skill is always inlined** (every non-chat instruction opens "Load the `<skill>` skill and follow it") | naming a skill and then waiting to be asked for it spends a whole model step on a body we already hold — measured at 3.8s on `/start`, 3.6s on a plan turn. Covers org-authored flows too, since resolution runs through the `SkillSource`, not this repo. Guidance a flow is CERTAIN to read therefore belongs in a skill rather than a `references/` file: references are not inlinable (ADR-0002) |
 | **A file write settles at its own call** ([ADR-0004](./ADR-0004-a-write-settles-at-its-own-call.md)) | the SDK queues a step's tool calls and runs them all at `model-call-end`, so a batched design turn's first file had no verdict until the last file's body finished streaming — four completed documents shown as pending for minutes. A bundle op is a pure function of the bundle and the args, and the args close at `tool-input-end`, so it runs there and its `tool-result` rides its own `tool-call`; the ledger memoises per `toolCallId`, so the SDK's later `execute()` re-reads that verdict instead of re-applying the op |
 | **SSE event types in `packages/agent-stream/src/contracts/sse-events.ts`** | one shared definition for producer, console and playground, owned by `@aep/agent-stream`; `OpResult` / tool-input types re-exported from the domain Zod schemas (no parallel copy) |
+
+## Prototype write gate
+
+A turn's file tools are built with `gates.prototypeRender` (`buildFileToolSet`),
+the render check in `src/prototype/render-check.ts`: `@wso2/prototype-kit/check`'s
+`checkPrototypeFiles` on the Oxygen theme's `check-runtime.js`, resolved once at
+import with the kit's `resolveTheme`. A write that leaves a whole prototype pair
+(`prototype.tsx`, or `prototype.json` beside an existing source) goes through
+`agent-stream`'s `writeWithRenderCheck`, which draws it in an isolated Node child
+(permission model, 15 s limit) asynchronously: the event loop serves other
+conversations meanwhile. The write ledger queues the turn's later writes behind
+a pending verdict, and `tapWrites` holds later frames, so call order and wire
+order are unchanged; the turn drains the tap before it ends. The image
+therefore builds the kit and the theme (`dist` runtimes) and needs Node 22. The
+static stages and the `INVALID_PROTOTYPE` code with its `findings` are in
+`@aep/agent-stream` (its README, Write gates).
+
+Each child runs with a 384 MiB heap cap (`RENDER_HEAP_MB` in the kit), and that
+memory counts against the pod container's 1 Gi limit, so the pod runs one check
+at a time (`MAX_RENDER_CHECKS`, [pod-memory-bounds.md](./pod-memory-bounds.md)).

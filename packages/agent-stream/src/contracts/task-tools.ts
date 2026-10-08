@@ -22,7 +22,7 @@
  * against. Peer of `sse-events.ts`: this module owns the TYPES (inputs, results,
  * error codes, tool names, the `tasks/<issueNumber>.md` rendering shape); the Zod
  * `inputSchema`s live in `../task-tools-schema.ts` (drift-guarded against these
- * types) and the runtime parser in `../task-context.ts`. The agents service, its
+ * types) and the runtime parser in `../task-context.ts`. The design agent, its
  * evals, the console, and the Go BFF plan tap all speak this one definition.
  *
  * ## The task-plan turn's `files` = READ-ONLY context (a §13 default)
@@ -94,6 +94,11 @@ export interface PlanTaskInput {
   origin?: TaskOrigin;
   /** One sentence: why this Task exists. */
   rationale: string;
+  /**
+   * The feature this Task builds in its component ("F2"), or "foundation" for
+   * the component's shared setup and carried product-wide requirements (B3).
+   */
+  feature?: string;
 }
 
 /**
@@ -127,6 +132,8 @@ export interface PlanTaskOk {
   /** Normalized: the default `spec-plan` is filled in. */
   origin: TaskOrigin;
   rationale: string;
+  /** As PlanTaskInput.feature; absent when the planner gave none. */
+  feature?: string;
 }
 
 /**

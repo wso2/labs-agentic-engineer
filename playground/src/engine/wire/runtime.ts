@@ -59,17 +59,38 @@ export function run(command: string, args: string[], options: RunOptions = {}): 
       ...(options.env ? { env: options.env } : {}),
     });
     let output = "";
-    const absorb = (chunk: Buffer): void => {
-      const text = chunk.toString();
-      output += text;
-      if (options.onLine) for (const line of text.split("\n")) if (line.trim()) options.onLine(line);
+    // Per stream, and only whole lines, into both the output and `onLine`: a
+    // chunk ends wherever the pipe did, and stdout and stderr interleave by
+    // chunk, so a consumer that parses each line (BuildKit's JSON progress)
+    // would otherwise be handed the halves of one record as two broken ones.
+    const lines = (): { absorb: (chunk: Buffer) => void; flush: () => void } => {
+      let partial = "";
+      const emit = (line: string): void => {
+        output += `${line}\n`;
+        if (line.trim()) options.onLine?.(line);
+      };
+      return {
+        absorb: (chunk) => {
+          const parts = (partial + chunk.toString()).split("\n");
+          partial = parts.pop() ?? "";
+          for (const line of parts) emit(line);
+        },
+        flush: () => {
+          if (partial) emit(partial);
+          partial = "";
+        },
+      };
     };
-    child.stdout?.on("data", absorb);
-    child.stderr?.on("data", absorb);
+    const out = lines();
+    const err = lines();
+    child.stdout?.on("data", out.absorb);
+    child.stderr?.on("data", err.absorb);
     child.on("error", (error) => {
       resolve({ code: 127, output: `${output}${error.message}` });
     });
     child.on("close", (code) => {
+      out.flush();
+      err.flush();
       resolve({ code: code ?? 1, output });
     });
   });
@@ -158,10 +179,14 @@ export async function isPortAvailable(port: number): Promise<boolean> {
   return (await isPortFree(port)) && !(await isPortBusy(port));
 }
 
-/** The first free port from `from`, so two wired sessions never fight over one. */
-export async function findFreePort(from: number, to = from + 40): Promise<number> {
+/** The first port from `from` that `take` grants. */
+export async function findFreePort(
+  from: number,
+  take: (port: number) => Promise<boolean> = isPortAvailable,
+  to = from + 40,
+): Promise<number> {
   for (let port = from; port <= to; port += 1) {
-    if (await isPortAvailable(port)) return port;
+    if (await take(port)) return port;
   }
   throw new Error(`no free port between ${String(from)} and ${String(to)}`);
 }
@@ -170,6 +195,8 @@ export async function findFreePort(from: number, to = from + 40): Promise<number
 export interface ProcessGroup {
   child: ChildProcess;
   pid: number;
+  /** Its exit code once it has exited (a signal reads as 1), null while it runs. */
+  exitCode: () => number | null;
   stop: () => Promise<void>;
 }
 
@@ -197,9 +224,17 @@ export function startGroup(command: string, args: string[], options: RunOptions 
     child.stderr?.on("data", absorb);
   }
   const pid = child.pid ?? 0;
+  let exitCode: number | null = null;
+  child.on("exit", (code) => {
+    exitCode = code ?? 1;
+  });
+  child.on("error", () => {
+    exitCode ??= 127;
+  });
   return {
     child,
     pid,
+    exitCode: () => exitCode,
     stop: async () => {
       await stopGroup(pid);
     },
@@ -261,9 +296,9 @@ export function delay(ms: number): Promise<void> {
  * it is clamped to what is left so the whole wait still ends when it said it
  * would.
  */
-export async function waitForHttp(url: string, timeoutMs = 120_000): Promise<boolean> {
+export async function waitForHttp(url: string, timeoutMs = 120_000, gone: () => boolean = () => false): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  while (Date.now() < deadline && !gone()) {
     try {
       const remaining = Math.max(1, deadline - Date.now());
       await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(Math.min(5_000, remaining)) });

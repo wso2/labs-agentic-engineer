@@ -65,6 +65,13 @@ func TestServer_ForwardsNameAndArgumentsOnly(t *testing.T) {
 	if up.params != `{"name":"fetch_openapi_spec","arguments":{"url":"https://x"}}` {
 		t.Fatalf("forwarded %s", up.params)
 	}
+	// The guardrail catalog is aep-api's, read for the token's org.
+	if _, err := s.Call(context.Background(), "tools/call", json.RawMessage(`{"name":"list_guardrail_policies"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if up.params != `{"name":"list_guardrail_policies","arguments":{}}` {
+		t.Fatalf("forwarded %s", up.params)
+	}
 }
 
 func TestServer_RefusalsAreJSONRPCErrors(t *testing.T) {

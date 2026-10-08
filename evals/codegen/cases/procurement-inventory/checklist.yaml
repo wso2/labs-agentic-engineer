@@ -1,0 +1,320 @@
+# Derived by the planner (save / replan) and frozen: every attempt walks this
+# list, in this order, from an empty database. HAND-EDITABLE — fix, reorder,
+# reweight or delete items freely; only an explicit replan re-derives it.
+
+# role: one of Requester, Approver, Warehouse Clerk, no role, signed out
+# weight: default 1. extras.mustCover items are walked and scored like items;
+# extras.mustNot entries ({id, description}) cap the band at review when violated.
+
+# Planner gaps — what the walk cannot cover, and where the PRD and the wireframes disagree:
+#  - Own-request approval refusal (assumed rule) cannot be walked: the Approver role has no grant to submit requests, so no request exists that an approver both raised and could approve (story 6 own-request case; purchase-approval flow).
+#  - Nothing in the wireframes lets a Requester see rejection reasons: MyRequestDetail draws only 'Decision: approved by an approver' as text, so the rejected-request detail and entered reason are not checked.
+#  - Per-user isolation of 'My requests' (test-requester vs test-requester-2) cannot be established since the role switch uses a single Requester identity; requester-own-requests-only is weak evidence only.
+#  - The PRD lists 'edit an item' and the Requester 'status of my requests' filter tabs, but the DSL tabs/ledger/receipt behaviour is partly stated by example only; 'Partially received' vs 'Received' tab membership for the 319.50 order depends on whether the pens line must also be received, which the spec leaves open (an order stays open until fully received), so the final status after receiving only the paper line is not asserted.
+#  - The 319.50 order's pens line is never received in this checklist; a person could add an item receiving 2 pens to the ReceivingQueue flow to verify the order becomes Received and pens stock rises to 2.
+
+items:
+  - id: clerk-lands-on-receiving-queue
+    role: Warehouse Clerk
+    screen: ReceivingQueue
+    flow: Receive goods
+    steps: Look at the landing screen and its sidebar.
+    expect: The Receiving queue (Approved orders) shows with an empty list and a sensible empty state. The sidebar offers Receiving, Stock levels, Low stock, Manage catalogue and Sign out.
+    weight: 1
+  - id: clerk-empty-catalogue
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Manage catalogue
+    steps: Click 'Manage catalogue' in the sidebar.
+    expect: The Manage catalogue screen loads with the heading, search box and 'Add item' button, and an empty table without a crash.
+    weight: 1
+  - id: clerk-adds-pens
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Add catalogue item (story 11)
+    steps: Click 'Add item'. Note the text saying a new item starts with 0 in stock. Enter Name 'Ballpoint pens', Unit 'box', Unit price 4.50, Reorder level 10. Click 'Save item'.
+    expect: The form shows that a new item starts with 0 in stock. After saving, you arrive on Manage catalogue and a row 'Ballpoint pens | box | 4.50 | 10' is listed with a SKU assigned.
+    weight: 2
+  - id: clerk-adds-paper
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Add catalogue item (story 11)
+    steps: Click 'Add item'. Enter Name 'A4 paper', Unit 'ream', Unit price 6.20, Reorder level 15. Click 'Save item'.
+    expect: You arrive on Manage catalogue and both 'Ballpoint pens' and 'A4 paper' (ream, 6.20, 15) are listed.
+    weight: 2
+  - id: clerk-cancel-item-form
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Add catalogue item
+    steps: Click 'Add item', type Name 'Discarded item' into the form, then click 'Cancel'.
+    expect: The form is left and no 'Discarded item' row appears in the Manage catalogue list.
+    weight: 1
+  - id: clerk-searches-catalogue
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Manage catalogue
+    steps: On Manage catalogue type 'paper' into 'Search items'. Then clear the search.
+    expect: While 'paper' is entered only 'A4 paper' is listed; after clearing, both items are listed again.
+    weight: 1
+  - id: clerk-edits-pens
+    role: Warehouse Clerk
+    screen: ManageCatalogue
+    flow: Edit catalogue item (story 12)
+    steps: Click the 'Ballpoint pens' row. Check the form shows the current values. Change Unit price to 4.75 and Reorder level to 12. Click 'Save item'.
+    expect: The form opened with the existing name, unit, price and reorder level. After saving, you arrive on Manage catalogue and the pens row shows unit price 4.75 and reorder level 12.
+    weight: 2
+  - id: requester-lands-on-catalogue
+    role: Requester
+    screen: Catalogue
+    flow: Browse and request
+    steps: Look at the landing screen and its sidebar.
+    expect: The Catalogue screen shows with a search box and 'New request' button. The sidebar offers Catalogue, My requests and Sign out.
+    weight: 1
+  - id: requester-browses-catalogue
+    role: Requester
+    screen: Catalogue
+    flow: Browse catalogue (story 1)
+    steps: Read the item table. Type 'pens' into 'Search items', then clear it.
+    expect: The table lists 'Ballpoint pens' (box, 4.75) and 'A4 paper' (ream, 6.20) with SKUs. Searching 'pens' leaves only the pens row; clearing restores both.
+    weight: 2
+  - id: requester-my-requests-empty
+    role: Requester
+    screen: MyRequests
+    flow: Request status (story 3)
+    steps: Click 'My requests' in the sidebar.
+    expect: My requests shows tabs All, Pending, Approved, Rejected, Received and an empty list with a sensible empty state.
+    weight: 1
+  - id: requester-submits-small-request
+    role: Requester
+    screen: MyRequests
+    flow: Raise purchase request (story 2)
+    steps: Click 'Catalogue', then 'New request'. Select Item 'A4 paper', Quantity 10, click 'Add line'. Check the lines table and Total value. Click 'Submit request'.
+    expect: The line 'A4 paper | 10 | 6.20 | 62.00' appears and Total value shows 62.00. After submitting you arrive on My requests, where a new request with total 62.00 and status Pending is listed.
+    weight: 2
+  - id: requester-submits-multi-line-request
+    role: Requester
+    screen: MyRequests
+    flow: Raise purchase request (story 2)
+    steps: Click 'New request' via the Catalogue. Add line Item 'A4 paper' Quantity 50, then add line Item 'Ballpoint pens' Quantity 2. Click 'Submit request'.
+    expect: Lines show 310.00 and 9.50; Total value shows 319.50. After submitting, My requests lists a Pending request with total 319.50.
+    weight: 2
+  - id: requester-submits-large-request
+    role: Requester
+    screen: MyRequests
+    flow: Raise purchase request (story 2)
+    steps: Open New request. Add line Item 'A4 paper' Quantity 1000. Click 'Submit request'.
+    expect: Total value shows 6200.00 and, after submitting, My requests lists a Pending request with total 6200.00.
+    weight: 1
+  - id: requester-cancels-new-request
+    role: Requester
+    screen: Catalogue
+    flow: Raise purchase request
+    steps: Open New request from the Catalogue, add line Item 'Ballpoint pens' Quantity 1, then click 'Cancel'.
+    expect: The request form is left and no new request with total 4.75 appears in My requests.
+    weight: 1
+  - id: requester-pending-tab
+    role: Requester
+    screen: MyRequests
+    flow: Request status (story 3)
+    steps: Open My requests and click the 'Pending' tab, then the 'Approved' tab.
+    expect: Pending lists the three pending requests (62.00, 319.50, 6200.00); Approved lists nothing yet.
+    weight: 1
+  - id: approver-lands-on-queue
+    role: Approver
+    screen: ApprovalQueue
+    flow: Approval queue
+    steps: Look at the landing screen and its sidebar.
+    expect: The Pending requests screen shows with an 'Approval limit 5000.00' card. The sidebar offers Approvals and Sign out.
+    weight: 1
+  - id: approver-sees-pending
+    role: Approver
+    screen: ApprovalQueue
+    flow: Approval queue (story 4)
+    steps: Read the table of pending requests.
+    expect: The three requests raised by the requester (totals 62.00, 319.50, 6200.00) are listed with requester and raised date.
+    weight: 2
+  - id: approver-reviews-request
+    role: Approver
+    screen: ReviewRequest
+    flow: Approval queue (story 4)
+    steps: Click the 62.00 request row.
+    expect: Review screen shows line 'A4 paper | 10 | 6.20 | 62.00', Total value 62.00, a Reason textarea, and Reject and Approve buttons. No 'Exceeds approval limit' warning is shown.
+    weight: 1
+  - id: approver-approves-small-request
+    role: Approver
+    screen: ApprovalQueue
+    flow: Approve within limit (story 5)
+    steps: On the 62.00 request review screen, click 'Approve'.
+    expect: You arrive on the Pending requests queue and the 62.00 request is no longer listed.
+    weight: 2
+  - id: approver-approves-multi-line
+    role: Approver
+    screen: ApprovalQueue
+    flow: Approve within limit (story 5)
+    steps: Open the 319.50 request and click 'Approve'.
+    expect: You arrive on the queue and the 319.50 request is no longer listed.
+    weight: 2
+  - id: approver-large-request-refused
+    role: Approver
+    screen: ReviewRequest
+    flow: Approval limit (story 6)
+    steps: Open the 6200.00 request. Note the warning, then click 'Approve'.
+    expect: "The screen shows Total value 6200.00 above the limit of 5000 and an 'Exceeds approval limit' warning. The approval is refused: the request is not approved and stays pending in the queue."
+    weight: 2
+  - id: approver-rejects-large-request
+    role: Approver
+    screen: ApprovalQueue
+    flow: Reject request (story 5)
+    steps: Open the 6200.00 request, enter Reason 'Over budget, split the order', click 'Reject'.
+    expect: You arrive on the queue and the 6200.00 request is no longer listed.
+    weight: 2
+  - id: requester-sees-decisions
+    role: Requester
+    screen: MyRequests
+    flow: Request status (story 3)
+    steps: Open My requests. Check the All, Approved and Rejected tabs.
+    expect: Approved lists the 62.00 and 319.50 requests with status Approved; Rejected lists the 6200.00 request with status Rejected; All lists all three.
+    weight: 2
+  - id: requester-request-detail
+    role: Requester
+    screen: MyRequestDetail
+    flow: Request status (story 3)
+    steps: On My requests click the 319.50 request row.
+    expect: Request detail shows an Approved badge, lines 'A4 paper | 50 | 0' and 'Ballpoint pens | 2 | 0' (ordered / received), and the decision text.
+    weight: 1
+  - id: clerk-sees-approved-orders
+    role: Warehouse Clerk
+    screen: ReceivingQueue
+    flow: Receive goods (story 7)
+    steps: Click 'Receiving' in the sidebar and read the table.
+    expect: The 62.00 and 319.50 orders are listed with status Approved; the rejected 6200.00 request is not listed.
+    weight: 1
+  - id: clerk-stock-initially-zero
+    role: Warehouse Clerk
+    screen: StockLevels
+    flow: Stock levels
+    steps: Click 'Stock levels' in the sidebar. Type 'pens' into 'Search items', then clear it.
+    expect: Both items are listed with On hand 0 and their reorder levels (pens 12, paper 15). Search narrows to the pens row and clearing restores both.
+    weight: 1
+  - id: clerk-low-stock-initial
+    role: Warehouse Clerk
+    screen: LowStock
+    flow: Low stock (story 10)
+    steps: Click 'Low stock' in the sidebar.
+    expect: Both items (on hand 0, below their reorder levels) are listed with on hand and reorder level.
+    weight: 2
+  - id: clerk-receives-partial
+    role: Warehouse Clerk
+    screen: ReceivingQueue
+    flow: Receive goods (story 7)
+    steps: Open Receiving, click the 319.50 order. Read the table, enter 'Quantity received now' 20, click 'Confirm receipt'.
+    expect: The screen showed A4 paper ordered 50, received so far 0, outstanding 50. After confirming you arrive on the Receiving queue and the 319.50 order is shown as Partially received.
+    weight: 2
+  - id: clerk-receipt-cancel
+    role: Warehouse Clerk
+    screen: ReceivingQueue
+    flow: Receive goods
+    steps: Open the 319.50 order, enter 5, click 'Cancel'.
+    expect: "You return from the receiving screen and nothing is received: reopening the order still shows 20 received so far for A4 paper."
+    weight: 1
+  - id: clerk-over-receipt-refused
+    role: Warehouse Clerk
+    screen: ReceiveGoods
+    flow: Receive goods (story 7)
+    steps: Open the 319.50 order (outstanding A4 paper 30). Enter 'Quantity received now' 31 and click 'Confirm receipt'.
+    expect: The receipt is refused; the received-so-far figure for A4 paper stays 20.
+    weight: 1
+  - id: clerk-receives-remaining
+    role: Warehouse Clerk
+    screen: ReceivingQueue
+    flow: Receive goods (story 7)
+    steps: Open the 319.50 order, check outstanding is 30, enter 30, click 'Confirm receipt'.
+    expect: Outstanding showed 30. After confirming, the order no longer awaits goods (fully received for A4 paper).
+    weight: 1
+  - id: clerk-stock-after-receipt
+    role: Warehouse Clerk
+    screen: StockLevels
+    flow: Stock levels (story 7)
+    steps: Click 'Stock levels' in the sidebar.
+    expect: A4 paper shows On hand 50 with reorder level 15; Ballpoint pens remains 0.
+    weight: 2
+  - id: clerk-views-ledger
+    role: Warehouse Clerk
+    screen: ItemLedger
+    flow: Ledger (stories 8, 9)
+    steps: On Stock levels click the 'A4 paper' row.
+    expect: Breadcrumb 'Stock levels / A4 paper'; the ledger lists two entries with changes +20 (balance 20) and +30 (balance 50), reason goods receipt, each with a receipt reference.
+    weight: 2
+  - id: clerk-low-stock-after-receipt
+    role: Warehouse Clerk
+    screen: LowStock
+    flow: Low stock (story 10)
+    steps: Click 'Low stock' in the sidebar, then click the 'Ballpoint pens' row.
+    expect: Only 'Ballpoint pens' (on hand 0, reorder level 12) is listed; A4 paper (50 vs 15) is not. Clicking the row opens its ledger, which has no entries.
+    weight: 1
+  - id: requester-sees-received
+    role: Requester
+    screen: MyRequestDetail
+    flow: Request status (story 3)
+    steps: Open My requests; check the Received tab, then open the 319.50 request.
+    expect: The request detail shows A4 paper ordered 50, received 50. The status is shown consistently in the list and the Received tab (the pens line was not received).
+    weight: 1
+  - id: requester-own-requests-only
+    role: Requester
+    screen: MyRequests
+    flow: Request status
+    steps: Open My requests.
+    expect: Only requests raised by this requester are listed (the three raised earlier).
+    weight: 1
+  - id: requester-refused-approval-queue
+    role: Requester
+    screen: ApprovalQueue
+    flow: Role reach
+    steps: Open the address the Approval Queue had in approver-lands-on-queue.
+    expect: The Approval queue is not shown; the requester is refused or sent to a no-access state.
+    weight: 1
+  - id: approver-refused-catalogue
+    role: Approver
+    screen: Catalogue
+    flow: Role reach
+    steps: Open the address the Catalogue had in requester-lands-on-catalogue.
+    expect: The Catalogue is not shown; the approver is refused or sent to a no-access state.
+    weight: 1
+  - id: approver-refused-receiving
+    role: Approver
+    screen: ReceivingQueue
+    flow: Role reach
+    steps: Open the address the Receiving Queue had in clerk-lands-on-receiving-queue.
+    expect: The Receiving queue is not shown; the approver is refused or sent to a no-access state.
+    weight: 1
+  - id: clerk-refused-approval-queue
+    role: Warehouse Clerk
+    screen: ApprovalQueue
+    flow: Role reach
+    steps: Open the address the Approval Queue had in approver-lands-on-queue.
+    expect: The Approval queue is not shown; the clerk is refused or sent to a no-access state.
+    weight: 1
+  - id: no-role-no-access
+    role: no role
+    screen: Catalogue
+    flow: Role reach
+    steps: Look at the landing page.
+    expect: A no-access page is shown instead of the app; no catalogue, requests or stock data appear.
+    weight: 1
+  - id: signed-out-guard
+    role: signed out
+    screen: Catalogue
+    flow: Role reach
+    steps: Load the app signed out and wait for it to settle.
+    expect: The address loses auth=out and the app reloads into a session through the sign-in guard, with no blank page or crash.
+    weight: 1
+  - id: requester-signs-out
+    role: Requester
+    screen: Catalogue
+    flow: Sign out
+    steps: Click 'Sign out' in the sidebar.
+    expect: The app goes to the root and shows its no-access state; the requester's screens and data are gone and no sign-in form appears.
+    weight: 1
+extras:
+  mustCover: []
+  mustNot: []

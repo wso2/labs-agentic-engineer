@@ -55,10 +55,10 @@ type DesignComponent struct {
 	// managed-API auth policy) — a component can be intranet-exposed without a
 	// managed API and vice versa. Sourced from the design.json `exposure` key.
 	Exposure string `json:"exposure,omitempty"`
-	// Stories are the PRD story numbers this component serves (#369) —
+	// Stories are the story IDs ("F2.3") this component serves (#369) —
 	// platform-recomputed from the cell's citations on save; read here so
 	// traceability surfaces and the codec round-trip carry them.
-	Stories []int `json:"stories,omitempty"`
+	Stories []string `json:"stories,omitempty"`
 	// Description is the single-responsibility prose (what the component does /
 	// does NOT do) — the design.json `description` key. This is the successor to
 	// the per-component design.md markdown body.

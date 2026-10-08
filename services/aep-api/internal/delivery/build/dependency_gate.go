@@ -18,6 +18,9 @@ package build
 
 import (
 	"context"
+	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -46,7 +49,7 @@ const kindAgentToolUnresolved = "agent-tool-unresolved"
 // dependencyBlocker is the SINGLE place that maps an `external` dependency's
 // already-computed Status/Reason onto a user-facing blocker: the drawer item
 // kind + a plain-language description. Both preflight.externalItems (the
-// drawer's GET-time item emission) and Service.dependencyGateFailures (the
+// drawer's GET-time item emission) and Service.dependencyGate (the
 // build-time hard gate) call this exact function, so the two surfaces can
 // never drift apart.
 //
@@ -90,52 +93,72 @@ func dependencyBlocker(d spec.Dependency) (kind, description string, blocked boo
 	return "", "", false
 }
 
-// dependencyGateFailures is the build-time hard gate (dependency-management
-// migration, restoring the gate Task 1 orphaned): a FRESH ReadDesignComponents
-// read (never the client-supplied inputs, never a cached preflight response —
-// "re-run the computation" means invoke, never copy) walks every component's
-// `external` dependencies — service AND web-application alike (#252 Task 14:
-// the guard that skipped non-service components here predates this feature
-// and left a gap the drawer already closed for every component kind; a
-// web-application's unresolved external dependency must block the build the
-// same way a service's does) — and maps each still-blocked one (unresolved
-// with needs-contract/needs-acceptance/needs-input) through the exact same
-// dependencyBlocker used by preflight.externalItems, into the existing
-// InputFailure shape (handlers_build.go's BuildResponse.failures). A doctored
-// client that skips the drawer (or supplies no/insufficient inputs) cannot
-// bypass this: the gate reads the design's Status/Reason at HEAD AFTER
-// InputsCoordinator.ApplyPreTag has had a chance to commit any drawer-supplied
-// resolution (e.g. a pasted external-spec) — Run() calls this AFTER ApplyPreTag
-// but BEFORE the tag-cut, so a legitimate resolution submitted with THIS build
-// request is reflected, while an unresolved dependency the client didn't
-// actually fix still blocks.
+// dependencyGate is the build-time dependency hard gate (dependency-management
+// migration, restoring the gate Task 1 orphaned), per feature since E2: an open
+// `external` dependency blocks the features whose stories its component serves
+// — "Payroll export waits on Xero" while Approvals builds — and nothing else.
+// It returns those features with the reason in words (the save refuses one
+// that is picked or needed), and the failures that still block the whole
+// build: an open dependency of a component that serves no story (nothing to
+// pin it on), and every unresolved agent tool.
+//
+// A FRESH ReadDesignComponents read (never the client-supplied inputs, never a
+// cached preflight response — "re-run the computation" means invoke, never
+// copy) walks every component's `external` dependencies — service AND
+// web-application alike (#252 Task 14) — and maps each still-blocked one
+// (unresolved with needs-contract/needs-acceptance/needs-input) through the
+// exact same dependencyBlocker used by preflight.externalItems. A doctored
+// client that skips the drawer cannot bypass this: the gate reads the design's
+// Status/Reason at HEAD AFTER InputsCoordinator.ApplyPreTag has had a chance to
+// commit any drawer-supplied resolution — Run() calls this AFTER ApplyPreTag
+// but BEFORE the tag-cut.
 //
 // A nil design reader (composition root didn't wire one) fails OPEN — no
 // design read means no dependency can be classified, mirroring every other
 // nil-safe port in this package (Coord, Tasks).
-func (s *Service) dependencyGateFailures(ctx context.Context, orgID, projectID string) ([]InputFailure, error) {
+func (s *Service) dependencyGate(ctx context.Context, orgID, projectID string) ([]InputFailure, map[string]string, error) {
 	if s.design == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	comps, err := s.design.ReadDesignComponents(ctx, orgID, projectID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var failures []InputFailure
+	blocked := map[string]string{}
 	for _, c := range comps {
+		features := featuresServed(c.Stories)
 		for _, d := range c.Dependencies {
-			if kind, desc, blocked := dependencyBlocker(d); blocked {
-				failures = append(failures, InputFailure{
-					Component:  c.Name,
-					Dependency: d.Name,
-					Kind:       kind,
-					Reason:     desc,
-				})
+			kind, desc, isBlocked := dependencyBlocker(d)
+			if !isBlocked {
+				continue
+			}
+			if len(features) == 0 {
+				failures = append(failures, InputFailure{Component: c.Name, Dependency: d.Name, Kind: kind, Reason: desc})
+				continue
+			}
+			for _, f := range features {
+				if _, seen := blocked[f]; !seen {
+					blocked[f] = fmt.Sprintf("it waits on %s — %s", d.Name, desc)
+				}
 			}
 		}
 		failures = append(failures, agentToolGateFailures(c)...)
 	}
-	return failures, nil
+	return failures, blocked, nil
+}
+
+// featuresServed is the features a component's claimed stories belong to:
+// F2 for F2.3.
+func featuresServed(stories []string) []string {
+	var out []string
+	for _, id := range stories {
+		head, _, ok := strings.Cut(id, ".")
+		if ok && !slices.Contains(out, head) {
+			out = append(out, head)
+		}
+	}
+	return out
 }
 
 // agentToolGateFailures maps an ai-agent component's already-computed

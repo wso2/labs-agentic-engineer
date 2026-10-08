@@ -142,25 +142,29 @@ func (e *Engine) readTags(ctx context.Context, p repoPaths, prefix string) ([]Ta
 	defer release()
 	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
 		"for-each-ref",
-		"--format=%(refname:short)%00%(objectname)%00%(*objectname)%00%(contents:subject)%00%(creatordate:iso-strict)",
+		// The body can hold newlines, so each record ends with a record
+		// separator (0x1e) rather than with the newline for-each-ref adds.
+		"--format=%(refname:short)%00%(objectname)%00%(*objectname)%00%(contents:subject)%00%(creatordate:iso-strict)%00%(contents:body)%1e",
 		"refs/tags/"+prefix+"*")
 	if err != nil {
 		return nil, fmt.Errorf("repo: list tags %q*: %w", prefix, err)
 	}
 	var tags []TagInfo
-	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-		if line == "" {
+	for _, record := range strings.Split(string(out), "\x1e") {
+		record = strings.TrimPrefix(record, "\n")
+		if strings.TrimSpace(record) == "" {
 			continue
 		}
-		fields := strings.SplitN(line, "\x00", 5)
-		if len(fields) != 5 {
-			return nil, fmt.Errorf("repo: unexpected for-each-ref record %q", line)
+		fields := strings.SplitN(record, "\x00", 6)
+		if len(fields) != 6 {
+			return nil, fmt.Errorf("repo: unexpected for-each-ref record %q", record)
 		}
-		name, object, peeled, subject, created := fields[0], fields[1], fields[2], fields[3], fields[4]
+		name, object, peeled, subject, created, body := fields[0], fields[1], fields[2], fields[3], fields[4], fields[5]
 		info := TagInfo{Name: name, CommitHash: object}
 		if peeled != "" { // annotated: dereference to the commit, keep the tag message
 			info.CommitHash = peeled
 			info.Message = subject
+			info.Body = strings.TrimSpace(body)
 		}
 		// An undatable ref leaves the zero time rather than failing the listing:
 		// ordering degrades for that one tag, which is better than no tags at

@@ -30,7 +30,7 @@
 import { randomUUID } from "node:crypto";
 import { request, type IncomingMessage } from "node:http";
 import { createInterface } from "node:readline";
-import { parseSseStream, type PlanContextFile, type StreamPart } from "@aep/agent-stream";
+import { parseSseStream, type PlanContextFile, type PlanScope, type StreamPart } from "@aep/agent-stream";
 import type { ResultFrame, TaskOpFrame, TurnSocketFrame } from "@aep/ae-design-agent/edge/turn-socket";
 import { PLAYGROUND_USER } from "../kit/auth.js";
 import type { TurnSession } from "./turn.js";
@@ -53,6 +53,8 @@ export interface PlanTurnResult extends PlanTurnOutcome {
 
 export interface PlanTurnOptions {
   onPart?: (part: StreamPart) => void;
+  /** The version's milestone scope, as aep-api computes it (stories, features, product-wide items). */
+  scope?: PlanScope;
 }
 
 /** POST one request to the Turn socket; resolves once the response headers arrive. */
@@ -85,6 +87,7 @@ export async function runPlanTurn(session: TurnSession, taskContext: PlanContext
     project: session.project,
     kind: "plan",
     credit: { userId: PLAYGROUND_USER.sub, name: PLAYGROUND_USER.name, email: PLAYGROUND_USER.email },
+    ...(opts.scope ? { scope: opts.scope } : {}),
     ...(taskContext.length ? { taskContext } : {}),
   });
   if (res.statusCode !== 200) {

@@ -11,7 +11,7 @@ for someone standing in the repository with a terminal open; on a console screen
 it names nothing, and once the artifacts are labelled *Product requirements* and
 *Validation criteria* it names things that are demonstrably not there.
 
-The same flow skills — `start`, `design`, `amend` — have to run on both. So
+The same flow skills — `start`, `design`, `refine` — have to run on both. So
 nothing is stripped from the trunk: the difference rides one extra skill, and the
 caller says which surface its turn is for.
 
@@ -78,5 +78,5 @@ unknown value is therefore a pre-stream 400, never a silent fallback — the wro
 answer narrates repo paths at someone who cannot see a file tree.
 
 Ordering, precedence and the four rules are settled under **How the agent talks**
-in `apps/console/design/lexicon.md`, which stays the source for the artifact
-names the skill pins.
+in the classic console's lexicon ([`apps/console/design/lexicon.md` at `classic-console`](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/lexicon.md#how-the-agent-talks)).
+The artifact names the skill pins are now sourced from `apps/console/design/lexicon.md`.

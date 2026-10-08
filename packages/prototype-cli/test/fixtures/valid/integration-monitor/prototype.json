@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 3,
+  "name": "Integration monitor",
+  "entryScreen": "screen.overview",
+  "roles": [
+    {
+      "id": "operator",
+      "name": "Integration operator"
+    },
+    {
+      "id": "integration-admin",
+      "name": "Integration administrator"
+    }
+  ],
+  "states": [
+    {
+      "id": "state.healthy",
+      "name": "Healthy"
+    },
+    {
+      "id": "state.delayed",
+      "name": "Delayed"
+    },
+    {
+      "id": "state.failed",
+      "name": "Failed"
+    },
+    {
+      "id": "state.empty",
+      "name": "No runs yet"
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.overview",
+      "name": "Overview",
+      "roleIds": [
+        "operator",
+        "integration-admin"
+      ]
+    },
+    {
+      "id": "screen.run",
+      "name": "Run detail",
+      "roleIds": [
+        "operator",
+        "integration-admin"
+      ]
+    },
+    {
+      "id": "screen.connections",
+      "name": "Connections",
+      "roleIds": [
+        "integration-admin"
+      ]
+    },
+    {
+      "id": "screen.connection",
+      "name": "Connection detail",
+      "roleIds": [
+        "integration-admin"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow.investigate",
+      "name": "Investigate a failed sync",
+      "roleId": "operator",
+      "screenIds": [
+        "screen.overview",
+        "screen.run"
+      ]
+    },
+    {
+      "id": "flow.replay",
+      "name": "Replay a delayed message",
+      "roleId": "operator",
+      "screenIds": [
+        "screen.overview",
+        "screen.run"
+      ]
+    },
+    {
+      "id": "flow.connections",
+      "name": "Review a connection",
+      "roleId": "integration-admin",
+      "screenIds": [
+        "screen.connections",
+        "screen.connection"
+      ]
+    }
+  ]
+}

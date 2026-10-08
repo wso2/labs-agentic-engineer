@@ -176,6 +176,50 @@ GIF, WebP; 10 files; 5 MB each; 15 MB together — are the platform's, and the
 write-gate rejects anything past them. Omit the block for an agent that works
 from text alone: it then refuses files.
 
+## Guardrails
+
+Each guardrail Product Decision becomes one entry the AI gateway applies to
+this agent's model traffic at deploy:
+
+```yaml
+x-aep:
+  guardrails:
+    - policy: pii-masking-regex           # a name list_guardrail_policies returned
+      params: { email: true, phone: true }
+      why: "The model never needs the user's contact details."
+    - policy: regex-guardrail
+      params:
+        request: { regex: "(?i)\\b(casino|gambling)\\b", invert: true }
+      why: "Gambling expenses are refused."
+```
+
+- **Pick the policy from `list_guardrail_policies`,** and set only the
+  `params` its schema lists. Declare only names it returned: a name the
+  gateway does not offer is not applied.
+- **When no listed guardrail can meet the decision,** say so in the chat and
+  meet it in the instructions instead. Gateway checks read the conversation's
+  text, so a rule about what is inside an image or a file is the agent's to
+  follow, not the gateway's.
+- **Read its `applies` note against this agent.** Where a check reads depends
+  on the agent: with no tools and no file uploads, the user's latest message;
+  with either, the whole request. A count or length check applies only to an
+  agent with neither — skip it otherwise.
+- **The use case only.** The platform sets the version and where each check
+  reads; the write-gate refuses `jsonPath`, `streamingJsonPath`, `version` or
+  `paths`.
+- **Request-side checks only.** Reply-side checks are not enforced on
+  streamed replies, so a guardrail with only a reply-side check is not
+  applied. PII masking still returns the real values in the reply.
+- **Keep blocked words out of everything every request carries.** Where a
+  block reads the whole request, it reads these instructions and the tools'
+  names and descriptions too, and one that matches them is not applied. It
+  also reads the conversation so far: once a blocked word appears in an
+  earlier message or reply, every later turn of that conversation is refused,
+  so the user has to start a new one.
+- **With personal data masked,** say so in the instructions: the model sees
+  tokens like `[EMAIL_0000]` in place of the real values, and is to use them
+  as written; the user gets the real values back.
+
 ## Scenarios — how this agent's behaviour is graded
 
 Every `ai-agent` also gets `specs/validation/agent-scenarios.json`: the

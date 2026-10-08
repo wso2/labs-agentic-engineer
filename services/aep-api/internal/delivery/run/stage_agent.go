@@ -399,6 +399,7 @@ func (l *loop) dispatch(ctx workflow.Context, kind string, anchorIssue int, cycl
 		ProjectID:       l.in.ProjectID,
 		MilestoneNumber: l.in.MilestoneNumber,
 		MilestoneTitle:  l.in.MilestoneTitle,
+		SpecTag:         l.in.Tag,
 		Kind:            kind,
 		IssueNumber:     anchorIssue,
 		RunID:           l.in.RunID,

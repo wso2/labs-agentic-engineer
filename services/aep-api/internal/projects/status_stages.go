@@ -117,12 +117,6 @@ type specTurnRows interface {
 	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*spec.AgentTurn, error)
 }
 
-// designFlow is the `/<skill>` token a design re-derivation runs under. Only a
-// full re-derivation counts as reconciling the design with the requirements: a
-// targeted edit to one document leaves the SET inconsistent, so clearing the
-// staleness flag on one would drop the warning while the problem stood.
-const designFlow = "design"
-
 // designOutdated answers whether the requirements have moved since the design
 // was last derived from them.
 //
@@ -142,7 +136,11 @@ func (s *Service) designOutdated(ctx context.Context, orgName, projectName, nowF
 	if s.specTurns == nil {
 		return false, nil
 	}
-	lastDesign, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, designFlow)
+	// Only a full design re-derivation (spec.FlowDesign) reconciles the design
+	// with the requirements: a targeted edit to one document leaves the SET
+	// inconsistent, so clearing the staleness flag on one would drop the
+	// warning while the problem stood.
+	lastDesign, err := s.specTurns.NewestCompletedFlow(ctx, orgName, projectName, spec.FlowDesign)
 	if err != nil {
 		return false, fmt.Errorf("newest design turn: %w", err)
 	}

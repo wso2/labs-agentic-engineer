@@ -1,75 +1,49 @@
 # Wiring a dependency into `workload.yaml`
 
-Read this before you write or edit a component's `workload.yaml`. What a
-dependency's *contract* is, and how code reads its injected values, is in
-`component-contract.md` beside this file.
-
-Everything here derives from what `specs/` already fixed, so it reads the same
-for a component's first line and for a change to one that shipped weeks ago. The
-one kind that is **not** derivable — an `org-service`, which belongs to another
-project — stays in the skill body under **Dependencies and `workload.yaml`**.
-
-Most of what goes wrong here is silent: an env var you renamed arrives empty, a
-`visibility` you omitted leaves a dependent's config unwritten, and nothing fails
-until deploy.
+Read this file before you write or edit the `workload.yaml` of a component.
+The data comes from `specs/`. The one exception is an `org-service`: the
+platform resolves it, and your prompt gives it. An error in this file shows
+only at deploy.
 
 ## The kinds
 
-Each entry in `design.json`'s `dependencies[]` is one thing the component
-consumes. Its `kind` decides where the wiring comes from and what you write:
+Each entry in the `dependencies[]` of `design.json` is one thing that the
+component consumes:
 
 | `kind` | Wiring comes from | You write |
 |---|---|---|
 | `platform-resource` | its `wiring` object | one `resources:` entry |
-| `external` | its `wiring` object — **only when it declares `config` keys** | one `resources:` entry (none when it declares no keys) |
+| `external` | its `wiring` object, only when it declares `config` keys | one `resources:` entry (none without keys) |
 | `component` | its `wiring` object | one `endpoints:` entry |
-| `org-service` | not derivable from `specs/` — the skill body | one `endpoints:` entry, plus `project:` and `visibility: namespace` |
+| `org-service` | the platform, not `specs/` | one `endpoints:` entry, with `project:` and `visibility: namespace` |
 
-Three of the four kinds carry a `wiring` object the platform derived and
-committed into `design.json`. Its **shape** tells you which half of
-`dependencies:` the entry belongs in:
+If the `wiring` has an `endpoint` object, the entry goes in
+`dependencies.endpoints[]`. If it has `ref` and `envBindings`, the entry goes in
+`dependencies.resources[]`.
 
-| `wiring` holds | The entry goes in |
-|---|---|
-| an `endpoint` object | `dependencies.endpoints[]` |
-| `ref` + `envBindings` | `dependencies.resources[]` |
+- Copy a `wiring` object verbatim. It is already the correct entry.
+- The platform injects values only under the env-var names in `envBindings`.
+  Do not change or add a name. The output of a `platform-resource` has the
+  name `<DEP>_<OUTPUT>` (`user-auth` + `jwks_url` → `USER_AUTH_JWKS_URL`). The
+  skill of the resource (for example `thunder-authentication`) tells what each
+  output is.
+- A `platform-resource` with no `wiring` is broken input. Say so in one line
+  and stop the run.
+- A `web-application` also writes its `resources:` entries, but it reads the
+  values from `window._env_`.
 
-`org-service` is the one kind with no `wiring` object, because its provider
-belongs to another project: its `project`, the platform's name for it and its
-endpoint name are resolved live and reach you by the channel the skill body
-names.
-
-**A `platform-resource` with no `wiring` is broken input, not a licence to
-substitute your own store** — say so in one line and stop the run.
-
-**Copy a `wiring` object verbatim** — every field and every `envBindings` pair,
-unchanged. It is already byte-identical to the entry that belongs there.
-
-**Those env-var names are the keys the platform populates at runtime**: an output
-arrives under that name and no other. Never rename one, never invent one.
-
-**A `wiring.endpoint`'s `component` carries the project as a prefix** —
-`<project>-<component>`. It deliberately does not match the name the rest of the
-tree calls that component: this prefixed one is what OpenChoreo resolves a
-connection by. Write the `wiring` value. Any other spelling parses, builds,
-deploys and serves with the address env var silently absent, and the only symptom
-is a project that reports "deploying" for ever.
-
-**Every component writes its `resources:` entries, a `web-application`
-included** — a web app reads the values from `window._env_` rather than pod env
-(see the `react-webapp` skill), but the block is what records the dependency, and
-shipping without a ref you declared has a fix issue minted against it.
+**The `component` of a `wiring.endpoint` is `<project>-<component>`.** It is
+not the name that the other files use. Copy the `wiring` value. With a
+different name, the deploy has no address env var, and the project shows
+"deploying" for ever.
 
 ## The file
 
-Beside the `Dockerfile` at the App Path root. This is the **flat
-WorkloadDescriptor** format, **not** a Kubernetes CR: no `kind: Workload`, no
-`spec:`, no `autoBuild`/`autoDeploy`.
+The file is next to the `Dockerfile`. It uses the flat WorkloadDescriptor
+format. It is not a Kubernetes CR: do not write `kind: Workload` or `spec:`.
 
-**One that already exists is edited, never regenerated.** Merge into it and leave
-every field the issue does not move — an endpoint's `visibility`, a `resources`
-ref an earlier issue added. Rewriting it from the template below drops wiring
-somebody already established, and nothing fails until deploy.
+A file that already exists is edited, never regenerated. Keep each field that
+the issue does not change.
 
 ```yaml
 apiVersion: openchoreo.dev/v1alpha1
@@ -78,37 +52,35 @@ metadata:
 
 endpoints:
   - name: http                  # MUST equal design.json `endpoint.name` (default
-                                # `http` when it declares none). The managed-API
-                                # gateway binds to THIS name; a mismatch fails
-                                # deploy rendering with
-                                # `workload.endpoints["<name>"]: no such key`.
+                                # `http`); the API gateway binds to this name
     type: HTTP                  # HTTP | GraphQL | Websocket | TCP | UDP | gRPC
     port: 9090
     basePath: /                 # optional; root path for API services
-    visibility:
+    visibility:                 # see "Visibility" below
       - project
       - external
 
-dependencies:                    # what you resolved above — omit a half you have none of
+dependencies:                    # omit a half that you have no entries for
   endpoints:                     # component: `wiring.endpoint`, verbatim
-                                 # org-service: resolved live (skill body)
+                                 # org-service: resolved by the platform
     - project: <provider-project> # org-service only; absent = same project
-      component: <provider-component> # `<project>-<component>` — the platform's
-                                  # own name for it, project-prefixed
+      component: <provider-component> # `<project>-<component>`
       name: <provider-endpoint>   # e.g. http
       visibility: namespace       # or project (same-project)
       envBindings:
         address: <ENV_VAR>        # the resolved URL is injected here
   resources:                      # platform-resource / external
-    - ref: <resource-name>         # both fields come straight from the
-      envBindings:                 # dependency's `wiring` object — verbatim
+    - ref: <resource-name>         # both fields straight from `wiring`
+      envBindings:
         <output-name>: <ENV_VAR>
 ```
 
-**A `web-application` may declare its own safe defaults** under
-`configurations.env`; they become `window._env_` entries the browser reads (the
-`react-webapp` skill covers reading them). Never a secret and never a per-env
-value — the platform owns those:
+The file is done when it opens with `apiVersion` and `metadata.name`, lists the
+component's own endpoint (without it, the deploy fails), and has one
+`dependencies:` entry for each dependency that has wiring.
+
+A `web-application` can put safe defaults under `configurations.env`; they
+become `window._env_` entries. Never a secret or a per-environment value:
 
 ```yaml
 configurations:
@@ -117,97 +89,37 @@ configurations:
       value: support@example.com
 ```
 
-| Visibility | Reachable from |
+## Visibility
+
+### Provider endpoint visibility
+
+The `visibility` of a component's own endpoint:
+
+| Component | `endpoints[].visibility` |
 |---|---|
-| `project` | same OpenChoreo project (implicit — always on) |
-| `namespace` | any component in the same Kubernetes namespace (cross-project) |
-| `internal` | across all namespaces in the cluster — reserved for platform components; a generated component lists `project`, `external` and (org-published only) `namespace` |
-| `external` | public internet via the ingress gateway |
+| a `web-application` or a service | `[project, external]` |
+| a service with `exposesAPI.orgPublished: true` | `[project, external, namespace]` |
 
-**A sibling SPA reaches a service through same-origin `/api`, not `external`.**
-OpenChoreo connections may only use `project` or `namespace`; `external` on a
-*dependency* is rejected. Same project → consumer `visibility: project`. Other
-project → `visibility: namespace` plus `project:` (and the provider must already
-list `namespace` / be org-published). That "not `external`" is the SPA's
-**dependency** entry only — not the service's own `endpoints[].visibility`.
+- `project`: access from the same project. It is always on, but write it.
+- `external`: the public URL. On a service, it also lets the API gateway
+  through the NetworkPolicy. Without it, calls through the gateway get `503`.
+  On a `web-application`, the platform uses this URL as the OAuth callback.
+  Without it, sign-in fails.
+- `namespace`: access from other projects. Add it only when `orgPublished` is
+  set.
+- Do not write `internal`. It is for platform components, and WSO2 Cloud
+  refuses it.
 
-The SPA browser calls `/api` on its own host; nginx in the SPA pod
-reverse-proxies to the sibling. For a sibling whose design declares
-`exposesAPI.auth` the platform also injects `<DEP_NAME>_GATEWAY_URL` — the
-auth-terminating address — and the proxy prefers it over the direct
-`<DEP_NAME>_URL` (`react-webapp` owns that rule). Both are pod env vars, never
-`window._env_` keys.
+Write `project` and `external` on each environment, also when the design sets
+`exposure: intranet`.
 
-`<DEP_NAME>_GATEWAY_URL` is the gateway's **runtime Service** on `:22893` —
-`api-platform-<org>-<env>-gw-gateway-gateway-runtime.<org>-<env>.svc.cluster.local:22893`
-— **not the public vhost**. The runtime listener routes on any `Host`; the
-`:19080` LoadBalancer path routes strictly on the vhost, and nginx's own
-`resolver` does not read `/etc/hosts`, so a `hostAliases` entry for the vhost is
-invisible to it and every `/api` call answers `502`. Pass the injected value
-through unchanged and never substitute a hostname you resolved yourself.
+### A dependency entry
 
-**A `web-application`'s own endpoint** lists `visibility: [project,
-external]`. `external` is the browser's lane — and it is also what materialises
-the component's public URL, which the platform patches into the `redirectUris`
-of an auth dependency that declares `consumer-url-env-config`. Without
-`external` there is no public URL, so the OAuth client is registered with no
-callback and sign-in fails at `/authorize`. `project` is the implicit
-same-project lane; write it anyway. The **service it calls** lists the same
-pair, immediately below.
+A sibling SPA reaches a service through same-origin `/api`, not `external`.
+In a dependency entry, use only these values:
 
-**Provider endpoint visibility:** a service a sibling SPA calls lists
-`visibility: [project, external]`. Each item earns its place:
+- `project`, for a provider in the same project.
+- `namespace` with `project:`, for a provider in a different project. That
+  provider must list `namespace`.
 
-- `project` — the same-project lane. Components in one project talk over it:
-  the SPA's dependency binds `visibility: project`, and both its direct
-  `<DEP_NAME>_URL` and a trusted service-to-service caller ride it.
-- `external` — the public URL, so the API stays curl-able on the public
-  gateway, AND the value that admits the API gateway to the component's
-  NetworkPolicy (OpenChoreo lets gateway pods in from any namespace for an
-  `external` endpoint). A protected service's `/api` traffic arrives through
-  the gateway, so without `external` the gateway authenticates the caller and
-  then cannot reach the upstream: every call answers `503`.
-
-Write both YAML list items, on every environment: `internal` is the platform's
-lane, and on WSO2 Cloud a component that lists it fails to render its
-ReleaseBinding (there is no internal gateway) and is refused for customer orgs.
-A single-item `project` list is wrong even when the SPA uses `/api`, and
-`design.json` `exposure: intranet` does not drop `external`. The SPA must not
-fetch that public URL — its nginx proxies to the gateway's IN-CLUSTER address
-(`react-webapp`). Org-published services still add `namespace` as below.
-
-`namespace` widens pod-to-pod reach to sibling projects and grants the gateway
-nothing; list it only for an org-published service.
-
-**Org-published services.** If the component's `design.json` sets
-`exposesAPI.orgPublished: true`, components in OTHER projects consume it — also
-add `namespace` (`visibility: [external, namespace]`). This is the only way a
-service becomes an `org-service` target; the platform never edits your
-`workload.yaml`. Add `namespace` **only** when `orgPublished` is set.
-
-## A `thunder-app` dependency's outputs
-
-Every output of a bound `platform-resource` arrives as `<DEP>_<OUTPUT>`, both
-upper-cased — `user-auth` + `jwks_url` → `USER_AUTH_JWKS_URL`. You do not choose
-those names: copy the `envBindings` pairs out of `wiring` verbatim, as above.
-The `thunder-app` type emits **five**:
-
-| Output | `<DEP>_…` | What it is |
-|---|---|---|
-| `client_id` | `_CLIENT_ID` | the OAuth client registered for this app |
-| `issuer` | `_ISSUER` | who signs the token |
-| `jwks_url` | `_JWKS_URL` | where its keys are published |
-| `scopes` | `_SCOPES` | the space-separated set the SPA requests |
-| `resource` | `_RESOURCE` | the project's resource-server identifier |
-
-`<DEP>_RESOURCE` is `https://aep.wso2.com/orgs/<org>/projects/<project>` — the
-value the SPA sends as `resource` on sign-in (RFC 8707) and the audience the
-gateway pins on the way in. Omitting its `envBindings` pair leaves the SPA
-asking for a token with no audience, which the gateway rejects. It is
-platform-derived; never author or edit the value.
-
-The type also takes a `validityPeriod` parameter — the **access** token's
-lifetime in seconds, `86400` by default; the ID token keeps its own day
-regardless. Nothing in a `workload.yaml` sets it, and no generated app should
-assume a shorter one: a short value exists only so a fixture app can exercise
-the silent renew in minutes.
+The `react-webapp` skill owns the `/api` proxy.

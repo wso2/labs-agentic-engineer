@@ -122,7 +122,7 @@ const OLLAMA_ENV = {
 
 describe("resolveGrader", () => {
   const FIRST_PARTY_JUDGE = {
-    id: "anthropic:messages:claude-sonnet-5",
+    id: "anthropic:messages:claude-sonnet-5-5",
     config: { apiBaseUrl: "https://api.anthropic.com" },
   };
 
@@ -198,7 +198,7 @@ describe("buildChildEnv", () => {
       ANTHROPIC_API_KEY: "sk-ant-local",
       MODEL_API_KEY: "sk-ant-local",
       MODEL_ENDPOINT: "https://api.anthropic.com/v1",
-      MODEL_NAME: "claude-sonnet-5",
+      MODEL_NAME: "claude-sonnet-5-5",
       MODEL_API_FORMAT: "anthropic",
       MODEL_API_AUTH_SCHEME: "x-api-key",
     });

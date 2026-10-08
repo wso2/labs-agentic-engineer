@@ -15,18 +15,17 @@
 # under the License.
 
 # Stage 0: build the SPA inside the ROOT pnpm workspace (apps/console is a
-# member; docker-compose sets `context: ..` accordingly). @aep/console has no
-# workspace runtime deps — the only cross-package input is
-# packages/contracts/api/v1/openapi.yaml, consumed by `pnpm gen`, which MUST
-# run here because src/generated/* is gitignored and absent from a fresh
-# checkout. corepack picks the pnpm version from the root `packageManager`
+# member; the build context is the repo root). Besides the workspace packages
+# built below, its cross-package input is packages/contracts/api/v1/openapi.yaml,
+# consumed by `pnpm gen`, which MUST run here because src/generated/* is
+# gitignored and absent from a fresh checkout. corepack picks the pnpm version from the root `packageManager`
 # field once package.json is copied in.
 #
 # Pinned to BUILDPLATFORM: this stage emits `dist/` — JS, CSS and static assets,
 # none of it architecture-specific — so one native run serves BOTH published
 # platforms and buildx reuses the identical stage across them. Only the nginx
 # stage below is genuinely per-arch, and it takes nothing from here but `dist`.
-# Remove the pin and the entire toolchain (pnpm install, six workspace builds,
+# Remove the pin and the entire toolchain (pnpm install, five workspace builds,
 # vite) runs under QEMU for the arm64 image at ~6x the cost — the vite build
 # alone ~7x. Native modules installed here resolve for the BUILDPLATFORM, which
 # is what we want: they execute at build time and never reach the runtime image.
@@ -50,15 +49,19 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 
 # Workspace deps whose exports resolve to ./dist must be compiled first
 # (@aep/excalidraw-dsl — the wireframe DSL + layout gate, built FIRST because
-# @aep/agent-stream imports it; @aep/agent-stream — the agent-chat panel's SSE
-# contracts, #130; @aep/collab-doc — the AgentInsertion mark shared with the
-# editor, #86 ph6; @aep/design-projection — the rich design view's projection,
-# #149; @aep/progress-view — the ONE rendering of the run progress feed, shared
-# with the playground TUI; @aep/ui-cell-diagram-react — the vendored xyflow
+# @aep/agent-stream imports it; @wso2/prototype-kit — the prototype manifest
+# and source rules @aep/agent-stream's write gate imports, built before it,
+# and the prototype review's frame host; @aep/ui-theme — the console's Oxygen
+# theme, which the Oxygen prototype theme bundles too; @wso2/prototype-theme-oxygen
+# — the Oxygen frame runtime the review runs a prototype on;
+# @aep/agent-stream — the chat's turn stream
+# contracts; @aep/collab-doc — the spec room's doc and the AgentInsertion mark;
+# @aep/progress-view — the ONE rendering of the run progress feed, shared with
+# the playground TUI; @aep/ui-cell-diagram-react — the vendored xyflow
 # renderer, which ships types: dist/index.d.ts so consumers read its pre-built
-# declarations instead of re-typechecking its source). The
-# @aep/ui-cell-diagram-view package resolves to its src/ (types: src/index.ts)
-# so tsc reads it directly — no pre-build. These depend only on packages/, so an
+# declarations instead of re-typechecking its source). The other @aep/ui-*
+# views resolve to their src/ (types: src/index.ts), so tsc reads them
+# directly — no pre-build. These depend only on packages/, so an
 # app-source edit doesn't rerun them.
 #
 # This list is hand-maintained and drifts silently: a new dist-resolved
@@ -67,9 +70,11 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
 # undefined-narrowing errors in files that never mention it. Adding a dep to
 # apps/console/package.json means adding a line below.
 RUN pnpm --filter @aep/excalidraw-dsl build
+RUN pnpm --filter @wso2/prototype-kit build
+RUN pnpm --filter @aep/ui-theme build
+RUN pnpm --filter @wso2/prototype-theme-oxygen build
 RUN pnpm --filter @aep/agent-stream build
 RUN pnpm --filter @aep/collab-doc build
-RUN pnpm --filter @aep/design-projection build
 RUN pnpm --filter @aep/progress-view build
 RUN pnpm --filter @aep/ui-cell-diagram-react build
 

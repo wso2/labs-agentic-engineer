@@ -1,0 +1,15 @@
+title IT Help Desk
+
+component helpdesk-webapp as "Help Desk Web App" web-application
+component helpdesk-api as "Help Desk API" service
+component helpdesk-db as "Help Desk Database" database
+
+east user-auth as "Thunder Auth" identity-server
+
+north -> helpdesk-webapp
+north -> helpdesk-api
+
+helpdesk-webapp -> helpdesk-api
+helpdesk-webapp -> user-auth
+helpdesk-api -> user-auth
+helpdesk-api -> helpdesk-db

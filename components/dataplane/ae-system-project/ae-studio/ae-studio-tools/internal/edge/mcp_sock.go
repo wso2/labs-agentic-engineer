@@ -152,6 +152,7 @@ func turnRecord(r mcpsock.TurnRecord) usage.TurnRecord {
 		CacheReadTokens:     r.CacheReadTokens,
 		CacheCreationTokens: r.CacheCreationTokens,
 		ContextTokens:       r.ContextTokens,
+		DesignFeatures:      r.DesignFeatures,
 	}
 	if r.Author != nil {
 		out.Author = &aepapi.AEStudioTurnRecordAuthor{ID: r.Author.ID, Name: r.Author.Name}

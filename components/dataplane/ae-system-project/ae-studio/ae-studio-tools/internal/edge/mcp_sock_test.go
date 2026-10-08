@@ -87,12 +87,12 @@ func (u *fakeUpstream) count(name string) int {
 	return u.calls[name]
 }
 
-// nineAEPAPITools are the allowed tools aep-api serves for the pod.
-func nineAEPAPITools() []string {
+// aepAPITools are the ten allowed tools aep-api serves for the pod.
+func aepAPITools() []string {
 	return []string{
 		"list_external_resources", "get_external_resource_schema", "list_org_endpoints",
 		"list_org_component_endpoints", "list_platform_resource_types", "list_groups",
-		"validate_openapi_spec", "fetch_openapi_spec", "slice_openapi_spec",
+		"list_guardrail_policies", "validate_openapi_spec", "fetch_openapi_spec", "slice_openapi_spec",
 	}
 }
 
@@ -355,18 +355,18 @@ func sortedNames(list json.RawMessage) []string {
 	return names
 }
 
-// Tools/list answers exactly the eleven names whatever aep-api
+// Tools/list answers exactly the twelve names whatever aep-api
 // serves; tools/call of any other name is refused in the pod; the remote-git
 // tools run in the pod for AE_GITHUB_OWNER only (case-insensitive) and never
 // call GitHub for another owner; the rest are forwarded to aep-api.
 func TestMCP_AllowListPinnedAndEnforced(t *testing.T) {
-	up := &fakeUpstream{tools: append(nineAEPAPITools(), "drop_database")}
+	up := &fakeUpstream{tools: append(aepAPITools(), "drop_database")}
 	s := newMCPHarness(t, up, withOwner("Acme-GH"))
 	list := s.rpc(t, "tools/list", `{}`)
 	want := []string{
 		"fetch_openapi_spec", "get_external_resource_schema", "get_remote_git_file_contents", "list_external_resources",
-		"list_groups", "list_org_component_endpoints", "list_org_endpoints", "list_platform_resource_types",
-		"search_remote_git_code", "slice_openapi_spec", "validate_openapi_spec",
+		"list_groups", "list_guardrail_policies", "list_org_component_endpoints", "list_org_endpoints",
+		"list_platform_resource_types", "search_remote_git_code", "slice_openapi_spec", "validate_openapi_spec",
 	}
 	if got := sortedNames(list); !reflect.DeepEqual(got, want) {
 		t.Fatalf("tools/list = %v", got)
@@ -402,6 +402,10 @@ func TestMCP_AllowListPinnedAndEnforced(t *testing.T) {
 	}
 	if n := s.logCount(`"tool":"list_groups"`, `"upstream":"aep-api"`); n != 1 {
 		t.Fatalf("aep-api tools_call logs = %d\n%s", n, s.logs.String())
+	}
+	_ = s.rpc(t, "tools/call", `{"name":"list_guardrail_policies","arguments":{}}`)
+	if n := up.count("list_guardrail_policies"); n != 1 {
+		t.Fatalf("list_guardrail_policies reached aep-api %d times", n)
 	}
 	// The log line is value-free: no arguments, no GitHub token.
 	if logs := s.logs.String(); strings.Contains(logs, "CONVENTIONS.md") || strings.Contains(logs, "gh-test-token") {
@@ -579,10 +583,28 @@ func TestTurnUsage_OptionalFieldsStayAbsent(t *testing.T) {
 		t.Fatalf("outbox = %+v", got)
 	}
 	sent, _ := json.Marshal(got[0])
-	for _, key := range []string{`"author"`, `"project"`, `"reason"`, `"code"`, `"contextTokens"`} {
+	for _, key := range []string{`"author"`, `"project"`, `"reason"`, `"code"`, `"contextTokens"`, `"designFeatures"`} {
 		if strings.Contains(string(sent), key) {
 			t.Fatalf("%s invented: %s", key, sent)
 		}
+	}
+}
+
+// A design turn's features reach the record aep-api gets as the agent sent
+// them, in order.
+func TestTurnUsage_DesignFeaturesCarriedOver(t *testing.T) {
+	s := newMCPHarness(t, &fakeUpstream{})
+	record := strings.Replace(turnRecordJSON, `,"contextTokens":15}`, `,"contextTokens":15,"designFeatures":["F1","F2"]}`, 1)
+	if c, body := s.post("/turn-usage", record); c != http.StatusAccepted {
+		t.Fatalf("POST /turn-usage = %d %s", c, body)
+	}
+	got := s.usage.got()
+	if len(got) != 1 || !reflect.DeepEqual(got[0].DesignFeatures, []string{"F1", "F2"}) {
+		t.Fatalf("outbox = %+v", got)
+	}
+	sent, _ := json.Marshal(got[0])
+	if !strings.Contains(string(sent), `"designFeatures":["F1","F2"]`) {
+		t.Fatalf("record = %s", sent)
 	}
 }
 
@@ -594,6 +616,12 @@ func TestTurnUsage_InvalidRecordIs400(t *testing.T) {
 		"bad kind":    strings.Replace(turnRecordJSON, `"kind":"plan"`, `"kind":"chat"`, 1),
 		"extra field": strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","cost":1`, 1),
 		"a batch":     "[" + turnRecordJSON + "]",
+		// aep-api refuses a whole batch for one bad feature ID, so the
+		// socket refuses the one record and the agent sees why.
+		"a lower-case feature":   strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["f1"]`, 1),
+		"a story, not a feature": strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["F1.2"]`, 1),
+		"a feature over 16":      strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":["F`+strings.Repeat("1", 16)+`"]`, 1),
+		"201 features":           strings.Replace(turnRecordJSON, `"model":"m"`, `"model":"m","designFeatures":[`+strings.Repeat(`"F1",`, 200)+`"F1"]`, 1),
 	} {
 		if c, out := s.post("/turn-usage", body); c != http.StatusBadRequest || !strings.Contains(out, "invalid_request") {
 			t.Fatalf("%s: POST /turn-usage = %d %s", name, c, out)

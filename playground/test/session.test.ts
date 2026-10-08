@@ -125,3 +125,19 @@ test("a Plan turn that fails reports it and is not completed", async (t) => {
     assert.ok(result.parts.some((p) => (p as { type: string }).type === "turn-failed"), "the /v1 stream was read beside the socket");
   });
 });
+
+test("a Plan turn carries its milestone scope to the Turn socket, as aep-api sends it", async (t) => {
+  const { projectDir, skillsDir } = project(t);
+  const planner = mockModel([{ kind: "text", text: "nothing to plan" }]);
+  const scope = {
+    tag: "v1",
+    stories: [{ id: "F1.1", title: "Say hello", covered: false }],
+    features: [{ id: "F1", name: "Greeting" }],
+  };
+  await withSession(projectDir, { model: planner, skillsDir }, async (s) => {
+    const result = await runPlanTurn(s, [], { scope });
+    assert.equal(result.completed, true, result.error);
+  });
+  assert.match(promptText(planner), /Milestone scope \(spec v1\)/);
+  assert.match(promptText(planner), /Story F1\.1: Say hello/);
+});

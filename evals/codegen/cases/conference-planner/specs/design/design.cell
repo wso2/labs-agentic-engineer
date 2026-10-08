@@ -1,0 +1,21 @@
+title Conference Planner
+
+component conference-webapp as "Conference Web App" web-application
+component events-api as "Events API" service
+component registration-service as "Registration Service" service
+component events-db as "Events Database" database
+component registration-db as "Registration Database" database
+
+east user-auth as "Thunder Auth" identity-server
+
+north -> conference-webapp
+north -> events-api
+west -> registration-service
+
+conference-webapp -> events-api
+conference-webapp -> user-auth
+events-api -> registration-service
+events-api -> user-auth
+registration-service -> user-auth
+events-api -> events-db
+registration-service -> registration-db
