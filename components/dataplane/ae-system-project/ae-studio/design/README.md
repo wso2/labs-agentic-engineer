@@ -277,9 +277,12 @@ a smee.io channel instead:
   production installs leave the relay off; while it is on, aep-api logs one
   WARN at boot (`webhook relay ON: …`) naming no channel.
 - **Key changes:** a new seed, or a rotated `CREDENTIAL_ENCRYPTION_KEY` under a
-  derived key, moves every org's channel. Existing repository hooks keep the
-  old URL (the hook sweep leaves a repo that holds a hook id alone), so they stop
-  delivering until re-created.
+  derived key, moves every org's channel; switching the relay off drops it.
+  Existing repository hooks keep the old URL (the hook sweep leaves a repo that
+  holds a hook id alone), so GitHub keeps posting those repos' payloads to the
+  old smee.io channel, readable by anyone holding its URL, while the pod no
+  longer receives them. Re-point or delete those hooks after any such change;
+  aep-api does not.
 
 ## gVisor switch
 
