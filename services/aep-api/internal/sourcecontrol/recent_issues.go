@@ -64,7 +64,32 @@ func (r *recentIssues) remember(owner, repo string, info IssueInfo) {
 	if r.byRepo == nil {
 		r.byRepo = make(map[string][]recentIssue)
 	}
-	r.byRepo[key] = append(r.pruned(key, now), recentIssue{info: info, at: now})
+	// Sweep every repository, not just this one: a quiet repository would
+	// otherwise keep its (expired) entries and its key for the process's life.
+	for k := range r.byRepo {
+		if live := r.pruned(k, now); len(live) > 0 {
+			r.byRepo[k] = live
+		} else {
+			delete(r.byRepo, k)
+		}
+	}
+	r.byRepo[key] = append(r.byRepo[key], recentIssue{info: info, at: now})
+}
+
+// update applies change to the remembered issue in place, so the list keeps
+// agreeing with the platform's own close, reopen and edit during the host's lag.
+// It does not evict: the issue must stay visible until the host lists it. A
+// no-op when the issue is not remembered.
+func (r *recentIssues) update(owner, repo string, number int, change func(*IssueInfo)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entries := r.byRepo[recentRepoKey(owner, repo)]
+	for i := range entries {
+		if entries[i].info.Number == number {
+			change(&entries[i].info)
+			return
+		}
+	}
 }
 
 // merge adds to listed (GitHub's answer, newest first) every remembered issue

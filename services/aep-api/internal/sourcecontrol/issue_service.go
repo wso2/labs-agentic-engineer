@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
@@ -244,7 +245,7 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 		unlock := s.lockRepoCreates(owner, repoName)
 		defer unlock()
 
-		existing, listErr := s.github.ListIssues(ctx, owner, repoName, cred, []string{label})
+		existing, listErr := s.listWithRecent(ctx, owner, repoName, cred, []string{label})
 		if listErr != nil {
 			// Best-effort: a failed lookup must not block filing the issue; at
 			// worst we regress to a possible duplicate.
@@ -346,17 +347,26 @@ func dedupeLabelFor(key string) string {
 	return dedupeLabelPrefix + norm[:keep] + "-" + hash
 }
 
+// listWithRecent is the host's issue list plus what this process filed inside
+// the host's indexing lag. Every read that decides something from the list
+// (the listing itself, the dedupe lookups) goes through it.
+func (s *issueService) listWithRecent(ctx context.Context, owner, repo string, cred secrets.Credential, labels []string) ([]IssueInfo, error) {
+	issues, err := s.github.ListIssues(ctx, owner, repo, cred, labels)
+	if err != nil {
+		return nil, err
+	}
+	return s.recent.merge(owner, repo, labels, issues), nil
+}
+
 func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, labels []string) ([]IssueInfo, error) {
 	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	issues, err := s.github.ListIssues(ctx, owner, repoName, cred, labels)
+	issues, err := s.listWithRecent(ctx, owner, repoName, cred, labels)
 	if err != nil {
 		return nil, err
 	}
-	// GitHub's list lags a creation by several seconds; add what we just filed.
-	issues = s.recent.merge(owner, repoName, labels, issues)
 	for i := range issues {
 		issues[i].AttentionReason = AttentionReasonFor(issues[i])
 	}
@@ -399,7 +409,14 @@ func (s *issueService) CloseIssue(ctx context.Context, orgID, projectID string, 
 		}
 	}
 
-	return s.github.CloseIssue(ctx, owner, repoName, cred, number)
+	if err := s.github.CloseIssue(ctx, owner, repoName, cred, number); err != nil {
+		return err
+	}
+	closedAt := s.recent.clock().UTC().Format(time.RFC3339)
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) {
+		i.State, i.StateReason, i.ClosedAt = "closed", "completed", closedAt
+	})
+	return nil
 }
 
 func (s *issueService) ReopenIssue(ctx context.Context, orgID, projectID string, number int) error {
@@ -407,7 +424,13 @@ func (s *issueService) ReopenIssue(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return err
 	}
-	return s.github.ReopenIssue(ctx, owner, repoName, cred, number)
+	if err := s.github.ReopenIssue(ctx, owner, repoName, cred, number); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) {
+		i.State, i.StateReason, i.ClosedAt = "open", "", ""
+	})
+	return nil
 }
 
 func (s *issueService) CommentIssue(ctx context.Context, orgID, projectID string, number int, body string) error {
@@ -455,7 +478,11 @@ func (s *issueService) EditIssueBody(ctx context.Context, orgID, projectID strin
 	if err != nil {
 		return err
 	}
-	return s.github.EditIssueBody(ctx, owner, repoName, cred, number, body)
+	if err := s.github.EditIssueBody(ctx, owner, repoName, cred, number, body); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) { i.Body = body })
+	return nil
 }
 
 func (s *issueService) EditIssueTitle(ctx context.Context, orgID, projectID string, number int, title string) error {
@@ -466,7 +493,11 @@ func (s *issueService) EditIssueTitle(ctx context.Context, orgID, projectID stri
 	if err != nil {
 		return err
 	}
-	return s.github.EditIssueTitle(ctx, owner, repoName, cred, number, title)
+	if err := s.github.EditIssueTitle(ctx, owner, repoName, cred, number, title); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) { i.Title = title })
+	return nil
 }
 
 func (s *issueService) SetIssueMilestone(ctx context.Context, orgID, projectID string, number, milestoneNumber int) error {

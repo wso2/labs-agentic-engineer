@@ -89,7 +89,8 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 - **A filed issue is listed at once (read-your-writes).** GitHub's list endpoint lags a creation by 3-10 s,
   so `ListIssues` merges in the issues this process filed in the last minute (`recent_issues.go`, per
   `owner/repo`) that GitHub's answer lacks and that satisfy the label filter, newest first; an entry is
-  dropped when GitHub lists it or after 60 s. The memory is per process: it holds for the single
+  dropped when GitHub lists it or after 60 s. The platform's own close, reopen and title/body edits update
+  the remembered entry in place, and the dedupe lookups read the same merged list. The memory is per process: it holds for the single
   replica the deployment runs, and a list answered by another replica still sees the lag.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.

@@ -76,7 +76,7 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 	}
 	unlock := s.lockRepoCreates(owner, repo)
 	defer unlock()
-	existing, err := s.github.ListIssues(ctx, owner, repo, cred, []string{label})
+	existing, err := s.listWithRecent(ctx, owner, repo, cred, []string{label})
 	if err != nil {
 		return nil, fmt.Errorf("look up incident: %w", err)
 	}

@@ -54,6 +54,20 @@ func (g *laggingGitHub) ListIssues(_ context.Context, _, _ string, _ secrets.Cre
 	return out, nil
 }
 
+// The host accepts the platform's writes; the lag only affects what its list shows.
+func (g *laggingGitHub) CloseIssue(context.Context, string, string, secrets.Credential, int) error {
+	return nil
+}
+func (g *laggingGitHub) ReopenIssue(context.Context, string, string, secrets.Credential, int) error {
+	return nil
+}
+func (g *laggingGitHub) EditIssueTitle(context.Context, string, string, secrets.Credential, int, string) error {
+	return nil
+}
+func (g *laggingGitHub) EditIssueBody(context.Context, string, string, secrets.Credential, int, string) error {
+	return nil
+}
+
 // lagFixture is a service over a lagging GitHub with a controllable clock.
 type lagFixture struct {
 	gh  *laggingGitHub
@@ -197,4 +211,95 @@ type fakeRepoRepoAt struct{ RepoRepository }
 
 func (fakeRepoRepoAt) GetByOrgAndProjectID(_ context.Context, org, proj string) (*GitRepository, error) {
 	return &GitRepository{OrgID: org, ProjectID: proj, RepoURL: "https://github.com/o/elsewhere"}, nil
+}
+
+// The platform's own writes during the lag window must show in the list.
+
+func (f *lagFixture) only(t *testing.T) IssueInfo {
+	t.Helper()
+	got := f.list(t)
+	if len(got) != 1 {
+		t.Fatalf("want exactly the remembered issue, got %v", numbers(got))
+	}
+	return got[0]
+}
+
+func TestListIssues_RememberedIssueFollowsClose(t *testing.T) {
+	f := newLagFixture()
+	n := f.file(t, "to close")
+	f.now = f.now.Add(5 * time.Second)
+
+	if err := f.svc.CloseIssue(context.Background(), "org", "proj", n, ""); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	if got.State != "closed" || got.StateReason != "completed" || got.ClosedAt != f.now.UTC().Format(time.RFC3339) {
+		t.Errorf("after close: state=%q reason=%q closedAt=%q", got.State, got.StateReason, got.ClosedAt)
+	}
+
+	if err := f.svc.ReopenIssue(context.Background(), "org", "proj", n); err != nil {
+		t.Fatal(err)
+	}
+	got = f.only(t)
+	if got.State != "open" || got.StateReason != "" || got.ClosedAt != "" {
+		t.Errorf("after reopen: state=%q reason=%q closedAt=%q", got.State, got.StateReason, got.ClosedAt)
+	}
+}
+
+func TestListIssues_RememberedIssueFollowsEdits(t *testing.T) {
+	f := newLagFixture()
+	n := f.file(t, "old title")
+
+	if err := f.svc.EditIssueTitle(context.Background(), "org", "proj", n, "new title"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.EditIssueBody(context.Background(), "org", "proj", n, "new body"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.only(t)
+	if got.Title != "new title" || got.Body != "new body" {
+		t.Errorf("after edits: title=%q body=%q", got.Title, got.Body)
+	}
+}
+
+func TestRecentIssues_UpdateOfAnAbsentIssueIsANoOp(t *testing.T) {
+	f := newLagFixture()
+	f.svc.recent.update("o", "r", 99, func(i *IssueInfo) { i.Title = "ghost" })
+	if got := f.list(t); len(got) != 0 {
+		t.Errorf("update invented an entry: %v", numbers(got))
+	}
+}
+
+func TestRecentIssues_SweepsQuietRepositories(t *testing.T) {
+	r := &recentIssues{}
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	r.remember("o", "quiet", IssueInfo{Number: 1})
+	now = now.Add(2 * recentIssueWindow)
+	r.remember("o", "busy", IssueInfo{Number: 1})
+
+	if len(r.byRepo) != 1 {
+		t.Errorf("tracked repos = %d, want 1 (the quiet one swept)", len(r.byRepo))
+	}
+}
+
+func TestCreateIssueDedup_SeesTheFirstDuringTheLag(t *testing.T) {
+	f := newLagFixture()
+	ctx := context.Background()
+	first, err := f.svc.CreateIssue(ctx, "org", "proj", CreateIssueRequest{Title: "x", DedupeKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gh.hidden[first.Number] = true // GitHub's list has not caught up
+
+	second, err := f.svc.CreateIssue(ctx, "org", "proj", CreateIssueRequest{Title: "x again", DedupeKey: "k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.Deduped || second.Number != first.Number {
+		t.Errorf("second = %+v, want deduped to #%d", second, first.Number)
+	}
+	if f.gh.createCount != 1 {
+		t.Errorf("GitHub creates = %d, want 1", f.gh.createCount)
+	}
 }
