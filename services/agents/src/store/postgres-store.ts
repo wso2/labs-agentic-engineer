@@ -80,6 +80,8 @@ const UPSERT = `INSERT INTO conversations (id, messages, turns, status, created_
         status = EXCLUDED.status,
         updated_at = now()`;
 
+const DELETE_ONE = `DELETE FROM conversations WHERE id = $1 RETURNING id`;
+
 const SWEEP = `DELETE FROM conversations
   WHERE updated_at < now() - (interval '1 millisecond' * $1::double precision)
   RETURNING id`;
@@ -234,6 +236,11 @@ export class PostgresConversationStore implements ConversationStore {
       JSON.stringify(sanitizeForJsonb(c.turns)),
       c.status,
     ]);
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const { rows } = await this.db.query(DELETE_ONE, [id]);
+    return rows.length > 0;
   }
 
   /** Delete rows whose `updated_at` is older than `ttlMs`. Returns the count purged. */

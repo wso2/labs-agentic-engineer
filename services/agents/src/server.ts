@@ -167,6 +167,28 @@ function isJournal(v: unknown): v is TurnJournal {
   return typeof a.id === "string" && a.id !== "" && typeof a.displayName === "string" && a.displayName !== "";
 }
 
+/**
+ * The cross-tenant fence for the conversation read/delete routes (§12): the
+ * id's org segment must equal the caller's X-Org-Id claim. Answers the
+ * refusal itself (400 malformed id, 403 org mismatch) and returns false then.
+ */
+function passesOrgFence(req: Request, res: Response, id: string): boolean {
+  try {
+    const claim = req.header("x-org-id");
+    if (!claim || conversationOrgId(id) !== claim) {
+      res.status(403).json({ error: "conversation org does not match the caller's organization" });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    if (err instanceof WorkspaceRefError) {
+      res.status(err.status).json({ error: err.message });
+      return false;
+    }
+    throw err;
+  }
+}
+
 function startSSE(res: Response): void {
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -710,24 +732,11 @@ export function createApp(deps: CreateAppDeps): Express {
   });
 
   app.get("/conversations/:id", requireAuth, async (req: Request, res: Response) => {
-    // The same cross-tenant fence as the turn POST (§12): the id's org segment
-    // must equal the caller's X-Org-Id claim. The M2M token is shared, so
-    // without this any holder could read another org's thread — which now
-    // carries per-turn author identities (#463).
+    // The same cross-tenant fence as the turn POST (§12). The M2M token is
+    // shared, so without it any holder could read another org's thread — which
+    // now carries per-turn author identities (#463).
     const id = req.params.id as string;
-    try {
-      const claim = req.header("x-org-id");
-      if (!claim || conversationOrgId(id) !== claim) {
-        res.status(403).json({ error: "conversation org does not match the caller's organization" });
-        return;
-      }
-    } catch (err) {
-      if (err instanceof WorkspaceRefError) {
-        res.status(err.status).json({ error: err.message });
-        return;
-      }
-      throw err;
-    }
+    if (!passesOrgFence(req, res, id)) return;
     const conv = await deps.store.get(id);
     if (!conv) {
       res.status(404).json({ error: "conversation not found" });
@@ -743,6 +752,17 @@ export function createApp(deps: CreateAppDeps): Express {
       createdAt: conv.createdAt,
       updatedAt: conv.updatedAt,
     });
+  });
+
+  // aep-api removes a closed issue's thread (round three §4). Idempotent:
+  // absent is the goal state, so an unknown id is 204 too. aep-api never sends
+  // this while a turn on the thread is running (it defers the removal to the
+  // turn's end), so a turn's final save cannot resurrect the thread.
+  app.delete("/conversations/:id", requireAuth, async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    if (!passesOrgFence(req, res, id)) return;
+    await deps.store.delete(id);
+    res.status(204).end();
   });
 
   // Body-parser errors (invalid JSON, malformed payloads) → a clean 400.

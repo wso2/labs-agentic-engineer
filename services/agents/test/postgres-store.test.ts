@@ -83,6 +83,11 @@ class FakePg implements Queryable {
         return Promise.resolve({ rows: [] });
       }
       case "DELETE": {
+        if (/WHERE id = \$1/.test(text)) {
+          const id = String(params[0]);
+          const had = this.rows.delete(id);
+          return Promise.resolve({ rows: had ? [{ id }] : [] });
+        }
         const cutoff = this.nowMs - Number(params[0]);
         const deleted: Array<Record<string, unknown>> = [];
         for (const [id, row] of this.rows) {
@@ -466,4 +471,15 @@ test("a malformed anchor reads back as absent, not as a half-tag", async () => {
   const got = await store.get("c-bad-anchor");
   assert.ok(got);
   assert.equal("anchor" in (got.turns[0] ?? {}), false);
+});
+
+test("delete removes exactly that row and says whether it was there", async () => {
+  const store = new PostgresConversationStore(new FakePg());
+  await store.save(fresh("c1"));
+  await store.save(fresh("c2"));
+
+  assert.equal(await store.delete("c1"), true);
+  assert.equal(await store.get("c1"), null);
+  assert.ok(await store.get("c2"), "a sibling conversation is untouched");
+  assert.equal(await store.delete("c1"), false, "a second delete finds nothing");
 });

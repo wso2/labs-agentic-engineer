@@ -209,6 +209,38 @@ test("GET rehydrates the aggregate; org-fenced; 404 for an unknown id", async ()
   }
 });
 
+test("DELETE removes the thread; idempotent; org-fenced and gated like GET", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const { store, baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]), root);
+  try {
+    const token = await mintToken();
+    await (await fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(wsBody(), { token, org: WS_ORG }))).text();
+    assert.ok(await store.get(WS_CONV));
+
+    const del = (headers: Record<string, string>, id = WS_CONV) =>
+      fetch(`${baseUrl}/conversations/${id}`, { method: "DELETE", headers });
+    const headers = { Authorization: `Bearer ${token}`, "X-Org-Id": WS_ORG };
+
+    // The shared M2M token alone must not delete another org's thread.
+    assert.equal((await del({ Authorization: `Bearer ${token}` })).status, 403);
+    assert.equal((await del({ Authorization: `Bearer ${token}`, "X-Org-Id": "other-org" })).status, 403);
+    assert.equal((await del({ "X-Org-Id": WS_ORG })).status, 401);
+    assert.equal((await del(headers, "does-not-exist")).status, 400);
+    assert.ok(await store.get(WS_CONV), "a refused delete leaves the thread");
+
+    const first = await del(headers);
+    assert.equal(first.status, 204);
+    assert.equal(await store.get(WS_CONV), null);
+    assert.equal((await fetch(`${baseUrl}/conversations/${WS_CONV}`, { headers })).status, 404);
+
+    // Absent is the goal state, not an error: a second delete is 204 too.
+    assert.equal((await del(headers)).status, 204);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("401 when the M2M token is missing, malformed, wrong-secret, or wrong-aud", async () => {
   const { baseUrl, close } = await boot(mockModel([{ kind: "text", text: "ok" }]));
   try {
