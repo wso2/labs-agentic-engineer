@@ -221,6 +221,7 @@ func rtVars(relayURL string) map[string]any {
 				"userAudiences": []any{"APP_FACTORY_CONSOLE"}},
 			"aepApiBaseUrl": "http://aep-api", "aeOnlyClientId": "ae-only", "runtimeClassName": "", "cilium": false,
 			"storage":      map[string]any{"sizeLimit": "3Gi", "ephemeralRequest": "1Gi", "budgetBytes": "2147483648"},
+			"resources":    map[string]any{"cpuRequest": map[string]any{"designAgent": "100m", "collab": "50m", "studioTools": "100m"}},
 			"pullSecret":   map[string]any{"remoteKey": "", "property": ""},
 			"extraEgress":  []any{},
 			"webhookRelay": map[string]any{"image": "ghcr.io/chmouel/gosmee@sha256:abc"},

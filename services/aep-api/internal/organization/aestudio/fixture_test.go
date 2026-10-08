@@ -468,6 +468,7 @@ func testConfig() config.AEStudioConfig {
 	c.IDP.UserAudiences = []string{"aep-console-client"}
 	c.AEPAPIBaseURL, c.InternalClientID = "http://aep-api:9090", "ae-studio-internal-client"
 	c.Storage.SizeLimit, c.Storage.EphemeralRequest, c.Storage.BudgetBytes = "3Gi", "1Gi", 2147483648
+	c.CPURequest.DesignAgent, c.CPURequest.Collab, c.CPURequest.StudioTools = "100m", "50m", "100m"
 	c.ExtraEgress = json.RawMessage(`[{"to":[{"podSelector":{}}]}]`)
 	return c
 }

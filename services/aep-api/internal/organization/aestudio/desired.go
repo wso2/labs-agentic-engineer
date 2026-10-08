@@ -115,6 +115,13 @@ type envConfigs struct {
 		// BudgetBytes is a string in the RT schema.
 		BudgetBytes string `json:"budgetBytes"`
 	} `json:"storage"`
+	Resources struct {
+		CPURequest struct {
+			DesignAgent string `json:"designAgent"`
+			Collab      string `json:"collab"`
+			StudioTools string `json:"studioTools"`
+		} `json:"cpuRequest"`
+	} `json:"resources"`
 	PullSecret struct {
 		RemoteKey string `json:"remoteKey"`
 		Property  string `json:"property"`
@@ -377,6 +384,9 @@ func envConfigsOf(cfg config.AEStudioConfig) envConfigs {
 	e.Storage.SizeLimit = cfg.Storage.SizeLimit
 	e.Storage.EphemeralRequest = cfg.Storage.EphemeralRequest
 	e.Storage.BudgetBytes = strconv.FormatInt(cfg.Storage.BudgetBytes, 10)
+	e.Resources.CPURequest.DesignAgent = cfg.CPURequest.DesignAgent
+	e.Resources.CPURequest.Collab = cfg.CPURequest.Collab
+	e.Resources.CPURequest.StudioTools = cfg.CPURequest.StudioTools
 	e.PullSecret.RemoteKey = cfg.PullSecret.Key
 	e.PullSecret.Property = cfg.PullSecret.Property
 	e.ExtraEgress = cfg.ExtraEgress

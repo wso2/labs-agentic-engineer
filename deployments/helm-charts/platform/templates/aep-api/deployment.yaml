@@ -241,6 +241,19 @@ spec:
               value: {{ (default dict $ae.storage).ephemeralRequest | default "1Gi" | quote }}
             - name: AE_STUDIO_STORAGE_BUDGET_BYTES
               value: {{ (default dict $ae.storage).budgetBytes | default "2147483648" | quote }}
+            {{- $cpu := default dict (default dict $ae.resources).cpuRequest }}
+            {{- with $cpu.designAgent }}
+            - name: AE_STUDIO_CPU_REQUEST_DESIGN_AGENT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cpu.collab }}
+            - name: AE_STUDIO_CPU_REQUEST_COLLAB
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cpu.studioTools }}
+            - name: AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS
+              value: {{ . | quote }}
+            {{- end }}
             {{- $relay := default dict $ae.webhookRelay }}
             {{- if $relay.enabled }}
             # Per-org webhook relay (values.yaml aeStudio.webhookRelay). The seed

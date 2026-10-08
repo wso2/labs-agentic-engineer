@@ -97,6 +97,19 @@ spec:
             sizeLimit: { type: string, default: 3Gi }
             ephemeralRequest: { type: string, default: 1Gi }
             budgetBytes: { type: string, default: "2147483648" }   # a STRING: the binding must send it quoted
+        resources:
+          # CPU requests only (memory and limits stay fixed): the pod's three
+          # app containers' scheduler share, lowered on a CPU-starved dataplane.
+          type: object
+          default: {}
+          properties:
+            cpuRequest:
+              type: object
+              default: {}
+              properties:
+                designAgent: { type: string, default: 100m }
+                collab: { type: string, default: 50m }
+                studioTools: { type: string, default: 100m }
         pullSecret:
           type: object
           default: { remoteKey: "" }
@@ -250,7 +263,7 @@ spec:
                   envFrom: '${size(parameters.secrets.designAgent.data) > 0 ? [{"secretRef": {"name": metadata.name + "-agent"}}] : oc_omit()}'
                   startupProbe: { httpGet: { path: /readyz, port: 9080 }, periodSeconds: 5, failureThreshold: 40 }
                   readinessProbe: { httpGet: { path: /readyz, port: 9080 }, periodSeconds: 10 }
-                  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+                  resources: { requests: { cpu: "${environmentConfigs.resources.cpuRequest.designAgent}", memory: 256Mi }, limits: { memory: 1Gi } }
                   securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
                   volumeMounts:
                     - { name: mcp-sock, mountPath: /run/ae/mcp }
@@ -275,7 +288,7 @@ spec:
                     - { name: AE_HEALTH_PORT, value: "9081" }
                   startupProbe: { httpGet: { path: /readyz, port: 9081 }, periodSeconds: 5, failureThreshold: 40 }
                   readinessProbe: { httpGet: { path: /readyz, port: 9081 }, periodSeconds: 10 }
-                  resources: { requests: { cpu: 50m, memory: 128Mi }, limits: { memory: 512Mi } }
+                  resources: { requests: { cpu: "${environmentConfigs.resources.cpuRequest.collab}", memory: 128Mi }, limits: { memory: 512Mi } }
                   securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
                   volumeMounts:
                     - { name: files-sock, mountPath: /run/ae/files }
@@ -312,7 +325,7 @@ spec:
                   startupProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 2, failureThreshold: 30 }
                   readinessProbe: { httpGet: { path: /readyz, port: 9082 }, periodSeconds: 10 }
                   resources:
-                    requests: { cpu: 100m, memory: 256Mi, ephemeral-storage: "${environmentConfigs.storage.ephemeralRequest}" }   # 20
+                    requests: { cpu: "${environmentConfigs.resources.cpuRequest.studioTools}", memory: 256Mi, ephemeral-storage: "${environmentConfigs.storage.ephemeralRequest}" }   # 20
                     limits: { memory: 1Gi }
                   securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
                   volumeMounts:

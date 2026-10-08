@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/config"
 )
 
 type podContainer struct {
@@ -302,5 +303,64 @@ func TestTemplate_ToolsExternalSecretHoldsOnlyThePodsClient(t *testing.T) {
 	}
 	if strings.Join(keys, ",") != "GITHUB_PAT,GITHUB_WEBHOOK_SECRET,AE_STUDIO_CLIENT_ID,AE_STUDIO_CLIENT_SECRET" {
 		t.Fatalf("es-tools secret keys = %v", keys)
+	}
+}
+
+// cpuRequests renders the deployment with the install config cfg's
+// environmentConfigs (as aep-api sends them) and returns each container's CPU
+// request.
+func cpuRequests(t *testing.T, cfg config.AEStudioConfig) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(envConfigsOf(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars := rtVars("")
+	envCfg := map[string]any{}
+	if err := json.Unmarshal(raw, &envCfg); err != nil {
+		t.Fatal(err)
+	}
+	vars["environmentConfigs"] = envCfg
+	rendered, err := json.Marshal(renderRT(t, templateOf(t, "deployment"), vars))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []podContainer `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(rendered, &d); err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]any{}
+	for _, c := range d.Spec.Template.Spec.Containers {
+		if req, ok := c.Resources["requests"].(map[string]any); ok {
+			out[c.Name] = req["cpu"]
+		}
+	}
+	return out
+}
+
+// With no AE_STUDIO_CPU_REQUEST_* set, aep-api sends the loader defaults and
+// the pod keeps the values the template hard-coded before they were knobs.
+func TestTemplate_CPURequestsFollowTheInstallConfig(t *testing.T) {
+	cfg := testConfig()
+	got := cpuRequests(t, cfg)
+	for name, want := range map[string]string{"ae-design-agent": "100m", "ae-collab": "50m", "ae-studio-tools": "100m"} {
+		if got[name] != want {
+			t.Errorf("default %s cpu request = %v, want %s", name, got[name], want)
+		}
+	}
+	cfg.CPURequest.DesignAgent, cfg.CPURequest.Collab, cfg.CPURequest.StudioTools = "10m", "5m", "250m"
+	got = cpuRequests(t, cfg)
+	for name, want := range map[string]string{"ae-design-agent": "10m", "ae-collab": "5m", "ae-studio-tools": "250m"} {
+		if got[name] != want {
+			t.Errorf("set %s cpu request = %v, want %s", name, got[name], want)
+		}
 	}
 }

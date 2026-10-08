@@ -220,6 +220,7 @@ its own deployment.
 | `aeOnlyClientId` | `AE_STUDIO_INTERNAL_CLIENT_ID` | `ae-studio-internal-client` |
 | `runtimeClassName`, `cilium` | `AE_STUDIO_RUNTIME_CLASS_NAME`, `AE_STUDIO_CILIUM` | `""`, `false` |
 | `storage.*` | `AE_STUDIO_STORAGE_SIZE_LIMIT`, `AE_STUDIO_STORAGE_EPHEMERAL_REQUEST`, `AE_STUDIO_STORAGE_BUDGET_BYTES` | `3Gi`, `1Gi`, `2147483648` |
+| `resources.cpuRequest.*` | `AE_STUDIO_CPU_REQUEST_DESIGN_AGENT`, `AE_STUDIO_CPU_REQUEST_COLLAB`, `AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS` | `100m`, `50m`, `100m` (each up to `2000m`) |
 | `pullSecret.*` | `AE_STUDIO_PULL_SECRET_KEY`, `AE_STUDIO_PULL_SECRET_PROPERTY` | unset (ghcr images are public) |
 | `extraEgress` | `AE_STUDIO_EXTRA_EGRESS` (JSON) | Thunder and `aep-api` (above) |
 | `webhookRelay.image` | `AE_STUDIO_WEBHOOK_RELAY_IMAGE` | the chart's pinned gosmee |

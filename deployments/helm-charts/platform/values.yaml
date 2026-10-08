@@ -94,6 +94,13 @@ aeStudio:
     sizeLimit: "3Gi"
     ephemeralRequest: "1Gi"
     budgetBytes: "2147483648"
+  # CPU requests of the AE Studio pod's containers. Unset keeps the template's
+  # 100m / 50m / 100m; lower them on a CPU-starved dataplane (each up to 2000m).
+  resources:
+    cpuRequest: {}
+    #  designAgent: 100m
+    #  collab: 50m
+    #  studioTools: 100m
   # Per-org webhook relay, for installs GitHub cannot reach (local
   # k3d). When enabled, aep-api reads the seed aep/webhook-relay-seed (ESO
   # Secret aep-webhook-relay) and gives each org's AE Studio pod a webhook-relay

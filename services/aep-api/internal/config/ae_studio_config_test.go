@@ -18,6 +18,7 @@ package config
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -36,7 +37,7 @@ func setMinimalEnv(t *testing.T) {
 		"AE_STUDIO_AEP_API_BASE_URL", "AE_STUDIO_INTERNAL_CLIENT_ID", "AE_STUDIO_INTERNAL_CLIENT_SECRET",
 		"AE_STUDIO_RUNTIME_CLASS_NAME", "AE_STUDIO_CILIUM", "AE_STUDIO_EXTRA_EGRESS",
 		"AE_STUDIO_STORAGE_SIZE_LIMIT", "AE_STUDIO_STORAGE_EPHEMERAL_REQUEST",
-		"AE_STUDIO_STORAGE_BUDGET_BYTES", "AE_STUDIO_PULL_SECRET_KEY", "AE_STUDIO_PULL_SECRET_PROPERTY",
+		"AE_STUDIO_STORAGE_BUDGET_BYTES", "AE_STUDIO_CPU_REQUEST_DESIGN_AGENT", "AE_STUDIO_CPU_REQUEST_COLLAB", "AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS", "AE_STUDIO_PULL_SECRET_KEY", "AE_STUDIO_PULL_SECRET_PROPERTY",
 		"AE_STUDIO_WEBHOOK_RELAY_SEED", "AE_STUDIO_WEBHOOK_RELAY_IMAGE",
 	} {
 		t.Setenv(k, "")
@@ -107,5 +108,45 @@ func TestLoad_WebhookRelay(t *testing.T) {
 	}
 	if cfg.AEStudio.WebhookRelayImage != "ghcr.io/chmouel/gosmee@sha256:abc" || slices.Contains(cfg.AEStudio.Missing(), "AE_STUDIO_WEBHOOK_RELAY_IMAGE") {
 		t.Fatalf("image %q missing %v", cfg.AEStudio.WebhookRelayImage, cfg.AEStudio.Missing())
+	}
+}
+
+func TestLoad_AEStudioCPURequests(t *testing.T) {
+	setMinimalEnv(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.AEStudio.CPURequest; got.DesignAgent != "100m" || got.Collab != "50m" || got.StudioTools != "100m" {
+		t.Fatalf("defaults = %+v, want 100m/50m/100m", got)
+	}
+	t.Setenv("AE_STUDIO_CPU_REQUEST_DESIGN_AGENT", "0.25")
+	t.Setenv("AE_STUDIO_CPU_REQUEST_COLLAB", "10m")
+	t.Setenv("AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS", "1000m")
+	if cfg, err = Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.AEStudio.CPURequest; got.DesignAgent != "250m" || got.Collab != "10m" || got.StudioTools != "1" {
+		t.Fatalf("set = %+v, want 250m/10m/1", got)
+	}
+}
+
+func TestLoad_AEStudioCPURequestsMalformedFailBootNamingTheKey(t *testing.T) {
+	const secretish = "bogus-cpu-value-xyz"
+	for _, key := range []string{"AE_STUDIO_CPU_REQUEST_DESIGN_AGENT", "AE_STUDIO_CPU_REQUEST_COLLAB", "AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS"} {
+		for _, bad := range []string{secretish, "0", "-1", "2001m", "3", "2066035336255469781"} {
+			setMinimalEnv(t)
+			t.Setenv(key, bad)
+			_, err := Load()
+			if err == nil {
+				t.Fatalf("%s=%q must fail Load", key, bad)
+			}
+			if !strings.Contains(err.Error(), key) {
+				t.Fatalf("%s=%q: error must name the key: %v", key, bad, err)
+			}
+			if len(bad) > 5 && strings.Contains(err.Error(), bad) {
+				t.Fatalf("%s: error must not echo the value: %v", key, err)
+			}
+		}
 	}
 }

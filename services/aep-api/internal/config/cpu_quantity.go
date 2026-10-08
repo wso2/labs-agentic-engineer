@@ -29,6 +29,12 @@ const maxCPUDecimals = 3
 // default ("3"); a request above it makes a pod Kubernetes refuses.
 const CodingAgentCPUCeilingMillicores = 3000
 
+// AEStudioCPURequestCeilingMillicores bounds each AE Studio container's CPU
+// request. The template sets memory limits only, so no limit caps it; 2 cores
+// is far above the 50-100m defaults yet keeps a typo from making the pod
+// unschedulable.
+const AEStudioCPURequestCeilingMillicores = 2000
+
 var errBadCPUQuantity = errors.New("not a positive CPU quantity (<int>m millicores or decimal cores, e.g. 250m, 0.5, 2)")
 
 // maxCPUDigits bounds the integer part before any arithmetic, so no input can

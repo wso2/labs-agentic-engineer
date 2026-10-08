@@ -331,6 +331,9 @@ type AEStudioConfig struct {
 		SizeLimit, EphemeralRequest string
 		BudgetBytes                 int64
 	}
+	// CPURequest are the three app containers' CPU requests, canonical
+	// quantities (AE_STUDIO_CPU_REQUEST_*), defaulting to the template's.
+	CPURequest struct{ DesignAgent, Collab, StudioTools string }
 	PullSecret struct{ Key, Property string }
 
 	// WebhookRelaySeed (AE_STUDIO_WEBHOOK_RELAY_SEED) keys each org's smee.io
