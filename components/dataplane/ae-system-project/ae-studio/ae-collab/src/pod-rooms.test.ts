@@ -206,6 +206,8 @@ interface TestCollab {
   rawUpgrade(path: string, o?: { origin?: string }): Promise<{ status: number }>;
   /** Stop every client socket from reconnecting; call before a server-side close the test outlives. */
   disarmReconnects(): void;
+  /** Disarm every client's reconnect, then close the pod: the server-side close a test asserts on. */
+  closePod(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -273,7 +275,8 @@ async function startTestCollab(
   // flushes) schedules a reconnect `delay` ms after the close, and that timer
   // survives destroy() and turns the socket back on (provider 4.3). A
   // reconnect already CONNECTING when destroy() lands makes ws throw, so a
-  // test that closes the pod while peers live disarms them first.
+  // test that closes the pod while peers live does so through closePod(),
+  // which disarms them first.
   const disarm = () => {
     for (const p of peers) p.socket.connect = () => Promise.resolve();
   };
@@ -330,6 +333,10 @@ async function startTestCollab(
     participants: (room) => [...(roomState(room)?.participants.values() ?? [])],
     rawUpgrade: (path, opts = {}) => wsUpgrade(`${pod.publicUrl}${path}`, opts),
     disarmReconnects: disarm,
+    closePod() {
+      disarm();
+      return pod.close();
+    },
     async close() {
       for (const p of peers) {
         disarm();
@@ -948,7 +955,7 @@ test("a deferred room is flushed by shutdown, and no retry runs after it", async
     s.files.failNext(503, "disk_full", "apply", 2);
     ann.provider.destroy();
     await waitFor(() => events(s, "room_final_flush_deferred").length === 1, "the deferral");
-    await s.pod.close();
+    await s.closePod();
     assert.equal(s.files.commits().length, 1);
     assert.match(s.files.file(PRD_PATH)!, /Saved by the shutdown flush\./);
   } finally {
@@ -962,7 +969,7 @@ test("close: listeners stop accepting, the room sockets end, then the rooms are 
     const ann = await s.join("public", ROOM, s.idp.userToken());
     typeInto(ann.doc, "Saved on SIGTERM.");
     await new Promise((r) => setTimeout(r, 100)); // the update reaches the server
-    await s.pod.close();
+    await s.closePod();
     assert.equal(s.files.commits().length, 1, "the shutdown flush committed the room");
     assert.match(s.files.file(PRD_PATH)!, /Saved on SIGTERM\./);
     assert.equal(events(s, "room_flush_committed").length, 1, "one commit: the unload and the shutdown flush share it");
@@ -980,8 +987,8 @@ test("close: no edit reaches a room after its shutdown flush read it, and close 
     await waitFor(() => /Typed before SIGTERM\./.test(markdown(bob.doc)), "the edit to reach the room");
     const apply = s.files.holdNext("apply");
     let closed = false;
-    s.disarmReconnects(); // the sockets close server-side; no client may reconnect mid-flush
-    const closing = s.pod.close().then(() => {
+    // the sockets close server-side; closePod() keeps every client from reconnecting mid-flush
+    const closing = s.closePod().then(() => {
       closed = true;
     });
     await apply.arrived; // the shutdown's commit is on its way
