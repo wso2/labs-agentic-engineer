@@ -57,8 +57,12 @@ type AdoptTarget struct {
 //     is not the coding agent's to work (delivery.ErrNotCodingWork): another
 //     species' issue, or an incident classified as configuration-only. The
 //     webhook path logs the refusal; a hand-off answers it to the person.
-//   - An unarmed issue is armed: a task run works armed issues only.
-//   - An issue that already has a milestone keeps it. The human put it there.
+//   - An unarmed issue is armed (a task run works armed issues only), and a
+//     halted one has its halt cleared: handing it over is the decision to try
+//     again.
+//   - On the webhook path, an issue that already has a milestone keeps it: the
+//     human put it there. A hand-off by number (promote-from-issue) reads no
+//     milestone, so its issue is placed as a bare one.
 //   - A bare issue joins the deployed version's milestone — the version it is
 //     an incident against. With no deployed version there is nothing to attach
 //     it to, and the caller gets delivery.ErrNoDeployedMilestone rather than a guess.
@@ -89,7 +93,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 			return err
 		}
 		if issue == nil {
-			return fmt.Errorf("adopt issue: issue %d not found", target.Number)
+			return fmt.Errorf("adopt issue: issue %d: %w", target.Number, sourcecontrol.ErrIssueNotFound)
 		}
 		target.Labels = issue.Labels
 		target.State = issue.State
@@ -139,6 +143,15 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 	// the SRE handoff is armed here, by that hand-off.
 	if !delivery.HasLabel(target.Labels, delivery.LabelAgentWork) {
 		if err := e.p.Writer.Label(ctx, orgID, projectID, target.Number, delivery.LabelAgentWork); err != nil {
+			return err
+		}
+	}
+	// A halted issue handed over again is a person deciding the work is worth
+	// another attempt — one of the two decisions that clear a halt
+	// (delivery.LabelHalted). Left on, the reconcile sweep would keep skipping
+	// the issue this hand-off just put in front of a run.
+	if delivery.HasLabel(target.Labels, delivery.LabelHalted) {
+		if err := e.p.Writer.Unlabel(ctx, orgID, projectID, target.Number, delivery.LabelHalted); err != nil {
 			return err
 		}
 	}

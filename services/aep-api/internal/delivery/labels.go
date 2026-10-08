@@ -47,7 +47,13 @@ const (
 	// It is also the GitHub-side ADOPTION trigger: a human stamping it on an
 	// issue arms it, and the event plane starts (or wakes) a run over the
 	// issue's milestone. Labels the platform stamps itself come back as webhook
-	// echoes and are dropped by sender, so arming stays a human act.
+	// echoes and are dropped by sender, so the platform's own writes never adopt
+	// anything. The platform stamps it in exactly one adoption: a person's
+	// hand-off from the console or by an issue's agent (promote-from-issue),
+	// which is that person's act made through the platform
+	// (eventcore.AdoptIssue). Once armed, a handed-over issue is a bug like any
+	// other: a cancelled task run over its milestone closes it with the rest of
+	// the run's work.
 	LabelAgentWork = "aep"
 )
 

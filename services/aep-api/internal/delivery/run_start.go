@@ -64,7 +64,7 @@ var (
 	// works (the version's validation task, a dispatch gate, planned work — see
 	// AdoptableByATaskRun) or that asks for no code at all (an incident the SRE
 	// agent classified as configuration-only).
-	ErrNotCodingWork = errors.New("This issue is not one the coding agent takes on: the platform works this kind of issue another way.")
+	ErrNotCodingWork = errors.New("The coding agent doesn't take on this kind of issue.")
 )
 
 // AdoptionRefusal is the refusal err carries when adoption declined the issue

@@ -28,9 +28,14 @@ import (
 type adoptionIssues struct {
 	*fakeIssues
 	issue sourcecontrol.IssueInfo
+	// missing answers the host's (nil, nil) for an issue it does not have.
+	missing bool
 }
 
 func (f *adoptionIssues) GetIssue(context.Context, string, string, int) (*sourcecontrol.IssueInfo, error) {
+	if f.missing {
+		return nil, nil
+	}
 	return &f.issue, nil
 }
 
@@ -94,4 +99,26 @@ func TestAdoptionArmsABareIssueHandedOver(t *testing.T) {
 	require.Equal(t, []string{"12->5"}, h.issues.assigned)
 	require.Len(t, h.sup.started, 1)
 	require.Equal(t, delivery.RunKindTask, h.sup.started[0].Kind)
+}
+
+// A halted issue handed over again is a person deciding the work is worth
+// another attempt: the halt is cleared, or the reconcile sweep would keep
+// skipping the issue the hand-off just put in front of a run.
+func TestAdoptionClearsAHalt(t *testing.T) {
+	h := newHarness(t, aRun("deployed", 5, delivery.RunStateSucceeded))
+	h.events.p.Issues = &adoptionIssues{fakeIssues: h.issues, issue: sourcecontrol.IssueInfo{
+		Number: 12, State: "open", Labels: []string{"bug", delivery.LabelHalted},
+	}}
+	require.NoError(t, h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 12}))
+	require.Equal(t, []string{"12+aep", "12-aep:halted"}, h.issues.labelled)
+	require.Len(t, h.sup.started, 1)
+}
+
+// An issue the host does not have is said as such, so the route can answer 404.
+func TestAdoptionOfAMissingIssueIsNotFound(t *testing.T) {
+	h := newHarness(t, aRun("deployed", 5, delivery.RunStateSucceeded))
+	h.events.p.Issues = &adoptionIssues{fakeIssues: h.issues, missing: true}
+	err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 12})
+	require.ErrorIs(t, err, sourcecontrol.ErrIssueNotFound)
+	require.Empty(t, h.issues.labelled)
 }

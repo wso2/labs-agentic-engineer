@@ -73,6 +73,12 @@ func (g *laggingGitHub) AddIssueLabels(context.Context, string, string, secrets.
 func (g *laggingGitHub) SetIssueMilestone(context.Context, string, string, secrets.Credential, int, int) error {
 	return nil
 }
+func (g *laggingGitHub) RemoveIssueLabel(context.Context, string, string, secrets.Credential, int, string) error {
+	return nil
+}
+func (g *laggingGitHub) SetIssueLabels(context.Context, string, string, secrets.Credential, int, []string) error {
+	return nil
+}
 
 // lagFixture is a service over a lagging GitHub with a controllable clock.
 type lagFixture struct {
@@ -283,6 +289,25 @@ func TestListIssues_RememberedIssueFollowsAdoption(t *testing.T) {
 	got := f.only(t)
 	if len(got.Labels) != 2 || got.Labels[0] != "bug" || got.Labels[1] != "aep" || got.MilestoneNumber != 5 {
 		t.Errorf("after adoption: labels=%v milestone=%d", got.Labels, got.MilestoneNumber)
+	}
+}
+
+// Every label write shows: a removal, and a replaced set.
+func TestListIssues_RememberedIssueFollowsLabelWrites(t *testing.T) {
+	f := newLagFixture()
+	n := f.file(t, "labelled", "bug", "aep:halted")
+
+	if err := f.svc.RemoveLabel(context.Background(), "org", "proj", n, "aep:halted"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t).Labels; len(got) != 1 || got[0] != "bug" {
+		t.Errorf("after remove: labels=%v, want [bug]", got)
+	}
+	if err := f.svc.SetLabels(context.Background(), "org", "proj", n, []string{"aep", "conflict"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.only(t).Labels; len(got) != 2 || got[0] != "aep" || got[1] != "conflict" {
+		t.Errorf("after set: labels=%v, want [aep conflict]", got)
 	}
 }
 

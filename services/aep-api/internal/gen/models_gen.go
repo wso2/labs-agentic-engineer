@@ -2215,7 +2215,7 @@ type IssueInfo struct {
 	// AttentionReason Console attention state. Omitted when the issue needs no attention.
 	AttentionReason IssueInfoAttentionReason `json:"attentionReason,omitempty"`
 
-	// MilestoneNumber The number of the milestone the issue is in: a version's, which the coding agent works (handing an issue over puts it in the deployed version's and arms it with the `aep` label). Omitted when the issue is in none.
+	// MilestoneNumber The number of the issue's milestone, if any (handing an issue over puts it in the deployed version's and arms it with the `aep` label). Omitted when the issue is in none.
 	MilestoneNumber int64 `json:"milestoneNumber,omitempty"`
 }
 

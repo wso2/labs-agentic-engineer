@@ -405,8 +405,10 @@ func (e *Events) OnIssues(ctx context.Context, _, action string, payload []byte)
 	// The ARMING SWITCH is the adoption trigger: a human adding `aep` to an issue
 	// hands it to the agent. Platform-written labels never reach here — the echo
 	// suppression above drops any delivery this platform's own sender caused —
-	// so every arming that arrives is a human's act, which is what makes "who
-	// adopted this" answerable from the issue timeline alone.
+	// so an arming that arrives is a human's act on GitHub. (A hand-off from the
+	// console or an issue's agent arms through the platform and adopts directly;
+	// on an install with no App its label echo arrives here as a human's and
+	// re-adopts idempotently.)
 	//
 	// Adoption does NOT short-circuit the predicate below, and that matters: the
 	// two jobs answer different states of the same milestone. Adoption starts a

@@ -603,7 +603,10 @@ is the one package allowed to name them, so `httpapi.Deps` + `httpapi.New` is wh
   comment on somebody's own record is not suppression of anything (the sweep skips a cancelled increment
   whole, and a note is not work to it in any case). A TASK run's cancel reaches only the bugs and
   conflicts it was working and leaves the milestone open: the version it works is the DEPLOYED one and is
-  not being withdrawn. A VALIDATION run closes nothing through this path — its own consequence is the
+  not being withdrawn. That includes an issue a person HANDED OVER (`promote-from-issue`, from the console
+  or by the issue's agent): adoption arms it, so it is an armed bug like any other, and cancelling the
+  task run working it closes the person's issue with the rest — handing it over again means reopening it.
+  A hand-off also clears an `aep:halted` on the issue, being the person's decision to try again. A VALIDATION run closes nothing through this path — its own consequence is the
   task it ADOPTED, closed on every ending by `settleJudged`, and that scoping is what keeps a cancel
   arriving before the first read from closing a task the run never adopted. Nothing is REVERTED by any of it:
   merged commits stay on `main` and promoted components keep serving, so closing the milestone is a

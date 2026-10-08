@@ -545,7 +545,13 @@ func (s *issueService) RemoveLabel(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return err
 	}
-	return s.github.RemoveIssueLabel(ctx, owner, repoName, cred, number, label)
+	if err := s.github.RemoveIssueLabel(ctx, owner, repoName, cred, number, label); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) {
+		i.Labels = slices.DeleteFunc(slices.Clone(i.Labels), func(l string) bool { return l == label })
+	})
+	return nil
 }
 
 func (s *issueService) SetLabels(ctx context.Context, orgID, projectID string, number int, labels []string) error {
@@ -554,7 +560,11 @@ func (s *issueService) SetLabels(ctx context.Context, orgID, projectID string, n
 		return err
 	}
 	s.ensureLabels(ctx, owner, repoName, cred, labels)
-	return s.github.SetIssueLabels(ctx, owner, repoName, cred, number, labels)
+	if err := s.github.SetIssueLabels(ctx, owner, repoName, cred, number, labels); err != nil {
+		return err
+	}
+	s.recent.update(owner, repoName, number, func(i *IssueInfo) { i.Labels = slices.Clone(labels) })
+	return nil
 }
 
 func (s *issueService) GetPullRequestState(ctx context.Context, orgID, projectID string, number int) (*PullRequestState, error) {
