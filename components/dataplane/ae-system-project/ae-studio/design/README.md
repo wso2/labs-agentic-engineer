@@ -187,8 +187,10 @@ per org, both installs.
   `ReleaseOwnershipConflict`) after a 1 min settle, or a binding not Ready for
   20 min (OpenChoreo's render and apply of the release plus the 200 s startup
   budget; a first install on Cloud takes about 15 min). `failed` carries a
-  `reason`, computed on each read: `timeout` for the 20 min bound, `error` for
-  every other path. A timeout has no visible cause: OpenChoreo gives an
+  `reason`, computed on each read: `timeout` for the 20 min bound while the
+  binding is still progressing (Ready reason `ResourcesProgressing`, or no
+  Ready condition yet), `error` for every other path, including any other
+  not-Ready reason past the bound. A timeout has no visible cause: OpenChoreo gives an
   unschedulable pod and an image-pull failure the same Ready condition
   (`ResourcesProgressing`, `Resource "deployment" readyWhen returned false`),
   and has no pod events route for a Resource binding. The console hedges it as

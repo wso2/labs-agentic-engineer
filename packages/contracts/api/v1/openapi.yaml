@@ -2943,10 +2943,11 @@ components:
         reason:
           description: >-
             Why AE Studio failed; set only when the state is failed. timeout: it
-            has not become ready within the bound; the platform cannot see why
+            is still starting past the bound; the platform cannot see why
             (commonly too little room in the cluster), it keeps trying, and a
             later read may answer ready. error: any other failure (not
-            configured, a failed install, a release that cannot be applied).
+            configured, a failed install, a release OpenChoreo cannot render,
+            own or apply).
           enum:
           - timeout
           - error

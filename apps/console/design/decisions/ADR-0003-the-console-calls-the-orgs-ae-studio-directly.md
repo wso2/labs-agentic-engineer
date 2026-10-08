@@ -38,7 +38,7 @@ talk to a second API whose error bodies differ from `aep-api`'s.
    runs only for an onboarded org. The answer is a `state` (`absent`,
    `provisioning`, `ready`, `failed`), only when `ready` `urls` for
    `designAgent`, `collab` and `tools`, and only when `failed` a `reason`
-   (`timeout`: not ready within the bound, cause unknown, still trying;
+   (`timeout`: still starting past the bound, cause unknown, still trying;
    `error`: anything else).
 
 2. **What the gate shows follows the state and the session.**

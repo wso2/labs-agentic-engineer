@@ -303,6 +303,21 @@ func TestStatus_FailedReason(t *testing.T) {
 			f.svc.mu.Unlock()
 			f.withNotReady("ResourcesProgressing", f.clock.now().Add(-notReadyBound-time.Second))
 		}, StateFailed, FailTimeout},
+		{"no Ready condition yet, past the bound", func(f *fixture) {
+			f.withAllRefs().converged()
+			f.oc.mu.Lock()
+			f.oc.rrb.Status.Conditions = nil
+			f.oc.mu.Unlock()
+			f.clock.advance(notReadyBound + time.Second)
+		}, StateFailed, FailTimeout},
+		// Past the bound, only a binding still progressing is a timeout: any
+		// other not-Ready reason is a fault the copy must not blame on room.
+		{"apply failed, past the bound", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("ResourceApplyFailed", f.clock.now()).clock.advance(notReadyBound + time.Second)
+		}, StateFailed, FailError},
+		{"a not-found reason, past the bound", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("ResourceReleaseNotFound", f.clock.now()).clock.advance(notReadyBound + time.Second)
+		}, StateFailed, FailError},
 		{"rendering failed once settled", func(f *fixture) {
 			f.withAllRefs().converged().withNotReady("RenderingFailed", f.clock.now()).clock.advance(settleGrace)
 		}, StateFailed, FailError},

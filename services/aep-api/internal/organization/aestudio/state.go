@@ -115,7 +115,7 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 			level = slog.LevelWarn
 		}
 		slog.Log(ctx, level, "ae_studio.status_failed", "org", org, "reason", reason)
-		if reason == reasonPastBound {
+		if reason == reasonPastBound && stillProgressing(l.binding) {
 			return failed(FailTimeout), nil
 		}
 		return failed(FailError), nil
@@ -138,9 +138,23 @@ var terminalReadyReasons = map[string]bool{
 }
 
 // reasonPastBound is stuck's reason for a binding not Ready for longer than
-// notReadyBound: the one failed answer that is a timeout, not an error, as
-// the binding may still come up by itself.
+// notReadyBound. It answers a timeout, not an error, only while the binding
+// is still progressing (stillProgressing): it may still come up by itself.
 const reasonPastBound = "not ready past bound"
+
+// progressingReason is the Ready reason OC gives a binding whose workload is
+// applied but not ready yet (readyWhen false). It is the same for a pod that
+// cannot be scheduled and one whose image will not pull: OC carries no cause.
+const progressingReason = "ResourcesProgressing"
+
+// stillProgressing is a binding with no Ready condition yet, or one whose
+// Ready reason is progressingReason. Any other not-Ready reason (an apply
+// failure, a missing release, environment or data plane) is a fault, not a
+// wait.
+func stillProgressing(b *openchoreo.ResourceReleaseBinding) bool {
+	c := b.ReadyCondition()
+	return c == nil || c.Reason == progressingReason
+}
 
 // stuck names why a binding that is not Ready will not become so by itself
 // ("" while it may): a terminal Ready reason once the last converge has

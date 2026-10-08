@@ -343,6 +343,24 @@ describe("AeStudioGate", () => {
     expect(screen.queryByText("AE Studio is starting…")).not.toBeInTheDocument();
   });
 
+  it.each([
+    ["failed with error", { state: "failed", reason: "error" }, "AE Studio couldn't start"],
+    ["ready", "ready", "console"],
+  ] as [string, AeStudioState | AeStudio, string][])(
+    "the 30 s re-read stops once a timeout turns %s",
+    async (_, next, shows) => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const reads = mockAeStudio([{ state: "failed", reason: "timeout" }, next]);
+      renderWithProviders(<AeStudioGate><div>console</div></AeStudioGate>, { route: "/projects" });
+      expect(await screen.findByText(SLOW_START_TITLE)).toBeInTheDocument();
+      await act(() => vi.advanceTimersByTimeAsync(30_000));
+      expect(await screen.findByText(shows)).toBeInTheDocument();
+      expect(reads()).toBe(2);
+      await act(() => vi.advanceTimersByTimeAsync(5 * 60_000));
+      expect(reads()).toBe(2);
+    },
+  );
+
   it("failed with timeout leaves Settings reachable", async () => {
     mockAeStudio([{ state: "failed", reason: "timeout" }]);
     renderWithProviders(<AeStudioGate><div>settings</div></AeStudioGate>, { route: "/settings" });

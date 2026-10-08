@@ -43,13 +43,14 @@ const (
 type AEStudioFailReason string
 
 const (
-	// AEStudioFailTimeout: the binding has not become Ready within the
-	// bound. OpenChoreo does not say why (a pod that cannot be scheduled
-	// reads the same as any other), and it may still come up by itself.
+	// AEStudioFailTimeout: the binding is still progressing (or has no Ready
+	// condition yet) past the bound. OpenChoreo does not say why (a pod that
+	// cannot be scheduled reads the same as any other), and it may still
+	// come up by itself.
 	AEStudioFailTimeout AEStudioFailReason = "timeout"
 	// AEStudioFailError: every other failure (AE Studio not configured, no
-	// write target, a failed converge, a release OpenChoreo cannot render
-	// or own).
+	// write target, a failed converge, a release OpenChoreo cannot render,
+	// own or apply, any other not-Ready reason past the bound).
 	AEStudioFailError AEStudioFailReason = "error"
 )
 

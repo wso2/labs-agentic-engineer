@@ -1396,7 +1396,7 @@ type AccessRequest struct {
 
 // AeStudio defines model for AeStudio.
 type AeStudio struct {
-	// Reason Why AE Studio failed; set only when the state is failed. timeout: it has not become ready within the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release that cannot be applied).
+	// Reason Why AE Studio failed; set only when the state is failed. timeout: it is still starting past the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release OpenChoreo cannot render, own or apply).
 	Reason AeStudioReason `json:"reason,omitempty"`
 
 	// State absent (no GitHub token yet), provisioning, ready, or failed.
@@ -1406,7 +1406,7 @@ type AeStudio struct {
 	Urls *AeStudioUrls `json:"urls,omitempty"`
 }
 
-// AeStudioReason Why AE Studio failed; set only when the state is failed. timeout: it has not become ready within the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release that cannot be applied).
+// AeStudioReason Why AE Studio failed; set only when the state is failed. timeout: it is still starting past the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release OpenChoreo cannot render, own or apply).
 type AeStudioReason string
 
 // AeStudioState absent (no GitHub token yet), provisioning, ready, or failed.
