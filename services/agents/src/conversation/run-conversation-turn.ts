@@ -46,7 +46,7 @@ import { runTurn } from "../agents/main/run-turn.js";
 import { createMainAgent } from "../agents/main/agent.js";
 import { createIssuesAgent } from "../agents/issues/agent.js";
 import { createIssueAgent } from "../agents/issue/agent.js";
-import { lastAskedQuestion } from "../agents/confirmation.js";
+import { answerableQuestion } from "../agents/confirmation.js";
 import { endedAwaitingHuman, type AgentRunSettings, type ProviderOptions, type TurnAgent } from "../agents/run-settings.js";
 import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
@@ -272,9 +272,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // user's message is its whole prompt, with no spec-turn notes.
     const viewAgent = toolset === "issues" || toolset === "issue";
     // A view's agent writes only what the user confirmed on a question card:
-    // the card it binds to is the last one in the history this service stored
-    // before this turn, never anything this turn's instruction or model says.
-    const asked = viewAgent ? lastAskedQuestion(conv.messages) : undefined;
+    // the card it binds to is the one the user is answering, the one card the
+    // previous turn asked in the history this service stored, never anything
+    // this turn's instruction or model says.
+    const asked = viewAgent ? answerableQuestion(conv.messages) : undefined;
     const skills = input.skillSource;
     let bundle: FileBundle | undefined;
     let agentFor: (run: AgentRunSettings) => TurnAgent;

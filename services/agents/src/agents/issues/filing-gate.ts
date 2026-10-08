@@ -60,8 +60,8 @@ export function filingConfirmed(instruction: string): boolean {
 
 /**
  * Guard `create_issue`. Unconfirmed, it refuses with a tool error telling the
- * model what to do; confirmed, it files only the issue the card the user last
- * saw (`asked`) showed, at most once per turn (`onceAsShown`). Call it once
+ * model what to do; confirmed, it files only the issue the card the user
+ * answered (`asked`) showed, at most once per turn (`onceAsShown`). Call it once
  * per turn: the one-filing state lives in the returned tools. When the set has
  * no create_issue, `tools` comes back unchanged.
  */

@@ -214,3 +214,29 @@ test("gateCreateIssue: CRLF line endings and surrounding whitespace do not chang
   assert.equal(await file(gateCreateIssue(tools, true, card(shown))), "FILED");
   assert.equal(filed.length, 1);
 });
+
+test("gateCreateIssue: a card with two File it options files nothing, whichever showed the issue", async () => {
+  for (const order of [0, 1]) {
+    const { tools, filed } = filingTool();
+    const options = [
+      { label: FILE_IT, description: describeFiling(ISSUE) },
+      { label: FILE_IT, description: describeFiling({ ...ISSUE, title: "Something else" }) },
+    ];
+    const asked: AskQuestionInput = { question: FILE_QUESTION, options: order ? options.reverse() : options };
+    await assert.rejects(() => file(gateCreateIssue(tools, true, asked)), {
+      message:
+        'Not done: more than one option on the card reads as File it, so the answer does not say which change the user saw. Ask "File this issue?" again with a single File it option.',
+    });
+    assert.deepEqual(filed, []);
+  }
+});
+
+test("gateCreateIssue: an issue with an invisible character is refused", async () => {
+  const { tools, filed } = filingTool();
+  const sneaky = { ...ISSUE, body: "## What happened\n\nNothing \u202Esaves." };
+  await assert.rejects(() => file(gateCreateIssue(tools, true, card(describeFiling(sneaky))), sneaky), {
+    message:
+      'Not done: the change has a character the card cannot show faithfully (U+202E: a control, format or invisible character). Remove it and ask "File this issue?" again with the change as the File it option\'s description.',
+  });
+  assert.deepEqual(filed, []);
+});

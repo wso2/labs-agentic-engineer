@@ -83,7 +83,7 @@ export function confirmedTool(instruction: string): WriteTool | undefined {
 
 /**
  * Gate the issue's write tools on this turn's instruction and the card the
- * user last saw (`asked`, the last ask_question in the stored history). The
+ * user answered (`asked`, `answerableQuestion` over the stored history). The
  * write the instruction confirms runs once, only with the change `asked`
  * showed; every other write refuses with a tool error naming the question to
  * ask. The reads and any tool that is not a write pass through untouched.

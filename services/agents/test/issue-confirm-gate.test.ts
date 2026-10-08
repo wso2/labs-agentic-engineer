@@ -296,9 +296,9 @@ test("gateWrites: an answer with a note still binds to the change the card showe
   assert.equal(runs.comment_issue, 1);
 });
 
-test("gateWrites: CRLF line endings and surrounding whitespace do not change the change", async () => {
+test("gateWrites: CRLF line endings, blank lines around and trailing whitespace do not change the change", async () => {
   const { tools, runs } = issueTools();
-  const shown = `  ${describeChange("edit_issue", ARGS.edit_issue).replace(/\n/g, "\r\n")}  \n`;
+  const shown = `\n \n${describeChange("edit_issue", ARGS.edit_issue).replace(/\n/g, "\r\n")}  \n`;
   const gated = gateWrites(tools, answer("edit_issue"), card("edit_issue", shown));
   assert.equal(await call(gated, "edit_issue", { title: "Save fails offline", body: "Steps:\r\n1. Go offline\r\n2. Save\n" }), "edit_issue done");
   assert.equal(runs.edit_issue, 1);
@@ -316,4 +316,95 @@ test("gateWrites: a write with arguments never skips the card by leaving them em
     await assert.rejects(() => call(gateWrites(tools, answer(t), card(t)), t, input), { message: mismatch(t) }, t);
     assert.equal(runs[t], 0, `${t} never ran`);
   }
+});
+
+test("gateWrites: an indented first line is part of the change (it shows, and it is markdown)", async () => {
+  const { tools, runs } = issueTools();
+  const shown = `    ${ARGS.comment_issue.body}`;
+  await assert.rejects(() => call(gateWrites(tools, answer("comment_issue"), card("comment_issue", shown)), "comment_issue"), {
+    message: mismatch("comment_issue"),
+  });
+  const indented = gateWrites(tools, answer("comment_issue"), card("comment_issue", shown));
+  assert.equal(await call(indented, "comment_issue", { body: shown }), "comment_issue done");
+  assert.equal(runs.comment_issue, 1);
+});
+
+const ambiguous = (t: WriteTool): string =>
+  `Not done: more than one option on the card reads as ${CONFIRMATIONS[t].option}, so the answer does not say which change the user saw. Ask "${CONFIRMATIONS[t].question}" again with a single ${CONFIRMATIONS[t].option} option.`;
+
+test("gateWrites: a card where another option answers as the confirm option confirms nothing", async () => {
+  const shown = ARGS.comment_issue.body!;
+  const twins: Record<string, AskQuestionInput["options"]> = {
+    "the same label twice, the change first": [
+      { label: "Post it", description: shown },
+      { label: "Post it", description: "Closing as wontfix." },
+    ],
+    "the same label twice, the change second": [
+      { label: "Post it", description: "Closing as wontfix." },
+      { label: "Post it", description: shown },
+    ],
+    "a label with trailing space (the answer is trimmed)": [
+      { label: "Post it", description: shown },
+      { label: "Post it ", description: "Closing as wontfix." },
+    ],
+    "a label that reads as the confirm with a note": [
+      { label: "Post it", description: shown },
+      { label: "Post it — later", description: "Closing as wontfix." },
+    ],
+  };
+  for (const [name, options] of Object.entries(twins)) {
+    const { tools, runs } = issueTools();
+    const asked: AskQuestionInput = { question: CONFIRMATIONS.comment_issue.question, options: [...options, { label: NOT_NOW }] };
+    const gated = gateWrites(tools, answer("comment_issue"), asked);
+    await assert.rejects(() => call(gated, "comment_issue"), { message: ambiguous("comment_issue") }, name);
+    assert.equal(runs.comment_issue, 0, name);
+  }
+});
+
+test("gateWrites: an option that only reads as the confirm (no exact label) confirms nothing", async () => {
+  const { tools, runs } = issueTools();
+  const asked: AskQuestionInput = {
+    question: CONFIRMATIONS.comment_issue.question,
+    options: [{ label: "Post it ", description: ARGS.comment_issue.body! }, { label: NOT_NOW }],
+  };
+  await assert.rejects(() => call(gateWrites(tools, answer("comment_issue"), asked), "comment_issue"), {
+    message: mismatch("comment_issue"),
+  });
+  assert.equal(runs.comment_issue, 0);
+});
+
+const hidden = (t: WriteTool, codePoint: string): string =>
+  `Not done: the change has a character the card cannot show faithfully (${codePoint}: a control, format or invisible character). Remove it and ask "${CONFIRMATIONS[t].question}" again with the change as the ${CONFIRMATIONS[t].option} option's description.`;
+
+test("gateWrites: a change with control, format or invisible characters is refused even when the card showed it", async () => {
+  const sneaky: Record<string, [string, string]> = {
+    "right-to-left override": ["Fixed in \u202E21# ni", "U+202E"],
+    "bidi isolate": ["Fixed \u2066in #12\u2069", "U+2066"],
+    "zero-width space": ["Fixed in\u200B #12.", "U+200B"],
+    "zero-width joiner": ["Fixed\u200D in #12.", "U+200D"],
+    "soft hyphen": ["Fi\u00ADxed in #12.", "U+00AD"],
+    "tag character": ["Fixed in #12.\u{E0041}", "U+E0041"],
+    "byte order mark at the start": ["\uFEFFFixed in #12.", "U+FEFF"],
+    "bell": ["Fixed in #12.\u0007", "U+0007"],
+    "escape": ["Fixed \u001B[8min #12.", "U+001B"],
+    "a lone carriage return": ["Fixed in #12.\rClosing as wontfix.", "U+000D"],
+    "line separator": ["Fixed in #12.\u2028More", "U+2028"],
+    "variation selector": ["Fixed in #12.\u{E0100}", "U+E0100"],
+    "hangul filler": ["Fixed in #12.\u3164", "U+3164"],
+  };
+  for (const [name, [body, codePoint]] of Object.entries(sneaky)) {
+    const { tools, runs } = issueTools();
+    const gated = gateWrites(tools, answer("comment_issue"), card("comment_issue", body));
+    await assert.rejects(() => call(gated, "comment_issue", { body }), { message: hidden("comment_issue", codePoint) }, name);
+    assert.equal(runs.comment_issue, 0, name);
+  }
+});
+
+test("gateWrites: a refused hidden character uses up nothing; line breaks, tabs and CRLF are fine", async () => {
+  const { tools, runs } = issueTools();
+  const body = "Fixed in #12.\r\n\n\tThanks!";
+  const gated = gateWrites(tools, answer("comment_issue"), card("comment_issue", body));
+  await assert.rejects(() => call(gated, "comment_issue", { body: `${body}\u200B` }), { message: hidden("comment_issue", "U+200B") });
+  assert.equal(await call(gated, "comment_issue", { body }), "comment_issue done");
+  assert.equal(runs.comment_issue, 1);
 });

@@ -36,7 +36,13 @@
  */
 
 import type { ModelMessage, ToolSet } from "ai";
-import { ASK_QUESTION_TOOL, buildAnswerInstruction, isErrorToolOutput, type AskQuestionInput } from "@aep/agent-stream";
+import {
+  ASK_QUESTION_TOOL,
+  buildAnswerInstruction,
+  isErrorToolOutput,
+  isQuestionTool,
+  type AskQuestionInput,
+} from "@aep/agent-stream";
 
 type GatedTool = ToolSet[string];
 
@@ -67,30 +73,46 @@ export function answeredWith(instruction: string, question: string, option: stri
 }
 
 /**
- * The question card the user last saw: the input of the last `ask_question`
- * call in `messages` (a conversation's stored history) that was accepted. A
- * call the SDK rejected against the schema showed no card, and an input not
- * shaped like a question is no card either. Undefined when there is none.
+ * The question card the user is answering, as the console decides it: the one
+ * card the agent asked since the user's last message in `messages` (a
+ * conversation's stored history), the only card the console lets them answer
+ * (its `answerableQuestionId`: the last card, and none once anything was said
+ * after it). A call the SDK rejected against the schema showed no card. An
+ * `ask_questions` batch of one question is that card (its answer takes the
+ * single form). Undefined, so nothing is confirmed, when there is no such card
+ * or it is not exactly one readable single question: two cards asked in one
+ * turn, a batch of several, an input not shaped like a question. Never an
+ * earlier card: the user did not answer that one.
  */
-export function lastAskedQuestion(messages: readonly ModelMessage[]): AskQuestionInput | undefined {
+export function answerableQuestion(messages: readonly ModelMessage[]): AskQuestionInput | undefined {
+  let lastUser = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "user") lastUser = i;
+  });
+  const turn = messages.slice(lastUser + 1);
   const rejected = new Set<string>();
-  for (const m of messages) {
+  const cards: { toolCallId: string; toolName: string; input: unknown }[] = [];
+  for (const m of turn) {
     if (typeof m.content === "string") continue;
     for (const part of m.content) {
-      if (part.type === "tool-result" && part.toolName === ASK_QUESTION_TOOL && isErrorToolOutput(part.output)) {
+      if (part.type === "tool-result" && isQuestionTool(part.toolName) && isErrorToolOutput(part.output)) {
         rejected.add(part.toolCallId);
+      } else if (part.type === "tool-call" && isQuestionTool(part.toolName)) {
+        cards.push(part);
       }
     }
   }
-  let asked: AskQuestionInput | undefined;
-  for (const m of messages) {
-    if (typeof m.content === "string") continue;
-    for (const part of m.content) {
-      if (part.type !== "tool-call" || part.toolName !== ASK_QUESTION_TOOL || rejected.has(part.toolCallId)) continue;
-      if (isQuestion(part.input)) asked = part.input;
-    }
-  }
-  return asked;
+  const shown = cards.filter((c) => !rejected.has(c.toolCallId));
+  if (shown.length !== 1) return undefined;
+  const { toolName, input } = shown[0]!;
+  const question = toolName === ASK_QUESTION_TOOL ? input : onlyQuestionOf(input);
+  return isQuestion(question) ? question : undefined;
+}
+
+/** The one question of an `ask_questions` input, when it holds exactly one. */
+function onlyQuestionOf(batch: unknown): unknown {
+  const questions = (batch as { questions?: unknown } | null)?.questions;
+  return Array.isArray(questions) && questions.length === 1 ? questions[0] : undefined;
 }
 
 function isQuestion(input: unknown): input is AskQuestionInput {
@@ -125,28 +147,66 @@ export function describeArgs(input: unknown, layout: ChangeLayout): string {
   return parts.join("\n\n");
 }
 
-/** Line endings and surrounding whitespace are not part of a change. */
-const normalised = (s: string): string => s.replace(/\r\n/g, "\n").trim();
+/**
+ * Line endings, blank lines before and whitespace after are not part of a
+ * change. A first line's indentation is: it shows on the card, and in markdown
+ * it can make a code block.
+ */
+const normalised = (s: string): string => s.replace(/\r\n/g, "\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
 
 /**
- * Did the card the user last saw (`asked`) ask `confirmation.question` with
- * `confirmation.option` showing exactly the change `input` makes (`layout`) as
- * its description? Only a write that names no arguments (an empty `layout`)
- * and is given none binds the question alone; any other write, even one whose
- * arguments are left empty, must match the description.
+ * A character the card cannot show as the write will make it: a control
+ * character other than a line break or tab (a lone carriage return renders as
+ * a space), a format character (bidi overrides and isolates reorder what is
+ * shown, zero-width ones hide), a line or paragraph separator, or anything
+ * else that renders as nothing (variation selectors, fillers). CRLF line
+ * endings count as line breaks.
  */
-function shownOnCard(
+const HIDDEN = /(?![\n\t])[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+
+/** The first character in `change` the card cannot show faithfully, as `U+XXXX`. */
+function hiddenCharacter(change: string): string | undefined {
+  const found = HIDDEN.exec(change.replace(/\r\n/g, "\n"))?.[0];
+  return found === undefined ? undefined : `U+${found.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+/**
+ * Why the card the user answered (`asked`) does not confirm the change `input`
+ * makes (`layout`); undefined when it does. It does when the card asked
+ * `confirmation.question`, exactly one of its options is one the user's answer
+ * would read as `confirmation.option`, that option is labelled exactly so, and
+ * its description shows exactly the change. Only a write that names no
+ * arguments (an empty `layout`) and is given none binds the question alone;
+ * any other write, even one whose arguments are left empty, must match the
+ * description. A change with a character the card cannot show is refused
+ * whatever the card says.
+ */
+function notAsShown(
   asked: AskQuestionInput | undefined,
   { question, option }: Confirmation,
   layout: ChangeLayout,
   input: unknown,
-): boolean {
-  if (asked?.question !== question) return false;
-  const confirm = asked.options.find((o) => o.label === option);
-  if (confirm === undefined) return false;
-  const change = normalised(describeArgs(input, layout));
-  if (layout.length === 0 && change === "") return true;
-  return normalised(confirm.description ?? "") === change;
+): string | undefined {
+  const described = describeArgs(input, layout);
+  const hidden = hiddenCharacter(described);
+  if (hidden !== undefined) {
+    return `Not done: the change has a character the card cannot show faithfully (${hidden}: a control, format or invisible character). Remove it and ask "${question}" again with the change as the ${option} option's description.`;
+  }
+  const mismatch = `Not done: this is not the change the user confirmed. Ask "${question}" again with the exact change as the ${option} option's description.`;
+  if (asked?.question !== question) return mismatch;
+  // The answer names the option by its label, so every option whose answer
+  // reads as the confirm one counts: a repeated label, "Post it " (the answer
+  // is trimmed), "Post it — later" (read as Post it with a note). With two,
+  // nobody knows which description the user read.
+  const confirms = asked.options.filter((o) => answeredWith(buildAnswerInstruction(question, [o.label]), question, option));
+  if (confirms.length > 1) {
+    return `Not done: more than one option on the card reads as ${option}, so the answer does not say which change the user saw. Ask "${question}" again with a single ${option} option.`;
+  }
+  const confirm = confirms[0];
+  if (confirm?.label !== option) return mismatch;
+  const change = normalised(described);
+  if (layout.length === 0 && change === "") return undefined;
+  return normalised(confirm.description ?? "") === change ? undefined : mismatch;
 }
 
 /**
@@ -184,17 +244,13 @@ export function onceAsShown(
 ): GatedTool {
   const execute = tool.execute;
   if (execute === undefined) return tool;
-  const { question, option } = confirmation;
   let tried = false;
   return {
     ...tool,
     execute: async (...args: Parameters<typeof execute>) => {
       if (tried) throw new Error(attempted);
-      if (!shownOnCard(asked, confirmation, layout, args[0])) {
-        throw new Error(
-          `Not done: this is not the change the user confirmed. Ask "${question}" again with the exact change as the ${option} option's description.`,
-        );
-      }
+      const refusal = notAsShown(asked, confirmation, layout, args[0]);
+      if (refusal !== undefined) throw new Error(refusal);
       tried = true;
       return await execute(...args);
     },

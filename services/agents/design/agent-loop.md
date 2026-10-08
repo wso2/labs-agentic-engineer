@@ -125,13 +125,21 @@ canonical rendering per tool (`describeChange` beside `CONFIRMATIONS`: the comme
 …" and/or "Body:\n…"; the reason; "Component: …"; nothing for a reopen; `describeFiling`
 for `create_issue`: title, kind and body). An argument the rendering does not name is shown
 too, so nothing reaches the tool unshown. In the answer turn `runConversationTurn` hands the
-agent the last accepted `ask_question` input from the history the service stored before
-the turn (`lastAskedQuestion`), never the instruction or this turn's model output. The
-confirmed tool runs only when that card asked its own question and its confirm option's
-description equals the call's rendering (CRLF→LF, trimmed); otherwise the call is refused
-("Not done: this is not the change the user confirmed…"), which uses up nothing, as the
-confirmed change is still the only one that can run. No card in the history (an answer
-typed by hand) refuses too. A note on the answer does not change what was confirmed: the
+agent the card the user is answering, read from the history the service stored before the
+turn (`answerableQuestion`), never the instruction or this turn's model output. It is the
+card the console lets the user answer: the one question call (`ask_question`, or an
+`ask_questions` batch of one question) accepted since the user's last message. Two cards
+in that turn, a batch of several, an unreadable input, or a card from before the user's
+last message is no card. The confirmed tool runs only when that card asked its own
+question, exactly one of its options answers as the confirm label (a repeated label, "Post
+it " or "Post it — later" make the card ambiguous) and is that label, and its description
+equals the call's rendering (CRLF→LF, blank lines before and whitespace after dropped; a
+first line's indentation counts). Otherwise the call is refused ("Not done: …"), which uses
+up nothing, as the confirmed change is still the only one that can run. A change holding a
+character the card cannot show faithfully (a control character other than a line break or
+tab, a format character such as a bidi override or a zero-width space, a line separator, or
+another default-ignorable character) is refused whatever the card says, naming the code
+point. No card in the history (an answer typed by hand) refuses too. A note on the answer does not change what was confirmed: the
 prompts have the agent ask again with the revised text.
 
 The report classifier (`classify_report`, Jev) never blocks a turn. Below 0.8 confidence,

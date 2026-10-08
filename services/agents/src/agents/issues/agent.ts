@@ -40,7 +40,7 @@ export interface IssuesAgentDeps {
   /** This turn's raw user instruction: the filing gate reads it. */
   instruction: string;
   /**
-   * The question card the user last saw (`lastAskedQuestion` over the
+   * The question card the user is answering (`answerableQuestion` over the
    * conversation's stored history): a confirmed filing files only the issue
    * it showed.
    */

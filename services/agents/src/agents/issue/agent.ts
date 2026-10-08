@@ -40,7 +40,7 @@ export interface IssueAgentDeps {
   /** This turn's raw user instruction: the confirmation gate reads it. */
   instruction: string;
   /**
-   * The question card the user last saw (`lastAskedQuestion` over the
+   * The question card the user is answering (`answerableQuestion` over the
    * conversation's stored history): a confirmed write makes only the change
    * it showed.
    */
