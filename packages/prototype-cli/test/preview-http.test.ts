@@ -100,11 +100,21 @@ describe("prototype preview (HTTP)", () => {
     expect(existsSync(feedbackFile())).toBe(false);
   });
 
-  it("answers every one of 50 concurrent oversized uploads with 413, none reset", async () => {
+  it("refuses every one of 50 concurrent oversized uploads with 413 or a cut connection, writes nothing, and keeps serving", async () => {
     const body = JSON.stringify({ prototypeHash: "a".repeat(64), requests: [{ screenId: "s", roleId: "r", stateId: "t", elementIds: [], text: "x".repeat(2 * 1024 * 1024) }] });
-    const statuses = await Promise.all(Array.from({ length: 50 }, () => send("/feedback", { method: "POST", headers: { "content-type": "application/json" }, body }).then((r) => r.status)));
-    expect(statuses.filter((s) => s !== 413)).toEqual([]);
+    const url = new URL("/feedback", preview.url);
+    // The server may answer 413 and close while the client is still writing, so a
+    // reset or broken pipe is a refusal too; anything else (a 200, a 5xx, a timeout) is not.
+    const upload = (): Promise<number | "cut"> =>
+      new Promise((resolve, reject) => {
+        const req = request({ host: url.hostname, port: url.port, path: url.pathname, method: "POST", headers: { "content-type": "application/json" } }, (res) => (res.resume(), resolve(res.statusCode ?? 0)));
+        req.on("error", (err: NodeJS.ErrnoException) => (err.code === "EPIPE" || err.code === "ECONNRESET" ? resolve("cut") : reject(err)));
+        req.end(body);
+      });
+    const outcomes = await Promise.all(Array.from({ length: 50 }, upload));
+    expect(outcomes.filter((o) => o !== 413 && o !== "cut")).toEqual([]);
     expect(existsSync(feedbackFile())).toBe(false);
+    expect((await send("/")).status).toBe(200);
   });
 
   it("says which rule a refused submission broke", async () => {
