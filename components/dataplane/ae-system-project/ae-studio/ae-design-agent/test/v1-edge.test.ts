@@ -99,35 +99,45 @@ test("POST turns returns 202, runs detached, and the stream attaches with ?from"
     assert.equal((await call(edge, `/v1/projects/${PROJECT}/turns/active`, tok)).status, 204);
   }));
 
-test("409 turn_in_progress with activeTurnId; wrong org 403; M2M token 401; marketplace sub must match", () =>
-  withEdge({ models: [slow()] }, async (edge) => {
+test("409 turn_in_progress with activeTurnId; wrong org 403; M2M token 401; marketplace sub must match", () => {
+  // The turn stays running until the test releases it, so every assertion below
+  // is made against a running turn however slow the host is.
+  let release!: () => void;
+  const hold = new Promise<void>((resolve) => (release = resolve));
+  return withEdge({ models: [mockModel([{ kind: "text", text: "slow" }], { hold })] }, async (edge) => {
     const ann = await edge.token({ sub: "u1" });
     const first = await startTurn(edge, ann);
     assert.equal(first.status, 202);
     const { turnId } = await json<{ turnId: string }>(first);
-    const second = await startTurn(edge, ann);
-    assert.equal(second.status, 409);
-    assert.equal(second.headers.get("content-type")?.startsWith("application/json"), true);
-    assert.deepEqual(await json(second), { code: "turn_in_progress", activeTurnId: turnId });
-    const active = await call(edge, `/v1/projects/${PROJECT}/turns/active`, ann);
-    assert.equal(active.status, 200);
-    assert.equal((await json(active)).turnId, turnId);
-    // A rotation under the running turn waits for it.
-    const rotate = await call(edge, `/v1/projects/${PROJECT}/conversations`, ann, { method: "POST" });
-    assert.equal(rotate.status, 409);
-    assert.deepEqual(await json(rotate), { code: "turn_in_progress", activeTurnId: turnId });
+    try {
+      const second = await startTurn(edge, ann);
+      assert.equal(second.status, 409);
+      assert.equal(second.headers.get("content-type")?.startsWith("application/json"), true);
+      assert.deepEqual(await json(second), { code: "turn_in_progress", activeTurnId: turnId });
+      const active = await call(edge, `/v1/projects/${PROJECT}/turns/active`, ann);
+      assert.equal(active.status, 200);
+      assert.equal((await json(active)).turnId, turnId);
+      // A rotation under the running turn waits for it.
+      const rotate = await call(edge, `/v1/projects/${PROJECT}/conversations`, ann, { method: "POST" });
+      assert.equal(rotate.status, 409);
+      assert.deepEqual(await json(rotate), { code: "turn_in_progress", activeTurnId: turnId });
 
-    assert.equal((await startTurn(edge, await edge.token({ ouHandle: "evil" }))).status, 403);
-    assert.equal((await startTurn(edge, await edge.m2m("ae-internal"))).status, 401);
-    assert.equal((await startTurn(edge, await edge.m2m("publisher"))).status, 401);
+      assert.equal((await startTurn(edge, await edge.token({ ouHandle: "evil" }))).status, 403);
+      assert.equal((await startTurn(edge, await edge.m2m("ae-internal"))).status, 401);
+      assert.equal((await startTurn(edge, await edge.m2m("publisher"))).status, 401);
 
-    const conv = await json<{ conversationId: string }>(await call(edge, "/v1/marketplace/conversations", ann, { method: "POST" }));
-    const bob = await edge.token({ sub: "u2" });
-    assert.equal((await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/messages`, bob)).status, 404);
-    assert.equal((await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/turns`, bob, { json: { instruction: "x" } })).status, 404);
-    const own = await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/messages`, ann);
-    assert.deepEqual(await json(own), { messages: [] });
-  }));
+      const conv = await json<{ conversationId: string }>(await call(edge, "/v1/marketplace/conversations", ann, { method: "POST" }));
+      const bob = await edge.token({ sub: "u2" });
+      assert.equal((await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/messages`, bob)).status, 404);
+      assert.equal((await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/turns`, bob, { json: { instruction: "x" } })).status, 404);
+      const own = await call(edge, `/v1/marketplace/conversations/${conv.conversationId}/messages`, ann);
+      assert.deepEqual(await json(own), { messages: [] });
+    } finally {
+      release();
+    }
+    await until(() => edge.desk.status(turnId)?.status === "completed", "the released turn to complete");
+  });
+});
 
 test("no key: turn POST answers problem no_default_key", () =>
   withEdge({ connection: null }, async (edge) => {
