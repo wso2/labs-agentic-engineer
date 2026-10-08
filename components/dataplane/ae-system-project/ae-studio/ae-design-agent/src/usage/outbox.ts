@@ -114,7 +114,6 @@ export class UsageOutbox implements Outbox {
         this.emptied = this.emptied.filter((f) => f !== onEmpty);
         resolve(false);
       }, timeoutMs);
-      deadline.unref();
       this.emptied.push(onEmpty);
     });
   }
