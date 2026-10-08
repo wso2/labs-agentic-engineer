@@ -677,13 +677,14 @@ export function eagerSkillsFor(turn: TurnSpec, scope?: TurnScope): string[] {
 
 
 /**
- * Which tool set the turn needs. A view that owns an agent (the Issues page)
- * selects its own set; otherwise planning registers `planTask`/`updateTask` and
- * NO file tools, and everything else mutates the bundle. Derived rather than
- * sent: two ways to say it is two ways to disagree.
+ * Which tool set the turn needs. A view that owns an agent (the Issues page, a
+ * filed issue's own thread) selects its own set; otherwise planning registers
+ * `planTask`/`updateTask` and NO file tools, and everything else mutates the
+ * bundle. Derived rather than sent: two ways to say it is two ways to disagree.
  */
 export function toolsetFor(turn: TurnSpec, view?: View): Toolset {
   if (view === "issues") return "issues";
+  if (view === "issue") return "issue";
   return turn.kind === "plan" ? "task-plan" : "files";
 }
 

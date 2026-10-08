@@ -52,6 +52,8 @@ test("a view's chat turn rides verbatim: no spec-paths rule, no spec-turn notes"
   assert.equal(composeInstruction({ kind: "chat", text: "the save button is broken" }, { view: "issues" }), "the save button is broken");
   // An answer must stay the whole instruction — the filing gate reads it from the start.
   assert.equal(composeInstruction({ kind: "chat", text: "Answer to \"File this issue?\": File it" }, { view: "issues", previousTurnFailed: true }), "Answer to \"File this issue?\": File it");
+  // An issue's own thread too: a confirmation's answer must stay the whole instruction.
+  assert.equal(composeInstruction({ kind: "chat", text: "Answer to \"Close this issue?\": Close it" }, { view: "issue", previousTurnFailed: true }), "Answer to \"Close this issue?\": Close it");
 });
 
 test("flow points at the skill, with the user's trailing text after a blank line", () => {
@@ -505,6 +507,7 @@ test("the tool set is derived from the kind", () => {
 
 test("a view selects its own tool set; no view leaves the turn to decide", () => {
   assert.equal(toolsetFor({ kind: "chat", text: "x" }, "issues"), "issues");
+  assert.equal(toolsetFor({ kind: "chat", text: "x" }, "issue"), "issue");
   assert.equal(toolsetFor({ kind: "plan" }, undefined), "task-plan");
   assert.equal(toolsetFor({ kind: "chat", text: "x" }, undefined), "files");
 });

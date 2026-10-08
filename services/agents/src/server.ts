@@ -235,6 +235,7 @@ export function createApp(deps: CreateAppDeps): Express {
       webSearch?: unknown;
       surface?: unknown;
       view?: unknown;
+      issueNumber?: unknown;
       branchNotes?: unknown;
       eagerSkills?: unknown;
       model?: unknown;
@@ -301,7 +302,8 @@ export function createApp(deps: CreateAppDeps): Express {
       surface = body.surface;
     }
     // The main-panel view the user is in selects that view's agent (the Issues
-    // page → the issues tool set). Absent → the spec agent; unknown → a 400.
+    // page → the issues tool set, a filed issue's thread → the issue tool set).
+    // Absent → the spec agent; unknown → a 400.
     let view: View | undefined;
     if (body.view !== undefined) {
       if (!isView(body.view)) {
@@ -309,6 +311,21 @@ export function createApp(deps: CreateAppDeps): Express {
         return;
       }
       view = body.view;
+    }
+    // The issue an issue-view turn works on: its agent's prompt names it (the
+    // tools it acts with are fenced to it by their own token). Required for
+    // that view, refused on every other, so a number can never ride a turn it
+    // does not describe.
+    let issueNumber: number | undefined;
+    if (view === "issue") {
+      if (typeof body.issueNumber !== "number" || !Number.isInteger(body.issueNumber) || body.issueNumber < 1) {
+        res.status(400).json({ error: "issueNumber must be a positive integer for the issue view" });
+        return;
+      }
+      issueNumber = body.issueNumber;
+    } else if (body.issueNumber !== undefined) {
+      res.status(400).json({ error: "issueNumber is accepted only for the issue view" });
+      return;
     }
     // What the other views' chats did since the previous turn (aep-api reads
     // it from its turn rows). Bounded on the way in: it lands in the prompt.
@@ -646,6 +663,7 @@ export function createApp(deps: CreateAppDeps): Express {
         ...(references.unreadable.length ? { unreadableReferences: references.unreadable } : {}),
         ...(chatAttachments.length ? { chatAttachments } : {}),
         ...(toolset ? { toolset } : {}),
+        ...(issueNumber !== undefined ? { issueNumber } : {}),
         ...(wantsRegisterDraftTool(turn, projectId) ? { registerDraft: true } : {}),
         ...(mcp ? { mcp } : {}),
         ...(journal ? { journal: { ...journal, turnId } } : {}),

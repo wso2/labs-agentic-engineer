@@ -350,11 +350,64 @@ test("an unknown view is a 400; an issues-view turn cannot join a collab room", 
 
     const badView = await post(wsBody({ view: "boards" }));
     assert.equal(badView.status, 400);
-    assert.deepEqual(await badView.json(), { error: "view must be one of: issues" });
+    assert.deepEqual(await badView.json(), { error: "view must be one of: issues, issue" });
 
     const collab = await post(wsBody({ view: "issues", collab: { roomId: "room-1", token: "t" } }));
     assert.equal(collab.status, 400);
     assert.match(((await collab.json()) as { error: string }).error, /collab turns support only the files toolset/);
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the issue view needs a positive integer issueNumber; no other view takes one", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const model = mockModel([{ kind: "text", text: "ok" }]);
+  const { baseUrl, close } = await boot(model, root);
+  try {
+    const token = await mintToken();
+    const post = (body: unknown) => fetch(`${baseUrl}/conversations/${WS_CONV}/turns`, turnPost(body, { token, org: WS_ORG }));
+
+    for (const issueNumber of [undefined, 0, -3, 1.5, "7", null]) {
+      const res = await post(wsBody({ view: "issue", ...(issueNumber === undefined ? {} : { issueNumber }) }));
+      assert.equal(res.status, 400, String(issueNumber));
+      assert.deepEqual(await res.json(), { error: "issueNumber must be a positive integer for the issue view" });
+    }
+    for (const view of [undefined, "issues"]) {
+      const res = await post(wsBody({ ...(view ? { view } : {}), issueNumber: 7 }));
+      assert.equal(res.status, 400, String(view));
+      assert.deepEqual(await res.json(), { error: "issueNumber is accepted only for the issue view" });
+    }
+    assert.equal(model.doStreamCalls.length, 0, "no rejected turn reaches the model");
+  } finally {
+    await close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a view: issue turn runs that issue's agent: its prompt names the issue, the user's text rides verbatim", async () => {
+  const root = makeMountRoot({ [REQUIREMENTS]: "# Req\n" });
+  const model = mockModel([{ kind: "text", text: "It is about the save button." }]);
+  const { baseUrl, close } = await boot(model, root);
+  try {
+    const token = await mintToken();
+    const res = await fetch(
+      `${baseUrl}/conversations/${WS_CONV}/turns`,
+      turnPost(wsBody({ view: "issue", issueNumber: 42, turn: { kind: "chat", text: "what is this about?" } }), {
+        token,
+        org: WS_ORG,
+      }),
+    );
+    assert.equal(res.status, 200);
+    assert.match(await res.text(), /"type":"manifest"/);
+    // No MCP block in this turn: the question tools alone.
+    const offered = ((model.doStreamCalls[0]!.tools ?? []) as Array<{ name?: string }>).map((t) => t.name).sort();
+    assert.deepEqual(offered, ["ask_question", "ask_questions"]);
+    assert.match(systemPrompt(model), /issue #42/);
+    assert.equal(systemPrompt(model).includes("spec-bundle editing agent"), false);
+    assert.ok(JSON.stringify(model.doStreamCalls[0]!.prompt).includes("what is this about?"));
+    assert.equal(JSON.stringify(model.doStreamCalls[0]!.prompt).includes("Existing files"), false);
   } finally {
     await close();
     rmSync(root, { recursive: true, force: true });

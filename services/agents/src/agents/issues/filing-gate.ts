@@ -17,16 +17,13 @@
  */
 
 /**
- * "Draft first, file on the user's go-ahead", enforced in code. The prompt asks
- * the model to ask "File this issue?" and file only on File it, but anything the
- * model reads (an issue body returned by search_issues, text the user pasted)
- * can try to talk it into calling create_issue without that answer. So the
- * filing tool is withheld unless THIS turn's instruction is the user's own File
- * it answer, which only the console's question card produces.
+ * "Draft first, file on the user's go-ahead", enforced in code
+ * (`../confirmation.ts`): create_issue is withheld unless THIS turn's
+ * instruction is the user's own File it answer, and runs once for it.
  */
 
 import type { ModelMessage, ToolSet } from "ai";
-import { buildAnswerInstruction } from "@aep/agent-stream";
+import { answeredWith, once, refusing } from "../confirmation.js";
 
 /** The confirmation question the agent asks, and the option that files. */
 export const FILE_QUESTION = "File this issue?";
@@ -35,71 +32,30 @@ export const FILE_IT = "File it";
 /** The MCP tool the gate guards. */
 const CREATE_ISSUE = "create_issue";
 
-/** What follows the label when the user added a note to their answer. */
-const NOTE_SEPARATOR = " — ";
-
-const SINGLE_ANSWER = buildAnswerInstruction(FILE_QUESTION, [FILE_IT]);
-
 /**
- * Is `instruction` the user's answer to FILE_QUESTION selecting exactly
- * FILE_IT? Only the single-answer serialization (`buildAnswerInstruction`),
- * anchored at the START of the instruction, with nothing after the label or a
- * note. The batch form is deliberately not accepted: its lines (and any note,
- * which may span lines) can be forged from text the user pastes, so a gate that
- * scanned for them would disagree with the serializer. A batch answer simply
- * gets the refusal, and the agent re-asks with ask_question. Another label
- * ("File it later", "Change it") or chat that merely contains the words does
- * not count.
+ * Is `instruction` the user's single answer to FILE_QUESTION selecting exactly
+ * FILE_IT (optionally with a note)? See `answeredWith`.
  */
 export function filingConfirmed(instruction: string): boolean {
-  const text = instruction.trim();
-  return text === SINGLE_ANSWER || text.startsWith(SINGLE_ANSWER + NOTE_SEPARATOR);
+  return answeredWith(instruction, FILE_QUESTION, FILE_IT);
 }
 
 /**
- * Guard `create_issue`. Unconfirmed, it keeps its description and schema but
- * refuses with a tool error telling the model what to do. Confirmed, it runs at
- * most ONCE per turn: the user's go-ahead covers one filing, and injected text
- * in an earlier tool result (or a retry after a timeout that did create the
- * issue) must not file a second. A failed first attempt counts, so the agent
- * tells the user and asks again. Call it once per turn: the one-filing state
- * lives in the returned tools. When the set has no create_issue, `tools` comes
- * back unchanged.
+ * Guard `create_issue`. Unconfirmed, it refuses with a tool error telling the
+ * model what to do; confirmed, it runs at most once per turn (`once`). Call it
+ * once per turn: the one-filing state lives in the returned tools. When the set
+ * has no create_issue, `tools` comes back unchanged.
  */
 export function gateCreateIssue(tools: ToolSet, confirmed: boolean): ToolSet {
   const create = tools[CREATE_ISSUE];
   if (create === undefined) return tools;
-  if (!confirmed) {
-    return {
-      ...tools,
-      [CREATE_ISSUE]: {
-        ...create,
-        execute: async () => {
-          throw new Error(
-            `Not filed. Ask the user "${FILE_QUESTION}" with ask_question (options ${FILE_IT} / Change it) and file only after they answer ${FILE_IT}.`,
-          );
-        },
-      },
-    } as ToolSet;
-  }
-  const execute = create.execute;
-  if (execute === undefined) return tools;
-  let attempted = false;
-  return {
-    ...tools,
-    [CREATE_ISSUE]: {
-      ...create,
-      execute: async (...args: Parameters<typeof execute>) => {
-        if (attempted) {
-          throw new Error(
-            "A filing was already attempted in this turn; tell the user the result and ask before trying again.",
-          );
-        }
-        attempted = true;
-        return await execute(...args);
-      },
-    },
-  } as ToolSet;
+  const gated = confirmed
+    ? once(create, "A filing was already attempted in this turn; tell the user the result and ask before trying again.")
+    : refusing(
+        create,
+        `Not filed. Ask the user "${FILE_QUESTION}" with ask_question (options ${FILE_IT} / Change it) and file only after they answer ${FILE_IT}.`,
+      );
+  return gated === create ? tools : { ...tools, [CREATE_ISSUE]: gated };
 }
 
 /**

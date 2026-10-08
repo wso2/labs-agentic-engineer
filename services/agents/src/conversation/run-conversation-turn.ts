@@ -45,6 +45,7 @@ import type { RoomPeer } from "../collab/room-peer.js";
 import { runTurn } from "../agents/main/run-turn.js";
 import { createMainAgent } from "../agents/main/agent.js";
 import { createIssuesAgent } from "../agents/issues/agent.js";
+import { createIssueAgent } from "../agents/issue/agent.js";
 import { endedAwaitingHuman, type AgentRunSettings, type ProviderOptions, type TurnAgent } from "../agents/run-settings.js";
 import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
@@ -163,6 +164,12 @@ export interface RunConversationTurnInput {
    */
   toolset?: Toolset;
   /**
+   * The issue an `issue` turn works on (`TurnRequest.issueNumber`): that
+   * agent's prompt names it. Required for the `issue` tool set (a turn
+   * without it is refused before the model runs); ignored by every other.
+   */
+  issueNumber?: number;
+  /**
    * Caller-supplied MCP discovery endpoint for this turn (dependency-management
    * migration Phase 5). Present → `tools/list` is fetched (best-effort) and
    * merged into the tool set as dynamic tools, under a shadow-guard so a
@@ -207,7 +214,7 @@ export interface RunConversationTurnInput {
   /**
    * What the other views' chats did since this conversation's previous turn
    * (`TurnRequest.branchNotes`). A main-agent turn's prompt opens with one
-   * `Meanwhile in <view> (N turns): <outcome>` line per note; an Issues turn
+   * `Meanwhile in <view> (N turns): <outcome>` line per note; a view's turn
    * ignores them. Absent/empty → the prompt is byte-identical to a turn without.
    */
   branchNotes?: BranchNote[];
@@ -250,7 +257,8 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     conv.status = "active";
 
     // 3. select the agent from `toolset` (default `files`). The Issues view
-    //    has an agent of its own (agents/issues/agent.ts); every other turn
+    //    and a filed issue's own thread each have an agent of their own
+    //    (agents/issues/agent.ts, agents/issue/agent.ts); every other turn
     //    runs the main agent (agents/main/agent.ts) over the tool set built
     //    here. Both spec tool sets build a throwaway per-turn accumulator from
     //    the passed snapshot; the skill catalog + `loadSkill` are registered
@@ -259,6 +267,9 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     //    ask_questions); `task-plan` does not. The FileBundle is held by name:
     //    it is the source of the terminal manifest (D14).
     const toolset: Toolset = input.toolset ?? "files";
+    // A view's agent (the Issues chat, an issue's thread) works on no spec: the
+    // user's message is its whole prompt, with no spec-turn notes.
+    const viewAgent = toolset === "issues" || toolset === "issue";
     const skills = input.skillSource;
     let bundle: FileBundle | undefined;
     let agentFor: (run: AgentRunSettings) => TurnAgent;
@@ -275,6 +286,18 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       agentFor = (run) =>
         createIssuesAgent(
           { jev, mcpTools, instruction: input.instruction, skills, surface: input.surface },
+          run,
+        );
+    } else if (toolset === "issue") {
+      // An issue's own thread: its tools arrive over the turn's MCP block,
+      // whose token names the issue; the agent keeps the issue's tools and
+      // gates every write on this turn's instruction.
+      const issueNumber = input.issueNumber;
+      if (issueNumber === undefined) throw new Error("an issue turn needs the issue number it works on");
+      const mcpTools = input.mcp ? await loadMcpTools(input.mcp) : {};
+      agentFor = (run) =>
+        createIssueAgent(
+          { issueNumber, mcpTools, instruction: input.instruction, skills, surface: input.surface },
           run,
         );
     } else {
@@ -354,11 +377,11 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // 4. one generic turn. The instructions append the skill catalog at the END
     //    of the system prompt; buildPrompt inlines CURRENT STATE; prepend a one-line
     //    divergence note ONLY when the FE flagged an external edit (append-only).
-    // The issues agent has no "Existing files:" block for the note to refer to.
-    const note = input.filesChangedExternally && toolset !== "issues" ? DIVERGENCE_NOTE : "";
-    // What the Issues chat did meanwhile reaches the main agent, never the
-    // Issues agent itself (it was there).
-    const branchNote = toolset === "issues" ? "" : branchNotesNote(input.branchNotes);
+    // A view's agent has no "Existing files:" block for the note to refer to.
+    const note = input.filesChangedExternally && !viewAgent ? DIVERGENCE_NOTE : "";
+    // What the Issues chat did meanwhile reaches the main agent, never a view's
+    // agent (the Issues agent was there; an issue's thread is about one issue).
+    const branchNote = viewAgent ? "" : branchNotesNote(input.branchNotes);
     // Eager skills (#335): resolve the requested bodies and inline them ahead
     // of the instruction — the model applies them in its FIRST step instead of
     // spending a whole model call on loadSkill. Unknown names skip silently
@@ -412,13 +435,13 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
         attachmentsNote((input.chatAttachments ?? []).flatMap((p) => (p.filename ? [p.filename] : []))) +
         unreadableReferencesNote(input.unreadableReferences) +
         eagerBlock +
-        // The issues agent has no spec snapshot: the user's message is the prompt.
-        (toolset === "issues" ? input.instruction : buildPrompt(input.files, input.instruction)),
+        // A view's agent has no spec snapshot: the user's message is the prompt.
+        (viewAgent ? input.instruction : buildPrompt(input.files, input.instruction)),
       messages: history,
       ...(freshAttachments.length ? { fileParts: freshAttachments } : {}),
       // Each agent ends its turn here or at an ACCEPTED HITL question call (the
-      // question tools live on the `files` and `issues` sets, so that never
-      // fires on a task-plan turn).
+      // question tools live on the `files`, `issues` and `issue` sets, so that
+      // never fires on a task-plan turn).
       maxSteps: config.maxSteps,
       maxOutputTokens,
       // Short provider waits (a 429 with a brief retry-after, a 5xx) ride out

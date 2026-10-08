@@ -30,8 +30,14 @@ test("the hand-off tool is named per view and recognised by name", () => {
 test("handOffView maps the tool name to the view it opens", () => {
   assert.equal(handOffView("hand_off_to_issues"), "issues");
   assert.equal(handOffView("ask_question"), undefined);
+  // The issue view has no hand-off tool; its missing entry matches nothing.
+  assert.equal(handOffView(undefined), undefined);
 });
 
-test("every view has exactly one hand-off tool", () => {
-  assert.deepEqual(Object.keys(HAND_OFF_TOOLS).sort(), [...VIEWS].sort());
+test("only the Issues view receives a hand-off; an issue's own thread has none", () => {
+  assert.deepEqual(Object.keys(HAND_OFF_TOOLS), ["issues"]);
+  for (const view of Object.keys(HAND_OFF_TOOLS)) assert.ok((VIEWS as readonly string[]).includes(view), view);
+  assert.equal("issue" in HAND_OFF_TOOLS, false);
+  // No view's name is mistaken for a hand-off tool.
+  for (const view of VIEWS) assert.equal(isHandOffTool(view), false, view);
 });

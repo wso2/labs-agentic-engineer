@@ -26,9 +26,9 @@ canonical `FileBundle` ops to reconstruct file state — no second matcher.
 
 Each agent is a `ToolLoopAgent` built in its own module by a factory, following the AI
 SDK's building-agents guidance: `createMainAgent` (`src/agents/main/agent.ts`, the spec
-editor) and `createIssuesAgent` (`src/agents/issues/agent.ts`). A factory takes what
-the agent IS (its deps: tools, instructions, or for the Issues agent what it builds them
-from) and `AgentRunSettings` (`src/agents/run-settings.ts`), what `runTurn` decided for
+editor), `createIssuesAgent` (`src/agents/issues/agent.ts`) and `createIssueAgent`
+(`src/agents/issue/agent.ts`). A factory takes what the agent IS (its deps: tools,
+instructions, or for a view's agent what it builds them from) and `AgentRunSettings` (`src/agents/run-settings.ts`), what `runTurn` decided for
 this turn: the model built from the org's connection, the step cap, the output ceiling,
 retries, provider options, `instructionsWrap` (the system prompt, with the cache
 breakpoint when caching is on) and `prepareStep` (the rolling breakpoint). Every agent
@@ -40,7 +40,8 @@ and leaves an absent option off entirely.
 message, which is what fixes the turn prompt's index for the rolling breakpoint, then
 calls `agentFor` once and streams the agent it returns. `runConversationTurn` picks the
 factory: the Issues view's turns get `createIssuesAgent`, which merges the turn's MCP
-tools under its own and gates `create_issue`; every other turn gets `createMainAgent`
+tools under its own and gates `create_issue`; an issue's thread gets `createIssueAgent`,
+which keeps that issue's MCP tools and gates every write; every other turn gets `createMainAgent`
 over the tool set it assembles (files or task-plan, then MCP, register draft and web
 search).
 
@@ -76,15 +77,26 @@ search).
 A **view** is a main-panel view of the console that owns an agent of its own. The turn
 body's optional `view` (`VIEWS` in `@aep/agent-stream`; absent means the spec agent)
 selects that view's agent in place of the spec editor:
-`toolsetFor(turn, view)` returns `issues` for `view: "issues"` and otherwise derives
-`files`/`task-plan` from the turn. `runConversationTurn` runs an `issues` turn on
+`toolsetFor(turn, view)` returns `issues` for `view: "issues"`, `issue` for
+`view: "issue"`, and otherwise derives `files`/`task-plan` from the turn. `runConversationTurn` runs an `issues` turn on
 `createIssuesAgent` (`src/agents/issues/agent.ts`: the report classifier, the question
 tools, the turn's MCP tools under them, Issues-agent instructions, no spec bundle), and
 it stops on an accepted question call like every agent, so a "File this issue?" card
 ends the turn awaiting the user. Adding a view is one entry in `VIEWS`, one tool set,
-one `src/agents/<view>/` with its `agent.ts` factory, and, so the main agent can hand a
-report to it, one entry each in `HAND_OFF_TOOLS` and `HAND_OFF_DESCRIPTIONS`
-(`src/agents/main/tools/hand-off.ts`) and in `VIEW_AGENTS` (`src/agents/views.ts`).
+one `src/agents/<view>/` with its `agent.ts` factory and one entry in `VIEW_AGENTS`
+(`src/agents/views.ts`); a view the main agent hands reports to also has one entry each
+in `HAND_OFF_TOOLS` and `HAND_OFF_DESCRIPTIONS` (`src/agents/main/tools/hand-off.ts`).
+Only the Issues view receives a hand-off and only its chat leaves the main chat a branch
+note (`BRANCH_NOTE_VIEWS`); a view's agent works on no spec, so its prompt is the user's
+message alone, with no divergence note and no branch note.
+
+An **issue's thread** (`view: "issue"`) is the chat on one filed issue's card. The turn
+also carries `issueNumber` (a positive integer: required for that view, a 400 on any
+other), which `createIssueAgent` names in its prompt. Its tools are the question tools and,
+from the turn's MCP block, the issue's own tools by contract name (`get_issue`,
+`list_components`, `comment_issue`, `edit_issue`, `close_issue`, `reopen_issue`,
+`hand_to_coding_agent`); anything else the server lists is left out. The MCP token names
+the issue, so the tools act on it alone. Its turns carry no `outcome`.
 
 The Issues agent files on one explicit answer. The prompt has it call a single
 `ask_question` with the exact question `FILE_QUESTION` and the exact options `FILE_IT`
@@ -95,6 +107,17 @@ refuses with an error that tells the model what to ask. Once confirmed, the tool
 at most once in the turn; any later call is refused, so injected text in an earlier tool
 result, or a retry after a timeout that did file, cannot file twice, and a failed first
 attempt is reported to the user rather than retried silently.
+
+Every write an issue's agent makes waits the same way, generalised
+(`src/agents/confirmation.ts`: `answeredWith`, `refusing`, `once`, which the filing gate
+uses too). `CONFIRMATIONS` (`issue/confirm-gate.ts`) gives each write tool its question
+and option: "Post this comment?" → "Post it", "Apply this edit?" → "Apply it", "Close this
+issue?" → "Close it", "Reopen this issue?" → "Reopen it", "Hand this to the coding agent?"
+→ "Hand it over", each with "Not now". `gateWrites` lets the one tool the turn's single
+answer confirms run once and refuses every other write with an error naming its question;
+`get_issue` and `list_components` are never gated. The prompt reads the issue first,
+drafts each change, asks its question, and before a hand-off asks which component (the
+options from `list_components`); a "Deploy a version first" answer is relayed as is.
 
 The report classifier (`classify_report`, Jev) never blocks a turn. Below 0.8 confidence,
 or for a `question`, it asks the agent to clarify; a missing key, a non-2xx response, a

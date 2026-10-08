@@ -26,4 +26,5 @@ import type { View } from "@aep/agent-stream";
 
 export const VIEW_AGENTS: Record<View, { label: string }> = {
   issues: { label: "Issues" },
+  issue: { label: "Issue" },
 };

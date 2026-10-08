@@ -987,6 +987,12 @@ export interface TurnRequest {
    */
   view?: View;
   /**
+   * The issue an `issue`-view turn works on (a positive integer); required for
+   * that view and refused on any other. The agent names it in its prompt; the
+   * issue tools it is handed act on this issue alone (their token says so).
+   */
+  issueNumber?: number;
+  /**
    * What happened in the other views' chats since this conversation's previous
    * turn (at most one note per view). The service prepends each to a main-agent
    * turn's prompt so the main agent knows; an Issues turn ignores them.
@@ -999,7 +1005,7 @@ export interface TurnRequest {
  * turns ran there and the newest one's `outcome` (see `ManifestPart.outcome`).
  */
 export interface BranchNote {
-  view: View;
+  view: BranchNoteView;
   /** Turns that view's chat completed since then (a positive integer). */
   turns: number;
   /** The newest of those turns' outcome (at most `OUTCOME_MAX_CHARS`). */
@@ -1024,9 +1030,10 @@ export function isSurface(v: unknown): v is Surface {
  * The main-panel views that own an agent of their own. A view selects that
  * view's tool set and instructions in place of the spec agent's; absent means
  * the spec agent. Adding a view is one entry here, one tool set below, and one
- * `agents/<view>/` directory.
+ * `agents/<view>/` directory. `issues` is the Issues page's chat; `issue` is
+ * one filed issue's own thread (the turn names it in `issueNumber`).
  */
-export const VIEWS = ["issues"] as const;
+export const VIEWS = ["issues", "issue"] as const;
 
 export type View = (typeof VIEWS)[number];
 
@@ -1035,23 +1042,36 @@ export function isView(v: unknown): v is View {
   return (VIEWS as readonly unknown[]).includes(v);
 }
 
+/**
+ * The views whose chat leaves the main chat a branch note: the Issues chat
+ * alone. An issue's own thread works on that issue and tells the main chat
+ * nothing.
+ */
+export const BRANCH_NOTE_VIEWS = ["issues"] as const satisfies readonly View[];
+
+export type BranchNoteView = (typeof BRANCH_NOTE_VIEWS)[number];
+
+function isBranchNoteView(v: unknown): v is BranchNoteView {
+  return (BRANCH_NOTE_VIEWS as readonly unknown[]).includes(v);
+}
+
 /** The longest a turn's `outcome` (and so a branch note's) may be. */
 export const OUTCOME_MAX_CHARS = 400;
 
 /**
  * Runtime guard for `TurnRequest.branchNotes`: an array of at most one note per
- * view, each naming a known view, a positive integer turn count and an outcome
- * of at most `OUTCOME_MAX_CHARS`.
+ * view that leaves one (`BRANCH_NOTE_VIEWS`), each naming such a view, a
+ * positive integer turn count and an outcome of at most `OUTCOME_MAX_CHARS`.
  */
 export function isBranchNotes(v: unknown): v is BranchNote[] {
-  if (!Array.isArray(v) || v.length > VIEWS.length) return false;
+  if (!Array.isArray(v) || v.length > BRANCH_NOTE_VIEWS.length) return false;
   const views = new Set(v.map((note) => (note as { view?: unknown } | null)?.view));
   if (views.size !== v.length) return false;
   return v.every((note) => {
     if (note === null || typeof note !== "object") return false;
     const n = note as Record<string, unknown>;
     return (
-      isView(n.view) &&
+      isBranchNoteView(n.view) &&
       typeof n.turns === "number" &&
       Number.isInteger(n.turns) &&
       n.turns > 0 &&
@@ -1073,8 +1093,11 @@ export function isBranchNotes(v: unknown): v is BranchNote[] {
 /** The wire tool NAME that hands a request to the Issues view's agent. */
 export const HAND_OFF_TO_ISSUES = "hand_off_to_issues" as const;
 
-/** The hand-off tool for each view that can receive one. */
-export const HAND_OFF_TOOLS: Record<View, string> = { issues: HAND_OFF_TO_ISSUES };
+/**
+ * The hand-off tool for each view that can receive one: the Issues chat. An
+ * issue's own thread is opened from its card, never handed a report.
+ */
+export const HAND_OFF_TOOLS = { issues: HAND_OFF_TO_ISSUES } as const satisfies Partial<Record<View, string>>;
 
 /** True when `toolName` is a hand-off tool. */
 export function isHandOffTool(toolName: string | undefined): boolean {
@@ -1083,7 +1106,10 @@ export function isHandOffTool(toolName: string | undefined): boolean {
 
 /** The view a hand-off tool opens; absent when `toolName` is not a hand-off tool. */
 export function handOffView(toolName: string | undefined): View | undefined {
-  return VIEWS.find((view) => HAND_OFF_TOOLS[view] === toolName);
+  // A view with no hand-off tool has no entry: an absent name must not match it.
+  if (toolName === undefined) return undefined;
+  const tools: Partial<Record<View, string>> = HAND_OFF_TOOLS;
+  return VIEWS.find((view) => tools[view] === toolName);
 }
 
 /** Input of a hand-off tool-call. */
@@ -1101,10 +1127,10 @@ export interface HandOffResult {
 /**
  * The registrable tool sets. NOT a wire field: the agents service derives the
  * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files) and
- * `TurnRequest.view` (`issues` → issues), so a caller cannot ask for a tool set
- * that disagrees with what its turn is for.
+ * `TurnRequest.view` (`issues` → issues, `issue` → issue), so a caller cannot ask
+ * for a tool set that disagrees with what its turn is for.
  */
-export const TOOLSETS = ["files", "task-plan", "issues"] as const;
+export const TOOLSETS = ["files", "task-plan", "issues", "issue"] as const;
 
 export type Toolset = (typeof TOOLSETS)[number];
 
