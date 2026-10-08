@@ -131,6 +131,25 @@ func TestLoad_CodingAgentJobTTL(t *testing.T) {
 	}
 }
 
+// A TTL that, plus OpenChoreo's re-create lag (up to 13 min on Cloud), passes
+// the 30-min apply cap would fail every re-dispatch `not_applied`: boot refuses
+// it, naming the key and never the value.
+func TestLoad_CodingAgentJobTTLApplyCapCoupling(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_JOB_TTL", "17m")
+	if _, err := Load(); err != nil {
+		t.Fatalf("17m is the largest allowed TTL: %v", err)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "17m1s")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a TTL past the apply-cap coupling must fail Load")
+	}
+	if !strings.Contains(err.Error(), "CODING_AGENT_JOB_TTL") || strings.Contains(err.Error(), "17m1s") {
+		t.Fatalf("error must name the key, never the value: %v", err)
+	}
+}
+
 // Aep-api holds no static OpenBao token. OPENBAO_TOKEN is read by
 // nothing, and the Kubernetes-auth login defaults to role aep-api on mount
 // kubernetes with the pod's projected service-account token.

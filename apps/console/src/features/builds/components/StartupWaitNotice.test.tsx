@@ -49,6 +49,18 @@ describe("StartupWaitNotice", () => {
     expect(notice).toHaveTextContent(/If it has not started by .+, this run fails\./);
   });
 
+  // NotYetApplied is the normal path on Cloud (8-13 min): a calm in-progress
+  // status, not a warning or an alert.
+  it("shows the platform still preparing the agent as a neutral status, not a warning", () => {
+    render(<StartupWaitNotice cycle={{ ...stuck, startupWait: { ...stuck.startupWait!, reason: "NotYetApplied" } }} />);
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("Preparing the agent");
+    expect(notice).toHaveTextContent("The platform is still preparing the agent.");
+    expect(notice).not.toHaveTextContent("this run fails");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(notice.closest(".MuiAlert-root")).toBeNull();
+  });
+
   it("renders nothing once the agent is running or the cycle has ended", () => {
     const running: RunCycleView = { id: "c1", kind: "coding", attempts: 1, createdAt: "2026-10-06T13:58:00Z", recording: "live" };
     const { container, rerender } = render(<StartupWaitNotice cycle={running} />);

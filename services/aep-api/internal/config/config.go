@@ -25,6 +25,14 @@ import (
 )
 
 // Config holds all application configuration.
+// MaxCodingAgentJobTTL bounds CODING_AGENT_JOB_TTL. After a re-dispatch the
+// finished Job's TTL has to run out and OpenChoreo re-create the Job (Cloud
+// applies a release up to 13 min after it is requested) before the attempt
+// can start, all inside delivery.CycleApplyCap (30 min from dispatch): 30 - 13
+// = 17 min. A longer TTL would fail every agent-death re-dispatch
+// `startup_failed:not_applied` (design/oc-job-dispatch.md).
+const MaxCodingAgentJobTTL = 17 * time.Minute
+
 type Config struct {
 	ServerHost string
 	ServerPort int

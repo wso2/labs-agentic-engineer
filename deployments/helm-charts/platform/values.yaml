@@ -153,7 +153,8 @@ codingAgentRunner:
   # How long a finished cycle Job (and its pod) is kept before Kubernetes
   # deletes it, as a Go duration (CODING_AGENT_JOB_TTL; rendered as the Job's
   # ttlSecondsAfterFinished). The cycle's binding is suspended once the run is
-  # over, so the Job OpenChoreo re-creates after the TTL never runs again.
+  # over, so the Job OpenChoreo re-creates after the TTL never runs again. At
+  # most 17m: aep-api refuses to boot with a longer one.
   jobTTL: 600s
   # CPU each cycle Job requests (CODING_AGENT_CPU_REQUEST): a positive CPU
   # quantity such as 250m or 0.5, at most 3. Empty keeps the ComponentType's

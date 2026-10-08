@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Alert, AlertTitle, Typography } from "@wso2/oxygen-ui";
+import { Alert, AlertTitle, CircularProgress, Stack, Typography } from "@wso2/oxygen-ui";
 import type { components } from "../../../generated/aep-api";
 import { startupWaitNotice } from "../model/agentStart";
 
@@ -27,14 +27,26 @@ type RunCycleView = components["schemas"]["RunCycleView"];
  * gives up. Shared by the Build card and the Validation card, because a coding
  * and a validation agent wait for the cluster the same way.
  *
- * Warning, not info: the run fails at the deadline unless the cause clears,
- * and freeing room in the cluster is something a person can do about it.
+ * Warning for a cause the cluster reported: the run fails at the deadline
+ * unless it clears, and freeing room is something a person can do about it.
+ * The platform still preparing the agent is the normal wait on Cloud, so it is
+ * a calm in-progress status with no alert and no deadline.
  * Nothing renders while the agent runs or once the cycle has ended; the
  * failure card says what happened after that.
  */
 export function StartupWaitNotice({ cycle }: { cycle: RunCycleView | undefined }) {
   const notice = startupWaitNotice(cycle);
   if (!notice) return null;
+  if (notice.tone === "neutral") {
+    return (
+      <Stack direction="row" spacing={1.5} role="status" sx={{ alignItems: "center" }}>
+        <CircularProgress size={16} />
+        <Typography variant="body2" color="text.secondary">
+          <strong>{notice.title}.</strong> {notice.body}
+        </Typography>
+      </Stack>
+    );
+  }
   return (
     <Alert severity="warning" role="status">
       <AlertTitle>{notice.title}</AlertTitle>

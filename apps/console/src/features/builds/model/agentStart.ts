@@ -57,12 +57,14 @@ interface CauseWords {
  */
 const PLATFORM_PREPARING: CauseWords = {
   waiting: "The platform is still preparing the agent.",
-  failed: "The platform took longer than usual to prepare it.",
+  failed: "The platform did not start it within 30 minutes.",
 };
 const NOT_APPLIED = "not_applied";
+/** The platform has not applied the agent's Job yet: on Cloud the normal path for 8-13 minutes. */
+const NOT_YET_APPLIED = "NotYetApplied";
 
 const CAUSES: Record<string, CauseWords> = {
-  NotYetApplied: PLATFORM_PREPARING,
+  [NOT_YET_APPLIED]: PLATFORM_PREPARING,
   [NOT_APPLIED]: PLATFORM_PREPARING,
   [UNSCHEDULABLE]: {
     waiting: "The cluster has no room for the agent right now (CPU, memory or a scheduling rule).",
@@ -90,6 +92,12 @@ export interface StartupWaitCopy {
   body: string;
 }
 
+/** How the waiting notice reads: `neutral` is the platform's normal wait, `warning` a stuck cause. */
+export interface StartupWaitNoticeCopy extends StartupWaitCopy {
+  tone: "neutral" | "warning";
+}
+
+
 /**
  * The notice for an OPEN cycle whose agent the cluster has not started, or
  * `undefined` when nothing holds it up. The deadline is the platform's own
@@ -100,9 +108,14 @@ export interface StartupWaitCopy {
 export function startupWaitNotice(
   cycle: RunCycleView | undefined,
   now: Date = new Date(),
-): StartupWaitCopy | undefined {
+): StartupWaitNoticeCopy | undefined {
   const wait = cycle?.startupWait;
   if (!cycle || cycle.endedAt || !wait) return undefined;
+  // Healthy and expected, so no deadline line and no warning: only a cause the
+  // cluster reported can need a person.
+  if (wait.reason === NOT_YET_APPLIED) {
+    return { title: "Preparing the agent", body: PLATFORM_PREPARING.waiting, tone: "neutral" };
+  }
   const cause =
     CAUSES[wait.reason]?.waiting ?? `The cluster reports the agent as waiting: ${wait.reason}.`;
   return {
@@ -111,6 +124,7 @@ export function startupWaitNotice(
         ? "Waiting for room in the cluster to start the agent"
         : "Waiting to start the agent",
     body: `${cause} If it has not started by ${resetStamp(wait.failsAt, now)}, this run fails.`,
+    tone: "warning",
   };
 }
 
@@ -172,8 +186,8 @@ function noPullRequestSentence(earlier: readonly RunCycleView[]): string {
 }
 
 /**
- * Why the newest cycle's agent never started, what that left undone, and when
- * trying again can help. `retry` names how, in the words of the button on the
+ * Why the newest cycle's agent never started, what that left undone, and what
+ * trying again does. `retry` names how, in the words of the button on the
  * caller's screen (the Build card's Retry; the Validation card's label from
  * `validateLabel`), so the copy never names a button that is not there.
  * `earlier` are the run's cycles before it.
@@ -188,13 +202,15 @@ export function agentStartFailedCopy(
   const notDone = validating ? "Nothing ran; the version was not validated." : noPullRequestSentence(earlier);
   const when = isRoomShortage(cycle?.agentReason)
     ? "once the cluster has room"
-    : startupFailureReason(cycle?.agentReason) === NOT_APPLIED
-      ? "in a few minutes"
-      : "once that is fixed";
+    : "once that is fixed";
+  const retryLine =
+    startupFailureReason(cycle?.agentReason) === NOT_APPLIED
+      ? `${retry} starts a new attempt.`
+      : `${retry} ${when}.`;
   const reported = clusterReport(cycle?.agentReason);
   return {
     title: `The ${agentNoun(cycle)} could not start`,
-    body: [cause, notDone, `${retry} ${when}.`, reported ? reportSentence("The cluster reported", reported) : undefined]
+    body: [cause, notDone, retryLine, reported ? reportSentence("The cluster reported", reported) : undefined]
       .filter(Boolean)
       .join(" "),
   };

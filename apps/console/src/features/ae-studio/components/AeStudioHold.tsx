@@ -40,9 +40,6 @@ export function AeStudioHold() {
   );
 }
 
-// AE Studio failed to start. Try again re-reads the state (a GET is also what
-// starts a new converge); Settings stays reachable, since a setting is the
-// usual fix.
 // AE Studio has not started within its bound (`failed`, reason `timeout`):
 // the cause is hedged, and the gate keeps re-reading, so this page gives way
 // to the console by itself. No Try again: it is already trying.
@@ -61,6 +58,9 @@ export function AeStudioSlowStart() {
   );
 }
 
+// AE Studio failed to start. Try again re-reads the state (a GET is also what
+// starts a new converge); Settings stays reachable, since a setting is the
+// usual fix.
 export function AeStudioFailed({
   onRetry,
   retrying,

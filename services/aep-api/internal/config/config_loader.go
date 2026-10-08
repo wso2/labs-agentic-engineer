@@ -144,7 +144,7 @@ func Load() (Config, error) {
 		// The observability plane's log retention (3 days on Cloud).
 		ObserverLogRetention: r.readOptionalDuration("OBSERVER_LOG_RETENTION", 72*time.Hour),
 		// Finished cycle Jobs are deleted after this; see Config.CodingAgentJobTTL.
-		CodingAgentJobTTL: r.readOptionalDuration("CODING_AGENT_JOB_TTL", 600*time.Second),
+		CodingAgentJobTTL: r.readBoundedDuration("CODING_AGENT_JOB_TTL", 600*time.Second, MaxCodingAgentJobTTL),
 		// See Config.CodingAgentCPURequest.
 		CodingAgentCPURequest: r.readOptionalCPU("CODING_AGENT_CPU_REQUEST", "500m", CodingAgentCPUCeilingMillicores),
 	}
@@ -382,6 +382,17 @@ func (r *configReader) readOptionalDuration(key string, defaultVal time.Duration
 	d, err := time.ParseDuration(val)
 	if err != nil {
 		r.errors = append(r.errors, fmt.Errorf("%s: %w", key, err))
+		return defaultVal
+	}
+	return d
+}
+
+// readBoundedDuration is readOptionalDuration with an upper bound: a longer
+// duration records an error naming the key only, never the value.
+func (r *configReader) readBoundedDuration(key string, defaultVal, max time.Duration) time.Duration {
+	d := r.readOptionalDuration(key, defaultVal)
+	if d > max {
+		r.errors = append(r.errors, fmt.Errorf("%s: above the maximum of %s", key, max))
 		return defaultVal
 	}
 	return d

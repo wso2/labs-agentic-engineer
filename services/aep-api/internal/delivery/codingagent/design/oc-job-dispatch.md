@@ -194,7 +194,8 @@ creation time. From attempt 2 a Job created more than `dispatchClockSkew`
 (30 s) before `dispatched_at` is attempt 1's, complete, and starts no pod:
 it counts as no Job yet (`NotYetApplied`, apply cap), and the Job OpenChoreo
 re-creates after its TTL starts the clock. That keeps `CODING_AGENT_JOB_TTL`
-plus OpenChoreo's re-create lag under the 30-min cap (600 s by default). Cloud
+plus OpenChoreo's re-create lag under the 30-min cap (600 s by default); boot
+refuses a TTL above 17 min (30 min minus the 13-min worst apply lag), naming the key. Cloud
 OpenChoreo applies a release 8-13 min after it is requested, which is why the
 grace does not count from the dispatch. The clock
 is written once per attempt, fenced on `attempts`, `startup_clock_at IS NULL`

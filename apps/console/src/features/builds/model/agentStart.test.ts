@@ -39,6 +39,7 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
   it("names the cluster's lack of room, in plain words, and when the run fails", () => {
     const n = startupWaitNotice(waiting("Unschedulable"), now);
     expect(n?.title).toBe("Waiting for room in the cluster to start the agent");
+    expect(n?.tone).toBe("warning");
     expect(n?.body).toContain("The cluster has no room for the agent right now (CPU, memory or a scheduling rule).");
     expect(n?.body).toContain(`If it has not started by ${resetStamp(failsAt, now)}, this run fails.`);
   });
@@ -51,6 +52,7 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
   ])("names %s in plain words", (reason, sentence) => {
     const n = startupWaitNotice(waiting(reason), now);
     expect(n?.title).toBe("Waiting to start the agent");
+    expect(n?.tone).toBe("warning");
     expect(n?.body).toContain(sentence);
     expect(n?.body).not.toContain(reason);
   });
@@ -59,11 +61,11 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
   // not a cluster reason, so it is never shown as one.
   it("says the platform is still preparing the agent before its Job exists", () => {
     const n = startupWaitNotice(waiting("NotYetApplied"), now);
-    expect(n?.title).toBe("Waiting to start the agent");
-    expect(n?.body).toBe(
-      `The platform is still preparing the agent. If it has not started by ${resetStamp(failsAt, now)}, this run fails.`,
-    );
+    expect(n?.title).toBe("Preparing the agent");
+    expect(n?.tone).toBe("neutral");
+    expect(n?.body).toBe("The platform is still preparing the agent.");
     expect(n?.body).not.toContain("NotYetApplied");
+    expect(n?.body).not.toContain("fails");
     expect(n?.body).not.toContain("cluster");
   });
 
@@ -97,7 +99,7 @@ describe("startupFailureCause — why an agent never started", () => {
   // not_applied is the platform's verdict (the Job was never applied within
   // the apply cap), not something the cluster reported.
   it("says the platform took too long to prepare it, never that the cluster reported not_applied", () => {
-    expect(startupFailureCause("startup_failed:not_applied")).toBe("The platform took longer than usual to prepare it.");
+    expect(startupFailureCause("startup_failed:not_applied")).toBe("The platform did not start it within 30 minutes.");
     const copy = agentStartFailedCopy(
       { id: "c1", kind: "coding", attempts: 1, createdAt: "2026-10-06T13:00:00Z", agentReason: "startup_failed:not_applied" },
       [],
@@ -105,7 +107,7 @@ describe("startupFailureCause — why an agent never started", () => {
     );
     expect(copy.title).toBe("The coding agent could not start");
     expect(copy.body).toBe(
-      "The platform took longer than usual to prepare it. Nothing ran; no pull request was opened. Retry in a few minutes.",
+      "The platform did not start it within 30 minutes. Nothing ran; no pull request was opened. Retry starts a new attempt.",
     );
     expect(copy.body).not.toContain("not_applied");
     expect(copy.body).not.toContain("cluster");
