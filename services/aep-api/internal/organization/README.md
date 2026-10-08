@@ -239,7 +239,10 @@ model-connection / idp services.*
   last successful converge, or not Ready for longer than `notReadyBound` (20 min, above OpenChoreo's
   render and apply of the release plus the pod's 200 s startup budget, about 15 min on a first Cloud install; this is how a stuck pod, CrashLoopBackOff, ImagePullBackOff or unschedulable, reaches `failed`, as OC reports no distinct reason for it) counted from the later of that converge and the Ready condition's last
   transition. Nothing is converged for it; a save that changes the desired state starts the clock
-  again.
+  again. The `failed` answer carries `reason` (`AEStudioFailReason`, computed per read, nothing
+  stored): `timeout` for `notReadyBound`, the one failure that may clear by itself; `error` for every
+  other failed path (a desired state that cannot be computed, no write target, a recent converge
+  failure, a terminal Ready reason).
 - **`EnsureClient` keeps Thunder and the vault agreeing** (`client_ensure.go`): a created app is
   stored with the secret Thunder returns once; a found app with no reference row is healed with a new
   secret written to the vault before Thunder's `PUT` (inside the repoint, so a failed `PUT` rolls the

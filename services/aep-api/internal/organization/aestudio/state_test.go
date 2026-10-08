@@ -282,3 +282,69 @@ func TestStatus_StuckWithoutConvergeOnRecord(t *testing.T) {
 		t.Fatalf("state %s", st.State)
 	}
 }
+
+// A failed answer says why: timeout for a binding not Ready past
+// notReadyBound (it may still come up by itself), error for every other
+// failed path. Answers that are not failed carry no reason.
+func TestStatus_FailedReason(t *testing.T) {
+	cases := []struct {
+		name   string
+		setup  func(*fixture)
+		state  State
+		reason FailReason
+	}{
+		{"progressing, past the bound", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound + time.Second)
+		}, StateFailed, FailTimeout},
+		{"progressing past the bound with no converge on record", func(f *fixture) {
+			f.withAllRefs().converged()
+			f.svc.mu.Lock()
+			delete(f.svc.converged, "default")
+			f.svc.mu.Unlock()
+			f.withNotReady("ResourcesProgressing", f.clock.now().Add(-notReadyBound-time.Second))
+		}, StateFailed, FailTimeout},
+		{"rendering failed once settled", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("RenderingFailed", f.clock.now()).clock.advance(settleGrace)
+		}, StateFailed, FailError},
+		{"invalid release configuration once settled", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("InvalidReleaseConfiguration", f.clock.now()).clock.advance(settleGrace)
+		}, StateFailed, FailError},
+		{"release ownership conflict once settled", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("ReleaseOwnershipConflict", f.clock.now()).clock.advance(settleGrace)
+		}, StateFailed, FailError},
+		{"rendering failed, past the bound too", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("RenderingFailed", f.clock.now()).clock.advance(notReadyBound + time.Second)
+		}, StateFailed, FailError},
+		{"no write target", func(f *fixture) {
+			f.withAllRefs().withWriteTargetErr(&openchoreo.ErrNoWriteTarget{})
+		}, StateFailed, FailError},
+		{"config missing", func(f *fixture) {
+			f.withAllRefs().withoutConfig("AE_STUDIO_IMAGE_COLLAB")
+		}, StateFailed, FailError},
+		{"converge failed moments ago", func(f *fixture) {
+			f.withAllRefs()
+			f.oc.mu.Lock()
+			f.oc.project = true
+			f.oc.mu.Unlock()
+			f.withWriteTargetErr(errFake)
+			f.svc.Trigger(userCtx(), "default")
+			f.waitIdle(t)
+		}, StateFailed, FailError},
+		{"progressing, inside the bound", func(f *fixture) {
+			f.withAllRefs().converged().withNotReady("ResourcesProgressing", f.clock.now()).clock.advance(notReadyBound - time.Second)
+		}, StateProvisioning, ""},
+		{"fresh org", func(f *fixture) { f.withAllRefs() }, StateProvisioning, ""},
+		{"ready", func(f *fixture) { f.withAllRefs().converged().withReady(true) }, StateReady, ""},
+		{"absent", func(f *fixture) {}, StateAbsent, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			c.setup(f)
+			st, err := f.svc.Status(userCtx(), "default")
+			if err != nil || st.State != c.state || st.Reason != c.reason {
+				t.Fatalf("state %s reason %q err %v, want %s %q", st.State, st.Reason, err, c.state, c.reason)
+			}
+		})
+	}
+}

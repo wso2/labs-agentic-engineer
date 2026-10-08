@@ -16,6 +16,24 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AeStudioReason.
+const (
+	AeStudioReasonError   AeStudioReason = "error"
+	AeStudioReasonTimeout AeStudioReason = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the AeStudioReason enum.
+func (e AeStudioReason) Valid() bool {
+	switch e {
+	case AeStudioReasonError:
+		return true
+	case AeStudioReasonTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AeStudioState.
 const (
 	AeStudioStateAbsent       AeStudioState = "absent"
@@ -1378,12 +1396,18 @@ type AccessRequest struct {
 
 // AeStudio defines model for AeStudio.
 type AeStudio struct {
+	// Reason Why AE Studio failed; set only when the state is failed. timeout: it has not become ready within the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release that cannot be applied).
+	Reason AeStudioReason `json:"reason,omitempty"`
+
 	// State absent (no GitHub token yet), provisioning, ready, or failed.
 	State AeStudioState `json:"state"`
 
 	// Urls Public URLs of a ready AE Studio's three services; set only when ready.
 	Urls *AeStudioUrls `json:"urls,omitempty"`
 }
+
+// AeStudioReason Why AE Studio failed; set only when the state is failed. timeout: it has not become ready within the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release that cannot be applied).
+type AeStudioReason string
 
 // AeStudioState absent (no GitHub token yet), provisioning, ready, or failed.
 type AeStudioState string

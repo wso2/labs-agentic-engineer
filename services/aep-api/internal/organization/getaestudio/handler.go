@@ -47,7 +47,7 @@ func (h *Handler) GetAeStudio(ctx context.Context, _ gen.GetAeStudioRequestObjec
 		slog.ErrorContext(ctx, "ae_studio.status_read_failed", "org", org, "error", err)
 		return nil, apierr.Internal("failed to read AE Studio state")
 	}
-	out := gen.GetAeStudio200JSONResponse{State: gen.AeStudioState(st.State)}
+	out := gen.GetAeStudio200JSONResponse{State: gen.AeStudioState(st.State), Reason: gen.AeStudioReason(st.Reason)}
 	if st.URLs != nil {
 		out.Urls = &gen.AeStudioUrls{DesignAgent: st.URLs.DesignAgent, Collab: st.URLs.Collab, Tools: st.URLs.Tools}
 	}

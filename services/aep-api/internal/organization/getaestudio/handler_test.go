@@ -79,11 +79,22 @@ func TestGetAeStudio(t *testing.T) {
 	}
 }
 
-func TestGetAeStudio_NotConfiguredIsFailed(t *testing.T) {
-	h := New(fakeStatus{st: organization.AEStudioStatus{State: organization.AEStudioFailed}})
-	resp, err := h.GetAeStudio(tenant.WithBoundOrg(context.Background(), "default"), gen.GetAeStudioRequestObject{})
-	if err != nil || mustJSON(t, resp) != `{"state":"failed"}` {
-		t.Fatalf("%v %v", resp, err)
+// A failed answer carries its reason; a reasonless one (nil) omits it.
+func TestGetAeStudio_FailedCarriesReason(t *testing.T) {
+	cases := []struct {
+		reason organization.AEStudioFailReason
+		want   string
+	}{
+		{organization.AEStudioFailTimeout, `{"reason":"timeout","state":"failed"}`},
+		{organization.AEStudioFailError, `{"reason":"error","state":"failed"}`},
+		{"", `{"state":"failed"}`},
+	}
+	for _, c := range cases {
+		h := New(fakeStatus{st: organization.AEStudioStatus{State: organization.AEStudioFailed, Reason: c.reason}})
+		resp, err := h.GetAeStudio(tenant.WithBoundOrg(context.Background(), "default"), gen.GetAeStudioRequestObject{})
+		if err != nil || mustJSON(t, resp) != c.want {
+			t.Fatalf("reason %q: got %v %v, want %s", c.reason, mustJSON(t, resp), err, c.want)
+		}
 	}
 }
 

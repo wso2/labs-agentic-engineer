@@ -70,6 +70,9 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 	d, err := s.desired(ctx, org)
 	var nr *notReadyError
 	if errors.As(err, &nr) {
+		if nr.state == StateFailed {
+			return failed(FailError), nil
+		}
 		return Status{State: nr.state}, nil
 	}
 	if err != nil {
@@ -80,7 +83,7 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 		return provisioning, nil
 	}
 	if s.recentlyFailed(org, d.fingerprint()) {
-		return Status{State: StateFailed}, nil
+		return failed(FailError), nil
 	}
 	l, err := s.observe(ctx, s.oc, org)
 	var noTarget *openchoreo.ErrNoWriteTarget
@@ -91,7 +94,7 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 			level = slog.LevelWarn
 		}
 		slog.Log(ctx, level, "ae_studio.status_failed", "org", org, "reason", "no write target", "error", err)
-		return Status{State: StateFailed}, nil
+		return failed(FailError), nil
 	case errors.Is(err, errProjectMissing):
 		s.Trigger(ctx, org)
 		return provisioning, nil
@@ -112,26 +115,37 @@ func (s *Service) status(ctx context.Context, org string) (Status, error) {
 			level = slog.LevelWarn
 		}
 		slog.Log(ctx, level, "ae_studio.status_failed", "org", org, "reason", reason)
-		return Status{State: StateFailed}, nil
+		if reason == reasonPastBound {
+			return failed(FailTimeout), nil
+		}
+		return failed(FailError), nil
 	}
 	return provisioning, nil
 }
+
+// failed is a failed answer with its reason.
+func failed(reason FailReason) Status { return Status{State: StateFailed, Reason: reason} }
 
 // terminalReadyReasons are the Ready=False reasons OC gives a binding whose
 // release it cannot render or own, which waiting will not fix. OC never
 // reports a data-plane failure (CrashLoopBackOff, ImagePullBackOff, an
 // unschedulable pod) as a distinct reason: those stay not Ready and reach
-// failed through notReadyBound instead.
+// failed through notReadyBound instead (reason timeout).
 var terminalReadyReasons = map[string]bool{
 	"RenderingFailed":             true,
 	"InvalidReleaseConfiguration": true,
 	"ReleaseOwnershipConflict":    true,
 }
 
+// reasonPastBound is stuck's reason for a binding not Ready for longer than
+// notReadyBound: the one failed answer that is a timeout, not an error, as
+// the binding may still come up by itself.
+const reasonPastBound = "not ready past bound"
+
 // stuck names why a binding that is not Ready will not become so by itself
 // ("" while it may): a terminal Ready reason once the last converge has
-// settled, or not Ready for longer than notReadyBound. The reason is an OC
-// reason code or a fixed phrase, never a value.
+// settled, or not Ready for longer than notReadyBound (reasonPastBound). The
+// reason is an OC reason code or a fixed phrase, never a value.
 func (s *Service) stuck(org string, b *openchoreo.ResourceReleaseBinding) string {
 	now, converged := s.now(), s.convergedAt(org)
 	c := b.ReadyCondition()
@@ -143,7 +157,7 @@ func (s *Service) stuck(org string, b *openchoreo.ResourceReleaseBinding) string
 		since = c.LastTransitionTime
 	}
 	if !since.IsZero() && now.Sub(since) > notReadyBound {
-		return "not ready past bound"
+		return reasonPastBound
 	}
 	return ""
 }

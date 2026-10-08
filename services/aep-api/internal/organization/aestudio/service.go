@@ -40,13 +40,14 @@ const (
 	ResourceName = "ae-studio"
 )
 
-// State, URLs and Status are the organization root's AE Studio types: the
-// root declares them so its slices answer GET /ae-studio without importing
-// this package.
+// State, URLs, FailReason and Status are the organization root's AE Studio
+// types: the root declares them so its slices answer GET /ae-studio without
+// importing this package.
 type (
-	State  = organization.AEStudioState
-	URLs   = organization.AEStudioURLs
-	Status = organization.AEStudioStatus
+	State      = organization.AEStudioState
+	URLs       = organization.AEStudioURLs
+	FailReason = organization.AEStudioFailReason
+	Status     = organization.AEStudioStatus
 )
 
 const (
@@ -54,6 +55,9 @@ const (
 	StateProvisioning = organization.AEStudioProvisioning
 	StateReady        = organization.AEStudioReady
 	StateFailed       = organization.AEStudioFailed
+
+	FailTimeout = organization.AEStudioFailTimeout
+	FailError   = organization.AEStudioFailError
 )
 
 var (

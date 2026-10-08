@@ -39,6 +39,20 @@ const (
 	AEStudioFailed AEStudioState = "failed"
 )
 
+// AEStudioFailReason is why a failed AE Studio failed.
+type AEStudioFailReason string
+
+const (
+	// AEStudioFailTimeout: the binding has not become Ready within the
+	// bound. OpenChoreo does not say why (a pod that cannot be scheduled
+	// reads the same as any other), and it may still come up by itself.
+	AEStudioFailTimeout AEStudioFailReason = "timeout"
+	// AEStudioFailError: every other failure (AE Studio not configured, no
+	// write target, a failed converge, a release OpenChoreo cannot render
+	// or own).
+	AEStudioFailError AEStudioFailReason = "error"
+)
+
 // AEStudioURLs are the public URLs of a ready AE Studio's three services.
 type AEStudioURLs struct {
 	DesignAgent string
@@ -46,14 +60,16 @@ type AEStudioURLs struct {
 	Tools       string
 }
 
-// AEStudioStatus is an org's AE Studio state. URLs is set only when ready.
+// AEStudioStatus is an org's AE Studio state. URLs is set only when ready,
+// Reason only when failed.
 // OUID is the OU id the pod pins (its parameters.org.id); it is never on the
 // wire, and is what a caller of the pod's internal API sends as
 // X-Impersonate-Org.
 type AEStudioStatus struct {
-	State AEStudioState
-	URLs  *AEStudioURLs
-	OUID  string
+	State  AEStudioState
+	URLs   *AEStudioURLs
+	Reason AEStudioFailReason
+	OUID   string
 }
 
 // StudioConverger starts a converge of the org's AE Studio and returns at
