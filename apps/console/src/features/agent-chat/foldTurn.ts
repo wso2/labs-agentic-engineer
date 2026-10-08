@@ -31,7 +31,7 @@ import {
 } from "@aep/agent-stream";
 import type { TurnStatus } from "./api/turns";
 import { isTurnStreamNotFound } from "./api/turns";
-import { handOffRequest } from "./chatLog";
+import { filedIssueNumber, handOffRequest, isCreateIssueTool } from "./chatLog";
 import { turnFailureText, type TurnFailure } from "./lib/turnFailure";
 import { extractStreamingQuestions, parseQuestionsInput } from "./questionCards";
 
@@ -57,6 +57,8 @@ export interface TurnSink {
   withdrawQuestion: (toolCallId: string) => void;
   /** The agent handed the user's request to another view's chat: the turn ends waiting for the user. */
   handoff: (handOff: { toolCallId: string; view: View; request: string }) => void;
+  /** The Issues agent filed an issue: its `create_issue` result names the new one. */
+  filed: (filed: { toolCallId: string; issueNumber: number }) => void;
   /** A file write the bundle accepted: its `tool-result`, carrying the call's input. */
   wrote: (part: StreamPart) => void;
   error: (text: string) => void;
@@ -199,6 +201,11 @@ export async function foldTurn(input: {
         break;
       }
       case "tool-result": {
+        if (isCreateIssueTool(part.toolName)) {
+          const issueNumber = filedIssueNumber(part.output);
+          if (issueNumber !== null && part.toolCallId) sink.filed({ toolCallId: part.toolCallId, issueNumber });
+          break;
+        }
         if (!part.toolName || !isFileMutationTool(part.toolName)) break;
         const change = toChange(part);
         const ok = change.result?.ok !== false;

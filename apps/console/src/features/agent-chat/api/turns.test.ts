@@ -31,7 +31,7 @@ vi.mock("../../../api/client", () => ({
   },
 }));
 
-const { ConversationRotatedError, TurnInProgressError, getActiveTurn, startTurn } = await import("./turns");
+const { ConversationRotatedError, IssueClosedError, TurnInProgressError, getActiveTurn, startTurn } = await import("./turns");
 
 function refused(status: number, error: unknown) {
   post.mockResolvedValueOnce({ data: undefined, error, response: { status } });
@@ -62,6 +62,13 @@ describe("startTurn", () => {
     await expect(startTurn("shop", "conv-1", { instruction: "Go" })).rejects.toBeInstanceOf(ConversationRotatedError);
   });
 
+  it("reads a 409 issue_closed as the issue being closed", async () => {
+    refused(409, { code: "issue_closed" });
+    await expect(startTurn("shop", "conv-1", { instruction: "Go", view: "issue", issueNumber: 7 })).rejects.toBeInstanceOf(
+      IssueClosedError,
+    );
+  });
+
   it("carries the server's message for any other refusal", async () => {
     refused(400, { code: "invalid_request", message: "instruction is required" });
     await expect(startTurn("shop", "conv-1", { instruction: " " })).rejects.toThrow("instruction is required");
@@ -85,6 +92,14 @@ describe("getActiveTurn", () => {
     expect(await getActiveTurn("shop", "issues")).toBe(turn);
     expect(get).toHaveBeenCalledWith("/projects/{projectName}/turns/active", {
       params: { path: { projectName: "shop" }, query: { view: "issues" } },
+    });
+  });
+
+  it("asks for an issue's running turn in the issue view, by its number", async () => {
+    get.mockResolvedValueOnce({ data: undefined, error: undefined, response: { status: 204 } });
+    await getActiveTurn("shop", "issue", 7);
+    expect(get).toHaveBeenCalledWith("/projects/{projectName}/turns/active", {
+      params: { path: { projectName: "shop" }, query: { view: "issue", issueNumber: 7 } },
     });
   });
 });

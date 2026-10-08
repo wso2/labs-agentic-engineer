@@ -30,6 +30,7 @@ import { ThreadsMenu } from "./ThreadsMenu";
 function renderMenu(props: Partial<Parameters<typeof ThreadsMenu>[0]> = {}) {
   const onMain = vi.fn();
   const onIssues = vi.fn();
+  const onIssue = vi.fn();
   render(
     <OxygenUIThemeProvider theme={OxygenTheme}>
       <ThreadsMenu
@@ -39,12 +40,14 @@ function renderMenu(props: Partial<Parameters<typeof ThreadsMenu>[0]> = {}) {
         current="main"
         onMain={onMain}
         onIssues={onIssues}
+        issueThreads={[]}
+        onIssue={onIssue}
         {...props}
       />
     </OxygenUIThemeProvider>,
   );
   fireEvent.click(screen.getByRole("button", { name: "Threads" }));
-  return { onMain, onIssues };
+  return { onMain, onIssues, onIssue };
 }
 
 afterEach(cleanup);
@@ -85,5 +88,17 @@ describe("ThreadsMenu", () => {
     const { onMain } = renderMenu();
     fireEvent.click(screen.getByRole("menuitem", { name: /main chat/ }));
     expect(onMain).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists each issue's own chat that holds something, under Issues, with its count; it goes to that issue's chat", () => {
+    const { onIssue } = renderMenu({ issueThreads: [{ issueNumber: 7, count: 3 }, { issueNumber: 12, count: 1 }], current: 7 });
+    const seven = screen.getByRole("menuitem", { name: /#7/ });
+    expect(within(seven).getByText("Issues › #7")).toBeTruthy();
+    expect(within(seven).getByText("3")).toBeTruthy();
+    expect(within(seven).getByText("open")).toBeTruthy();
+    expect(seven.classList).toContain("Mui-selected");
+    expect(screen.getByRole("menuitem", { name: /#12/ }).classList).not.toContain("Mui-selected");
+    fireEvent.click(screen.getByRole("menuitem", { name: /#12/ }));
+    expect(onIssue).toHaveBeenCalledWith(12);
   });
 });

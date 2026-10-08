@@ -21,44 +21,61 @@ import type { ProjectCard, ProjectPage } from "../shell/scope";
 import type { TurnBody } from "./turnScope";
 
 // A project has a chat per view of the main panel. The Issues Page has its
-// own agent on its own thread, a branch the chat panel stacks on the main chat
-// (which the panel always holds); everywhere else, the Issue card over it
-// included, is the project's main chat alone. The contract names only the issues
-// view (`ChatView`): the main chat is the absence of one, so "main" is never
-// sent on the wire.
+// own agent on its own thread, and so does each open issue, on its card: each
+// is a branch the chat panel stacks on the main chat (which the panel always
+// holds); everywhere else is the project's main chat alone. The contract names
+// only the branch views (`ChatView`), an issue's by its number: the main chat
+// is the absence of one, so "main" is never sent on the wire.
 
 export type ChatView = "main" | components["schemas"]["ChatView"];
 
 /**
  * The view whose own chat this page has: the Issues Page with no card open,
  * or with its own Questions card open (the card answers this chat's
- * questions). The panel draws it over the main chat once it is started.
+ * questions); an issue's card, or the Questions card answering that issue's
+ * chat (`issueNumber`). The panel draws it over the main chat.
  */
-export function chatViewFor(page: ProjectPage, card: ProjectCard | null): ChatView {
-  return page === "issues" && (card === null || card === "questions") ? "issues" : "main";
+export function chatViewFor(page: ProjectPage, card: ProjectCard | null, issueNumber: number | null = null): ChatView {
+  if (page !== "issues") return "main";
+  if (card === "issue" || (card === "questions" && issueNumber !== null)) return "issue";
+  return card === null || card === "questions" ? "issues" : "main";
 }
 
 /** The Questions card a view's questions are answered on (ADR-0002): over the page whose chat asked. */
-export function questionsPath(view: ChatView): "/projects/$projectName/questions" | "/projects/$projectName/issues/questions" {
-  return view === "issues" ? "/projects/$projectName/issues/questions" : "/projects/$projectName/questions";
+export function questionsLink(projectName: string, view: ChatView, issueNumber?: number) {
+  if (view === "main") return { to: "/projects/$projectName/questions" as const, params: { projectName } };
+  return {
+    to: "/projects/$projectName/issues/questions" as const,
+    params: { projectName },
+    ...(view === "issue" && issueNumber !== undefined ? { search: { issue: issueNumber } } : {}),
+  };
 }
 
-/** The page a view's Questions card closes back to: the one it is over. */
-export function homePath(view: ChatView): "/projects/$projectName" | "/projects/$projectName/issues" {
-  return view === "issues" ? "/projects/$projectName/issues" : "/projects/$projectName";
+/** The page a view's Questions card closes back to: the one it is over, or the issue's card. */
+export function homeLink(projectName: string, view: ChatView, issueNumber?: number) {
+  if (view === "issue" && issueNumber !== undefined) {
+    return { to: "/projects/$projectName/issues/$number" as const, params: { projectName, number: String(issueNumber) } };
+  }
+  if (view === "issues") return { to: "/projects/$projectName/issues" as const, params: { projectName } };
+  return { to: "/projects/$projectName" as const, params: { projectName } };
 }
 
-/** A view as the contract carries it: absent for the main chat. */
-export function wireView(view?: ChatView): components["schemas"]["ChatView"] | undefined {
-  return view === "issues" ? "issues" : undefined;
+/** A view as the contract's query carries it: absent for the main chat; an issue's with its number. */
+export function wireQuery(
+  view?: ChatView,
+  issueNumber?: number,
+): { view: components["schemas"]["ChatView"]; issueNumber?: number } | undefined {
+  if (view === "issues") return { view };
+  if (view === "issue") return { view, ...(issueNumber !== undefined ? { issueNumber } : {}) };
+  return undefined;
 }
 
 /**
- * A turn's body in a view. The Issues agent has no spec room and no scope (the
+ * A turn's body in a view. A branch's agent has no spec room and no scope (the
  * server refuses both on a view turn), so its turn is the user's words and the
- * view; the main chat's body goes as built.
+ * view (an issue's, with its number); the main chat's body goes as built.
  */
-export function viewTurnBody(view: ChatView, body: TurnBody): TurnBody {
-  const wire = wireView(view);
-  return wire ? { instruction: body.instruction, view: wire } : body;
+export function viewTurnBody(view: ChatView, body: TurnBody, issueNumber?: number): TurnBody {
+  const wire = wireQuery(view, issueNumber);
+  return wire ? { instruction: body.instruction, ...wire } : body;
 }

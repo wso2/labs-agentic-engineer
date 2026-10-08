@@ -22,6 +22,7 @@ import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { stamp } from "../../../lib/stamp";
 import { TaskLog } from "../../builds/components/TaskLog";
 import { statusLine } from "../../builds/model/taskRow";
+import { useIssueThreadState } from "../../agent-chat/useIssueThread";
 import { CardOverlay } from "../../projects/components/CardOverlay";
 import { useIssueDetail, useProjectIssues } from "../api/issues";
 import {
@@ -38,8 +39,9 @@ import { ORIGIN_LABEL } from "./IssuesPage";
 // An Issue card, over the Issues Page: the issue's text, who opened it, its
 // newest status line, why it needs a person, and, once the coding agent has
 // taken it on, the agent's log on it (the same log the Build card's task row
-// shows). It sets no Turn scope: no agent works on one issue from the chat,
-// so the chat stays on the whole product.
+// shows). An open issue has an agent of its own, whose chat the chat panel
+// draws beside the card; a closed one has none, and the card says it is
+// closed (the issue list's word, or the server's once its chat was removed).
 //
 // Handing an issue to the coding agent has no operation a person can call
 // yet: today it is done on GitHub, by adding the `aep` label. The button is
@@ -75,6 +77,7 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const issues = useProjectIssues(projectName);
   const detail = useIssueDetail(projectName, issueNumber);
   const issue = issues.data?.find((i) => i.Number === issueNumber);
+  const closed = useIssueThreadState(projectName, issueNumber) === "closed";
 
   if (!issue) {
     if (issues.isPending || (issues.isError && detail.isPending)) return <Skeleton variant="rounded" height={200} />;
@@ -104,6 +107,7 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
           {issueStateLabel(issue)}
         </Typography>
       </Box>
+      {closed && <Alert severity="info">This issue is closed.</Alert>}
       {reason && (
         <Alert severity={attentionNeedsPerson(reason) ? "warning" : "info"}>
           <strong>{attentionLabel(reason)}.</strong> {attentionWhy(reason)}
@@ -120,7 +124,7 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
         >
           Open on GitHub
         </Button>
-        {!tookOn && issue.State !== "closed" && (
+        {!tookOn && !closed && (
           <>
             <Button size="small" variant="contained" disabled>
               Hand to the coding agent

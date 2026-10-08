@@ -29,11 +29,18 @@ import type { ChatView } from "./chatView";
  * the card is already open.
  *
  * The Issues chat's questions open their own card over the Issues page, and
- * only from the Issues page itself (not from an Issue card over it): the
- * overview's rule is the main chat's.
+ * only from the Issues page itself (not from an Issue card over it); an
+ * issue's chat's, only from that issue's own card (the card closes back to
+ * it): the overview's rule is the main chat's.
  */
-export function opensQuestionsCard(scope: ShellScope, projectName: string, view: ChatView = "main"): boolean {
+export function opensQuestionsCard(
+  scope: ShellScope,
+  projectName: string,
+  view: ChatView = "main",
+  issueNumber?: number,
+): boolean {
   if (scope.kind !== "project" || scope.projectName !== projectName) return false;
   if (view === "issues") return scope.page === "issues" && scope.card === null;
+  if (view === "issue") return scope.card === "issue" && scope.issueNumber === issueNumber;
   return scope.page === "overview" && scope.card !== "questions";
 }

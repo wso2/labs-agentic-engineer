@@ -33,3 +33,19 @@ export function useOpenIssuesChat(projectName: string): () => Promise<void> {
     chatPanel.startBranch("issues", projectName);
   }, [navigate, chatPanel, projectName]);
 }
+
+/**
+ * Go to an issue's card, where its own chat is drawn over the main chat, and
+ * bring that chat up: what Continue on #N and the threads menu do.
+ */
+export function useOpenIssueChat(projectName: string): (issueNumber: number) => Promise<void> {
+  const navigate = useNavigate();
+  const chatPanel = useChatPanel();
+  return useCallback(
+    async (issueNumber: number) => {
+      await navigate({ to: "/projects/$projectName/issues/$number", params: { projectName, number: String(issueNumber) } });
+      chatPanel.startBranch("issue", projectName, issueNumber);
+    },
+    [navigate, chatPanel, projectName],
+  );
+}

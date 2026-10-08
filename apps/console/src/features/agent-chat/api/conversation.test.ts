@@ -27,6 +27,7 @@ vi.mock("../../../api/client", () => ({
 }));
 
 const { fetchCurrentConversationId } = await import("./conversation");
+const { IssueClosedError } = await import("./turns");
 
 const threads = {
   data: { conversations: [{ conversationId: "old" }, { conversationId: "now", current: true }] },
@@ -55,5 +56,17 @@ describe("fetchCurrentConversationId", () => {
     expect(get).toHaveBeenCalledWith("/projects/{projectName}/agents/conversations", {
       params: { path: { projectName: "shop" } },
     });
+  });
+
+  it("reads an issue's own thread in the issue view, by its number", async () => {
+    expect(await fetchCurrentConversationId("shop", "issue", 7)).toBe("now");
+    expect(get).toHaveBeenCalledWith("/projects/{projectName}/agents/conversations", {
+      params: { path: { projectName: "shop" }, query: { view: "issue", issueNumber: 7 } },
+    });
+  });
+
+  it("reads a 409 issue_closed as the issue being closed: it has no thread", async () => {
+    get.mockResolvedValueOnce({ data: undefined, error: { code: "issue_closed", message: "the issue is closed" }, response: { status: 409 } });
+    await expect(fetchCurrentConversationId("shop", "issue", 7)).rejects.toBeInstanceOf(IssueClosedError);
   });
 });

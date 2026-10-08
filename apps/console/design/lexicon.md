@@ -51,7 +51,8 @@ for console turns, and a disagreement is settled here.
 
 What the chat panel says above the composer and in an empty thread, by where
 the user is. The panel always holds the project's main chat; the Issues Page
-has its own agent, whose chat is a branch stacked on the main chat.
+has its own agent, whose chat is a branch stacked on the main chat, and so does
+each open issue, on its card.
 
 | Say | Where | Means |
 |---|---|---|
@@ -59,7 +60,7 @@ has its own agent, whose chat is a branch stacked on the main chat.
 | **↑ Main chat** | the strip across the top of the Issues sheet, with the main chat's last line after it | goes back to the main chat: the sheet folds down to a link; nothing is lost |
 | **<Project> └ Issues** | the path under that strip (the project named as the chat's breadcrumb names it) | the Issues chat is a branch of this project's main chat |
 | **↳ Issues · its own chat · Open ↑** | the end of the main thread while the Issues chat is minimised | Open brings the sheet back up, with whatever was typed in it |
-| **Threads** | the list button in the chat's header | the project's chats: **<Project> · main chat**, and **Issues** once it holds something, each with its message count; Issues reads **open** while started, **summarised** once the main chat has its From Issues note. Issues goes to the Issues page and opens its chat; the main chat brings it to the front |
+| **Threads** | the list button in the chat's header | the project's chats: **<Project> · main chat**, **Issues** once it holds something, and **Issues › #N** for each issue's chat that holds something (opened in this tab), each with its message count; Issues reads **open** while started, **summarised** once the main chat has its From Issues note; an issue's reads **open** while its sheet is up. Issues goes to the Issues page and opens its chat; Issues › #N goes to the issue's card and brings its chat up; the main chat brings it to the front |
 | **Talking about the project's issues** | the composer's line in the Issues chat | the chat there is about the project's issues, not the whole product |
 | **Tell me what's broken or what you need, and I'll draft an issue.** | an empty Issues chat | invites a report; the agent drafts, and files once the user confirms |
 | **Describe what's broken, or what you need…** | the Issues chat composer's placeholder (the main chat's stays "Tell the agent what to change…") | the box takes a report, not an edit instruction |
@@ -72,6 +73,16 @@ has its own agent, whose chat is a branch stacked on the main chat.
 | **Stayed here instead of opening Issues** | the announcement once Stay here was chosen | the user kept the request in this chat |
 | **From Issues · N messages · …** | a note in the main chat, after the user leaves the Issues page having talked in its chat (minimising the Issues chat, or opening an issue's card, is not leaving) | sums up the visit: the number of messages said there since arriving (a later visit adds to it, replacing the note while it is the chat's last line) and the agent's last line, on one line of at most 140 characters; nothing is posted for a visit that said nothing |
 | **Reopen** | a button under that note | goes back to the Issues page and opens its chat |
+| **<Project> └ Issues › #N** | the path under the strip of an issue's sheet, on the issue's card | the issue's own chat, a branch of this project's main chat; it is up on arrival at an open issue's card |
+| **↳ Issues › #N · its own chat · Open ↑** | the end of the main thread while an issue's chat is minimised on its card | Open brings the issue's sheet back up |
+| **Talking about issue #N** | the composer's line in an issue's chat | the chat there is about that one issue, with its own agent |
+| **Ask me about this issue, or tell me what to do with it.** | an empty issue chat | invites a question, or a change: a comment, an edit, closing it, handing it to the coding agent; each is asked about first |
+| **Ask about this issue, or what to do with it…** | an issue chat composer's placeholder | the box takes a question or a change to the issue |
+| **Post this comment?** · **Post it** / **Apply this edit?** · **Apply it** / **Close this issue?** · **Close it** / **Reopen this issue?** · **Reopen it** / **Hand this to the coding agent?** · **Hand it over** — **Not now** | the issue agent's confirmation, on the Questions card; the go-ahead option's description is the exact change (the comment, "Title: …" / "Body: …", the reason, "Component: …") | nothing changes on the issue until that option is chosen; Not now changes nothing |
+| **Continue on #N · Open** | the Issues chat, under the reply that filed issue #N | the issue now has its own chat; Open goes to the issue's card with that chat up |
+| **This issue is closed.** | an Issue card, for a closed issue | a closed issue has no chat of its own; closing an issue removes its chat |
+| **Issue #N was closed; its chat was removed.** | a line in the main chat, when the issue whose card is open turns out closed (its agent closed it, or it was closed on GitHub) | the issue's sheet went away with it; the line is the console's, never sent to the agent |
+| **This issue is closed. Its chat was removed.** | an issue chat or its Questions card, when the server refuses its thread as closed | as above, where the chat itself was asked for |
 
 ## The agent's questions
 

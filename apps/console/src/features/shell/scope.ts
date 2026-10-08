@@ -58,6 +58,12 @@ export type ShellScope =
       card: ProjectCard | null;
       /** The spec card's open file (`?file=`), by its key; null on the product page and off the card. */
       specFile: string | null;
+      /**
+       * The issue in view: an Issue card's (its address), or the one whose
+       * chat the Questions card over the Issues Page answers (`?issue=`).
+       * Null anywhere else, and for an address that names no issue.
+       */
+      issueNumber: number | null;
     };
 
 const ORG_PAGE_ROUTES: Record<string, OrgPage> = {
@@ -130,11 +136,17 @@ export function pageOfCard(card: ProjectCard): ProjectPage {
   return CARD_PAGE[card];
 }
 
+/** A positive whole number, from an address or a search, or null. */
+function issueNumberOf(value: unknown): number | null {
+  const n = typeof value === "number" ? value : typeof value === "string" && /^\d+$/.test(value) ? Number(value) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** The scope of the deepest matched route. */
 export function shellScope(leaf: {
   routeId: string;
-  params: { projectName?: string };
-  search?: { file?: unknown };
+  params: { projectName?: string; number?: string };
+  search?: { file?: unknown; issue?: unknown };
 }): ShellScope {
   const { routeId, params, search } = leaf;
   if (params.projectName && routeId.startsWith("/projects/$projectName")) {
@@ -149,6 +161,12 @@ export function shellScope(leaf: {
       page: cardRoute ? cardRoute.page : (PAGE_ROUTES[routeId] ?? "overview"),
       card,
       specFile: card === "spec" && typeof file === "string" && file ? file : null,
+      issueNumber:
+        routeId === "/projects/$projectName/issues/$number"
+          ? issueNumberOf(params.number)
+          : routeId === "/projects/$projectName/issues/questions"
+            ? issueNumberOf(search?.issue)
+            : null,
     };
   }
   const orgCard = ORG_CARD_ROUTES[routeId];
@@ -186,20 +204,22 @@ export function cardTitle(card: ProjectCard): string {
 /**
  * What a message sent from here would be about, for the line above the
  * composer: the Issues Page (the issues view) talks about the project's
- * issues, with the Issues agent; the design card talks about the design review; a feature open in
+ * issues, with the Issues agent; an issue's chat (the issue view), about that
+ * issue, with its own agent; the design card talks about the design review; a feature open in
  * the spec card narrows it to that feature, and a change reaching past it is
  * made there too; everywhere else in a project, the whole product. That
- * includes a Build or Validation card, the Deploy Page, an environment's
- * Configure card and an Issue card: no agent works on one build, one
- * validation, one environment or one issue yet, so they set no Turn scope of
- * their own (the Issue card stays in the main chat).
+ * includes a Build or Validation card, the Deploy Page and an environment's
+ * Configure card: no agent works on one build, one validation or one
+ * environment yet, so they set no Turn scope of their own.
  */
 export function chatTopic(
   card: ProjectCard | null,
   openFeature: string | null,
   view?: ChatView,
+  issueNumber?: number,
 ): { topic: string; note: string | null } {
   if (view === "issues") return { topic: "the project's issues", note: null };
+  if (view === "issue" && issueNumber !== undefined) return { topic: `issue #${issueNumber}`, note: null };
   if (card === "design" || card === "prototype") return { topic: "the design review", note: null };
   if (card === "spec" && openFeature) {
     return { topic: openFeature, note: "A change that reaches other features is made there too." };

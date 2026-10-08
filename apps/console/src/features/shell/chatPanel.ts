@@ -36,18 +36,20 @@ export interface ChatPanelControls {
   /**
    * Start a view's chat, the branch stacked on the main chat, and show it (a
    * minimised one comes back up). It is the project in focus's, unless the
-   * caller is moving the user and names the project.
+   * caller is moving the user and names the project; an issue's chat is named
+   * by the issue's number.
    */
-  startBranch: (view: BranchView, projectName?: string) => void;
+  startBranch: (view: BranchView, projectName?: string, issueNumber?: number) => void;
 }
 
 /** The views whose chat is a branch of the main chat. */
 export type BranchView = Exclude<ChatView, "main">;
 
-/** One chat: a view's in a project. */
+/** One chat: a view's in a project (an issue's, by its number). */
 export interface ComposeTarget {
   view: ChatView;
   projectName: string;
+  issueNumber?: number;
 }
 
 /**

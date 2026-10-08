@@ -22,12 +22,15 @@ import {
   appendAgentText,
   askedScope,
   dropTurnOutput,
+  filedIssueNumber,
   historyItems,
   interviewWriteUp,
   openQuestionId,
   setAnswers,
+  upsertFiled,
   upsertHandOff,
   userLineText,
+  withFiledLast,
   type ChatItem,
 } from "./chatLog";
 
@@ -329,5 +332,52 @@ describe("userLineText", () => {
   it("leaves anything else as typed", () => {
     expect(userLineText("/started a draft")).toBe("/started a draft");
     expect(userLineText("Where are we?")).toBe("Where are we?");
+  });
+});
+
+describe("an issue the Issues agent filed (Continue on #N)", () => {
+  const MCP_TEXT = JSON.stringify({ number: 15, url: "https://github.com/acme/shop/issues/15" });
+
+  it("reads the new issue's number from create_issue's result, as the stream and the history carry it", () => {
+    expect(filedIssueNumber(MCP_TEXT)).toBe(15);
+    expect(filedIssueNumber({ type: "text", value: MCP_TEXT })).toBe(15);
+    expect(filedIssueNumber({ type: "json", value: { number: 15 } })).toBe(15);
+  });
+
+  it("reads no number from a refusal, an error or anything else", () => {
+    expect(filedIssueNumber("could not file the issue right now; nothing was done")).toBeNull();
+    expect(filedIssueNumber({ type: "error-text", value: "Not filed." })).toBeNull();
+    expect(filedIssueNumber(JSON.stringify({ number: 0 }))).toBeNull();
+    expect(filedIssueNumber(undefined)).toBeNull();
+  });
+
+  it("reads back from the history after the call that filed it", () => {
+    const items = historyItems([
+      { role: "user", content: "File it" },
+      { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "create_issue", input: { title: "Save" } }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "create_issue", output: { type: "text", value: MCP_TEXT } }] },
+      { role: "assistant", content: [{ type: "text", text: "Filed #15." }] },
+    ]);
+    expect(items.map((i) => i.kind)).toEqual(["user", "filed", "agent"]);
+    expect(items[1]).toMatchObject({ kind: "filed", issueNumber: 15 });
+  });
+
+  it("is a turn's output: placed once by its call, and cleared before a replay", () => {
+    let items: ChatItem[] = [{ kind: "user", id: "u1", text: "File it", state: "sent", turnId: "t1" }];
+    items = upsertFiled(items, "t1", { toolCallId: "c1", issueNumber: 15 });
+    items = upsertFiled(items, "t1", { toolCallId: "c1", issueNumber: 15 });
+    expect(items.filter((i) => i.kind === "filed")).toHaveLength(1);
+    expect(dropTurnOutput(items, "t1").map((i) => i.kind)).toEqual(["user"]);
+  });
+
+  it("shows under the reply: at the end of its exchange, before the next message", () => {
+    const items: ChatItem[] = [
+      { kind: "user", id: "u1", text: "File it", state: "sent", turnId: "t1" },
+      { kind: "filed", id: "f1", turnId: "t1", toolCallId: "c1", issueNumber: 15 },
+      { kind: "agent", id: "a1", turnId: "t1", text: "Filed #15." },
+      { kind: "user", id: "u2", text: "Thanks", state: "sent", turnId: "t2" },
+      { kind: "agent", id: "a2", turnId: "t2", text: "Any time." },
+    ];
+    expect(withFiledLast(items).map((i) => i.id)).toEqual(["u1", "a1", "f1", "u2", "a2"]);
   });
 });

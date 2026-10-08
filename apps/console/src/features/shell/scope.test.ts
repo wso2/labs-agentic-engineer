@@ -65,6 +65,7 @@ describe("shellScope", () => {
       page: "overview",
       card: null,
       specFile: null,
+      issueNumber: null,
     });
     expect(inProject("/projects/$projectName/builds")).toMatchObject({ page: "builds", card: null });
     expect(inProject("/projects/$projectName/validations")).toMatchObject({ page: "validations", card: null });
@@ -85,8 +86,31 @@ describe("shellScope", () => {
       ["/projects/$projectName/issues/questions", "questions", "issues"],
     ] as const;
     for (const [routeId, card, page] of routes) {
-      expect(inProject(routeId)).toEqual({ kind: "project", projectName: "acme-expenses", page, card, specFile: null });
+      expect(inProject(routeId)).toEqual({
+        kind: "project",
+        projectName: "acme-expenses",
+        page,
+        card,
+        specFile: null,
+        issueNumber: null,
+      });
     }
+  });
+
+  it("reads the issue an Issue card is about, from its address", () => {
+    const card = shellScope({ routeId: "/projects/$projectName/issues/$number", params: { projectName: "acme-expenses", number: "7" } });
+    expect(card).toMatchObject({ page: "issues", card: "issue", issueNumber: 7 });
+    const notANumber = shellScope({ routeId: "/projects/$projectName/issues/$number", params: { projectName: "acme-expenses", number: "x" } });
+    expect(notANumber).toMatchObject({ card: "issue", issueNumber: null });
+  });
+
+  it("reads the issue whose chat the Questions card answers, from its search, and only there", () => {
+    expect(
+      shellScope({ routeId: "/projects/$projectName/issues/questions", params: { projectName: "acme-expenses" }, search: { issue: 7 } }),
+    ).toMatchObject({ card: "questions", issueNumber: 7 });
+    expect(
+      shellScope({ routeId: "/projects/$projectName/_overview/questions", params: { projectName: "acme-expenses" }, search: { issue: 7 } }),
+    ).toMatchObject({ card: "questions", issueNumber: null });
   });
 
   it("reads an address the project does not have as its overview", () => {
@@ -172,7 +196,8 @@ describe("chatTopic", () => {
     expect(chatTopic("configure", null)).toEqual(product);
   });
 
-  it("talks about the whole product on an Issue card, which no agent works on its own yet", () => {
+  it("talks about the whole product in the main chat on an Issue card, and about the issue in its own chat", () => {
     expect(chatTopic("issue", null)).toEqual(product);
+    expect(chatTopic("issue", null, "issue", 7)).toEqual({ topic: "issue #7", note: null });
   });
 });

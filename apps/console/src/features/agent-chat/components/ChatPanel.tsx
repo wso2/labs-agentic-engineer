@@ -28,7 +28,8 @@ import { useSpecFeature } from "../../spec/useSpecWorkspace";
 import type { ChatItem } from "../chatLog";
 import { turnScopeFor, type TurnScope } from "../turnScope";
 import { chatViewFor, type ChatView } from "../chatView";
-import { useOpenIssuesChat } from "../useOpenIssuesChat";
+import { useIssueThreadRemovedNote, useIssueThreadState, useOpenIssueThreads } from "../useIssueThread";
+import { useOpenIssueChat, useOpenIssuesChat } from "../useOpenIssuesChat";
 import { canSend, chatStoreFor, useProjectChat } from "../useProjectChat";
 import { BranchSheet } from "./BranchSheet";
 import { Thread } from "./Thread";
@@ -39,8 +40,11 @@ import { ThreadsMenu, type IssuesThread } from "./ThreadsMenu";
 // Issues Page has its own agent and thread, a branch of the main chat: a Start
 // row above the main composer until it is started, then a sheet over the main
 // chat, or a link at the end of its thread while minimised (the shell keeps
-// which, `useChatControls`). What a message is about follows from where the
-// user is, and goes with every turn sent from here.
+// which, `useChatControls`). An open issue's card has its own too, drawn the
+// same way from arrival; a closed issue has none, and an issue found closed
+// while its card is open takes its sheet away and leaves a line in the main
+// chat. What a message is about follows from where the user is, and goes with
+// every turn sent from here.
 
 /** The project as the chat names it: its display name once read, its handle until then. */
 function useProjectLabel(projectName: string): string {
@@ -129,6 +133,7 @@ function Composer({
   note,
   scope,
   view,
+  issueNumber,
   composeRequest,
   onComposeApplied,
   focusSignal = null,
@@ -140,6 +145,8 @@ function Composer({
   note: string | null;
   scope: TurnScope;
   view: ChatView;
+  /** The issue whose chat this is, in the issue view. */
+  issueNumber?: number;
   composeRequest: ComposeRequest | null;
   onComposeApplied: (nonce: number) => void;
   /** A nonce that puts the cursor here: the user brought this chat to the front. Applied once. */
@@ -149,7 +156,7 @@ function Composer({
   /** Called with the signal's nonce once applied; the panel clears it. */
   onFocusApplied?: (nonce: number) => void;
 }) {
-  const chat = useProjectChat(projectName, view);
+  const chat = useProjectChat(projectName, view, issueNumber);
   const statusId = useId();
   const [draft, setDraft] = useState("");
   const input = useRef<HTMLTextAreaElement | null>(null);
@@ -157,7 +164,12 @@ function Composer({
   const appliedNonce = useRef(0);
   const [pendingFocus, setPendingFocus] = useState(false);
   const request =
-    composeRequest && composeRequest.projectName === projectName && composeRequest.view === view ? composeRequest : null;
+    composeRequest &&
+    composeRequest.projectName === projectName &&
+    composeRequest.view === view &&
+    composeRequest.issueNumber === issueNumber
+      ? composeRequest
+      : null;
   useEffect(() => {
     if (!request || request.nonce === appliedNonce.current) return;
     appliedNonce.current = request.nonce;
@@ -190,7 +202,7 @@ function Composer({
     const text = draft.trim();
     if (!text || !ready) return;
     setDraft("");
-    void chatStoreFor(view).send(projectName, text, scope).then((sent) => {
+    void chatStoreFor(view, issueNumber).send(projectName, text, scope).then((sent) => {
       // Refused: the words come back, unless the user has typed again.
       if (!sent) setDraft((current) => current || text);
     });
@@ -234,7 +246,13 @@ function Composer({
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={onKeyDown}
           disabled={!enabled}
-          placeholder={view === "issues" ? "Describe what's broken, or what you need…" : "Tell the agent what to change…"}
+          placeholder={
+            view === "issues"
+              ? "Describe what's broken, or what you need…"
+              : view === "issue"
+                ? "Ask about this issue, or what to do with it…"
+                : "Tell the agent what to change…"
+          }
           inputProps={{
             "aria-label": "Message the agent",
             ...(status ? { "aria-describedby": statusId } : {}),
@@ -279,8 +297,17 @@ function StartRow({ onStart }: { onStart: () => void }) {
   );
 }
 
-/** At the end of the main thread while the Issues chat is minimised. */
-function BranchLink({ onOpen, linkRef }: { onOpen: () => void; linkRef: RefObject<HTMLButtonElement | null> }) {
+/** At the end of the main thread while a branch (the Issues chat, or an issue's) is minimised. */
+function BranchLink({
+  title,
+  onOpen,
+  linkRef,
+}: {
+  /** The branch as its sheet's path names it. */
+  title: string;
+  onOpen: () => void;
+  linkRef: RefObject<HTMLButtonElement | null>;
+}) {
   return (
     <Typography
       data-testid="branch-link"
@@ -289,7 +316,7 @@ function BranchLink({ onOpen, linkRef }: { onOpen: () => void; linkRef: RefObjec
       component="p"
       sx={{ px: 1.75, pb: 1 }}
     >
-      ↳ Issues · its own chat ·{" "}
+      ↳ {title} · its own chat ·{" "}
       <Link
         ref={linkRef}
         component="button"
@@ -306,16 +333,19 @@ function BranchLink({ onOpen, linkRef }: { onOpen: () => void; linkRef: RefObjec
 
 /**
  * The chat panel: scope breadcrumb, threads menu, the project's main chat, and
- * on the Issues Page the Issues chat stacked on it.
+ * on the Issues Page the Issues chat stacked on it; on an open issue's card,
+ * that issue's chat.
  */
 export function ChatPanel({
   projectName,
   page,
   card,
   specFile,
+  issueNumber,
   composeRequest,
   onComposeApplied,
   branch,
+  issueBranch,
   onStartBranch,
   onMinimiseBranch,
   onClose,
@@ -326,15 +356,19 @@ export function ChatPanel({
   card: ProjectCard | null;
   /** The spec card's open file; a feature narrows what the chat is about. */
   specFile: string | null;
+  /** The issue in view: its card, or the Questions card answering its chat; null elsewhere. */
+  issueNumber: number | null;
   /** The shell's pending ask to fill a composer, applied once per nonce. */
   composeRequest: ComposeRequest | null;
   /** Called with the request's nonce once a composer has applied it; the shell clears it. */
   onComposeApplied: (nonce: number) => void;
   /** The Issues chat's place in the panel, kept by the shell. */
   branch: BranchState;
-  /** Start the Issues chat, or bring a minimised one back up. */
+  /** The chat of the issue in view's place in the panel; null with no issue in view. */
+  issueBranch: BranchState | null;
+  /** Start the branch in view (the Issues chat, or the issue's), or bring a minimised one back up. */
   onStartBranch: () => void;
-  /** Fold the Issues chat down: the main chat comes to the front. */
+  /** Fold the branch in view down: the main chat comes to the front. */
   onMinimiseBranch: () => void;
   onClose: () => void;
 }) {
@@ -344,6 +378,12 @@ export function ChatPanel({
   const main = useProjectChat(projectName, "main");
   const issues = useProjectChat(projectName, "issues");
   const openIssuesChat = useOpenIssuesChat(projectName);
+  const openIssueChat = useOpenIssueChat(projectName);
+  const issueThreads = useOpenIssueThreads(projectName);
+  // An issue's chat is drawn only while the issue is known open; one found
+  // closed while its card is open leaves a line in the main chat.
+  const issueState = useIssueThreadState(projectName, issueNumber);
+  useIssueThreadRemovedNote(projectName, issueNumber, issueState);
   // The nonce of a pending ask to put the cursor in the sheet; the sheet's
   // composer clears it once it has applied it, so it never fires twice.
   const focusNonce = useRef(0);
@@ -357,8 +397,11 @@ export function ChatPanel({
 
   // `chatViewFor` names the chat this page has of its own; the main chat is
   // always here, and a page with its own (the Issues Page) stacks it on top.
-  const branchHere = chatViewFor(page, card) === "issues";
+  const branchHere = chatViewFor(page, card, issueNumber) === "issues";
   const sheetUp = branchHere && branch.started && !branch.minimised;
+  const issueHere = issueNumber !== null && issueBranch !== null && issueState === "open";
+  const issueSheetUp = issueHere && !issueBranch.minimised;
+  const issueTitle = `Issues › #${issueNumber}`;
   // The sheet stays mounted, out of sight, while an issue's card is open on
   // the Issues page, so its draft survives; it is shown only where it belongs.
   const sheetMounted = page === "issues" && branch.started;
@@ -367,13 +410,15 @@ export function ChatPanel({
     onMinimiseBranch();
     setFocusLink(true);
   };
+  const linkShown = (branchHere && branch.minimised) || (issueHere && issueBranch.minimised);
   useEffect(() => {
-    if (!focusLink || !branchHere || !branch.minimised) return;
+    if (!focusLink || !linkShown) return;
     branchLink.current?.focus();
     setFocusLink(false);
-  }, [focusLink, branchHere, branch.minimised]);
+  }, [focusLink, linkShown]);
   const mainTopic = chatTopic(card, feature ? `${feature.id} ${feature.name}` : null, "main");
   const issuesTopic = chatTopic(card, null, "issues");
+  const issueTopic = chatTopic(card, null, "issue", issueNumber ?? undefined);
   const bringUp = () => {
     onStartBranch();
     requestSheetFocus();
@@ -411,13 +456,18 @@ export function ChatPanel({
           projectLabel={label}
           mainCount={main.items.filter(isSpoken).length}
           issues={issuesThread}
-          current={sheetUp ? "issues" : "main"}
+          issueThreads={issueThreads}
+          current={sheetUp ? "issues" : issueSheetUp ? issueNumber : "main"}
           onMain={() => {
-            if (sheetUp) minimise();
+            if (sheetUp || issueSheetUp) minimise();
           }}
           onIssues={() => {
             requestSheetFocus();
             void openIssuesChat();
+          }}
+          onIssue={(n) => {
+            requestSheetFocus();
+            void openIssueChat(n);
           }}
         />
         <Tooltip title="Hide agent chat">
@@ -430,11 +480,14 @@ export function ChatPanel({
         {/* Under the sheet the main chat is still drawn, but out of reach. */}
         <Box
           data-testid="main-chat"
-          inert={sheetUp}
+          inert={sheetUp || issueSheetUp}
           sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
         >
           <Thread projectName={projectName} view="main" />
-          {branchHere && branch.started && branch.minimised && <BranchLink onOpen={bringUp} linkRef={branchLink} />}
+          {branchHere && branch.started && branch.minimised && (
+            <BranchLink title="Issues" onOpen={bringUp} linkRef={branchLink} />
+          )}
+          {issueHere && issueBranch.minimised && <BranchLink title={issueTitle} onOpen={bringUp} linkRef={branchLink} />}
           {branchHere && !branch.started && <StartRow onStart={bringUp} />}
           <Composer
             projectName={projectName}
@@ -459,6 +512,32 @@ export function ChatPanel({
               onComposeApplied={onComposeApplied}
               focusSignal={focusSheet}
               focusActive={sheetUp}
+              onFocusApplied={sheetFocusApplied}
+            />
+          </BranchSheet>
+        )}
+        {issueHere && (
+          <BranchSheet
+            key={issueNumber}
+            projectLabel={label}
+            title={issueTitle}
+            label={`Issue #${issueNumber} chat`}
+            peek={lastLine(main.items)}
+            hidden={!issueSheetUp}
+            onMinimise={minimise}
+          >
+            <Thread projectName={projectName} view="issue" issueNumber={issueNumber} />
+            <Composer
+              projectName={projectName}
+              topic={issueTopic.topic}
+              note={issueTopic.note}
+              scope={scope}
+              view="issue"
+              issueNumber={issueNumber}
+              composeRequest={composeRequest}
+              onComposeApplied={onComposeApplied}
+              focusSignal={focusSheet}
+              focusActive={issueSheetUp}
               onFocusApplied={sheetFocusApplied}
             />
           </BranchSheet>

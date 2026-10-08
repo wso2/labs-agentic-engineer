@@ -46,6 +46,11 @@ const ABOUT_QUESTION = "What should the issue be about?";
 const KIND_LABELS: Record<string, IssueKind> = { Bug: "bug", "Feature request": "feature", Improvement: "improvement" };
 const KIND_NAMES: Record<IssueKind, string> = { bug: "bug", feature: "feature request", improvement: "improvement" };
 
+/** Where an issue the mock files lives on GitHub. */
+export function mockIssueUrl(projectName: string, number: number): string {
+  return `https://github.com/acme/${projectName}/issues/${number}`;
+}
+
 /** Sure of the kind at or above this; below it the agent asks (the real classifier's 0.8). */
 const CLARIFY_BELOW = 0.8;
 
@@ -146,7 +151,12 @@ function plainDraft(report: string, kind: IssueKind): string {
 let counter = 0;
 
 /** What the mock Issues agent does with a message, given the user's earlier messages in the conversation. */
-export function scriptIssuesTurn(instruction: string, nextNumber: number, history: string[] = []): IssuesTurn {
+export function scriptIssuesTurn(
+  instruction: string,
+  nextNumber: number,
+  history: string[] = [],
+  projectName = "acme-expenses",
+): IssuesTurn {
   const text = instruction.trim();
   counter += 1;
   const id = (step: string) => `issues-${Date.now().toString(36)}-${counter}-${step}`;
@@ -158,7 +168,12 @@ export function scriptIssuesTurn(instruction: string, nextNumber: number, histor
     const filed = draft(report ?? "Something is not working as expected", kind ?? "bug");
     const s = new Script()
       .pause(400)
-      .call(id("create"), "create_issue", { title: filed.title, body: filed.body, kind: filed.kind }, { number: nextNumber, title: filed.title })
+      .mcp(
+        id("create"),
+        "create_issue",
+        { title: filed.title, body: filed.body, kind: filed.kind },
+        JSON.stringify({ number: nextNumber, url: mockIssueUrl(projectName, nextNumber) }),
+      )
       .say(`Filed #${nextNumber}: ${filed.title}. You can find it under Open in the list.`);
     return { display: text, ...s.end(), progress, filed };
   }

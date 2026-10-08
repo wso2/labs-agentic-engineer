@@ -51,12 +51,18 @@ vi.mock("../agent-chat/useProjectChat", () => ({
 
 const { useChatControls } = await import("./useChatControls");
 
-const scope = (page: "overview" | "issues", card: "issue" | "questions" | null = null, projectName = "acme"): ShellScope => ({
+const scope = (
+  page: "overview" | "issues",
+  card: "issue" | "questions" | null = null,
+  projectName = "acme",
+  issueNumber: number | null = card === "issue" ? 7 : null,
+): ShellScope => ({
   kind: "project",
   projectName,
   page,
   card,
   specFile: null,
+  issueNumber,
 });
 
 function mount(first: ShellScope) {
@@ -164,5 +170,36 @@ describe("useChatControls", () => {
     act(() => hook.result.current.controls.startBranch("issues"));
     go(scope("issues", null, "beta"));
     expect(hook.result.current.branch).toEqual(NOT_STARTED);
+  });
+
+  describe("an issue's own chat", () => {
+    it("is up on the issue's card, with no other issue's chat anywhere else", () => {
+      const { hook, go } = mount(scope("issues", "issue"));
+      expect(hook.result.current.issueBranch).toEqual(OPEN);
+      go(scope("issues"));
+      expect(hook.result.current.issueBranch).toBeNull();
+    });
+
+    it("minimises on the card without touching the Issues chat, and comes back up when asked", () => {
+      const { hook } = mount(scope("issues", "issue"));
+      act(() => hook.result.current.minimiseBranch());
+      expect(hook.result.current.issueBranch).toEqual({ started: true, minimised: true });
+      expect(hook.result.current.branch).toEqual(NOT_STARTED);
+      act(() => hook.result.current.startBranch());
+      expect(hook.result.current.issueBranch).toEqual(OPEN);
+      act(() => hook.result.current.minimiseBranch());
+      act(() => hook.result.current.controls.startBranch("issue", "acme", 7));
+      expect(hook.result.current.issueBranch).toEqual(OPEN);
+    });
+
+    it("is up again on the next visit to the card, and on another issue's card", () => {
+      const { hook, go } = mount(scope("issues", "issue"));
+      act(() => hook.result.current.minimiseBranch());
+      go(scope("issues", "issue", "acme", 8));
+      expect(hook.result.current.issueBranch).toEqual(OPEN);
+      go(scope("issues"));
+      go(scope("issues", "issue"));
+      expect(hook.result.current.issueBranch).toEqual(OPEN);
+    });
   });
 });

@@ -44,6 +44,7 @@ function recordingSink() {
     question: (q) => calls.push(["question", q]),
     withdrawQuestion: (id) => calls.push(["withdraw", id]),
     handoff: (h) => calls.push(["handoff", h]),
+    filed: (f) => calls.push(["filed", f]),
     wrote: (p) => calls.push(["wrote", p.toolCallId]),
     error: (t) => calls.push(["error", t]),
     ended: (o) => calls.push(["ended", o]),
@@ -189,5 +190,15 @@ describe("foldTurn", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("names the issue create_issue filed, from its result, and nothing for a refused one", async () => {
+    const { of } = await fold([
+      { type: "tool-call", toolCallId: "c1", toolName: "create_issue", input: { title: "Save" } },
+      { type: "tool-result", toolCallId: "c1", toolName: "create_issue", output: JSON.stringify({ number: 15, url: "u" }) },
+      { type: "tool-result", toolCallId: "c2", toolName: "create_issue", output: "could not file the issue right now" },
+      { type: "turn-committed" },
+    ]);
+    expect(of("filed")).toEqual([{ toolCallId: "c1", issueNumber: 15 }]);
   });
 });

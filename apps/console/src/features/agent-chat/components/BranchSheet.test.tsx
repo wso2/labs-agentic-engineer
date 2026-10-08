@@ -66,4 +66,10 @@ describe("BranchSheet", () => {
     expect(screen.queryByRole("region", { name: "Issues chat" })).toBeNull();
     expect(screen.getByText("the branch's thread")).toBeTruthy();
   });
+
+  it("is an issue's chat when titled so: the path runs from the project through Issues to the issue", () => {
+    renderSheet({ title: "Issues › #7", label: "Issue #7 chat" });
+    expect(screen.getByRole("region", { name: "Issue #7 chat" })).toBeTruthy();
+    expect(screen.getByTestId("branch-path").textContent).toBe("Acme Expenses └ Issues › #7");
+  });
 });

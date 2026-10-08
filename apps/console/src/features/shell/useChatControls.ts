@@ -23,12 +23,15 @@ import type { ChatPanelControls, ComposeRequest, ComposeTarget } from "./chatPan
 import type { ShellScope } from "./scope";
 
 // What the shell keeps for the chat panel: the request to fill a composer, and
-// the Issues chat's place in the panel. The panel always holds the project's
+// the branches' places in the panel. The panel always holds the project's
 // main chat; on the Issues page the Issues chat is a branch of it, drawn as a
 // sheet over it once started. It starts when the user asks for it (Start, New
 // Issue, Create Issue, the threads menu, Reopen) or when a turn runs in it, and
 // is put away again when the user leaves the Issues page: the main chat then
 // sums the visit up (`useBranchSummary`). Kept per project, in this tab only.
+// An open issue's own chat is a branch too, drawn over the main chat on the
+// issue's card: it is up on arrival, can be minimised while the user stays on
+// the card, and is up again on the next visit.
 
 /** The Issues chat's place in the panel, for one project. */
 export interface BranchState {
@@ -40,6 +43,10 @@ export interface BranchState {
 
 const NOT_STARTED: BranchState = { started: false, minimised: false };
 const OPEN: BranchState = { started: true, minimised: false };
+const MINIMISED: BranchState = { started: true, minimised: true };
+
+/** An issue's chat in a project, as one key. */
+const issueKey = (projectName: string, issueNumber: number) => `${projectName}#${issueNumber}`;
 
 export function useChatControls(scope: ShellScope, openChat: () => void) {
   const project = scope.kind === "project" ? scope : null;
@@ -51,7 +58,13 @@ export function useChatControls(scope: ShellScope, openChat: () => void) {
   const [composeRequest, setComposeRequest] = useState<ComposeRequest | null>(null);
   const composeNonce = useRef(0);
   const inFocus = useRef<ComposeTarget | null>(null);
-  inFocus.current = project ? { projectName: project.projectName, view: chatViewFor(project.page, project.card) } : null;
+  inFocus.current = project
+    ? {
+        projectName: project.projectName,
+        view: chatViewFor(project.page, project.card, project.issueNumber),
+        ...(project.issueNumber !== null ? { issueNumber: project.issueNumber } : {}),
+      }
+    : null;
   const opener = useRef(openChat);
   opener.current = openChat;
 
@@ -68,23 +81,37 @@ export function useChatControls(scope: ShellScope, openChat: () => void) {
     });
   }, []);
 
+  // The issue in view (its card, or the Questions card answering its chat),
+  // and which issue's chat the user minimised there (one at a time: leaving
+  // the issue brings its chat back up for the next visit).
+  const issueInView = project && project.issueNumber !== null ? issueKey(project.projectName, project.issueNumber) : null;
+  const [minimisedIssue, setMinimisedIssue] = useState<string | null>(null);
+  const raiseIssue = useCallback((key: string) => setMinimisedIssue((m) => (m === key ? null : m)), []);
+
   const controls = useMemo<ChatPanelControls>(
     () => ({
       open: () => opener.current(),
       compose: (text, explicit) => {
         const target = explicit ?? inFocus.current;
         if (target) {
-          if (target.view !== "main") setBranch(target.projectName, () => OPEN);
+          if (target.view === "issues") setBranch(target.projectName, () => OPEN);
+          if (target.view === "issue" && target.issueNumber !== undefined) raiseIssue(issueKey(target.projectName, target.issueNumber));
           setComposeRequest({ text, ...target, nonce: ++composeNonce.current });
         }
         opener.current();
       },
-      startBranch: (_view, projectName) => {
+      startBranch: (view, projectName, issueNumber) => {
         const name = projectName ?? inFocus.current?.projectName;
-        if (name) setBranch(name, () => OPEN);
+        if (!name) return;
+        if (view === "issue") {
+          const n = issueNumber ?? inFocus.current?.issueNumber;
+          if (n !== undefined) raiseIssue(issueKey(name, n));
+          return;
+        }
+        setBranch(name, () => OPEN);
       },
     }),
-    [setBranch],
+    [setBranch, raiseIssue],
   );
   const clearComposeRequest = useCallback(
     (nonce: number) => setComposeRequest((current) => (current?.nonce === nonce ? null : current)),
@@ -120,14 +147,26 @@ export function useChatControls(scope: ShellScope, openChat: () => void) {
     };
   }, [issuesPage, setBranch]);
 
-  const branch = project ? (branches.get(project.projectName) ?? NOT_STARTED) : NOT_STARTED;
-  const projectName = project?.projectName ?? null;
-  const minimiseBranch = useCallback(() => {
-    if (projectName) setBranch(projectName, (current) => (current.started ? { started: true, minimised: true } : current));
-  }, [projectName, setBranch]);
-  const startBranch = useCallback(() => {
-    if (projectName) setBranch(projectName, () => OPEN);
-  }, [projectName, setBranch]);
+  const previousIssue = useRef(issueInView);
+  useEffect(() => {
+    if (previousIssue.current === issueInView) return;
+    previousIssue.current = issueInView;
+    setMinimisedIssue(null);
+  }, [issueInView]);
 
-  return { controls, composeRequest, clearComposeRequest, branch, startBranch, minimiseBranch };
+  const branch = project ? (branches.get(project.projectName) ?? NOT_STARTED) : NOT_STARTED;
+  /** The chat of the issue in view: up unless minimised there; null with no issue in view. */
+  const issueBranch = issueInView ? (minimisedIssue === issueInView ? MINIMISED : OPEN) : null;
+  const projectName = project?.projectName ?? null;
+  // The branch in view: the issue's on its card, else the Issues chat.
+  const minimiseBranch = useCallback(() => {
+    if (issueInView) setMinimisedIssue(issueInView);
+    else if (projectName) setBranch(projectName, (current) => (current.started ? MINIMISED : current));
+  }, [issueInView, projectName, setBranch]);
+  const startBranch = useCallback(() => {
+    if (issueInView) raiseIssue(issueInView);
+    else if (projectName) setBranch(projectName, () => OPEN);
+  }, [issueInView, projectName, setBranch, raiseIssue]);
+
+  return { controls, composeRequest, clearComposeRequest, branch, issueBranch, startBranch, minimiseBranch };
 }

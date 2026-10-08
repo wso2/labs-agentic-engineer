@@ -12,6 +12,10 @@ route, `/projects/$p/issues/questions`, answering that chat's thread). The
 chat's pointer and the automatic opening follow the view that asked, and a
 send closes back to that page.
 
+**Amended 2026-10-08:** an issue's own chat answers on the Issues Page's card
+naming the issue (`/projects/$p/issues/questions?issue=N`); it opens by itself
+only on that issue's card, and a send closes back to the card.
+
 ## Context
 
 The agent asks through `ask_question` (one) and `ask_questions` (a batch of up

@@ -42,7 +42,7 @@ function atPhoneWidth(): boolean {
  *
  * The chat follows the entity in view: inside a project it is the project's
  * main conversation, with the Issues chat stacked on it as a branch on the
- * Issues page (`useChatControls`); on an org Page it is the organization's,
+ * Issues page, and an open issue's own chat on its card (`useChatControls`); on an org Page it is the organization's,
  * which is not available yet and shows as such. It starts open on a wide screen, beside the page in
  * the golden ratio and resizable (`useChatWidth`), and closed at phone width,
  * where it opens as an overlay beside the rail.
@@ -52,8 +52,8 @@ export function Shell() {
   const leaf = matches[matches.length - 1];
   const scope = shellScope({
     routeId: leaf?.routeId ?? "",
-    params: (leaf?.params ?? {}) as { projectName?: string },
-    search: (leaf?.search ?? {}) as { file?: unknown },
+    params: (leaf?.params ?? {}) as { projectName?: string; number?: string },
+    search: (leaf?.search ?? {}) as { file?: unknown; issue?: unknown },
   });
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -66,7 +66,7 @@ export function Shell() {
 
   const chatWidth = useChatWidth();
   const openChat = useCallback(() => setChatOpen(true), []);
-  const { controls: chatControls, composeRequest, clearComposeRequest, branch, startBranch, minimiseBranch } =
+  const { controls: chatControls, composeRequest, clearComposeRequest, branch, issueBranch, startBranch, minimiseBranch } =
     useChatControls(scope, openChat);
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
@@ -141,9 +141,11 @@ export function Shell() {
                   page={project.page}
                   card={project.card}
                   specFile={project.specFile}
+                  issueNumber={project.issueNumber}
                   composeRequest={composeRequest}
                   onComposeApplied={clearComposeRequest}
                   branch={branch}
+                  issueBranch={issueBranch}
                   onStartBranch={startBranch}
                   onMinimiseBranch={minimiseBranch}
                   onClose={() => setChatOpen(false)}

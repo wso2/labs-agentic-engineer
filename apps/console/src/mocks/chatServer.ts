@@ -66,6 +66,8 @@ export interface MockTurn {
   conversationId: string;
   /** The view whose chat this turn belongs to; absent is the project's main chat. */
   view?: ChatView;
+  /** The issue whose own chat this turn is in, in the issue view. */
+  issueNumber?: number;
   /** The display record: the message that started it. */
   instruction: string;
   /** The scope it was sent with, which the history carries back as the platform's does. */
@@ -108,9 +110,16 @@ function write(state: State): void {
   }
 }
 
-/** A project's conversation in a view: the main chat's, or the Issues Page's own. */
-export function conversationIdFor(projectName: string, view: ChatView = "main"): string {
+/** A project's conversation in a view: the main chat's, the Issues Page's own, or an issue's own. */
+export function conversationIdFor(projectName: string, view: ChatView = "main", issueNumber?: number): string {
+  if (view === "issue") return `conv-${projectName}-issue-${issueNumber}`;
   return view === "main" ? `conv-${projectName}` : `conv-${projectName}-${view}`;
+}
+
+/** The use case a turn runs as, as aep-api names it: an issue's is `issue-<n>`. */
+export function turnUseCase(turn: MockTurn): string {
+  if (turn.view === "issue") return `issue-${turn.issueNumber}`;
+  return turn.view === "issues" ? "issues" : "general";
 }
 
 function duration(turn: MockTurn): number {
@@ -121,9 +130,15 @@ export function isRunning(turn: MockTurn, now = Date.now()): boolean {
   return now < turn.startedAt + duration(turn);
 }
 
-/** The turn running in a view's chat (the main chat's by default): one at a time per conversation. */
-export function runningTurn(projectName: string, view: ChatView = "main"): MockTurn | undefined {
-  return read().turns.find((t) => t.projectName === projectName && (t.view ?? "main") === view && isRunning(t));
+/** The turn running in a view's chat (the main chat's by default; an issue's by its number): one at a time per conversation. */
+export function runningTurn(projectName: string, view: ChatView = "main", issueNumber?: number): MockTurn | undefined {
+  return read().turns.find(
+    (t) =>
+      t.projectName === projectName &&
+      (t.view ?? "main") === view &&
+      (view !== "issue" || t.issueNumber === issueNumber) &&
+      isRunning(t),
+  );
 }
 
 export function findTurn(turnId: string): MockTurn | undefined {

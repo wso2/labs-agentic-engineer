@@ -18,6 +18,7 @@
 
 import { describe, expect, it } from "vitest";
 import { buildAnswerInstruction, buildAnswersInstruction, type AskQuestionInput } from "@aep/agent-stream";
+import { filedIssueNumber, historyItems } from "../../features/agent-chat/chatLog";
 import { scriptIssuesTurn } from "./issuesAgent";
 
 // The mock Issues agent: it classifies a report, drafts the issue, asks "File
@@ -102,6 +103,14 @@ describe("the answers to the mock Issues agent's questions", () => {
     expect(calls(turn, "create_issue")).toHaveLength(1);
     expect(said(turn)).toContain("#15");
     expect(calls(turn, "ask_question")).toHaveLength(0);
+  });
+
+  it("answers create_issue as aep-api's MCP tool does: the new issue's number and url, as text", () => {
+    const turn = scriptIssuesTurn(FILE_IT, 15, [REPORT]);
+    const result = turn.frames.map((f) => f.part).find((p) => p.type === "tool-result" && p.toolName === "create_issue")!;
+    expect(JSON.parse(result.output as string)).toEqual({ number: 15, url: "https://github.com/acme/acme-expenses/issues/15" });
+    expect(filedIssueNumber(result.output)).toBe(15);
+    expect(historyItems([{ role: "user", content: FILE_IT }, ...turn.reply]).some((i) => i.kind === "filed" && i.issueNumber === 15)).toBe(true);
   });
 
   it("files a feature request as kind feature", () => {

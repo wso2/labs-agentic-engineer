@@ -31,7 +31,7 @@ routes/projects/$projectName/
     $env/configure.tsx         /projects/$p/deploy/staging/configure  Configure card
   issues/route.tsx           the Issues Page         /projects/$p/issues
     $number.tsx                /projects/$p/issues/14  Issue card
-    questions.tsx              /projects/$p/issues/questions  Questions card (the Issues chat's)
+    questions.tsx              /projects/$p/issues/questions  Questions card (the Issues chat's; an issue's with ?issue=14)
 ```
 
 - **A Page is a layout route.** It renders `PageWithCards` around its content:
@@ -102,13 +102,35 @@ it when the user leaves the Issues page; the main chat then gets its From
 Issues note. The Issues chat's thread and running turn are its alone, about
 "the project's issues", with no spec room and no Turn scope (the composer's
 scope is not sent; `viewTurnBody` sends the words and the view). The Issues agent files
-issues, so its turn ending re-reads the issue list. An Issue card is over the
-Page and shows the main chat alone (the branch waits for the card to close: the
-sheet stays mounted but out of sight, so its draft, thread and any running turn are
-kept, and it takes no focus when it returns), setting no Turn scope: no agent works on one issue yet. The Issues chat's questions (ADR-0002) are answered on a Questions
-card of their own over this Page (`issues/questions`, `chatViewFor` reads it as
-the `issues` view), so a question asked here never points to the overview or
-answers the main chat; a send closes back to the Issues Page. The Dashboard's Alerts
+issues, so its turn ending re-reads the issue list. When it files #N, a
+**Continue on #N · Open** line follows its reply (read from the `create_issue`
+result, in the stream and in the history); Open goes to that issue's card.
+
+An Issue card is over the Page (the Issues branch waits for the card to close:
+its sheet stays mounted but out of sight, so its draft, thread and any running
+turn are kept, and it takes no focus when it returns). An open issue has an
+agent of its own on a thread of its own (the `issue` view with the issue's
+number, use case `issue-<n>`; one chat store per issue, `chatStoreFor("issue",
+n)`), drawn on its card as a sheet over the main chat, **<Project> └ Issues ›
+#N**, up on arrival and minimisable while the user stays on the card. Its turn
+ending re-reads the issue list and that issue's detail, so a comment, an edit
+or a close shows at once. A closed issue has none: closing an issue removes its
+thread, the card says **This issue is closed.** and the panel draws no sheet.
+Whether it is open is the issue list's word, or the server's 409
+`issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
+stands until the list shows it closed too); when the issue in view turns from
+open to closed, the sheet goes and the main chat gets **Issue #N was closed;
+its chat was removed.**, a local line never sent to the agent. The threads menu
+lists each issue chat that holds something (opened in this tab).
+
+The Issues chat's questions (ADR-0002) are answered on a Questions card of
+their own over this Page (`issues/questions`, `chatViewFor` reads it as the
+`issues` view), so a question asked here never points to the overview or
+answers the main chat; a send closes back to the Issues Page. An issue's chat's
+questions (its agent confirms every change on one: the change is the confirm
+option's description) are answered on the same card naming the issue
+(`issues/questions?issue=N`, the `issue` view), which opens by itself only on
+that issue's card and closes back to it. The Dashboard's Alerts
 link straight to Issue cards: they are every project's issues that need
 attention (`features/issues/useAlerts.ts` asks each project, as no read
 answers for the org), and the rail's logo counts those that need a person.

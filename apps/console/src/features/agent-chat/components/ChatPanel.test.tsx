@@ -45,16 +45,31 @@ const chatOf = (view: ChatView): ProjectChat => ({
 
 const mainSend = vi.fn(() => Promise.resolve(true));
 const issuesSend = vi.fn(() => Promise.resolve(true));
+const issueSend = vi.fn(() => Promise.resolve(true));
 const stores: Record<ChatView, { send: typeof mainSend }> = {
   main: { send: mainSend },
   issues: { send: issuesSend },
-  issue: { send: vi.fn(() => Promise.resolve(true)) },
+  issue: { send: issueSend },
 };
+const storeIssue = vi.fn();
+const post = vi.fn();
+let issueThreads: { issueNumber: number; count: number }[] = [];
 vi.mock("../useProjectChat", () => ({
   useProjectChat: (_projectName: string, view: ChatView = "main") => chatOf(view),
-  chatStoreFor: (view: ChatView) => stores[view],
-  chatStore: { retry: vi.fn(), answer: vi.fn() },
+  chatStoreFor: (view: ChatView, issueNumber?: number) => {
+    storeIssue(view, issueNumber);
+    return stores[view];
+  },
+  chatStore: { retry: vi.fn(), answer: vi.fn(), post: (...args: unknown[]) => post(...args) },
   canSend: () => true,
+}));
+// Whether the issue in view is open: the issue list's word, or the server's
+// 409 `issue_closed` once its thread is found removed.
+let issueState: "open" | "closed" | "unknown" = "unknown";
+vi.mock("../useIssueThread", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../useIssueThread")>()),
+  useIssueThreadState: () => issueState,
+  useOpenIssueThreads: () => issueThreads,
 }));
 vi.mock("../../spec/useSpecWorkspace", () => ({
   useSpecFeature: () => null,
@@ -92,15 +107,18 @@ function Harness({
   initial,
 }: {
   page: "issues" | "overview";
-  card: "issue" | null;
+  card: "issue" | "questions" | null;
   composeRequest: ComposeRequest | null;
   initial: BranchState;
 }) {
   const [branch, setBranch] = useState(initial);
+  const [issueBranch, setIssueBranch] = useState(OPEN);
+  // An issue's card, or the Questions card answering that issue's chat.
+  const onCard = card === "issue" || (card === "questions" && questionsIssue !== null);
   const controls: ChatPanelControls = {
     open: vi.fn(),
     compose: vi.fn(),
-    startBranch: () => setBranch(OPEN),
+    startBranch: (view) => (view === "issue" ? setIssueBranch(OPEN) : setBranch(OPEN)),
   };
   return (
     <OxygenUIThemeProvider theme={OxygenTheme}>
@@ -110,11 +128,15 @@ function Harness({
           page={page}
           card={card}
           specFile={null}
+          issueNumber={onCard ? 7 : null}
           composeRequest={composeRequest}
           onComposeApplied={onComposeApplied}
           branch={branch}
-          onStartBranch={() => setBranch(OPEN)}
-          onMinimiseBranch={() => setBranch((b) => ({ ...b, minimised: true }))}
+          issueBranch={onCard ? issueBranch : null}
+          onStartBranch={() => (onCard ? setIssueBranch(OPEN) : setBranch(OPEN))}
+          onMinimiseBranch={() =>
+            onCard ? setIssueBranch((b) => ({ ...b, minimised: true })) : setBranch((b) => ({ ...b, minimised: true }))
+          }
           onClose={() => {}}
         />
       </ChatPanelContext.Provider>
@@ -122,9 +144,12 @@ function Harness({
   );
 }
 
+/** The issue whose chat the Questions card answers, in a test that opens it so. */
+let questionsIssue: number | null = null;
+
 function panel(
   page: "issues" | "overview",
-  card: "issue" | null = null,
+  card: "issue" | "questions" | null = null,
   composeRequest: ComposeRequest | null = null,
   initial: BranchState = NOT_STARTED,
 ) {
@@ -132,6 +157,7 @@ function panel(
 }
 
 const sheet = () => screen.queryByRole("region", { name: "Issues chat" });
+const issueSheet = () => screen.queryByRole("region", { name: "Issue #7 chat" });
 const mainLayer = () => screen.getByTestId("main-chat");
 const inputIn = (el: HTMLElement) => within(el).getByLabelText("Message the agent") as HTMLTextAreaElement;
 
@@ -144,6 +170,12 @@ describe("ChatPanel", () => {
   beforeEach(() => {
     mainSend.mockClear();
     issuesSend.mockClear();
+    issueSend.mockClear();
+    storeIssue.mockClear();
+    post.mockClear();
+    issueState = "unknown";
+    issueThreads = [];
+    questionsIssue = null;
     onComposeApplied.mockClear();
     navigate.mockClear();
     chatStatus = "ready";
@@ -267,11 +299,77 @@ describe("ChatPanel", () => {
       expect(screen.getByRole("button", { name: /Main chat/ }).textContent).toContain("Sure, I'll look at that.");
     });
 
-    it("on an issue's card, which is the main chat's, shows no branch", () => {
+    it("on an issue's card, shows no Issues chat", () => {
       render(panel("issues", "issue", null, OPEN));
       expect(sheet()).toBeNull();
       expect(screen.queryByTestId("branch-start")).toBeNull();
       expect(screen.queryByTestId("branch-link")).toBeNull();
+    });
+  });
+
+  describe("on an issue's card", () => {
+    it("draws an open issue's own chat as a sheet over the main chat, sending to that issue's chat", () => {
+      issueState = "open";
+      render(panel("issues", "issue"));
+      const s = issueSheet()!;
+      expect(within(s).getByTestId("branch-path").textContent).toBe("Acme Expenses └ Issues › #7");
+      expect(within(s).getByText(/Talking about/).textContent).toBe("Talking about issue #7.");
+      expect(within(s).getByText("Ask me about this issue, or tell me what to do with it.")).toBeTruthy();
+      expect(mainLayer().hasAttribute("inert")).toBe(true);
+      typeAndSend(s, "Comment that it is fixed");
+      expect(issueSend).toHaveBeenCalledWith("shop", "Comment that it is fixed", { kind: "product" });
+      expect(storeIssue).toHaveBeenCalledWith("issue", 7);
+      expect(mainSend).not.toHaveBeenCalled();
+    });
+
+    it("minimises to a link at the end of the main thread, and Open brings it back", () => {
+      issueState = "open";
+      render(panel("issues", "issue"));
+      fireEvent.click(within(issueSheet()!).getByRole("button", { name: /Main chat/ }));
+      expect(issueSheet()).toBeNull();
+      expect(screen.getByTestId("branch-link").textContent).toBe("↳ Issues › #7 · its own chat · Open ↑");
+      fireEvent.click(screen.getByRole("button", { name: "Open ↑" }));
+      expect(issueSheet()).not.toBeNull();
+    });
+
+    it("draws no chat for a closed issue, or one not read yet", () => {
+      issueState = "closed";
+      render(panel("issues", "issue"));
+      expect(issueSheet()).toBeNull();
+      expect(mainLayer().hasAttribute("inert")).toBe(false);
+      cleanup();
+      issueState = "unknown";
+      render(panel("issues", "issue"));
+      expect(issueSheet()).toBeNull();
+    });
+
+    it("when the issue turns out closed while its sheet is open, the sheet closes and the main chat says so", () => {
+      issueState = "open";
+      const view = render(panel("issues", "issue"));
+      expect(post).not.toHaveBeenCalled();
+      issueState = "closed";
+      view.rerender(panel("issues", "issue"));
+      expect(issueSheet()).toBeNull();
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(post).toHaveBeenCalledWith("shop", "Issue #7 was closed; its chat was removed.");
+      view.rerender(panel("issues", "issue"));
+      expect(post).toHaveBeenCalledTimes(1);
+    });
+
+    it("stays over the main chat on the Questions card answering it, with no Issues Start row", () => {
+      issueState = "open";
+      questionsIssue = 7;
+      render(panel("issues", "questions"));
+      expect(issueSheet()).not.toBeNull();
+      expect(sheet()).toBeNull();
+      expect(screen.queryByTestId("branch-start")).toBeNull();
+    });
+
+    it("says nothing for an issue already closed on arrival", () => {
+      issueState = "closed";
+      const view = render(panel("issues", "issue"));
+      view.rerender(panel("issues", "issue"));
+      expect(post).not.toHaveBeenCalled();
     });
   });
 
@@ -315,6 +413,19 @@ describe("ChatPanel", () => {
       await act(async () => fireEvent.click(screen.getByRole("menuitem", { name: /^Issues/ })));
       expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "shop" } });
       expect(sheet()).not.toBeNull();
+    });
+
+    it("lists each issue's chat that holds something; it goes to the issue's card and brings its chat up", async () => {
+      issueThreads = [{ issueNumber: 7, count: 2 }];
+      render(panel("overview"));
+      openMenu();
+      const seven = screen.getByRole("menuitem", { name: /#7/ });
+      expect(within(seven).getByText("Issues › #7")).toBeTruthy();
+      await act(async () => fireEvent.click(seven));
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/projects/$projectName/issues/$number",
+        params: { projectName: "shop", number: "7" },
+      });
     });
 
     it("the main chat minimises the sheet", () => {

@@ -20,12 +20,26 @@ import { describe, expect, it } from "vitest";
 import type { ProjectCard, ProjectPage, ShellScope } from "../shell/scope";
 import { opensQuestionsCard } from "./openQuestions";
 
-const at = (page: ProjectPage, card: ProjectCard | null = null, projectName = "acme"): ShellScope => ({
+const at = (page: ProjectPage, card: ProjectCard | null = null, projectName = "acme", issueNumber: number | null = null): ShellScope => ({
   kind: "project",
   projectName,
   page,
   card,
   specFile: null,
+  issueNumber,
+});
+
+describe("opensQuestionsCard in an issue's view", () => {
+  it("opens over that issue's own card only", () => {
+    expect(opensQuestionsCard(at("issues", "issue", "acme", 7), "acme", "issue", 7)).toBe(true);
+  });
+
+  it("leaves the user on another issue's card, the Issues Page, a Questions card already open, or another project", () => {
+    expect(opensQuestionsCard(at("issues", "issue", "acme", 8), "acme", "issue", 7)).toBe(false);
+    expect(opensQuestionsCard(at("issues"), "acme", "issue", 7)).toBe(false);
+    expect(opensQuestionsCard(at("issues", "questions", "acme", 7), "acme", "issue", 7)).toBe(false);
+    expect(opensQuestionsCard(at("issues", "issue", "other", 7), "acme", "issue", 7)).toBe(false);
+  });
 });
 
 describe("opensQuestionsCard in the issues view", () => {

@@ -97,6 +97,20 @@ export class Script {
   }
 
   /**
+   * A call of one of aep-api's MCP tools (the issue tools): its result is the
+   * server's text, which the stream carries as the call's output and the
+   * history in the SDK's `{ type: "text", value }` wrapper.
+   */
+  mcp(toolCallId: string, toolName: string, input: unknown, text: string): this {
+    this.emit({ type: "tool-call", toolCallId, toolName, input }, 200);
+    this.emit({ type: "tool-result", toolCallId, toolName, input, output: text }, 30);
+    this.parts.push({ type: "tool-call", toolCallId, toolName, input });
+    this.results.push({ type: "tool-result", toolCallId, toolName, output: { type: "text", value: text } });
+    this.lastWasText = false;
+    return this;
+  }
+
+  /**
    * A batch of questions (ask_questions), its input streamed as the provider
    * streams it, so the card fills question by question; the turn ends waiting
    * for the answers.

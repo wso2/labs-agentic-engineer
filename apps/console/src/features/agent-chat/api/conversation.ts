@@ -23,21 +23,24 @@
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
-import { wireView, type ChatView } from "../chatView";
+import { wireQuery, type ChatView } from "../chatView";
+import { IssueClosedError } from "./turns";
 
 export type ConversationMessage = components["schemas"]["ConversationMessage"];
 
 /**
  * The project's CURRENT thread id (#430): server-minted and stored against the
  * project, so every member resolves the same one. Each view has its own: the
- * Issues Page's agent talks on a thread of its own.
+ * Issues Page's agent talks on a thread of its own, and so does each open
+ * issue's (`issueNumber`); a closed issue has none (409 `issue_closed`).
  */
-export async function fetchCurrentConversationId(projectName: string, view?: ChatView): Promise<string> {
-  const wire = wireView(view);
-  const { data, error } = await client.GET("/projects/{projectName}/agents/conversations", {
-    params: { path: { projectName }, ...(wire ? { query: { view: wire } } : {}) },
+export async function fetchCurrentConversationId(projectName: string, view?: ChatView, issueNumber?: number): Promise<string> {
+  const query = wireQuery(view, issueNumber);
+  const { data, error, response } = await client.GET("/projects/{projectName}/agents/conversations", {
+    params: { path: { projectName }, ...(query ? { query } : {}) },
   });
   if (error || data === undefined) {
+    if (response?.status === 409 && (error as { code?: string } | undefined)?.code === "issue_closed") throw new IssueClosedError();
     throw new Error(apiErrorMessage(error, "Couldn't open the project conversation"));
   }
   const current = data.conversations.find((c) => c.current) ?? data.conversations[0];

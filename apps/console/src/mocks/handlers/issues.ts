@@ -18,7 +18,8 @@
 
 import { http, HttpResponse } from "msw";
 import type { components } from "../../generated/aep-api";
-import type { FiledIssue } from "../fixtures/issuesAgent";
+import type { IssueChange } from "../fixtures/issueAgent";
+import { mockIssueUrl, type FiledIssue } from "../fixtures/issuesAgent";
 
 type IssueInfo = components["schemas"]["IssueInfo"];
 type TaskDetail = components["schemas"]["TaskDetail"];
@@ -28,7 +29,9 @@ type TimelineEvent = components["schemas"]["TimelineEvent"];
 // Issues and Alerts in mock mode: Acme Expenses has one of each kind the
 // Issues Page and the Dashboard tell apart (an escalated incident, a fix to
 // review, a verdict, a person's issue, the platform's planned work); the
-// other projects have none. No RCA reports, as on today's install.
+// other projects have none. No RCA reports, as on today's install. What an
+// issue's own agent changed (a comment, a new title, closing it) shows once
+// the turn that made the change has ended; a closed issue has no thread.
 
 const REPO = "https://github.com/acme/acme-expenses/issues";
 
@@ -161,7 +164,7 @@ export function fileMockIssue(projectName: string, filed: FiledIssue, visibleAt 
     Number: number,
     Title: filed.title,
     Body: filed.body,
-    URL: `https://github.com/acme/${projectName}/issues/${number}`,
+    URL: mockIssueUrl(projectName, number),
     State: "open",
     Labels: [filed.kind, "src/user"],
   };
@@ -171,10 +174,73 @@ export function fileMockIssue(projectName: string, filed: FiledIssue, visibleAt 
   return issue;
 }
 
-/** The project's issues: those the agent has filed (newest first), then the fixtures. */
+/** A change an issue's agent made, and when the turn that made it ends and the issue shows it. */
+interface ChangeRecord {
+  number: number;
+  change: IssueChange;
+  visibleAt: number;
+}
+
+const CHANGES_KEY = "aep:mock:issue-changes";
+
+function readChanges(): Record<string, ChangeRecord[]> {
+  try {
+    const raw = sessionStorage.getItem(CHANGES_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, ChangeRecord[]>;
+  } catch {
+    // unreadable: start over
+  }
+  return {};
+}
+
+/** Record what an issue's agent changed, shown once its turn has ended (`visibleAt`). Kept in sessionStorage. */
+export function changeMockIssue(projectName: string, number: number, change: IssueChange, visibleAt = Date.now()): void {
+  const all = readChanges();
+  all[projectName] = [...(all[projectName] ?? []), { number, change, visibleAt }];
+  try {
+    sessionStorage.setItem(CHANGES_KEY, JSON.stringify(all));
+  } catch {
+    /* quota: non-fatal in mock mode */
+  }
+}
+
+/** An issue's changes that have happened by `now`, oldest first. */
+function changesOf(projectName: string, number: number, now: number): IssueChange[] {
+  return (readChanges()[projectName] ?? []).filter((c) => c.number === number && c.visibleAt <= now).map((c) => c.change);
+}
+
+/** The issue as its agent's changes left it: a new title, or closed. */
+function changed(projectName: string, issue: IssueInfo, now: number): IssueInfo {
+  return changesOf(projectName, issue.Number, now).reduce<IssueInfo>((i, c) => {
+    if (c.kind === "edit") return { ...i, Title: c.title };
+    if (c.kind === "close") return { ...i, State: "closed", StateReason: "completed" };
+    return i;
+  }, issue);
+}
+
+/** The project's issues: those the agent has filed (newest first), then the fixtures, as their agents left them. */
 export function issuesOf(projectName: string, now = Date.now()): IssueInfo[] {
   const filed = (readFiled()[projectName] ?? []).filter((f) => f.visibleAt <= now).map((f) => f.issue);
-  return [...filed.reverse(), ...(ISSUES[projectName] ?? [])];
+  return [...filed.reverse(), ...(ISSUES[projectName] ?? [])].map((i) => changed(projectName, i, now));
+}
+
+/** Whether the issue has a thread: it exists and is open (closing it removed the thread). */
+export function issueThreadOpen(projectName: string, number: number, now = Date.now()): boolean {
+  return issuesOf(projectName, now).find((i) => i.Number === number)?.State === "open";
+}
+
+/** The comments the issue's agent posted, as GitHub lists them. */
+function agentComments(projectName: string, number: number): NonNullable<TaskDetail["comments"]> {
+  const url = mockIssueUrl(projectName, number);
+  return (readChanges()[projectName] ?? [])
+    .filter((c) => c.number === number && c.change.kind === "comment" && c.visibleAt <= Date.now())
+    .map((c, i) => ({
+      id: `agent-${number}-${i}`,
+      author: "aep-agent",
+      body: c.change.kind === "comment" ? c.change.body : "",
+      createdAt: new Date(c.visibleAt).toISOString(),
+      url: `${url}#agent-${i}`,
+    }));
 }
 
 export const issuesHandlers = [
@@ -182,7 +248,9 @@ export const issuesHandlers = [
 
   http.get("*/api/v1/projects/:projectName/tasks/:issueNumber", ({ params }) => {
     const number = Number(params.issueNumber);
-    const issue = issuesOf(String(params.projectName)).find((i) => i.Number === number);
+    const projectName = String(params.projectName);
+    const issue = issuesOf(projectName).find((i) => i.Number === number);
+    const comments = [...(COMMENTS[number] ?? []), ...agentComments(projectName, number)];
     if (!issue) return HttpResponse.json({ code: "not_found", message: "task not found" }, { status: 404 });
     return HttpResponse.json<TaskDetail>({
       issueNumber: number,
@@ -197,7 +265,7 @@ export const issuesHandlers = [
       executions: {},
       executionHistory: [],
       lineage: {},
-      ...(COMMENTS[number] ? { comments: COMMENTS[number] } : {}),
+      ...(comments.length > 0 ? { comments } : {}),
     });
   }),
 

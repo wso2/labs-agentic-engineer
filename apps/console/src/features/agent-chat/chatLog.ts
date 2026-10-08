@@ -116,11 +116,51 @@ export type ChatItem =
       /** The user's words, passed on unchanged. */
       request: string;
     }
+  | {
+      /**
+       * The Issues agent filed an issue (its `create_issue` result names it):
+       * the chat offers to go on in that issue's own chat.
+       */
+      kind: "filed";
+      id: string;
+      turnId: string;
+      toolCallId: string;
+      issueNumber: number;
+    }
   | { kind: "error"; id: string; text: string };
 
 export type ActivityItem = Extract<ChatItem, { kind: "activity" }>;
 export type QuestionItem = Extract<ChatItem, { kind: "question" }>;
 export type HandOffItem = Extract<ChatItem, { kind: "handoff" }>;
+export type FiledItem = Extract<ChatItem, { kind: "filed" }>;
+
+/** The Issues agent's tool that files an issue: aep-api's MCP tool (sourcecontrol/issues/user_mcp.go). */
+const CREATE_ISSUE_TOOL = "create_issue";
+
+/** Whether a tool call files an issue, so its result names the new issue. */
+export const isCreateIssueTool = (toolName: string | undefined) => toolName === CREATE_ISSUE_TOOL;
+
+/**
+ * The new issue's number a `create_issue` result names, or null for a refusal,
+ * a failure or anything unreadable. The MCP server answers with text
+ * (`{"number":15,"url":…}`), which the stream carries as the call's output and
+ * the history in the SDK's `{ type: "text", value }` wrapper (or `json`).
+ */
+export function filedIssueNumber(output: unknown): number | null {
+  const wrapped = output as { type?: unknown; value?: unknown } | null | undefined;
+  let value: unknown = output;
+  if (wrapped && typeof wrapped === "object" && (wrapped.type === "text" || wrapped.type === "json")) value = wrapped.value;
+  else if (wrapped && typeof wrapped === "object" && "type" in wrapped) return null;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  const number = (value as { number?: unknown } | null | undefined)?.number;
+  return typeof number === "number" && Number.isInteger(number) && number > 0 ? number : null;
+}
 
 /** Append streamed narration to the turn's current text row, or start one after anything else. */
 export function appendAgentText(items: ChatItem[], turnId: string, delta: string): ChatItem[] {
@@ -164,6 +204,30 @@ export function upsertHandOff(
   handOff: Pick<HandOffItem, "toolCallId" | "view" | "request">,
 ): ChatItem[] {
   return upsert(items, { kind: "handoff", id: `${turnId}:h:${handOff.toolCallId}`, turnId, ...handOff });
+}
+
+export function upsertFiled(items: ChatItem[], turnId: string, filed: Pick<FiledItem, "toolCallId" | "issueNumber">): ChatItem[] {
+  return upsert(items, { kind: "filed", id: `${turnId}:f:${filed.toolCallId}`, turnId, ...filed });
+}
+
+/**
+ * The log as drawn: an issue the agent filed shows under its reply, at the end
+ * of its exchange (before the next message), wherever in the turn the filing
+ * landed. Worked out when drawing, so the stream and the history agree.
+ */
+export function withFiledLast(items: ChatItem[]): ChatItem[] {
+  if (!items.some((i) => i.kind === "filed")) return items;
+  const out: ChatItem[] = [];
+  let held: ChatItem[] = [];
+  for (const item of items) {
+    if (item.kind === "user") {
+      out.push(...held);
+      held = [];
+    }
+    if (item.kind === "filed") held.push(item);
+    else out.push(item);
+  }
+  return [...out, ...held];
 }
 
 /** The request a hand-off call carries; null when it carries none. */
@@ -344,8 +408,9 @@ function failedToolCalls(history: ConversationMessage[]): Set<string> {
  * The server's history as chat items, in order: user rows, the agent's prose,
  * a line for each file it wrote, a card for each question it asked (so a
  * question still waiting survives a reload and stays answerable), and the
- * announcement of a hand-off to another view. A call the SDK rejected, and a
- * write the bundle refused, drop out; any other tool call shows nothing.
+ * announcement of a hand-off to another view, and the issue a `create_issue`
+ * call filed (from its result). A call the SDK rejected, and a write the
+ * bundle refused, drop out; any other tool call shows nothing.
  *
  * Ids are position-stable (`h<n>`), so the same history projects to the same
  * ids every time.
@@ -366,6 +431,16 @@ export function historyItems(history: ConversationMessage[]): ChatItem[] {
         ...(m.prototypeFeedback ? { prototypeFeedback: m.prototypeFeedback } : {}),
         scope: wireScope(m.scope),
       });
+      continue;
+    }
+    if (m.role === "tool") {
+      for (const p of parts(m.content)) {
+        if (p.type !== "tool-result" || typeof p.toolName !== "string" || !isCreateIssueTool(p.toolName)) continue;
+        const issueNumber = filedIssueNumber(p.output);
+        if (issueNumber === null) continue;
+        const toolCallId = typeof p.toolCallId === "string" ? p.toolCallId : "";
+        out.push({ kind: "filed", id: `h${out.length}`, turnId: "history", toolCallId, issueNumber });
+      }
       continue;
     }
     if (m.role !== "assistant") continue;

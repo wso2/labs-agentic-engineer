@@ -17,18 +17,23 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { chatViewFor, homePath, questionsPath, viewTurnBody, wireView } from "./chatView";
+import { chatViewFor, homeLink, questionsLink, viewTurnBody, wireQuery } from "./chatView";
 
 // A project has a chat per view: the Issues Page talks to its own agent on its
-// own thread; everywhere else, including the Issue card over it, is the main chat.
+// own thread, and each issue's card to that issue's own; everywhere else is the
+// main chat.
 
 describe("chatViewFor", () => {
   it("is the issues view on the Issues Page with no card open", () => {
     expect(chatViewFor("issues", null)).toBe("issues");
   });
 
-  it("is the main chat on the Issue card, which no agent works on yet", () => {
-    expect(chatViewFor("issues", "issue")).toBe("main");
+  it("is the issue's own view on an Issue card", () => {
+    expect(chatViewFor("issues", "issue", 7)).toBe("issue");
+  });
+
+  it("is the issue's own view on the Questions card answering that issue's chat", () => {
+    expect(chatViewFor("issues", "questions", 7)).toBe("issue");
   });
 
   it("is the issues view on the Questions card over the Issues Page, and the main chat on the one over the overview", () => {
@@ -45,21 +50,37 @@ describe("chatViewFor", () => {
 
 describe("where a view's questions are answered, and where it closes back to", () => {
   it("is the overview's card for the main chat", () => {
-    expect(questionsPath("main")).toBe("/projects/$projectName/questions");
-    expect(homePath("main")).toBe("/projects/$projectName");
+    expect(questionsLink("shop", "main")).toEqual({ to: "/projects/$projectName/questions", params: { projectName: "shop" } });
+    expect(homeLink("shop", "main")).toEqual({ to: "/projects/$projectName", params: { projectName: "shop" } });
   });
 
   it("is the Issues Page's card for the issues view", () => {
-    expect(questionsPath("issues")).toBe("/projects/$projectName/issues/questions");
-    expect(homePath("issues")).toBe("/projects/$projectName/issues");
+    expect(questionsLink("shop", "issues")).toEqual({ to: "/projects/$projectName/issues/questions", params: { projectName: "shop" } });
+    expect(homeLink("shop", "issues")).toEqual({ to: "/projects/$projectName/issues", params: { projectName: "shop" } });
+  });
+
+  it("is the Issues Page's card, naming the issue, for an issue's chat, which closes back to the issue's card", () => {
+    expect(questionsLink("shop", "issue", 7)).toEqual({
+      to: "/projects/$projectName/issues/questions",
+      params: { projectName: "shop" },
+      search: { issue: 7 },
+    });
+    expect(homeLink("shop", "issue", 7)).toEqual({
+      to: "/projects/$projectName/issues/$number",
+      params: { projectName: "shop", number: "7" },
+    });
   });
 });
 
-describe("wireView", () => {
-  it("names only the issues view: the main chat is the absence of a view", () => {
-    expect(wireView("issues")).toBe("issues");
-    expect(wireView("main")).toBeUndefined();
-    expect(wireView(undefined)).toBeUndefined();
+describe("wireQuery", () => {
+  it("names the issues view alone: the main chat is the absence of a view", () => {
+    expect(wireQuery("issues")).toEqual({ view: "issues" });
+    expect(wireQuery("main")).toBeUndefined();
+    expect(wireQuery(undefined)).toBeUndefined();
+  });
+
+  it("names an issue's chat by the view and its number", () => {
+    expect(wireQuery("issue", 7)).toEqual({ view: "issue", issueNumber: 7 });
   });
 });
 
@@ -72,5 +93,9 @@ describe("viewTurnBody", () => {
 
   it("sends an issues turn as the words and the view alone: it has no spec room and no scope", () => {
     expect(viewTurnBody("issues", roomTurn)).toEqual({ instruction: "Go", view: "issues" });
+  });
+
+  it("sends an issue's turn as the words, the view and the issue's number", () => {
+    expect(viewTurnBody("issue", roomTurn, 7)).toEqual({ instruction: "Go", view: "issue", issueNumber: 7 });
   });
 });

@@ -32,9 +32,13 @@ const ISSUES_STALE_MS = 30_000;
 /** The project's issue list in the query cache: the Issues agent's turn ends by reading it again. */
 export const issuesListKey = (projectName: string) => ["projects", projectName, "issues"] as const;
 
+/** One issue's detail in the query cache: its own agent's turn ends by reading it again. */
+export const issueDetailKey = (projectName: string, issueNumber: number) =>
+  ["projects", projectName, "issues", issueNumber] as const;
+
 const issueKeys = {
   list: issuesListKey,
-  detail: (projectName: string, issueNumber: number) => ["projects", projectName, "issues", issueNumber] as const,
+  detail: issueDetailKey,
   reports: () => ["rca-agent", "reports"] as const,
 };
 

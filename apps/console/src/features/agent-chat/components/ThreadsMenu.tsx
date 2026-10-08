@@ -20,10 +20,11 @@ import { useState } from "react";
 import { Box, IconButton, Menu, MenuItem, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { ListTree } from "@wso2/oxygen-ui-icons-react";
 
-// The project's threads, from the chat header: its main chat, and the Issues
-// chat once it holds something, the branch stacked on the main one. Each
-// shows its message count; the branch says whether it is open or was summed
-// up in the main chat.
+// The project's threads, from the chat header: its main chat, the Issues chat
+// once it holds something, and each issue's own chat that holds something
+// (opened in this tab), the branches stacked on the main one. Each shows its
+// message count; a branch says whether it is open, and the Issues chat
+// whether it was summed up in the main chat.
 
 /** The Issues branch as the menu lists it. */
 export interface IssuesThread {
@@ -37,20 +38,26 @@ export function ThreadsMenu({
   projectLabel,
   mainCount,
   issues,
+  issueThreads,
   current,
   onMain,
   onIssues,
+  onIssue,
 }: {
   projectLabel: string;
   mainCount: number;
   /** Null while the Issues chat is empty and not started: it is not listed. */
   issues: IssuesThread | null;
-  /** The thread in front. */
-  current: "main" | "issues";
+  /** The issues whose own chat holds something, with what was said there. */
+  issueThreads: readonly { issueNumber: number; count: number }[];
+  /** The thread in front: the main chat, the Issues chat, or an issue's by its number. */
+  current: "main" | "issues" | number;
   /** Bring the main chat to the front. */
   onMain: () => void;
   /** Go to the Issues chat. */
   onIssues: () => void;
+  /** Go to an issue's own chat. */
+  onIssue: (issueNumber: number) => void;
 }) {
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const close = () => setAnchor(null);
@@ -89,6 +96,17 @@ export function ThreadsMenu({
             onClick={pick(onIssues)}
           />
         )}
+        {issueThreads.map(({ issueNumber, count }) => (
+          <ThreadRow
+            key={issueNumber}
+            label={`Issues › #${issueNumber}`}
+            state={current === issueNumber ? "open" : null}
+            count={count}
+            branch
+            selected={current === issueNumber}
+            onClick={pick(() => onIssue(issueNumber))}
+          />
+        ))}
       </Menu>
     </>
   );

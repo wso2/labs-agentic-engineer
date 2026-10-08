@@ -20,13 +20,16 @@ import type { ReactNode } from "react";
 import { Box, ButtonBase, Typography } from "@wso2/oxygen-ui";
 import { PHONE } from "../../shell/layout";
 
-// The Issues chat, a branch of the main chat, drawn as a sheet over it inside
-// the chat panel: a strip back to the main chat (with its last line), the path
-// from the project to Issues, then the branch's own thread and composer. No
-// motion: it is there, or it is not. At phone width it fills the panel.
+// A branch of the main chat (the Issues chat, or an issue's own), drawn as a
+// sheet over it inside the chat panel: a strip back to the main chat (with its
+// last line), the path from the project to the branch ("Issues", or
+// "Issues › #7"), then the branch's own thread and composer. No motion: it is
+// there, or it is not. At phone width it fills the panel.
 
 export function BranchSheet({
   projectLabel,
+  title = "Issues",
+  label = "Issues chat",
   peek,
   hidden,
   onMinimise,
@@ -34,6 +37,10 @@ export function BranchSheet({
 }: {
   /** The project as the chat's breadcrumb names it. */
   projectLabel: string;
+  /** The branch, as its path names it after the project. */
+  title?: string;
+  /** The sheet's name to assistive tech. */
+  label?: string;
   /** The main chat's last line, on the strip; null when it has none. */
   peek: string | null;
   /** Minimised: kept (its draft too) but out of sight, the main chat in front. */
@@ -46,7 +53,7 @@ export function BranchSheet({
   return (
     <Box
       component="section"
-      aria-label="Issues chat"
+      aria-label={label}
       hidden={hidden}
       sx={{
         position: "absolute",
@@ -109,7 +116,7 @@ export function BranchSheet({
             └
           </Box>{" "}
           <Box component="b" sx={{ fontWeight: 600 }}>
-            Issues
+            {title}
           </Box>
         </Typography>
       </Box>

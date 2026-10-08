@@ -24,7 +24,7 @@
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
-import { wireView, type ChatView } from "../chatView";
+import { wireQuery, type ChatView } from "../chatView";
 import type { TurnBody } from "../turnScope";
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
@@ -56,6 +56,17 @@ export class ConversationRotatedError extends Error {
   }
 }
 
+/**
+ * The issue whose thread was addressed is closed (409 `issue_closed`): a closed
+ * issue has no thread, and closing one removes the one it had.
+ */
+export class IssueClosedError extends Error {
+  constructor() {
+    super("This issue is closed. Its chat was removed.");
+    this.name = "IssueClosedError";
+  }
+}
+
 /** Start a turn in the project's conversation; resolves with its id (202). */
 export async function startTurn(projectName: string, conversationId: string, body: TurnBody): Promise<string> {
   const { data, error, response } = await client.POST("/projects/{projectName}/agents/{conversationId}/messages", {
@@ -65,8 +76,9 @@ export async function startTurn(projectName: string, conversationId: string, bod
   if (error || data === undefined) {
     if (response.status === 409) {
       // The pinned TurnConflict: turn_in_progress / requirements_missing /
-      // conversation_rotated (#430).
+      // conversation_rotated (#430) / issue_closed.
       const conflict = error as Partial<TurnConflict> | undefined;
+      if (conflict?.code === "issue_closed") throw new IssueClosedError();
       if (conflict?.code === "conversation_rotated") throw new ConversationRotatedError();
       if (conflict?.code === "turn_in_progress") throw new TurnInProgressError(conflict.activeTurnId);
     }
@@ -75,11 +87,11 @@ export async function startTurn(projectName: string, conversationId: string, bod
   return data.turnId;
 }
 
-/** The project's running turn in a view (the main chat's by default), or null (204, or the read failed). */
-export async function getActiveTurn(projectName: string, view?: ChatView): Promise<TurnStatus | null> {
-  const wire = wireView(view);
+/** The project's running turn in a view (the main chat's by default; an issue's by its number), or null (204, or the read failed). */
+export async function getActiveTurn(projectName: string, view?: ChatView, issueNumber?: number): Promise<TurnStatus | null> {
+  const query = wireQuery(view, issueNumber);
   const { data, error, response } = await client.GET("/projects/{projectName}/turns/active", {
-    params: { path: { projectName }, ...(wire ? { query: { view: wire } } : {}) },
+    params: { path: { projectName }, ...(query ? { query } : {}) },
   });
   if (response.status === 204 || error || data === undefined) return null;
   return data;

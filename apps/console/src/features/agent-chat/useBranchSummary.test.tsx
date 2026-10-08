@@ -74,11 +74,11 @@ vi.mock("./useProjectChat", () => ({
 
 const { useBranchSummary } = await import("./useBranchSummary");
 
-const onIssues: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: null, specFile: null };
-const onOverview: ShellScope = { kind: "project", projectName: PROJECT, page: "overview", card: null, specFile: null };
-const onOtherIssues: ShellScope = { kind: "project", projectName: "beta", page: "issues", card: null, specFile: null };
-const onQuestions: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: "questions", specFile: null };
-const onIssueCard: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: "issue", specFile: null };
+const onIssues: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: null, specFile: null, issueNumber: null };
+const onOverview: ShellScope = { kind: "project", projectName: PROJECT, page: "overview", card: null, specFile: null, issueNumber: null };
+const onOtherIssues: ShellScope = { kind: "project", projectName: "beta", page: "issues", card: null, specFile: null, issueNumber: null };
+const onQuestions: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: "questions", specFile: null, issueNumber: null };
+const onIssueCard: ShellScope = { kind: "project", projectName: PROJECT, page: "issues", card: "issue", specFile: null, issueNumber: 7 };
 
 const notes = (store: ReturnType<typeof createChatStore>, project = PROJECT) =>
   store.get(project).items.filter((i) => i.kind === "note");

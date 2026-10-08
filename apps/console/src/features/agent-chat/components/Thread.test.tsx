@@ -187,3 +187,22 @@ describe("a From Issues note in the conversation", () => {
   });
 });
 
+describe("an issue the Issues agent filed", () => {
+  it("shows Continue on #N under the reply; Open goes to the issue's card and opens its chat", async () => {
+    chat = ready([
+      { kind: "user", id: "u1", text: "File it", state: "sent", turnId: "t1" },
+      { kind: "filed", id: "f1", turnId: "t1", toolCallId: "c1", issueNumber: 15 },
+      { kind: "agent", id: "a1", turnId: "t1", text: "Filed #15." },
+    ]);
+    renderThread();
+    const line = screen.getByTestId("filed-issue");
+    expect(line.textContent).toBe("Continue on #15 · Open");
+    expect(screen.getByText("Filed #15.").compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Open" })));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/projects/$projectName/issues/$number",
+      params: { projectName: "acme", number: "15" },
+    });
+    expect(startBranch).toHaveBeenCalledWith("issue", "acme", 15);
+  });
+});
