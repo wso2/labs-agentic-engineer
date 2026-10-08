@@ -72,7 +72,7 @@ export function gateCreateIssue(tools: ToolSet, confirmed: boolean, asked: AskQu
     ? onceAsShown(
         create,
         { question: FILE_QUESTION, option: FILE_IT },
-        describeFiling,
+        FILING,
         asked,
         "A filing was already attempted in this turn; tell the user the result and ask before trying again.",
       )

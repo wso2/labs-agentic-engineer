@@ -303,3 +303,17 @@ test("gateWrites: CRLF line endings and surrounding whitespace do not change the
   assert.equal(await call(gated, "edit_issue", { title: "Save fails offline", body: "Steps:\r\n1. Go offline\r\n2. Save\n" }), "edit_issue done");
   assert.equal(runs.edit_issue, 1);
 });
+
+test("gateWrites: a write with arguments never skips the card by leaving them empty", async () => {
+  const empty: Record<Exclude<WriteTool, "reopen_issue">, Record<string, unknown>> = {
+    comment_issue: { body: "" },
+    edit_issue: {},
+    close_issue: {},
+    hand_to_coding_agent: { component: "  " },
+  };
+  for (const [t, input] of Object.entries(empty) as [WriteTool, Record<string, unknown>][]) {
+    const { tools, runs } = issueTools();
+    await assert.rejects(() => call(gateWrites(tools, answer(t), card(t)), t, input), { message: mismatch(t) }, t);
+    assert.equal(runs[t], 0, `${t} never ran`);
+  }
+});

@@ -130,14 +130,23 @@ const normalised = (s: string): string => s.replace(/\r\n/g, "\n").trim();
 
 /**
  * Did the card the user last saw (`asked`) ask `confirmation.question` with
- * `confirmation.option` showing exactly `change` as its description? An empty
- * change (a write with no arguments) binds no description, only the question.
+ * `confirmation.option` showing exactly the change `input` makes (`layout`) as
+ * its description? Only a write that names no arguments (an empty `layout`)
+ * and is given none binds the question alone; any other write, even one whose
+ * arguments are left empty, must match the description.
  */
-function shownOnCard(asked: AskQuestionInput | undefined, { question, option }: Confirmation, change: string): boolean {
+function shownOnCard(
+  asked: AskQuestionInput | undefined,
+  { question, option }: Confirmation,
+  layout: ChangeLayout,
+  input: unknown,
+): boolean {
   if (asked?.question !== question) return false;
   const confirm = asked.options.find((o) => o.label === option);
   if (confirm === undefined) return false;
-  return normalised(change) === "" || normalised(confirm.description ?? "") === normalised(change);
+  const change = normalised(describeArgs(input, layout));
+  if (layout.length === 0 && change === "") return true;
+  return normalised(confirm.description ?? "") === change;
 }
 
 /**
@@ -156,7 +165,7 @@ export function refusing(tool: GatedTool, message: string): GatedTool {
 
 /**
  * `tool` confirmed by this turn's answer to `confirmation`: it runs only with
- * arguments whose change (`describe`) is the one the card the user answered
+ * arguments whose change (`layout`, `describeArgs`) is the one the card the user answered
  * (`asked`) showed, and at most ONCE. A call with any other change, or with no
  * such card in the stored history, is refused and uses up nothing: the
  * confirmed change can still be made, and no other. The go-ahead covers one
@@ -169,7 +178,7 @@ export function refusing(tool: GatedTool, message: string): GatedTool {
 export function onceAsShown(
   tool: GatedTool,
   confirmation: Confirmation,
-  describe: (input: unknown) => string,
+  layout: ChangeLayout,
   asked: AskQuestionInput | undefined,
   attempted: string,
 ): GatedTool {
@@ -181,7 +190,7 @@ export function onceAsShown(
     ...tool,
     execute: async (...args: Parameters<typeof execute>) => {
       if (tried) throw new Error(attempted);
-      if (!shownOnCard(asked, confirmation, describe(args[0]))) {
+      if (!shownOnCard(asked, confirmation, layout, args[0])) {
         throw new Error(
           `Not done: this is not the change the user confirmed. Ask "${question}" again with the exact change as the ${option} option's description.`,
         );

@@ -101,7 +101,7 @@ export function gateWrites(tools: ToolSet, instruction: string, asked: AskQuesti
         ? onceAsShown(
             tool,
             CONFIRMATIONS[name],
-            (input) => describeChange(name, input),
+            CHANGES[name],
             asked,
             "Already attempted in this turn; tell the user the result and ask before trying again.",
           )
