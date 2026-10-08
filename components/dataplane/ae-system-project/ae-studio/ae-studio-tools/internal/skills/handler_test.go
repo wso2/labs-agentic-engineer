@@ -19,6 +19,7 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/ae-studio-tools/internal/gen"
 	"github.com/wso2/aep/ae-studio-tools/internal/repo"
@@ -196,10 +198,37 @@ func TestMirrorSkills_ErrorMap(t *testing.T) {
 		f := newHandlerFixture(t, nil)
 		cctx, cancel := context.WithCancel(ctx)
 		cancel()
-		if _, err := f.h.MirrorSkills(cctx, f.request("acme", f.skills.name)); err == nil {
-			t.Fatal("want the ctx error")
+		if _, err := f.h.MirrorSkills(cctx, f.request("acme", f.skills.name)); !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
 		}
+		// The cold clone is detached from the caller and keeps writing under
+		// studio-data; let it land so the temp dir cleanup does not race it.
+		awaitDetachedClone(t, f.root, "acme", f.skills.name)
 	})
+}
+
+// awaitDetachedClone waits for the cold clone a cancelled caller left behind
+// to land: the mirror's HEAD exists and no clone-* staging dir remains
+// (tmp/ itself permanently holds askpass.sh).
+func awaitDetachedClone(t *testing.T, root, owner, name string) {
+	t.Helper()
+	dir, err := repo.RepoDir(root, repo.RepoRef{Owner: owner, Repo: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := filepath.Join(repo.GitSubdir(dir), "HEAD")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, statErr := os.Stat(head)
+		staging, _ := filepath.Glob(filepath.Join(repo.TmpDir(root), "clone-*"))
+		if statErr == nil && len(staging) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the detached clone never landed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // A library read failure is logged under the skills repository, value-free.
