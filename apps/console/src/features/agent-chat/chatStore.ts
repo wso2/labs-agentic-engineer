@@ -137,6 +137,11 @@ interface Entry {
   kickoffClaimed: boolean;
   /** Question items already announced: a replay of the turn announces none again. */
   announced: Set<string>;
+  /**
+   * Bumped when the chat is forgotten (`forget`): a load, send or turn begun
+   * before then lands nowhere, so the thread is resolved afresh.
+   */
+  generation: number;
 }
 
 export function createChatStore(options: ChatStoreOptions) {
@@ -164,6 +169,7 @@ export function createChatStore(options: ChatStoreOptions) {
         ownTurns: new Set(),
         kickoffClaimed: false,
         announced: new Set(),
+        generation: 0,
       };
       entries.set(projectName, e);
     }
@@ -207,23 +213,29 @@ export function createChatStore(options: ChatStoreOptions) {
 
   function sinkFor(projectName: string, turnId: string, onEnded: (outcome: TurnOutcome) => void): TurnSink {
     const e = entry(projectName);
+    const generation = e.generation;
+    const live = () => e.generation === generation;
+    const set = (change: (items: ChatItem[]) => ChatItem[]) => {
+      if (live()) setItems(projectName, change);
+    };
     return {
-      text: (delta) => setItems(projectName, (items) => appendAgentText(items, turnId, delta)),
-      activity: (activity) => setItems(projectName, (items) => upsertActivity(items, turnId, activity)),
+      text: (delta) => set((items) => appendAgentText(items, turnId, delta)),
+      activity: (activity) => set((items) => upsertActivity(items, turnId, activity)),
       question: (question) => {
+        if (!live()) return;
         setItems(projectName, (items) => upsertQuestion(items, turnId, question));
         announceQuestions(projectName, turnId);
       },
-      withdrawQuestion: (toolCallId) => setItems(projectName, (items) => dropQuestion(items, turnId, toolCallId)),
-      handoff: (handOff) => setItems(projectName, (items) => upsertHandOff(items, turnId, handOff)),
-      filed: (filed) => setItems(projectName, (items) => upsertFiled(items, turnId, filed)),
+      withdrawQuestion: (toolCallId) => set((items) => dropQuestion(items, turnId, toolCallId)),
+      handoff: (handOff) => set((items) => upsertHandOff(items, turnId, handOff)),
+      filed: (filed) => set((items) => upsertFiled(items, turnId, filed)),
       wrote: (part) => {
         const key = `${turnId}:${part.toolCallId ?? ""}`;
-        if (e.applied.has(key)) return;
+        if (!live() || e.applied.has(key)) return;
         e.applied.add(key);
         onAgentWrite?.(projectName, part);
       },
-      error: (text) => setItems(projectName, (items) => [...items, { kind: "error", id: localId("e"), text }]),
+      error: (text) => set((items) => [...items, { kind: "error", id: localId("e"), text }]),
       ended: onEnded,
     };
   }
@@ -231,7 +243,9 @@ export function createChatStore(options: ChatStoreOptions) {
   /** Show a running turn and fold its stream, from its start, to its end. */
   async function attach(projectName: string, turn: TurnToAttach): Promise<void> {
     // Idle (a turn found running) or starting (one just sent from here).
-    if (entry(projectName).state.turn.phase === "running") return;
+    const e = entry(projectName);
+    if (e.state.turn.phase === "running") return;
+    const generation = e.generation;
     const { turnId } = turn;
     update(projectName, (s) => {
       // A replay from the start re-adds the turn's output, so what an earlier
@@ -266,20 +280,26 @@ export function createChatStore(options: ChatStoreOptions) {
         sink: sinkFor(projectName, turnId, (o) => (outcome = o)),
       });
     } catch {
-      setItems(projectName, (items) => [
-        ...items,
-        { kind: "error", id: localId("e"), text: "Lost the agent's stream. It picks up again when the chat reopens." },
-      ]);
+      if (e.generation === generation) {
+        setItems(projectName, (items) => [
+          ...items,
+          { kind: "error", id: localId("e"), text: "Lost the agent's stream. It picks up again when the chat reopens." },
+        ]);
+      }
     }
-    update(projectName, () => ({ turn: { phase: "idle" } }));
+    const live = e.generation === generation;
+    if (live) update(projectName, () => ({ turn: { phase: "idle" } }));
     if (outcome) for (const fn of turnEndListeners) fn(projectName, outcome);
-    trySeed(projectName);
+    if (live) trySeed(projectName);
   }
 
   async function readHistory(projectName: string): Promise<void> {
     const e = entry(projectName);
-    e.conversationId ??= await api.conversationId(projectName);
-    const history = await api.history(projectName, e.conversationId);
+    const generation = e.generation;
+    const conversationId = e.conversationId ?? (await api.conversationId(projectName));
+    const history = await api.history(projectName, conversationId);
+    if (e.generation !== generation) return;
+    e.conversationId = conversationId;
     update(projectName, () => ({ items: historyItems(history) }));
   }
 
@@ -309,20 +329,23 @@ export function createChatStore(options: ChatStoreOptions) {
     const e = entry(projectName);
     if (e.state.status === "ready") return Promise.resolve();
     e.loading ??= (async () => {
+      const generation = e.generation;
       update(projectName, () => ({ status: "loading", error: null }));
       try {
         await readHistory(projectName);
         const active = await runningTurn(projectName);
+        if (e.generation !== generation) return;
         if (active) attachStatus(projectName, active);
         update(projectName, () => ({ status: "ready" }));
         trySeed(projectName);
       } catch (err) {
+        if (e.generation !== generation) return;
         update(projectName, () => ({
           status: "error",
           error: err instanceof Error ? err.message : "Couldn't load the conversation",
         }));
       } finally {
-        e.loading = null;
+        if (e.generation === generation) e.loading = null;
       }
     })();
     return e.loading;
@@ -375,15 +398,20 @@ export function createChatStore(options: ChatStoreOptions) {
    */
   async function startInCurrentThread(projectName: string, rowId: string, body: TurnBody): Promise<string> {
     const e = entry(projectName);
-    e.conversationId ??= await api.conversationId(projectName);
+    const generation = e.generation;
+    const conversationId = e.conversationId ?? (await api.conversationId(projectName));
+    if (e.generation === generation) e.conversationId = conversationId;
     try {
-      return await api.startTurn(projectName, e.conversationId, body);
+      return await api.startTurn(projectName, conversationId, body);
     } catch (err) {
       if (!(err instanceof ConversationRotatedError)) throw err;
-      e.conversationId = await api.conversationId(projectName);
-      const history = historyItems(await api.history(projectName, e.conversationId));
-      update(projectName, (s) => ({ items: [...history, ...s.items.filter((i) => i.id === rowId)] }));
-      return api.startTurn(projectName, e.conversationId, body);
+      const rotated = await api.conversationId(projectName);
+      const history = historyItems(await api.history(projectName, rotated));
+      if (e.generation === generation) {
+        e.conversationId = rotated;
+        update(projectName, (s) => ({ items: [...history, ...s.items.filter((i) => i.id === rowId)] }));
+      }
+      return api.startTurn(projectName, rotated, body);
     }
   }
 
@@ -413,11 +441,14 @@ export function createChatStore(options: ChatStoreOptions) {
         },
       ],
     }));
+    const generation = e.generation;
     let turnId: string;
     try {
       await beforeTurn?.(projectName).catch(() => undefined);
       turnId = await startInCurrentThread(projectName, rowId, body);
     } catch (err) {
+      // Forgotten meanwhile (its issue was closed): there is no row to mark.
+      if (e.generation !== generation) return false;
       update(projectName, (s) => ({
         turn: { phase: "idle" },
         items: [
@@ -430,6 +461,7 @@ export function createChatStore(options: ChatStoreOptions) {
       }
       return false;
     }
+    if (e.generation !== generation) return true;
     setItems(projectName, (items) =>
       items.map((i) => (i.id === rowId && i.kind === "user" ? { ...i, state: "sent" as const, turnId } : i)),
     );
@@ -462,6 +494,29 @@ export function createChatStore(options: ChatStoreOptions) {
           e.pollTimer = null;
         }
       };
+    },
+
+    /**
+     * Forget a project's thread here, as if never opened: its items, its
+     * thread's id, the turns it started. The thread was removed (closing an
+     * issue removes its chat), so the next open resolves a fresh one; what
+     * was still loading or folding for the old one lands nowhere. Whoever
+     * listens is told; whoever watches stays watching.
+     */
+    forget(projectName: string): void {
+      const e = entries.get(projectName);
+      if (!e) return;
+      e.generation += 1;
+      e.state = INITIAL;
+      e.conversationId = null;
+      e.loading = null;
+      e.seed = null;
+      e.applied = new Set();
+      e.polls = 0;
+      e.ownTurns = new Set();
+      e.kickoffClaimed = false;
+      e.announced = new Set();
+      for (const fn of e.listeners) fn();
     },
 
     /** Read the conversation again after it failed to load. */

@@ -16,14 +16,17 @@
  * under the License.
  */
 
+import { useMemo } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { homeLink } from "../../../../features/agent-chat/chatView";
 import { QuestionsList } from "../../../../features/agent-chat/components/QuestionsList";
 import { CardOverlay } from "../../../../features/projects/components/CardOverlay";
 
 // The Questions card over the Issues Page: every question the Issues agent is
 // waiting on, answered in one list (ADR-0002). The Issues chat's pointer opens
 // it, and a send closes back to the Issues Page. With `?issue=N` it answers
-// that issue's own chat instead, and a send closes back to the issue's card.
+// that issue's own chat instead, and a send, or closing it, goes back to the
+// issue's card.
 interface IssuesQuestionsSearch {
   issue?: number;
 }
@@ -39,8 +42,12 @@ export const Route = createFileRoute("/projects/$projectName/issues/questions")(
 function IssuesQuestionsRoute() {
   const { projectName } = Route.useParams();
   const { issue } = Route.useSearch();
+  const back = useMemo(
+    () => (issue === undefined ? {} : { back: { to: homeLink(projectName, "issue", issue), name: `Issue #${issue}` } }),
+    [projectName, issue],
+  );
   return (
-    <CardOverlay card="questions" page="issues" fill>
+    <CardOverlay card="questions" page="issues" fill {...back}>
       {issue === undefined ? (
         <QuestionsList projectName={projectName} view="issues" />
       ) : (

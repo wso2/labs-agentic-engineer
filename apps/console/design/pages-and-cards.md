@@ -126,8 +126,11 @@ Whether it is open is the issue list's word, or the server's 409
 `issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
 stands until the list shows it closed too); when the issue in view turns from
 open to closed, the sheet goes and the main chat gets **Issue #N was closed;
-its chat was removed.**, a local line never sent to the agent. The threads menu
-lists each issue chat that holds something (opened in this tab).
+its chat was removed.**, a local line never sent to the agent, posted only while
+the chat panel is mounted. Closed, the issue's chat is forgotten in this tab
+(`forgetIssueChat`), so a reopen starts on a fresh, empty thread, and the card's
+header says closed too while the list lags. The threads menu lists each issue
+chat that holds something (opened in this tab).
 
 The Issues chat's questions (ADR-0002) are answered on a Questions card of
 their own over this Page (`issues/questions`, `chatViewFor` reads it as the
@@ -136,7 +139,8 @@ answers the main chat; a send closes back to the Issues Page. An issue's chat's
 questions (its agent confirms every change on one: the change is the confirm
 option's description) are answered on the same card naming the issue
 (`issues/questions?issue=N`, the `issue` view), which opens by itself only on
-that issue's card and closes back to it. The Dashboard's Alerts
+that issue's card and closes back to it, on a send or its X (`CardOverlay`'s
+`back`). The Dashboard's Alerts
 link straight to Issue cards: they are every project's issues that need
 attention (`features/issues/useAlerts.ts` asks each project, as no read
 answers for the org), and the rail's logo counts those that need a person.

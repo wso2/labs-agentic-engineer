@@ -515,3 +515,60 @@ describe("before a turn", () => {
   });
 });
 
+
+describe("forgetting a thread (it was removed: its issue was closed)", () => {
+  it("drops what it held and tells its listeners; the next open resolves a fresh thread", async () => {
+    let current = "conv-1";
+    const { store, api, chat } = setup({
+      api: {
+        conversationId: vi.fn(async () => current),
+        history: vi.fn(async (_p: string, conversationId: string) =>
+          conversationId === "conv-1" ? [{ role: "user" as const, content: "Is it still broken?" }] : [],
+        ),
+      },
+    });
+    await store.open(PROJECT);
+    expect(chat().items).toHaveLength(1);
+    const told = vi.fn();
+    store.subscribe(PROJECT, told);
+
+    store.forget(PROJECT);
+    expect(told).toHaveBeenCalled();
+    expect(chat()).toEqual({ status: "loading", error: null, items: [], turn: { phase: "idle" } });
+
+    current = "conv-2";
+    await store.open(PROJECT);
+    expect(api.conversationId).toHaveBeenCalledTimes(2);
+    expect(api.history).toHaveBeenLastCalledWith(PROJECT, "conv-2");
+    expect(chat()).toMatchObject({ status: "ready", items: [] });
+  });
+
+  it("lets a load in flight land nowhere", async () => {
+    let release!: () => void;
+    const { store, api, chat } = setup({
+      api: { history: vi.fn(() => new Promise<ConversationMessage[]>((r) => (release = () => r([])))) },
+    });
+    const loading = store.open(PROJECT);
+    await vi.waitFor(() => expect(api.history).toHaveBeenCalled());
+    store.forget(PROJECT);
+    release();
+    await loading;
+    expect(chat().status).toBe("loading");
+  });
+
+  it("lets a turn still folding land nowhere, though its end is still told", async () => {
+    const { store, streams, chat, ended } = setup();
+    await store.open(PROJECT);
+    const stream = controlledStream();
+    streams.set("t1", stream.body);
+    await store.send(PROJECT, "Close it", PRODUCT);
+    await vi.waitFor(() => expect(chat().turn.phase).toBe("running"));
+
+    store.forget(PROJECT);
+    stream.send({ type: "text-delta", delta: "Closed." });
+    stream.send({ type: "turn-committed" });
+    stream.end();
+    await vi.waitFor(() => expect(ended).toHaveBeenCalledWith(PROJECT, "completed"));
+    expect(chat()).toEqual({ status: "loading", error: null, items: [], turn: { phase: "idle" } });
+  });
+});

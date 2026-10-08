@@ -30,7 +30,12 @@ import type { IssueInfo } from "../issues/model/issues";
 let issues: IssueInfo[] | undefined;
 vi.mock("../issues/api/issues", () => ({ useProjectIssues: () => ({ data: issues }) }));
 let threads: { issueNumber: number; count: number }[] = [];
-vi.mock("./useProjectChat", () => ({ useIssueThreads: () => threads, chatStore: { post: vi.fn() } }));
+const forgetIssueChat = vi.fn();
+vi.mock("./useProjectChat", () => ({
+  useIssueThreads: () => threads,
+  chatStore: { post: vi.fn() },
+  forgetIssueChat: (p: string, n: number) => forgetIssueChat(p, n),
+}));
 
 const { useIssueThreadState, useOpenIssueThreads } = await import("./useIssueThread");
 const { issueMarkedClosed, markIssueClosed } = await import("./closedIssues");
@@ -68,6 +73,15 @@ describe("useIssueThreadState", () => {
     issues = [issue(7, "open")];
     hook.rerender();
     expect(hook.result.current).toBe("open");
+  });
+
+  it("forgets the issue's chat in this tab once it is closed, so a reopen starts on a fresh thread", () => {
+    forgetIssueChat.mockClear();
+    const hook = renderHook(() => useIssueThreadState("forget", 7));
+    expect(forgetIssueChat).not.toHaveBeenCalled();
+    issues = [issue(7, "closed")];
+    hook.rerender();
+    expect(forgetIssueChat).toHaveBeenCalledWith("forget", 7);
   });
 });
 

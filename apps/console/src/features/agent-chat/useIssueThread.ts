@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useProjectIssues } from "../issues/api/issues";
 import { forgetIssueClosed, issueMarkedClosed, onIssueClosedMark } from "./closedIssues";
-import { chatStore, useIssueThreads, type IssueThreadActivity } from "./useProjectChat";
+import { chatStore, forgetIssueChat, useIssueThreads, type IssueThreadActivity } from "./useProjectChat";
 
 // An open issue has a chat of its own; a closed one has none (closing an issue
 // removes its thread). Whether the issue in view is open is the issue list's
@@ -42,6 +42,10 @@ export function useIssueThreadState(projectName: string, issueNumber: number | n
   useEffect(() => {
     if (marked && listClosed && issueNumber !== null) forgetIssueClosed(projectName, issueNumber);
   }, [marked, listClosed, projectName, issueNumber]);
+  // Closed, its thread is gone: what this tab held of it goes too, so a reopen starts afresh.
+  useEffect(() => {
+    if (listClosed && issueNumber !== null) forgetIssueChat(projectName, issueNumber);
+  }, [listClosed, projectName, issueNumber]);
   if (marked || listClosed) return "closed";
   return issue ? "open" : "unknown";
 }

@@ -26,6 +26,7 @@ import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
 import { wireQuery, type ChatView } from "../chatView";
 import type { TurnBody } from "../turnScope";
+import { IssueClosedError } from "./errors";
 
 export type TurnStatus = components["schemas"]["TurnStatus"];
 type TurnConflict = components["schemas"]["TurnConflict"];
@@ -53,17 +54,6 @@ export class ConversationRotatedError extends Error {
   constructor() {
     super("The conversation was replaced with a new one. Your message wasn't sent.");
     this.name = "ConversationRotatedError";
-  }
-}
-
-/**
- * The issue whose thread was addressed is closed (409 `issue_closed`): a closed
- * issue has no thread, and closing one removes the one it had.
- */
-export class IssueClosedError extends Error {
-  constructor() {
-    super("This issue is closed. Its chat was removed.");
-    this.name = "IssueClosedError";
   }
 }
 

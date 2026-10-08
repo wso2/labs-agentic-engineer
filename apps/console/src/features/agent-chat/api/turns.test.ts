@@ -31,7 +31,8 @@ vi.mock("../../../api/client", () => ({
   },
 }));
 
-const { ConversationRotatedError, IssueClosedError, TurnInProgressError, getActiveTurn, startTurn } = await import("./turns");
+const { ConversationRotatedError, TurnInProgressError, getActiveTurn, startTurn } = await import("./turns");
+const { IssueClosedError } = await import("./errors");
 
 function refused(status: number, error: unknown) {
   post.mockResolvedValueOnce({ data: undefined, error, response: { status } });

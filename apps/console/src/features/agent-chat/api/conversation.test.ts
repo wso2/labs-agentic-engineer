@@ -27,7 +27,7 @@ vi.mock("../../../api/client", () => ({
 }));
 
 const { fetchCurrentConversationId } = await import("./conversation");
-const { IssueClosedError } = await import("./turns");
+const { IssueClosedError } = await import("./errors");
 
 const threads = {
   data: { conversations: [{ conversationId: "old" }, { conversationId: "now", current: true }] },

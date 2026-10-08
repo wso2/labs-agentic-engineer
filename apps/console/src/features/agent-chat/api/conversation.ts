@@ -24,7 +24,7 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { apiErrorMessage } from "../../../api/errors";
 import { wireQuery, type ChatView } from "../chatView";
-import { IssueClosedError } from "./turns";
+import { IssueClosedError } from "./errors";
 
 export type ConversationMessage = components["schemas"]["ConversationMessage"];
 

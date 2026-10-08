@@ -39,8 +39,8 @@ vi.mock("./api/turns", async (importOriginal) => ({
 vi.mock("../spec/collab/specRoom", () => ({ flushSpecRoom: vi.fn(() => Promise.resolve()) }));
 vi.mock("../spec/collab/specDoc", () => ({ applyAgentWrite: vi.fn() }));
 
-const { chatStore, chatStoreFor } = await import("./useProjectChat");
-const { IssueClosedError } = await import("./api/turns");
+const { chatStore, chatStoreFor, forgetIssueChat } = await import("./useProjectChat");
+const { IssueClosedError } = await import("./api/errors");
 const { issueMarkedClosed } = await import("./closedIssues");
 
 describe("chatStoreFor", () => {
@@ -105,13 +105,28 @@ describe("chatStoreFor", () => {
     await chatStoreFor("issue", 9).open("shop-closed");
     expect(issueMarkedClosed("shop-closed", 9)).toBe(true);
     expect(issueMarkedClosed("shop-closed", 7)).toBe(false);
-    expect(chatStoreFor("issue", 9).get("shop-closed").status).toBe("error");
   });
 
-  it("marks the issue closed when a turn sent to it is refused as closed", async () => {
+  it("forgets the thread when a turn sent to it is refused as closed, so a reopen resolves a fresh one", async () => {
     await chatStoreFor("issue", 10).open("shop-closed-send");
     startTurn.mockRejectedValueOnce(new IssueClosedError());
     await chatStoreFor("issue", 10).send("shop-closed-send", "Hello", { kind: "product" });
     expect(issueMarkedClosed("shop-closed-send", 10)).toBe(true);
+    expect(chatStoreFor("issue", 10).get("shop-closed-send")).toMatchObject({ status: "loading", items: [] });
+
+    // Reopened: the issue's new thread, not the removed one.
+    conversationId.mockResolvedValueOnce("conv-2");
+    await chatStoreFor("issue", 10).open("shop-closed-send");
+    expect(conversationId).toHaveBeenLastCalledWith("shop-closed-send", "issue", 10);
+    expect(conversationId).toHaveBeenCalledTimes(2);
+    expect(chatStoreFor("issue", 10).get("shop-closed-send")).toMatchObject({ status: "ready", items: [] });
+  });
+
+  it("forgets an issue's thread when told the issue was closed, that issue's only", async () => {
+    await chatStoreFor("issue", 11).open("shop-list-closed");
+    await chatStoreFor("issue", 12).open("shop-list-closed");
+    forgetIssueChat("shop-list-closed", 11);
+    expect(chatStoreFor("issue", 11).get("shop-list-closed").status).toBe("loading");
+    expect(chatStoreFor("issue", 12).get("shop-list-closed").status).toBe("ready");
   });
 });

@@ -100,6 +100,8 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const text = issueText(issue.Body);
   const tookOn = codingAgentTookOn(issue, detail.data) || handOff.isSuccess;
   const canHand = !tookOn && !closed;
+  // Closed by the server's word while the list still lags: the header says closed too.
+  const stateLabel = issueStateLabel(closed && issue.State !== "closed" ? { State: "closed" } : issue);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, maxWidth: "72ch" }}>
@@ -109,7 +111,7 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
         </Typography>
         <Typography variant="body2" color="text.secondary">
           {ORIGIN_LABEL[origin.kind]} · Opened by {origin.by} ·{" "}
-          {issueStateLabel(issue)}
+          {stateLabel}
         </Typography>
       </Box>
       {closed && <Alert severity="info">This issue is closed.</Alert>}

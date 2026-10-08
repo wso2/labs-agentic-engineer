@@ -93,6 +93,14 @@ describe("IssueCard", () => {
     expect(screen.queryByRole("button", { name: HAND })).toBeNull();
   });
 
+  it("says closed in its header too while the list still lags the server's word", () => {
+    // The list reads the issue open; the server has said its thread is gone.
+    state = "closed";
+    renderCard();
+    expect(screen.getByText(/· Closed$/)).toBeTruthy();
+    expect(screen.queryByText(/· Open$/)).toBeNull();
+  });
+
   it("says nothing of the kind for an open issue, and offers the hand-off", () => {
     renderCard();
     expect(screen.queryByText("This issue is closed.")).toBeNull();

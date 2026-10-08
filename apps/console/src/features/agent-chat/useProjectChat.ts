@@ -25,7 +25,8 @@ import { specKey } from "../spec/api/specModel";
 import { applyAgentWrite } from "../spec/collab/specDoc";
 import { flushSpecRoom } from "../spec/collab/specRoom";
 import { fetchConversationMessages, fetchCurrentConversationId } from "./api/conversation";
-import { getActiveTurn, getTurn, IssueClosedError, openTurnStream, startTurn } from "./api/turns";
+import { IssueClosedError } from "./api/errors";
+import { getActiveTurn, getTurn, openTurnStream, startTurn } from "./api/turns";
 import { issueDetailKey, issuesListKey } from "../issues/api/issues";
 import { createChatStore, type ProjectChat } from "./chatStore";
 import { questionsLink, viewTurnBody, type ChatView } from "./chatView";
@@ -82,7 +83,8 @@ const issueStoresMade = new Set<() => void>();
  * An issue's chat: its own thread, running turn and turns, in the issue view
  * by its number. Like the Issues agent, the issue's agent writes no spec. A
  * closed issue has no thread: the server's 409 `issue_closed`, on resolving
- * the thread or on sending to it, marks the issue closed (`closedIssues`).
+ * the thread or on sending to it, marks the issue closed (`closedIssues`) and
+ * forgets the thread here, so a reopen starts on a fresh one.
  */
 function issueChatStore(issueNumber: number): ChatStore {
   const known = issueStores.get(issueNumber);
@@ -91,7 +93,10 @@ function issueChatStore(issueNumber: number): ChatStore {
     try {
       return await call;
     } catch (err) {
-      if (err instanceof IssueClosedError) markIssueClosed(projectName, issueNumber);
+      if (err instanceof IssueClosedError) {
+        store.forget(projectName);
+        markIssueClosed(projectName, issueNumber);
+      }
       throw err;
     }
   };
@@ -115,6 +120,14 @@ function issueChatStore(issueNumber: number): ChatStore {
   issueStores.set(issueNumber, store);
   for (const fn of issueStoresMade) fn();
   return store;
+}
+
+/**
+ * An issue was closed, which removed its thread: forget what this tab holds
+ * of it (`forget`), so that a reopen resolves a fresh, empty thread.
+ */
+export function forgetIssueChat(projectName: string, issueNumber: number): void {
+  issueStores.get(issueNumber)?.forget(projectName);
 }
 
 /**
