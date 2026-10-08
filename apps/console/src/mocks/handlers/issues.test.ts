@@ -21,21 +21,23 @@
 import { getResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// Handing an issue to the coding agent in mock mode: refused, in aep-api's
-// words, until the mock has a deployed version (a built one); once handed
-// over, the issue's task shows the coding agent's run, so its log takes over.
+// Handing an issue to the coding agent in mock mode, as aep-api answers it:
+// refused (409, in its words) while there is no deployed version, for a closed
+// issue, and for one the coding agent does not take on; otherwise adopted
+// (202, no body): the issue is armed and joins the deployed version's
+// milestone, which is what the issue list then shows, a reload included.
 
-let deployed: string | null = null;
+let deployed: { version: string; milestoneNumber: number } | null = null;
 vi.mock("../buildsState", () => ({ deployedVersion: () => deployed }));
 
 const { issuesHandlers } = await import("./issues");
 
-const BASE = "http://localhost/api/v1/projects/acme-expenses/tasks/11";
+const API = "http://localhost/api/v1/projects/acme-expenses";
 
-function promote(componentName = "expense-api") {
+function promote(number: number, componentName = "expense-api") {
   return getResponse(
     issuesHandlers,
-    new Request(`${BASE}/promote-from-issue`, {
+    new Request(`${API}/tasks/${number}/promote-from-issue`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ componentName }),
@@ -43,10 +45,15 @@ function promote(componentName = "expense-api") {
   );
 }
 
-async function codingRuns(): Promise<unknown[]> {
-  const res = await getResponse(issuesHandlers, new Request(BASE));
-  const task = (await res?.json()) as { executions: Record<string, { kind: string }> };
-  return Object.values(task.executions).filter((e) => e.kind === "coding");
+async function listed(number: number): Promise<{ Labels: string[]; milestoneNumber?: number }> {
+  const res = await getResponse(issuesHandlers, new Request(`${API}/issues`));
+  const issues = (await res?.json()) as { Number: number; Labels: string[]; milestoneNumber?: number }[];
+  return issues.find((i) => i.Number === number)!;
+}
+
+async function refusal(res: Response | undefined): Promise<string> {
+  expect(res?.status).toBe(409);
+  return ((await res?.json()) as { message: string }).message;
 }
 
 beforeEach(() => {
@@ -55,20 +62,38 @@ beforeEach(() => {
 });
 
 describe("promote-from-issue in mock mode", () => {
-  it("refuses with 409 while there is no deployed version", async () => {
-    const res = await promote();
-    expect(res?.status).toBe(409);
-    expect(await res?.json()).toMatchObject({
-      message: "Deploy a version first: the coding agent works in a deployed version's milestone.",
-    });
-    expect(await codingRuns()).toEqual([]);
+  it("refuses with 409 while there is no deployed version, and changes nothing", async () => {
+    expect(await refusal(await promote(11))).toBe(
+      "Deploy a version first: the coding agent works in a deployed version's milestone.",
+    );
+    expect(await listed(11)).toMatchObject({ Labels: [] });
+    expect((await listed(11)).milestoneNumber).toBeUndefined();
   });
 
-  it("accepts with 202 once a version is deployed, and the issue's task shows the coding run", async () => {
-    deployed = "v1";
-    const res = await promote();
+  it("adopts with 202 once a version is deployed: the issue is armed, in that version's milestone", async () => {
+    deployed = { version: "v2", milestoneNumber: 2 };
+    const res = await promote(11);
     expect(res?.status).toBe(202);
     expect(res?.headers.get("Content-Length")).toBe("0");
-    expect(await codingRuns()).toHaveLength(1);
+    expect(await listed(11)).toMatchObject({ Labels: ["aep"], milestoneNumber: 2 });
+  });
+
+  it("refuses a closed issue", async () => {
+    deployed = { version: "v2", milestoneNumber: 2 };
+    expect(await refusal(await promote(9))).toBe("This issue is closed.");
+  });
+
+  it("refuses an issue the coding agent does not take on", async () => {
+    deployed = { version: "v2", milestoneNumber: 2 };
+    expect(await refusal(await promote(3))).toBe(
+      "This issue is not one the coding agent takes on: the platform works this kind of issue another way.",
+    );
+  });
+
+  it("serves no coding run on the task: aep-api mints none", async () => {
+    deployed = { version: "v2", milestoneNumber: 2 };
+    await promote(11);
+    const res = await getResponse(issuesHandlers, new Request(`${API}/tasks/11`));
+    expect(((await res?.json()) as { executions: object }).executions).toEqual({});
   });
 });

@@ -29,7 +29,6 @@ import type { components } from "../../../generated/aep-api";
 
 export type IssueInfo = components["schemas"]["IssueInfo"];
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
-type TaskDetail = components["schemas"]["TaskDetail"];
 export type AttentionReason = NonNullable<IssueInfo["attentionReason"]>;
 
 const ATTENTION: Record<AttentionReason, { label: string; why: string; needsPerson: boolean; rank: number }> = {
@@ -67,22 +66,44 @@ export function attentionNeedsPerson(reason: AttentionReason): boolean {
   return ATTENTION[reason].needsPerson;
 }
 
-/** The label that hands an issue to the coding agent (aep-api delivery/labels.go, the arming switch). */
+/** The label that arms an issue for the coding agent (aep-api delivery/labels.go, the arming switch). */
 const ARMED = "aep";
 
-/** The execution kind of a coding agent's run on a task (aep-api contracts/taskmeta KindCoding). */
-const CODING = "coding";
+/** The issue kinds, in aep-api's precedence when an issue carries more than one (delivery/labels.go KindOf). */
+const KIND_PRECEDENCE = ["provision", "validation", "conflict", "bug", "development"] as const;
+
+/** The issue's kind, from its labels, or null when it carries none. */
+function kindOf(labels: readonly string[]): (typeof KIND_PRECEDENCE)[number] | null {
+  return KIND_PRECEDENCE.find((kind) => labels.includes(kind)) ?? null;
+}
+
+/** Kinds another run works: the version's validation task, and a dispatch gate the platform resolves. */
+const NOT_CODING = new Set<string>(["validation", "provision"]);
 
 /**
- * Whether the coding agent has taken the issue on: it carries the arming
- * label, or the coding agent has run on its task. Handing an issue over from
- * its card adopts it without the label, so the run is what shows it.
+ * Whether the coding agent has taken the issue on: it is armed and in a
+ * version's milestone, which is where handing it over puts it (aep-api's
+ * adoption), and it is of a kind the coding agent works.
  */
-export function codingAgentTookOn(
-  issue: Pick<IssueInfo, "Labels">,
-  task?: Pick<TaskDetail, "executions">,
-): boolean {
-  return (issue.Labels ?? []).includes(ARMED) || Object.values(task?.executions ?? {}).some((e) => e.kind === CODING);
+export function codingAgentTookOn(issue: Pick<IssueInfo, "Labels" | "milestoneNumber">): boolean {
+  const labels = issue.Labels ?? [];
+  const kind = kindOf(labels);
+  return labels.includes(ARMED) && !!issue.milestoneNumber && !(kind && NOT_CODING.has(kind));
+}
+
+/**
+ * Whether the issue can be handed to the coding agent: it is open, and of a
+ * kind aep-api's adoption takes (delivery/labels.go AdoptableByATaskRun) — not
+ * the version's validation task, a dispatch gate or planned work, nor an
+ * incident the SRE agent filed as configuration-only. aep-api refuses those
+ * anyway; the card does not offer them.
+ */
+export function canHandToCodingAgent(issue: Pick<IssueInfo, "Labels" | "State">): boolean {
+  const labels = issue.Labels ?? [];
+  const kind = kindOf(labels);
+  if (issue.State === "closed") return false;
+  if (kind === "validation" || kind === "provision" || kind === "development") return false;
+  return !labels.some((l) => l.toLowerCase().startsWith("dedupe:sre-config-"));
 }
 
 export type OriginKind = "incident" | "platform" | "person";

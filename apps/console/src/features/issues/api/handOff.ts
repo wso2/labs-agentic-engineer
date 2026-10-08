@@ -23,9 +23,10 @@ import { issueDetailKey, issuesListKey } from "./issues";
 
 // Handing an issue to the coding agent from its card: aep-api adopts it into
 // the deployed version's milestone and starts a run over it (the same
-// promotion the issue's own agent makes). It answers 202 and works on out of
-// band. It refuses with 409 when there is no deployed version ("Deploy a
-// version first: …") or the issue was closed meanwhile; the card shows those
+// promotion the issue's own agent makes), arms it, and starts a run over it.
+// It answers 202 and works on out of band. It refuses with 409 when there is
+// no deployed version ("Deploy a version first: …"), the issue was closed
+// meanwhile, or it is not one the coding agent takes on; the card shows those
 // words as they are.
 
 /** Every other failure, said the same way. */
@@ -44,6 +45,9 @@ export async function handToCodingAgent(projectName: string, issueNumber: number
     .POST("/projects/{projectName}/tasks/{issueNumber}/promote-from-issue", {
       params: { path: { projectName, issueNumber } },
       body: { componentName },
+      // Any 2xx is handed over: its body is never parsed as JSON, so one the
+      // client could not read does not turn a hand-off into a failure.
+      parseAs: "text",
     })
     .catch(() => null);
   if (!result) throw new Error(HAND_OFF_FAILED);

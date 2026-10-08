@@ -114,7 +114,7 @@ describe("a turn for the Issues view", () => {
 
     vi.resetModules();
     const reloaded = await import("./issues");
-    expect(reloaded.issuesOf(PROJECT).map((i) => i.Number)).toEqual([15, 14, 12, 11, 9, 4]);
+    expect(reloaded.issuesOf(PROJECT).map((i) => i.Number)).toEqual([15, 14, 12, 11, 9, 4, 3]);
     expect(reloaded.nextIssueNumber(PROJECT)).toBe(16);
     expect(reloaded.issuesOf("other-project")).toEqual([]);
   });

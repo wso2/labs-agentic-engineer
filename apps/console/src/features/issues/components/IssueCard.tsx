@@ -30,6 +30,7 @@ import {
   attentionLabel,
   attentionNeedsPerson,
   attentionWhy,
+  canHandToCodingAgent,
   codingAgentTookOn,
   issueOrigin,
   issueStateLabel,
@@ -45,9 +46,10 @@ import { ORIGIN_LABEL } from "./IssuesPage";
 // draws beside the card; a closed one has none, and the card says it is
 // closed (the issue list's word, or the server's once its chat was removed).
 //
-// An open issue the coding agent has not taken on can be handed to it from
-// here: the person picks the design's component it is about, and once aep-api
-// has it the card says so and its log takes over.
+// An open issue the coding agent has not taken on (it is not armed in a
+// version's milestone) can be handed to it from here, unless it is of a kind
+// the platform works another way: the person picks the design's component it
+// is about, and once aep-api has it the card says so and its log takes over.
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -98,8 +100,8 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const newest = detail.data?.comments?.at(-1);
   const line = detail.data ? statusLine(detail.data) : null;
   const text = issueText(issue.Body);
-  const tookOn = codingAgentTookOn(issue, detail.data) || handOff.isSuccess;
-  const canHand = !tookOn && !closed;
+  const tookOn = codingAgentTookOn(issue) || handOff.isSuccess;
+  const canHand = !tookOn && !closed && canHandToCodingAgent(issue);
   // Closed by the server's word while the list still lags: the header says closed too.
   const stateLabel = issueStateLabel(closed && issue.State !== "closed" ? { State: "closed" } : issue);
 

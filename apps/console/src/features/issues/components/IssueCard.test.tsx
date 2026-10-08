@@ -31,6 +31,8 @@ import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 
 let state: "open" | "closed" | "unknown" = "open";
 let components: string[] = ["api", "web"];
+let designFails = false;
+let listed: { Labels: string[]; milestoneNumber?: number } = { Labels: [] };
 const post = vi.fn<(path: string, init: Record<string, unknown>) => Promise<unknown>>();
 
 vi.mock("../../../api/client", () => ({
@@ -40,17 +42,16 @@ vi.mock("../../agent-chat/useIssueThread", () => ({ useIssueThreadState: () => s
 vi.mock("../../projects/components/CardOverlay", () => ({ CardOverlay: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock("../../builds/components/TaskLog", () => ({ TaskLog: () => <div>the task log</div> }));
 vi.mock("../../deploy/api/deploy", () => ({
-  useDesignDependencies: () => ({
-    data: components.map((componentName) => ({ componentName, dependencies: [] })),
-    isPending: false,
-    isError: false,
-  }),
+  useDesignDependencies: () =>
+    designFails
+      ? { data: undefined, isPending: false, isError: true }
+      : { data: components.map((componentName) => ({ componentName, dependencies: [] })), isPending: false, isError: false },
 }));
 vi.mock("../api/issues", () => ({
   issuesListKey: (p: string) => ["projects", p, "issues"],
   issueDetailKey: (p: string, n: number) => ["projects", p, "issues", n],
   useProjectIssues: () => ({
-    data: [{ Number: 7, Title: "Save does nothing", Body: "It does nothing.", URL: "https://github.com/a/b/issues/7", State: "open", Labels: [] }],
+    data: [{ Number: 7, Title: "Save does nothing", Body: "It does nothing.", URL: "https://github.com/a/b/issues/7", State: "open", ...listed }],
     isPending: false,
     isError: false,
     error: null,
@@ -81,6 +82,8 @@ function handOver() {
 beforeEach(() => {
   state = "open";
   components = ["api", "web"];
+  designFails = false;
+  listed = { Labels: [] };
   post.mockReset();
 });
 afterEach(cleanup);
@@ -120,6 +123,7 @@ describe("IssueCard", () => {
     expect(post).toHaveBeenCalledWith("/projects/{projectName}/tasks/{issueNumber}/promote-from-issue", {
       params: { path: { projectName: "shop", issueNumber: 7 } },
       body: { componentName: "web" },
+      parseAs: "text",
     });
     expect(screen.getByText("the task log")).toBeTruthy();
     expect(screen.queryByRole("button", { name: HAND })).toBeNull();
@@ -171,6 +175,46 @@ describe("IssueCard", () => {
     renderCard();
     fireEvent.click(screen.getByRole("button", { name: HAND }));
     expect(screen.getByText("The design has no components yet, so there is nothing to hand it to.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Hand it over" })).toBeNull();
+  });
+
+  it("shows the coding agent's log, and no hand-off, for an issue handed over before (armed, in a version's milestone)", () => {
+    listed = { Labels: ["bug", "aep"], milestoneNumber: 3 };
+    renderCard();
+    expect(screen.getByText("the task log")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: HAND })).toBeNull();
+  });
+
+  it("offers the hand-off for an armed issue in no milestone: nothing has taken it on", () => {
+    listed = { Labels: ["aep"] };
+    renderCard();
+    expect(screen.queryByText("the task log")).toBeNull();
+    expect(screen.getByRole("button", { name: HAND })).toBeTruthy();
+  });
+
+  it("offers no hand-off for an issue the platform works another way", () => {
+    listed = { Labels: ["validation"] };
+    renderCard();
+    expect(screen.queryByRole("button", { name: HAND })).toBeNull();
+  });
+
+  it("holds the picker still while the hand-off is in flight", async () => {
+    post.mockReturnValueOnce(new Promise(() => {}));
+    renderCard();
+    fireEvent.click(screen.getByRole("button", { name: HAND }));
+    fireEvent.click(screen.getByRole("radio", { name: "api" }));
+    handOver();
+    await waitFor(() => expect((screen.getByRole("button", { name: "Hand it over" }) as HTMLButtonElement).disabled).toBe(true));
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(true);
+    for (const radio of screen.getAllByRole("radio")) expect((radio as HTMLInputElement).disabled).toBe(true);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("says so when the design's components cannot be read", () => {
+    designFails = true;
+    renderCard();
+    fireEvent.click(screen.getByRole("button", { name: HAND }));
+    expect(screen.getByText("The design's components could not be read.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Hand it over" })).toBeNull();
   });
 });

@@ -16,7 +16,9 @@
  * under the License.
  */
 
+import createClient from "openapi-fetch";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { paths } from "../../../generated/aep-api";
 
 // What handing an issue to the coding agent puts on the wire, and how it
 // reads the server's refusals: a 409 (no deployed version, or the issue was
@@ -45,7 +47,18 @@ describe("handToCodingAgent", () => {
     expect(post).toHaveBeenCalledWith("/projects/{projectName}/tasks/{issueNumber}/promote-from-issue", {
       params: { path: { projectName: "shop", issueNumber: 7 } },
       body: { componentName: "api" },
+      parseAs: "text",
     });
+  });
+
+  it("reads any 2xx as handed over, whatever body it carries", async () => {
+    // A real client over a server whose 202 carries a body that is not JSON.
+    const real = createClient<paths>({
+      baseUrl: "http://aep.test/api/v1",
+      fetch: () => Promise.resolve(new Response("Accepted", { status: 202, headers: { "Content-Type": "application/json" } })),
+    });
+    post.mockImplementationOnce((path, init) => real.POST(path as never, init as never));
+    await expect(handToCodingAgent("shop", 7, "api")).resolves.toBeUndefined();
   });
 
   it("reads a 409 as a refusal, in the server's words", async () => {

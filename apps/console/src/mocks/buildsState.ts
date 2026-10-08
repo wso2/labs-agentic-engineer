@@ -77,11 +77,16 @@ export function mockBuilds(projectName: string): MockBuild[] {
   return read().filter((b) => b.projectName === projectName);
 }
 
+/** Whether the build's run has ended by `now`. */
+function built(build: MockBuild, now: number): boolean {
+  return elapsed(build, now) >= scriptOf(build).end;
+}
+
 /** The project's builds, oldest first, each with its status read off its run. */
 export function projectBuilds(projectName: string, now = Date.now()): ProjectBuild[] {
   return mockBuilds(projectName).map((b) => ({
     ...b.build,
-    status: elapsed(b, now) >= scriptOf(b).end ? "built" : "building",
+    status: built(b, now) ? "built" : "building",
   }));
 }
 
@@ -89,7 +94,9 @@ export function addBuild(build: MockBuild): void {
   write([...read(), build]);
 }
 
-/** The newest version the mock has built: the deployed one, running in Development. */
-export function deployedVersion(projectName: string, now = Date.now()): string | null {
-  return projectBuilds(projectName, now).filter((b) => b.status === "built").at(-1)?.version ?? null;
+/** The newest version the mock has built, with its milestone: the deployed one, running in Development. */
+export function deployedVersion(projectName: string): { version: string; milestoneNumber: number } | null {
+  const now = Date.now();
+  const deployed = mockBuilds(projectName).filter((b) => built(b, now)).at(-1);
+  return deployed ? { version: deployed.build.version, milestoneNumber: deployed.run.milestoneNumber } : null;
 }

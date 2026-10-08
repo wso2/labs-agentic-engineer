@@ -33,8 +33,10 @@ type TimelineEvent = components["schemas"]["TimelineEvent"];
 // other projects have none. No RCA reports, as on today's install. What an
 // issue's own agent changed (a comment, a new title, closing it) shows once
 // the turn that made the change has ended; a closed issue has no thread. An
-// issue handed to the coding agent from its card (refused, in aep-api's words,
-// until the mock has built a version) shows the coding agent's run on its task.
+// issue handed to the coding agent from its card is adopted as aep-api adopts
+// it — armed (`aep`) and put in the deployed version's milestone, which the
+// list shows — or refused in aep-api's words: no deployed version yet (the mock
+// has built none), a closed issue, or one the coding agent does not take on.
 
 const REPO = "https://github.com/acme/acme-expenses/issues";
 
@@ -49,6 +51,7 @@ const ISSUES: Record<string, IssueInfo[]> = {
       StateReason: "reopened",
       Labels: ["incident", "aep"],
       attentionReason: "escalated",
+      milestoneNumber: 1,
     },
     {
       Number: 12,
@@ -57,8 +60,10 @@ const ISSUES: Record<string, IssueInfo[]> = {
       URL: `${REPO}/12`,
       State: "open",
       StateReason: "reopened",
+      // Disarmed while its fix waits for review: still in the version's milestone, no longer worked.
       Labels: ["incident"],
       attentionReason: "unverified_fix",
+      milestoneNumber: 1,
     },
     {
       Number: 11,
@@ -86,6 +91,16 @@ const ISSUES: Record<string, IssueInfo[]> = {
       State: "closed",
       StateReason: "completed",
       Labels: ["aep", "development"],
+      milestoneNumber: 1,
+    },
+    {
+      Number: 3,
+      Title: "Validate v1",
+      Body: "Check v1 against its acceptance criteria.",
+      URL: `${REPO}/3`,
+      State: "open",
+      Labels: ["aep", "validation"],
+      milestoneNumber: 1,
     },
   ],
 };
@@ -221,10 +236,10 @@ function changed(projectName: string, issue: IssueInfo, now: number): IssueInfo 
   }, issue);
 }
 
-/** The project's issues: those the agent has filed (newest first), then the fixtures, as their agents left them. */
+/** The project's issues: those the agent has filed (newest first), then the fixtures, as their agents and hand-offs left them. */
 export function issuesOf(projectName: string, now = Date.now()): IssueInfo[] {
   const filed = (readFiled()[projectName] ?? []).filter((f) => f.visibleAt <= now).map((f) => f.issue);
-  return [...filed.reverse(), ...(ISSUES[projectName] ?? [])].map((i) => changed(projectName, i, now));
+  return [...filed.reverse(), ...(ISSUES[projectName] ?? [])].map((i) => adopted(projectName, changed(projectName, i, now)));
 }
 
 /** Whether the issue has a thread: it exists and is open (closing it removed the thread). */
@@ -246,37 +261,62 @@ function agentComments(projectName: string, number: number): NonNullable<TaskDet
     }));
 }
 
-const HANDED_KEY = "aep:mock:issue-handoffs";
+/** An issue handed to the coding agent, and the milestone adoption put it in. */
+interface Adoption {
+  number: number;
+  milestoneNumber: number;
+}
 
-function readHanded(): Record<string, number[]> {
+const ADOPTED_KEY = "aep:mock:issue-adoptions";
+
+function readAdopted(): Record<string, Adoption[]> {
   try {
-    const raw = sessionStorage.getItem(HANDED_KEY);
-    if (raw) return JSON.parse(raw) as Record<string, number[]>;
+    const raw = sessionStorage.getItem(ADOPTED_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, Adoption[]>;
   } catch {
     // unreadable: start over
   }
   return {};
 }
 
-/** Record that the issue was handed to the coding agent. Kept in sessionStorage. */
-function handOver(projectName: string, number: number): void {
-  const all = readHanded();
-  all[projectName] = [...new Set([...(all[projectName] ?? []), number])];
+/** Record that the issue was adopted into the milestone. Kept in sessionStorage, so a reload keeps it. */
+function adopt(projectName: string, adoption: Adoption): void {
+  const all = readAdopted();
+  all[projectName] = [...(all[projectName] ?? []).filter((a) => a.number !== adoption.number), adoption];
   try {
-    sessionStorage.setItem(HANDED_KEY, JSON.stringify(all));
+    sessionStorage.setItem(ADOPTED_KEY, JSON.stringify(all));
   } catch {
     /* quota: non-fatal in mock mode */
   }
 }
 
-/** The coding agent's run on a handed-over issue's task, as aep-api's task read keys it. */
-function codingRuns(projectName: string, number: number): TaskDetail["executions"] {
-  if (!(readHanded()[projectName] ?? []).includes(number)) return {};
-  const id = `coding-${number}`;
-  return { [id]: { id, kind: "coding", status: "running", createdAt: new Date().toISOString() } };
+/** The issue as adoption left it: armed, in the milestone it joined. */
+function adopted(projectName: string, issue: IssueInfo): IssueInfo {
+  const adoption = (readAdopted()[projectName] ?? []).find((a) => a.number === issue.Number);
+  if (!adoption) return issue;
+  const labels = issue.Labels ?? [];
+  return { ...issue, Labels: labels.includes("aep") ? labels : [...labels, "aep"], milestoneNumber: adoption.milestoneNumber };
 }
 
-const NO_DEPLOYED_VERSION = "Deploy a version first: the coding agent works in a deployed version's milestone.";
+/** The kinds, in aep-api's precedence (delivery/labels.go KindOf). */
+const KIND_PRECEDENCE = ["provision", "validation", "conflict", "bug", "development"];
+
+/**
+ * Why aep-api's adoption refuses the issue (eventcore AdoptIssue), in its
+ * words, or null when it takes it: closed, configuration-only, another
+ * species' kind, then no deployed version.
+ */
+function adoptionRefusal(projectName: string, issue: IssueInfo): string | null {
+  const labels = issue.Labels ?? [];
+  if (issue.State === "closed") return "This issue is closed.";
+  const kind = KIND_PRECEDENCE.find((k) => labels.includes(k));
+  const configOnly = labels.some((l) => l.toLowerCase().startsWith("dedupe:sre-config-"));
+  if (configOnly || kind === "provision" || kind === "validation" || kind === "development") {
+    return "This issue is not one the coding agent takes on: the platform works this kind of issue another way.";
+  }
+  if (!deployedVersion(projectName)) return "Deploy a version first: the coding agent works in a deployed version's milestone.";
+  return null;
+}
 
 export const issuesHandlers = [
   http.get("*/api/v1/projects/:projectName/issues", ({ params }) => HttpResponse.json(issuesOf(String(params.projectName)))),
@@ -297,7 +337,7 @@ export const issuesHandlers = [
       hold: false,
       attention: null,
       dependsOn: null,
-      executions: codingRuns(projectName, number),
+      executions: {},
       executionHistory: [],
       lineage: {},
       ...(comments.length > 0 ? { comments } : {}),
@@ -308,10 +348,10 @@ export const issuesHandlers = [
     const number = Number(params.issueNumber);
     const projectName = String(params.projectName);
     const issue = issuesOf(projectName).find((i) => i.Number === number);
-    if (!issue) return HttpResponse.json({ code: "not_found", message: "task not found" }, { status: 404 });
-    if (issue.State !== "open") return HttpResponse.json({ code: "conflict", message: "issue is closed" }, { status: 409 });
-    if (!deployedVersion(projectName)) return HttpResponse.json({ code: "conflict", message: NO_DEPLOYED_VERSION }, { status: 409 });
-    handOver(projectName, number);
+    if (!issue) return HttpResponse.json({ code: "not_found", message: "issue not found" }, { status: 404 });
+    const refusal = adoptionRefusal(projectName, issue);
+    if (refusal) return HttpResponse.json({ code: "conflict", message: refusal }, { status: 409 });
+    adopt(projectName, { number, milestoneNumber: deployedVersion(projectName)!.milestoneNumber });
     // No body, as aep-api answers it: a client reads an empty 202 by its length.
     return new HttpResponse(null, { status: 202, headers: { "Content-Length": "0" } });
   }),

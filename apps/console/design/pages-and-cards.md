@@ -116,12 +116,17 @@ n)`), drawn on its card as a sheet over the main chat, **<Project> â”” Issues â€
 ending re-reads the issue list and that issue's detail, so a comment, an edit
 or a close shows at once. A closed issue has none: closing an issue removes its
 thread, the card says **This issue is closed.** and the panel draws no sheet.
-An open issue the coding agent has not taken on (no `aep` label, no coding
-run on its task) can be handed to it from the card: **Hand to the coding
-agent** opens a picker of the design's components (`design/dependencies`, one
-entry per component), **Hand it over** calls `promote-from-issue` with the
-one picked, and the card says **Handed to the coding agent.** with its log in
-place; a 409 (no deployed version) shows the server's words in the picker.
+An open issue the coding agent has not taken on can be handed to it from the
+card. Taken on is what aep-api's adoption leaves: the issue armed (`aep`) and
+in a version's milestone (`milestoneNumber` on the issue list), so it holds
+across a reload. **Hand to the coding agent** opens a picker of the design's
+components (`design/dependencies`, one entry per component; no design, no
+components), **Hand it over** calls `promote-from-issue` with the one picked,
+and the card says **Handed to the coding agent.** with its task log in place;
+a 409 (no deployed version, the issue closed, a kind the coding agent does not
+take on) shows the server's words in the picker. The card offers no button for
+the kinds it can tell the platform works another way (validation, provision,
+development, a configuration-only incident).
 Whether it is open is the issue list's word, or the server's 409
 `issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
 stands until the list shows it closed too); when the issue in view turns from

@@ -163,17 +163,24 @@ export function useReadiness(projectName: string, environment: string) {
   });
 }
 
+/**
+ * Every component of the design, with its dependencies and their config keys.
+ * A project with no design yet has no components: aep-api answers that 404.
+ */
+export async function designDependencies(projectName: string) {
+  const { data, error, response } = await client.GET("/projects/{projectName}/design/dependencies", {
+    params: { path: { projectName } },
+  });
+  if (response.status === 404) return [];
+  if (error) throw new Error(apiErrorMessage(error, "Couldn't load the design's dependencies"));
+  return data ?? [];
+}
+
 /** Every component's dependencies as the design declares them, with their config keys. */
 export function useDesignDependencies(projectName: string) {
   return useQuery({
     queryKey: deployKeys.designDependencies(projectName),
-    queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/design/dependencies", {
-        params: { path: { projectName } },
-      });
-      if (error) throw new Error(apiErrorMessage(error, "Couldn't load the design's dependencies"));
-      return data ?? [];
-    },
+    queryFn: () => designDependencies(projectName),
     staleTime: 30_000,
   });
 }

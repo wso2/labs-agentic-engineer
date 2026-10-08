@@ -90,7 +90,7 @@ export const deployHandlers = [
   http.get("*/api/v1/dependencies/environments", () => HttpResponse.json(environments)),
 
   http.get("*/api/v1/projects/:projectName/status", ({ params }) => {
-    const version = deployedVersion(String(params.projectName));
+    const version = deployedVersion(String(params.projectName))?.version;
     return HttpResponse.json<ProjectStatus>({
       build: { status: "idle", version: version ?? "" },
       deploy: {
