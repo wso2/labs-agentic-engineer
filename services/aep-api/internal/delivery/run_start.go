@@ -23,7 +23,7 @@ import "errors"
 // and those two sub-packages may not import each other (`slice ⊥ sibling`) —
 // the same reason ErrTemporalUnavailable lives here.
 //
-// All three are written for a human: the console returns them verbatim.
+// All are written for a human: the console returns them verbatim.
 var (
 	// ErrRunAlreadyLive means a run is already working that milestone. Adoption
 	// treats this as a no-op — the live run picks the issue up at its next
@@ -52,6 +52,11 @@ var (
 	// lost admission race. The paths that re-offer on a timer treat those as
 	// nothing to do; a caller waiting on an answer has to be told.
 	ErrRunNotStarted = errors.New("the run could not be started — the platform is not ready to work this version")
+	// ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins
+	// the DEPLOYED version's milestone, and a project that has never completed a
+	// build has no such version. Decided in the event plane, rendered by the task
+	// surface's promote route (409) and the issue agent's hand-off tool.
+	ErrNoDeployedMilestone = errors.New("Deploy a version first: the coding agent works in a deployed version's milestone.")
 )
 
 // StartRunRequest asks the run supervisor for a run over one milestone.

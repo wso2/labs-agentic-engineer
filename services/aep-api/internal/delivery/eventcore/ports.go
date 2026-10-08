@@ -48,8 +48,8 @@ type RunStore interface {
 	// DeployedMilestoneRun returns the project's most recently SUCCEEDED DEV
 	// run — the deployed version, whose milestone is where
 	// incidents and adopted bare issues belong. Nil when the project has never
-	// completed a version, which is what makes "no milestone for the deployed
-	// version — trigger a build" an honest error rather than a guess.
+	// completed a version, which is what makes delivery.ErrNoDeployedMilestone
+	// an honest error rather than a guess.
 	DeployedMilestoneRun(ctx context.Context, orgID, projectID string) (*delivery.MilestoneRun, error)
 	// NewestRunForMilestone returns the milestone's most recent run of ANY kind
 	// and any state, or (nil, nil) for a milestone with none.

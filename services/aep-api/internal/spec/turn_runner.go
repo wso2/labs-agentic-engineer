@@ -248,14 +248,17 @@ func journalAuthorFrom(ctx context.Context) *agentsvc.JournalAuthor {
 // / base URL are not wired, when the turn is none of those, or when minting
 // fails — a turn without MCP is
 // byte-identical to today, so this is best-effort. An Issues-view turn gets the
-// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow. An
-// issue-view turn is a plain chat turn (no flow, no room), so it gets neither.
+// project-fenced issue tools instead (issuesMCPForTurn), whatever its flow, and
+// an issue-view turn the same endpoint on a token fenced to its one issue.
 func (s *Service) mcpForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
 	if s.mcpTokens == nil || s.mcpBaseURL == "" {
 		return nil
 	}
-	if job.chat.View == ChatViewIssues {
+	switch job.chat.View {
+	case ChatViewIssues:
 		return s.issuesMCPForTurn(ctx, job)
+	case ChatViewIssue:
+		return s.issueMCPForTurn(ctx, job)
 	}
 	if !catalogTurn(job) {
 		return nil
@@ -284,6 +287,25 @@ func (s *Service) issuesMCPForTurn(ctx context.Context, job turnJob) *agentsvc.M
 			"turn", job.turnID, "error", err)
 		return nil
 	}
+	return s.issueToolsBlock(token)
+}
+
+// issueMCPForTurn mints an issue turn's MCP block: the issue-tools endpoint on
+// a token fenced to the turn's org, project AND issue number, so the issue's
+// agent reads and writes that one issue whatever it sends. Best-effort like
+// issuesMCPForTurn.
+func (s *Service) issueMCPForTurn(ctx context.Context, job turnJob) *agentsvc.MCPBlock {
+	token, err := s.mcpTokens.IssueIssueMCPToken(job.orgID, job.projectID, job.chat.IssueNumber)
+	if err != nil {
+		slog.WarnContext(ctx, "genai: issue MCP token mint failed — dispatching turn without issue tools",
+			"turn", job.turnID, "issue", job.chat.IssueNumber, "error", err)
+		return nil
+	}
+	return s.issueToolsBlock(token)
+}
+
+// issueToolsBlock is the BFF's issue-tools endpoint carrying token.
+func (s *Service) issueToolsBlock(token string) *agentsvc.MCPBlock {
 	return &agentsvc.MCPBlock{
 		URL:   strings.TrimRight(s.mcpBaseURL, "/") + "/internal/v1/issues/mcp",
 		Token: token,

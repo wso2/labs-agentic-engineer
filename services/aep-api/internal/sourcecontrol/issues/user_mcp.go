@@ -30,11 +30,17 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// The Issues agent's MCP surface: the console's Issues view chats with an agent
-// that can search and file issues on the ONE project the view was opened on.
-// auth.IssuesMCPVerifier binds that org + project from the signed token before
-// this handler runs; nothing the model sends can name another project, another
-// org, or a label. Unknown arguments are ignored.
+// The issues MCP surface, one endpoint serving two agents by token scope:
+//
+//   - the console's Issues view chats with an agent that can search and file
+//     issues on the ONE project the view was opened on (this file);
+//   - an issue's own chat talks to an agent that reads and works that ONE issue
+//     (issue_mcp.go).
+//
+// auth.IssuesMCPVerifier binds the org + project (+ issue number) from the
+// signed token before this handler runs; nothing the model sends can name
+// another project, another org, another issue, or a label. Each scope lists
+// and calls only its own tools. Unknown arguments are ignored.
 
 // userIssueKinds are the kinds the agent may file; each is also the label.
 var userIssueKinds = []string{"bug", "feature", "improvement"}
@@ -55,17 +61,25 @@ const userSearchBodyRunes = 500
 const userSearchMaxHits = 25
 
 // NewUserMCPHandler serves the Issues agent's search_issues and create_issue
-// tools. A request without the verifier's scope answers 401; a nil issues
-// service answers 503.
-func NewUserMCPHandler(issues sourcecontrol.IssueService) http.Handler {
-	server := mcprpc.Server{
+// tools on a project-scoped token, and an issue agent's tools (issueTools) on
+// an issue-scoped one. A request without the verifier's scope answers 401; a
+// nil issues service answers 503.
+func NewUserMCPHandler(issues sourcecontrol.IssueService, agent IssueAgentPorts) http.Handler {
+	projectServer := mcprpc.Server{
 		Name: "aep-issues", Version: "1.0.0", Tools: userTools(),
 		Call: func(w http.ResponseWriter, r *http.Request, req mcprpc.Request) {
 			callUserTool(w, r, issues, req)
 		},
 	}
+	issueServer := mcprpc.Server{
+		Name: "aep-issue", Version: "1.0.0", Tools: issueTools(),
+		Call: func(w http.ResponseWriter, r *http.Request, req mcprpc.Request) {
+			callIssueTool(w, r, issues, agent, req)
+		},
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := auth.IssuesMCPScopeFromContext(r.Context()); !ok {
+		scope, ok := auth.IssuesMCPScopeFromContext(r.Context())
+		if !ok {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -73,7 +87,11 @@ func NewUserMCPHandler(issues sourcecontrol.IssueService) http.Handler {
 			http.Error(w, "issue service not configured", http.StatusServiceUnavailable)
 			return
 		}
-		server.Serve(w, r)
+		if scope.IssueNumber > 0 {
+			issueServer.Serve(w, r)
+			return
+		}
+		projectServer.Serve(w, r)
 	})
 }
 
@@ -173,6 +191,9 @@ func callUserTool(w http.ResponseWriter, r *http.Request, issues sourcecontrol.I
 func userIssueFailure(r *http.Request, action string, err error) string {
 	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
 		return "the project has no repository yet; nothing was done"
+	}
+	if errors.Is(err, sourcecontrol.ErrIssueNotFound) {
+		return "the issue was not found on the project's repository; nothing was done"
 	}
 	slog.ErrorContext(r.Context(), "issues agent: could not "+action, "error", err)
 	return "could not " + action + " right now; nothing was done"

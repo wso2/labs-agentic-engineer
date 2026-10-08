@@ -154,6 +154,8 @@ func mapTaskCommandError(err error) error {
 		return apierr.Conflict("issue is closed")
 	case errors.Is(err, ErrComponentNameRequired):
 		return apierr.BadRequest(ErrComponentNameRequired.Error())
+	case errors.Is(err, delivery.ErrNoDeployedMilestone):
+		return apierr.Conflict(delivery.ErrNoDeployedMilestone.Error())
 	default:
 		return apierr.Internal("internal error")
 	}

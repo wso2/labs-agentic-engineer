@@ -165,3 +165,74 @@ func TestIssuesMCP_TokenRejectedByAgentsScopedVerifier(t *testing.T) {
 		})
 	}
 }
+
+// An issue's token carries the issue number beside the org + project; the
+// verifier binds all three. The Issues view's token binds number 0.
+func TestIssuesMCP_IssueTokenBindsTheIssueNumber(t *testing.T) {
+	mgr := mcpTestManager(t)
+	tok, err := mgr.IssueIssueMCPToken("acme", "acme-expenses", 7)
+	if err != nil {
+		t.Fatalf("IssueIssueMCPToken: %v", err)
+	}
+	claims, err := mgr.Verify(tok)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !hasAudience(claims.Audience, AudienceIssuesMCP) || claims.IssueNumber != 7 {
+		t.Errorf("aud/issueNumber = %v/%d, want [%s]/7", claims.Audience, claims.IssueNumber, AudienceIssuesMCP)
+	}
+	if ttl := claims.ExpiresAt.Sub(claims.IssuedAt.Time); ttl != mcpTokenTTL {
+		t.Errorf("ttl = %v, want %v", ttl, mcpTokenTTL)
+	}
+
+	v := NewIssuesMCPVerifier(mgr)
+	scope, err := v.resolveScope("Bearer " + tok)
+	if err != nil {
+		t.Fatalf("resolveScope: %v", err)
+	}
+	if want := (IssuesMCPScope{OrgID: "acme", ProjectID: "acme-expenses", IssueNumber: 7}); scope != want {
+		t.Errorf("scope = %+v, want %+v", scope, want)
+	}
+
+	issuesTok, err := mgr.IssueIssuesMCPToken("acme", "acme-expenses")
+	if err != nil {
+		t.Fatalf("IssueIssuesMCPToken: %v", err)
+	}
+	if scope, err := v.resolveScope("Bearer " + issuesTok); err != nil || scope.IssueNumber != 0 {
+		t.Errorf("issues-view scope = %+v (%v), want issue number 0", scope, err)
+	}
+}
+
+// Only a positive number is an issue: the mint refuses anything else, so a
+// zero or negative claim can never read as some issue's token.
+func TestIssuesMCP_IssueTokenRefusesANonPositiveNumber(t *testing.T) {
+	mgr := mcpTestManager(t)
+	for _, n := range []int{0, -3} {
+		if tok, err := mgr.IssueIssueMCPToken("acme", "acme-expenses", n); err == nil {
+			t.Errorf("IssueIssueMCPToken(%d) = %q, want an error", n, tok)
+		}
+	}
+}
+
+// A hand-signed negative claim is refused by the verifier.
+func TestIssuesMCP_NegativeIssueClaimIs401(t *testing.T) {
+	mgr := mcpTestManager(t)
+	claims := TaskClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    mgr.issuer,
+			Audience:  jwt.ClaimStrings{AudienceIssuesMCP},
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute)),
+		},
+		OcOrgID: "acme", ProjectID: "acme-expenses", IssueNumber: -1,
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = mgr.keyID
+	signed, err := tok.SignedString(mgr.privateKey)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if w := serveIssues(NewIssuesMCPVerifier(mgr), "Bearer "+signed); w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}

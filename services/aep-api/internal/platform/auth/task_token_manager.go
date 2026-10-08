@@ -69,6 +69,9 @@ type TaskClaims struct {
 	TaskID    string `json:"taskId"`
 	OcOrgID   string `json:"ocOrgId"`
 	ProjectID string `json:"projectId,omitempty"`
+	// IssueNumber fences an issues MCP token to one issue of its project (set
+	// only by IssueIssueMCPToken; absent on every other token).
+	IssueNumber int `json:"issueNumber,omitempty"`
 }
 
 // NewTaskTokenManager parses the signing key and returns a ready manager.
@@ -153,7 +156,18 @@ const AudienceIssuesMCP = "aep-api-issues-mcp"
 // Issues view was opened on. IssuesMCPVerifier binds both from these claims, so
 // the agent can never choose the project it files into.
 func (m *TaskTokenManager) IssueIssuesMCPToken(orgID, projectID string) (string, error) {
-	return m.signServiceToken(AudienceIssuesMCP, orgID, projectID, mcpTokenTTL)
+	return m.signServiceToken(AudienceIssuesMCP, serviceScope{orgID: orgID, projectID: projectID}, mcpTokenTTL)
+}
+
+// IssueIssueMCPToken mints the issues MCP token for ONE issue's agent: the
+// same audience as IssueIssuesMCPToken plus the issueNumber claim. The
+// verifier binds the number from the claim, so every issue tool acts on that
+// issue and nothing the model sends can name another. n must be positive.
+func (m *TaskTokenManager) IssueIssueMCPToken(orgID, projectID string, n int) (string, error) {
+	if n < 1 {
+		return "", fmt.Errorf("issue number must be positive, got %d", n)
+	}
+	return m.signServiceToken(AudienceIssuesMCP, serviceScope{orgID: orgID, projectID: projectID, issueNumber: n}, mcpTokenTTL)
 }
 
 // IssueServiceToken mints a short-lived BFF-signed JWT that authenticates an
@@ -168,12 +182,19 @@ func (m *TaskTokenManager) IssueIssuesMCPToken(orgID, projectID string) (string,
 // signature+aud without requiring org. ttl is short (minutes); a non-positive
 // ttl falls back to the manager's configured task TTL.
 func (m *TaskTokenManager) IssueServiceToken(audience, ocOrgID string, ttl time.Duration) (string, error) {
-	return m.signServiceToken(audience, ocOrgID, "", ttl)
+	return m.signServiceToken(audience, serviceScope{orgID: ocOrgID}, ttl)
 }
 
-// signServiceToken signs a service token; projectID is set only by
-// IssueIssuesMCPToken (empty omits the claim, as on every other service token).
-func (m *TaskTokenManager) signServiceToken(audience, ocOrgID, projectID string, ttl time.Duration) (string, error) {
+// serviceScope is what a service token is fenced to. projectID and issueNumber
+// are set only by the issues MCP mints (zero omits the claim, as on every
+// other service token).
+type serviceScope struct {
+	orgID, projectID string
+	issueNumber      int
+}
+
+// signServiceToken signs a service token fenced to scope.
+func (m *TaskTokenManager) signServiceToken(audience string, scope serviceScope, ttl time.Duration) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("audience is required")
 	}
@@ -189,8 +210,9 @@ func (m *TaskTokenManager) signServiceToken(audience, ocOrgID, projectID string,
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
-		OcOrgID:   ocOrgID,
-		ProjectID: projectID,
+		OcOrgID:     scope.orgID,
+		ProjectID:   scope.projectID,
+		IssueNumber: scope.issueNumber,
 	}
 
 	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)

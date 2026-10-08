@@ -61,23 +61,68 @@ func (f *recordingIssues) CreateIssue(ctx context.Context, org, project string, 
 	return &sourcecontrol.IssueResult{Number: 15, URL: "https://github.com/acme/acme-expenses/issues/15", NodeID: "secret-node"}, nil
 }
 
+// issuesScope is the Issues view's scope: the project, no issue.
+var issuesScope = auth.IssuesMCPScope{OrgID: "acme", ProjectID: "acme-expenses"}
+
 // scopedRPC POSTs one JSON-RPC message to the user MCP handler with the
-// project scope the verifier would bind.
+// Issues view's project scope the verifier would bind (none when !scoped).
 func scopedRPC(t *testing.T, h http.Handler, scoped bool, msg map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	if !scoped {
+		return rpcAs(t, h, nil, msg)
+	}
+	return rpcAs(t, h, &issuesScope, msg)
+}
+
+// rpcAs POSTs one JSON-RPC message bound to scope (nil binds none).
+func rpcAs(t *testing.T, h http.Handler, scope *auth.IssuesMCPScope, msg map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(msg)
 	req := httptest.NewRequest(http.MethodPost, "/internal/v1/issues/mcp", strings.NewReader(string(body)))
-	if scoped {
-		req = req.WithContext(auth.WithIssuesMCPScope(req.Context(), auth.IssuesMCPScope{OrgID: "acme", ProjectID: "acme-expenses"}))
+	if scope != nil {
+		req = req.WithContext(auth.WithIssuesMCPScope(req.Context(), *scope))
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w
 }
 
+// listedTools answers tools/list under scope: each tool's name and declared
+// argument names.
+func listedTools(t *testing.T, h http.Handler, scope auth.IssuesMCPScope) ([]string, map[string]map[string]any) {
+	t.Helper()
+	w := rpcAs(t, h, &scope, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+	var resp struct {
+		Result struct {
+			Tools []struct {
+				Name        string         `json:"name"`
+				Description string         `json:"description"`
+				InputSchema map[string]any `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+	names := []string{}
+	props := map[string]map[string]any{}
+	for _, tool := range resp.Result.Tools {
+		names = append(names, tool.Name)
+		p, _ := tool.InputSchema["properties"].(map[string]any)
+		props[tool.Name] = p
+	}
+	return names, props
+}
+
 func callUserTool(t *testing.T, h http.Handler, name string, args map[string]any) (string, bool) {
 	t.Helper()
-	w := scopedRPC(t, h, true, map[string]any{
+	return callToolAs(t, h, issuesScope, name, args)
+}
+
+// callToolAs calls one tool bound to scope and returns its text and isError.
+func callToolAs(t *testing.T, h http.Handler, scope auth.IssuesMCPScope, name string, args map[string]any) (string, bool) {
+	t.Helper()
+	w := rpcAs(t, h, &scope, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": name, "arguments": args},
 	})
@@ -102,27 +147,20 @@ func callUserTool(t *testing.T, h http.Handler, name string, args map[string]any
 	return resp.Result.Content[0].Text, resp.Result.IsError
 }
 
+// The Issues view's token lists exactly its two tools, and none of them can
+// name the scope the session fixed.
+// newHandler serves the Issues view's tools over fake; it wires no issue-agent
+// ports (the Issues view's tools need none).
+func newHandler(fake sourcecontrol.IssueService) http.Handler {
+	return issues.NewUserMCPHandler(fake, issues.IssueAgentPorts{})
+}
+
 func TestUserMCPListsExactlyTheTwoTools(t *testing.T) {
-	h := issues.NewUserMCPHandler(&recordingIssues{})
-	w := scopedRPC(t, h, true, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
-	var resp struct {
-		Result struct {
-			Tools []struct {
-				Name        string         `json:"name"`
-				InputSchema map[string]any `json:"inputSchema"`
-			} `json:"tools"`
-		} `json:"result"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, tool := range resp.Result.Tools {
-		names = append(names, tool.Name)
-		props, _ := tool.InputSchema["properties"].(map[string]any)
+	names, props := listedTools(t, newHandler(&recordingIssues{}), issuesScope)
+	for name, p := range props {
 		for _, banned := range []string{"project", "org", "namespace", "labels"} {
-			if _, ok := props[banned]; ok {
-				t.Errorf("%s declares %q: the scope is fixed by the session", tool.Name, banned)
+			if _, ok := p[banned]; ok {
+				t.Errorf("%s declares %q: the scope is fixed by the session", name, banned)
 			}
 		}
 	}
@@ -133,7 +171,7 @@ func TestUserMCPListsExactlyTheTwoTools(t *testing.T) {
 
 func TestUserMCPCreateIssueFilesIntoTheScopedProject(t *testing.T) {
 	fake := &recordingIssues{}
-	h := issues.NewUserMCPHandler(fake)
+	h := newHandler(fake)
 	text, isErr := callUserTool(t, h, "create_issue", map[string]any{
 		"title": "Save button does nothing", "body": "Steps…", "kind": "bug",
 		// The model cannot steer these: unknown arguments are ignored.
@@ -163,7 +201,7 @@ func TestUserMCPCreateIssueFilesIntoTheScopedProject(t *testing.T) {
 func TestUserMCPCreateIssueRefusesUnknownKind(t *testing.T) {
 	for _, kind := range []any{"epic", "", nil, "incident"} {
 		fake := &recordingIssues{}
-		text, isErr := callUserTool(t, issues.NewUserMCPHandler(fake), "create_issue", map[string]any{
+		text, isErr := callUserTool(t, newHandler(fake), "create_issue", map[string]any{
 			"title": "x", "body": "y", "kind": kind,
 		})
 		if !isErr || len(fake.creates) != 0 {
@@ -174,7 +212,7 @@ func TestUserMCPCreateIssueRefusesUnknownKind(t *testing.T) {
 
 func TestUserMCPCreateIssueRequiresTitleAndBody(t *testing.T) {
 	fake := &recordingIssues{}
-	h := issues.NewUserMCPHandler(fake)
+	h := newHandler(fake)
 	if _, isErr := callUserTool(t, h, "create_issue", map[string]any{"body": "y", "kind": "bug"}); !isErr {
 		t.Error("missing title should be a tool error")
 	}
@@ -193,7 +231,7 @@ func TestUserMCPSearchRanksFiltersAndTruncates(t *testing.T) {
 		{Number: 2, Title: "Save button broken", Body: long + " save button", State: "open", Labels: []string{"bug"}, URL: "u2"},
 		{Number: 3, Title: "Save button old", Body: "save button", State: "closed", URL: "u3"},
 	}}
-	h := issues.NewUserMCPHandler(fake)
+	h := newHandler(fake)
 
 	text, isErr := callUserTool(t, h, "search_issues", map[string]any{"query": "save button", "project": "other", "labels": []string{"x"}})
 	if isErr {
@@ -243,7 +281,7 @@ func TestUserMCPSearchRanksFiltersAndTruncates(t *testing.T) {
 
 func TestUserMCPServiceErrorIsShortToolError(t *testing.T) {
 	fake := &recordingIssues{listErr: errors.New("GET https://api.github.com/x?token=ghs_secret: 502")}
-	text, isErr := callUserTool(t, issues.NewUserMCPHandler(fake), "search_issues", map[string]any{})
+	text, isErr := callUserTool(t, newHandler(fake), "search_issues", map[string]any{})
 	if !isErr || strings.Contains(text, "ghs_secret") || strings.Contains(text, "https://") {
 		t.Fatalf("got %q isError=%v, want a short tool error with no internal detail", text, isErr)
 	}
@@ -251,7 +289,7 @@ func TestUserMCPServiceErrorIsShortToolError(t *testing.T) {
 
 func TestUserMCPWithoutScopeIs401(t *testing.T) {
 	fake := &recordingIssues{}
-	w := scopedRPC(t, issues.NewUserMCPHandler(fake), false, map[string]any{
+	w := scopedRPC(t, newHandler(fake), false, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{"name": "create_issue", "arguments": map[string]any{"title": "x", "body": "y", "kind": "bug"}},
 	})
@@ -267,7 +305,7 @@ func TestUserMCPSearchCapsResultsWithoutAQuery(t *testing.T) {
 	for n := 40; n >= 1; n-- { // newest first, as the GitHub list answers
 		fake.listed = append(fake.listed, sourcecontrol.IssueInfo{Number: n, Title: "issue", State: "open"})
 	}
-	text, isErr := callUserTool(t, issues.NewUserMCPHandler(fake), "search_issues", map[string]any{})
+	text, isErr := callUserTool(t, newHandler(fake), "search_issues", map[string]any{})
 	if isErr {
 		t.Fatalf("search failed: %s", text)
 	}

@@ -984,7 +984,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		OrganizationService: organizationService,
 		SREHandoffAuth:      sreHandoffAuth,
 		SREHandoffMCP:       sreHandoffMCP,
-		IssuesMCP:           scissues.NewUserMCPHandler(issueService),
+		IssuesMCP: scissues.NewUserMCPHandler(issueService, scissues.IssueAgentPorts{
+			Promoter:   issueAgentPromoter{commands: taskCommands},
+			Components: designComponents{store: artifactStore},
+		}),
 
 		DB:                   db,
 		CredService:          credService,

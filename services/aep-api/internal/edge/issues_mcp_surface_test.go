@@ -29,9 +29,9 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 )
 
-// The Issues agent's tools are mounted behind their own verifier: an issues
-// token opens them, a discovery token does not, and an issues token does not
-// open the discovery surface.
+// The Issues agent's and an issue agent's tools are mounted behind their own
+// verifier: an issues or issue token opens them, a discovery token does not,
+// and neither issues-audience token opens the discovery surface.
 func TestIssuesMCPSurface_MountedBehindItsOwnAudience(t *testing.T) {
 	mgr, err := auth.NewTaskTokenManager(auth.TaskTokenConfig{
 		PrivateKey: string(encodePKCS1(t, mustGenerateRSAKey(t))),
@@ -45,11 +45,15 @@ func TestIssuesMCPSurface_MountedBehindItsOwnAudience(t *testing.T) {
 	srv := httptest.NewServer(NewHandler(AppParams{
 		Config:    config.Config{},
 		Deps:      Deps{TaskTokens: mgr},
-		IssuesMCP: issues.NewUserMCPHandler(svc),
+		IssuesMCP: issues.NewUserMCPHandler(svc, issues.IssueAgentPorts{}),
 	}))
 	t.Cleanup(srv.Close)
 
 	issuesTok, err := mgr.IssueIssuesMCPToken("acme", "acme-expenses")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issueTok, err := mgr.IssueIssueMCPToken("acme", "acme-expenses", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,6 +77,12 @@ func TestIssuesMCPSurface_MountedBehindItsOwnAudience(t *testing.T) {
 
 	if got := post("/internal/v1/issues/mcp", issuesTok); got != http.StatusOK {
 		t.Errorf("issues token on issues surface = %d, want 200", got)
+	}
+	if got := post("/internal/v1/issues/mcp", issueTok); got != http.StatusOK {
+		t.Errorf("issue token on issues surface = %d, want 200", got)
+	}
+	if got := post("/internal/v1/mcp", issueTok); got != http.StatusUnauthorized {
+		t.Errorf("issue token on discovery surface = %d, want 401", got)
 	}
 	if got := post("/internal/v1/issues/mcp", discoveryTok); got != http.StatusUnauthorized {
 		t.Errorf("discovery token on issues surface = %d, want 401", got)

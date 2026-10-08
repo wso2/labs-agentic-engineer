@@ -81,7 +81,8 @@ func TestIssueView_OwnThreadPerIssue(t *testing.T) {
 
 // An issue turn runs in its own slot beside a running Issues turn, reaches the
 // agents service as the issue view with its number under its own namespace,
-// and is a plain chat turn: no flow, no room, no discovery tools.
+// and is a plain chat turn: no flow, no room, no discovery tools — only the
+// issue tools, on a token fenced to its issue.
 func TestIssueView_TurnRunsBesideIssuesTurn(t *testing.T) {
 	r := newIssueRig(t, &memConversationRepo{}, withMCP())
 	issuesThread := listConversationsAt(t, r, conversationsPath()+"?view=issues")[0].ConversationID
@@ -133,9 +134,13 @@ func TestIssueView_TurnRunsBesideIssuesTurn(t *testing.T) {
 	if sent.req.Turn.Kind != agentsvc.TurnKindChat || sent.req.Turn.Text != "/design" {
 		t.Errorf("turn = %+v, want the instruction verbatim as a chat turn", sent.req.Turn)
 	}
-	if sent.req.Collab != nil || sent.req.MCP != nil || sent.req.WebSearch || len(sent.req.BranchNotes) != 0 {
-		t.Errorf("issue turn carried collab/mcp/webSearch/branchNotes: %+v %+v %v %+v",
-			sent.req.Collab, sent.req.MCP, sent.req.WebSearch, sent.req.BranchNotes)
+	if sent.req.Collab != nil || sent.req.WebSearch || len(sent.req.BranchNotes) != 0 {
+		t.Errorf("issue turn carried collab/webSearch/branchNotes: %+v %v %+v",
+			sent.req.Collab, sent.req.WebSearch, sent.req.BranchNotes)
+	}
+	wantMCP := agentsvc.MCPBlock{URL: testMCPBaseURL + "/internal/v1/issues/mcp", Token: "issue:" + testOrg + "/" + testProj + "#7"}
+	if sent.req.MCP == nil || *sent.req.MCP != wantMCP {
+		t.Errorf("issue turn MCP = %+v, want the issue-fenced block %+v", sent.req.MCP, wantMCP)
 	}
 	if issuesSent := r.fake.sentTurn(t, 0); issuesSent.req.IssueNumber != 0 {
 		t.Errorf("issues turn carried issueNumber %d", issuesSent.req.IssueNumber)

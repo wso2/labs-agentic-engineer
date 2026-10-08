@@ -608,13 +608,18 @@ const (
 )
 
 // stubMinter is an MCPTokenMinter that always returns a fixed discovery token,
-// and an issues token naming the org + project it was minted for.
+// an issues token naming the org + project it was minted for, and an issue
+// token naming the org + project + issue number.
 type stubMinter struct{ token string }
 
 func (m stubMinter) IssueMCPToken(string) (string, error) { return m.token, nil }
 
 func (m stubMinter) IssueIssuesMCPToken(org, project string) (string, error) {
 	return "issues:" + org + "/" + project, nil
+}
+
+func (m stubMinter) IssueIssueMCPToken(org, project string, n int) (string, error) {
+	return fmt.Sprintf("issue:%s/%s#%d", org, project, n), nil
 }
 
 // withMCP wires the MCP discovery deps (a fixed-token minter + a base URL) so a

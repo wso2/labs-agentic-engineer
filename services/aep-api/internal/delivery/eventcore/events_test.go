@@ -694,7 +694,7 @@ func TestAdoption_NeverDeployedProjectRefusesClearly(t *testing.T) {
 	h := newHarness(t) // no runs at all
 
 	err := h.events.AdoptIssue(context.Background(), testOrg, testProject, AdoptTarget{Number: 31})
-	if !errors.Is(err, ErrNoDeployedMilestone) {
+	if !errors.Is(err, delivery.ErrNoDeployedMilestone) {
 		t.Fatalf("adoption without a deployed version must refuse with the actionable error, got %v", err)
 	}
 	if len(h.issues.assigned) != 0 || len(h.sup.started) != 0 {
@@ -870,7 +870,7 @@ func TestRevalidate_RefusesWhenNothingHasEverDeployed(t *testing.T) {
 
 	_, err := h.events.Revalidate(context.Background(), testOrg, testProject,
 		MilestoneRef{Number: 5, Title: "v3"}, 1, 0)
-	if !errors.Is(err, ErrNoDeployedMilestone) {
+	if !errors.Is(err, delivery.ErrNoDeployedMilestone) {
 		t.Fatalf("nothing deployed must refuse the revalidation, got %v", err)
 	}
 	if len(h.sup.started) != 0 {

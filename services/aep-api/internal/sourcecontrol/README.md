@@ -27,6 +27,7 @@ flowchart LR
 |---|---|---|
 | `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
 | `issues` (Issues agent) | the console Issues view's agent searches / files issues on its one project | `POST /internal/v1/issues/mcp` (`search_issues`, `create_issue`; `user_mcp.go`) |
+| `issues` (issue agent) | one issue's chat agent reads and works that one issue | the same endpoint on an issue token (`get_issue`, `list_components`, `comment_issue`, `edit_issue`, `close_issue`, `reopen_issue`, `hand_to_coding_agent`; `issue_mcp.go`) |
 
 *In the domain root rather than a slice: repo lifecycle, workspace, webhook register/receive (including
 the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
@@ -39,6 +40,9 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
+| `issues.Promoter` | needs | the issue agent's hand-off — delivery's promote command (adapted in `app`); answers `issues.ErrNoDeployedVersion` with no deployed version |
+| `issues.ComponentLister` | needs | the design's component names, sorted (spec's design, adapted in `app`) |
+| `issues.IssueThreadRemover` | needs (optional) | removes a closed issue's chat thread after `close_issue`; must not wait on the calling turn; a failure is logged, never the tool's |
 
 ## Owns
 - `git_repositories` (the repo coordinate registry) and `webhook_deliveries` — gorm + entities in this
@@ -53,6 +57,11 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   `projectId`); no tool schema declares a project, org or labels, and unknown arguments are ignored.
   Labels are server-set: `[kind, src/user]` with kind `bug | feature | improvement`. The tool names are
   a contract with the agents service's filing gate, which keys on `create_issue`.
+- **An issue's agent is fenced to one issue.** The same endpoint serves a token minted with
+  `IssueIssueMCPToken` (claim `issueNumber` beside `ocOrgId` + `projectId`) the issue tools only, and
+  every one acts on the claimed number — no schema declares a number, project, org or labels. Each
+  token lists and calls only its own set; anything else is a tool error. Writes are confirmed by the
+  agents service's gate before they reach here; the tool names are its contract.
 - **SRE creation owns incident identity and outcomes.** A trusted transport binds the opaque incident
   identity with `WithIncidentContext`. Creation combines it with tenant/project and normalized component,
   ignoring the client dedupe key. `ops.ClassifyActions` determines classification; config-only ledger

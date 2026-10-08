@@ -251,13 +251,16 @@ func providerLimitHost(t *AgentTurn) string {
 
 // MCPTokenMinter mints the short-lived BFF-signed identity tokens the agents
 // service calls back into the BFF with: IssueMCPToken (aud aep-api-mcp, the org)
-// for the MCP discovery surface on a generation turn, and IssueIssuesMCPToken
+// for the MCP discovery surface on a generation turn, IssueIssuesMCPToken
 // (aud aep-api-issues-mcp, the org + project) for the Issues agent's
-// project-fenced issue tools. *auth.TaskTokenManager satisfies it; defined here
-// (consumer side) so genai needn't import the platform/auth package.
+// project-fenced issue tools, and IssueIssueMCPToken (the same audience plus
+// the issue number) for one issue's agent. *auth.TaskTokenManager satisfies
+// it; defined here (consumer side) so genai needn't import the platform/auth
+// package.
 type MCPTokenMinter interface {
 	IssueMCPToken(orgID string) (string, error)
 	IssueIssuesMCPToken(orgID, projectID string) (string, error)
+	IssueIssueMCPToken(orgID, projectID string, issueNumber int) (string, error)
 }
 
 // ServiceDeps wires the genai service. Repos..SkillsRepo are required; MCPTokens

@@ -27,12 +27,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// ErrNoDeployedMilestone is adoption's honest refusal: a bare issue joins the
-// DEPLOYED version's milestone, and a project that has never completed a build
-// has no such version. The message is written for a human because the console
-// dispatch path returns it to one verbatim.
-var ErrNoDeployedMilestone = errors.New("no milestone for the deployed version — trigger a build")
-
 // AdoptTarget is the issue being handed to the coding agent, plus the
 // milestone it already belongs to (0 when it is a bare issue). The webhook
 // path reads both out of the payload — every issues delivery embeds the full
@@ -62,7 +56,7 @@ type AdoptTarget struct {
 //   - An issue that already has a milestone keeps it. The human put it there.
 //   - A bare issue joins the deployed version's milestone — the version it is
 //     an incident against. With no deployed version there is nothing to attach
-//     it to, and the caller gets ErrNoDeployedMilestone rather than a guess.
+//     it to, and the caller gets delivery.ErrNoDeployedMilestone rather than a guess.
 //   - If a run is already live on that milestone, this is a no-op: the run
 //     re-reads its milestone at the next cycle boundary and picks the issue up
 //     there. Starting a second run on one milestone would put two agents on
@@ -127,7 +121,7 @@ func (e *Events) AdoptIssue(ctx context.Context, orgID, projectID string, target
 			return err
 		}
 		if deployed == nil {
-			return ErrNoDeployedMilestone
+			return delivery.ErrNoDeployedMilestone
 		}
 		milestone = MilestoneRef{Number: deployed.MilestoneNumber, Title: deployed.MilestoneTitle}
 		if e.p.Issues != nil {
@@ -270,7 +264,7 @@ func (e *Events) Revalidate(ctx context.Context, orgID, projectID string, milest
 		return "", derr
 	}
 	if deployed == nil {
-		return "", ErrNoDeployedMilestone
+		return "", delivery.ErrNoDeployedMilestone
 	}
 	if deployed.MilestoneNumber != milestone.Number {
 		return "", delivery.ErrVersionNotDeployed

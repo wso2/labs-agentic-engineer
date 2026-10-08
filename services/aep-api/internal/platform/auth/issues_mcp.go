@@ -20,7 +20,9 @@ package auth
 // (POST /internal/v1/issues/mcp). Unlike AgentsScopedVerifier (org-wide
 // discovery), the scope here is one project: both the org and the project come
 // SOLELY from the signed ocOrgId + projectId claims of a token minted with
-// IssueIssuesMCPToken. There is no publisher fallback — only aep-api mints these.
+// IssueIssuesMCPToken, and an issue's agent is further fenced to the
+// issueNumber claim of IssueIssueMCPToken. There is no publisher fallback —
+// only aep-api mints these.
 
 import (
 	"context"
@@ -30,10 +32,13 @@ import (
 	"strings"
 )
 
-// IssuesMCPScope is the org + project an issues MCP token is fenced to.
+// IssuesMCPScope is the org + project an issues MCP token is fenced to, and
+// the one issue when the token is an issue's (IssueIssueMCPToken). IssueNumber
+// is 0 on the Issues view's token.
 type IssuesMCPScope struct {
-	OrgID     string
-	ProjectID string
+	OrgID       string
+	ProjectID   string
+	IssueNumber int
 }
 
 type issuesMCPScopeCtxKey struct{}
@@ -98,5 +103,8 @@ func (v *IssuesMCPVerifier) resolveScope(authHeader string) (IssuesMCPScope, err
 	if claims.OcOrgID == "" || claims.ProjectID == "" {
 		return IssuesMCPScope{}, fmt.Errorf("token lacks ocOrgId or projectId claim")
 	}
-	return IssuesMCPScope{OrgID: claims.OcOrgID, ProjectID: claims.ProjectID}, nil
+	if claims.IssueNumber < 0 {
+		return IssuesMCPScope{}, fmt.Errorf("token issueNumber %d is not an issue", claims.IssueNumber)
+	}
+	return IssuesMCPScope{OrgID: claims.OcOrgID, ProjectID: claims.ProjectID, IssueNumber: claims.IssueNumber}, nil
 }
