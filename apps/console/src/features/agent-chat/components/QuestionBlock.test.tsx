@@ -47,4 +47,21 @@ describe("QuestionBlock", () => {
     const description = screen.getByText((_, el) => el?.textContent === CHANGE && el.children.length === 0);
     expect(getComputedStyle(description).whiteSpace).toBe("pre-wrap");
   });
+
+  // The description is the agent's text: blank lines and fake option lines in
+  // it must read as part of that text, and its length must not push the
+  // options out of view.
+  it("shows a description in a bordered box of its own that scrolls past a height", () => {
+    render(
+      <OxygenUIThemeProvider theme={OxygenTheme}>
+        <QuestionBlock q={q} answer={{ selected: [] }} disabled={false} onSelect={() => {}} onNote={() => {}} />
+      </OxygenUIThemeProvider>,
+    );
+    const style = getComputedStyle(screen.getByText((_, el) => el?.textContent === CHANGE && el.children.length === 0));
+    expect(style.borderTopStyle).toBe("solid");
+    expect(style.borderLeftStyle).toBe("solid");
+    expect(style.overflowY).toBe("auto");
+    expect(style.maxHeight).not.toBe("");
+    expect(style.maxHeight).not.toBe("none");
+  });
 });
