@@ -86,6 +86,11 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   1000 items). The bell polls the unfiltered list per alerting project every minute, so the cap bounds
   that poll's rate cost. Past it the oldest issues are missing from the list (logged); `GetIssue` still
   reads any issue by number. Paging the API contract itself is the follow-up if repositories outgrow it.
+- **A filed issue is listed at once (read-your-writes).** GitHub's list endpoint lags a creation by 3-10 s,
+  so `ListIssues` merges in the issues this process filed in the last minute (`recent_issues.go`, per
+  `owner/repo`) that GitHub's answer lacks and that satisfy the label filter, newest first; an entry is
+  dropped when GitHub lists it or after 60 s. The memory is per process: it holds for the single
+  replica the deployment runs, and a list answered by another replica still sees the lag.
 - **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
   — including whether an op rides REST or GraphQL.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces

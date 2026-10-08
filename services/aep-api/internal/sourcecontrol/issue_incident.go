@@ -136,6 +136,7 @@ func (s *issueService) createIncidentIssue(ctx context.Context, orgID, projectID
 		return nil, err
 	}
 	result.Classification = classification
+	s.rememberCreated(owner, repo, req, result)
 	s.adoptIncident(ctx, orgID, projectID, result)
 	return result, nil
 }

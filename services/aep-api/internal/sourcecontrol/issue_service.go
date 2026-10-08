@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -133,6 +134,9 @@ type issueService struct {
 	// Skipping a repeat is safe because label creation is monotone — nothing in
 	// the platform deletes a label — and a process restart re-ensures anyway.
 	ensuredLabels sync.Map // "owner/repo\x00name\x00color" → struct{}
+	// recent bridges GitHub's list lag: it holds issues this process filed in
+	// the last minute so ListIssues can show them before GitHub's list does.
+	recent recentIssues
 }
 
 // keyedMutex is a per-key mutex pool that deletes a key's entry once no
@@ -264,7 +268,27 @@ func (s *issueService) CreateIssue(ctx context.Context, orgID, projectID string,
 
 	// GitHub Projects v2 is dropped (tasks-github-native §4): no lazy board
 	// create/link/add on issue creation. Tasks are plain GitHub issues.
-	return s.github.CreateIssue(ctx, owner, repoName, cred, req)
+	result, err := s.github.CreateIssue(ctx, owner, repoName, cred, req)
+	if err != nil {
+		return nil, err
+	}
+	s.rememberCreated(owner, repoName, req, result)
+	return result, nil
+}
+
+// rememberCreated records a freshly filed issue for ListIssues' read-your-writes.
+func (s *issueService) rememberCreated(owner, repo string, req CreateIssueRequest, result *IssueResult) {
+	if result == nil {
+		return
+	}
+	s.recent.remember(owner, repo, IssueInfo{
+		Number: result.Number,
+		Title:  req.Title,
+		Body:   req.Body,
+		URL:    result.URL,
+		State:  "open",
+		Labels: slices.Clone(req.Labels),
+	})
 }
 
 // ensureLabels pre-creates every label that this process has not already
@@ -331,6 +355,8 @@ func (s *issueService) ListIssues(ctx context.Context, orgID, projectID string, 
 	if err != nil {
 		return nil, err
 	}
+	// GitHub's list lags a creation by several seconds; add what we just filed.
+	issues = s.recent.merge(owner, repoName, labels, issues)
 	for i := range issues {
 		issues[i].AttentionReason = AttentionReasonFor(issues[i])
 	}
