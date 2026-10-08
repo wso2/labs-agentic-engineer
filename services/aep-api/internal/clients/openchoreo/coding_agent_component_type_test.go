@@ -287,9 +287,10 @@ func cpuRequestSchema(t *testing.T, ct map[string]any) map[string]any {
 	return cpu
 }
 
-// An unset request, or one already in the schema's enum, must render the
+// An unset request, or the literal default 500m, must render the
 // ComponentType byte-for-byte as before: EnsureComponentType PUTs on any body
-// difference, so a drift would re-write the type on every dispatch.
+// difference, so a drift would re-write the type on every dispatch. "1" is in
+// the enum, so it keeps the enum and changes only the default.
 func TestCodingAgentComponentType_CPURequestUnsetIsToday(t *testing.T) {
 	today := CodingAgentComponentType(CodingAgentResources{})
 	cpu := cpuRequestSchema(t, today)

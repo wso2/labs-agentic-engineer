@@ -384,8 +384,8 @@ func (r *configReader) readOptionalDuration(key string, defaultVal time.Duration
 	return d
 }
 
-// readOptionalCPU returns the env's CPU quantity verbatim, defaultVal when
-// empty. A quantity that does not parse or exceeds maxMillicores records an
+// readOptionalCPU returns the env's CPU quantity in canonical form
+// (CanonicalCPU), defaultVal when empty. A quantity that does not parse or exceeds maxMillicores records an
 // error naming the key only, never the value.
 func (r *configReader) readOptionalCPU(key, defaultVal string, maxMillicores int) string {
 	val := os.Getenv(key)
@@ -401,7 +401,7 @@ func (r *configReader) readOptionalCPU(key, defaultVal string, maxMillicores int
 		r.errors = append(r.errors, fmt.Errorf("%s: above the maximum of %dm", key, maxMillicores))
 		return defaultVal
 	}
-	return val
+	return CanonicalCPU(m)
 }
 
 func (r *configReader) readOptionalBool(key string, defaultVal bool) bool {

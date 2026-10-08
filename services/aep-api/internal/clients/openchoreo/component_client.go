@@ -57,7 +57,7 @@ type ComponentClient interface {
 	// type and PUTs body only if the stored spec has drifted from it, so an org
 	// seeded by an older platform build stops validating today's dispatches
 	// against yesterday's schema. body is the raw CR map (e.g.
-	// CodingAgentComponentType()) posted via the gen client's WithBody path —
+	// CodingAgentComponentType(res)) posted via the gen client's WithBody path —
 	// no typed converter.
 	EnsureComponentType(ctx context.Context, orgName string, body map[string]any) error
 

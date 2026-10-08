@@ -227,6 +227,16 @@ func TestLoad_CodingAgentCPURequest(t *testing.T) {
 	if cfg, err = Load(); err != nil || cfg.CodingAgentCPURequest != "250m" {
 		t.Fatalf("Load = %q, %v; want 250m", cfg.CodingAgentCPURequest, err)
 	}
+	for in, want := range map[string]string{"0.5": "500m", "1000m": "1", "0.25": "250m", "1": "1"} {
+		t.Setenv("CODING_AGENT_CPU_REQUEST", in)
+		if cfg, err = Load(); err != nil || cfg.CodingAgentCPURequest != want {
+			t.Fatalf("%q -> %q, %v; want %q", in, cfg.CodingAgentCPURequest, err, want)
+		}
+	}
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "2066035336255469781")
+	if _, err := Load(); err == nil {
+		t.Fatal("an overflowing quantity must fail Load")
+	}
 	const secretish = "bogus-cpu-value-xyz"
 	for _, bad := range []string{secretish, "0", "-1", "4", "3001m", "1.5.2", "0m"} {
 		t.Setenv("CODING_AGENT_CPU_REQUEST", bad)

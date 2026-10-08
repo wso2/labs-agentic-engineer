@@ -156,7 +156,7 @@ verification wave — and a validation cycle 2h),
 and limits, where the schema enforces the ceiling so an out-of-bounds
 per-dispatch override is rejected instead of silently clamped.
 
-The Job's CPU request is the type's `cpuRequest` default, set from `CODING_AGENT_CPU_REQUEST` (default `500m`; a positive CPU quantity such as `250m` or `0.5`, at most the `cpuLimit` default `3`; boot fails naming the key otherwise). Unset or `500m`/`1` renders the schema unchanged; any other value becomes the default and joins the enum. aep-api re-asserts the type on every dispatch, so a change reaches the next cycle. Memory is not tunable.
+The Job's CPU request is the type's `cpuRequest` default, set from `CODING_AGENT_CPU_REQUEST` (default `500m`; a positive CPU quantity such as `250m` or `0.5`, at most the `cpuLimit` default `3`; boot fails naming the key otherwise). The value is canonicalised (`0.5` and `500m` are one value). Unset or `500m` renders the schema unchanged; `1` (already in the enum) changes only the default; any other value becomes the default and is prepended to the enum. aep-api re-asserts the type on every dispatch, so a change reaches the next cycle. Memory is not tunable.
 
 The TTL is rendered per Component from `CODING_AGENT_JOB_TTL` (default `600s`).
 It is the only path that deletes a finished Job's pod with a propagation policy,

@@ -40,7 +40,7 @@ import (
 // freshly-created org works fine. Converging on conflict is what keeps the two
 // halves of such a change in step.
 //
-// body is the raw CR shape from CodingAgentComponentType() (map[string]any).
+// body is the raw CR shape from CodingAgentComponentType(res) (map[string]any).
 // Posted via CreateComponentTypeWithBody so we avoid a hand-written converter
 // into gen.ComponentType — JSON round-trip through the gen client is enough.
 func (c *componentClient) EnsureComponentType(ctx context.Context, orgName string, body map[string]any) error {
