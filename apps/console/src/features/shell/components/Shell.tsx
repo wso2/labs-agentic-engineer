@@ -40,9 +40,9 @@ function atPhoneWidth(): boolean {
  * The app's frame: the activity rail, the chat panel, and the main
  * area where the routes draw (a base page, and a card over it).
  *
- * The chat follows the entity in view: inside a project it is the project's
- * main conversation, with the Issues chat stacked on it as a branch on the
- * Issues page, and an open issue's own chat on its card (`useChatControls`); on an org Page it is the organization's,
+ * The chat follows the entity in view: inside a project it holds one thread,
+ * the page's: the project's main conversation, the Issues chat on the Issues
+ * page, an open issue's own chat on its card (`ChatPanel`); on an org Page it is the organization's,
  * which is not available yet and shows as such. It starts open on a wide screen, beside the page in
  * the golden ratio and resizable (`useChatWidth`), and closed at phone width,
  * where it opens as an overlay beside the rail.
@@ -66,8 +66,7 @@ export function Shell() {
 
   const chatWidth = useChatWidth();
   const openChat = useCallback(() => setChatOpen(true), []);
-  const { controls: chatControls, composeRequest, clearComposeRequest, branch, issueBranch, startBranch, minimiseBranch } =
-    useChatControls(scope, openChat);
+  const { controls: chatControls, composeRequest, clearComposeRequest } = useChatControls(scope, openChat);
   useRefreshOnTurnEnd();
   useOpenQuestionsWhenAsked();
   useBranchSummary(scope);
@@ -144,10 +143,6 @@ export function Shell() {
                   issueNumber={project.issueNumber}
                   composeRequest={composeRequest}
                   onComposeApplied={clearComposeRequest}
-                  branch={branch}
-                  issueBranch={issueBranch}
-                  onStartBranch={startBranch}
-                  onMinimiseBranch={minimiseBranch}
                   onClose={() => setChatOpen(false)}
                 />
               ) : (

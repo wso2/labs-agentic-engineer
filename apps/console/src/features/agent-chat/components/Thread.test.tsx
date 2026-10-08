@@ -48,8 +48,7 @@ vi.mock("../../spec/useSpecWorkspace", () => ({ useSpecModel: () => ({ data: { f
 vi.mock("../useStartInterview", () => ({ useStartInterview: () => ({ start: vi.fn(), ready: true, waiting: false }) }));
 const navigate = vi.fn();
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
-const startBranch = vi.fn();
-vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: vi.fn(), compose: vi.fn(), startBranch }) }));
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open: vi.fn(), compose: vi.fn() }) }));
 
 // jsdom has no ResizeObserver, which the thread uses to follow its growth.
 vi.stubGlobal(
@@ -149,12 +148,11 @@ describe("a prototype review in the conversation", () => {
 });
 
 describe("a From Issues note in the conversation", () => {
-  it("offers Reopen, which goes back to the Issues page and opens its chat there", async () => {
+  it("offers Reopen, which goes back to the Issues page where its chat is", async () => {
     chat = ready([{ kind: "note", id: "n1", text: "From Issues · 2 messages · Filed #41.", actions: [{ kind: "open-issues", label: "Reopen" }] }]);
     renderThread();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Reopen" })));
     expect(navigate).toHaveBeenCalledWith({ to: "/projects/$projectName/issues", params: { projectName: "acme" } });
-    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
   });
 
   it("keeps Reopen on the newest note only, and every note's text", () => {
@@ -188,7 +186,7 @@ describe("a From Issues note in the conversation", () => {
 });
 
 describe("an issue the Issues agent filed", () => {
-  it("shows Continue on #N under the reply; Open goes to the issue's card and opens its chat", async () => {
+  it("shows Continue on #N under the reply; Open goes to the issue's card, where its chat is", async () => {
     chat = ready([
       { kind: "user", id: "u1", text: "File it", state: "sent", turnId: "t1" },
       { kind: "filed", id: "f1", turnId: "t1", toolCallId: "c1", issueNumber: 15 },
@@ -203,6 +201,5 @@ describe("an issue the Issues agent filed", () => {
       to: "/projects/$projectName/issues/$number",
       params: { projectName: "acme", number: "15" },
     });
-    expect(startBranch).toHaveBeenCalledWith("issue", "acme", 15);
   });
 });

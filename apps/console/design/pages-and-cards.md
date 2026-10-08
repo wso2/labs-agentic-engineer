@@ -56,8 +56,8 @@ routes/projects/$projectName/
   (`PAGE_ROUTES`, and `ORG_PAGE_ROUTES` for the org's), which are Cards
   (`CARD_ROUTES` and `ORG_CARD_ROUTES`, both read by `cardOfRoute`), and the
   Page each Card is over (`pageOfCard`; `ORG_CARD_PAGE`). The rail's active
-  item, the chat's breadcrumb, the Turn scope and `CardOverlay`'s close all
-  read them, so a new Card is a route file plus its rows there; a new project
+  item, the chat's thread (`chatViewFor`), the Turn scope and `CardOverlay`'s
+  close all read them, so a new Card is a route file plus its rows there; a new project
   Page also needs its path in `CardOverlay`'s `PAGE_PATH`.
 - **A card with a draft guards it**: `LeaveGuard` (`features/shell/`) asks
   before any navigation off the card while the draft is dirty (close,
@@ -90,15 +90,13 @@ Dashboard, and keeps its section in the address (`?section=github|ai|usage`).
 
 The Issues Page lists the project's GitHub issues (incidents the SRE agent
 filed, the platform's own, people's), those that need attention first. It
-has a chat of its own, a branch of the project's main chat: the panel keeps
-the main chat and, with no card open (`chatViewFor` reads the Page and Card as
-the `issues` view), stacks the Issues agent's chat on it. Until it is started
-a **Work on Issues here · Start** row sits above the main composer; started
-(Start, Create Issue, a hand-off's New Issue, Reopen, the threads menu, or a
-turn running there) it is a sheet over the main chat inside the panel, with
-a **↑ Main chat** strip that minimises it to a link at the end of the main
-thread (focus moves to that link). The shell keeps that state per project (`useChatControls`) and drops
-it when the user leaves the Issues page; the main chat then gets its From
+has a chat of its own, a branch of the project's main chat. The chat panel
+holds one thread, the page's (ADR-0003): with no card open (`chatViewFor`
+reads the Page and Card as the `issues` view) that is the Issues agent's
+chat, in place of the main chat. Its breadcrumb reads **<org> › <Project> ›
+Issues**; the project crumb goes back to the overview and the main chat.
+Create Issue, a hand-off's New Issue, Reopen and the threads menu all go to
+the page. When the user leaves the Issues page the main chat gets its From
 Issues note. The Issues chat's thread and running turn are its alone, about
 "the project's issues", with no spec room and no Turn scope (the composer's
 scope is not sent; `viewTurnBody` sends the words and the view). The Issues agent files
@@ -106,16 +104,15 @@ issues, so its turn ending re-reads the issue list. When it files #N, a
 **Continue on #N · Open** line follows its reply (read from the `create_issue`
 result, in the stream and in the history); Open goes to that issue's card.
 
-An Issue card is over the Page (the Issues branch waits for the card to close:
-its sheet stays mounted but out of sight, so its draft, thread and any running
-turn are kept, and it takes no focus when it returns). An open issue has an
-agent of its own on a thread of its own (the `issue` view with the issue's
-number, use case `issue-<n>`; one chat store per issue, `chatStoreFor("issue",
-n)`), drawn on its card as a sheet over the main chat, **<Project> └ Issues ›
-#N**, up on arrival and minimisable while the user stays on the card. Its turn
+An Issue card is over the Page (the Issues chat's thread and any running turn
+are kept in its store while the card is open; an unsent draft is not). An open
+issue has an agent of its own on a thread of its own (the `issue` view with
+the issue's number, use case `issue-<n>`; one chat store per issue,
+`chatStoreFor("issue", n)`), which the panel holds on its card, breadcrumb
+**<org> › <Project> › Issues › #N** (Issues goes back to the Issues chat). Its turn
 ending re-reads the issue list and that issue's detail, so a comment, an edit
 or a close shows at once. A closed issue has none: closing an issue removes its
-thread, the card says **This issue is closed.** and the panel draws no sheet.
+thread, the card says **This issue is closed.** and the panel holds the main chat.
 An open issue the coding agent has not taken on can be handed to it from the
 card. Taken on is what aep-api's adoption leaves: the issue armed (`aep`),
 not halted (`aep:halted`; a halted issue can be handed over again, which
@@ -135,7 +132,7 @@ development, a configuration-only incident).
 Whether it is open is the issue list's word, or the server's 409
 `issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
 stands until the list shows it closed too); when the issue in view turns from
-open to closed, the sheet goes and the main chat gets **Issue #N was closed;
+open to closed, its chat goes, the main chat takes the panel and gets **Issue #N was closed;
 its chat was removed.**, a local line never sent to the agent, posted only while
 the chat panel is mounted. Closed, the issue's chat is forgotten in this tab
 (`forgetIssueChat`), so a reopen starts on a fresh, empty thread, and the card's

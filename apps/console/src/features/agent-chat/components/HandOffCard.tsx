@@ -34,7 +34,7 @@ function preview(request: string): string {
 
 /**
  * The main chat's announcement that a request belongs in Issues. New Issue
- * opens the Issues page, starts its chat over the main one, and takes the
+ * opens the Issues page, whose chat takes the chat panel, and takes the
  * request on to it as an `/issue` report (`continueInIssues`); Stay here keeps the user where they are, and
  * nothing is sent. Once chosen, the card reads as what was chosen, here and
  * after a reload.
@@ -96,7 +96,7 @@ function Pending({
   const newIssue = async () => {
     setMoving(true);
     try {
-      // The Issues chat comes up over the main one, so the request is seen
+      // The Issues chat takes the panel, so the request is seen
       // going there (sent, or waiting in its composer).
       await openIssuesChat();
     } catch {
@@ -115,7 +115,7 @@ function Pending({
   return (
     <Box sx={{ pl: 4, display: "flex", flexDirection: "column", gap: 0.75 }}>
       <Typography variant="body2">
-        This belongs in <strong>Issues</strong>. I&apos;ll open it and draft the issue, in its own chat on top of this one.
+        This belongs in <strong>Issues</strong>. I&apos;ll open it and draft the issue, in its own chat.
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
         {`I'll pass on: “${preview(item.request)}”`}

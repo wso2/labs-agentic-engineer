@@ -24,8 +24,8 @@ import type { StreamPart } from "@aep/agent-stream";
 import type { ShellScope } from "../shell/scope";
 import { createChatStore, type ChatApi } from "./chatStore";
 
-// When the user leaves the Issues page after talking in its chat (the branch
-// stacked on the main chat), the main chat sums the visit up: "From Issues · N messages · <the agent's last line>" with a
+// When the user leaves the Issues page after talking in its chat (a branch
+// of the main chat), the main chat sums the visit up: "From Issues · N messages · <the agent's last line>" with a
 // Reopen. A second visit rewords that card instead of stacking another.
 
 const PROJECT = "acme";

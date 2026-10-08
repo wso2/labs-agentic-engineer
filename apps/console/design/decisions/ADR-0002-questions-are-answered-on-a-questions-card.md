@@ -16,6 +16,11 @@ send closes back to that page.
 naming the issue (`/projects/$p/issues/questions?issue=N`); it opens by itself
 only on that issue's card, and a send closes back to the card.
 
+**Amended 2026-10-08 (later):** the chat panel holds one thread, the page's
+([ADR-0003](ADR-0003-a-thread-takes-the-chat-panel.md)), so the pointer to a
+view's Questions card is in that view's thread, shown on the page the card is
+over; nothing else about the card changes.
+
 ## Context
 
 The agent asks through `ask_question` (one) and `ask_questions` (a batch of up

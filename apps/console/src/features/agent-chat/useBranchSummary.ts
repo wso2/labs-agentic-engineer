@@ -21,10 +21,10 @@ import type { ShellScope } from "../shell/scope";
 import type { ChatItem } from "./chatLog";
 import { chatStore, chatStoreFor } from "./useProjectChat";
 
-// The Issues page has a chat of its own, a branch stacked on the main one. When
-// the user leaves the page after talking there, the main chat sums the visit
-// up, so the conversation they come back to knows what happened in between.
-// Minimising the branch is not leaving: the user is still on the page.
+// The Issues page has a chat of its own, a branch of the main one. When the
+// user leaves the page after talking there, the main chat sums the visit up,
+// so the conversation they come back to knows what happened in between. An
+// issue's card over the page is not leaving: the user is still on the page.
 
 /** The last line, as one line, cut to this many characters. */
 const LINE_MAX = 140;

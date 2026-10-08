@@ -18,34 +18,29 @@
 
 import { useCallback } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { useChatPanel } from "../shell/chatPanel";
 
 /**
- * Go to the Issues page and start its chat there, over the main chat: what
- * Reopen, the threads menu and a hand-off's Open do. Rejects, with the branch
- * left as it was, when the move does not happen.
+ * Go to the Issues page, whose chat then takes the chat panel: what Reopen,
+ * the threads menu and a hand-off's Open do. Rejects when the move does not
+ * happen.
  */
 export function useOpenIssuesChat(projectName: string): () => Promise<void> {
   const navigate = useNavigate();
-  const chatPanel = useChatPanel();
   return useCallback(async () => {
     await navigate({ to: "/projects/$projectName/issues", params: { projectName } });
-    chatPanel.startBranch("issues", projectName);
-  }, [navigate, chatPanel, projectName]);
+  }, [navigate, projectName]);
 }
 
 /**
- * Go to an issue's card, where its own chat is drawn over the main chat, and
- * bring that chat up: what Continue on #N and the threads menu do.
+ * Go to an issue's card, whose own chat then takes the chat panel: what
+ * Continue on #N and the threads menu do.
  */
 export function useOpenIssueChat(projectName: string): (issueNumber: number) => Promise<void> {
   const navigate = useNavigate();
-  const chatPanel = useChatPanel();
   return useCallback(
     async (issueNumber: number) => {
       await navigate({ to: "/projects/$projectName/issues/$number", params: { projectName, number: String(issueNumber) } });
-      chatPanel.startBranch("issue", projectName, issueNumber);
     },
-    [navigate, chatPanel, projectName],
+    [navigate, projectName],
   );
 }

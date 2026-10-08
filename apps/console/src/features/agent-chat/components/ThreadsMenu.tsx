@@ -22,15 +22,16 @@ import { ListTree } from "@wso2/oxygen-ui-icons-react";
 
 // The project's threads, from the chat header: its main chat, the Issues chat
 // once it holds something, and each issue's own chat that holds something
-// (opened in this tab), the branches stacked on the main one. Each shows its
-// message count; a branch says whether it is open, and the Issues chat
-// whether it was summed up in the main chat.
+// (opened in this tab), the branches of the main one, drawn under it. Each
+// shows its message count; a branch says whether it is open, and the Issues
+// chat whether it was summed up in the main chat. Picking one goes to its
+// page, whose thread the panel then holds.
 
 /** The Issues branch as the menu lists it. */
 export interface IssuesThread {
   /** What the user and the agent said there. */
   count: number;
-  /** Open: started on the Issues page. Summarised: the main chat has its From Issues note. */
+  /** Open: the user is on the Issues page. Summarised: the main chat has its From Issues note. */
   state: "open" | "summarised" | null;
 }
 

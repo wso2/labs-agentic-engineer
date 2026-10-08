@@ -30,7 +30,7 @@ import type { ProjectChat } from "../chatStore";
 // reads back after a reload.
 
 const REQUEST = "The Save button on the expense form does nothing";
-const ANNOUNCEMENT = "This belongs in Issues. I'll open it and draft the issue, in its own chat on top of this one.";
+const ANNOUNCEMENT = "This belongs in Issues. I'll open it and draft the issue, in its own chat.";
 
 let issues: ProjectChat;
 const store = {
@@ -47,8 +47,7 @@ const navigate = vi.fn(async (): Promise<void> => undefined);
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 const open = vi.fn();
 const compose = vi.fn();
-const startBranch = vi.fn();
-vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open, compose, startBranch }) }));
+vi.mock("../../shell/chatPanel", () => ({ useChatPanel: () => ({ open, compose }) }));
 
 const { HandOffCard } = await import("./HandOffCard");
 
@@ -123,7 +122,6 @@ describe("the hand-off announcement", () => {
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "New Issue" })));
     expect(store.send).not.toHaveBeenCalled();
     expect(compose).not.toHaveBeenCalled();
-    expect(startBranch).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "New Issue" })).toBeTruthy();
     expect(localStorage.getItem("aep:handoff:acme:c1")).toBeNull();
   });
@@ -136,12 +134,11 @@ describe("the hand-off announcement", () => {
     expect(useProjectChat).not.toHaveBeenCalled();
   });
 
-  it("New Issue opens Issues, starts its chat over the main one, and sends the request to it", async () => {
+  it("New Issue opens Issues, whose chat takes the panel, and sends the request to it", async () => {
     issues = idleIssues();
     renderCard();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "New Issue" })));
     expect(navigate).toHaveBeenCalledWith(ISSUES_PAGE);
-    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
     expect(open).toHaveBeenCalled();
     expect(store.send).toHaveBeenCalledWith("acme", `/issue ${REQUEST}`, { kind: "product" });
     expect(compose).not.toHaveBeenCalled();
@@ -184,7 +181,6 @@ describe("the hand-off announcement", () => {
     expect(screen.queryByRole("button", { name: "New Issue" })).toBeNull();
     await act(async () => fireEvent.click(screen.getByRole("button", { name: "Open" })));
     expect(navigate).toHaveBeenCalledWith(ISSUES_PAGE);
-    expect(startBranch).toHaveBeenCalledWith("issues", "acme");
     expect(store.send).not.toHaveBeenCalled();
   });
 });
