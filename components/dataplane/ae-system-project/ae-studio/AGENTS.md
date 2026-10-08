@@ -9,8 +9,8 @@ The org's AE Studio: one pod per organization with one container per folder.
 | `ae-studio-tools/` | Go module `github.com/wso2/aep/ae-studio-tools` | tools (GitHub, webhooks) |
 
 A fourth container, `webhook-relay` (the public gosmee image), runs only when the Resource's `webhookRelayUrl` is set (a local
-install with `ae_studio.webhook_relay.enabled`). Its channel and exposure:
-[`design/README.md`](design/README.md#webhook-relay-local-only).
+install with `ae_studio.webhook_relay.enabled`, or a dev install with `AE_STUDIO_WEBHOOK_RELAY_ENABLED=true`). Its channel and exposure:
+[`design/README.md`](design/README.md#webhook-relay-local-and-dev-installs).
 
 The containers run only in the per-org ae-studio pod (aep-api provisions it; `skaffold/ae-studio.yaml`
 builds the three images, the relay's is public); the platform chart has no Deployment for any of them.

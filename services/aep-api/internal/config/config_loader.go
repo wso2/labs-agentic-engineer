@@ -18,6 +18,7 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -30,6 +31,10 @@ import (
 
 type configReader struct {
 	errors []error
+	// webhookRelay holds the relay env Load resolves into
+	// AEStudioConfig.WebhookRelaySeed once CREDENTIAL_ENCRYPTION_KEY is known
+	// good; it is not configuration in its own right.
+	webhookRelay struct{ flag, seed string }
 }
 
 // Load reads configuration from environment variables.
@@ -161,6 +166,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	// Validate proved the key decodes to 32 bytes.
+	credKey, _ := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
+	relayKey, err := resolveWebhookRelayKey(r.webhookRelay.flag, r.webhookRelay.seed, credKey)
+	if err != nil {
+		return Config{}, fmt.Errorf("configuration errors:\n%w", err)
+	}
+	cfg.AEStudio.WebhookRelaySeed = relayKey
+
 	return cfg, nil
 }
 
@@ -263,8 +276,10 @@ func (r *configReader) kubeAPI() KubeAPIConfig {
 
 // aeStudio reads the optional AE_STUDIO_* set. Nothing here is required: an
 // absent value is reported by AEStudioConfig.Missing at Ensure time. A
-// malformed AE_STUDIO_EXTRA_EGRESS is a deployment typo and fails boot (the
-// error names the key, never the value).
+// malformed AE_STUDIO_EXTRA_EGRESS or AE_STUDIO_WEBHOOK_RELAY_ENABLED is a
+// deployment typo and fails boot (the error names the key, never the value).
+// The relay flag and seed are kept on the reader; Load resolves them into
+// WebhookRelaySeed.
 func (r *configReader) aeStudio() AEStudioConfig {
 	var c AEStudioConfig
 	c.Images.DesignAgent = r.readOptionalString("AE_STUDIO_IMAGE_DESIGN_AGENT", "")
@@ -292,7 +307,8 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	c.CPURequest.StudioTools = r.readOptionalCPU("AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS", "100m", AEStudioCPURequestCeilingMillicores)
 	c.PullSecret.Key = r.readOptionalString("AE_STUDIO_PULL_SECRET_KEY", "")
 	c.PullSecret.Property = r.readOptionalString("AE_STUDIO_PULL_SECRET_PROPERTY", "")
-	c.WebhookRelaySeed = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_SEED", "")
+	r.webhookRelay.flag = r.readWebhookRelayFlag()
+	r.webhookRelay.seed = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_SEED", "")
 	c.WebhookRelayImage = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_IMAGE", "")
 
 	egress := r.readOptionalString("AE_STUDIO_EXTRA_EGRESS", "[]")
@@ -302,6 +318,20 @@ func (r *configReader) aeStudio() AEStudioConfig {
 	}
 	c.ExtraEgress = json.RawMessage(egress)
 	return c
+}
+
+// readWebhookRelayFlag reads AE_STUDIO_WEBHOOK_RELAY_ENABLED strictly: "",
+// "true" or "false", exactly. Anything else ("True", "1", " true") is a
+// typo that the lenient readOptionalBool would silently read as off, so it
+// fails boot instead.
+func (r *configReader) readWebhookRelayFlag() string {
+	switch v := os.Getenv("AE_STUDIO_WEBHOOK_RELAY_ENABLED"); v {
+	case "", webhookRelayOn, webhookRelayOff:
+		return v
+	default:
+		r.errors = append(r.errors, fmt.Errorf(`AE_STUDIO_WEBHOOK_RELAY_ENABLED must be "true" or "false"`))
+		return ""
+	}
 }
 
 // splitCSV splits a comma list, trimming blanks and dropping empty items.

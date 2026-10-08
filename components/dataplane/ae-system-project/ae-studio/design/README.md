@@ -243,15 +243,26 @@ The ExternalSecrets read the DataPlane's `secretStore` (OpenBao locally).
 Cloud's platform API forces every write into the org's namespace, which is
 why the ResourceType is per org.
 
-## Webhook relay (local only)
+## Webhook relay (local and dev installs)
 
-A laptop install has no public ingress, so each org's repository hooks
-deliver to a smee.io channel instead:
+A laptop install has no public ingress, and a hosted dev install may sit
+behind an edge GitHub cannot reach, so each org's repository hooks deliver to
+a smee.io channel instead:
 
-- **Channel:** `https://smee.io/` + base64url(HMAC-SHA256(seed, org name))
-  cut to 22 characters, derived on every converge and never stored. The seed
-  is `aep/webhook-relay-seed`, read as `AE_STUDIO_WEBHOOK_RELAY_SEED`; unset
-  means no relay. aectl's `ae_studio.webhook_relay.enabled` turns it on.
+- **Channel:** `https://smee.io/` + base64url(HMAC-SHA256(key, org name))
+  cut to 22 characters, derived on every converge and never stored. aep-api
+  resolves the key once at boot (`resolveWebhookRelayKey` in
+  `services/aep-api/internal/config/webhook_relay_seed.go`):
+  - `AE_STUDIO_WEBHOOK_RELAY_SEED` set: its text. Locally that is
+    `aep/webhook-relay-seed`, and aectl's `ae_studio.webhook_relay.enabled`
+    turns it on.
+  - `AE_STUDIO_WEBHOOK_RELAY_ENABLED=true` and no seed: HKDF-SHA256 of
+    `CREDENTIAL_ENCRYPTION_KEY` (info `ae-studio-webhook-relay/v1`), so a
+    hosted install needs no relay secret. With the all-zero placeholder key
+    aep-api refuses to boot: that key is public, and so would every channel be.
+  - `AE_STUDIO_WEBHOOK_RELAY_ENABLED=false`: off, even with a seed.
+  - Neither set: off. Any flag value other than `true`, `false` or empty
+    fails boot.
 - **Container:** when `webhookRelayUrl` is set, a fourth container
   `webhook-relay` (gosmee, pinned by digest in the chart's
   `aeStudio.webhookRelay.image`) runs `client <channel>
@@ -263,7 +274,12 @@ deliver to a smee.io channel instead:
   that org's deliveries. A forged delivery still fails the HMAC. smee.io
   buffers nothing, so a delivery during a roll is lost, and `aep-api`'s
   sweeps recover what it described. smee.io is a third-party relay, so
-  production installs leave the seed unset.
+  production installs leave the relay off; while it is on, aep-api logs one
+  WARN at boot (`webhook relay ON: …`) naming no channel.
+- **Key changes:** a new seed, or a rotated `CREDENTIAL_ENCRYPTION_KEY` under a
+  derived key, moves every org's channel. Existing repository hooks keep the
+  old URL (the hook sweep leaves a repo that holds a hook id alone), so they stop
+  delivering until re-created.
 
 ## gVisor switch
 

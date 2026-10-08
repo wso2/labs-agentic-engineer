@@ -30,8 +30,8 @@ const webhookRelayChannelLen = 22
 // base64url(HMAC-SHA256(seed, ocOrgID)) cut to 22 characters (no padding).
 // It is derived, never stored: the same seed gives every org the same
 // channel on every converge, and a channel says nothing about another org's.
-// seed is the install's relay seed as configured (the hex text, not its
-// decoded bytes); an empty seed is no relay and answers "".
+// seed is the resolved relay key (config.AEStudioConfig.WebhookRelaySeed);
+// an empty seed is no relay and answers "".
 func WebhookRelayURL(seed []byte, ocOrgID string) string {
 	if len(seed) == 0 {
 		return ""

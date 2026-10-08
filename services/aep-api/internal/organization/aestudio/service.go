@@ -21,6 +21,7 @@ package aestudio
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -191,8 +192,13 @@ type failure struct {
 	fingerprint string
 }
 
-// New builds the Service.
+// New builds the Service. With a relay key it logs, once, that GitHub
+// payloads leave the install through smee.io (a third-party relay); the line
+// carries neither the key nor any channel.
 func New(d Deps) *Service {
+	if len(d.Config.WebhookRelaySeed) > 0 {
+		slog.Warn("webhook relay ON: GitHub payloads pass through smee.io; dev only")
+	}
 	return &Service{
 		cfg: d.Config, orgSecrets: d.OrgSecrets, orgs: d.Orgs, profiles: d.Profiles,
 		connections: d.Connections, github: d.GitHub,

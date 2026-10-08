@@ -238,7 +238,7 @@ func (s *Service) desired(ctx context.Context, org string) (desiredState, error)
 		return d, err
 	}
 	d.Params.GitHubOwner = login
-	d.Params.WebhookRelayURL = WebhookRelayURL([]byte(cfg.WebhookRelaySeed), org)
+	d.Params.WebhookRelayURL = WebhookRelayURL(cfg.WebhookRelaySeed, org)
 	tools, agent, err := secretSets(ctx, s.oc, org, set)
 	if err != nil {
 		return d, err

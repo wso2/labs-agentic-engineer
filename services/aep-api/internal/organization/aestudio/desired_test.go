@@ -184,8 +184,9 @@ func TestDesired_MissingInputsAreFailed(t *testing.T) {
 	}
 }
 
-// With the install's relay seed, the Resource names the org's
-// relay channel and the binding the relay image; without it (Cloud), no relay.
+// With a relay key (an explicit seed's text, or the key config derives from
+// the credential key), the Resource names the org's relay channel and the
+// binding the relay image; without one, no relay.
 func TestDesired_WebhookRelay(t *testing.T) {
 	f := newFixture(t).withAllRefs()
 	d, err := f.svc.desired(ctx, "default")
@@ -197,19 +198,34 @@ func TestDesired_WebhookRelay(t *testing.T) {
 		t.Errorf("no seed: params %s, want webhookRelayUrl empty", p)
 	}
 
-	f = newFixture(t).withAllRefs()
-	f.svc.cfg.WebhookRelaySeed = "0123456789abcdef"
-	f.svc.cfg.WebhookRelayImage = "ghcr.io/chmouel/gosmee@sha256:abc"
-	d, err = f.svc.desired(ctx, "default")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := WebhookRelayURL([]byte("0123456789abcdef"), "default"); want == "" || d.Params.WebhookRelayURL != want {
-		t.Errorf("webhookRelayUrl = %q, want %q", d.Params.WebhookRelayURL, want)
-	}
-	e, _ := json.Marshal(d.EnvConfigs)
-	if !strings.Contains(string(e), `"webhookRelay":{"image":"ghcr.io/chmouel/gosmee@sha256:abc"}`) {
-		t.Errorf("env configs %s lack the relay image", e)
+	for _, key := range []struct {
+		name string
+		key  []byte
+	}{
+		{"explicit seed text", []byte("0123456789abcdef")},
+		{"derived 32-byte key", []byte{
+			0x19, 0xeb, 0x1a, 0x9f, 0x23, 0xae, 0x0a, 0xf8, 0x8a, 0xdc, 0x67, 0xa1, 0x6e, 0x95, 0x44, 0xea,
+			0x0f, 0xe1, 0x73, 0x3b, 0x04, 0x77, 0xf2, 0x52, 0xf3, 0x1c, 0x35, 0xa4, 0x26, 0xde, 0x46, 0x60,
+		}},
+	} {
+		f = newFixture(t).withAllRefs()
+		f.svc.cfg.WebhookRelaySeed = key.key
+		f.svc.cfg.WebhookRelayImage = "ghcr.io/chmouel/gosmee@sha256:abc"
+		d, err = f.svc.desired(ctx, "default")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := d.Params.WebhookRelayURL
+		if want := WebhookRelayURL(key.key, "default"); !strings.HasPrefix(got, "https://smee.io/") || got != want {
+			t.Errorf("%s: webhookRelayUrl = %q, want %q", key.name, got, want)
+		}
+		if got == WebhookRelayURL(key.key, "other") {
+			t.Errorf("%s: another org would share the channel", key.name)
+		}
+		e, _ := json.Marshal(d.EnvConfigs)
+		if !strings.Contains(string(e), `"webhookRelay":{"image":"ghcr.io/chmouel/gosmee@sha256:abc"}`) {
+			t.Errorf("%s: env configs %s lack the relay image", key.name, e)
+		}
 	}
 }
 
@@ -217,7 +233,7 @@ func TestDesired_WebhookRelay(t *testing.T) {
 // image: the Ensure reports "not configured" instead.
 func TestDesired_WebhookRelaySeedNeedsImage(t *testing.T) {
 	f := newFixture(t).withAllRefs()
-	f.svc.cfg.WebhookRelaySeed = "0123456789abcdef"
+	f.svc.cfg.WebhookRelaySeed = []byte("0123456789abcdef")
 	if st, err := f.svc.Status(userCtx(), "default"); err != nil || st.State != StateFailed {
 		t.Fatalf("state %s err %v", st.State, err)
 	}

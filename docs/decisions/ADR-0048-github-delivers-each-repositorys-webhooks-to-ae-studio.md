@@ -69,6 +69,12 @@ ledger, the replay and the sweeps.**
    `/webhooks/github` over the pod's loopback, and the HMAC check is the same
    as for a direct delivery.
 
+   Note (2026-10): a hosted dev install whose edge GitHub cannot reach turns
+   the same relay on with `AE_STUDIO_WEBHOOK_RELAY_ENABLED=true`; its key is
+   derived from the install's existing `CREDENTIAL_ENCRYPTION_KEY` (HKDF), so
+   no relay secret is configured. Production stays off: smee.io is
+   third-party.
+
 ## Consequences
 
 - No webhook route remains on the control plane; GitHub reaches only the
