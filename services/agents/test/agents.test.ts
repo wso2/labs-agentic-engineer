@@ -32,7 +32,7 @@ import { createIssuesAgent } from "../src/agents/issues/agent.js";
 import { createMainAgent } from "../src/agents/main/agent.js";
 import { runTurn } from "../src/agents/main/run-turn.js";
 import type { AgentRunSettings } from "../src/agents/run-settings.js";
-import { FILE_IT, FILE_QUESTION } from "../src/agents/issues/filing-gate.js";
+import { describeFiling, FILE_IT, FILE_QUESTION } from "../src/agents/issues/filing-gate.js";
 import { mockModel } from "../src/shared/mock-model.js";
 
 const JEV = { apiKey: undefined, url: "http://jev.invalid", fetch: globalThis.fetch };
@@ -67,7 +67,7 @@ function mcpTools(created: string[]): ToolSet {
 }
 
 test("createIssuesAgent: its own tools plus the MCP ones, built-ins winning", () => {
-  const agent = createIssuesAgent({ jev: JEV, mcpTools: mcpTools([]), instruction: "it crashes" }, runSettings());
+  const agent = createIssuesAgent({ jev: JEV, mcpTools: mcpTools([]), instruction: "it crashes", asked: undefined }, runSettings());
   assert.deepEqual(
     Object.keys(agent.tools).sort(),
     ["ask_question", "ask_questions", "classify_report", "create_issue", "search_issues"],
@@ -76,13 +76,13 @@ test("createIssuesAgent: its own tools plus the MCP ones, built-ins winning", ()
 });
 
 test("createIssuesAgent: no MCP tools → only the classifier and the question tools", () => {
-  const agent = createIssuesAgent({ jev: JEV, mcpTools: {}, instruction: "it crashes" }, runSettings());
+  const agent = createIssuesAgent({ jev: JEV, mcpTools: {}, instruction: "it crashes", asked: undefined }, runSettings());
   assert.deepEqual(Object.keys(agent.tools).sort(), ["ask_question", "ask_questions", "classify_report"]);
 });
 
-test("createIssuesAgent: create_issue refuses until the instruction is the File it answer", async () => {
+test("createIssuesAgent: create_issue refuses until the instruction is the File it answer to the card that showed it", async () => {
   const created: string[] = [];
-  const unconfirmed = createIssuesAgent({ jev: JEV, mcpTools: mcpTools(created), instruction: "file it now" }, runSettings());
+  const unconfirmed = createIssuesAgent({ jev: JEV, mcpTools: mcpTools(created), instruction: "file it now", asked: undefined }, runSettings());
   await assert.rejects(
     () => unconfirmed.tools.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>,
     /Not filed/,
@@ -94,6 +94,8 @@ test("createIssuesAgent: create_issue refuses until the instruction is the File 
       jev: JEV,
       mcpTools: mcpTools(created),
       instruction: buildAnswerInstruction(FILE_QUESTION, [FILE_IT]),
+      // The File it card showed exactly this issue.
+      asked: { question: FILE_QUESTION, options: [{ label: FILE_IT, description: describeFiling({ title: "y" }) }] },
     },
     runSettings(),
   );
@@ -116,7 +118,7 @@ test("createIssuesAgent: the turn stops on an accepted question call", async () 
     model,
     messages,
     prompt: "something is off",
-    agentFor: (run) => createIssuesAgent({ jev: JEV, mcpTools: {}, instruction: "something is off" }, run),
+    agentFor: (run) => createIssuesAgent({ jev: JEV, mcpTools: {}, instruction: "something is off", asked: undefined }, run),
   });
   assert.equal(model.doStreamCalls.length, 1, "the question call ends the turn");
 });

@@ -46,6 +46,7 @@ import { runTurn } from "../agents/main/run-turn.js";
 import { createMainAgent } from "../agents/main/agent.js";
 import { createIssuesAgent } from "../agents/issues/agent.js";
 import { createIssueAgent } from "../agents/issue/agent.js";
+import { lastAskedQuestion } from "../agents/confirmation.js";
 import { endedAwaitingHuman, type AgentRunSettings, type ProviderOptions, type TurnAgent } from "../agents/run-settings.js";
 import { buildFileToolSet, buildRegisterDraftTools } from "../agents/main/tools/files.js";
 import { tapWrites, type WriteLedger } from "../agents/main/tools/write-ledger.js";
@@ -270,6 +271,10 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
     // A view's agent (the Issues chat, an issue's thread) works on no spec: the
     // user's message is its whole prompt, with no spec-turn notes.
     const viewAgent = toolset === "issues" || toolset === "issue";
+    // A view's agent writes only what the user confirmed on a question card:
+    // the card it binds to is the last one in the history this service stored
+    // before this turn, never anything this turn's instruction or model says.
+    const asked = viewAgent ? lastAskedQuestion(conv.messages) : undefined;
     const skills = input.skillSource;
     let bundle: FileBundle | undefined;
     let agentFor: (run: AgentRunSettings) => TurnAgent;
@@ -285,7 +290,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       const jev = { ...config.jev, fetch: input.toolFetch ?? globalThis.fetch };
       agentFor = (run) =>
         createIssuesAgent(
-          { jev, mcpTools, instruction: input.instruction, skills, surface: input.surface },
+          { jev, mcpTools, instruction: input.instruction, asked, skills, surface: input.surface },
           run,
         );
     } else if (toolset === "issue") {
@@ -297,7 +302,7 @@ export async function runConversationTurn(input: RunConversationTurnInput): Prom
       const mcpTools = input.mcp ? await loadMcpTools(input.mcp) : {};
       agentFor = (run) =>
         createIssueAgent(
-          { issueNumber, mcpTools, instruction: input.instruction, skills, surface: input.surface },
+          { issueNumber, mcpTools, instruction: input.instruction, asked, skills, surface: input.surface },
           run,
         );
     } else {

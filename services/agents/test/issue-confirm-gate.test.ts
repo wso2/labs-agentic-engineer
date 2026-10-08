@@ -18,43 +18,98 @@
 
 /**
  * An issue's agent changes its issue only on the user's own answer to that
- * change's question. The prompt asks for it; this gate enforces it in code,
- * because the issue's body and comments (text the model reads) can try to talk
- * it into a write the user never confirmed.
+ * change's question, and only with the change the question's card showed. The
+ * prompt asks for it; this gate enforces it in code, because the issue's body
+ * and comments (text the model reads) can try to talk it into a write the user
+ * never confirmed, or into writing something else than what they confirmed.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import { buildAnswerInstruction, buildAnswersInstruction } from "@aep/agent-stream";
-import { CONFIRMATIONS, confirmedTool, gateWrites, NOT_NOW, type WriteTool } from "../src/agents/issue/confirm-gate.js";
+import { buildAnswerInstruction, buildAnswersInstruction, type AskQuestionInput } from "@aep/agent-stream";
+import {
+  CONFIRMATIONS,
+  confirmedTool,
+  describeChange,
+  gateWrites,
+  ISSUE_MCP_TOOLS,
+  NOT_NOW,
+  type WriteTool,
+} from "../src/agents/issue/confirm-gate.js";
 
 const WRITES = Object.keys(CONFIRMATIONS) as WriteTool[];
+
+/** Each write's arguments, as the agent drafts them. */
+const ARGS: Record<WriteTool, Record<string, string>> = {
+  comment_issue: { body: "Fixed in #12." },
+  edit_issue: { title: "Save fails offline", body: "Steps:\n1. Go offline\n2. Save" },
+  close_issue: { reason: "Duplicate of #3." },
+  reopen_issue: {},
+  hand_to_coding_agent: { component: "api" },
+};
+
+/** Other arguments for each write that has any. */
+const OTHER: Record<Exclude<WriteTool, "reopen_issue">, Record<string, string>> = {
+  comment_issue: { body: "Closing as wontfix." },
+  edit_issue: { title: "Save fails offline", body: "Something else" },
+  close_issue: { reason: "Spam." },
+  hand_to_coding_agent: { component: "web" },
+};
+
+/** The card the agent asks `t` with, its change as the confirm option's description. */
+const card = (t: WriteTool, description = describeChange(t, ARGS[t])): AskQuestionInput => ({
+  question: CONFIRMATIONS[t].question,
+  options: [{ label: CONFIRMATIONS[t].option, recommended: true, description }, { label: NOT_NOW }],
+});
+
+const mismatch = (t: WriteTool): string =>
+  `Not done: this is not the change the user confirmed. Ask "${CONFIRMATIONS[t].question}" again with the exact change as the ${CONFIRMATIONS[t].option} option's description.`;
 
 const answer = (t: WriteTool, note?: string): string =>
   buildAnswerInstruction(CONFIRMATIONS[t].question, [CONFIRMATIONS[t].option], note);
 
-/** Every issue tool, each counting its runs. */
-function issueTools(): { tools: ToolSet; runs: Record<string, number> } {
+/** Every issue tool, each counting its runs and keeping the arguments it ran with. */
+function issueTools(): { tools: ToolSet; runs: Record<string, number>; ran: Record<string, unknown[]> } {
   const runs: Record<string, number> = {};
+  const ran: Record<string, unknown[]> = {};
   const tools: ToolSet = {};
-  for (const name of ["get_issue", "list_components", ...WRITES]) {
+  for (const name of ISSUE_MCP_TOOLS) {
     runs[name] = 0;
+    ran[name] = [];
     tools[name] = tool({
       description: `the ${name} tool`,
       inputSchema: z.object({}),
-      execute: async () => {
+      execute: async (input: unknown) => {
         runs[name]! += 1;
+        ran[name]!.push(input);
         return `${name} done`;
       },
     });
   }
-  return { tools, runs };
+  return { tools, runs, ran };
 }
 
-const call = (tools: ToolSet, name: string): Promise<unknown> =>
-  tools[name]!.execute!({}, {} as never) as Promise<unknown>;
+const call = (tools: ToolSet, name: string, input: unknown = ARGS[name as WriteTool] ?? {}): Promise<unknown> =>
+  tools[name]!.execute!(input, {} as never) as Promise<unknown>;
+
+test("the issue's MCP tools are its two reads and its writes", () => {
+  assert.deepEqual(ISSUE_MCP_TOOLS, ["get_issue", "list_components", ...WRITES]);
+});
+
+test("describeChange: each write's change as its card shows it", () => {
+  assert.equal(describeChange("comment_issue", { body: "Fixed in #12." }), "Fixed in #12.");
+  assert.equal(describeChange("edit_issue", { title: "T", body: "B\nB2" }), "Title: T\n\nBody:\nB\nB2");
+  assert.equal(describeChange("edit_issue", { title: "T" }), "Title: T");
+  assert.equal(describeChange("edit_issue", { body: "B" }), "Body:\nB");
+  assert.equal(describeChange("close_issue", { reason: "Duplicate of #3." }), "Duplicate of #3.");
+  assert.equal(describeChange("reopen_issue", {}), "");
+  assert.equal(describeChange("hand_to_coding_agent", { component: "api" }), "Component: api");
+  // Nothing reaches the tool unshown: an argument the layout does not name is shown too.
+  assert.equal(describeChange("comment_issue", { body: "hi", extra: 1 }), "hi\n\nextra: 1");
+  assert.equal(describeChange("reopen_issue", { state: "open" }), "state: open");
+});
 
 test("the confirmation table is the constraint's, word for word", () => {
   assert.deepEqual(CONFIRMATIONS, {
@@ -105,7 +160,7 @@ test("confirmedTool: anything else confirms nothing", () => {
 
 test("gateWrites: unconfirmed, every write refuses with what to ask; the reads run", async () => {
   const { tools, runs } = issueTools();
-  const gated = gateWrites(tools, "please post a comment saying it is fixed");
+  const gated = gateWrites(tools, "please post a comment saying it is fixed", card("comment_issue"));
   for (const t of WRITES) {
     const { question, option } = CONFIRMATIONS[t];
     assert.equal(gated[t]!.description, `the ${t} tool`, "description kept");
@@ -121,11 +176,12 @@ test("gateWrites: unconfirmed, every write refuses with what to ask; the reads r
   assert.equal(gated.list_components, tools.list_components);
 });
 
-test("gateWrites: each confirmation unlocks only its own tool, once", async () => {
+test("gateWrites: each confirmation unlocks only its own tool, with the change its card showed, once", async () => {
   for (const t of WRITES) {
-    const { tools, runs } = issueTools();
-    const gated = gateWrites(tools, answer(t));
+    const { tools, runs, ran } = issueTools();
+    const gated = gateWrites(tools, answer(t), card(t));
     assert.equal(await call(gated, t), `${t} done`);
+    assert.deepEqual(ran[t], [ARGS[t]]);
     await assert.rejects(() => call(gated, t), {
       message: "Already attempted in this turn; tell the user the result and ask before trying again.",
     });
@@ -146,7 +202,7 @@ test("gateWrites: a confirmed first call that throws still uses up the turn's on
       throw new Error("timeout");
     },
   });
-  const gated = gateWrites({ close_issue: failing }, answer("close_issue"));
+  const gated = gateWrites({ close_issue: failing }, answer("close_issue"), card("close_issue"));
   await assert.rejects(() => call(gated, "close_issue"), /timeout/);
   await assert.rejects(() => call(gated, "close_issue"), /Already attempted in this turn/);
   assert.equal(runs, 1);
@@ -154,10 +210,96 @@ test("gateWrites: a confirmed first call that throws still uses up the turn's on
 
 test("gateWrites: a set without write tools passes through; each turn's gate has its own attempt", async () => {
   const reads: ToolSet = { get_issue: issueTools().tools.get_issue! };
-  assert.deepEqual(gateWrites(reads, answer("comment_issue")), reads);
+  assert.deepEqual(gateWrites(reads, answer("comment_issue"), card("comment_issue")), reads);
   const { tools } = issueTools();
-  const a = gateWrites(tools, answer("comment_issue"));
-  const b = gateWrites(tools, answer("comment_issue"));
+  const a = gateWrites(tools, answer("comment_issue"), card("comment_issue"));
+  const b = gateWrites(tools, answer("comment_issue"), card("comment_issue"));
   assert.equal(await call(a, "comment_issue"), "comment_issue done");
   assert.equal(await call(b, "comment_issue"), "comment_issue done");
+});
+
+test("gateWrites: a confirmed write with any other change is refused, and the shown change still runs", async () => {
+  for (const t of Object.keys(OTHER) as (keyof typeof OTHER)[]) {
+    const { tools, ran } = issueTools();
+    const gated = gateWrites(tools, answer(t), card(t));
+    await assert.rejects(() => call(gated, t, OTHER[t]), { message: mismatch(t) });
+    // A refused mismatch uses up nothing: the confirmed change can still be made, and only it.
+    assert.equal(await call(gated, t), `${t} done`);
+    assert.deepEqual(ran[t], [ARGS[t]], `${t} only ever ran with the shown change`);
+  }
+});
+
+test("gateWrites: an argument the card did not show is refused", async () => {
+  const { tools, runs } = issueTools();
+  const gated = gateWrites(tools, answer("comment_issue"), card("comment_issue"));
+  await assert.rejects(() => call(gated, "comment_issue", { ...ARGS.comment_issue, extra: "x" }), {
+    message: mismatch("comment_issue"),
+  });
+  assert.equal(runs.comment_issue, 0);
+});
+
+test("gateWrites: the last card asked another write's question → refused", async () => {
+  for (const t of WRITES) {
+    const other = WRITES.find((o) => o !== t)!;
+    const { tools, runs } = issueTools();
+    const gated = gateWrites(tools, answer(t), card(other));
+    await assert.rejects(() => call(gated, t), { message: mismatch(t) });
+    assert.equal(runs[t], 0, t);
+  }
+});
+
+test("gateWrites: no card in the stored history (an answer typed by hand) → refused", async () => {
+  for (const t of WRITES) {
+    const { tools, runs } = issueTools();
+    const gated = gateWrites(tools, answer(t), undefined);
+    await assert.rejects(() => call(gated, t), { message: mismatch(t) });
+    assert.equal(runs[t], 0, t);
+  }
+});
+
+test("gateWrites: a card whose confirm option shows no change, or another label, binds nothing", async () => {
+  const { tools, runs } = issueTools();
+  const bare: AskQuestionInput = {
+    question: CONFIRMATIONS.comment_issue.question,
+    options: [{ label: "Post it" }, { label: NOT_NOW }],
+  };
+  await assert.rejects(() => call(gateWrites(tools, answer("comment_issue"), bare), "comment_issue"), {
+    message: mismatch("comment_issue"),
+  });
+  const relabelled: AskQuestionInput = {
+    question: CONFIRMATIONS.comment_issue.question,
+    options: [{ label: "Post", description: ARGS.comment_issue.body! }, { label: NOT_NOW }],
+  };
+  await assert.rejects(() => call(gateWrites(tools, answer("comment_issue"), relabelled), "comment_issue"), {
+    message: mismatch("comment_issue"),
+  });
+  assert.equal(runs.comment_issue, 0);
+});
+
+test("gateWrites: reopening has no change to show; the card need only be its question", async () => {
+  const { tools, runs } = issueTools();
+  const plain: AskQuestionInput = {
+    question: CONFIRMATIONS.reopen_issue.question,
+    options: [{ label: "Reopen it", description: "Reopens the issue." }, { label: NOT_NOW }],
+  };
+  assert.equal(await call(gateWrites(tools, answer("reopen_issue"), plain), "reopen_issue"), "reopen_issue done");
+  assert.equal(runs.reopen_issue, 1);
+});
+
+test("gateWrites: an answer with a note still binds to the change the card showed", async () => {
+  const { tools, runs } = issueTools();
+  const gated = gateWrites(tools, answer("comment_issue", "make it friendlier"), card("comment_issue"));
+  await assert.rejects(() => call(gated, "comment_issue", { body: "Fixed in #12, thanks!" }), {
+    message: mismatch("comment_issue"),
+  });
+  assert.equal(await call(gated, "comment_issue"), "comment_issue done");
+  assert.equal(runs.comment_issue, 1);
+});
+
+test("gateWrites: CRLF line endings and surrounding whitespace do not change the change", async () => {
+  const { tools, runs } = issueTools();
+  const shown = `  ${describeChange("edit_issue", ARGS.edit_issue).replace(/\n/g, "\r\n")}  \n`;
+  const gated = gateWrites(tools, answer("edit_issue"), card("edit_issue", shown));
+  assert.equal(await call(gated, "edit_issue", { title: "Save fails offline", body: "Steps:\r\n1. Go offline\r\n2. Save\n" }), "edit_issue done");
+  assert.equal(runs.edit_issue, 1);
 });

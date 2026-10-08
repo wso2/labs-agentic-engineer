@@ -23,7 +23,7 @@
  * the BFF's, loaded from the turn's MCP block and handed in as `mcpTools`.
  */
 
-import type { Surface } from "@aep/agent-stream";
+import type { AskQuestionInput, Surface } from "@aep/agent-stream";
 import type { ToolSet } from "ai";
 import type { SkillSource } from "../main/skill-source.js";
 import { buildToolLoopAgent, type AgentRunSettings, type TurnAgent } from "../run-settings.js";
@@ -39,6 +39,12 @@ export interface IssuesAgentDeps {
   mcpTools: ToolSet;
   /** This turn's raw user instruction: the filing gate reads it. */
   instruction: string;
+  /**
+   * The question card the user last saw (`lastAskedQuestion` over the
+   * conversation's stored history): a confirmed filing files only the issue
+   * it showed.
+   */
+  asked: AskQuestionInput | undefined;
   skills?: SkillSource | undefined;
   surface?: Surface | undefined;
 }
@@ -48,10 +54,11 @@ export function createIssuesAgent(deps: IssuesAgentDeps, run: AgentRunSettings):
   // The agent's own tools spread LAST — the shadow-guard — so an MCP tool can
   // never stand in for the classifier or a question tool of the same name.
   const merged: ToolSet = Object.keys(deps.mcpTools).length > 0 ? { ...deps.mcpTools, ...builtIns } : builtIns;
-  // It files only on the user's own File it answer: until then create_issue
-  // (an MCP tool) refuses. The prompt asks for the same; this is what holds
-  // when text the model read tries to talk it past the question.
-  const tools = gateCreateIssue(merged, filingConfirmed(deps.instruction));
+  // It files only on the user's own File it answer, and only the issue its
+  // card showed: until then create_issue (an MCP tool) refuses. The prompt
+  // asks for the same; this is what holds when text the model read tries to
+  // talk it past the question.
+  const tools = gateCreateIssue(merged, filingConfirmed(deps.instruction), deps.asked);
   return buildToolLoopAgent(run, {
     instructions: buildIssuesInstructions(deps.skills, deps.surface),
     tools,

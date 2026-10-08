@@ -17,7 +17,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildAnswerInstruction, buildAnswersInstruction } from "@aep/agent-stream";
+import { buildAnswerInstruction, buildAnswersInstruction, type AskQuestionInput } from "@aep/agent-stream";
 import { scriptIssuesTurn } from "./issuesAgent";
 
 // The mock Issues agent: it classifies a report, drafts the issue, asks "File
@@ -51,6 +51,18 @@ describe("a report to the mock Issues agent", () => {
     expect(input.options[0]!.recommended).toBe(true);
     expect(turn.filed).toBeUndefined();
     expect(turn.display).toBe(REPORT);
+  });
+
+  it("shows the exact issue it will file as File it's description, as the real agent must", () => {
+    const asked = calls(scriptIssuesTurn(REPORT, 15), "ask_question")[0]!.input as AskQuestionInput;
+    const description = asked.options.find((o) => o.label === "File it")!.description;
+    const created = calls(scriptIssuesTurn(FILE_IT, 15, [REPORT]), "create_issue")[0]!.input as {
+      title: string;
+      body: string;
+      kind: string;
+    };
+    // The agents service's filing gate rendering (describeFiling): title, kind, body.
+    expect(description).toBe(`Title: ${created.title}\n\nKind: ${created.kind}\n\nBody:\n${created.body}`);
   });
 
   it("drafts a bug from a confident report, without the classifier's name or scores", () => {

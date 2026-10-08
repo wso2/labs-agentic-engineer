@@ -109,8 +109,8 @@ result, or a retry after a timeout that did file, cannot file twice, and a faile
 attempt is reported to the user rather than retried silently.
 
 Every write an issue's agent makes waits the same way, generalised
-(`src/agents/confirmation.ts`: `answeredWith`, `refusing`, `once`, which the filing gate
-uses too). `CONFIRMATIONS` (`issue/confirm-gate.ts`) gives each write tool its question
+(`src/agents/confirmation.ts`: `answeredWith`, `refusing`, `onceAsShown`, which the filing
+gate uses too). `CONFIRMATIONS` (`issue/confirm-gate.ts`) gives each write tool its question
 and option: "Post this comment?" → "Post it", "Apply this edit?" → "Apply it", "Close this
 issue?" → "Close it", "Reopen this issue?" → "Reopen it", "Hand this to the coding agent?"
 → "Hand it over", each with "Not now". `gateWrites` lets the one tool the turn's single
@@ -118,6 +118,21 @@ answer confirms run once and refuses every other write with an error naming its 
 `get_issue` and `list_components` are never gated. The prompt reads the issue first,
 drafts each change, asks its question, and before a hand-off asks which component (the
 options from `list_components`); a "Deploy a version first" answer is relayed as is.
+
+A gate binds the tool AND its arguments to the card the user answered, not only which
+write runs. The agent puts the exact change in the confirm option's `description`, in one
+canonical rendering per tool (`describeChange` beside `CONFIRMATIONS`: the comment; "Title:
+…" and/or "Body:\n…"; the reason; "Component: …"; nothing for a reopen; `describeFiling`
+for `create_issue`: title, kind and body). An argument the rendering does not name is shown
+too, so nothing reaches the tool unshown. In the answer turn `runConversationTurn` hands the
+agent the last accepted `ask_question` input from the history the service stored before
+the turn (`lastAskedQuestion`), never the instruction or this turn's model output. The
+confirmed tool runs only when that card asked its own question and its confirm option's
+description equals the call's rendering (CRLF→LF, trimmed); otherwise the call is refused
+("Not done: this is not the change the user confirmed…"), which uses up nothing, as the
+confirmed change is still the only one that can run. No card in the history (an answer
+typed by hand) refuses too. A note on the answer does not change what was confirmed: the
+prompts have the agent ask again with the revised text.
 
 The report classifier (`classify_report`, Jev) never blocks a turn. Below 0.8 confidence,
 or for a `question`, it asks the agent to clarify; a missing key, a non-2xx response, a

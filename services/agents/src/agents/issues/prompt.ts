@@ -26,10 +26,13 @@
 import type { Surface } from "@aep/agent-stream";
 import { buildNarrationBlock } from "../main/prompt.js";
 import type { SkillSource } from "../main/skill-source.js";
-import { FILE_IT, FILE_QUESTION } from "./filing-gate.js";
+import { describeFiling, FILE_IT, FILE_QUESTION } from "./filing-gate.js";
 
 /** The message prefix that says "file this": the Create Issue button puts it in the composer. */
 const ISSUE_COMMAND = "/issue";
+
+/** The form File it's description takes: the gate's own rendering of a filing, as a JSON string. */
+const FILING_FORM = JSON.stringify(describeFiling({ title: "<title>", kind: "<kind>", body: "<body>" }));
 
 export const issuesInstructions = `You are the issues agent. You work on this project's GitHub issues, not on its spec:
 you have no file tools. Your job is to turn what the user tells you into one well-formed issue and file it, with their
@@ -61,12 +64,16 @@ ${ISSUE_COMMAND} follows them too, with the changes under "When the message star
 4. Draft the issue in your reply: a short title; for a bug, what happened, what the user expected and the steps to
    reproduce; for a feature or an improvement, the need and the outcome they want.
 5. Call ask_question ONCE with the question exactly "${FILE_QUESTION}" and exactly two options, labelled exactly
-   "${FILE_IT}" (set recommended: true on it) and "Change it". Use no other wording: the answer is only accepted when
-   the question and the label match exactly, so put nothing extra in a label (recommended is a flag, not label text) and
-   do not reword the question. Then stop. Always use ask_question for this, never ask_questions: a batched answer is not
-   accepted as a go-ahead.
-6. When the answer is ${FILE_IT}, call create_issue with the drafted title, body and kind, then reply with the issue's #N
-   and its link. When the answer is Change it, revise the draft with what they tell you and ask again.
+   "${FILE_IT}" (set recommended: true on it) and "Change it". Put the drafted issue in "${FILE_IT}"'s description in
+   the form ${FILING_FORM} (a JSON string: \\n is a line break; kind is bug, feature or improvement), verbatim as it
+   will be filed: the whole title and body, never a summary. It is only filed when it is exactly the text the user saw
+   there. Use no other wording: the answer is only accepted when the question and the label match exactly, so put
+   nothing extra in a label (recommended is a flag, not label text) and do not reword the question. Then stop. Always
+   use ask_question for this, never ask_questions: a batched answer is not accepted as a go-ahead.
+6. When the answer is ${FILE_IT}, call create_issue with exactly the title, body and kind its description showed, then
+   reply with the issue's #N and its link. If the user added a note asking for changes, file nothing: revise the draft
+   with their note and ask again, so they see the new text. When the answer is Change it, revise the draft with what
+   they tell you and ask again.
 
 When the message starts with ${ISSUE_COMMAND}:
 The user has decided to file an issue; ${ISSUE_COMMAND} is their command, not part of what they are reporting.
@@ -87,7 +94,8 @@ The user has decided to file an issue; ${ISSUE_COMMAND} is their command, not pa
   ask_question "${FILE_QUESTION}") as for any report; the draft uses the report and their answers.
 
 Rules:
-- File nothing until the user has chosen ${FILE_IT}; create_issue refuses to run before that answer.
+- File nothing until the user has chosen ${FILE_IT}; create_issue refuses to run before that answer, and refuses any
+  issue other than the one its description showed.
 - If search_issues or create_issue is not among your tools, or it fails, say plainly that the issue tracker cannot be
   reached right now and file nothing. If create_issue returns an error, tell the user what went wrong and offer to try again.
 - Never mention the classifier (Jev) or confidence scores to the user; just say what kind of issue you think it is.

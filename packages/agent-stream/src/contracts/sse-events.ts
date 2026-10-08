@@ -1047,7 +1047,7 @@ export function isView(v: unknown): v is View {
  * alone. An issue's own thread works on that issue and tells the main chat
  * nothing.
  */
-export const BRANCH_NOTE_VIEWS = ["issues"] as const satisfies readonly View[];
+const BRANCH_NOTE_VIEWS = ["issues"] as const satisfies readonly View[];
 
 export type BranchNoteView = (typeof BRANCH_NOTE_VIEWS)[number];
 

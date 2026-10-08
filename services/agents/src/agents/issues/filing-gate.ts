@@ -19,11 +19,13 @@
 /**
  * "Draft first, file on the user's go-ahead", enforced in code
  * (`../confirmation.ts`): create_issue is withheld unless THIS turn's
- * instruction is the user's own File it answer, and runs once for it.
+ * instruction is the user's own File it answer, and runs once for it, only
+ * with the issue the File it card showed (`describeFiling`).
  */
 
+import type { AskQuestionInput } from "@aep/agent-stream";
 import type { ModelMessage, ToolSet } from "ai";
-import { answeredWith, once, refusing } from "../confirmation.js";
+import { answeredWith, describeArgs, onceAsShown, refusing, type ChangeLayout } from "../confirmation.js";
 
 /** The confirmation question the agent asks, and the option that files. */
 export const FILE_QUESTION = "File this issue?";
@@ -31,6 +33,22 @@ export const FILE_IT = "File it";
 
 /** The MCP tool the gate guards. */
 const CREATE_ISSUE = "create_issue";
+
+/** How a filing is shown on its card: everything create_issue sends to GitHub. */
+const FILING: ChangeLayout = [
+  ["title", (title) => `Title: ${title}`],
+  ["kind", (kind) => `Kind: ${kind}`],
+  ["body", (body) => `Body:\n${body}`],
+];
+
+/**
+ * The issue a create_issue call with `input` files, as File it's description
+ * must show it: "Title: <title>", "Kind: <kind>" and "Body:\n<body>", a blank
+ * line between each.
+ */
+export function describeFiling(input: unknown): string {
+  return describeArgs(input, FILING);
+}
 
 /**
  * Is `instruction` the user's single answer to FILE_QUESTION selecting exactly
@@ -42,15 +60,22 @@ export function filingConfirmed(instruction: string): boolean {
 
 /**
  * Guard `create_issue`. Unconfirmed, it refuses with a tool error telling the
- * model what to do; confirmed, it runs at most once per turn (`once`). Call it
- * once per turn: the one-filing state lives in the returned tools. When the set
- * has no create_issue, `tools` comes back unchanged.
+ * model what to do; confirmed, it files only the issue the card the user last
+ * saw (`asked`) showed, at most once per turn (`onceAsShown`). Call it once
+ * per turn: the one-filing state lives in the returned tools. When the set has
+ * no create_issue, `tools` comes back unchanged.
  */
-export function gateCreateIssue(tools: ToolSet, confirmed: boolean): ToolSet {
+export function gateCreateIssue(tools: ToolSet, confirmed: boolean, asked: AskQuestionInput | undefined): ToolSet {
   const create = tools[CREATE_ISSUE];
   if (create === undefined) return tools;
   const gated = confirmed
-    ? once(create, "A filing was already attempted in this turn; tell the user the result and ask before trying again.")
+    ? onceAsShown(
+        create,
+        { question: FILE_QUESTION, option: FILE_IT },
+        describeFiling,
+        asked,
+        "A filing was already attempted in this turn; tell the user the result and ask before trying again.",
+      )
     : refusing(
         create,
         `Not filed. Ask the user "${FILE_QUESTION}" with ask_question (options ${FILE_IT} / Change it) and file only after they answer ${FILE_IT}.`,

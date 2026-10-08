@@ -106,6 +106,15 @@ function draftContext(history: string[]): { report?: string; kind?: IssueKind; v
   return chosen ? { kind: chosen } : {};
 }
 
+/**
+ * The issue as File it's description shows it: the agents service's filing
+ * rendering (`describeFiling` in services/agents' filing gate), which binds the
+ * user's File it to exactly this issue.
+ */
+function filingDescription(issue: FiledIssue): string {
+  return `Title: ${issue.title}\n\nKind: ${issue.kind}\n\nBody:\n${issue.body}`;
+}
+
 function sentence(report: string): string {
   return report.replace(/\s+/g, " ").trim().replace(/[.!?]+$/, "");
 }
@@ -262,7 +271,7 @@ function draftAndAsk(s: Script, id: (step: string) => string, report: string, ki
     .ask(id("file"), {
       question: FILE_QUESTION,
       options: [
-        { label: FILE_IT, recommended: true, description: "Create the issue as drafted." },
+        { label: FILE_IT, recommended: true, description: filingDescription(issue) },
         { label: CHANGE_IT, description: "Tell me what to change first." },
       ],
     });

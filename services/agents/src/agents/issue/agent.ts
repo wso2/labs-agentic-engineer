@@ -24,21 +24,13 @@
  * and handed in as `mcpTools`.
  */
 
-import { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL, type Surface } from "@aep/agent-stream";
+import { ASK_QUESTION_TOOL, ASK_QUESTIONS_TOOL, type AskQuestionInput, type Surface } from "@aep/agent-stream";
 import type { ToolSet } from "ai";
 import { askQuestionTool, askQuestionsTool } from "../main/tools/files.js";
 import type { SkillSource } from "../main/skill-source.js";
 import { buildToolLoopAgent, type AgentRunSettings, type TurnAgent } from "../run-settings.js";
-import { CONFIRMATIONS, gateWrites } from "./confirm-gate.js";
+import { gateWrites, ISSUE_MCP_TOOLS } from "./confirm-gate.js";
 import { buildIssueInstructions } from "./prompt.js";
-
-/**
- * The MCP tools an issue's agent takes, by contract name: the two reads and
- * the gated writes. Whatever else the server lists (the Issues chat's
- * search_issues / create_issue) is left out, so an issue's thread never files
- * or searches.
- */
-const ISSUE_MCP_TOOLS: readonly string[] = ["get_issue", "list_components", ...Object.keys(CONFIRMATIONS)];
 
 export interface IssueAgentDeps {
   /** The issue this thread works on; its prompt names it. */
@@ -47,23 +39,34 @@ export interface IssueAgentDeps {
   mcpTools: ToolSet;
   /** This turn's raw user instruction: the confirmation gate reads it. */
   instruction: string;
+  /**
+   * The question card the user last saw (`lastAskedQuestion` over the
+   * conversation's stored history): a confirmed write makes only the change
+   * it showed.
+   */
+  asked: AskQuestionInput | undefined;
   skills?: SkillSource | undefined;
   surface?: Surface | undefined;
 }
 
 export function createIssueAgent(deps: IssueAgentDeps, run: AgentRunSettings): TurnAgent {
   const issueTools: ToolSet = {};
+  // Only the issue's own tools, by contract name: whatever else the server
+  // lists (the Issues chat's search_issues / create_issue, a write this agent
+  // does not know) is left out, so an issue's thread never files or searches.
   for (const name of ISSUE_MCP_TOOLS) {
     const tool = deps.mcpTools[name];
     if (tool !== undefined) issueTools[name] = tool;
   }
   // The question tools spread LAST — the shadow-guard — so an MCP tool can
   // never stand in for them. Every write then refuses until the user's own
-  // answer to its question: the prompt asks for the same, and this is what
-  // holds when the issue's text tries to talk the model past the question.
+  // answer to its question, and then makes only the change its card showed:
+  // the prompt asks for the same, and this is what holds when the issue's text
+  // tries to talk the model past the question.
   const tools = gateWrites(
     { ...issueTools, [ASK_QUESTION_TOOL]: askQuestionTool, [ASK_QUESTIONS_TOOL]: askQuestionsTool },
     deps.instruction,
+    deps.asked,
   );
   return buildToolLoopAgent(run, {
     instructions: buildIssueInstructions(deps.issueNumber, deps.skills, deps.surface),

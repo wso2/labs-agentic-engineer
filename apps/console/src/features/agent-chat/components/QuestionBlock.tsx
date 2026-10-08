@@ -89,7 +89,9 @@ function OptionButton({
           )}
         </Box>
         {opt.description && (
-          <Typography variant="caption" color="text.secondary">
+          // A confirmation's description is the exact change (a comment, an
+          // issue's title and body): its line breaks are part of what is confirmed.
+          <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
             {opt.description}
           </Typography>
         )}

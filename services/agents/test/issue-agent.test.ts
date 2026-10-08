@@ -23,7 +23,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CONFIRMATIONS, NOT_NOW } from "../src/agents/issue/confirm-gate.js";
+import { CONFIRMATIONS, describeChange, NOT_NOW } from "../src/agents/issue/confirm-gate.js";
 import { buildIssueInstructions } from "../src/agents/issue/prompt.js";
 import { testSkillSource } from "./skill-source.js";
 
@@ -64,11 +64,29 @@ test("issue instructions pick the component before the hand-off and relay the de
   assert.match(out, /deploy a version first/i);
 });
 
-test("issue instructions keep the classifier unnamed and speak plainly", () => {
+test("issue instructions put each change in its confirm option's description, verbatim, in the gate's form", () => {
   const out = buildIssueInstructions(42);
-  // The one allowed occurrence is the rule that forbids naming it.
-  assert.equal(out.match(/Jev/g)?.length, 1);
-  assert.match(out, /never .*classifier/i);
+  // The forms come from the gate's own rendering, so the two cannot drift apart.
+  const forms = [
+    describeChange("comment_issue", { body: "<the comment>" }),
+    describeChange("edit_issue", { title: "<new title>", body: "<new body>" }),
+    describeChange("close_issue", { reason: "<the reason>" }),
+    describeChange("hand_to_coding_agent", { component: "<component>" }),
+  ];
+  for (const form of forms) assert.ok(out.includes(JSON.stringify(form)), `shows the form ${JSON.stringify(form)}`);
+  assert.equal(forms[1], "Title: <new title>\n\nBody:\n<new body>");
+  const text = flat(out);
+  assert.match(text, /description/);
+  assert.match(text, /verbatim/);
+  // A note on the answer never changes what was confirmed: the agent asks again.
+  assert.match(text, /note .*ask .*again/i);
+});
+
+test("issue instructions name no internal service and speak plainly", () => {
+  const out = buildIssueInstructions(42);
+  // The issue agent has no classifier: nothing to name.
+  assert.equal(out.match(/Jev/g), null);
+  assert.match(out, /Never name internal services to the user/);
   assert.match(out, /plain words/);
 });
 

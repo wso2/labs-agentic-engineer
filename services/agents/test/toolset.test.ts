@@ -30,7 +30,7 @@ import { buildTaskPlanTools } from "../src/agents/main/tools/task-plan.js";
 import { TaskPlan } from "../src/agents/main/task-plan-accumulator.js";
 import { instructions, buildInstructions, taskPlanInstructions, buildTaskPlanInstructions } from "../src/agents/main/prompt.js";
 import { buildIssuesTools } from "../src/agents/issues/tools.js";
-import { FILE_IT, FILE_QUESTION } from "../src/agents/issues/filing-gate.js";
+import { describeFiling, FILE_IT, FILE_QUESTION } from "../src/agents/issues/filing-gate.js";
 import { buildIssuesInstructions } from "../src/agents/issues/prompt.js";
 import { testSkillSource } from "./skill-source.js";
 
@@ -142,6 +142,19 @@ test("issues instructions pin the exact question and labels, with recommended as
   assert.ok(out.includes(`"${FILE_IT}"`) && out.includes('"Change it"'));
   assert.match(out, /recommended: true/);
   assert.equal(out.includes("(recommended)"), false, "never a label that carries the word");
+});
+
+test("issues instructions put the drafted issue in File it's description, verbatim, in the gate's form", () => {
+  const out = buildIssuesInstructions(undefined, undefined);
+  // The form comes from the gate's own rendering, so the two cannot drift apart.
+  const form = describeFiling({ title: "<title>", kind: "<kind>", body: "<body>" });
+  assert.equal(form, "Title: <title>\n\nKind: <kind>\n\nBody:\n<body>");
+  assert.ok(out.includes(JSON.stringify(form)));
+  const text = out.replace(/\s+/g, " ");
+  assert.match(text, /description/);
+  assert.match(text, /verbatim/);
+  // A note asking for changes never files the changed issue: the agent asks again.
+  assert.match(text, /note .*ask .*again/i);
 });
 
 test("issues instructions append the surface's narration policy", () => {

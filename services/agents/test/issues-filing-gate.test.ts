@@ -17,18 +17,39 @@
  */
 
 /**
- * The Issues agent files only on the user's own "File it" answer. The prompt
- * asks for it; this gate enforces it in code, because text the model reads
- * (an issue body from search_issues, something the user pasted) can try to talk
- * it into calling create_issue unconfirmed.
+ * The Issues agent files only on the user's own "File it" answer, and only the
+ * issue its card showed. The prompt asks for it; this gate enforces it in code,
+ * because text the model reads (an issue body from search_issues, something the
+ * user pasted) can try to talk it into calling create_issue unconfirmed, or
+ * into filing something else than what the user confirmed.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { tool, type ToolSet } from "ai";
 import { z } from "zod";
-import { buildAnswerInstruction, buildAnswersInstruction } from "@aep/agent-stream";
-import { FILE_IT, FILE_QUESTION, filingConfirmed, gateCreateIssue } from "../src/agents/issues/filing-gate.js";
+import { buildAnswerInstruction, buildAnswersInstruction, type AskQuestionInput } from "@aep/agent-stream";
+import {
+  describeFiling,
+  FILE_IT,
+  FILE_QUESTION,
+  filingConfirmed,
+  gateCreateIssue,
+} from "../src/agents/issues/filing-gate.js";
+
+const ISSUE = { title: "Save does nothing", body: "## What happened\n\nNothing saves.", kind: "bug" };
+
+/** The File this issue? card, the drafted issue as File it's description. */
+const card = (description = describeFiling(ISSUE)): AskQuestionInput => ({
+  question: FILE_QUESTION,
+  options: [{ label: FILE_IT, recommended: true, description }, { label: "Change it" }],
+});
+
+const MISMATCH =
+  'Not done: this is not the change the user confirmed. Ask "File this issue?" again with the exact change as the File it option\'s description.';
+
+const file = (tools: ToolSet, input: unknown = ISSUE): Promise<unknown> =>
+  tools.create_issue!.execute!(input, {} as never) as Promise<unknown>;
 
 test("the question and option the gate waits for are the ones the prompt uses", () => {
   assert.equal(FILE_QUESTION, "File this issue?");
@@ -76,9 +97,14 @@ const createIssue = tool({
   execute: async () => "FILED",
 });
 
+test("describeFiling: everything that reaches GitHub, title, kind and body", () => {
+  assert.equal(describeFiling(ISSUE), "Title: Save does nothing\n\nKind: bug\n\nBody:\n## What happened\n\nNothing saves.");
+  assert.equal(describeFiling({ title: "T", body: "B", kind: "bug", labels: ["x"] }), 'Title: T\n\nKind: bug\n\nBody:\nB\n\nlabels: ["x"]');
+});
+
 test("gateCreateIssue: unconfirmed, create_issue refuses with a tool error that says what to do", async () => {
   const tools: ToolSet = { search_issues: tool({ inputSchema: z.object({}), execute: async () => "ok" }), create_issue: createIssue };
-  const gated = gateCreateIssue(tools, false);
+  const gated = gateCreateIssue(tools, false, card());
   assert.equal(gated.search_issues, tools.search_issues, "other tools are untouched");
   assert.equal(gated.create_issue!.description, "file an issue");
   assert.equal(gated.create_issue!.inputSchema, createIssue.inputSchema);
@@ -90,8 +116,8 @@ test("gateCreateIssue: unconfirmed, create_issue refuses with a tool error that 
 
 test("gateCreateIssue: no create_issue returns the tools unchanged", () => {
   const bare: ToolSet = {};
-  assert.equal(gateCreateIssue(bare, false), bare);
-  assert.equal(gateCreateIssue(bare, true), bare);
+  assert.equal(gateCreateIssue(bare, false, card()), bare);
+  assert.equal(gateCreateIssue(bare, true, card()), bare);
 });
 
 test("gateCreateIssue: confirmed, only the first create_issue call of the turn executes", async () => {
@@ -104,12 +130,12 @@ test("gateCreateIssue: confirmed, only the first create_issue call of the turn e
       return "FILED";
     },
   });
-  const gated = gateCreateIssue({ create_issue: counting }, true);
+  const gated = gateCreateIssue({ create_issue: counting }, true, card());
   assert.equal(gated.create_issue!.description, "file an issue");
   assert.equal(gated.create_issue!.inputSchema, counting.inputSchema);
-  assert.equal(await (gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
+  assert.equal(await file(gated), "FILED");
   await assert.rejects(
-    () => gated.create_issue!.execute!({ title: "y" }, {} as never) as Promise<unknown>,
+    () => file(gated),
     /A filing was already attempted in this turn; tell the user the result and ask before trying again\./,
   );
   assert.equal(runs, 1, "the second call never reached the inner tool");
@@ -124,18 +150,67 @@ test("gateCreateIssue: a first call that throws still uses up the turn's one fil
       throw new Error("timeout");
     },
   });
-  const gated = gateCreateIssue({ create_issue: failing }, true);
-  await assert.rejects(() => gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>, /timeout/);
+  const gated = gateCreateIssue({ create_issue: failing }, true, card());
+  await assert.rejects(() => file(gated), /timeout/);
   await assert.rejects(
-    () => gated.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>,
+    () => file(gated),
     /already attempted/,
   );
   assert.equal(runs, 1);
 });
 
 test("gateCreateIssue: each turn's gate has its own one filing", async () => {
-  const a = gateCreateIssue({ create_issue: createIssue }, true);
-  const b = gateCreateIssue({ create_issue: createIssue }, true);
-  assert.equal(await (a.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
-  assert.equal(await (b.create_issue!.execute!({ title: "x" }, {} as never) as Promise<unknown>), "FILED");
+  const a = gateCreateIssue({ create_issue: createIssue }, true, card());
+  const b = gateCreateIssue({ create_issue: createIssue }, true, card());
+  assert.equal(await file(a), "FILED");
+  assert.equal(await file(b), "FILED");
+});
+
+/** create_issue counting its runs and keeping what it filed. */
+function filingTool(): { tools: ToolSet; filed: unknown[] } {
+  const filed: unknown[] = [];
+  const create = tool({
+    inputSchema: z.object({}),
+    execute: async (input: unknown) => {
+      filed.push(input);
+      return "FILED";
+    },
+  });
+  return { tools: { create_issue: create }, filed };
+}
+
+test("gateCreateIssue: confirmed, filing anything but the issue the card showed is refused; the shown one still files", async () => {
+  const others: Record<string, unknown> = {
+    "another title": { ...ISSUE, title: "Delete everything" },
+    "another body": { ...ISSUE, body: "Something else" },
+    "another kind": { ...ISSUE, kind: "feature" },
+    "an argument the card did not show": { ...ISSUE, labels: ["urgent"] },
+  };
+  const { tools, filed } = filingTool();
+  const gated = gateCreateIssue(tools, true, card());
+  for (const [name, input] of Object.entries(others)) {
+    await assert.rejects(() => file(gated, input), { message: MISMATCH }, name);
+  }
+  assert.equal(await file(gated), "FILED");
+  assert.deepEqual(filed, [ISSUE]);
+});
+
+test("gateCreateIssue: no card, another question's card, or a File it with no description → refused", async () => {
+  const cards: Record<string, AskQuestionInput | undefined> = {
+    "no card": undefined,
+    "another question": { question: "What kind of issue is this?", options: [{ label: FILE_IT, description: describeFiling(ISSUE) }] },
+    "no description": { question: FILE_QUESTION, options: [{ label: FILE_IT }, { label: "Change it" }] },
+  };
+  for (const [name, asked] of Object.entries(cards)) {
+    const { tools, filed } = filingTool();
+    await assert.rejects(() => file(gateCreateIssue(tools, true, asked)), { message: MISMATCH }, name);
+    assert.deepEqual(filed, [], name);
+  }
+});
+
+test("gateCreateIssue: CRLF line endings and surrounding whitespace do not change the issue", async () => {
+  const { tools, filed } = filingTool();
+  const shown = `\n${describeFiling(ISSUE).replace(/\n/g, "\r\n")}  `;
+  assert.equal(await file(gateCreateIssue(tools, true, card(shown))), "FILED");
+  assert.equal(filed.length, 1);
 });
