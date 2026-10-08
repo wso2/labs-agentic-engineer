@@ -27,12 +27,14 @@ import { OxygenTheme, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 // An Issue card says when the issue is closed: a closed issue has no chat of
 // its own, so the panel beside it draws none, and it cannot be handed over.
 // An open one can be handed to the coding agent from the card: the person
-// picks the component it is about, and the card's log takes over.
+// picks the component it is about, and once the issue reads taken on the card
+// points to the version whose build is working it.
 
 let state: "open" | "closed" | "unknown" = "open";
 let components: string[] = ["api", "web"];
 let designFails = false;
 let listed: { Labels: string[]; milestoneNumber?: number } = { Labels: [] };
+let ledger: { tag: string; milestoneNumber: number }[] = [];
 const post = vi.fn<(path: string, init: Record<string, unknown>) => Promise<unknown>>();
 
 vi.mock("../../../api/client", () => ({
@@ -40,7 +42,15 @@ vi.mock("../../../api/client", () => ({
 }));
 vi.mock("../../agent-chat/useIssueThread", () => ({ useIssueThreadState: () => state }));
 vi.mock("../../projects/components/CardOverlay", () => ({ CardOverlay: ({ children }: { children: ReactNode }) => <>{children}</> }));
-vi.mock("../../builds/components/TaskLog", () => ({ TaskLog: () => <div>the task log</div> }));
+vi.mock("@tanstack/react-router", async (actual) => ({
+  ...(await actual<typeof import("@tanstack/react-router")>()),
+  createLink:
+    () =>
+    ({ to, params, children }: { to: string; params: Record<string, string>; children: ReactNode }) => (
+      <a href={to.replace("$projectName", params.projectName!).replace("$version", params.version!)}>{children}</a>
+    ),
+}));
+vi.mock("../../builds/api/runs", () => ({ useVersionLedger: () => ({ data: ledger }) }));
 vi.mock("../../deploy/api/deploy", () => ({
   useDesignDependencies: () =>
     designFails
@@ -84,6 +94,7 @@ beforeEach(() => {
   components = ["api", "web"];
   designFails = false;
   listed = { Labels: [] };
+  ledger = [{ tag: "v2", milestoneNumber: 2 }, { tag: "v1", milestoneNumber: 1 }];
   post.mockReset();
 });
 afterEach(cleanup);
@@ -110,10 +121,9 @@ describe("IssueCard", () => {
     expect((screen.getByRole("button", { name: HAND }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("hands the issue over with the component the person picked, and its log takes over", async () => {
+  it("hands the issue over with the component the person picked, and says so until the list reads it", async () => {
     post.mockResolvedValueOnce({ data: undefined, error: undefined, response: { status: 202 } });
     renderCard();
-    expect(screen.queryByText("the task log")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: HAND }));
     expect(screen.getByText("Which component is it about?")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Hand it over" }) as HTMLButtonElement).disabled).toBe(true);
@@ -125,7 +135,7 @@ describe("IssueCard", () => {
       body: { componentName: "web" },
       parseAs: "text",
     });
-    expect(screen.getByText("the task log")).toBeTruthy();
+    expect(screen.queryByText(/works it/)).toBeNull();
     expect(screen.queryByRole("button", { name: HAND })).toBeNull();
   });
 
@@ -149,7 +159,6 @@ describe("IssueCard", () => {
     handOver();
     expect(await screen.findByText(NO_VERSION)).toBeTruthy();
     expect(screen.queryByText("Handed to the coding agent.")).toBeNull();
-    expect(screen.queryByText("the task log")).toBeNull();
   });
 
   it("says it could not hand it over when anything else fails", async () => {
@@ -178,17 +187,33 @@ describe("IssueCard", () => {
     expect(screen.queryByRole("button", { name: "Hand it over" })).toBeNull();
   });
 
-  it("shows the coding agent's log, and no hand-off, for an issue handed over before (armed, in a version's milestone)", () => {
-    listed = { Labels: ["bug", "aep"], milestoneNumber: 3 };
+  it("points to the version working an issue handed over before (armed, in its milestone), and offers no hand-off", () => {
+    listed = { Labels: ["bug", "aep"], milestoneNumber: 2 };
     renderCard();
-    expect(screen.getByText("the task log")).toBeTruthy();
+    const link = screen.getByRole("link", { name: "v2" });
+    expect(link.getAttribute("href")).toBe("/projects/shop/builds/v2");
+    expect(link.parentElement?.textContent).toBe("The coding agent works it in version v2.");
     expect(screen.queryByRole("button", { name: HAND })).toBeNull();
+  });
+
+  it("says the coding agent works it, without a version, when the ledger has no entry for its milestone", () => {
+    listed = { Labels: ["aep"], milestoneNumber: 9 };
+    renderCard();
+    expect(screen.getByText("The coding agent is working on it.")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: /^v\d/ })).toBeNull();
+  });
+
+  it("offers the hand-off again for an issue its run gave up on (halted)", () => {
+    listed = { Labels: ["bug", "aep", "aep:halted"], milestoneNumber: 2 };
+    renderCard();
+    expect(screen.queryByText(/works it|working on it/)).toBeNull();
+    expect(screen.getByRole("button", { name: HAND })).toBeTruthy();
   });
 
   it("offers the hand-off for an armed issue in no milestone: nothing has taken it on", () => {
     listed = { Labels: ["aep"] };
     renderCard();
-    expect(screen.queryByText("the task log")).toBeNull();
+    expect(screen.queryByText(/works it|working on it/)).toBeNull();
     expect(screen.getByRole("button", { name: HAND })).toBeTruthy();
   });
 

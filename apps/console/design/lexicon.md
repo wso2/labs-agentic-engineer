@@ -90,13 +90,15 @@ What an Issue card says about handing its issue to the coding agent.
 
 | Say | Where | Means |
 |---|---|---|
-| **Hand to the coding agent** | a button on an open issue's card, until the coding agent has taken it on (armed, in a version's milestone); a closed issue has none, nor has one the platform works another way (the version's validation task, a dispatch gate, planned work, a configuration-only incident) | opens the picker below; nothing is handed over yet |
+| **Hand to the coding agent** | a button on an open issue's card, until the coding agent has taken it on (armed, in a version's milestone, not halted — a halted issue offers it again); a closed issue has none, nor has one the platform works another way (the version's validation task, a dispatch gate, planned work, a configuration-only incident) | opens the picker below; nothing is handed over yet |
 | **Which component is it about?** | the picker's question, over the design's components (one is chosen already when the design has only one) | the coding agent works in the component the person picks |
 | **Hand it over** · **Cancel** | the picker's buttons | Hand it over hands the issue to the coding agent with that component; Cancel puts the picker away |
-| **Handed to the coding agent.** | the card, once the platform has the issue | the coding agent's log takes over the card |
+| **Handed to the coding agent.** | the card, once the platform has the issue and until the issue list reads it taken on | the hand-off went through |
+| **The coding agent works it in version** *v2***.** | the card, for an issue the coding agent has taken on; the version (the ledger's entry for the issue's milestone) links to its Build card, where the coding agent's log is | the build of that version is working it |
+| **The coding agent is working on it.** | as above, when the ledger has no entry for the issue's milestone | the same, with no version to point to |
 | **Deploy a version first: the coding agent works in a deployed version's milestone.** | the picker, when the project has no deployed version (the platform's words, shown as they are, as is any other refusal) | there is nothing to hand it to yet |
 | **This issue is closed.** | the picker, when the issue was closed meanwhile (the platform's words) | nothing was handed over |
-| **This issue is not one the coding agent takes on: the platform works this kind of issue another way.** | the picker, when the platform will not adopt the issue's kind (the platform's words; the card offers no button where it can tell) | nothing was handed over |
+| **The coding agent doesn't take on this kind of issue.** | the picker, when the platform will not adopt the issue's kind (the platform's words; the card offers no button where it can tell) | nothing was handed over |
 | **Couldn't hand it to the coding agent. Try again.** | the picker, for any other failure | nothing was handed over |
 | **The design has no components yet, so there is nothing to hand it to.** / **The design's components could not be read.** | the picker, in place of the components (a project with no design yet has none) | nothing can be picked |
 

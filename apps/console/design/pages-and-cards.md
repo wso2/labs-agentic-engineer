@@ -117,15 +117,20 @@ ending re-reads the issue list and that issue's detail, so a comment, an edit
 or a close shows at once. A closed issue has none: closing an issue removes its
 thread, the card says **This issue is closed.** and the panel draws no sheet.
 An open issue the coding agent has not taken on can be handed to it from the
-card. Taken on is what aep-api's adoption leaves: the issue armed (`aep`) and
-in a version's milestone (`milestoneNumber` on the issue list), so it holds
-across a reload. **Hand to the coding agent** opens a picker of the design's
-components (`design/dependencies`, one entry per component; no design, no
-components), **Hand it over** calls `promote-from-issue` with the one picked,
-and the card says **Handed to the coding agent.** with its task log in place;
-a 409 (no deployed version, the issue closed, a kind the coding agent does not
-take on) shows the server's words in the picker. The card offers no button for
-the kinds it can tell the platform works another way (validation, provision,
+card. Taken on is what aep-api's adoption leaves: the issue armed (`aep`),
+not halted (`aep:halted`; a halted issue can be handed over again, which
+clears the halt), and in a version's milestone (`milestoneNumber` on the
+issue list), so it holds across a reload. **Hand to the coding agent** opens a
+picker of the design's components (`design/dependencies`, one entry per
+component; no design, no components), **Hand it over** calls
+`promote-from-issue` with the one picked, and the card says **Handed to the
+coding agent.** until the issue list reads it taken on; from then the card
+says which version works it — the version ledger's entry for the issue's
+milestone, linked to its Build card, where the coding agent's log is (the
+issue's own task log is empty: a coding run's log is the build's). A 409 (no
+deployed version, the issue closed, a kind the coding agent does not take on)
+shows the server's words in the picker. The card offers no button for the
+kinds it can tell the platform works another way (validation, provision,
 development, a configuration-only incident).
 Whether it is open is the issue list's word, or the server's 409
 `issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which

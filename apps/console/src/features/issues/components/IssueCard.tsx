@@ -17,10 +17,11 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { Alert, Box, Button, Skeleton, Typography } from "@wso2/oxygen-ui";
+import { createLink } from "@tanstack/react-router";
+import { Alert, Box, Button, Link, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { stamp } from "../../../lib/stamp";
-import { TaskLog } from "../../builds/components/TaskLog";
+import { useVersionLedger } from "../../builds/api/runs";
 import { statusLine } from "../../builds/model/taskRow";
 import { useIssueThreadState } from "../../agent-chat/useIssueThread";
 import { CardOverlay } from "../../projects/components/CardOverlay";
@@ -41,15 +42,39 @@ import { ORIGIN_LABEL } from "./IssuesPage";
 
 // An Issue card, over the Issues Page: the issue's text, who opened it, its
 // newest status line, why it needs a person, and, once the coding agent has
-// taken it on, the agent's log on it (the same log the Build card's task row
-// shows). An open issue has an agent of its own, whose chat the chat panel
+// taken it on, which version's build is working it (the coding agent's log is
+// that build's, on its Build card). An open issue has an agent of its own, whose chat the chat panel
 // draws beside the card; a closed one has none, and the card says it is
 // closed (the issue list's word, or the server's once its chat was removed).
 //
 // An open issue the coding agent has not taken on (it is not armed in a
 // version's milestone) can be handed to it from here, unless it is of a kind
 // the platform works another way: the person picks the design's component it
-// is about, and once aep-api has it the card says so and its log takes over.
+// is about, and once aep-api has it the card says so; once the issue list
+// reads it taken on, the card points to the version working it.
+
+// The router's typed `to`/`params` over the theme's link (as the rail does).
+const RouterLink = createLink(Link);
+
+/**
+ * Where the coding agent works an issue it took on: the build of the version
+ * whose milestone the issue is in, on the version ledger. Without a ledger
+ * entry for that milestone (not read yet, or none), the sentence names none.
+ */
+function WorkingVersion({ projectName, milestoneNumber }: { projectName: string; milestoneNumber: number }) {
+  const ledger = useVersionLedger(projectName);
+  const version = ledger.data?.find((b) => b.milestoneNumber === milestoneNumber)?.tag;
+  if (!version) return <Typography variant="body2">The coding agent is working on it.</Typography>;
+  return (
+    <Typography variant="body2">
+      The coding agent works it in version{" "}
+      <RouterLink to="/projects/$projectName/builds/$version" params={{ projectName, version }}>
+        {version}
+      </RouterLink>
+      .
+    </Typography>
+  );
+}
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -100,8 +125,8 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const newest = detail.data?.comments?.at(-1);
   const line = detail.data ? statusLine(detail.data) : null;
   const text = issueText(issue.Body);
-  const tookOn = codingAgentTookOn(issue) || handOff.isSuccess;
-  const canHand = !tookOn && !closed && canHandToCodingAgent(issue);
+  const tookOn = codingAgentTookOn(issue);
+  const canHand = !tookOn && !handOff.isSuccess && !closed && canHandToCodingAgent(issue);
   // Closed by the server's word while the list still lags: the header says closed too.
   const stateLabel = issueStateLabel(closed && issue.State !== "closed" ? { State: "closed" } : issue);
 
@@ -183,11 +208,9 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
           </Typography>
         )}
       </Part>
-      {tookOn && (
-        <Part title="The coding agent's log">
-          <Box sx={{ border: 1, borderColor: "divider", borderRadius: 2, overflow: "hidden" }}>
-            <TaskLog projectName={projectName} issueNumber={issueNumber} />
-          </Box>
+      {tookOn && issue.milestoneNumber && (
+        <Part title="The coding agent">
+          <WorkingVersion projectName={projectName} milestoneNumber={issue.milestoneNumber} />
         </Part>
       )}
     </Box>

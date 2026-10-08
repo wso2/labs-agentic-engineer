@@ -25,7 +25,6 @@ import { mockIssueUrl, type FiledIssue } from "../fixtures/issuesAgent";
 type IssueInfo = components["schemas"]["IssueInfo"];
 type TaskDetail = components["schemas"]["TaskDetail"];
 type RcaAgentReportList = components["schemas"]["RcaAgentReportList"];
-type TimelineEvent = components["schemas"]["TimelineEvent"];
 
 // Issues and Alerts in mock mode: Acme Expenses has one of each kind the
 // Issues Page and the Dashboard tell apart (an escalated incident, a fix to
@@ -125,18 +124,6 @@ const COMMENTS: Record<number, NonNullable<TaskDetail["comments"]>> = {
     },
   ],
 };
-
-/** A settled task's log: a few of the coding agent's lines, then the end. */
-function taskLog(): string {
-  const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
-  const lines: TimelineEvent[] = [
-    { executionId: "e1", executionKind: "coding", kind: "log", schemaVersion: 1, seq: 1, ts: at(50), message: "Reading the incident and the upload handler" },
-    { executionId: "e1", executionKind: "coding", kind: "log", schemaVersion: 1, seq: 2, ts: at(46), message: "Raising the request body limit to 10 MB" },
-    { executionId: "e1", executionKind: "coding", kind: "log", schemaVersion: 1, seq: 3, ts: at(41), message: "Opened a pull request" },
-  ];
-  const frames = lines.map((line) => `data: ${JSON.stringify({ type: "line", line })}\n\n`);
-  return [...frames, "data: [DONE]\n\n"].join("");
-}
 
 /** An issue the Issues agent filed: the issue, and when the turn that filed it ends and the list may show it. */
 interface FiledRecord {
@@ -312,7 +299,7 @@ function adoptionRefusal(projectName: string, issue: IssueInfo): string | null {
   const kind = KIND_PRECEDENCE.find((k) => labels.includes(k));
   const configOnly = labels.some((l) => l.toLowerCase().startsWith("dedupe:sre-config-"));
   if (configOnly || kind === "provision" || kind === "validation" || kind === "development") {
-    return "This issue is not one the coding agent takes on: the platform works this kind of issue another way.";
+    return "The coding agent doesn't take on this kind of issue.";
   }
   if (!deployedVersion(projectName)) return "Deploy a version first: the coding agent works in a deployed version's milestone.";
   return null;
@@ -355,10 +342,6 @@ export const issuesHandlers = [
     // No body, as aep-api answers it: a client reads an empty 202 by its length.
     return new HttpResponse(null, { status: 202, headers: { "Content-Length": "0" } });
   }),
-
-  http.get("*/api/v1/projects/:projectName/tasks/:issueNumber/log", () =>
-    new HttpResponse(taskLog(), { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } }),
-  ),
 
   http.get("*/api/v1/rca-agent/reports", () => HttpResponse.json<RcaAgentReportList>({ items: [] })),
 ];

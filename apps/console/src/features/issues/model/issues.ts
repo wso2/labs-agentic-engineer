@@ -69,8 +69,16 @@ export function attentionNeedsPerson(reason: AttentionReason): boolean {
 /** The label that arms an issue for the coding agent (aep-api delivery/labels.go, the arming switch). */
 const ARMED = "aep";
 
+/** The label a failed run leaves on work it gave up on (delivery/labels.go LabelHalted); a hand-off clears it. */
+const HALTED = "aep:halted";
+
 /** The issue kinds, in aep-api's precedence when an issue carries more than one (delivery/labels.go KindOf). */
 const KIND_PRECEDENCE = ["provision", "validation", "conflict", "bug", "development"] as const;
+
+/** The issue's labels as aep-api compares them: case-insensitively (delivery.HasLabel). */
+function labelsOf(issue: Pick<IssueInfo, "Labels">): string[] {
+  return (issue.Labels ?? []).map((l) => l.toLowerCase());
+}
 
 /** The issue's kind, from its labels, or null when it carries none. */
 function kindOf(labels: readonly string[]): (typeof KIND_PRECEDENCE)[number] | null {
@@ -83,12 +91,13 @@ const NOT_CODING = new Set<string>(["validation", "provision"]);
 /**
  * Whether the coding agent has taken the issue on: it is armed and in a
  * version's milestone, which is where handing it over puts it (aep-api's
- * adoption), and it is of a kind the coding agent works.
+ * adoption), it is of a kind the coding agent works, and no run has given up
+ * on it (halted, it waits to be handed over again).
  */
 export function codingAgentTookOn(issue: Pick<IssueInfo, "Labels" | "milestoneNumber">): boolean {
-  const labels = issue.Labels ?? [];
+  const labels = labelsOf(issue);
   const kind = kindOf(labels);
-  return labels.includes(ARMED) && !!issue.milestoneNumber && !(kind && NOT_CODING.has(kind));
+  return labels.includes(ARMED) && !labels.includes(HALTED) && !!issue.milestoneNumber && !(kind && NOT_CODING.has(kind));
 }
 
 /**
@@ -99,11 +108,11 @@ export function codingAgentTookOn(issue: Pick<IssueInfo, "Labels" | "milestoneNu
  * anyway; the card does not offer them.
  */
 export function canHandToCodingAgent(issue: Pick<IssueInfo, "Labels" | "State">): boolean {
-  const labels = issue.Labels ?? [];
+  const labels = labelsOf(issue);
   const kind = kindOf(labels);
   if (issue.State === "closed") return false;
   if (kind === "validation" || kind === "provision" || kind === "development") return false;
-  return !labels.some((l) => l.toLowerCase().startsWith("dedupe:sre-config-"));
+  return !labels.some((l) => l.startsWith("dedupe:sre-config-"));
 }
 
 export type OriginKind = "incident" | "platform" | "person";

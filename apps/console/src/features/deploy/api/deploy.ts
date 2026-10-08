@@ -165,13 +165,14 @@ export function useReadiness(projectName: string, environment: string) {
 
 /**
  * Every component of the design, with its dependencies and their config keys.
- * A project with no design yet has no components: aep-api answers that 404.
+ * A project with no design yet has no components: aep-api answers that 404
+ * (`not_found`, "design not found").
  */
 export async function designDependencies(projectName: string) {
   const { data, error, response } = await client.GET("/projects/{projectName}/design/dependencies", {
     params: { path: { projectName } },
   });
-  if (response.status === 404) return [];
+  if (response.status === 404 && error?.code === "not_found") return [];
   if (error) throw new Error(apiErrorMessage(error, "Couldn't load the design's dependencies"));
   return data ?? [];
 }

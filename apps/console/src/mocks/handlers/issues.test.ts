@@ -85,9 +85,7 @@ describe("promote-from-issue in mock mode", () => {
 
   it("refuses an issue the coding agent does not take on", async () => {
     deployed = { version: "v2", milestoneNumber: 2 };
-    expect(await refusal(await promote(3))).toBe(
-      "This issue is not one the coding agent takes on: the platform works this kind of issue another way.",
-    );
+    expect(await refusal(await promote(3))).toBe("The coding agent doesn't take on this kind of issue.");
   });
 
   it("serves no coding run on the task: aep-api mints none", async () => {

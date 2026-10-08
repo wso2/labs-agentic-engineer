@@ -42,6 +42,11 @@ describe("designDependencies", () => {
     await expect(designDependencies("shop")).resolves.toEqual([]);
   });
 
+  it("fails on a 404 that is not the design's absence", async () => {
+    get.mockResolvedValueOnce({ data: undefined, error: { code: "route_not_found", message: "no such route" }, response: { status: 404 } });
+    await expect(designDependencies("shop")).rejects.toThrow("no such route");
+  });
+
   it("fails on any other refusal", async () => {
     get.mockResolvedValueOnce({ data: undefined, error: { code: "internal", message: "failed to read design dependencies" }, response: { status: 500 } });
     await expect(designDependencies("shop")).rejects.toThrow("failed to read design dependencies");
