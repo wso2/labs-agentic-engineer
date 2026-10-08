@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -104,10 +105,11 @@ type observabilityClient struct {
 }
 
 // NewClient creates a new observability client. baseURL is the observer's base
-// URL (e.g. https://observer.obs.dp.example.com).
+// URL (e.g. https://observer.obs.dp.example.com), with any path prefix it is
+// served under; a trailing slash is dropped so the join never reads `//api/…`.
 func NewClient(baseURL string) Client {
 	return &observabilityClient{
-		baseURL:    baseURL,
+		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }

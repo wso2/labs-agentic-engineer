@@ -96,6 +96,25 @@ func TestGetBuildLogs_UsesTheWorkflowScopeOnTheQueryEndpoint(t *testing.T) {
 	}
 }
 
+// OBSERVER_URL may carry a path prefix (Cloud's `…/wso2cloud-obs`), and an
+// operator may write it with a trailing slash. The join must not turn that
+// into `//api/…`, which the proxy's mux answers with a redirect or a 404.
+func TestQuery_ATrailingSlashOnTheBaseURLIsNotDoubled(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"logs": []interface{}{}, "total": 0})
+	}))
+	defer srv.Close()
+
+	if _, err := NewClient(srv.URL+"/wso2cloud-obs/").GetBuildLogs(context.Background(), "a", "p", "c", "b", time.Time{}); err != nil {
+		t.Fatalf("GetBuildLogs: %v", err)
+	}
+	if gotPath != "/wso2cloud-obs/api/v1/logs/query" {
+		t.Fatalf("path = %q, want /wso2cloud-obs/api/v1/logs/query", gotPath)
+	}
+}
+
 func TestGetBuildLogs_SinceNarrowsTheWindow(t *testing.T) {
 	// RELATIVE to now, deliberately. This was a fixed calendar date, and it
 	// worked until real time drifted more than defaultLookback past it — after
