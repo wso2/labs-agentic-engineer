@@ -116,8 +116,10 @@ and the exact window is the platform's to change.
 
 A coding or validation agent can wait for the cluster before its first line:
 no room (CPU, memory or a scheduling rule), an image that does not pull, a
-secret not there yet. The platform gives it a startup grace, then closes the
-cycle and fails the run `agent-start-failed`. The Build card and the
+secret not there yet, or, before any of that, the platform still applying its
+Job. The platform gives it a startup grace from when the Job exists (a longer
+cap while it does not), then closes the cycle and fails the run
+`agent-start-failed`. The Build card and the
 Validation card say both halves; `features/builds/model/agentStart.ts` owns
 the words.
 
@@ -125,6 +127,7 @@ the words.
 |---|---|
 | Waiting, the cluster has no room (`Unschedulable`) | warning · **Waiting for room in the cluster to start the agent** · *The cluster has no room for the agent right now (CPU, memory or a scheduling rule). If it has not started by 14:05, this run fails.* |
 | Waiting, any other cause | warning · **Waiting to start the agent** · the cause · the same deadline sentence |
+| Cause: the platform has not applied the agent's Job yet (`NotYetApplied`, never shown) | *The platform is still preparing the agent.* / after (`not_applied`): *The platform took longer than usual to prepare it.*, then *Retry in a few minutes.* and no *The cluster reported* sentence: the cause is the platform's own. Same voice as AE Studio's *taking longer than usual* |
 | Cause: image does not pull (`ImagePullBackOff`, `ErrImagePull`) | *The cluster cannot pull the agent's container image.* / after: *The cluster could not pull its container image.* |
 | Cause: secret or setting missing (`CreateContainerConfigError`) | *A secret or setting the agent needs is not ready yet.* / after: *A secret or setting it needed was not ready.* |
 | Cause the console has no words for | *The cluster reports the agent as waiting: `<reason>`.* / after: *The cluster reported `<reason>`.* |

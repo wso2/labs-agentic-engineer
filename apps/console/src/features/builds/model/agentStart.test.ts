@@ -19,7 +19,7 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../../../generated/aep-api";
 import { resetStamp } from "../../../lib/stamp";
-import { startupFailureCause, startupWaitNotice } from "./agentStart";
+import { agentStartFailedCopy, startupFailureCause, startupWaitNotice } from "./agentStart";
 
 type RunCycleView = components["schemas"]["RunCycleView"];
 
@@ -55,6 +55,18 @@ describe("startupWaitNotice — an agent the cluster has not started yet", () =>
     expect(n?.body).not.toContain(reason);
   });
 
+  // OpenChoreo has not applied the agent's Job yet: the platform's own wait,
+  // not a cluster reason, so it is never shown as one.
+  it("says the platform is still preparing the agent before its Job exists", () => {
+    const n = startupWaitNotice(waiting("NotYetApplied"), now);
+    expect(n?.title).toBe("Waiting to start the agent");
+    expect(n?.body).toBe(
+      `The platform is still preparing the agent. If it has not started by ${resetStamp(failsAt, now)}, this run fails.`,
+    );
+    expect(n?.body).not.toContain("NotYetApplied");
+    expect(n?.body).not.toContain("cluster");
+  });
+
   it("shows a reason it has no words for as the cluster gave it", () => {
     const n = startupWaitNotice(waiting("RunContainerError"), now);
     expect(n?.title).toBe("Waiting to start the agent");
@@ -80,6 +92,23 @@ describe("startupFailureCause — why an agent never started", () => {
       "A secret or setting it needed was not ready.",
     );
     expect(startupFailureCause("startup_failed:RunContainerError")).toBe("The cluster reported RunContainerError.");
+  });
+
+  // not_applied is the platform's verdict (the Job was never applied within
+  // the apply cap), not something the cluster reported.
+  it("says the platform took too long to prepare it, never that the cluster reported not_applied", () => {
+    expect(startupFailureCause("startup_failed:not_applied")).toBe("The platform took longer than usual to prepare it.");
+    const copy = agentStartFailedCopy(
+      { id: "c1", kind: "coding", attempts: 1, createdAt: "2026-10-06T13:00:00Z", agentReason: "startup_failed:not_applied" },
+      [],
+      "Retry",
+    );
+    expect(copy.title).toBe("The coding agent could not start");
+    expect(copy.body).toBe(
+      "The platform took longer than usual to prepare it. Nothing ran; no pull request was opened. Retry in a few minutes.",
+    );
+    expect(copy.body).not.toContain("not_applied");
+    expect(copy.body).not.toContain("cluster");
   });
 
   it("has nothing to say about another kind of stop", () => {

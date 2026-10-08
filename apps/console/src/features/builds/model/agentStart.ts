@@ -26,7 +26,10 @@ type RunCycleView = components["schemas"]["RunCycleView"];
  *
  * The platform sends the pod's own Kubernetes waiting reason, verbatim: on an
  * open cycle as `startupWait.reason`, and on a cycle the watcher closed inside
- * `agentReason` as `startup_failed:<reason>[: <message>]`. This module owns
+ * `agentReason` as `startup_failed:<reason>[: <message>]`. Before OpenChoreo
+ * has applied the agent's Job there is no pod to have a reason, and the
+ * platform sends its own instead: `NotYetApplied` while it waits, and
+ * `not_applied` when that outlasted its cap. This module owns
  * the plain words for the reasons the console knows, so the waiting notice,
  * the failure card and the run's reason line say one cause one way (lexicon,
  * *An agent that has not started*). A reason it has no words for is shown as
@@ -47,7 +50,20 @@ interface CauseWords {
   failed: string;
 }
 
+/**
+ * The platform's own reasons, not the cluster's: the agent's Job has not been
+ * applied yet. Said in the voice of AE Studio's slow start ("taking longer
+ * than usual"), and never as "the cluster reported".
+ */
+const PLATFORM_PREPARING: CauseWords = {
+  waiting: "The platform is still preparing the agent.",
+  failed: "The platform took longer than usual to prepare it.",
+};
+const NOT_APPLIED = "not_applied";
+
 const CAUSES: Record<string, CauseWords> = {
+  NotYetApplied: PLATFORM_PREPARING,
+  [NOT_APPLIED]: PLATFORM_PREPARING,
   [UNSCHEDULABLE]: {
     waiting: "The cluster has no room for the agent right now (CPU, memory or a scheduling rule).",
     failed: "The cluster had no room for it (CPU, memory or a scheduling rule).",
@@ -118,9 +134,11 @@ export function isRoomShortage(agentReason: string | undefined): boolean {
   return startupFailureReason(agentReason) === UNSCHEDULABLE;
 }
 
-/** What the cluster said, without the platform's `startup_failed:` prefix. */
+/** What the cluster said, without the platform's `startup_failed:` prefix;
+ *  nothing when the reason is the platform's own (`not_applied`). */
 export function clusterReport(agentReason: string | undefined): string | undefined {
   if (!agentReason?.startsWith(STARTUP_FAILED)) return undefined;
+  if (startupFailureReason(agentReason) === NOT_APPLIED) return undefined;
   return agentReason.slice(STARTUP_FAILED.length).trim() || undefined;
 }
 
@@ -168,7 +186,11 @@ export function agentStartFailedCopy(
   const validating = cycle?.kind === "validation";
   const cause = startupFailureCause(cycle?.agentReason);
   const notDone = validating ? "Nothing ran; the version was not validated." : noPullRequestSentence(earlier);
-  const when = isRoomShortage(cycle?.agentReason) ? "once the cluster has room" : "once that is fixed";
+  const when = isRoomShortage(cycle?.agentReason)
+    ? "once the cluster has room"
+    : startupFailureReason(cycle?.agentReason) === NOT_APPLIED
+      ? "in a few minutes"
+      : "once that is fixed";
   const reported = clusterReport(cycle?.agentReason);
   return {
     title: `The ${agentNoun(cycle)} could not start`,
