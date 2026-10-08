@@ -83,9 +83,10 @@ const ollama: LLMProjection = {
   },
 };
 
+// "active" is the only status the server writes (writeKeyTx).
 const subscription: SubscriptionProjection = {
   kind: "claude",
-  status: "connected",
+  status: "active",
   connectedAt: "2026-09-01T10:00:00Z",
 };
 
@@ -250,6 +251,32 @@ describe("AiAgentsCard on Anthropic's API", () => {
     type("New subscription token", "sk-ant-oat01-new-token-abcd");
     fireEvent.click(saveButton());
     expect(lastPatch()).toEqual({ agents: { subscription: { kind: "claude", token: "sk-ant-oat01-new-token-abcd" } } });
+  });
+
+  // Dispatch refuses a subscription that is not active, so the card says
+  // neither "bills your Claude plan" nor "uses the API key": the server's
+  // validation error, or its status, is the one line it shows.
+  it("an inactive subscription shows its validation error, not the uses-the-API-key warning", () => {
+    renderCard(
+      config({
+        agents: {
+          ...defaultAgents,
+          subscription: { ...subscription, status: "invalid", validationError: "The token was revoked." },
+        },
+      }),
+    );
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("The token was revoked.");
+    expect(screen.queryByText(/coding uses the API key/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
+  });
+
+  it("an inactive subscription without a validation error names its status", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, status: "invalid" } } }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This subscription is invalid: replace its token or remove it.",
+    );
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
   });
 
   it("does not warn about a recorded token", () => {

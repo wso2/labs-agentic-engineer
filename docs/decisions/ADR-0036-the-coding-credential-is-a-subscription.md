@@ -157,11 +157,16 @@ no `coding-agent-key` reference row: there is nothing to mount. Decision 5 now
 treats it as no subscription. `ResolveCodingCredential` returns the
 connection's key and logs a value-free WARN naming the org, so the run
 proceeds instead of failing every dispatch. A subscription row whose status is
-not `active` still fails the dispatch: its token was recorded and refused.
+not `active` (legacy data) still fails the dispatch. A failed read of the
+reference row is an error too, never the fallback: only a row that was never
+written bills the key.
 
 GET /config reads the subscription off the same fact, the credential row, so
-Settings and dispatch never disagree. Such a subscription is projected with
-`tokenMissing: true`, and the AI agents card shows it set with **Replace** and
+Settings and dispatch never disagree. Such a subscription, when active, is
+projected with `tokenMissing: true` (by the recorded-reference predicate
+dispatch reads), and the AI agents card shows it set with **Replace** and
 **Remove** and a warning that coding uses the API key until the token is saved
-again. Saving the token records the reference; Remove (`agents.subscription:
-null`) deletes the row. No backfill: the org acts on the warning.
+again. A non-active one is never flagged, since dispatch errors on it: the
+card shows its validation error, or its status, instead. Saving the token
+records the reference; Remove (`agents.subscription: null`) deletes the row.
+No backfill: the org acts on the warning.

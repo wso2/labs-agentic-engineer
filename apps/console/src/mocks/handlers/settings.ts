@@ -392,7 +392,7 @@ export const settingsHandlers = [
             ...agents,
             subscription: {
               kind: "claude",
-              status: "connected",
+              status: "active",
               connectedAt: now,
               lastValidatedAt: now,
             },

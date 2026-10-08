@@ -278,8 +278,8 @@ func (s *ModelConnectionService) connectionRow(ctx context.Context, ocOrgID stri
 // has no coding-agent-key reference row: saved before the token lived there)
 // cannot be mounted, so the run bills the connection's key, with a WARN; GET
 // /config shows that subscription flagged tokenMissing so the org can save the
-// token again. A subscription that is not active is still an error: its token
-// was recorded and refused, which the org has to fix.
+// token again. A failed read of that reference row is an error, never the
+// fallback. A non-active subscription (legacy data) still fails the dispatch.
 func (s *ModelConnectionService) ResolveCodingCredential(ctx context.Context, ocOrgID string, runtime orgconfig.AgentRuntime) (CodingCredential, error) {
 	row, err := s.conns.GetByOrg(ctx, ocOrgID)
 	if err != nil {
@@ -353,18 +353,30 @@ func (s *ModelConnectionService) recordedRef(ctx context.Context, ocOrgID string
 // vault, as opposed to a failed read.
 var errRefNotRecorded = errors.New("reference is not recorded")
 
-// keySet reports whether the org's default-key reference row exists: the
-// record that the connection's key was written to vault.
+// keySet reports whether the connection's key was recorded in vault (its
+// default-key reference), by the predicate the mount reads.
 func (s *ModelConnectionService) keySet(ctx context.Context, ocOrgID string) (bool, error) {
-	row, err := s.orgSecrets.Get(ctx, ocOrgID, OrgSecretDefaultKey)
-	return row != nil, err
+	return s.refRecorded(ctx, ocOrgID, OrgSecretDefaultKey)
 }
 
-// CodingKeySet reports whether the org's coding-agent-key reference row exists:
-// the record that the Claude subscription token was written to vault.
+// CodingKeySet reports whether the Claude subscription token was recorded in
+// vault (its coding-agent-key reference), by the predicate coding dispatch
+// reads: false exactly when dispatch falls back to the connection's key.
 func (s *ModelConnectionService) CodingKeySet(ctx context.Context, ocOrgID string) (bool, error) {
-	row, err := s.orgSecrets.Get(ctx, ocOrgID, OrgSecretCodingAgentKey)
-	return row != nil, err
+	return s.refRecorded(ctx, ocOrgID, OrgSecretCodingAgentKey)
+}
+
+// refRecorded is recordedRef as a yes/no: false only for errRefNotRecorded, a
+// failed read stays an error.
+func (s *ModelConnectionService) refRecorded(ctx context.Context, ocOrgID string, sec OrgSecret) (bool, error) {
+	_, err := s.recordedRef(ctx, ocOrgID, sec)
+	switch {
+	case errors.Is(err, errRefNotRecorded):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
 }
 
 // Projection is the org's connection as GET /config shows it, nil when it has

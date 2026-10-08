@@ -113,7 +113,8 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 	// dispatch keys on (ResolveCodingCredential). One whose coding-agent-key
 	// reference row is missing (saved before the token lived in vault) is
 	// still projected, flagged TokenMissing: dispatch bills the connection's
-	// key instead, so the card offers it for Replace or Remove.
+	// key instead, so the card offers it for Replace or Remove. Only an active
+	// one: dispatch errors on any other status before it reads the reference.
 	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
 	switch {
 	case isNotFound(err):
@@ -126,7 +127,7 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
 	}
 	out.Subscription = subscriptionProjectionFrom(sub)
-	out.Subscription.TokenMissing = !set
+	out.Subscription.TokenMissing = sub.Status == "active" && !set
 	return out, nil
 }
 

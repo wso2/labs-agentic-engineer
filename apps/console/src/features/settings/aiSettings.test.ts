@@ -268,7 +268,7 @@ describe("aiSettingsPatch", () => {
       config({
         agents: {
           ...config().agents,
-          subscription: { kind: "claude", status: "connected", connectedAt: "" },
+          subscription: { kind: "claude", status: "active", connectedAt: "" },
         },
       }),
     );

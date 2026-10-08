@@ -526,9 +526,10 @@ func legacySubscription(t *testing.T, c *cardDB) {
 }
 
 // GET /config and coding dispatch answer "does the org have a Claude
-// subscription" with the same predicate, the credential row: dispatch fails a
-// run on a subscription whose token was never recorded, so Settings must show
-// that subscription (to replace or remove), flagged tokenMissing.
+// subscription" with the same predicate, the credential row: dispatch bills
+// the connection's key for a subscription whose token was never recorded, so
+// Settings must show that subscription (to replace or remove), flagged
+// tokenMissing.
 func TestAgentSettings_SubscriptionWithoutItsReferenceRow_ProjectsTokenMissing_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
@@ -549,6 +550,31 @@ func TestAgentSettings_SubscriptionWithoutItsReferenceRow_ProjectsTokenMissing_D
 	}
 	if !got.Subscription.TokenMissing {
 		t.Fatalf("without its reference row: tokenMissing = false, want true (%+v)", got.Subscription)
+	}
+}
+
+// tokenMissing means "coding bills the connection's key", which holds only for
+// an active subscription: dispatch errors on a non-active one before it reads
+// the reference row, so such a row is projected with its status and without
+// the flag, recorded token or not.
+func TestAgentSettings_InactiveSubscriptionIsNotTokenMissing_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+	if err := c.db.Exec(`UPDATE org_anthropic_credentials SET status = 'invalid' WHERE oc_org_id = 'acme' AND role = ?`,
+		string(organization.AnthropicRoleCoding)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil {
+		t.Fatalf("an inactive subscription = %+v (%v), want projected", got.Subscription, err)
+	}
+	if got.Subscription.Status != "invalid" || got.Subscription.TokenMissing {
+		t.Fatalf("an inactive subscription = %+v, want status invalid and tokenMissing false", got.Subscription)
+	}
+	if cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode); err == nil {
+		t.Fatalf("dispatch on an inactive subscription resolved %+v, want an error", cred)
 	}
 }
 

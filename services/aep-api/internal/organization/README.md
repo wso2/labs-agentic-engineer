@@ -127,12 +127,13 @@ model-connection / idp services.*
   - Exactly one credential reaches a coding run. `ResolveCodingCredential(ctx, org, runtime)` is
     the single statement of which: the subscription only on `claude-code`, else the connection key.
     A subscription whose token was never recorded (credential row, no `coding-agent-key` row) counts
-    as none: the run bills the connection's key and logs a value-free WARN naming the org. One that
-    is not `active` is an error. It answers with a kind and the connection, never a variable name;
+    as none: the run bills the connection's key and logs a value-free WARN naming the org. A failed
+    read of that row, or a subscription that is not `active`, is an error. It answers with a kind and the connection, never a variable name;
     dispatch (`codingagent/model_env.go`) maps that to the runner's env.
   - GET /config's `agents.subscription` keys on the same credential row (`Effective`), so Settings
-    and dispatch answer "has a subscription" with one predicate. Without its `coding-agent-key` row
-    it is projected with `tokenMissing: true`; the card then shows it set, with Replace and Remove,
+    and dispatch answer "has a subscription" with one predicate. An active one without a recorded
+    `coding-agent-key` reference (`CodingKeySet`, the predicate dispatch reads) is projected with
+    `tokenMissing: true`; a non-active one never is, since dispatch errors on it; the card then shows it set, with Replace and Remove,
     and warns that coding uses the API key until the token is saved again. Remove
     (`agents.subscription: null`) deletes the row because the save judges by `creds.Holds`, the
     credential row too.

@@ -3099,8 +3099,8 @@ components:
             the connection's key. Only possible while the connection has
             `capabilities.claudeSubscription` and the runtime is `claude-code`.
             Present whenever the subscription exists, also when its token was
-            never recorded (`tokenMissing`): coding dispatch reads the same
-            fact.
+            never recorded (`tokenMissing`, set only on an active
+            subscription): coding dispatch reads the same fact.
           nullable: true
         updatedAt:
           format: date-time
@@ -3143,11 +3143,13 @@ components:
           type: string
         tokenMissing:
           description: >-
-            True when the token was never recorded in the vault (a
-            subscription saved before the vault held it). Coding then bills
-            the connection's API key until the token is saved again; removing
-            the subscription (`agents.subscription: null`) clears the flag.
-            Absent while the token is recorded.
+            True only for an active subscription whose token was never
+            recorded in the vault (saved before the vault held it). Coding
+            then bills the connection's API key until the token is saved
+            again; removing the subscription (`agents.subscription: null`)
+            clears the flag. Absent while the token is recorded, and on a
+            subscription that is not active (dispatch refuses it; its
+            `status` and `validationError` say why).
           type: boolean
       required:
       - kind

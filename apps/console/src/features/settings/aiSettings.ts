@@ -67,6 +67,12 @@ export const FORMAT_LABELS: Record<LLMFormat, { label: string; modelNote?: strin
  */
 export const SUBSCRIPTION_TOKEN_PREFIX = "sk-ant-oat";
 
+/**
+ * The only subscription status coding dispatch accepts; the server refuses a
+ * run on any other, so the card does not say who it bills.
+ */
+export const SUBSCRIPTION_ACTIVE = "active";
+
 /** What the server holds, in the card's terms. */
 export interface AiSettings {
   /** The org's model connection, key masked; null when it has none. */

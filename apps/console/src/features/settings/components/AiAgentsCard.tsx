@@ -33,6 +33,7 @@ import {
 import { Bot } from "@wso2/oxygen-ui-icons-react";
 import type { components } from "../../../generated/aep-api";
 import {
+  SUBSCRIPTION_ACTIVE,
   SUBSCRIPTION_TOKEN_PREFIX,
   formatRuns,
   formatsRunning,
@@ -356,9 +357,17 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
               Remove
             </Button>
           </CredentialField>
-          {/* A token never recorded in the vault: dispatch cannot mount it,
-              so coding bills the connection's key until it is replaced. */}
-          {stored.tokenMissing ? (
+          {/* A subscription that is not active: dispatch refuses it, so
+              coding bills neither the plan nor the key until it is replaced
+              or removed. A token never recorded in the vault (the server
+              flags only an active one): dispatch cannot mount it, so coding
+              bills the connection's key until it is replaced. */}
+          {stored.status !== SUBSCRIPTION_ACTIVE ? (
+            <Alert severity="warning">
+              {stored.validationError ??
+                `This subscription is ${stored.status}: replace its token or remove it.`}
+            </Alert>
+          ) : stored.tokenMissing ? (
             <Alert severity="warning">
               The Claude subscription token was never saved, so coding uses the
               API key. Replace the token to bill your Claude plan, or remove the
@@ -369,7 +378,7 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
               Coding bills your Claude plan. Other agents use the API key.
             </Typography>
           )}
-          {stored.validationError && (
+          {stored.status === SUBSCRIPTION_ACTIVE && stored.validationError && (
             <Alert severity="warning">{stored.validationError}</Alert>
           )}
         </>
