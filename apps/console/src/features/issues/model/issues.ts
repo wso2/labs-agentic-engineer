@@ -29,6 +29,7 @@ import type { components } from "../../../generated/aep-api";
 
 export type IssueInfo = components["schemas"]["IssueInfo"];
 type RcaAgentReport = components["schemas"]["RcaAgentReport"];
+type TaskDetail = components["schemas"]["TaskDetail"];
 export type AttentionReason = NonNullable<IssueInfo["attentionReason"]>;
 
 const ATTENTION: Record<AttentionReason, { label: string; why: string; needsPerson: boolean; rank: number }> = {
@@ -69,9 +70,19 @@ export function attentionNeedsPerson(reason: AttentionReason): boolean {
 /** The label that hands an issue to the coding agent (aep-api delivery/labels.go, the arming switch). */
 const ARMED = "aep";
 
-/** Whether the coding agent has taken the issue on: it carries the arming label. */
-export function codingAgentTookOn(issue: Pick<IssueInfo, "Labels">): boolean {
-  return (issue.Labels ?? []).includes(ARMED);
+/** The execution kind of a coding agent's run on a task (aep-api contracts/taskmeta KindCoding). */
+const CODING = "coding";
+
+/**
+ * Whether the coding agent has taken the issue on: it carries the arming
+ * label, or the coding agent has run on its task. Handing an issue over from
+ * its card adopts it without the label, so the run is what shows it.
+ */
+export function codingAgentTookOn(
+  issue: Pick<IssueInfo, "Labels">,
+  task?: Pick<TaskDetail, "executions">,
+): boolean {
+  return (issue.Labels ?? []).includes(ARMED) || Object.values(task?.executions ?? {}).some((e) => e.kind === CODING);
 }
 
 export type OriginKind = "incident" | "platform" | "person";

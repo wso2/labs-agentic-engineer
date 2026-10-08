@@ -116,6 +116,12 @@ n)`), drawn on its card as a sheet over the main chat, **<Project> â”” Issues â€
 ending re-reads the issue list and that issue's detail, so a comment, an edit
 or a close shows at once. A closed issue has none: closing an issue removes its
 thread, the card says **This issue is closed.** and the panel draws no sheet.
+An open issue the coding agent has not taken on (no `aep` label, no coding
+run on its task) can be handed to it from the card: **Hand to the coding
+agent** opens a picker of the design's components (`design/dependencies`, one
+entry per component), **Hand it over** calls `promote-from-issue` with the
+one picked, and the card says **Handed to the coding agent.** with its log in
+place; a 409 (no deployed version) shows the server's words in the picker.
 Whether it is open is the issue list's word, or the server's 409
 `issue_closed` on resolving or sending to its thread (`closedIssues.ts`, which
 stands until the list shows it closed too); when the issue in view turns from

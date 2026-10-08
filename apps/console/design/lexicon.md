@@ -84,6 +84,20 @@ each open issue, on its card.
 | **Issue #N was closed; its chat was removed.** | a line in the main chat, when the issue whose card is open turns out closed (its agent closed it, or it was closed on GitHub) | the issue's sheet went away with it; the line is the console's, never sent to the agent |
 | **This issue is closed. Its chat was removed.** | an issue chat or its Questions card, when the server refuses its thread as closed | as above, where the chat itself was asked for |
 
+## Issue card
+
+What an Issue card says about handing its issue to the coding agent.
+
+| Say | Where | Means |
+|---|---|---|
+| **Hand to the coding agent** | a button on an open issue's card, until the coding agent has taken it on (a closed issue has none) | opens the picker below; nothing is handed over yet |
+| **Which component is it about?** | the picker's question, over the design's components (one is chosen already when the design has only one) | the coding agent works in the component the person picks |
+| **Hand it over** · **Cancel** | the picker's buttons | Hand it over hands the issue to the coding agent with that component; Cancel puts the picker away |
+| **Handed to the coding agent.** | the card, once the platform has the issue | the coding agent's log takes over the card |
+| **Deploy a version first: the coding agent works in a deployed version's milestone.** | the picker, when the project has no deployed version (the platform's words, shown as they are, as is any other refusal) | there is nothing to hand it to yet |
+| **Couldn't hand it to the coding agent. Try again.** | the picker, for any other failure | nothing was handed over |
+| **The design has no components yet, so there is nothing to hand it to.** / **The design's components could not be read.** | the picker, in place of the components | nothing can be picked |
+
 ## The agent's questions
 
 | Say | Means | Not |

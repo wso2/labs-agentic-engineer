@@ -88,3 +88,8 @@ export function projectBuilds(projectName: string, now = Date.now()): ProjectBui
 export function addBuild(build: MockBuild): void {
   write([...read(), build]);
 }
+
+/** The newest version the mock has built: the deployed one, running in Development. */
+export function deployedVersion(projectName: string, now = Date.now()): string | null {
+  return projectBuilds(projectName, now).filter((b) => b.status === "built").at(-1)?.version ?? null;
+}

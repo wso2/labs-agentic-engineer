@@ -18,6 +18,7 @@
 
 import { http, HttpResponse } from "msw";
 import type { components } from "../../generated/aep-api";
+import { deployedVersion } from "../buildsState";
 import type { IssueChange } from "../fixtures/issueAgent";
 import { mockIssueUrl, type FiledIssue } from "../fixtures/issuesAgent";
 
@@ -31,7 +32,9 @@ type TimelineEvent = components["schemas"]["TimelineEvent"];
 // review, a verdict, a person's issue, the platform's planned work); the
 // other projects have none. No RCA reports, as on today's install. What an
 // issue's own agent changed (a comment, a new title, closing it) shows once
-// the turn that made the change has ended; a closed issue has no thread.
+// the turn that made the change has ended; a closed issue has no thread. An
+// issue handed to the coding agent from its card (refused, in aep-api's words,
+// until the mock has built a version) shows the coding agent's run on its task.
 
 const REPO = "https://github.com/acme/acme-expenses/issues";
 
@@ -243,6 +246,38 @@ function agentComments(projectName: string, number: number): NonNullable<TaskDet
     }));
 }
 
+const HANDED_KEY = "aep:mock:issue-handoffs";
+
+function readHanded(): Record<string, number[]> {
+  try {
+    const raw = sessionStorage.getItem(HANDED_KEY);
+    if (raw) return JSON.parse(raw) as Record<string, number[]>;
+  } catch {
+    // unreadable: start over
+  }
+  return {};
+}
+
+/** Record that the issue was handed to the coding agent. Kept in sessionStorage. */
+function handOver(projectName: string, number: number): void {
+  const all = readHanded();
+  all[projectName] = [...new Set([...(all[projectName] ?? []), number])];
+  try {
+    sessionStorage.setItem(HANDED_KEY, JSON.stringify(all));
+  } catch {
+    /* quota: non-fatal in mock mode */
+  }
+}
+
+/** The coding agent's run on a handed-over issue's task, as aep-api's task read keys it. */
+function codingRuns(projectName: string, number: number): TaskDetail["executions"] {
+  if (!(readHanded()[projectName] ?? []).includes(number)) return {};
+  const id = `coding-${number}`;
+  return { [id]: { id, kind: "coding", status: "running", createdAt: new Date().toISOString() } };
+}
+
+const NO_DEPLOYED_VERSION = "Deploy a version first: the coding agent works in a deployed version's milestone.";
+
 export const issuesHandlers = [
   http.get("*/api/v1/projects/:projectName/issues", ({ params }) => HttpResponse.json(issuesOf(String(params.projectName)))),
 
@@ -262,11 +297,23 @@ export const issuesHandlers = [
       hold: false,
       attention: null,
       dependsOn: null,
-      executions: {},
+      executions: codingRuns(projectName, number),
       executionHistory: [],
       lineage: {},
       ...(comments.length > 0 ? { comments } : {}),
     });
+  }),
+
+  http.post("*/api/v1/projects/:projectName/tasks/:issueNumber/promote-from-issue", ({ params }) => {
+    const number = Number(params.issueNumber);
+    const projectName = String(params.projectName);
+    const issue = issuesOf(projectName).find((i) => i.Number === number);
+    if (!issue) return HttpResponse.json({ code: "not_found", message: "task not found" }, { status: 404 });
+    if (issue.State !== "open") return HttpResponse.json({ code: "conflict", message: "issue is closed" }, { status: 409 });
+    if (!deployedVersion(projectName)) return HttpResponse.json({ code: "conflict", message: NO_DEPLOYED_VERSION }, { status: 409 });
+    handOver(projectName, number);
+    // No body, as aep-api answers it: a client reads an empty 202 by its length.
+    return new HttpResponse(null, { status: 202, headers: { "Content-Length": "0" } });
   }),
 
   http.get("*/api/v1/projects/:projectName/tasks/:issueNumber/log", () =>

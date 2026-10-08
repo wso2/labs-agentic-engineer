@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Alert, Box, Button, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { ExternalLink } from "@wso2/oxygen-ui-icons-react";
 import { stamp } from "../../../lib/stamp";
@@ -24,6 +24,7 @@ import { TaskLog } from "../../builds/components/TaskLog";
 import { statusLine } from "../../builds/model/taskRow";
 import { useIssueThreadState } from "../../agent-chat/useIssueThread";
 import { CardOverlay } from "../../projects/components/CardOverlay";
+import { useHandToCodingAgent } from "../api/handOff";
 import { useIssueDetail, useProjectIssues } from "../api/issues";
 import {
   attentionLabel,
@@ -34,6 +35,7 @@ import {
   issueStateLabel,
   issueText,
 } from "../model/issues";
+import { ComponentPicker } from "./ComponentPicker";
 import { ORIGIN_LABEL } from "./IssuesPage";
 
 // An Issue card, over the Issues Page: the issue's text, who opened it, its
@@ -43,9 +45,9 @@ import { ORIGIN_LABEL } from "./IssuesPage";
 // draws beside the card; a closed one has none, and the card says it is
 // closed (the issue list's word, or the server's once its chat was removed).
 //
-// Handing an issue to the coding agent has no operation a person can call
-// yet: today it is done on GitHub, by adding the `aep` label. The button is
-// shown, disabled, saying so.
+// An open issue the coding agent has not taken on can be handed to it from
+// here: the person picks the design's component it is about, and once aep-api
+// has it the card says so and its log takes over.
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -78,6 +80,8 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const detail = useIssueDetail(projectName, issueNumber);
   const issue = issues.data?.find((i) => i.Number === issueNumber);
   const closed = useIssueThreadState(projectName, issueNumber) === "closed";
+  const handOff = useHandToCodingAgent(projectName, issueNumber);
+  const [picking, setPicking] = useState(false);
 
   if (!issue) {
     if (issues.isPending || (issues.isError && detail.isPending)) return <Skeleton variant="rounded" height={200} />;
@@ -94,7 +98,8 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
   const newest = detail.data?.comments?.at(-1);
   const line = detail.data ? statusLine(detail.data) : null;
   const text = issueText(issue.Body);
-  const tookOn = codingAgentTookOn(issue);
+  const tookOn = codingAgentTookOn(issue, detail.data) || handOff.isSuccess;
+  const canHand = !tookOn && !closed;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5, maxWidth: "72ch" }}>
@@ -124,17 +129,23 @@ function IssueBody({ projectName, issueNumber }: { projectName: string; issueNum
         >
           Open on GitHub
         </Button>
-        {!tookOn && !closed && (
-          <>
-            <Button size="small" variant="contained" disabled>
-              Hand to the coding agent
-            </Button>
-            <Typography variant="caption" color="text.secondary">
-              Not available here yet. On GitHub, the <code>aep</code> label hands it over.
-            </Typography>
-          </>
+        {canHand && !picking && (
+          <Button size="small" variant="contained" onClick={() => setPicking(true)}>
+            Hand to the coding agent
+          </Button>
         )}
       </Box>
+      {canHand && picking && (
+        <ComponentPicker
+          projectName={projectName}
+          handOff={handOff}
+          onCancel={() => {
+            handOff.reset();
+            setPicking(false);
+          }}
+        />
+      )}
+      {handOff.isSuccess && <Alert severity="success">Handed to the coding agent.</Alert>}
       <Part title="Status">
         {detail.isPending ? (
           <Skeleton width="60%" />

@@ -77,6 +77,14 @@ describe("codingAgentTookOn", () => {
     expect(codingAgentTookOn(issue(1, { Labels: ["incident", "aep"] }))).toBe(true);
     expect(codingAgentTookOn(issue(1, { Labels: ["aep:halted"] }))).toBe(false);
   });
+
+  it("reads a coding run on the task, as handing it over from its card leaves no label", () => {
+    const run = (kind: string) => ({ executions: { e1: { id: "e1", kind, status: "running", createdAt: "2026-10-08T00:00:00Z" } } });
+    expect(codingAgentTookOn(issue(1), run("coding"))).toBe(true);
+    expect(codingAgentTookOn(issue(1), run("provision"))).toBe(false);
+    expect(codingAgentTookOn(issue(1), { executions: {} })).toBe(false);
+    expect(codingAgentTookOn(issue(1), undefined)).toBe(false);
+  });
 });
 
 describe("issueStateLabel", () => {
