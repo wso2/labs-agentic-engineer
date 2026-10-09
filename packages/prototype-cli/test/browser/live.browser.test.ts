@@ -175,7 +175,7 @@ describe("prototype preview — the live loop", () => {
     );
     await driver.waitFor(page, app.heading("Acme contacts"));
     expect(await driver.count(page, host.alert())).toBe(0);
-    expect(await driver.read(page, host.picker("Screen"), "value")).toBe("screen.contacts");
+    expect(await driver.read(page, host.address(), "text")).toBe("prototype://screen.contacts");
   });
 
   // Fix round: a file that cannot be read (here a directory) must not crash the preview; it shows findings, keeps the last good render and recovers.

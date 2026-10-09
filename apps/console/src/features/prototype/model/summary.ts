@@ -42,7 +42,7 @@ function clip(text: string): string {
  */
 export function feedbackSummary(feedback: PrototypeFeedback, manifest: PrototypeManifest | null): string {
   const n = feedback.requests.length;
-  const lines = [`Feedback on the ${manifest?.name ?? feedback.component} prototype (${n} ${n === 1 ? "request" : "requests"})`];
+  const lines = [`Feedback on the ${manifest?.name ?? feedback.component} prototype (${n} ${n === 1 ? "comment" : "comments"})`];
   feedback.requests.forEach((r, i) => {
     const screen = manifest ? nameOf(manifest.screens, r.screenId) : r.screenId;
     const role = manifest ? nameOf(manifest.roles, r.roleId) : r.roleId;

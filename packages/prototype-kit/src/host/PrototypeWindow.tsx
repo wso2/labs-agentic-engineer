@@ -25,7 +25,7 @@
  * React, no theme: the structure is inline, the look is CSS variables
  * (`--proto-window-*`, each with a neutral default) and the stable classes
  * `proto-window`, `-bar`, `-dots`, `-title`, `-address`, `-body` the host
- * styles as it likes.
+ * styles as it likes. A host's `tag` (its mode, say) shows at the bar's end.
  */
 
 import type { CSSProperties, ReactNode } from "react";
@@ -42,6 +42,8 @@ export interface PrototypeWindowProps {
   className?: string | undefined;
   /** Extra style on the window; set `--proto-window-*` here. */
   style?: CSSProperties | undefined;
+  /** Shown at the end of the bar: the host's own word on the review, such as its mode. */
+  tag?: ReactNode;
   /** Usually the `PrototypeFrame`. */
   children: ReactNode;
 }
@@ -57,7 +59,7 @@ export function prototypeAddress(manifest: PrototypeManifest, view: Pick<Prototy
 
 const v = (name: string, fallback: string) => `var(--proto-window-${name}, ${fallback})`;
 
-export function PrototypeWindow({ title, manifest, view, className, style, children }: PrototypeWindowProps) {
+export function PrototypeWindow({ title, manifest, view, className, style, tag, children }: PrototypeWindowProps) {
   return (
     <section
       aria-label={`${title} prototype`}
@@ -94,6 +96,7 @@ export function PrototypeWindow({ title, manifest, view, className, style, child
         >
           {prototypeAddress(manifest, view)}
         </span>
+        {tag}
       </div>
       <div className="proto-window-body" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {children}

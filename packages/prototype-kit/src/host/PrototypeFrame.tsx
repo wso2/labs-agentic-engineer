@@ -21,18 +21,23 @@
  * inside a sandboxed frame, never in the host's own page. The host tells the
  * frame what to run (`load`), what to draw (`view`) and when to start the
  * mock data over (`reset`); the frame answers with navigations, selection
- * toggles, the elements a screen draws, data snapshots, Escape and errors.
+ * toggles, clicks on empty space in Annotate, pin clicks, the elements a
+ * screen draws, where the elements a host anchors to are and how far the
+ * prototype is scrolled (`onGeometry`, for `useFrameAnchors`), data
+ * snapshots, Escape and errors. Through its `ref` a host puts keyboard focus
+ * back on an element (or a pin) when its own UI by it closes.
  * Every message's source and shape is checked. Until the app first draws,
  * a loading cover sits over the frame, so an early click is not silently
  * lost; a frame that neither draws nor reports an error within
  * `PROTOTYPE_START_TIMEOUT_MS` says it did not start. Plain React, no theme.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import type { DataSnapshot } from "../data.js";
 import type { PrototypeManifest } from "../manifest/types.js";
-import { parseFromFrameMessage, type FrameColorScheme, type FrameElement, type FrameView, type ToFrameMessage } from "./bridge.js";
+import { parseFromFrameMessage, type FrameBox, type FrameColorScheme, type FrameElement, type FramePoint, type FrameView, type ToFrameMessage } from "./bridge.js";
 import { prototypeFrameDocument } from "./frame-document.js";
+import type { FrameGeometry } from "./useFrameAnchors.js";
 
 export interface PrototypeFrameProps {
   /** The prototype's name, for the frame's accessible title (`<title> prototype app`). */
@@ -49,10 +54,19 @@ export interface PrototypeFrameProps {
   /** Bump to start the mock data from the seed again. */
   resetToken?: number | undefined;
   onNavigate: (screenId: string) => void;
-  onToggle: (elementKey: string) => void;
+  /** A click in Annotate on an element; `additive` when it held Shift (add to the selection rather than start a new one). */
+  onToggle: (elementKey: string, additive: boolean) => void;
+  /** A pin was clicked, in either mode: its element and the queued comments' numbers it shows (`[]`: the element's draft pin). */
+  onPin?: ((elementKey: string, requests: number[]) => void) | undefined;
+  /** A click in Annotate on empty space, on no element: a whole-screen comment at `at`, the spot of the prototype's document (its pin is drawn there). */
+  onScreenClick?: ((at: FramePoint) => void) | undefined;
+  /** A whole-screen comment's pin was clicked, in either mode: the queued comment's number it shows (`[]`: the screen's hollow pin). */
+  onScreenPin?: ((requests: number[]) => void) | undefined;
   onEscape: () => void;
   onElements: (screenId: string, elements: FrameElement[]) => void;
   onData?: ((data: DataSnapshot) => void) | undefined;
+  /** Where the toggled, selected and pinned elements are drawn, whenever that changes; give it `useFrameAnchors().onGeometry`. */
+  onGeometry?: ((geometry: FrameGeometry) => void) | undefined;
   /**
    * What covers the frame until the prototype first draws (or fails): the
    * runtime is large and takes a moment to start, and a click before then
@@ -61,6 +75,18 @@ export interface PrototypeFrameProps {
   loading?: ReactNode;
   /** The host's resolved colour scheme, for the theme to draw the prototype in; the system's when absent. */
   colorScheme?: FrameColorScheme | undefined;
+  ref?: Ref<PrototypeFrameHandle> | undefined;
+}
+
+/** What a host can ask of the running frame. */
+export interface PrototypeFrameHandle {
+  /**
+   * Move keyboard focus into the frame, onto the element `key`: onto its pin
+   * for `requests` when given (`[]`: its draft pin), as `onPin` named it.
+   */
+  focusElement: (key: string, requests?: readonly number[]) => void;
+  /** Move keyboard focus into the frame, onto the whole-screen comment's pin for `requests` (`[]`: the screen's hollow pin), as `onScreenPin` named it. */
+  focusScreenPin: (requests: readonly number[]) => void;
 }
 
 /** How long the frame may take to draw its app (or report why not) before the host stops waiting. */
@@ -88,6 +114,14 @@ export function PrototypeFrame(props: PrototypeFrameProps) {
   // The latest props, for the one message listener and the effects below.
   const latest = useRef(props);
   latest.current = props;
+  // The boxes and scroll the frame last reported: its geometry replaces them, a toggle adds the clicked element's box at once, a screen click says the scroll.
+  const geometry = useRef<{ boxes: Readonly<Record<string, FrameBox>>; scroll: FramePoint }>({ boxes: {}, scroll: { x: 0, y: 0 } });
+  const report = (next: Partial<FrameGeometry>) => {
+    geometry.current = { boxes: next.boxes ?? geometry.current.boxes, scroll: next.scroll ?? geometry.current.scroll };
+    if (frame.current) latest.current.onGeometry?.({ frame: frame.current, ...geometry.current });
+  };
+  /** A spot the frame named in its viewport (`point`) and its document (`at`): how far the document is scrolled. */
+  const scrolledBy = (point: FramePoint, at: FramePoint): FramePoint => ({ x: at.x - point.x, y: at.y - point.y });
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -103,12 +137,30 @@ export function PrototypeFrame(props: PrototypeFrameProps) {
           p.onNavigate(message.screenId);
           break;
         case "proto:toggle":
-          p.onToggle(message.elementKey);
+          if (message.box) report({ boxes: { ...geometry.current.boxes, [message.elementKey]: message.box } });
+          p.onToggle(message.elementKey, message.additive === true);
+          break;
+        case "proto:pin":
+          report({ boxes: { ...geometry.current.boxes, [message.key]: message.box } });
+          p.onPin?.(message.key, message.requests);
+          break;
+        case "proto:screen-click":
+          report({ scroll: scrolledBy(message.point, message.at) });
+          p.onScreenClick?.(message.at);
+          break;
+        case "proto:screen-pin":
+          report({ scroll: scrolledBy(message.point, message.at) });
+          p.onScreenPin?.(message.requests);
+          break;
+        case "proto:geometry":
+          report({ boxes: message.boxes, scroll: message.scroll ?? { x: 0, y: 0 } });
           break;
         case "proto:escape":
           p.onEscape();
           break;
         case "proto:rendered":
+          // A report of an earlier version (one the frame drew before it loaded this one) is not what shows.
+          if (message.version !== undefined && message.version !== p.version) break;
           setProgress((s) => ({ ...s, settled: true }));
           p.onElements(message.screenId, message.elements);
           break;
@@ -130,6 +182,21 @@ export function PrototypeFrame(props: PrototypeFrameProps) {
     frame.current?.contentWindow?.postMessage(message, "*");
   };
 
+  useImperativeHandle(
+    props.ref,
+    () => ({
+      focusElement: (key, requests) => {
+        frame.current?.focus();
+        post({ type: "proto:focus", key, ...(requests !== undefined ? { requests: [...requests] } : {}) });
+      },
+      focusScreenPin: (requests) => {
+        frame.current?.focus();
+        post({ type: "proto:focus-screen-pin", requests: [...requests] });
+      },
+    }),
+    [],
+  );
+
   // (Re)load the app whenever the frame becomes ready (again) and whenever the prototype changes.
   const loadedVersion = useRef<string | null>(null);
   useEffect(() => {
@@ -137,7 +204,7 @@ export function PrototypeFrame(props: PrototypeFrameProps) {
     const p = latest.current;
     setError(null);
     loadedVersion.current = version;
-    post({ type: "proto:load", source: p.source, manifest: p.manifest, view, data: p.initialData });
+    post({ type: "proto:load", source: p.source, manifest: p.manifest, view, data: p.initialData, version });
   }, [readies, version]);
 
   // A frame that neither draws nor says why within the bound stops being waited for, visibly.

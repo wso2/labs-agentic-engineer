@@ -17,9 +17,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { MAX_FEEDBACK_REQUESTS, requestFor, type FeedbackRequest } from "@wso2/prototype-kit/feedback";
+import { EMPTY_FEEDBACK_QUEUE, enqueue, keepDraft, requestFor, type FeedbackRequest } from "@wso2/prototype-kit/feedback";
 import { initialPrototypeView, reducePrototypeView, type PrototypeManifest } from "@wso2/prototype-kit/host";
-import { dequeue, enqueue, feedbackBatch } from "./feedback";
+import { feedbackBatch, sent } from "./feedback";
 
 const manifest: PrototypeManifest = {
   schemaVersion: 3,
@@ -59,28 +59,23 @@ describe("a request on the review", () => {
   });
 });
 
-describe("the queue", () => {
-  it("keeps the revision its first request was made on", () => {
-    let queue = enqueue(null, "a".repeat(64), request("screen.claims", []));
-    queue = enqueue(queue, "b".repeat(64), request("screen.claim", []));
-    expect(queue.hash).toBe("a".repeat(64));
-    expect(queue.requests).toHaveLength(2);
+describe("the batch Send makes", () => {
+  const hash = "c".repeat(64);
+
+  it("is the queued comments, on their revision, as the component's feedback", () => {
+    const queue = enqueue(EMPTY_FEEDBACK_QUEUE, hash, request("screen.claim", ["btn.approve"]));
+    expect(feedbackBatch("expense-web", queue)).toEqual({ prototypeHash: hash, component: "expense-web", requests: [request("screen.claim", ["btn.approve"])] });
   });
 
-  it("takes no more than the kit's limit", () => {
-    let queue = enqueue(null, "a".repeat(64), request("screen.claims", []));
-    for (let i = 1; i < MAX_FEEDBACK_REQUESTS + 5; i++) queue = enqueue(queue, "a".repeat(64), request("screen.claims", []));
-    expect(queue.requests).toHaveLength(MAX_FEEDBACK_REQUESTS);
+  it("leaves the drafts out, and is nothing while only drafts are kept", () => {
+    const drafted = keepDraft(EMPTY_FEEDBACK_QUEUE, request("screen.claims", ["btn.reject"], "Half a thought"));
+    expect(feedbackBatch("expense-web", drafted)).toBeNull();
+    expect(feedbackBatch("expense-web", enqueue(drafted, hash, request("screen.claim", [])))?.requests).toEqual([request("screen.claim", [])]);
   });
 
-  it("drops a request, and is gone with its last one", () => {
-    const queue = enqueue(enqueue(null, "a".repeat(64), request("screen.claims", [], "1")), "a".repeat(64), request("screen.claim", [], "2"));
-    expect(dequeue(queue, 0)?.requests.map((r) => r.text)).toEqual(["2"]);
-    expect(dequeue(dequeue(queue, 0)!, 0)).toBeNull();
-  });
-
-  it("is sent whole as the component's feedback batch", () => {
-    const queue = enqueue(null, "c".repeat(64), request("screen.claim", ["btn.approve"]));
-    expect(feedbackBatch("expense-web", queue)).toEqual({ prototypeHash: "c".repeat(64), component: "expense-web", requests: queue.requests });
+  it("empties the queue once sent, keeping the drafts", () => {
+    const draft = request("screen.claims", ["btn.reject"], "Half a thought");
+    const queue = enqueue(keepDraft(EMPTY_FEEDBACK_QUEUE, draft), hash, request("screen.claim", []));
+    expect(sent(queue)).toEqual({ ...EMPTY_FEEDBACK_QUEUE, drafts: [draft] });
   });
 });

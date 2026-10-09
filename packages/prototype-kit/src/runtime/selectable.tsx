@@ -28,7 +28,11 @@
  *
  *  - `SelectableBox` wraps a component's themed output.
  *  - `selectableRootProps` are spread by a theme on an element that cannot be
- *    wrapped without breaking its parent's markup (a table row, a tab).
+ *    wrapped without breaking its parent's markup (a table row, a tab); its
+ *    pins are drawn over it (`RootPins`).
+ *
+ * A box draws its own pins (`Pins`): the queued comments on it and its draft,
+ * in both modes, each a button that opens its comment.
  *
  * Annotate mechanics: the scene takes no pointer events; a selectable takes
  * them back and its content does not, so a click lands on the innermost
@@ -39,6 +43,7 @@
 
 import type { KeyboardEvent, MouseEvent, ReactNode } from "react";
 import { useKit, type KitContextValue } from "./context.js";
+import { Pins, hasPins } from "./pins.js";
 
 const EXCERPT = 32;
 
@@ -67,7 +72,6 @@ export interface SelectableRootProps {
   "data-proto-to"?: string | undefined;
   "data-proto-annotating"?: "" | undefined;
   "data-proto-selected"?: "" | undefined;
-  "data-proto-pins"?: string | undefined;
   role?: "button" | undefined;
   tabIndex?: number | undefined;
   "aria-pressed"?: boolean | undefined;
@@ -78,10 +82,6 @@ export interface SelectableRootProps {
 function insideNestedRoot(e: MouseEvent): boolean {
   const nearest = e.target instanceof Element ? e.target.closest("[data-proto-annotating]") : null;
   return nearest !== null && nearest !== e.currentTarget;
-}
-
-function pinsOf(ctx: KitContextValue, key: string): readonly number[] {
-  return ctx.view.mode === "annotate" ? (ctx.view.pins[key] ?? []) : [];
 }
 
 /**
@@ -99,13 +99,13 @@ function selectHandlers(ctx: KitContextValue, key: string, claims: "own-target" 
       if (claims === "any-inside" && insideNestedRoot(e)) return;
       e.stopPropagation();
       e.preventDefault();
-      ctx.toggle(key);
+      ctx.toggle(key, e.shiftKey);
     },
     onKeyDown: (e: KeyboardEvent) => {
       if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
       e.preventDefault();
       e.stopPropagation();
-      ctx.toggle(key);
+      ctx.toggle(key, e.shiftKey);
     },
   };
 }
@@ -119,13 +119,11 @@ export function selectableRootProps(ctx: KitContextValue, key: string, label: st
     ...(to !== undefined ? { "data-proto-to": to } : {}),
   };
   if (ctx.view.mode !== "annotate") return base;
-  const pins = pinsOf(ctx, key);
   return {
     ...base,
     ...selectHandlers(ctx, key, "any-inside"),
     "data-proto-annotating": "",
     ...(ctx.view.selectedKeys.includes(key) ? { "data-proto-selected": "" } : {}),
-    ...(pins.length > 0 ? { "data-proto-pins": pins.join(", ") } : {}),
   };
 }
 
@@ -140,18 +138,15 @@ export interface SelectableBoxProps {
   children: ReactNode;
 }
 
-/** A box that carries an element's id and makes it selectable in Annotate: outline, label chip and request pins. */
+/** A box that carries an element's id and makes it selectable in Annotate: outline, label chip and comment pins. */
 export function SelectableBox({ id, label, inline = false, container = false, to, children }: SelectableBoxProps) {
   const ctx = useKit();
   const annotating = ctx.view.mode === "annotate";
   const selected = annotating && ctx.view.selectedKeys.includes(id);
   const Tag = inline ? "span" : "div";
-  const pins = pinsOf(ctx, id).map((n) => (
-    <span key={n} className="proto-chip proto-pin" aria-hidden data-testid="request-pin">
-      {n}
-    </span>
-  ));
-  const pinsLeft = pins.length > 0 && container;
+  const pinned = hasPins(ctx, id);
+  const pins = pinned && <Pins elementKey={id} />;
+  const pinsLeft = pinned && container;
   return (
     <Tag
       className={inline ? "proto-selectable proto-inline" : "proto-selectable"}
@@ -171,7 +166,7 @@ export function SelectableBox({ id, label, inline = false, container = false, to
           )}
         </span>
       )}
-      {pins.length > 0 && !pinsLeft && <span className="proto-corner proto-corner-right">{pins}</span>}
+      {pinned && !pinsLeft && <span className="proto-corner proto-corner-right">{pins}</span>}
       <Tag className="proto-content">{children}</Tag>
     </Tag>
   );

@@ -24,14 +24,17 @@
  * data store. Remount it (a new `key`) to start from the seed again.
  */
 
-import { Component, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PrototypeApp } from "../app.js";
 import type { DataSnapshot } from "../data.js";
+import type { FramePoint } from "../host/bridge.js";
 import type { PrototypeManifest } from "../manifest/types.js";
 import type { PrototypeTheme, ThemeRegistry } from "../theme/contract.js";
 import { ThemeContext } from "../theme/context.js";
 import { KitContext, type KitContextValue, type KitView } from "./context.js";
 import { KIT_CSS } from "./kit-css.js";
+import { RootPins, ScreenPins } from "./pins.js";
+import { watchScreenClicks } from "./screen-click.js";
 import { createDataStore } from "./store.js";
 
 export interface KitRootProps {
@@ -43,8 +46,14 @@ export interface KitRootProps {
   initialData?: DataSnapshot | undefined;
   /** A press asked for another screen (Preview only). */
   onNavigate: (screenId: string) => void;
-  /** A click selected or deselected an element (Annotate only). */
-  onToggle: (elementKey: string) => void;
+  /** A click selected or deselected an element (Annotate only); `additive` when it held Shift. */
+  onToggle: (elementKey: string, additive: boolean) => void;
+  /** A pin was clicked (either mode): its element and the queued comments' numbers it shows, none for a draft pin. */
+  onPin?: ((elementKey: string, requests: number[]) => void) | undefined;
+  /** A click on empty space (Annotate only): where, in the viewport (`point`) and the scrolled document (`at`). */
+  onScreenClick?: ((point: FramePoint, at: FramePoint) => void) | undefined;
+  /** A whole-screen comment's pin was clicked (either mode): its comment's number (none: the hollow pin), and where it is. */
+  onScreenPin?: ((requests: number[], point: FramePoint, at: FramePoint) => void) | undefined;
   /** The mock data changed. */
   onData?: ((snapshot: DataSnapshot) => void) | undefined;
   /** A screen failed to render, or the app asked for a screen that does not exist. */
@@ -59,9 +68,13 @@ function Passthrough({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-export function KitRoot({ app, manifest, theme, view, initialData, onNavigate, onToggle, onData, onError, colorScheme }: KitRootProps) {
+export function KitRoot({ app, manifest, theme, view, initialData, onNavigate, onToggle, onPin, onScreenClick, onScreenPin, onData, onError, colorScheme }: KitRootProps) {
   const onDataRef = useRef(onData);
   onDataRef.current = onData;
+  const onScreenClickRef = useRef(onScreenClick);
+  onScreenClickRef.current = onScreenClick;
+  const annotating = view.mode === "annotate";
+  useEffect(() => (annotating ? watchScreenClicks((point, at) => onScreenClickRef.current?.(point, at)) : undefined), [annotating]);
   const [store] = useState(() => createDataStore(app.data, initialData, (snapshot) => onDataRef.current?.(snapshot)));
   const [lastGo, setLastGo] = useState<{ screen: string; params: Record<string, string> } | null>(null);
 
@@ -72,9 +85,10 @@ export function KitRoot({ app, manifest, theme, view, initialData, onNavigate, o
       view,
       params,
       store,
-      toggle: (key) => {
-        if (view.mode === "annotate") onToggle(key);
+      toggle: (key, additive) => {
+        if (view.mode === "annotate") onToggle(key, additive);
       },
+      openPin: (key, requests) => onPin?.(key, [...requests]),
       go: (screenId, next = {}) => {
         if (view.mode === "annotate") return;
         if (!manifest.screens.some((s) => s.id === screenId)) {
@@ -85,7 +99,7 @@ export function KitRoot({ app, manifest, theme, view, initialData, onNavigate, o
         onNavigate(screenId);
       },
     }),
-    [manifest, view, params, store, onNavigate, onToggle, onError],
+    [manifest, view, params, store, onNavigate, onToggle, onPin, onError],
   );
 
   const Screen = app.screens[view.screenId];
@@ -103,6 +117,8 @@ export function KitRoot({ app, manifest, theme, view, initialData, onNavigate, o
             ) : (
               <theme.registry.Alert tone="warning" title="Screen not drawn" text={`prototype.tsx has no screen ${JSON.stringify(view.screenId)} although prototype.json lists it.`} />
             )}
+            <RootPins />
+            {view.screenPins && view.screenPins.length > 0 && <ScreenPins pins={view.screenPins} onOpen={(requests, point, at) => onScreenPin?.(requests, point, at)} />}
           </div>
         </Provider>
       </KitContext.Provider>

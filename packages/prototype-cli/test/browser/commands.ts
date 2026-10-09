@@ -32,7 +32,7 @@ import { pathToFileURL } from "node:url";
 import type { FrameLocator, Locator, Page } from "playwright";
 import type { BrowserCommand } from "vitest/node";
 import { PACKAGE_ROOT, copyFixture, runCli, startPreview as spawnPreview, tempDir, type PreviewProcess } from "../harness.js";
-import type { Action, Preview, Reading, Target } from "./protocol.js";
+import type { Action, Box, Preview, Reading, Target } from "./protocol.js";
 
 const previews = new Map<string, PreviewProcess>();
 const pages = new Map<string, { page: Page; requests: string[] }>();
@@ -115,7 +115,7 @@ const closePage: BrowserCommand<[id: string]> = async (_ctx, id) => {
 
 const act: BrowserCommand<[pageId: string, target: Target, action: Action]> = async (_ctx, pageId, target, action) => {
   const l = locate(pageId, target);
-  if (action.type === "click") await l.click();
+  if (action.type === "click") await l.click(action.modifiers ? { modifiers: action.modifiers } : {});
   else if (action.type === "fill") await l.fill(action.value);
   else if (action.type === "press") await l.press(action.key);
   else await l.selectOption({ label: action.label });
@@ -131,8 +131,77 @@ const read: BrowserCommand<[pageId: string, target: Target, reading: Reading]> =
   return l.getAttribute("aria-pressed");
 };
 
+/** Where the target is drawn in the page's viewport; it must be visible. */
+const box: BrowserCommand<[pageId: string, target: Target]> = async (_ctx, pageId, target) => {
+  const b = await locate(pageId, target).boundingBox();
+  if (!b) throw new Error(`not drawn: ${JSON.stringify(target)}`);
+  return b satisfies Box;
+};
+
+/**
+ * A click at the spot (`x`, `y`) of the app frame's viewport, as a person's
+ * pointer clicks there; returns where that is in the page's viewport.
+ */
+const clickAppAt: BrowserCommand<[pageId: string, x: number, y: number]> = async (_ctx, pageId, x, y) => {
+  const frame = await page(pageId).locator(APP_FRAME).boundingBox();
+  if (!frame) throw new Error("the app frame is not drawn");
+  const at = { x: frame.x + x, y: frame.y + y };
+  await page(pageId).mouse.click(at.x, at.y);
+  return at;
+};
+
+/** A key pressed on the page itself, wherever focus is (Playwright key names, e.g. "c", "Escape"). */
+const pressKey: BrowserCommand<[pageId: string, key: string]> = async (_ctx, pageId, key) => {
+  await page(pageId).keyboard.press(key);
+};
+
+const resizePage: BrowserCommand<[pageId: string, width: number, height: number]> = async (_ctx, pageId, width, height) => {
+  await page(pageId).setViewportSize({ width, height });
+};
+
 const waitFor: BrowserCommand<[pageId: string, target: Target, state?: "visible" | "hidden"]> = async (_ctx, pageId, target, state = "visible") => {
   await locate(pageId, target).first().waitFor({ state, timeout: 15_000 });
+};
+
+/**
+ * With the pointer resting on `target` (an app element), the computed outline
+ * colour of each app element in `keys`: what the frame highlights on hover.
+ */
+const outlinesOnHover: BrowserCommand<[pageId: string, target: Target, keys: string[]]> = async (_ctx, pageId, target, keys) => {
+  await locate(pageId, target).hover();
+  const handle = await page(pageId).locator(APP_FRAME).elementHandle();
+  const frame = await handle?.contentFrame();
+  if (!frame) throw new Error("the app frame is not there");
+  return frame.evaluate(
+    (ks) => ks.map((k) => {
+      const el = document.querySelector(`[data-proto-key="${k}"]`);
+      return el ? getComputedStyle(el).outlineColor : "";
+    }),
+    keys,
+  );
+};
+
+/**
+ * The cursor the app frame shows with the pointer at the middle of `target`
+ * (an app element), or (null) on empty space at the bottom-left of the
+ * frame's viewport: the computed cursor of whatever the frame hit-tests
+ * there, which is what the pointer draws.
+ */
+const cursorAt: BrowserCommand<[pageId: string, target: Target | null]> = async (_ctx, pageId, target) => {
+  if (target !== null) {
+    return locate(pageId, target).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      return hit ? getComputedStyle(hit).cursor : "";
+    });
+  }
+  const handle = await page(pageId).locator(APP_FRAME).elementHandle();
+  const frame = await handle?.contentFrame();
+  if (!frame) throw new Error("the app frame is not there");
+  return frame.evaluate(() => {
+    const hit = document.elementFromPoint(4, window.innerHeight - 4);
+    return hit ? getComputedStyle(hit).cursor : "";
+  });
 };
 
 /** Evaluates an expression inside the sandboxed app frame and returns its result as a string. */
@@ -233,8 +302,14 @@ export const commands = {
   closePage,
   act,
   read,
+  box,
+  clickAppAt,
+  pressKey,
+  resizePage,
   waitFor,
   evalInApp,
+  cursorAt,
+  outlinesOnHover,
   viewBeforeLoad,
   requests,
   setStorage,
