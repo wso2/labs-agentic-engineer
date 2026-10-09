@@ -30,9 +30,10 @@
  * same file means the same thing on both surfaces.
  *
  * The agent still cannot read it. Dot-led path segments are stripped from every
- * turn snapshot (`readProjectFiles`, mirroring agentfold.InTurnSnapshot), so
- * the idea reaches a turn ONLY through the `/start` expansion in
- * `engine/turn-spec.ts` — never by the model opening the file.
+ * turn snapshot (`readProjectFiles`), so
+ * the idea reaches a turn ONLY through the project lookup
+ * (`engine/tools-fake.ts`) and the design agent's `/start` — never by the
+ * model opening the file.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

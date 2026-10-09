@@ -20,8 +20,6 @@
  * Write-gate behavior for the `agent.afm.md` structural schema — the
  * self-contained half checkable from the document alone (parse, required
  * fields, enum values, body sections, and the no-literal-credentials rule).
- * The Go fold gate (agentfold/afmgate.go) has its own parity tests, and the
- * two must agree — an AFM document that passes one gate MUST pass the other.
  */
 
 import { test } from "node:test";

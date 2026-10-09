@@ -269,7 +269,6 @@ function layoutFor(workspace: string): WorkspaceLayout {
     ghConfigDir: path.join(workspace, ".gh"),
     bearerFile: path.join(workspace, ".bearer"),
     aepDir: path.join(workspace, ".aep"),
-    helperBin: path.join(workspace, ".aep", "credhelper"),
     ghWrapper: path.join(workspace, ".aep", "gh"),
   };
 }
@@ -313,7 +312,6 @@ function dispatch(over: Partial<DispatchRequest> = {}): DispatchRequest {
     repoUrl: "https://github.com/acme/todo.git",
     bearer: "",
     identity: { name: "AEP", email: "aep@example.com" },
-    gitServiceUrl: "https://git.example.com",
     prompt: "Work the issues in this project.",
     taskKind: "implementation",
     ...over,
@@ -492,6 +490,35 @@ test("startCodingRun: MCP is stated only when both the url and a token arrived",
   // No publisher credentials were mounted, so there is nothing to remint — and
   // "can remint" is the same fact as "there is a stale token worth discarding".
   assert.equal(policy.mcp?.invalidate, undefined);
+});
+
+// The remote-git tools are served in-process with the Job's mounted PAT, and
+// only when the guard has its reference (the org's GitHub owner) and there is a
+// token to read with. They ride the MCP clause, so a dispatch without the
+// platform's MCP server offers none of them.
+test("buildMcpPolicy: the remote-git tools are local only with the org's owner and a mounted token", async (t) => {
+  const saved = { GITHUB_TOKEN: process.env.GITHUB_TOKEN, GH_TOKEN: process.env.GH_TOKEN };
+  t.after(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+  const mcp = { mcpUrl: "https://bff.example.com/internal/v1/mcp", mcpToken: "tok" };
+  const policy = (over: Partial<DispatchRequest>) =>
+    buildMcpPolicy(dispatch({ ...mcp, ...over }), layoutFor("/workspace/project"), createRunTerminator()).mcp;
+
+  delete process.env.GITHUB_TOKEN;
+  process.env.GH_TOKEN = "pat";
+  const local = policy({ githubOwner: "acme" })?.local;
+  assert.deepEqual(local?.descriptors.map((d) => d.name), ["get_remote_git_file_contents", "search_remote_git_code"]);
+  assert.equal(local?.call("list_org_component_endpoints", {}), undefined, "that one stays on aep-api");
+
+  assert.equal(policy({})?.local, undefined, "no owner, no guard reference");
+  delete process.env.GH_TOKEN;
+  assert.equal(policy({ githubOwner: "acme" })?.local, undefined, "no token, nothing to read with");
+  process.env.GITHUB_TOKEN = "pat";
+  assert.equal(buildMcpPolicy(dispatch({ githubOwner: "acme" }), layoutFor("/w/p"), createRunTerminator()).mcp, undefined);
 });
 
 // --- the MCP policy's fatal: the loop settles, this callback does not --------

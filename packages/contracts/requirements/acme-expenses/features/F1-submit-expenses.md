@@ -17,6 +17,9 @@ Employees record expenses with a receipt photo and submit them as a claim.
 - Meals are capped at $50 per day. [T&E Policy v3 · p.2]
 - A claim can hold expenses from any dates.
 - Amounts are entered as P3 describes; a submitted claim goes to F2 for approval.
+- A receipt photo is stored under its `receipt_id` and kept **unchanged** after the claim is submitted.
+- Expenses paid in a *foreign* currency are converted at the day's rate, as the [rate policy](https://acme.example/rates) sets.
+- Paper receipts are ~~accepted~~ scanned on arrival.
 
 ## Out of Scope
 

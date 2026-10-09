@@ -29,9 +29,9 @@ import (
 	intapp "github.com/wso2/aep/aep-api/internal/app"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
-	"github.com/wso2/aep/aep-api/secretsprovider"
 	"github.com/wso2/aep/aep-api/internal/platform/async"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
+	"github.com/wso2/aep/aep-api/secretsprovider"
 )
 
 // Run owns config load → resolve → assemble → HTTP serve → watchers → signal
@@ -62,6 +62,7 @@ func Run(opts Options) error {
 		RequestAuthStrategy:    opts.RequestAuthStrategy,
 		ImpersonateOrgResolver: resolver,
 		SecretsProvider:        secretsProvider,
+		OpenBaoAuth:            opts.openBaoAuth,
 		ResourceLabels:         opts.ResourceLabels,
 	}
 	application, err := intapp.Assemble(cfg, infra, seam)

@@ -85,7 +85,7 @@ func (s *stubGitHub) on(method, path string, code int, body string) {
 // store.
 func probeSvc(t testing.TB, gh *stubGitHub) *CredentialService {
 	t.Helper()
-	return NewCredentialService(nil, nil, nil, "", "", "", nil).WithGitHubAPIBase(gh.URL)
+	return NewCredentialService(nil).WithGitHubAPIBase(gh.URL)
 }
 
 // --- projectionFromRow -------------------------------------------------------

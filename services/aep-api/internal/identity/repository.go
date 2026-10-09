@@ -180,8 +180,7 @@ type store struct {
 }
 
 // NewStore builds the persistence surface. cipher may be nil (the ColumnCipher
-// passthrough contract), in which case passwords are stored as written — the
-// same degradation every other sealed column in this codebase has.
+// passthrough contract), in which case passwords are stored as written.
 func NewStore(db *gorm.DB, cipher *secrets.ColumnCipher) Store {
 	return &store{db: db, cipher: cipher}
 }
@@ -293,11 +292,10 @@ func (s *store) RevealTestUserPassword(ctx context.Context, scope Scope, usernam
 	if row == nil || strings.TrimSpace(row.PasswordSealed) == "" {
 		return "", ErrNoPassword
 	}
-	// Open, not OpenTolerant. There is no migration window for this column —
-	// every row was written sealed by this package — so a decrypt failure means
-	// the credential-encryption-key changed under us. OpenTolerant would answer
-	// that by handing the caller the base64 ciphertext AS the password, which
-	// the validation runner would then dutifully type into a login form.
+	// Every row was written sealed by this package, so a decrypt failure means
+	// the credential-encryption-key changed under us. It is an error: handing
+	// the caller the base64 ciphertext AS the password would have the
+	// validation runner dutifully type it into a login form.
 	plain, err := s.cipher.Open(row.PasswordSealed)
 	if err != nil {
 		return "", fmt.Errorf("open password for %q on %s: %w", username, scope, err)

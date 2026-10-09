@@ -32,10 +32,18 @@ var sreSecretKeys = []string{"sre-model/key", "sre-model/seed-applied", "sre/han
 // org_sre_model_connections table, and the org_secrets rows holding the
 // stored SRE key, the seed marker and the minted handoff token. Phase22 stays
 // in the list because databases have already run it. Idempotent.
+//
+// The row delete runs only while org_secrets still has its legacy key
+// column: phase29 renames it to secret and deletes every row without a
+// reference name (the SRE rows were value rows), and every step reruns on
+// every boot, so this one must tolerate the converged shape.
 func RunPhase24DropSreModelConnections(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec(`DROP TABLE IF EXISTS org_sre_model_connections`).Error; err != nil {
 			return err
+		}
+		if !hasColumn(tx, "org_secrets", "key") {
+			return nil
 		}
 		return tx.Exec(`DELETE FROM org_secrets WHERE key IN ?`, sreSecretKeys).Error
 	})

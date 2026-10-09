@@ -2,61 +2,36 @@ openapi: 3.0.3
 info:
   title: AEP Internal S2S API
   description: |-
-    The BFF's internal service-to-service surface: runner-pod callbacks.
-    Non-public — never gateway-advertised. Callers authenticate with a
-    BFF-signed per-task RS256 JWT (runner pods) or a Thunder per-org publisher
-    client-credentials token; the acting org is always derived from the
-    verified credential, never from request input.
+    aep-api's internal service-to-service surface. Its audience is machines,
+    never the console: non-public, never gateway-advertised. Every operation's
+    tags name its caller (Runner, AE Studio, SRE Agent), so the spec reads as
+    who calls what. Callers authenticate with a Thunder per-org publisher
+    client-credentials token (runner ops and mcp) or the org's ae-studio-<org>
+    client-credentials token (ae-studio/ ops and mcp); the acting org is
+    always derived from the verified credential, never from request input.
+    The one exception is the OpenChoreo SRE agent's sre-handoff/mcp: its
+    install-time handoff key names no org, so each tool call names its org
+    and the tools verify it against the observer's recorded alerts.
 
-    RUNNER LOCKSTEP: the credentials-refresh exchange is consumed by the
-    coding runner — its request/response bytes must not change without a
-    coordinated runner release.
+    Requests are validated against this spec and body-capped per operation
+    (1 MiB by default) before any handler runs.
   version: 1.0.0
 servers:
 - url: /internal/v1
 paths:
-  /executions/{executionId}/credentials/refresh:
-    post:
-      operationId: runner-refresh-credentials
-      summary: Refresh an execution's git credentials (runner callback)
-      tags:
-      - Internal
-      security:
-      - taskJWT: []
-      - publisherCC: []
-      parameters:
-      - description: Execution id the runner callback is scoped to
-        in: path
-        name: executionId
-        required: true
-        schema:
-          type: string
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RefreshResponse'
-          description: OK
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Error
-  /validation/{cycleId}/context:
+  /runs/{cycleId}/validation-context:
     get:
       operationId: runner-validation-context
       summary: Fetch a validation run's deployed endpoints (runner callback)
       tags:
-      - Internal
+      - Runner
       security:
-      - taskJWT: []
       - publisherCC: []
       parameters:
       - description: Validation cycle id the runner callback is scoped to — the
           run cycle the platform dispatched this runner for, carried to the pod as
-          AEP_TASK_ID and bound into its bearer token
+          AEP_TASK_ID. The per-org publisher token does not name it; the edge
+          answers only a cycle of the token's own org (the cycle fence)
         in: path
         name: cycleId
         required: true
@@ -75,56 +50,296 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Error
+  /ae-studio/projects/{projectName}/repository:
+    get:
+      operationId: get-ae-studio-project-repository
+      summary: Resolve a project to its GitHub repository (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this on every request; it keeps no
+        cache. The org is the one its ae-studio client token is recorded for. A
+        project the org does not own answers 404, the same as one that does not exist.
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      parameters:
+      - description: Project name (DNS-label slug)
+        in: path
+        name: projectName
+        required: true
+        schema:
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioProjectRepository'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /ae-studio/skills/repository:
+    get:
+      operationId: get-ae-studio-skills-repository
+      summary: Resolve the org's skills repository (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this before it writes the Org
+        skills snapshot of a turn; it keeps no cache. The org is the one its
+        ae-studio client token is recorded for. aep-api reconciles the org's skills library
+        first (the platform skills shipped since it was provisioned land in it),
+        then answers the org's skills repository. 404 when the org has none;
+        503 when the library could not be reconciled.
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioProjectRepository'
+          description: OK
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The org has no skills repository.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /ae-studio/dependency-completions:
+    post:
+      operationId: complete-ae-studio-dependencies
+      summary: Complete dependency stubs from a save (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod calls this when a save carries a
+        dependency stub: a registry stub (`resource.ref`, no provider) or a
+        provider contract named by `provenance.sourceUrl` with no hash yet.
+        aep-api copies the registered resource from the org registry, or
+        fetches the provider's document (https, public hosts, 5 MiB), so a URL
+        chosen by model output is never fetched by the pod that holds the
+        org's git credential. The org is the one its ae-studio client token is
+        recorded for, and `project` must be one of its projects (404 otherwise,
+        with no data). A stub that cannot be completed is absent from `completed`
+        and carries a warning; a write that is not a stub is ignored. Every
+        path must be `specs/design/dependencies/<name>/dependency.json`, else
+        400 `path_invalid`.
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioDependencyCompletionsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioDependencyCompletions'
+          description: OK
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /ae-studio/turn-usage:
+    post:
+      operationId: record-turn-usage
+      summary: Record finished turns (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod hands over the records of the turns that
+        ran in its design agent. The org is the one its ae-studio client token
+        is recorded for. Idempotent on `turnId`: a record already stored is kept, not
+        written twice. A record's `project`, when present, must be one of the
+        org's projects; a record without `project` is a marketplace turn and is
+        valid. When any record names a project that is unknown or not the org's,
+        the whole batch is refused with 404 and no row is written.
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioTurnUsageRequest'
+        required: true
+      responses:
+        '202':
+          description: Accepted
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: A record names a project that is unknown or not the org's.
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /ae-studio/webhook-events:
+    post:
+      operationId: ingest-webhook-event
+      summary: Ingest one verified GitHub webhook delivery (AE Studio tools pod)
+      description: |-
+        The org's AE Studio tools pod receives its repositories' GitHub hook
+        deliveries, verifies GitHub's signature over the exact bytes, and hands
+        each verified delivery over here, one per request, with GitHub's
+        delivery id and event name. The org is the one its ae-studio client
+        token is recorded for.
+        The body is kept as it arrived (never re-serialized): the handlers get
+        these bytes, and the delivery ledger stores them with only a published
+        test-user credential redacted.
+
+        The event must be one of the hook's (`pull_request`, `push`,
+        `issue_comment`, `issues`, `ping`) and its `repository.full_name` must
+        name one of the org's repositories; otherwise 404
+        `repository_unknown` and nothing is stored. Deduplicated on the
+        delivery id: a delivery already processed answers 200 `duplicate`, one
+        whose earlier attempt is still running or waiting to be retried
+        answers 202 `held`. Otherwise it is stored and its handlers start
+        after the answer (202 `dispatched`); a failed run is retried by
+        aep-api, not by the caller. Bodies up to 25 MiB (GitHub's payload
+        maximum).
+      tags:
+      - AE Studio
+      security:
+      - aeStudioCC: []
+      parameters:
+      - description: GitHub's delivery id (X-GitHub-Delivery), the dedup key.
+        in: header
+        name: X-GitHub-Delivery
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      - description: GitHub's event name (X-GitHub-Event).
+        in: header
+        name: X-GitHub-Event
+        required: true
+        schema:
+          type: string
+          minLength: 1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AEStudioWebhookEvent'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioWebhookEventResult'
+          description: A redelivery of a delivery already processed (`duplicate`).
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AEStudioWebhookEventResult'
+          description: Stored and dispatched (`dispatched`), or held by an earlier attempt (`held`).
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The delivery names no repository of the org (`repository_unknown`).
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Error
+  /mcp:
+    post:
+      operationId: call-mcp-tool
+      summary: MCP JSON-RPC (tools/list, tools/call)
+      description: |-
+        One opaque JSON-RPC 2.0 operation; mcpdiscovery serves it. Declared so
+        this spec lists every internal route. Excluded from code generation
+        (internal/igen/oapi-codegen.yaml exclude-operation-ids): the handler is a
+        raw JSON-RPC handler, not a strict-server method.
+      tags:
+      - Runner
+      - AE Studio
+      security:
+      - publisherCC: []
+      - aeStudioCC: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+        default:
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /sre-handoff/mcp:
+    post:
+      operationId: call-sre-handoff-mcp-tool
+      summary: SRE handoff MCP JSON-RPC (tools/list, tools/call)
+      description: |-
+        One opaque JSON-RPC 2.0 operation; sourcecontrol/issues serves its two
+        tools (search_related_issues, create_issue). Every tool call names its
+        org (`namespace`), verified against the observer's alerts of the last
+        hour before the tool acts. Mounted only when SRE_HANDOFF_TOKEN is set.
+        Declared so this spec lists every internal route. Excluded from code
+        generation (internal/igen/oapi-codegen.yaml exclude-operation-ids): the
+        handler is a raw JSON-RPC handler, not a strict-server method.
+      tags:
+      - SRE Agent
+      security:
+      - sreHandoffKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          description: The bearer is not the handoff key (plain text).
 components:
   schemas:
-    RefreshResponse:
-      description: Fresh GitHub token + commit identity for the execution.
-      type: object
-      additionalProperties: false
-      properties:
-        token:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
-        identity:
-          $ref: '#/components/schemas/Identity'
-        taskId:
-          type: string
-      required:
-      - token
-      - expiresAt
-      - identity
-      - taskId
-      # Generated as igen.RefreshResponse (no x-go-type). The org domain owns the
-      # RefreshResponse value type and projects onto this wire shape at the edge —
-      # igen must stay a leaf, so it cannot import the domain that owns the type.
-      # This schema IS the runner-lockstep wire contract; keep it field-aligned
-      # with the domain's mapping.
-    Identity:
-      description: 'Git commit identity. Field names are CAPITALIZED on the
-        wire (historical lockstep — changing them needs a coordinated runner
-        release). KNOWN GAP: the runner''s credhelper currently reads
-        lowercase keys, so its identity-drift rewrite never fires; fix belongs
-        runner-side (case-tolerant parse), not here.'
-      type: object
-      additionalProperties: false
-      properties:
-        Name:
-          type: string
-        Email:
-          type: string
-        Login:
-          type: string
-      required:
-      - Name
-      - Email
-      - Login
     ValidationContextResponse:
       description: The deployed endpoints a validation run drives. Generated as
         igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf,
         so the edge's internal handler projects the delivery domain's own struct
-        onto this wire shape (the same decoupling as RefreshResponse).
+        onto this wire shape (the same decoupling as every wire projection here).
 
         It carries no oracle path; the runner already knows where the oracle is.
       type: object
@@ -147,6 +362,259 @@ components:
       required:
       - component
       - url
+    AEStudioProjectRepository:
+      description: A project's GitHub repository, as the AE Studio tools pod
+        clones it.
+      type: object
+      additionalProperties: false
+      properties:
+        owner:
+          description: GitHub owner (user or organization) of the repo.
+          type: string
+        repo:
+          description: GitHub repository name.
+          type: string
+        defaultBranch:
+          type: string
+        cloneUrl:
+          type: string
+      required:
+      - owner
+      - repo
+      - defaultBranch
+      - cloneUrl
+    AEStudioDependencyCompletionsRequest:
+      description: The dependency stub writes of one save to a project.
+      type: object
+      additionalProperties: false
+      properties:
+        project:
+          description: The project the save is for. It must belong to the
+            token's org, else 404 (the same answer as an unknown project).
+          type: string
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+        writes:
+          description: At most 64 stubs, bounding the outbound registry reads
+            and fetches one call can cause.
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/AEStudioFile'
+      required:
+      - project
+      - writes
+    AEStudioDependencyCompletions:
+      description: The stubs aep-api completed, and the warnings for every stub
+        it touched (completed or not).
+      type: object
+      additionalProperties: false
+      properties:
+        completed:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioCompletedDependency'
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioWarning'
+      required:
+      - completed
+      - warnings
+    AEStudioCompletedDependency:
+      description: One completed stub. `definition` replaces the stub's
+        dependency.json content; `files` land beside it in the same commit.
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          description: The stub's dependency.json path, as sent.
+          type: string
+        definition:
+          type: string
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/AEStudioFile'
+      required:
+      - path
+      - definition
+      - files
+    AEStudioFile:
+      description: A repo-relative file path and its UTF-8 content.
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        content:
+          type: string
+      required:
+      - path
+      - content
+    AEStudioWarning:
+      description: A non-fatal note on one path (registry-copied,
+        registry-miss, registry-unreachable, provider-document-fetched,
+        provider-document-unavailable).
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+      required:
+      - path
+      - code
+      - message
+    AEStudioTurnUsageRequest:
+      description: The records of finished turns.
+      type: object
+      additionalProperties: false
+      properties:
+        records:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AEStudioTurnRecord'
+      required:
+      - records
+    AEStudioTurnRecord:
+      type: object
+      additionalProperties: false
+      description: One finished turn, as the ledger stores it. Idempotent on turnId.
+      required:
+      - turnId
+      - conversationId
+      - kind
+      - flow
+      - status
+      - baseRef
+      - skillsRef
+      - startedAt
+      - finishedAt
+      - model
+      - modelHost
+      - inputTokens
+      - outputTokens
+      - cacheReadTokens
+      - cacheCreationTokens
+      properties:
+        turnId:
+          type: string
+          format: uuid
+        project:
+          type: string
+          description: Absent on a marketplace turn.
+        conversationId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - browser
+          - kickoff
+          - plan
+        flow:
+          type: string
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+        reason:
+          type: string
+          enum:
+          - agent-error
+          - stream-died
+          - shutdown
+          - internal
+        code:
+          type: string
+        baseRef:
+          type: string
+          description: The repo snapshot sha the turn read.
+        skillsRef:
+          type: string
+          description: The Org skills snapshot sha the turn read.
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/AEStudioTurnRecordAuthor'
+          # A pointer under the global prefer-skip-optional-pointer: absent must
+          # omit the key, which omitempty cannot do for a struct value.
+          x-go-type-skip-optional-pointer: false
+        model:
+          type: string
+        modelHost:
+          type: string
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        cacheReadTokens:
+          type: integer
+          format: int64
+        cacheCreationTokens:
+          type: integer
+          format: int64
+        contextTokens:
+          type: integer
+          format: int64
+        designFeatures:
+          type: array
+          maxItems: 200
+          description: |-
+            The features a `design` turn designed, as the `/design F1 F2`
+            line named them. Absent or empty means every feature designable
+            at baseRef (a bare `/design`). Send it only on a `design` turn:
+            on any other flow it is ignored, not refused, so one record never
+            costs the batch. The ledger stores the IDs only, never the line.
+          items:
+            type: string
+            pattern: '^F[0-9]+$'
+            maxLength: 16
+    AEStudioTurnRecordAuthor:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    AEStudioWebhookEvent:
+      description: |-
+        A GitHub webhook payload, exactly as GitHub sent it. Declares no
+        properties or defaults, so validation never rewrites it, and is
+        generated as json.RawMessage so the handler gets the bytes as they
+        arrived.
+      type: object
+      x-go-type: json.RawMessage
+    AEStudioWebhookEventResult:
+      description: What became of an ingested delivery.
+      type: object
+      additionalProperties: false
+      properties:
+        result:
+          type: string
+          enum:
+          - dispatched
+          - held
+          - duplicate
+      required:
+      - result
     Error:
       description: Flat error envelope returned by every non-2xx response.
       type: object
@@ -178,13 +646,24 @@ components:
       - field
       - message
   securitySchemes:
-    taskJWT:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: BFF-signed per-task RS256 JWT (runner pods)
     publisherCC:
       type: http
       scheme: bearer
       bearerFormat: JWT
       description: Thunder per-org publisher client-credentials token
+    aeStudioCC:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |-
+        Thunder client-credentials token of the org's AE Studio client
+        (ae-studio-<org>), held by its AE Studio tools pod; the org is the one
+        that client is recorded for. The only credential the ae-studio/ ops
+        accept, and the pod's credential on mcp; never a runner op's.
+    sreHandoffKey:
+      type: http
+      scheme: bearer
+      description: |-
+        The install-time SRE handoff key (SRE_HANDOFF_TOKEN), shared by
+        aep-api and the OpenChoreo SRE agent. Names no org; opens
+        sre-handoff/mcp only.

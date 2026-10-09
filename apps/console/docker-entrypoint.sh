@@ -23,15 +23,11 @@ AEP_API_PROXY_URL="${AEP_API_PROXY_URL:-http://localhost:9090}"
 
 # window._env_ keys the SPA reads (src/config/env.ts RuntimeEnv).
 # VITE_API_BASE_URL defaults to the nginx-side same-origin proxy path.
-# collabWsUrl is forward-wiring for the #86 spec-collab feature (in flight
-# on console/sso-91): empty means the SPA falls back to same-origin
-# /collab, which the nginx block below proxies.
 VITE_API_BASE_URL_VAL="${VITE_API_BASE_URL:-/aep-api-service}"
 THUNDER_URL="${VITE_THUNDER_URL:-}"
 THUNDER_CLIENT_ID="${VITE_THUNDER_CLIENT_ID:-aep-console-client}"
 THUNDER_SCOPES="${VITE_THUNDER_SCOPES:-openid profile email}"
 TRY_IT_URL="${VITE_TRY_IT_URL:-http://tryit.aep.localhost:8095}"
-COLLAB_WS_URL="${COLLAB_WS_URL:-}"
 # WSO2 Cloud only — set by the ReleaseBinding. Empty locally so the SPA skips
 # the first-login billing activation call.
 BILLING_API_BASE_URL_VAL="${BILLING_API_BASE_URL:-}"
@@ -49,7 +45,6 @@ window._env_ = {
   VITE_THUNDER_CLIENT_ID: "${THUNDER_CLIENT_ID}",
   VITE_THUNDER_SCOPES: "${THUNDER_SCOPES}",
   VITE_TRY_IT_URL: "${TRY_IT_URL}",
-  collabWsUrl: "${COLLAB_WS_URL}",
   BILLING_API_BASE_URL: "${BILLING_API_BASE_URL_VAL}",
 };
 EOF_INNER
@@ -77,26 +72,12 @@ sed -i "s|__AEP_API_PROXY_URL__|${AEP_API_PROXY_URL}|g" /etc/nginx/nginx.conf
 AEP_API_BACKEND="$(echo "${AEP_API_PROXY_URL}" | sed 's|^https\{0,1\}://||' | sed 's|/.*||')"
 sed -i "s|__AEP_API_BACKEND__|${AEP_API_BACKEND}|g" /etc/nginx/nginx.conf
 
-# Collab-server upstream. nginx.conf uses `set $collab_backend host:port`
-# in the /collab/ block so DNS is resolved at request time (the container
-# starts even when the upstream is missing — a /collab/ request will then
-# 502 instead of preventing nginx from starting at all). Default upstream
-# matches docker-compose's service name; OC overrides via COLLAB_SERVER_URL.
-COLLAB_SERVER_URL="${COLLAB_SERVER_URL:-}"
-if [ -n "$COLLAB_SERVER_URL" ]; then
-    # Strip scheme + trailing slash so we end up with "host:port".
-    COLLAB_BACKEND="${COLLAB_SERVER_URL#*://}"
-    COLLAB_BACKEND="${COLLAB_BACKEND%/}"
-    sed -i "s|set \$collab_backend [^;]*;|set \$collab_backend ${COLLAB_BACKEND};|" /etc/nginx/nginx.conf
-fi
-
 echo "Configuration summary:"
 echo "  API Proxy:     /aep-api-service/ -> ${AEP_API_PROXY_URL}/"
 echo "  Thunder URL:   ${THUNDER_URL:-[NOT SET]}"
 echo "  Client ID:     ${THUNDER_CLIENT_ID}"
 echo "  Test app:      ${TRY_IT_URL}"
 echo "  Billing API:   ${BILLING_API_BASE_URL_VAL:-[NOT SET — activation skipped]}"
-echo "  Collab Server: ${COLLAB_SERVER_URL:-[default: collab-server:3400 via lazy DNS — 502s if upstream missing]}"
 
 echo "Starting nginx on port 3000..."
 exec "$@"

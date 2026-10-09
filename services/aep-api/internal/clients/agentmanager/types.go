@@ -46,8 +46,8 @@ type Config struct {
 	// (http://k3d-openchoreo-serverlb:8080), and kgateway routes it by Host —
 	// so a request without one matches no vhost and answers 404, which reads
 	// like a wrong path and is not one. The service's other OAuth clients carry
-	// the same field for the same reason (SERVICE_AUTH_HOST_HEADER,
-	// OBSERVER_OAUTH_HOST_HEADER). Empty when the URL's own host already routes.
+	// the same field for the same reason (SERVICE_AUTH_HOST_HEADER). Empty when
+	// the URL's own host already routes.
 	HostHeader string
 }
 
@@ -62,7 +62,16 @@ type Config struct {
 // projection always won. Re-adding it buys a round-trip per deploy and a second
 // writer on a record Agent Manager owns.
 type Client interface {
+	// EnsureProvider creates the org's provider, or writes in's template,
+	// upstream, auth and key onto the one already there. It is the KEY-SAVE
+	// path's write: the only moment the key is in hand.
 	EnsureProvider(ctx context.Context, in EnsureProviderInput) (ProviderRef, error)
+	// FindProvider looks the org's provider up by its handle and writes
+	// nothing; found is false when the org has none. It is the deploy path's
+	// read: a deploy holds no key, so it can bind a provider but never make
+	// one. Reading the guardrail catalog uses it too: that read must never
+	// write the provider, whose every update redeploys each proxy bound to it.
+	FindProvider(ctx context.Context, org, id string) (ref ProviderRef, found bool, err error)
 	// UpdateProviderCredential writes in's template, upstream, auth and key
 	// onto an EXISTING provider and never creates one; found is false when the
 	// org has none.
@@ -77,10 +86,6 @@ type Client interface {
 	// authenticates its OTLP export with. Unlike the two above it is NOT a
 	// stored key: see TracingToken.
 	IssueTracingToken(ctx context.Context, in TracingTokenRef) (TracingToken, error)
-
-	// FindProvider looks the org's provider up by handle and never creates
-	// one; found is false when the org has none.
-	FindProvider(ctx context.Context, org, id string) (uuid string, found bool, err error)
 
 	// ListPolicies, ReadBinding and WriteBindingPolicies carry an agent's
 	// guardrails (client_guardrails.go).
@@ -109,18 +114,6 @@ type EnsureProviderInput struct {
 	AuthHeader  string
 	APIKey      string // the ORG's key, held by AMP and never by an agent
 	GatewayID   string
-	// ReassertCredential re-PUTs the connection — template, upstream, auth and
-	// APIKey — onto a provider that already exists.
-	//
-	// IT IS NOT FREE, which is why the caller decides. Updating a provider
-	// redeploys every LLM proxy bound to it — measured at twelve proxy
-	// redeploys per governed deploy in a single-agent org — and a redeploy is
-	// the window in which a proxy can lose the API keys broadcast to it. So the
-	// credential is re-asserted when it has CHANGED, not on the chance that it
-	// might have.
-	//
-	// Creation always carries the key: a provider cannot exist without one.
-	ReassertCredential bool
 }
 
 // ProviderRef is what later calls bind to.

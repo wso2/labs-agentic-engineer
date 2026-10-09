@@ -300,6 +300,7 @@ export async function bootOpencode(policy: RuntimePolicy, opts: OpencodeRuntimeO
         canRefresh: policy.mcp.invalidate !== undefined,
         onToken: policy.mcp.onToken,
         onFatal: (err) => policy.mcp?.onFatal?.(err),
+        local: policy.mcp.local,
       });
       cleanups.push(() => proxy.close());
       mcpUrl = proxy.url;

@@ -18,7 +18,10 @@ package task
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -93,11 +96,11 @@ func NewReads(issues IssueClient, repos RepoResolver, execs ExecutionReader, run
 // ask about. A caller that renders no comments passes false and the read costs
 // what it always did.
 func (r *Reads) ListByTag(ctx context.Context, orgID, projectID, state, tag string, withComments bool) ([]delivery.TaskView, error) {
-	_, owner, name, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
+	ref, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	repoFullName := owner + "/" + name
+	repoFullName := ref.Owner + "/" + ref.Repo
 
 	milestoneNumber, err := r.milestoneForTag(ctx, orgID, projectID, tag)
 	if err != nil {
@@ -232,18 +235,25 @@ func (r *Reads) oneIssueComments(ctx context.Context, orgID, projectID string, i
 // number (O(1)); a number that is not a Task of this project is
 // ErrTaskNotFound.
 func (r *Reads) Get(ctx context.Context, orgID, projectID string, issueNumber int) (*delivery.TaskDetail, error) {
-	_, owner, name, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
+	ref, err := resolveProjectRepo(ctx, r.repos, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	repoFullName := owner + "/" + name
+	repoFullName := ref.Owner + "/" + ref.Repo
 
 	// Starts FIRST so it overlaps the issue fetch — see oneIssueCommentsAsync.
 	commentsCh := r.oneIssueCommentsAsync(ctx, orgID, projectID, issueNumber)
 
 	issue, err := r.issues.GetIssue(ctx, orgID, projectID, issueNumber)
-	if err != nil || issue == nil {
+	switch {
+	case errors.Is(err, sourcecontrol.ErrIssueNotFound), sourcecontrol.IsHTTPStatus(err, http.StatusNotFound),
+		err == nil && issue == nil:
 		return nil, ErrTaskNotFound
+	case err != nil:
+		// Not a verdict on the issue: AE Studio or GitHub could not answer,
+		// and the edge says which (503 / 409 / 429) rather than a 404 that
+		// would tell the reader the Task is gone.
+		return nil, fmt.Errorf("get issue %d: %w", issueNumber, err)
 	}
 
 	execs, err := r.execs.LatestPerKindScoped(ctx, orgID, repoFullName, issueNumber)

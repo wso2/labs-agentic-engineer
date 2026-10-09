@@ -181,7 +181,7 @@ export const BANDS = {
  * The `AEP_MODEL_*` names a coding run reads as a model connection — the
  * playground's `CODING_CONNECTION_ENV` (`playground/src/kit/model-connection.ts`)
  * plus `AEP_MODEL_CONTEXT_WINDOW`. Copied, not imported: that module loads
- * `@aep/agents`, whose module scope merges `deployments/.env` into
+ * `@aep/ae-design-agent`, whose module scope merges `deployments/.env` into
  * `process.env`, and this process must never hold that file's API key.
  */
 export const CONNECTION_ENV = [

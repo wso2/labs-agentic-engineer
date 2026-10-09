@@ -19,54 +19,48 @@ package spec
 import (
 	"context"
 	"errors"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// ---- engine-backed test host -------------------------------------------------
+// ---- pod-backed test host ----------------------------------------------------
 
-// testGitHost is the workspacetest-backed fixture these tests run against: one
-// gitfs engine rooted in t.TempDir() plus one REAL bare file:// origin per
-// (org, project) pair, provisioned lazily by EnsureBareRepo exactly like
-// production provisions the GitHub repo (it supersedes the old in-memory
-// git-host fake — the store now drives genuine git plumbing end to end). It
-// implements sourcecontrol.RepoService (the row store) and hands out origins
-// for arrange/assert. Rows/origins are keyed by repoKey(orgID, projectID) —
-// most existing tests only ever address the org's skills repo (a single
-// implicit projectID, SkillsRepoProject), so keying on the pair is a
-// no-behaviour-change refactor for them; the skill-mirror tests are the first
-// to also provision a distinct PROJECT repo for the same org.
+// testGitHost is the fixture these tests run against: the in-memory AE
+// Studio pod (aestudiotest.Fake, one org-wide instance) plus the
+// git_repositories rows, provisioned lazily by EnsureBareRepo the way
+// production creates the GitHub repository (an empty initial commit). It
+// implements sourcecontrol.RepoService (the row store) and gives tests
+// arrange/assert access to each repository's tip. A row names a GitHub
+// repository (https://github.com/test-org/<repoName>, which RefForRow needs).
+// Rows are keyed by repoKey(orgID, projectID) — most tests only ever address
+// the org's skills repo (SkillsRepoProject); the skill-mirror tests also
+// provision a distinct PROJECT repo for the same org.
 type testGitHost struct {
 	sourcecontrol.RepoService // embedded: unimplemented methods panic (untouched by these tests)
 
-	t       *testing.T
-	engine  *gitfs.Engine
-	mu      sync.Mutex // models the DB's concurrency safety (the real GetRepo/EnsureBareRepo are serialized by Postgres)
-	rows    map[string]*sourcecontrol.GitRepository
-	origins map[string]*gittest.Remote
+	t    *testing.T
+	pod  *aestudiotest.Fake
+	mu   sync.Mutex // models the DB's concurrency safety (the real GetRepo/EnsureBareRepo are serialized by Postgres)
+	rows map[string]*sourcecontrol.GitRepository
 }
 
 func newTestGitHost(t *testing.T) *testGitHost {
 	return &testGitHost{
-		t:       t,
-		engine:  workspacetest.NewEngine(t),
-		rows:    map[string]*sourcecontrol.GitRepository{},
-		origins: map[string]*gittest.Remote{},
+		t:    t,
+		pod:  aestudiotest.New(),
+		rows: map[string]*sourcecontrol.GitRepository{},
 	}
 }
 
-// repoKey composes the (orgID, projectID) pair into the map key rows/origins
-// are stored under.
+// git is the Git port (and mirror-skills) the store runs on.
+func (h *testGitHost) git() *aestudiotest.Fake { return h.pod }
+
+// repoKey composes the (orgID, projectID) pair into the map key rows are
+// stored under.
 func repoKey(orgID, projectID string) string { return orgID + "\x00" + projectID }
 
 func (h *testGitHost) GetRepo(_ context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error) {
@@ -85,48 +79,68 @@ func (h *testGitHost) EnsureBareRepo(_ context.Context, orgID, projectID, repoNa
 	if r, ok := h.rows[key]; ok {
 		return r, nil
 	}
-	origin := workspacetest.NewOrigin(h.t, nil)
 	r := &sourcecontrol.GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
-		RepoURL:       origin.URL(),
+		RepoURL:       "https://github.com/test-org/" + repoName + ".git",
 		DefaultBranch: "main",
 		Status:        "ready",
-		// Production persists naming.SlugForURL(cloneURL); file:// URLs have no
-		// owner/repo shape, so the tests pin the stable repo name as the slug —
-		// the path key the engine derives the mirror location from.
-		RepoSlug: repoName,
+		RepoSlug:      repoName,
 	}
-	h.origins[key] = origin
+	h.pod.SeedRepo(rowRef(h.t, orgID, r), nil)
 	h.rows[key] = r
 	return r, nil
 }
 
-// originFor returns the (org, project) pair's provisioned bare origin for
-// arrange/assert (nil before the first read provisions it).
-func (h *testGitHost) originFor(orgID, projectID string) *gittest.Remote {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.origins[repoKey(orgID, projectID)]
+// rowRef is the repository a row names.
+func rowRef(t *testing.T, orgID string, row *sourcecontrol.GitRepository) sourcecontrol.RepoRef {
+	t.Helper()
+	ref, err := sourcecontrol.RefForRow(orgID, row)
+	if err != nil {
+		t.Fatalf("ref for row: %v", err)
+	}
+	return ref
 }
 
-// origin is originFor pinned to the org's skills repo — the sentinel project
-// every pre-existing test in this package addresses.
-func (h *testGitHost) origin(orgID string) *gittest.Remote {
-	return h.originFor(orgID, SkillsRepoProject)
+// refIn is the (org, project) pair's repository; ok is false before the
+// first read provisions it.
+func (h *testGitHost) refIn(orgID, projectID string) (sourcecontrol.RepoRef, bool) {
+	h.mu.Lock()
+	row, ok := h.rows[repoKey(orgID, projectID)]
+	h.mu.Unlock()
+	if !ok {
+		return sourcecontrol.RepoRef{}, false
+	}
+	return rowRef(h.t, orgID, row), true
 }
+
+// headIn is the (org, project) pair's tip commit sha ("" before it exists).
+func (h *testGitHost) headIn(orgID, projectID string) string {
+	ref, ok := h.refIn(orgID, projectID)
+	if !ok {
+		return ""
+	}
+	sha, err := h.pod.Head(context.Background(), ref, "")
+	if err != nil {
+		h.t.Fatalf("head: %v", err)
+	}
+	return sha
+}
+
+// head is headIn pinned to the org's skills repo.
+func (h *testGitHost) head(orgID string) string { return h.headIn(orgID, SkillsRepoProject) }
 
 // writeAtHeadIn / removeAtHeadIn commit content changes directly on the
-// (org, project) pair's ORIGIN (advancing main) the way an external writer
-// would — the store's branch-tip reads must observe them on the very next
-// read (no cache to evict). writeAtHead/removeAtHead below are the
-// skills-repo-scoped convenience wrappers every pre-existing test uses.
+// (org, project) pair's tip the way an external writer would — the store's
+// branch-tip reads must observe them on the very next read (no cache to
+// evict). writeAtHead/removeAtHead below are the skills-repo-scoped
+// convenience wrappers.
 func (h *testGitHost) writeAtHeadIn(orgID, projectID, path, content string) {
-	h.originFor(orgID, projectID).Seed(h.t, map[string]string{path: content}, "test write "+path)
+	h.commitIn(orgID, projectID, map[string]string{path: content}, nil, "test write "+path)
 }
 
 func (h *testGitHost) removeAtHeadIn(orgID, projectID, path string) {
-	h.originFor(orgID, projectID).Remove(h.t, "test remove "+path, path)
+	h.commitIn(orgID, projectID, nil, []string{path}, "test remove "+path)
 }
 
 func (h *testGitHost) writeAtHead(orgID, path, content string) {
@@ -138,71 +152,106 @@ func (h *testGitHost) removeAtHead(orgID, path string) {
 }
 
 // readAtHeadIn returns one file's exact content at the (org, project) pair's
-// origin main tip ("" if the pair, the ref, or the path is absent), so tests
-// can assert committed bytes outside the skill catalog (e.g.
-// skills-manifest.json) without failing the test on a legitimate absence.
-// Mirrors gitDirOut's plumbing but tolerates the not-found case
-// gittest.Remote.FileAt does not. readAtHead is the skills-repo-scoped
-// convenience wrapper every pre-existing test uses.
+// tip ("" if the pair or the path is absent), so tests can assert committed
+// bytes outside the skill catalog (e.g. skills-manifest.json) without
+// failing the test on a legitimate absence. readAtHead is the
+// skills-repo-scoped convenience wrapper.
 func (h *testGitHost) readAtHeadIn(orgID, projectID, path string) string {
-	origin := h.originFor(orgID, projectID)
-	if origin == nil {
+	ref, ok := h.refIn(orgID, projectID)
+	if !ok {
 		return ""
 	}
-	cmd := exec.Command("git", "--git-dir", origin.Dir(), "cat-file", "blob", "main:"+path)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	out, err := cmd.Output()
+	content, _, err := h.pod.ReadFile(context.Background(), ref, "", path)
 	if err != nil {
 		return ""
 	}
-	return string(out)
+	return string(content)
 }
 
 func (h *testGitHost) readAtHead(orgID, path string) string {
 	return h.readAtHeadIn(orgID, SkillsRepoProject, path)
 }
 
-// mirrorGitDirIn is the engine-side bare mirror location for the (org,
-// project) pair's repo. mirrorGitDir is the skills-repo-scoped convenience
-// wrapper every pre-existing test uses.
-func (h *testGitHost) mirrorGitDirIn(orgID, projectID string) (string, error) {
-	h.mu.Lock()
-	row := h.rows[repoKey(orgID, projectID)]
-	h.mu.Unlock()
-	repoDir, err := gitfs.RepoDir(h.engine.Root(), sourcecontrol.WorkspaceRefFor(orgID, row, nil))
-	if err != nil {
-		return "", err
+// testOrigin is one provisioned repository as tests arrange and assert it.
+type testOrigin struct {
+	h       *testGitHost
+	org     string
+	project string
+}
+
+// originFor is the (org, project) pair's repository; origin pins the org's
+// skills repo.
+func (h *testGitHost) originFor(orgID, projectID string) testOrigin {
+	return testOrigin{h: h, org: orgID, project: projectID}
+}
+
+func (h *testGitHost) origin(orgID string) testOrigin { return h.originFor(orgID, SkillsRepoProject) }
+
+// FileAt is path's content at the tip; a missing path fails the test.
+func (o testOrigin) FileAt(t *testing.T, path string) string {
+	t.Helper()
+	ref, ok := o.h.refIn(o.org, o.project)
+	if !ok {
+		t.Fatalf("read %s: repository not provisioned", path)
 	}
-	return gitfs.GitSubdir(repoDir), nil
+	content, _, err := o.h.pod.ReadFile(context.Background(), ref, "", path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
 }
 
-func (h *testGitHost) mirrorGitDir(orgID string) (string, error) {
-	return h.mirrorGitDirIn(orgID, SkillsRepoProject)
+// Paths lists every file at the tip.
+func (o testOrigin) Paths(t *testing.T) []string {
+	t.Helper()
+	ref, ok := o.h.refIn(o.org, o.project)
+	if !ok {
+		t.Fatal("list: repository not provisioned")
+	}
+	entries, _, err := o.h.pod.List(context.Background(), ref, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	out := make([]string, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.Path)
+	}
+	return out
 }
 
-// ---- fake credential + resolver ----------------------------------------------
-
-type fakeCred struct{}
-
-func (fakeCred) Token(context.Context) (string, time.Time, error) { return "tok", time.Time{}, nil }
-func (fakeCred) Identity() secrets.Identity {
-	return secrets.Identity{Name: "Bot", Email: "bot@aep.dev"}
-}
-func (fakeCred) RepoOwner() string                        { return "test-org" }
-func (fakeCred) WebhookStrategy() secrets.WebhookStrategy { return secrets.WebhookPlatform }
-
-type fakeResolver struct{}
-
-func (fakeResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return fakeCred{}, nil
+// HeadSHA is the tip commit.
+func (o testOrigin) HeadSHA(t *testing.T) string {
+	t.Helper()
+	return o.h.headIn(o.org, o.project)
 }
 
-// newTestStore builds a REAL SkillService over the engine-backed host: the
-// production sourcecontrol.NewGitOpsService gateway with the workspacetest engine
-// as the Workspace port.
+// Seed writes files at the tip in one commit.
+func (o testOrigin) Seed(t *testing.T, files map[string]string, msg string) {
+	t.Helper()
+	o.h.commitIn(o.org, o.project, files, nil, msg)
+}
+
+// Remove deletes paths at the tip in one commit.
+func (o testOrigin) Remove(t *testing.T, msg string, paths ...string) {
+	t.Helper()
+	o.h.commitIn(o.org, o.project, nil, paths, msg)
+}
+
+// commitIn commits writes and deletes on the (org, project) pair's tip
+// (commitAtTip).
+func (h *testGitHost) commitIn(orgID, projectID string, writes map[string]string, deletes []string, msg string) {
+	h.t.Helper()
+	ref, ok := h.refIn(orgID, projectID)
+	if !ok {
+		h.t.Fatalf("commit %q: repository not provisioned", msg)
+	}
+	commitAtTip(h.t, h.pod, ref, writes, deletes, msg)
+}
+
+// newTestStore builds a REAL SkillService over the pod-backed host.
 func newTestStore(t *testing.T) (*SkillService, *testGitHost) {
 	host := newTestGitHost(t)
-	svc := NewSkillService(sourcecontrol.NewGitOpsService(fakeResolver{}, host.engine), host, testLibraryFS(t))
+	svc := NewSkillService(host.git(), host.git(), host, testLibraryFS(t))
 	return svc, host
 }
 
@@ -212,19 +261,6 @@ func nameSet(skills []Skill) map[string]Skill {
 		out[sk.Name] = sk
 	}
 	return out
-}
-
-// gitDirOut runs one git plumbing command against a bare repo dir (an origin
-// or an engine mirror) for integrity assertions.
-func gitDirOut(t *testing.T, gitDir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"--git-dir", gitDir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v in %s: %v\n%s", args, gitDir, err, out)
-	}
-	return string(out)
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -277,7 +313,7 @@ func TestRepoWebURL_ProjectsCloneURLToHTMLURL(t *testing.T) {
 // catalog's degrade-to-empty; the console shows its connect-GitHub guidance.
 func TestRepoWebURL_DegradesToEmpty(t *testing.T) {
 	t.Parallel()
-	svc := NewSkillService(nil, nil, nil)
+	svc := NewSkillService(nil, nil, nil, nil)
 	if got := svc.RepoWebURL(context.Background(), "org1"); got != "" {
 		t.Fatalf("RepoWebURL on degraded service = %q, want empty", got)
 	}
@@ -326,10 +362,10 @@ func TestFreshOrgProvisioning_SeedsEmbeddedLibrary(t *testing.T) {
 
 	// And they are genuinely IN the repo tree on origin under flat skills/.
 	origin := host.origin("org1")
-	if got := origin.FileAt(t, "main", "skills/architecture/SKILL.md"); !strings.Contains(got, "name: architecture") {
+	if got := origin.FileAt(t, "skills/architecture/SKILL.md"); !strings.Contains(got, "name: architecture") {
 		t.Fatalf("platform SKILL.md not committed to origin:\n%s", got)
 	}
-	if got := origin.FileAt(t, "main", "skills/openapi-conventions/references/wso2-rest-api-design-guidelines.md"); got == "" {
+	if got := origin.FileAt(t, "skills/openapi-conventions/references/wso2-rest-api-design-guidelines.md"); got == "" {
 		t.Fatal("platform reference file not committed to origin")
 	}
 }
@@ -587,14 +623,12 @@ func TestConcurrentReads_ProvisionOnceConsistently(t *testing.T) {
 	}
 }
 
-// TestCommitFiles_ConcurrentCommitsSerialize pins the Phase-1 exit gate: two
-// concurrent commitFiles for one org are serialized by the per-repo flock +
-// origin push-CAS — both land (or one surfaces a clean non-fast-forward
-// conflict), the origin history stays linear, and `git fsck` is clean on both
-// the origin and the engine's mirror.
-func TestCommitFiles_ConcurrentCommitsSerialize(t *testing.T) {
+// TestCommitFiles_ConcurrentCommitsBothLand: two concurrent commitFiles for
+// one org that touch different paths both land — each commit's baseSha
+// preconditions name only its own paths.
+func TestCommitFiles_ConcurrentCommitsBothLand(t *testing.T) {
 	t.Parallel()
-	svc, host := newTestStore(t)
+	svc, _ := newTestStore(t)
 	ctx := context.Background()
 	if _, err := svc.List(ctx, "org1"); err != nil { // provision + seed
 		t.Fatalf("seed: %v", err)
@@ -612,58 +646,32 @@ func TestCommitFiles_ConcurrentCommitsSerialize(t *testing.T) {
 		go func(i int, name string) {
 			defer wg.Done()
 			writes := map[string][]byte{skillRepoPath(name): []byte(skillMDNamed(name, ""))}
-			_, errs[i] = svc.commitFiles(ctx, "org1", repo, "add "+name, writes, nil, nil)
+			errs[i] = svc.commitFiles(ctx, "org1", repo, "add "+name, writes, nil, nil)
 		}(i, name)
 	}
 	wg.Wait()
 
-	landed := 0
 	for i, err := range errs {
-		switch {
-		case err == nil:
-			landed++
-			// A landed write must be visible in the catalog.
-			sk, rerr := svc.Resolve(ctx, "org1", names[i])
-			if rerr != nil || sk == nil {
-				t.Fatalf("landed skill %q not resolvable: %v / %v", names[i], sk, rerr)
-			}
-		case errors.Is(err, sourcecontrol.ErrRefNotFastForward):
-			// The one acceptable failure mode: a clean CAS conflict.
-		default:
-			t.Fatalf("commit %q failed with a non-conflict error: %v", names[i], err)
+		if err != nil {
+			t.Fatalf("commit %q: %v", names[i], err)
+		}
+		if sk, rerr := svc.Resolve(ctx, "org1", names[i]); rerr != nil || sk == nil {
+			t.Fatalf("landed skill %q not resolvable: %v / %v", names[i], sk, rerr)
 		}
 	}
-	if landed == 0 {
-		t.Fatal("neither concurrent commit landed")
-	}
-
-	// Origin history stays linear (no merge commits) and fsck-clean.
-	origin := host.origin("org1")
-	if merges := strings.TrimSpace(gitDirOut(t, origin.Dir(), "rev-list", "--merges", "--count", "main")); merges != "0" {
-		t.Fatalf("origin history not linear: %s merge commits", merges)
-	}
-	gitDirOut(t, origin.Dir(), "fsck", "--strict")
-
-	// Engine mirror fsck-clean too.
-	mirror, err := host.mirrorGitDir("org1")
-	if err != nil {
-		t.Fatalf("mirrorGitDir: %v", err)
-	}
-	gitDirOut(t, mirror, "fsck", "--strict")
 }
 
 // TestCommitFiles_ManifestMergeSurvivesCASRetry is the regression for the
-// lost-update hazard: the manifest merge now runs INSIDE the CAS closure, so a
-// concurrent commit that adds another skill's entry between this op's base
-// read and its push is folded in on the forced retry instead of clobbered.
+// lost-update hazard: the manifest merge runs on every attempt, so a
+// concurrent commit that adds another skill's entry between this op's read
+// and its commit is folded in on the retry instead of clobbered.
 //
-// It is a genuine race-shaped test driven through the real engine + real
-// origin + real CAS retry: the injected manifestFn, on its FIRST invocation,
-// lands a competing entry ("A") directly on the origin — advancing main after
-// this attempt resolved its base but before it pushes. The push is rejected
-// non-fast-forward, Mutate re-fetches + re-runs the closure against the new
-// base ({..,A}), and this op's own entry ("B") is merged on top → both survive.
-// A pre-rendered manifest captured outside the closure would drop "A" here.
+// The injected manifestFn, on its FIRST invocation, lands a competing entry
+// ("A") on the tip — after this attempt read the manifest's blob sha but
+// before it commits. The commit's manifest baseSha no longer holds, so the
+// pod answers a conflict; commitFiles re-reads and re-merges against the new
+// manifest ({..,A}), and this op's own entry ("B") is merged on top → both
+// survive. A pre-rendered manifest would drop "A" here.
 func TestCommitFiles_ManifestMergeSurvivesCASRetry(t *testing.T) {
 	t.Parallel()
 	svc, host := newTestStore(t)
@@ -688,7 +696,7 @@ func TestCommitFiles_ManifestMergeSurvivesCASRetry(t *testing.T) {
 	}
 
 	writes := map[string][]byte{skillRepoPath("B"): []byte(skillMDNamed("B", ""))}
-	if _, err := svc.commitFiles(ctx, "org1", repo, "add B", writes, nil, manifestFn); err != nil {
+	if err := svc.commitFiles(ctx, "org1", repo, "add B", writes, nil, manifestFn); err != nil {
 		t.Fatalf("commitFiles: %v", err)
 	}
 	if !injected {
@@ -722,4 +730,47 @@ func keysOfStr(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestSkillReads_ManifestAtTheLibrarysSha pins the catalog's one-snapshot
+// rule and its cacheability: the skills repo's tip is resolved on the pod's
+// mirror (Head, Local), then the library and the manifest are both read at
+// that sha — never at the tip again, which could pair a manifest with a
+// different tree, and never at "" (uncacheable: the library is the whole
+// skills/ tree, base64 on the wire).
+func TestSkillReads_ManifestAtTheLibrarysSha(t *testing.T) {
+	t.Parallel()
+	svc, host := newTestStore(t)
+	ctx := context.Background()
+	if _, err := svc.List(ctx, "org1"); err != nil { // provision + seed
+		t.Fatalf("seed skills repo: %v", err)
+	}
+	seen := len(host.pod.Calls())
+
+	if _, err := svc.List(ctx, "org1"); err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	var reads, heads []aestudiotest.Call
+	for _, c := range host.pod.Calls()[seen:] {
+		switch c.Op {
+		case aestudiotest.OpReadBundle:
+			reads = append(reads, c)
+		case aestudiotest.OpHead:
+			heads = append(heads, c)
+		}
+	}
+	skillsRef := sourcecontrol.RepoRef{Org: "org1", Owner: "test-org", Repo: SkillsRepoName, DefaultBranch: "main"}
+	tip := host.head("org1")
+	if len(heads) != 1 || heads[0].Ref != skillsRef || heads[0].At != "" || !heads[0].Local {
+		t.Fatalf("head calls = %+v, want one local tip resolve of the skills repo", heads)
+	}
+	if len(reads) != 2 {
+		t.Fatalf("bundle reads = %+v, want 2", reads)
+	}
+	if r := reads[0]; r.Ref != skillsRef || r.At != tip || r.Filter.Prefix != "skills/" || len(r.Filter.Paths) != 0 {
+		t.Fatalf("library read = %+v, want skills/ at %s", r, tip)
+	}
+	if r := reads[1]; r.Ref != skillsRef || r.At != tip || len(r.Filter.Paths) != 1 || r.Filter.Paths[0] != skillsManifestPath {
+		t.Fatalf("manifest read = %+v, want %s at %s", r, skillsManifestPath, tip)
+	}
 }

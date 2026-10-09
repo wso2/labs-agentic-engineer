@@ -18,7 +18,7 @@
 
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorMessage, retryAfterMs } from "../../../api/errors";
 import type { IssueInfo } from "../model/issues";
 
 // A project's issues and the RCA agent's reports, copied from the old console
@@ -39,10 +39,10 @@ function issuesQuery(projectName: string) {
   return {
     queryKey: issueKeys.list(projectName),
     queryFn: async (): Promise<IssueInfo[]> => {
-      const { data, error } = await client.GET("/projects/{projectName}/issues", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/issues", {
         params: { path: { projectName } },
       });
-      if (error) throw new Error(apiErrorMessage(error, "Couldn't load the issues"));
+      if (error) throw new ApiRequestError(error, "Couldn't load the issues", { retryAfterMs: retryAfterMs(response) });
       return data ?? [];
     },
     staleTime: ISSUES_STALE_MS,
@@ -79,10 +79,12 @@ export function useIssueDetail(projectName: string, issueNumber: number) {
   return useQuery({
     queryKey: issueKeys.detail(projectName, issueNumber),
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/tasks/{issueNumber}", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/tasks/{issueNumber}", {
         params: { path: { projectName, issueNumber } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, `Couldn't load issue #${issueNumber}`));
+      if (error || data === undefined) {
+        throw new ApiRequestError(error, `Couldn't load issue #${issueNumber}`, { retryAfterMs: retryAfterMs(response) });
+      }
       return data;
     },
     staleTime: ISSUES_STALE_MS,

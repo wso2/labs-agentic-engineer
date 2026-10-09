@@ -74,6 +74,9 @@ type AgentLaunch struct {
 	JobRef      string
 	ModelHost   string
 	Environment string
+	// ComponentUID is the UID of the Component the Job runs as, recorded on the
+	// cycle so the settler deletes exactly it.
+	ComponentUID string
 }
 
 // MilestoneDispatcher launches ONE agent run over a milestone and reports what

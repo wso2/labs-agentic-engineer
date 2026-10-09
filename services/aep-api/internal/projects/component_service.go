@@ -82,8 +82,8 @@ type ComponentService interface {
 	GetBuildLogs(ctx context.Context, orgName, projectName, componentName, buildName string, sinceMillis int64) (*gen.BuildLogs, error)
 }
 
-// BuildSecretStager pre-stages the org's build git Secret on the workflow
-// plane and returns the secretRef the build WorkflowRun consumes. Consumer-
+// BuildSecretStager returns the secretRef the build WorkflowRun consumes: the
+// org's github-pat SecretReference name, never a value. Consumer-
 // side port over BuildCredentialsService; a thin composition-root adapter
 // maps the concrete *StageResult to the secretRef string so the component
 // feature need not import that services type.
@@ -93,13 +93,13 @@ type BuildSecretStager interface {
 
 // ModelKeyResolver is the narrow port ModelAccessEnvVars needs from the
 // organization domain's ConnectionReader: the org's model connection and its
-// key's vault coordinates.
-// Declared consumer-side (same pattern as OrgPublisher in trait_sync.go) so
+// key's stamped reference with its vault path (KeyPathRef).
+// Declared consumer-side (same pattern as OrgIDPProfiles in api_traits.go) so
 // this package takes only the one method it needs, not the whole reader.
 // Returns an *organization.NotFoundError when the org has no active
 // connection — see ModelAccessEnvVars.
 type ModelKeyResolver interface {
-	KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
+	KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
 }
 
 // -- model access for ai-agent components (see ai_agent_model_access.go) ----
@@ -193,9 +193,9 @@ type componentService struct {
 	client        openchoreo.ComponentClient
 	observClient  observability.Client
 	artifactStore *spec.ArtifactStore
-	// repoSvc + buildCredSvc are used by TriggerBuild to pre-stage the
-	// per-WorkflowRun build Secret. Optional — nil means "no staging"
-	// (tests / unit-only flows).
+	// repoSvc + buildCredSvc are used by TriggerBuild to resolve the org's
+	// github-pat SecretReference the build references. Optional — nil means
+	// no reference (tests / unit-only flows).
 	repoSvc      sourcecontrol.RepoService
 	buildCredSvc BuildSecretStager
 	// aiGatewayBindings resolves the environment's Agent Manager AI gateway.
@@ -239,8 +239,8 @@ func (s *componentService) SetAutoRCAEnabled(enabled bool) {
 
 // NewComponentService builds the component service. repoSvc, buildCredSvc,
 // modelKeyResolver, and secretRefClient may be nil in tests / unit-only
-// flows; production wiring passes all four so TriggerBuild can pre-stage
-// the per-WorkflowRun build Secret and ModelAccessEnvVars can compose MODEL_*
+// flows; production wiring passes all four so TriggerBuild can name the org's
+// github-pat SecretReference and ModelAccessEnvVars can compose MODEL_*
 // for ai-agent components.
 func NewComponentService(client openchoreo.ComponentClient, observClient observability.Client, artifactStore *spec.ArtifactStore, repoSvc sourcecontrol.RepoService, buildCredSvc BuildSecretStager, modelKeyResolver ModelKeyResolver, secretRefClient secretmanagersvc.OpenChoreoSecretReferenceClient) ComponentService {
 	return &componentService{
@@ -367,9 +367,9 @@ func (s *componentService) EnsureComponent(ctx context.Context, orgName, project
 		AutoDeploy: false,
 	}
 
-	// repository.secretRef stays empty: build credentials are pre-staged per
-	// WorkflowRun (build-credential-injection.md), so the Component's workflow
-	// param carries no SecretReference.
+	// repository.secretRef stays empty here: each build WorkflowRun names the
+	// org's github-pat SecretReference itself (TriggerBuild), so the
+	// Component's workflow param carries none.
 	if _, err := s.CreateComponent(ctx, orgName, projectName, &openchoreo.CreateComponentRequest{
 		Name:        k8sName,
 		DisplayName: comp.Name,
@@ -472,10 +472,11 @@ func (s *componentService) ListDeployments(ctx context.Context, orgName, project
 }
 
 func (s *componentService) TriggerBuild(ctx context.Context, orgName, projectName, componentName string) (*gen.WorkflowRun, error) {
-	// Pre-stage the per-WorkflowRun build Secret in workflows-<orgID> so
-	// the shared dockerfile-builder workflow's checkout-source mounts a
-	// populated Secret (see docs/design/build-credential-injection.md).
-	// Manual triggers from the console go through this path; the
+	// The build references the org's github-pat SecretReference by name
+	// (StageBuildSecret returns that name after checking the repo belongs to
+	// the org); nothing is written per run. The shared dockerfile-builder
+	// workflow's checkout-source synthesises the git Secret from the
+	// reference. Manual triggers from the console go through this path; the
 	// webhook-driven dispatch path uses workflowRunService.dispatchBuild.
 	runName := openchoreo.NewBuildRunName(projectName, componentName)
 	buildSecretRef := ""

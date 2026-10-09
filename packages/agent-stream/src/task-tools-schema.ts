@@ -19,7 +19,7 @@
 /**
  * The Zod `inputSchema`s for the plan-turn tools. They live HERE (not in the
  * service's tool defs, unlike the file tools) because they are the single
- * definition the agents service uses as tool `inputSchema` AND the source the
+ * definition the design agent uses as tool `inputSchema` AND the source the
  * published JSON Schema is rendered from (`json-schema.ts`) for the Go BFF to
  * vendor — one definition, no hand-kept copies (mirrors `componentDesignSchema`).
  *

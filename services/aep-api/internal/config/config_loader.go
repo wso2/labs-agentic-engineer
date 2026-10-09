@@ -18,6 +18,8 @@ package config
 
 import (
 	"bufio"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
@@ -29,6 +31,10 @@ import (
 
 type configReader struct {
 	errors []error
+	// webhookRelay holds the relay env Load resolves into
+	// AEStudioConfig.WebhookRelaySeed once CREDENTIAL_ENCRYPTION_KEY is known
+	// good; it is not configuration in its own right.
+	webhookRelay struct{ flag, seed string }
 }
 
 // Load reads configuration from environment variables.
@@ -53,22 +59,16 @@ func Load() (Config, error) {
 			// not must say so (see the field's doc).
 			DataPlaneGatewayTLS: r.readOptionalBool("DATA_PLANE_GATEWAY_TLS", true),
 		},
-		DatabaseURL:               r.databaseURL(),
-		TestMode:                  r.readOptionalBool("TEST_MODE", false),
-		LocalOpenBaoRepairEnabled: r.readOptionalBool("LOCAL_OPENBAO_REPAIR", false),
-		DeploymentTier:            r.readOptionalString("DEPLOYMENT_TIER", "dev"),
-		PlaygroundTokenEnabled:    r.readOptionalBool("PLAYGROUND_TOKEN_ENABLED", false),
+		DatabaseURL:    r.databaseURL(),
+		DeploymentTier: r.readOptionalString("DEPLOYMENT_TIER", "dev"),
 		// Default true: core capability, opt-out (unlike other booleans here which are opt-in extras).
 		PlatformResourcesEnabled: r.readOptionalBool("PLATFORM_RESOURCES_ENABLED", true),
 		AutoMergeCodingPRs:       r.readOptionalBool("AUTO_MERGE_CODING_PRS", false),
 		TenantGateMode:           r.readOptionalString("TENANT_GATE_MODE", "enforce"),
 		SREHandoff:               r.sreHandoff(),
-
-		OAuthStateSigningKey: r.readOptionalString("OAUTH_STATE_SIGNING_KEY", ""),
-		BFFPublicURL:         r.readOptionalString("BFF_PUBLIC_URL", "http://localhost:8090"),
-		TryItCallbackURL:     r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
-		BuildAuthRetryBudget: r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
-		SkillsDir:            r.readOptionalString("SKILLS_DIR", "/app/skills"),
+		TryItCallbackURL:         r.readOptionalString("TRY_IT_CALLBACK_URL", ""),
+		BuildAuthRetryBudget:     r.readOptionalInt("BUILD_AUTH_RETRY_BUDGET", 3),
+		SkillsDir:                r.readOptionalString("SKILLS_DIR", "/app/skills"),
 		ThunderAdmin: ThunderAdminConfig{
 			BaseURL:      r.readOptionalString("THUNDER_ADMIN_URL", ""),
 			ClientID:     r.readOptionalString("THUNDER_SYSTEM_CLIENT_ID", "aep-system-client"),
@@ -86,42 +86,15 @@ func Load() (Config, error) {
 			// name; this default must agree with it.
 			JWKSURL: r.readOptionalString("PLATFORM_IDP_JWKS_URL", "http://platform-idp-service.platform-idp.svc.cluster.local:8090/oauth2/jwks"),
 		},
-		TaskTokenSigningKey:    r.taskSigningKey(),
-		TaskTokenIssuer:        r.readOptionalString("BFF_TASK_TOKEN_ISSUER", "aep-bff"),
-		TaskTokenAudience:      r.readOptionalString("BFF_TASK_TOKEN_AUDIENCE", "git-service"),
+		AEStudio:               r.aeStudio(),
 		JWKSURL:                r.readOptionalString("JWKS_URL", ""),
 		JWTAllowedIssuer:       r.readOptionalString("JWT_ISSUER", ""),
-		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-bff"),
+		JWTAllowedAudience:     r.readOptionalString("JWT_AUDIENCE", "aep-console-client"),
 		JWTResourceMetadataURL: r.readOptionalString("JWT_RESOURCE_METADATA_URL", ""),
 		Observability: ObservabilityConfig{
-			BaseURL:      r.readOptionalString("OBSERVER_URL", r.readOptionalString("OBSERVABILITY_SERVICE_BASE_URL", "")),
-			TokenURL:     r.readOptionalString("OBSERVER_OAUTH_TOKEN_URL", ""),
-			ClientID:     r.readOptionalString("OBSERVER_OAUTH_CLIENT_ID", ""),
-			ClientSecret: r.readOptionalString("OBSERVER_OAUTH_CLIENT_SECRET", ""),
-			HostHeader:   r.readOptionalString("OBSERVER_OAUTH_HOST_HEADER", ""),
+			BaseURL: r.readOptionalString("OBSERVER_URL", r.readOptionalString("OBSERVABILITY_SERVICE_BASE_URL", "")),
 		},
-		AgentsSvc: AgentsSvcConfig{
-			BaseURL:     r.readOptionalString("AGENTS_SVC_BASE_URL", ""),
-			JWTSecret:   r.readOptionalString("AGENTS_SVC_JWT_SECRET", ""),
-			JWTAudience: r.readOptionalString("AGENTS_SVC_JWT_AUDIENCE", "agents-service"),
-			JWTIssuer:   r.readOptionalString("AGENTS_SVC_JWT_ISSUER", "aep-bff"),
-		},
-		Workspace: WorkspaceConfig{
-			Root:           r.readOptionalString("AEP_WORKSPACE_ROOT", "/workspaces"),
-			ReapInterval:   r.readOptionalDuration("AEP_WORKSPACE_REAP_INTERVAL", 5*time.Minute),
-			SnapshotMaxAge: r.readOptionalDuration("AEP_WORKSPACE_SNAPSHOT_MAX_AGE", time.Hour),
-			TrashMaxAge:    r.readOptionalDuration("AEP_WORKSPACE_TRASH_MAX_AGE", time.Hour),
-			// 30 days. A recording is the only thing on this mount nothing can
-			// rebuild, so its window is set by how long a run is worth looking at,
-			// not by cache pressure.
-			RecordingMaxAge:   r.readOptionalDuration("AEP_WORKSPACE_RECORDING_MAX_AGE", 720*time.Hour),
-			RecordingMaxBytes: r.readOptionalInt64("AEP_WORKSPACE_RECORDING_MAX_BYTES", 0),
-			OrgQuotaBytes:     r.readOptionalInt64("AEP_WORKSPACE_ORG_QUOTA_BYTES", 2147483648), // 2 GiB
-			DiskHighPct:       r.readOptionalInt("AEP_WORKSPACE_DISK_HIGH_PCT", 85),
-			DiskLowPct:        r.readOptionalInt("AEP_WORKSPACE_DISK_LOW_PCT", 70),
-		},
-		AgentPlatformURL:   r.readOptionalString("AGENT_PLATFORM_URL", ""),
-		AEPInternalBaseURL: r.readOptionalString("AEP_API_INTERNAL_BASE_URL", ""),
+		AgentPlatformURL: r.readOptionalString("AGENT_PLATFORM_URL", ""),
 		ServiceAuth: ServiceAuthConfig{
 			TokenURL:     r.readOptionalString("SERVICE_AUTH_TOKEN_URL", ""),
 			ClientID:     r.readOptionalString("SERVICE_AUTH_CLIENT_ID", ""),
@@ -143,20 +116,15 @@ func Load() (Config, error) {
 
 		// Git-service config. Uses the same env-var names git-service used so
 		// existing local .env files / release-bindings keep working.
-		GitProvider:                 r.readOptionalString("GIT_PROVIDER", "github"),
-		GitHubRepoVisibility:        r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
-		GitHubCommitterName:         r.readOptionalString("GIT_COMMITTER_NAME", "AEP Bot"),
-		GitHubCommitterEmail:        r.readOptionalString("GIT_COMMITTER_EMAIL", "bot@aep.dev"),
-		WebhookDeliveryURL:          r.readOptionalString("GITHUB_WEBHOOK_DELIVERY_URL", ""),
-		WebhookHMACSecret:           r.readOptionalString("GITHUB_WEBHOOK_SECRET", ""),
-		CredentialEncryptionKey:     r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
-		OpenBaoAddr:                 r.readOptionalString("OPENBAO_ADDR", ""),
-		OpenBaoToken:                r.readOptionalString("OPENBAO_TOKEN", ""),
-		GitHubAppID:                 r.readOptionalString("GITHUB_APP_ID", ""),
-		GitHubAppClientID:           r.readOptionalString("GITHUB_CLIENT_ID", ""),
-		GitHubAppClientSecret:       r.readOptionalString("GITHUB_CLIENT_SECRET", ""),
+		GitHubRepoVisibility:    r.readOptionalString("GITHUB_REPO_VISIBILITY", "public"),
+		CredentialEncryptionKey: r.readOptionalString("CREDENTIAL_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+		OpenBaoAddr:             r.readOptionalString("OPENBAO_ADDR", ""),
+		OpenBaoAuth: OpenBaoAuthConfig{
+			Role:      r.readOptionalString("OPENBAO_AUTH_ROLE", "aep-api"),
+			Mount:     r.readOptionalString("OPENBAO_AUTH_MOUNT", "kubernetes"),
+			TokenPath: r.readOptionalString("OPENBAO_AUTH_TOKEN_PATH", "/var/run/secrets/kubernetes.io/serviceaccount/token"),
+		},
 		GitHubAppSlug:               r.readOptionalString("GITHUB_APP_SLUG", "aep-platform"),
-		GitHubAppPrivateKeyPath:     r.readOptionalString("GITHUB_APP_PRIVATE_KEY_PATH", ""),
 		CredentialValidatorInterval: r.readOptionalDuration("CREDENTIAL_VALIDATOR_INTERVAL", 24*time.Hour),
 
 		// Temporal (devflow workflows). Enabled iff TEMPORAL_HOSTPORT is set.
@@ -176,10 +144,14 @@ func Load() (Config, error) {
 		// The OpenCode variant of the same image, pinned the same way (Helm
 		// codingAgentRunner.opencodeImage / compose AGENT_RUNNER_IMAGE_OPENCODE).
 		AgentRunnerImageOpenCode: r.readOptionalString("AGENT_RUNNER_IMAGE_OPENCODE", ""),
-		// Finished cycle Components stay queryable via the observer until
-		// pruned. Default 10 matches codingagent.DefaultCodingAgentComponentRetention;
-		// local compose lowers this (often to 2) to make LRU prune observable.
-		CodingAgentComponentRetention: r.readOptionalInt("CODING_AGENT_COMPONENT_RETENTION", 10),
+		// See Config.CodingAgentSettleGrace.
+		CodingAgentSettleGrace: r.readOptionalDuration("CODING_AGENT_SETTLE_GRACE", 5*time.Minute),
+		// The observability plane's log retention (3 days on Cloud).
+		ObserverLogRetention: r.readOptionalDuration("OBSERVER_LOG_RETENTION", 72*time.Hour),
+		// Finished cycle Jobs are deleted after this; see Config.CodingAgentJobTTL.
+		CodingAgentJobTTL: r.readBoundedDuration("CODING_AGENT_JOB_TTL", 600*time.Second, MaxCodingAgentJobTTL),
+		// See Config.CodingAgentCPURequest.
+		CodingAgentCPURequest: r.readOptionalCPU("CODING_AGENT_CPU_REQUEST", "500m", CodingAgentCPUCeilingMillicores),
 	}
 
 	if len(r.errors) > 0 {
@@ -193,6 +165,14 @@ func Load() (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
+
+	// Validate proved the key decodes to 32 bytes.
+	credKey, _ := base64.StdEncoding.DecodeString(cfg.CredentialEncryptionKey)
+	relayKey, err := resolveWebhookRelayKey(r.webhookRelay.flag, r.webhookRelay.seed, credKey)
+	if err != nil {
+		return Config{}, fmt.Errorf("configuration errors:\n%w", err)
+	}
+	cfg.AEStudio.WebhookRelaySeed = relayKey
 
 	return cfg, nil
 }
@@ -223,26 +203,6 @@ func (r *configReader) databaseURL() string {
 		RawQuery: params.Encode(),
 	}
 	return u.String()
-}
-
-// taskSigningKey reads the BFF Task JWT signing PEM. BFF_TASK_SIGNING_KEY
-// takes precedence; BFF_TASK_SIGNING_KEY_PATH is the file-mount fallback
-// docker-compose deployments use (multi-line PEM survives a bind mount
-// cleanly; env-var passing across compose `${VAR}` substitution does not).
-func (r *configReader) taskSigningKey() string {
-	if v := os.Getenv("BFF_TASK_SIGNING_KEY"); v != "" {
-		return v
-	}
-	path := os.Getenv("BFF_TASK_SIGNING_KEY_PATH")
-	if path == "" {
-		return ""
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		r.errors = append(r.errors, fmt.Errorf("read BFF_TASK_SIGNING_KEY_PATH %s: %w", path, err))
-		return ""
-	}
-	return string(b)
 }
 
 const (
@@ -312,6 +272,77 @@ func (r *configReader) kubeAPI() KubeAPIConfig {
 		}
 	}
 	return cfg
+}
+
+// aeStudio reads the optional AE_STUDIO_* set. Nothing here is required: an
+// absent value is reported by AEStudioConfig.Missing at Ensure time. A
+// malformed AE_STUDIO_EXTRA_EGRESS or AE_STUDIO_WEBHOOK_RELAY_ENABLED is a
+// deployment typo and fails boot (the error names the key, never the value).
+// The relay flag and seed are kept on the reader; Load resolves them into
+// WebhookRelaySeed.
+func (r *configReader) aeStudio() AEStudioConfig {
+	var c AEStudioConfig
+	c.Images.DesignAgent = r.readOptionalString("AE_STUDIO_IMAGE_DESIGN_AGENT", "")
+	c.Images.Collab = r.readOptionalString("AE_STUDIO_IMAGE_COLLAB", "")
+	c.Images.StudioTools = r.readOptionalString("AE_STUDIO_IMAGE_STUDIO_TOOLS", "")
+	c.GatewayHost = r.readOptionalString("AE_STUDIO_GATEWAY_HOST", "")
+	c.PublicScheme = r.readOptionalString("AE_STUDIO_PUBLIC_SCHEME", "https")
+	c.PublicPortSuffix = r.readOptionalString("AE_STUDIO_PUBLIC_PORT_SUFFIX", "")
+	c.ListenerName = r.readOptionalString("AE_STUDIO_LISTENER_NAME", "https")
+	c.ConsoleOrigins = splitCSV(os.Getenv("AE_STUDIO_CONSOLE_ORIGINS"))
+	c.IDP.Issuer = r.readOptionalString("AE_STUDIO_IDP_ISSUER", "")
+	c.IDP.JWKSURL = r.readOptionalString("AE_STUDIO_IDP_JWKS_URL", "")
+	c.IDP.TokenURL = r.readOptionalString("AE_STUDIO_IDP_TOKEN_URL", "")
+	c.IDP.UserAudiences = splitCSV(os.Getenv("AE_STUDIO_IDP_USER_AUDIENCES"))
+	c.AEPAPIBaseURL = r.readOptionalString("AE_STUDIO_AEP_API_BASE_URL", "")
+	c.InternalClientID = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_ID", "")
+	c.InternalClientSecret = r.readOptionalString("AE_STUDIO_INTERNAL_CLIENT_SECRET", "")
+	c.RuntimeClassName = r.readOptionalString("AE_STUDIO_RUNTIME_CLASS_NAME", "")
+	c.Cilium = r.readOptionalBool("AE_STUDIO_CILIUM", false)
+	c.Storage.SizeLimit = r.readOptionalString("AE_STUDIO_STORAGE_SIZE_LIMIT", "3Gi")
+	c.Storage.EphemeralRequest = r.readOptionalString("AE_STUDIO_STORAGE_EPHEMERAL_REQUEST", "1Gi")
+	c.Storage.BudgetBytes = r.readOptionalInt64("AE_STUDIO_STORAGE_BUDGET_BYTES", 2147483648)
+	c.CPURequest.DesignAgent = r.readOptionalCPU("AE_STUDIO_CPU_REQUEST_DESIGN_AGENT", "100m", AEStudioCPURequestCeilingMillicores)
+	c.CPURequest.Collab = r.readOptionalCPU("AE_STUDIO_CPU_REQUEST_COLLAB", "50m", AEStudioCPURequestCeilingMillicores)
+	c.CPURequest.StudioTools = r.readOptionalCPU("AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS", "100m", AEStudioCPURequestCeilingMillicores)
+	c.PullSecret.Key = r.readOptionalString("AE_STUDIO_PULL_SECRET_KEY", "")
+	c.PullSecret.Property = r.readOptionalString("AE_STUDIO_PULL_SECRET_PROPERTY", "")
+	r.webhookRelay.flag = r.readWebhookRelayFlag()
+	r.webhookRelay.seed = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_SEED", "")
+	c.WebhookRelayImage = r.readOptionalString("AE_STUDIO_WEBHOOK_RELAY_IMAGE", "")
+
+	egress := r.readOptionalString("AE_STUDIO_EXTRA_EGRESS", "[]")
+	if !json.Valid([]byte(egress)) {
+		r.errors = append(r.errors, fmt.Errorf("AE_STUDIO_EXTRA_EGRESS must be valid JSON"))
+		egress = "[]"
+	}
+	c.ExtraEgress = json.RawMessage(egress)
+	return c
+}
+
+// readWebhookRelayFlag reads AE_STUDIO_WEBHOOK_RELAY_ENABLED strictly: "",
+// "true" or "false", exactly. Anything else ("True", "1", " true") is a
+// typo that the lenient readOptionalBool would silently read as off, so it
+// fails boot instead.
+func (r *configReader) readWebhookRelayFlag() string {
+	switch v := os.Getenv("AE_STUDIO_WEBHOOK_RELAY_ENABLED"); v {
+	case "", webhookRelayOn, webhookRelayOff:
+		return v
+	default:
+		r.errors = append(r.errors, fmt.Errorf(`AE_STUDIO_WEBHOOK_RELAY_ENABLED must be "true" or "false"`))
+		return ""
+	}
+}
+
+// splitCSV splits a comma list, trimming blanks and dropping empty items.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // minSREHandoffTokenLen is the shortest handoff key accepted. aectl generates
@@ -384,6 +415,37 @@ func (r *configReader) readOptionalDuration(key string, defaultVal time.Duration
 		return defaultVal
 	}
 	return d
+}
+
+// readBoundedDuration is readOptionalDuration with an upper bound: a longer
+// duration records an error naming the key only, never the value.
+func (r *configReader) readBoundedDuration(key string, defaultVal, max time.Duration) time.Duration {
+	d := r.readOptionalDuration(key, defaultVal)
+	if d > max {
+		r.errors = append(r.errors, fmt.Errorf("%s: above the maximum of %s", key, max))
+		return defaultVal
+	}
+	return d
+}
+
+// readOptionalCPU returns the env's CPU quantity in canonical form
+// (CanonicalCPU), defaultVal when empty. A quantity that does not parse or exceeds maxMillicores records an
+// error naming the key only, never the value.
+func (r *configReader) readOptionalCPU(key, defaultVal string, maxMillicores int) string {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal
+	}
+	m, err := ParseCPUMillicores(val)
+	switch {
+	case err != nil:
+		r.errors = append(r.errors, fmt.Errorf("%s: %w", key, err))
+		return defaultVal
+	case m > maxMillicores:
+		r.errors = append(r.errors, fmt.Errorf("%s: above the maximum of %dm", key, maxMillicores))
+		return defaultVal
+	}
+	return CanonicalCPU(m)
 }
 
 func (r *configReader) readOptionalBool(key string, defaultVal bool) bool {

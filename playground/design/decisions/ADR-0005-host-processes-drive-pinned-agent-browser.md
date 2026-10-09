@@ -38,7 +38,7 @@ because a bare `agent-browser` would otherwise resolve to the global CLI.
 
 **`agent-browser.ts` and `runner-image.ts` are their own modules.** The eval
 walker needs the PATH helpers and the provenance needs the runner image name.
-Importing them from `coding-run.ts` would load `@aep/agents`, whose module
+Importing them from `coding-run.ts` would load `@aep/ae-design-agent`, whose module
 scope merges `deployments/.env` into the importer's environment.
 
 ## Consequences
@@ -49,4 +49,4 @@ scope merges `deployments/.env` into the importer's environment.
 - The developer's global CLI is never used or changed by the playground or the
   evals.
 - `evals/codegen` imports the two small modules and never imports
-  `@aep/agents`.
+  `@aep/ae-design-agent`.

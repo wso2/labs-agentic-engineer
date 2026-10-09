@@ -21,16 +21,13 @@
 // shapes, the 404 miss, and the no-claims 401 the API-surface guard exists
 // for. The command/plan HTTP operations the retired Huma surface carried
 // (plan-tasks, execute-task, hold-task, unhold-task, promote-task-from-issue)
-// are not in the committed contract, so their route tests are gone; the
-// one-active-plan-turn invariant keeps a service-level test below (the build
-// click's plan path is its caller).
+// are not in the committed contract, so their route tests are gone. One
+// plan turn per project is the AE Studio pod's lock now (plan_test.go).
 package task_test
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -38,7 +35,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/contracts/taskmeta"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/execution"
@@ -46,11 +42,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
 	"github.com/wso2/aep/aep-api/internal/edge"
 	"github.com/wso2/aep/aep-api/internal/platform/componenttest"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
 const (
@@ -212,22 +204,6 @@ func (f fakeExecs) ListByIssueScoped(_ context.Context, _, _ string, n int) ([]d
 	return f.history[n], nil
 }
 
-// fakeVersions drives the plan versioned-spec gate.
-type fakeVersions struct {
-	tags []string
-}
-
-func (fakeVersions) BuildScopeAtTag(context.Context, string, string, string) (spec.BuildScope, error) {
-	return spec.BuildScope{}, nil
-}
-
-func (f fakeVersions) ListSpecVersionTags(context.Context, string, string) (*spec.TagList, error) {
-	if len(f.tags) == 0 {
-		return &spec.TagList{}, nil
-	}
-	return &spec.TagList{Tags: f.tags, Latest: f.tags[0]}, nil
-}
-
 func hasAll(have, want []string) bool {
 	set := map[string]bool{}
 	for _, l := range have {
@@ -340,76 +316,6 @@ func TestGet_IncludesHistory(t *testing.T) {
 	if e := componenttest.DecodeEnvelope(t, miss.Body.String()); e.Code != "not_found" {
 		t.Errorf("missing task envelope code = %q, want not_found", e.Code)
 	}
-}
-
-func TestPlan_InProgress_409(t *testing.T) {
-	// The one-active-plan-turn invariant (§6): while a plan turn holds the
-	// per-project in-flight lock (blocked in the upstream Turn), a second plan
-	// for the same project must be rejected with ErrPlanInProgress. plan-tasks
-	// has no public HTTP route, so the invariant is asserted at the service
-	// seam the build click calls. The plan dispatch is workspace-shaped, so the
-	// rig runs a real engine over real file:// origins.
-	iss := newIssues()
-	bt := &blockingTurn{started: make(chan struct{}), release: make(chan struct{})}
-	fx := workspacetest.New(t, map[string]string{"specs/design/design.md": "# d"})
-	fx.Origin.Tag(t, "v1", "spec version v1")
-	skillsOrigin := gittest.NewRemote(t, gittest.WithSeed(map[string]string{
-		"skills/task-planning/SKILL.md": "---\nname: task-planning\nmetadata:\n  aep:\n    kind: platform\n---\nbody",
-	}, "seed"))
-	repoRow := &sourcecontrol.GitRepository{OrgID: org, ProjectID: proj, RepoURL: fx.Origin.URL(),
-		DefaultBranch: "main", RepoSlug: workspacetest.DefaultSlug, Status: "ready"}
-	skillsRow := &sourcecontrol.GitRepository{OrgID: org, ProjectID: spec.SkillsRepoSentinelProjectID,
-		RepoURL: skillsOrigin.URL(), DefaultBranch: "main", RepoSlug: "org-skills", Status: "ready"}
-	git := sourcecontrol.NewGitOpsService(nilCredResolver{}, fx.Engine)
-	plan := task.NewPlanService(fixedRepos{repo: repoRow},
-		fakeVersions{tags: []string{"v1"}}, git,
-		func(context.Context, string) (spec.AgentLLM, error) { return spec.AgentLLM{Key: "sk-key"}, nil }, bt, iss, iss.writer(), fx.Engine,
-		func(context.Context, string) (*sourcecontrol.GitRepository, error) { return skillsRow, nil })
-
-	firstErr := make(chan error, 1)
-	go func() {
-		firstErr <- plan.PlanIntoMilestone(context.Background(), org, proj, 7)
-	}()
-	select {
-	case <-bt.started: // the first turn now holds the in-flight lock
-	case err := <-firstErr:
-		t.Fatalf("first plan failed before dispatch: %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("first plan never reached the turn dispatch")
-	}
-
-	if err := plan.PlanIntoMilestone(context.Background(), org, proj, 7); !errors.Is(err, task.ErrPlanInProgress) {
-		t.Fatalf("second concurrent plan: err = %v, want ErrPlanInProgress", err)
-	}
-	close(bt.release)
-}
-
-// fixedRepos serves one fixed row (the workspace-backed plan rig's repo).
-type fixedRepos struct{ repo *sourcecontrol.GitRepository }
-
-func (f fixedRepos) GetRepo(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
-	return f.repo, nil
-}
-
-// nilCredResolver satisfies secrets.Resolver for file:// origins (the
-// engine skips askpass injection on a nil credential).
-type nilCredResolver struct{}
-
-func (nilCredResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return nil, nil
-}
-
-// blockingTurn holds the in-flight lock by blocking inside Turn until released.
-type blockingTurn struct {
-	once    sync.Once
-	started chan struct{}
-	release chan struct{}
-}
-
-func (b *blockingTurn) Turn(_ context.Context, _, _, _ string, _ agentsvc.TurnRequest) (io.ReadCloser, error) {
-	b.once.Do(func() { close(b.started) })
-	<-b.release
-	return io.NopCloser(strings.NewReader("data: [DONE]\n\n")), nil
 }
 
 func TestTasks_NoAuth_401(t *testing.T) {

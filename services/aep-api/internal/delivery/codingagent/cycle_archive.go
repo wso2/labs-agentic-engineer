@@ -16,13 +16,16 @@
 
 package codingagent
 
-// cycle_archive.go — the POST-MORTEM half of a cycle's log.
+// cycle_archive.go — the observability plane's half of a cycle's log.
 //
-// Once the agent pod is reaped there is no pod log left to read, but the
-// observability plane has been indexing that pod's output all along, keyed on
-// the COMPONENT. So the archive is readable for exactly as long as the
-// Component is retained — which is why retention deletes Components lazily
-// rather than the moment a cycle ends.
+// Once the agent pod is gone there is no pod log left to read, but the
+// observability plane has been indexing that pod's output all along. It is read
+// by the cycle's Component UID: by COMPONENT scope while the Component's
+// release binding resolves, and by PROJECT scope once the Component is deleted
+// (the component scope resolves the name through the control plane, and a
+// deleted name no longer resolves; the project scope needs only the Project and
+// Environment). The UID filter keeps another Component of the project, or a
+// later Component reusing the name, out of the cycle's log.
 //
 // Two things this is not. It is not a system of record: the observability
 // plane's retention is the dataplane's, and nothing here writes anything back.
@@ -34,6 +37,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -46,45 +50,34 @@ import (
 // answer is gone for good.
 var ErrArchiveUnavailable = errors.New("codingagent: log archive unavailable")
 
-// ObserverArchive reads a finished cycle's log from the observability plane.
+// ObserverArchive reads a cycle's log from the observability plane as text,
+// for the v1 surfaces.
 type ObserverArchive struct {
-	obs     observability.Client
+	obs     cycleLogQuerier
 	runtime openchoreo.RuntimeClient
 }
 
 // NewObserverArchive wires the archive. obs may be nil (no OBSERVER_URL): every
 // read then reports ErrArchiveUnavailable.
-func NewObserverArchive(obs observability.Client, runtime openchoreo.RuntimeClient) *ObserverArchive {
+func NewObserverArchive(obs cycleLogQuerier, runtime openchoreo.RuntimeClient) *ObserverArchive {
 	return &ObserverArchive{obs: obs, runtime: runtime}
 }
 
 // CycleArchive returns the cycle's archived log as timestamped text.
 func (a *ObserverArchive) CycleArchive(ctx context.Context, scope ArchiveScope) (string, error) {
-	if a == nil || a.obs == nil {
+	if a == nil {
 		return "", fmt.Errorf("%w: no observability plane configured", ErrArchiveUnavailable)
 	}
-	if scope.Environment == "" {
-		return "", fmt.Errorf("%w: no environment for %s", ErrArchiveUnavailable, scope.ComponentName)
-	}
-	// The index dies with the component, so check the component first: querying
-	// a deleted one returns an empty page that is indistinguishable from a
-	// silent agent, and those are opposite things to tell a user.
-	if a.runtime != nil {
+	componentExists := true
+	if a.runtime != nil && scope.Environment != "" {
 		_, err := a.runtime.ReleaseBindingName(ctx, scope.OrgName, scope.ProjectName, scope.ComponentName, scope.Environment)
 		if errors.Is(err, openchoreo.ErrNotFound) {
-			return "", fmt.Errorf("%w: %s", ErrComponentGone, scope.ComponentName)
+			componentExists = false
 		}
 	}
-	lines, err := a.obs.QueryComponentLogs(ctx, observability.ComponentLogQuery{
-		Namespace:   scope.OrgName,
-		Project:     scope.ProjectName,
-		Component:   openchoreo.ScopedComponentName(scope.ProjectName, scope.ComponentName),
-		Environment: scope.Environment,
-		From:        scope.From,
-		To:          scope.To,
-	})
+	lines, err := readCycleObserver(ctx, a.obs, scope, componentExists)
 	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrArchiveUnavailable, err)
+		return "", err
 	}
 	var b strings.Builder
 	for i := range lines {
@@ -96,4 +89,45 @@ func (a *ObserverArchive) CycleArchive(ctx context.Context, scope ArchiveScope) 
 		b.WriteByte('\n')
 	}
 	return b.String(), nil
+}
+
+// readCycleObserver is the one observer read of a cycle's lines, for the feed
+// and for the v1 archive alike: component scope while the Component exists,
+// project scope after, always filtered on the cycle's Component UID. It logs
+// `observer.read` with the scope and the read's size.
+func readCycleObserver(ctx context.Context, obs cycleLogQuerier, scope ArchiveScope, componentExists bool) ([]observability.LogLine, error) {
+	if obs == nil {
+		return nil, fmt.Errorf("%w: no observability plane configured", ErrArchiveUnavailable)
+	}
+	if scope.Environment == "" {
+		return nil, fmt.Errorf("%w: no environment for %s", ErrArchiveUnavailable, scope.ComponentName)
+	}
+	if scope.ComponentUID == "" {
+		// No UID to filter on: the cycle predates UID capture, and an
+		// unfiltered read would hand it every Component's lines.
+		return nil, fmt.Errorf("%w: %s has no recorded component uid", ErrComponentGone, scope.ComponentName)
+	}
+	q := observability.CycleLogQuery{
+		Namespace:    scope.OrgName,
+		Project:      scope.ProjectName,
+		ComponentUID: scope.ComponentUID,
+		Environment:  scope.Environment,
+		From:         scope.From,
+		To:           scope.To,
+	}
+	scopeName := "project"
+	if componentExists {
+		q.Component = openchoreo.ScopedComponentName(scope.ProjectName, scope.ComponentName)
+		scopeName = "component"
+	}
+	lines, stats, err := obs.QueryCycleLogs(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrArchiveUnavailable, err)
+	}
+	// linesMissing says the read knows it could not return every line in the
+	// window (the client warns with the detail); interior losses also show on
+	// the feed as gap notices.
+	slog.InfoContext(ctx, "observer.read", "cycle", scope.CycleID, "componentUid", scope.ComponentUID,
+		"scope", scopeName, "lines", len(lines), "pages", stats.Pages, "linesMissing", stats.LinesMissing)
+	return lines, nil
 }

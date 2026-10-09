@@ -31,8 +31,7 @@
  * provider, the contract path fits its type and has no URL form, a copy's
  * `ref` may only be the stub that asks for the copy (the platform fills the
  * block), and the organization's instructions and the user's `accepted` record
- * are echoed but never authored. The Go fold (agentfold/dependencygate.go) is
- * an exact port; the two must agree.
+ * are echoed but never authored.
  */
 
 import { z } from "zod";
@@ -377,7 +376,7 @@ function platformFieldChanged(next: unknown, prior: string | undefined, pick: (b
   return canonical(pick(before as PriorShape)) !== canonical(next);
 }
 
-/** JSON with sorted object keys — the Go fold compares the same way, so a re-ordered echo reads equal on both sides. */
+/** JSON with sorted object keys, so a re-ordered echo reads equal. */
 function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (typeof value === "object" && value !== null) {

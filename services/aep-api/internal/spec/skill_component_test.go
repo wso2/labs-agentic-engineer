@@ -20,10 +20,9 @@
 // tenant gate in ENFORCE → strict handlers → mapSkillError — driven in-process
 // via the componenttest harness. The
 // SkillService/SkillMutationService/SkillImportService run for real over the
-// gitfs Workspace engine + one REAL bare file:// origin per org
-// (spec.NewComponentStore, the export_test.go handle around
-// repo_store_test.go's engine-backed host); NOTHING is faked below the git
-// plumbing — every request fetches, reads, and commits genuine git objects.
+// in-memory AE Studio pod (spec.NewComponentStore, the export_test.go handle
+// around repo_store_test.go's pod-backed host): every request reads and
+// commits through the Git port with git's blob and commit shas.
 //
 // Read-body shapes are asserted by FIELD SET against the harvested goldens
 // (testdata/harvest/golden/). The goldens were harvested from the Huma edge and

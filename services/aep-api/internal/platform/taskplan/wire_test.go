@@ -23,10 +23,6 @@ import (
 
 func TestToolResultDecoders(t *testing.T) {
 	planOk := `{"ok":true,"op":"plan","component":"svc","title":"Do it","dependsOn":["a"],"origin":"spec-plan","rationale":"why"}`
-	ok, op, err := ToolResultOK(json.RawMessage(planOk))
-	if err != nil || !ok || op != "plan" {
-		t.Fatalf("ToolResultOK = (%v,%q,%v)", ok, op, err)
-	}
 	p, err := DecodePlanTaskOk(json.RawMessage(planOk))
 	if err != nil {
 		t.Fatalf("DecodePlanTaskOk: %v", err)
@@ -61,10 +57,9 @@ func TestToolResultDecoders(t *testing.T) {
 		t.Fatalf("expected error for neither ref branch")
 	}
 
-	// A failed tool result (ok:false, self-correction) is skipped by the tap.
+	// A failed tool result (ok:false, self-correction) is never a success.
 	toolErr := `{"ok":false,"op":"plan","code":"UNKNOWN_COMPONENT","message":"no such component"}`
-	ok, _, err = ToolResultOK(json.RawMessage(toolErr))
-	if err != nil || ok {
-		t.Fatalf("ToolResultOK(err) = (%v,%v)", ok, err)
+	if _, err := DecodePlanTaskOk(json.RawMessage(toolErr)); err == nil {
+		t.Fatalf("expected an ok:false result to be refused")
 	}
 }

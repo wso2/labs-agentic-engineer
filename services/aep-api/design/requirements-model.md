@@ -14,6 +14,17 @@ feature. Decisions: ADR-0039, ADR-0040, ADR-0041. Terms: `CONTEXT.md`
   unavailable)` — what a selection carries and what it refuses.
 - Held to `packages/contracts/requirements/acme-expenses` (`expected.json`,
   `feature-lines.json`, `basis.json`), which the console's reader shares.
+- Every line reads as the console reads it from the collab room, where inline
+  markup is a mark and not text (`inline.go`): code spans, emphasis, strong,
+  strikethrough, links and autolinks read as their words, escapes and
+  entities as their characters. A closing `*assumed*`/`*blocking*` is kept for
+  `parseLine`. The room's parser (`marked`, via @tiptap/markdown) is the
+  reference, not the CommonMark spec: the console has no markdown source to
+  re-derive markup from, and the basis is compared by string equality. Both
+  sides are held to `packages/contracts/requirements/inline-markup-cases.json`.
+- The reader is linear in a line's length (one pairing pass for brackets,
+  parentheses and code spans; emphasis paired with CommonMark's
+  `openers_bottom`): files are user-written and every basis reads them all.
 
 ## The save gate — `internal/spec`
 
@@ -22,7 +33,10 @@ acceptance at one commit and refuses the tag on: requirement ID problems;
 designs or roles citing a feature instead of its stories, or stale stories; an
 acceptance file missing a carried story's tag; a feature out of date
 (`staleFeatures`: its basis now vs at its last design run, from
-`CompletedFlows`); a pick it cannot carry (`build_selection.go`). The tag's
+`CompletedFlows`); a pick it cannot carry (`build_selection.go`). A design
+run's scope is the feature IDs its ledger row's `Summary` holds ("F1 F2",
+from the pod's `designFeatures`; empty = every designable feature), read by
+`DesignedFeatures`; `Summary` holds nothing else for a design turn. The tag's
 annotation records the plan (`scopeBody` / `parseScope`).
 
 - `BuildScopeAtTag` — the stories, features, P items and component claims a
@@ -51,4 +65,5 @@ into the repair milestone and starts the run without planning.
 against the previous validated version's final attempt (`Baseline`). The
 verdict, digest and regression count come from it; repair issues are filed by
 standing (regression / still failing / plain). Office uploads are converted
-to markdown by `internal/platform/officetext`.
+to markdown by `internal/platform/officetext` while the references upload
+streams them to the pod (`spec/files/references.go`).

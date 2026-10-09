@@ -67,9 +67,12 @@ func (r deliveryRunner) settled(ctx context.Context, attrs []any, err error) boo
 	return false
 }
 
-// run executes the handlers under handlerBudget. ctx must already be detached
-// from any request (the receiver passes context.WithoutCancel of its own).
+// run executes the handlers under handlerBudget and the delivery org
+// (WithDeliveryOrg), whoever dispatched the attempt. ctx must already be
+// detached from any request (the receiver passes context.WithoutCancel of its
+// own).
 func (r deliveryRunner) run(ctx context.Context, a deliveryAttempt) {
+	ctx = WithDeliveryOrg(ctx, a.ocOrgID)
 	started := time.Now()
 	handlerCtx, cancel := context.WithTimeout(ctx, handlerBudget)
 	err := r.router.Dispatch(handlerCtx, a.event, a.payload)

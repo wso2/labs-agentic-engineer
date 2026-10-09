@@ -18,12 +18,21 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 )
 
 // Config holds all application configuration.
+// MaxCodingAgentJobTTL bounds CODING_AGENT_JOB_TTL. After a re-dispatch the
+// finished Job's TTL has to run out and OpenChoreo re-create the Job (Cloud
+// applies a release up to 13 min after it is requested) before the attempt
+// can start, all inside delivery.CycleApplyCap (30 min from dispatch): 30 - 13
+// = 17 min. A longer TTL would fail every agent-death re-dispatch
+// `startup_failed:not_applied` (design/oc-job-dispatch.md).
+const MaxCodingAgentJobTTL = 17 * time.Minute
+
 type Config struct {
 	ServerHost string
 	ServerPort int
@@ -32,39 +41,16 @@ type Config struct {
 	PlatformAPI PlatformAPIConfig
 	DatabaseURL string
 
-	// Test mode — registration gate for the dev/test surface (/_dev/v1/*).
-	// Defaults false, so the surface is absent in every real env.
-	TestMode bool
-
-	// LocalOpenBaoRepairEnabled gates POST /_dev/v1/secret-ref-resync — the
-	// in-process SecretRefWriter resync helper (status-only response; no secret
-	// material on the wire). Distinct from TestMode because TestMode is also
-	// true on the shared wso2cloud dev release binding. Splitting the two means
-	// the resync route only mounts where deployments/docker-compose.yml
-	// explicitly opts in; cloud release bindings never set this var so the route
-	// never registers in deployed environments.
-	LocalOpenBaoRepairEnabled bool
-
 	// DeploymentTier guards dev-only destructive migrations and seed paths.
 	// The destructive BFF migrations refuse to run unless tier=dev.
 	DeploymentTier string
-
-	// PlaygroundTokenEnabled gates POST /internal/v1/mcp/playground-token — a
-	// caller-auth-free endpoint that mints a short-lived MCP token so a human
-	// can drive the @aep/playground CLI against a live aep-api
-	// without a caller-auth story (an open decision this endpoint deliberately
-	// does not prejudge). Defaults false, so the route is ABSENT (404, not
-	// 403) everywhere except deployments/docker-compose.yml, which opts in for
-	// local dev. Read from PLAYGROUND_TOKEN_ENABLED.
-	PlaygroundTokenEnabled bool
 
 	// PlatformResourcesEnabled gates discovery of cluster-scoped platform
 	// resource types (ResourceTypeCatalog.List → OC ListClusterResourceTypes).
 	// Defaults TRUE: platform resources are a core capability; deployments that
 	// offer no platform-resource catalog must opt out explicitly
-	// (PLATFORM_RESOURCES_ENABLED=false). Unlike PlaygroundTokenEnabled /
-	// AutoMergeCodingPRs (opt-in extras that default false), this is an
-	// opt-out. Read from PLATFORM_RESOURCES_ENABLED.
+	// (PLATFORM_RESOURCES_ENABLED=false). Unlike AutoMergeCodingPRs (an opt-in extra that
+	// defaults false), this is an opt-out. Read from PLATFORM_RESOURCES_ENABLED.
 	PlatformResourcesEnabled bool
 
 	// AutoMergeCodingPRs gates auto-merge of coding-agent pull requests: when
@@ -89,31 +75,12 @@ type Config struct {
 	// which aep-api verifies against the observer's recorded alerts.
 	SREHandoff SREHandoffConfig
 
-	// OAuthStateSigningKey is the HS256 key used to sign the connect-state
-	// JWT that rides the GitHub App OAuth `state` query param (CSRF
-	// protection on the connect callback). Task JWTs use RS256 via
-	// TaskTokenSigningKey; this key has no other use.
-	OAuthStateSigningKey string
-
-	// BFFPublicURL is the user-visible BFF base — used as the basis for
-	// the App-mode redirect after callback (302 → console settings page).
-	BFFPublicURL string
-
 	// TryItCallbackURL is the platform tester's OAuth callback, registered as a
 	// redirect URI on every project's sign-in resource so a client that is not
 	// one of the project's own components — the platform's test app — can
 	// complete a sign-in there. One fixed URL for the whole platform. Empty
 	// disables the registration.
 	TryItCallbackURL string
-
-	// TaskTokenSigningKey is the PEM-encoded RSA private key used to sign
-	// Task JWTs. The matching public key is published at /auth/external/jwks.json.
-	TaskTokenSigningKey string
-	// TaskTokenIssuer is the iss claim on issued Task JWTs (e.g. "aep-bff").
-	TaskTokenIssuer string
-	// TaskTokenAudience is the aud claim — fixed to "git-service" today, the
-	// only verifier of Task JWTs.
-	TaskTokenAudience string
 
 	// Build watcher git_clone_failed_auth retry budget. Default 3 attempts.
 	// Configurable via BUILD_AUTH_RETRY_BUDGET; tests set to 0 to force
@@ -171,11 +138,15 @@ type Config struct {
 	// PLATFORM_IDP_JWKS_URL.
 	PlatformIDP PlatformIDPDefaults
 
+	// AEStudio configures the per-org AE Studio data-plane Resource. Every
+	// field is optional at boot (AE_STUDIO_*); Missing() names what Ensure
+	// needs and lacks, so an unconfigured install fails Ensure loudly instead
+	// of failing boot.
+	AEStudio AEStudioConfig
+
 	Observability ObservabilityConfig
-	AgentsSvc     AgentsSvcConfig
 	ServiceAuth   ServiceAuthConfig
 	AgentManager  AgentManagerConfig
-	Workspace     WorkspaceConfig
 
 	// SkillsDir is the on-disk platform skill library the BFF seeds + reconciles
 	// into each org's skills repo (SKILLS_DIR). It is COPY'd into the image from
@@ -185,25 +156,16 @@ type Config struct {
 	SkillsDir string
 
 	// AgentPlatformURL is the URL the coding-agent runner pod uses to call
-	// back to the BFF (credentials refresh, MCP, skills). In cloud this is the
+	// back to the BFF (MCP, validation context). In cloud this is the
 	// public/internal gateway route to app-factory-api — runner pods live in
 	// the dataplane and cannot reach the control-plane ClusterIP. Locally it
 	// is typically http://host.k3d.internal:9090.
 	AgentPlatformURL string
 
-	// AEPInternalBaseURL is the BFF's own base URL as reached by peer
-	// cluster-internal services (agents-service) for the internal MCP
-	// discovery surface (/internal/v1/mcp). The BFF hands agents-service an
-	// `mcp: {url, token}` bundle in the architect request; agents-service calls
-	// back to `AEPInternalBaseURL + /internal/v1/mcp` with the BFF-signed MCP
-	// token. Optional — empty disables MCP propagation (the additive `mcp`
-	// field is simply omitted; consumed in the E-phase). Read from
-	// AEP_API_INTERNAL_BASE_URL.
-	AEPInternalBaseURL string
-
-	// JWKS settings for inbound JWT verification — Thunder publishes the
-	// User JWT and Service JWT signing key at JWKSURL; verifiers refresh
-	// on kid miss. Issuer and audience configure RFC 7519 claim checks.
+	// JWKS settings for /api/v1's user-JWT verification — Thunder publishes
+	// the signing key at JWKSURL; verifiers refresh on kid miss. Issuer and
+	// audience configure RFC 7519 claim checks; the audience is the console
+	// client's, the one client that issues user tokens for this edge.
 	JWKSURL                string
 	JWTAllowedIssuer       string
 	JWTAllowedAudience     string
@@ -211,36 +173,21 @@ type Config struct {
 
 	// Git-service config fields.
 
-	// GitProvider selects the git host implementation (clients/<provider>)
-	// wired behind gitrepo's provider ports. Read from GIT_PROVIDER; default
-	// and only supported value today is "github". Validate() rejects anything
-	// else with a boot error.
-	GitProvider string
-
 	GitHubRepoVisibility string
-	GitHubCommitterName  string
-	GitHubCommitterEmail string
 
-	// WebhookDeliveryURL is the URL the platform registers on each repo.
-	WebhookDeliveryURL string
-	// WebhookHMACSecret is the HMAC key for inbound webhook validation.
-	WebhookHMACSecret string
-
-	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key
-	// used to encrypt per-org credentials at rest in org_secrets.
+	// CredentialEncryptionKey is the base64-encoded 32-byte AES-256 key of
+	// the column cipher, which seals test_users.password_sealed at rest.
 	CredentialEncryptionKey string
 
-	// OpenBaoAddr / OpenBaoToken — local-only OpenBao connection for the
-	// in-process OpenBao-direct secrets provider (NewOSSOptions). Empty
-	// leaves SecretsProvider nil (delivery off). Never set in cloud.
-	OpenBaoAddr  string
-	OpenBaoToken string
+	// OpenBaoAddr — local-only OpenBao address for the in-process
+	// OpenBao-direct secrets provider (NewOSSOptions). Empty leaves
+	// SecretsProvider nil (delivery off). Never set in cloud.
+	OpenBaoAddr string
+	// OpenBaoAuth is how aep-api logs in to OpenBao: Kubernetes auth with its
+	// service-account token. There is no static token.
+	OpenBaoAuth OpenBaoAuthConfig
 
-	GitHubAppID             string
-	GitHubAppClientID       string // App's OAuth client_id; used to build the OAuth authorize URL
-	GitHubAppClientSecret   string
-	GitHubAppSlug           string // App's URL slug, used in the install URL
-	GitHubAppPrivateKeyPath string
+	GitHubAppSlug string // App's URL slug; names the platform bot sender (githubBotLogin)
 
 	// CredentialValidatorInterval is the periodic credential-validator
 	// sweep interval. Default 24h.
@@ -262,12 +209,29 @@ type Config struct {
 	// dispatch fails naming this setting; Claude Code orgs are unaffected.
 	AgentRunnerImageOpenCode string
 
-	// CodingAgentComponentRetention is how many finished coding-agent
-	// Components a project may keep (LRU reap before each create). Defaults
-	// to codingagent.DefaultCodingAgentComponentRetention (10). Override via
-	// CODING_AGENT_COMPONENT_RETENTION so local E2E can observe prune without
-	// eleven cycles; cloud keeps the code default unless explicitly set.
-	CodingAgentComponentRetention int
+	// CodingAgentSettleGrace is how far apart the two "no pod" reads must be
+	// before a closed coding cycle's Component is deleted (the
+	// ComponentSettler). An empty resource tree can be transient, so one read
+	// is never enough. Default 5m (CODING_AGENT_SETTLE_GRACE).
+	CodingAgentSettleGrace time.Duration
+
+	// ObserverLogRetention is how long the observability plane keeps pod logs.
+	// A coding cycle that ended longer ago than this reports its log as
+	// `expired` and is not read. Default 72h (OBSERVER_LOG_RETENTION).
+	ObserverLogRetention time.Duration
+
+	// CodingAgentJobTTL is how long a finished coding-agent Job (and its pod)
+	// is kept before Kubernetes deletes it, rendered per Component as the
+	// ComponentType's ttlSecondsAfterFinished. Default 600s (CODING_AGENT_JOB_TTL).
+	// Once a cycle is over its binding is suspended, so the Job OpenChoreo
+	// re-creates after the TTL never runs the runner again.
+	CodingAgentJobTTL time.Duration
+
+	// CodingAgentCPURequest is the CPU each coding-agent Job requests, a CPU
+	// quantity ("500m", "0.25", "1") no greater than CodingAgentCPUCeiling.
+	// Default 500m (CODING_AGENT_CPU_REQUEST), the ComponentType's own default;
+	// lower it on a CPU-starved dataplane. Memory is not configurable.
+	CodingAgentCPURequest string
 
 	// Temporal holds the workflow-engine connection settings for the devflow
 	// feature. Enabled iff HostPort is set — unset leaves aep-api fully
@@ -284,9 +248,6 @@ func (c Config) Validate() error {
 	if key, err := base64.StdEncoding.DecodeString(c.CredentialEncryptionKey); err != nil || len(key) != 32 {
 		errs = append(errs, "CREDENTIAL_ENCRYPTION_KEY must be a base64-encoded 32-byte key")
 	}
-	if c.GitProvider != "github" {
-		errs = append(errs, fmt.Sprintf("unknown GIT_PROVIDER %q — supported: github", c.GitProvider))
-	}
 	// Required config — fail fast at boot instead of soft-warning and surfacing
 	// the failure later at runtime. Both planes (docker-compose + Helm) always set
 	// these; an empty value means a misconfigured deployment, not a valid mode.
@@ -294,11 +255,6 @@ func (c Config) Validate() error {
 		// Without JWKS the inbound verifier rejects every /api/ request (401);
 		// there is no unsigned-claim fallback.
 		errs = append(errs, "JWKS_URL is required — the inbound JWT verifier cannot start without it")
-	}
-	if c.TaskTokenSigningKey == "" {
-		// Without the RS256 signing key every task dispatch (and the runner
-		// callbacks that verify against the published JWKS) fails.
-		errs = append(errs, "BFF_TASK_SIGNING_KEY (or _PATH) is required — task dispatch cannot start without it")
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("configuration errors:\n%s", strings.Join(errs, "\n"))
@@ -352,6 +308,85 @@ type PlatformIDPDefaults struct {
 	JWKSURL string
 }
 
+// AEStudioConfig is the deployment-supplied input of the AE Studio Resource.
+// One AE_STUDIO_* env per field; only ExtraEgress is JSON.
+type AEStudioConfig struct {
+	Images struct{ DesignAgent, Collab, StudioTools string }
+
+	GatewayHost      string
+	PublicScheme     string
+	PublicPortSuffix string
+	ListenerName     string
+	ConsoleOrigins   []string
+
+	IDP struct {
+		Issuer, JWKSURL, TokenURL string
+		UserAudiences             []string
+	}
+
+	AEPAPIBaseURL string
+	// InternalClientID is aep-api's own AE-only client. The secret is not
+	// needed by Ensure (the converge uses it), so Missing() ignores it and boot
+	// never requires it.
+	InternalClientID     string
+	InternalClientSecret string
+
+	RuntimeClassName string
+	Cilium           bool
+	ExtraEgress      json.RawMessage // default "[]"
+
+	Storage struct {
+		SizeLimit, EphemeralRequest string
+		BudgetBytes                 int64
+	}
+	// CPURequest are the three app containers' CPU requests, canonical
+	// quantities (AE_STUDIO_CPU_REQUEST_*), defaulting to the template's.
+	CPURequest struct{ DesignAgent, Collab, StudioTools string }
+	PullSecret struct{ Key, Property string }
+
+	// WebhookRelaySeed is the HMAC key of each org's smee.io relay channel
+	// (aestudio.WebhookRelayURL), resolved at Load: the text of
+	// AE_STUDIO_WEBHOOK_RELAY_SEED when set, else, with
+	// AE_STUDIO_WEBHOOK_RELAY_ENABLED=true, a key derived from
+	// CREDENTIAL_ENCRYPTION_KEY; AE_STUDIO_WEBHOOK_RELAY_ENABLED=false forces
+	// it empty (resolveWebhookRelayKey). Empty = no relay, the default. A
+	// secret: never logged.
+	WebhookRelaySeed []byte
+	// WebhookRelayImage (AE_STUDIO_WEBHOOK_RELAY_IMAGE) is the relay
+	// container's image, needed whenever the relay is on.
+	WebhookRelayImage string
+}
+
+// Missing returns the env names Ensure needs and lacks, in a stable order.
+func (c AEStudioConfig) Missing() []string {
+	var missing []string
+	for _, f := range []struct{ env, val string }{
+		{"AE_STUDIO_IMAGE_DESIGN_AGENT", c.Images.DesignAgent},
+		{"AE_STUDIO_IMAGE_COLLAB", c.Images.Collab},
+		{"AE_STUDIO_IMAGE_STUDIO_TOOLS", c.Images.StudioTools},
+		{"AE_STUDIO_GATEWAY_HOST", c.GatewayHost},
+		{"AE_STUDIO_IDP_ISSUER", c.IDP.Issuer},
+		{"AE_STUDIO_IDP_JWKS_URL", c.IDP.JWKSURL},
+		{"AE_STUDIO_IDP_TOKEN_URL", c.IDP.TokenURL},
+		{"AE_STUDIO_AEP_API_BASE_URL", c.AEPAPIBaseURL},
+		{"AE_STUDIO_INTERNAL_CLIENT_ID", c.InternalClientID},
+	} {
+		if f.val == "" {
+			missing = append(missing, f.env)
+		}
+	}
+	if len(c.ConsoleOrigins) == 0 {
+		missing = append(missing, "AE_STUDIO_CONSOLE_ORIGINS")
+	}
+	if len(c.IDP.UserAudiences) == 0 {
+		missing = append(missing, "AE_STUDIO_IDP_USER_AUDIENCES")
+	}
+	if len(c.WebhookRelaySeed) > 0 && c.WebhookRelayImage == "" {
+		missing = append(missing, "AE_STUDIO_WEBHOOK_RELAY_IMAGE")
+	}
+	return missing
+}
+
 // ServiceAuthConfig holds OAuth2 client_credentials settings for
 // service-to-service authentication (e.g. BFF → OpenChoreo API).
 type ServiceAuthConfig struct {
@@ -361,71 +396,23 @@ type ServiceAuthConfig struct {
 	HostHeader   string // Thunder Host header for k3d routing
 }
 
-// AgentsSvcConfig holds connection + M2M settings for the file-mutation agents
-// service (services/agents) — the requirements/design/chat generation flows AND
-// the tasks-github-native plan turns (toolset:"task-plan"). The legacy AI-SDK
-// agents service and its config are gone. The BFF mints a per-call HS256 M2M
-// bearer from JWTSecret with aud=JWTAudience (the service's AGENT_JWT_SECRET /
-// AGENT_JWT_AUDIENCE).
-type AgentsSvcConfig struct {
-	BaseURL     string
-	JWTSecret   string
-	JWTAudience string
-	JWTIssuer   string
-}
-
-// WorkspaceConfig holds the shared git-workspaces mount settings: the mount root
-// where bare repo mirrors + per-SHA snapshots live, plus the disk-lifecycle
-// (reaper) knobs. aep-api is the sole writer of the mount; the agents service
-// consumes read-only snapshots from the same volume.
-type WorkspaceConfig struct {
-	// Root is the workspace mount root (AEP_WORKSPACE_ROOT). Layout under it:
-	// repos/<orgId>/<projectId>/<repoSlug>/{git,repo.lock,snapshots/<sha>},
-	// trash/<ulid>, tmp/, runs/<orgId>/<cycleId>.
-	Root string
-	// ReapInterval is the background reaper sweep cadence (trash purge,
-	// snapshot age-reap, orphan reconciliation, quota/LRU eviction).
-	ReapInterval time.Duration
-	// SnapshotMaxAge — snapshots/<sha> dirs older than this and not the
-	// repo's current HEAD are reaped.
-	SnapshotMaxAge time.Duration
-	// TrashMaxAge — trash/<ulid> entries (phase 1 of the two-phase delete)
-	// older than this are purged.
-	TrashMaxAge time.Duration
-	// RecordingMaxAge — runs/<orgId>/<cycleId> coding-agent feed recordings
-	// older than this are removed by the reaper. Days, not hours: unlike every
-	// other tree on this mount a recording cannot be rebuilt, so the window is
-	// how long a run stays inspectable rather than how long a cache stays warm
-	// (ADR-0027).
-	RecordingMaxAge time.Duration
-	// RecordingMaxBytes caps ONE cycle's recording. Zero — the default — is no
-	// cap: a 55-minute run wrote about 300KB, so this is a safety valve for a
-	// pathological producer, not an operating limit. A run that trips it records
-	// a notice saying so and keeps running without recording.
-	RecordingMaxBytes int64
-	// OrgQuotaBytes is the per-org disk quota before LRU eviction kicks in.
-	OrgQuotaBytes int64
-	// DiskHighPct / DiskLowPct are the statfs water marks (%): usage above
-	// high triggers eviction, which runs until usage drops below low.
-	DiskHighPct int
-	DiskLowPct  int
-}
-
 // ObservabilityConfig holds connection settings for the OpenChoreo Observer
 // service. BaseURL is optional; if empty, the BFF returns 503
-// progress_unavailable on the /progress/* endpoints. Auth fields drive the
-// Thunder client_credentials flow used to read workflow-run logs.
+// progress_unavailable on the /progress/* endpoints. There are no credentials:
+// every observer read forwards the calling user's bearer, so the observer
+// authorizes the person who asked.
 type ObservabilityConfig struct {
 	BaseURL string
+}
 
-	// OAuth client_credentials settings — wired to the platform-default
-	// reader app `openchoreo-observer-resource-reader-client`. Promoting to
-	// multi-tenant cloud should swap this for a per-app registration (see
-	// task-execution-progress.md §5.4).
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	HostHeader   string
+// OpenBaoAuthConfig is aep-api's Kubernetes-auth login to OpenBao
+// (OPENBAO_AUTH_*). The role binds service account aep-api in wso2-aep to the
+// write-only aep-api-writer policy; deployments/scripts/openbao-aep-api-auth.sh
+// creates both.
+type OpenBaoAuthConfig struct {
+	Role      string // OPENBAO_AUTH_ROLE, default aep-api
+	Mount     string // OPENBAO_AUTH_MOUNT, default kubernetes
+	TokenPath string // OPENBAO_AUTH_TOKEN_PATH, default the pod's projected service-account token
 }
 
 // AgentManagerConfig holds the machine credentials AEP calls Agent Manager

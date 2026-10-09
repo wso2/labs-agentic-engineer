@@ -28,7 +28,7 @@ import path from "node:path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/** See core.test.mjs: drop NODE_TEST_* so the child uses the TAP reporter. */
+/** See core.test.mjs: drop NODE_TEST_* so the child uses the TAP reporter (also pinned via --test-reporter=tap, since Node 24 defaults to spec). */
 function childEnv() {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
@@ -40,7 +40,7 @@ function childEnv() {
 test("authz/screens: which question decides NoAccess", () => {
   const child = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", "--test", path.join(here, "screens.cases.mjs")],
+    ["--experimental-strip-types", "--no-warnings", "--test", "--test-reporter=tap", path.join(here, "screens.cases.mjs")],
     { encoding: "utf8", env: childEnv() },
   );
   const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;

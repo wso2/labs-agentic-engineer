@@ -37,7 +37,7 @@ type secretReferenceClient struct {
 
 // NewSecretReferenceClient builds an OpenChoreoSecretReferenceClient over the
 // generated OC SecretReference API. Panics on construction failure (same
-// pattern as NewGitSecretClient / NewProjectClient).
+// pattern as NewProjectClient).
 func NewSecretReferenceClient(cfg Config) secretmanagersvc.OpenChoreoSecretReferenceClient {
 	oc, err := newGenClient(cfg)
 	if err != nil {
@@ -164,6 +164,15 @@ func secretReferenceToModel(sr *gen.SecretReference) *secretmanagersvc.SecretRef
 	}
 	if sr.Metadata.Namespace != nil {
 		out.Namespace = *sr.Metadata.Namespace
+	}
+	if sr.Spec != nil {
+		for _, d := range sr.Spec.Data {
+			entry := secretmanagersvc.SecretReferenceData{SecretKey: d.SecretKey, RemoteKey: d.RemoteRef.Key}
+			if d.RemoteRef.Property != nil {
+				entry.Property = *d.RemoteRef.Property
+			}
+			out.Data = append(out.Data, entry)
+		}
 	}
 	return out
 }

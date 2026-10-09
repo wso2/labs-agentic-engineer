@@ -44,7 +44,9 @@ type RunCycleRepository interface {
 	Append(ctx context.Context, cycle *RunCycle) error
 
 	// NoteDispatch records a dispatch of the cycle: it increments Attempts and
-	// re-points the row at the newly dispatched Job. The supervisor compares the
+	// re-points the row at the newly dispatched Job, stamping dispatched_at and
+	// clearing the previous attempt's settle stamps (job_suspended_at,
+	// pod_gone_at) and startup wait. The supervisor compares the
 	// returned Attempts against RunMaxRedispatchPerCycle to decide whether the
 	// per-cycle re-dispatch budget is spent. Guarded on the cycle being open.
 	NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error)
@@ -56,7 +58,58 @@ type RunCycleRepository interface {
 	// name a host it never ran on (RecordUsage prices the capture against the
 	// host), and a write target moved mid-run does not send the cycle's readers
 	// to an environment its Job was never in. Guarded on the cycle being open.
-	NoteLaunch(ctx context.Context, id, host, environment string) (*RunCycle, error)
+	// componentUID is the UID of the Component the Job runs as.
+	NoteLaunch(ctx context.Context, id, host, environment, componentUID string) (*RunCycle, error)
+
+	// MarkJobSuspended stamps job_suspended_at once (WHERE it IS NULL); a later
+	// call keeps the first stamp. stamped reports whether THIS call wrote it, so
+	// only the caller whose suspend took effect announces it. Not fenced on the
+	// cycle being open: a Job is suspended after its cycle closes.
+	MarkJobSuspended(ctx context.Context, id string) (stamped bool, err error)
+
+	// NoteStartupWait records why the current attempt's pod is stuck before
+	// Running: the reason is overwritten, the since stamp is kept from the
+	// first note of the attempt. Guarded on the cycle being open. It does NOT
+	// touch updated_at: it is the attempt start (RunCycle.AttemptStart) of a
+	// row that predates dispatched_at.
+	NoteStartupWait(ctx context.Context, id, reason string, at time.Time) error
+
+	// ClearStartupWait forgets a recorded startup wait (the pod runs, or is no
+	// longer stuck). A no-op on a row with none. Does not touch updated_at.
+	ClearStartupWait(ctx context.Context, id string) error
+
+	// NoteStartupClock records when the current attempt's startup grace began
+	// (RunCycle.StartupClockAt), once: fenced on the attempt the caller read
+	// (a write from a tick that read attempt N lands on nothing after a
+	// re-dispatch to N+1), on no clock yet, and on the cycle being open.
+	// landed reports whether THIS call wrote it. Does not touch updated_at.
+	NoteStartupClock(ctx context.Context, id string, attempt int, at time.Time) (landed bool, err error)
+
+	// NotePodGone records when the cycle's pod was first seen gone, once
+	// (WHERE pod_gone_at IS NULL).
+	NotePodGone(ctx context.Context, id string, at time.Time) error
+
+	// ClearPodGone forgets a recorded pod_gone_at, for a pod that reappeared.
+	ClearPodGone(ctx context.Context, id string) error
+
+	// MarkComponentDeleted stamps component_deleted_at once
+	// (WHERE component_deleted_at IS NULL).
+	MarkComponentDeleted(ctx context.Context, id string) error
+
+	// FinishCancelled closes an open cycle with agent_reason CycleReasonCancelled.
+	// Unlike FinishAgentFailed it has no pr_number fence: a cancel ends a cycle
+	// that already opened its pull request. (nil, nil) when already closed.
+	FinishCancelled(ctx context.Context, id string) (*RunCycle, error)
+
+	// ListSettling returns closed Job cycles (job_ref 'ca-%') whose Component is
+	// not yet deleted, at most limit: never-checked first, then the least
+	// recently checked (settle_checked_at), oldest ended breaking ties. The
+	// order is what makes the sweep fair: a row the settler visits goes to the
+	// back, so a fixed set that never settles cannot hold every page.
+	ListSettling(ctx context.Context, limit int) ([]RunCycle, error)
+
+	// NoteSettleChecked stamps settle_checked_at: the settler visited the cycle.
+	NoteSettleChecked(ctx context.Context, id string, at time.Time) error
 
 	// NotePullRequest records the pull request the agent actually opened, learned
 	// from the pull_request webhook — the platform never dictates branch identity
@@ -163,15 +216,6 @@ type RunCycleRepository interface {
 	// Unscoped by org on purpose: it drives a platform watcher, not an HTTP read.
 	ListRecentDispatched(ctx context.Context, since time.Time) ([]RunCycle, error)
 
-	// ListOpenCycleIDs returns the ids of the project's cycles that have not
-	// ended — the LIVE set. The agent-component reaper reads it to decide what
-	// it may delete: OpenChoreo registers no health check for a `batch/v1 Job`,
-	// so a Component's own status cannot say whether its pod is still running,
-	// while a cycle row with no ended_at can.
-	//
-	// Org-scoped because it is derived from an already-org-resolved dispatch.
-	ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error)
-
 	// HasOpenCycle reports whether any of the org's cycles has not ended, in
 	// any project: an agent that may still be starting on the credential it
 	// was dispatched with. The model connection key's rename reads it before
@@ -226,14 +270,109 @@ func (r *runCycleRepository) Append(ctx context.Context, cycle *RunCycle) error 
 }
 
 func (r *runCycleRepository) NoteDispatch(ctx context.Context, id, jobRef string) (*RunCycle, error) {
+	// The settle stamps, the startup wait and the start clock describe one
+	// attempt's Job: a new attempt starts with none of them, and with its own
+	// dispatch time, in the same write that moves job_ref.
 	return r.updateOpen(ctx, id, map[string]any{
-		"attempts": gorm.Expr("attempts + 1"),
-		"job_ref":  jobRef,
+		"attempts":            gorm.Expr("attempts + 1"),
+		"job_ref":             jobRef,
+		"dispatched_at":       time.Now().UTC(),
+		"job_suspended_at":    nil,
+		"pod_gone_at":         nil,
+		"startup_wait_reason": "",
+		"startup_wait_since":  nil,
+		"startup_clock_at":    nil,
 	})
 }
 
-func (r *runCycleRepository) NoteLaunch(ctx context.Context, id, host, environment string) (*RunCycle, error) {
-	return r.updateOpen(ctx, id, map[string]any{"model_host": host, "environment": environment})
+func (r *runCycleRepository) NoteLaunch(ctx context.Context, id, host, environment, componentUID string) (*RunCycle, error) {
+	return r.updateOpen(ctx, id, map[string]any{
+		"model_host": host, "environment": environment, "component_uid": componentUID,
+	})
+}
+
+func (r *runCycleRepository) MarkJobSuspended(ctx context.Context, id string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND job_suspended_at IS NULL", id).
+		Update("job_suspended_at", time.Now().UTC())
+	return res.RowsAffected > 0, res.Error
+}
+
+// NoteStartupWait and ClearStartupWait write through UpdateColumns, which —
+// unlike Update/Updates — leaves updated_at alone: updated_at is the attempt
+// start of a row without dispatched_at, and a wait note must not restart the
+// clock it is reporting on.
+func (r *runCycleRepository) NoteStartupWait(ctx context.Context, id, reason string, at time.Time) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND ended_at IS NULL", id).
+		UpdateColumns(map[string]any{
+			"startup_wait_reason": reason,
+			"startup_wait_since":  gorm.Expr("COALESCE(startup_wait_since, ?)", at.UTC()),
+		}).Error
+}
+
+// NoteStartupClock writes through UpdateColumns for the same reason as
+// NoteStartupWait: updated_at is the attempt start of a row without
+// dispatched_at.
+func (r *runCycleRepository) NoteStartupClock(ctx context.Context, id string, attempt int, at time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND attempts = ? AND startup_clock_at IS NULL AND ended_at IS NULL", id, attempt).
+		UpdateColumn("startup_clock_at", at.UTC())
+	return res.RowsAffected > 0, res.Error
+}
+
+func (r *runCycleRepository) ClearStartupWait(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND (startup_wait_reason <> '' OR startup_wait_since IS NOT NULL)", id).
+		UpdateColumns(map[string]any{"startup_wait_reason": "", "startup_wait_since": nil}).Error
+}
+
+func (r *runCycleRepository) NotePodGone(ctx context.Context, id string, at time.Time) error {
+	return r.stampOnce(ctx, id, "pod_gone_at", at.UTC())
+}
+
+func (r *runCycleRepository) ClearPodGone(ctx context.Context, id string) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND pod_gone_at IS NOT NULL", id).
+		Update("pod_gone_at", nil).Error
+}
+
+func (r *runCycleRepository) MarkComponentDeleted(ctx context.Context, id string) error {
+	return r.stampOnce(ctx, id, "component_deleted_at", time.Now().UTC())
+}
+
+// stampOnce sets a nullable timestamp column only while it is still NULL, so a
+// repeated call is a no-op that keeps the first stamp.
+func (r *runCycleRepository) stampOnce(ctx context.Context, id, column string, at time.Time) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ? AND "+column+" IS NULL", id).
+		Update(column, at).Error
+}
+
+func (r *runCycleRepository) FinishCancelled(ctx context.Context, id string) (*RunCycle, error) {
+	return r.updateOpen(ctx, id, map[string]any{
+		"agent_reason": CycleReasonCancelled,
+		"ended_at":     time.Now().UTC(),
+	})
+}
+
+func (r *runCycleRepository) ListSettling(ctx context.Context, limit int) ([]RunCycle, error) {
+	var rows []RunCycle
+	err := r.db.WithContext(ctx).
+		Where("job_ref LIKE 'ca-%' AND ended_at IS NOT NULL AND component_deleted_at IS NULL").
+		Order("settle_checked_at ASC NULLS FIRST, ended_at ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+func (r *runCycleRepository) NoteSettleChecked(ctx context.Context, id string, at time.Time) error {
+	return r.db.WithContext(ctx).Model(&RunCycle{}).
+		Where("id = ?", id).
+		Update("settle_checked_at", at.UTC()).Error
 }
 
 func (r *runCycleRepository) NotePullRequest(ctx context.Context, id string, pr CyclePullRequest) (*RunCycle, error) {
@@ -393,19 +532,6 @@ func (r *runCycleRepository) ListRecentDispatched(ctx context.Context, since tim
 		return nil, err
 	}
 	return rows, nil
-}
-
-func (r *runCycleRepository) ListOpenCycleIDs(ctx context.Context, orgID, projectID string) ([]string, error) {
-	var ids []string
-	err := r.db.WithContext(ctx).
-		Model(&RunCycle{}).
-		Where("org_id = ? AND project_id = ? AND ended_at IS NULL", orgID, projectID).
-		Order("created_at ASC").
-		Pluck("id", &ids).Error
-	if err != nil {
-		return nil, err
-	}
-	return ids, nil
 }
 
 func (r *runCycleRepository) HasOpenCycle(ctx context.Context, orgID string) (bool, error) {

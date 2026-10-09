@@ -51,7 +51,6 @@ var ConfigMapKeys = []string{
 	"thunder.public_url",
 	"console.public_url",
 	"tryit.public_url",
-	"aep_api.public_url",
 	"oc.api_url",
 	"oc.observability_api_url",
 	"oc.system_namespace",
@@ -59,11 +58,9 @@ var ConfigMapKeys = []string{
 	"oc.pipeline_source_environment",
 	"oc.local_org_provisioning.enabled",
 	"oc.data_plane_gateway_tls",
-	"platform.workspaces.access_mode",
 	"codingagent.openbao_direct.enabled",
 	"openbao.addr",
-	"webhook.delivery_url",
-	"webhook.local_smee.enabled",
+	"ae_studio.webhook_relay.enabled",
 	"gateway.hostname",
 	"environment.idp_base_domain",
 	"environment.gateway_base_domain",
@@ -100,9 +97,6 @@ var keyRegistry = map[string]configKeyMeta{
 	// redirect URI.
 	"console.public_url": {required: false, kind: kindURL},
 	"tryit.public_url":   {required: false, kind: kindURL},
-	// Empty falls back to console.public_url, whose origin proxies the API.
-	// Set it only where the two are genuinely different origins.
-	"aep_api.public_url": {required: false, kind: kindURL},
 	"oc.api_url":         {required: true, kind: kindURL},
 	// In-cluster URL of the OpenChoreo Observer. Empty leaves the chart's own
 	// default (see values.yaml's observer.baseURL) — build-log reading and
@@ -131,11 +125,12 @@ var keyRegistry = map[string]configKeyMeta{
 	// never answer. Set true only when aectl is installing against a gateway
 	// that genuinely fronts TLS.
 	"oc.data_plane_gateway_tls":          {required: false, kind: kindBool},
-	"platform.workspaces.access_mode":    {required: false, kind: kindEnum, enumValues: []string{"", "ReadWriteOnce", "ReadWriteMany", "ReadOnlyMany"}},
 	"codingagent.openbao_direct.enabled": {required: false, kind: kindBool},
 	"openbao.addr":                       {required: false, kind: kindURL},
-	"webhook.delivery_url":               {required: false, kind: kindURL},
-	"webhook.local_smee.enabled":         {required: false, kind: kindBool},
+	// The per-org AE Studio webhook relay (smee.io channel per org) for a
+	// cluster GitHub cannot reach. Passed as aeStudio.webhookRelay.enabled on
+	// install and update; absent is false. Never true in production.
+	"ae_studio.webhook_relay.enabled": {required: false, kind: kindBool},
 	// gateway.hostname, when set, lets `aectl platform install` configure the
 	// external gateway ingress non-interactively (CI-friendly path).
 	"gateway.hostname": {required: false, kind: kindString},

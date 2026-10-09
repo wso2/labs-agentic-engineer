@@ -100,13 +100,38 @@ jobs:
       - name: Test
         run: make test
 
-      - name: Contract codegen freshness (aep-api)
-        run: make -C services/aep-api gen-api-check
+      # Every workspace Go module whose Makefile defines the rule runs it; a
+      # module without one is skipped, so a new module opts in by adding the
+      # target. The rule is probed by grepping the Makefile (`make -n` also
+      # passes for an implicit rule or a file of that name). A failing
+      # `go list -m` fails the step instead of looping over nothing, and the
+      # gates listed in `required` must have run, so the loop cannot go green
+      # without checking them.
+      - name: Contract codegen freshness + dead-code gate (every Go module)
+        run: |
+          set -euo pipefail
+          required="services/aep-api:gen-api-check services/aep-api:deadcode-check
+            components/dataplane/ae-system-project/ae-studio/ae-studio-tools:gen-api-check
+            components/dataplane/ae-system-project/ae-studio/ae-studio-tools:deadcode-check"
+          mods="$(go list -m -f '{{.Dir}}')"
+          rc=0
+          ran=" "
+          for d in $mods; do
+            case "$d" in "$PWD"/*) ;; *) continue ;; esac
+            [ -f "$d/Makefile" ] || continue
+            for t in gen-api-check deadcode-check; do
+              if grep -qE "^$t:" "$d/Makefile"; then
+                echo ">> make -C $d $t"; make -C "$d" "$t" || rc=1
+                ran="$ran${d#"$PWD"/}:$t "
+              fi
+            done
+          done
+          for g in $required; do
+            case "$ran" in *" $g "*) ;; *) echo "FAIL: required gate $g did not run"; rc=1 ;; esac
+          done
+          exit $rc
 
-      - name: Dead-code gate (aep-api)
-        run: make -C services/aep-api deadcode-check
-
-      - name: Dead-code gate (TS — agents + playground)
+      - name: Dead-code gate (TS, scope in knip.jsonc)
         run: make deadcode-ts-check
 
       - name: Lint
@@ -114,6 +139,9 @@ jobs:
 
       - name: License header check
         run: make license-check
+
+      - name: Image name lists agree
+        run: make check-image-names
 
   # ── The `bal library` tool ──────────────────────────────────────────────────
   # A job of its own rather than steps in `verify`: the toolchain is JDK 21 +

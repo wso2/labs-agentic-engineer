@@ -26,6 +26,8 @@ package organization_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -33,7 +35,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
+	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
 
@@ -57,16 +61,6 @@ func llmOf(t *testing.T, body []byte) map[string]any {
 		t.Fatalf("llm is not an object: %s", body)
 	}
 	return llm
-}
-
-// keyPreview reads the stored connection's key preview.
-func (c *configHarness) keyPreview(t *testing.T, org string) string {
-	t.Helper()
-	var preview string
-	if err := c.db.Raw(`SELECT key_preview FROM org_model_connections WHERE oc_org_id = ?`, org).Scan(&preview).Error; err != nil {
-		t.Fatalf("read preview: %v", err)
-	}
-	return preview
 }
 
 // --- transitions -------------------------------------------------------------------
@@ -101,7 +95,7 @@ func TestConfigLLM_TheOldBodyConnectsWithTheFormatDefaults(t *testing.T) {
 }
 
 // A host change needs a key, and with one the connection moves: Bearer, the
-// host's own limits and capabilities, and the stored key never sent there.
+// host's own limits and capabilities, and the previous key never sent there.
 func TestConfigLLM_AHostChange(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
@@ -110,7 +104,7 @@ func TestConfigLLM_AHostChange(t *testing.T) {
 	}
 
 	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"openai-compatible","baseURL":"https://ollama.com/v1"},"agents":{"runtime":"opencode"}}`)
-	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required_for_new_host")
+	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
 
 	resp := c.h.AsOrg("acme").Patch(configPath, onOllama(ollamaKey))
 	if resp.Code != 200 {
@@ -129,33 +123,30 @@ func TestConfigLLM_AHostChange(t *testing.T) {
 	}
 }
 
-// Ollama serves both formats on one host with one key: switching the format
-// there keeps the key, and the probe used the stored one.
-func TestConfigLLM_AFormatChangeOnTheSameHostKeepsTheKey(t *testing.T) {
+// Ollama serves both formats on one host with one key, but a format switch
+// still rewrites the Agent Manager provider: it needs the key in the save,
+// and the probe uses the key the request carries.
+func TestConfigLLM_AFormatChangeOnTheSameHostNeedsTheKey(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if r := c.h.AsOrg("acme").Patch(configPath, onOllama(ollamaKey)); r.Code != 200 {
 		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
 	}
-	preview := c.keyPreview(t, "acme")
-	before := len(c.model.seen())
+	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic"}}`)
+	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
 
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic"}}`)
+	before := len(c.model.seen())
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+ollamaKey2+`"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("format change: %d %s", resp.Code, resp.Body.String())
 	}
 	if llm := llmOf(t, resp.Body.Bytes()); llm["kind"] != "anthropic" || llm["baseURL"] != "https://ollama.com/v1" {
 		t.Fatalf("llm = %v, want the Anthropic format on the same URL", llm)
 	}
-	if got := c.keyPreview(t, "acme"); got != preview {
-		t.Fatalf("the key changed: %q → %q", preview, got)
-	}
-	probed := false
 	for _, req := range c.model.seen()[before:] {
-		probed = probed || req.APIKey == ollamaKey || req.Authorization == "Bearer "+ollamaKey
-	}
-	if !probed {
-		t.Fatal("the format change was not probed with the stored key")
+		if req.APIKey == ollamaKey || strings.Contains(req.Authorization, ollamaKey) {
+			t.Fatalf("the probe used the previous key: %+v", req)
+		}
 	}
 }
 
@@ -184,11 +175,11 @@ func TestConfigLLM_LeavingAnthropicDeletesTheSubscription(t *testing.T) {
 	if resp.Code != 200 || agentsOf(t, resp.Body.Bytes())["subscription"] != nil {
 		t.Fatalf("the subscription survived leaving Anthropic's API: %d %s", resp.Code, resp.Body.String())
 	}
-	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND key = 'anthropic/coding-key'`); n != 0 {
-		t.Fatal("the token's bytes survived")
+	if n := c.count(t, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`); n != 0 {
+		t.Fatal("the token's reference survived")
 	}
 	// And a new one cannot be added while the connection lacks claudeSubscription.
-	if r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic"},"agents":{"runtime":"claude-code"}}`); r.Code != 200 {
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+ollamaKey2+`"},"agents":{"runtime":"claude-code"}}`); r.Code != 200 {
 		t.Fatalf("Anthropic format on Ollama with Claude Code: %d %s", r.Code, r.Body.String())
 	}
 	r := c.h.AsOrg("acme").Patch(configPath, subscribe(goodToken))
@@ -206,8 +197,8 @@ func TestConfigLLM_NullDisconnects(t *testing.T) {
 	if resp.Code != 200 || decodeCfg(t, resp.Body.Bytes())["llm"] != nil {
 		t.Fatalf("disconnect: %d %s", resp.Code, resp.Body.String())
 	}
-	if creds, _, secrets := c.cardRows(t, "acme"); creds+secrets != 0 {
-		t.Fatalf("disconnect left rows=%d secrets=%d", creds, secrets)
+	if creds, _, secrets := c.cardRows(t, "acme"); creds+secrets != 0 || c.defaultKeyRef(t, "acme") != nil {
+		t.Fatalf("disconnect left rows=%d secrets=%d (or the default-key row)", creds, secrets)
 	}
 }
 
@@ -238,15 +229,15 @@ func TestConfigLLM_AfterADisconnectFromOpenCodeASubscriptionNeedsTheRuntime(t *t
 	}
 }
 
-// An unlisted model is a warning, not a refusal: the save goes
-// through with the stored key, and llmCheck says so.
+// An unlisted model is a warning, not a refusal: a save that carries the key
+// (and so is probed) goes through, and llmCheck says so.
 func TestConfigLLM_AnUnlistedModelIsAWarning(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
 		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
 	}
-	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"model":"claude-not-listed"}}`)
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"apiKey":"`+goodAnthKey2+`","model":"claude-not-listed"}}`)
 	if resp.Code != 200 {
 		t.Fatalf("model change: %d %s", resp.Code, resp.Body.String())
 	}
@@ -367,23 +358,23 @@ func TestConfigLLM_TestConnectionWritesNothing(t *testing.T) {
 	}
 }
 
-// apiKey may be omitted only on the saved connection's host: the stored key is
-// used, server side, and a new host without a key is refused.
-func TestConfigLLM_TestConnectionReusesTheStoredKeyOnlyOnItsHost(t *testing.T) {
+// Test connection probes with the key the body carries, on the saved host as
+// on any other: no stored key is read back.
+func TestConfigLLM_TestConnectionProbesWithTheRequestKey(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if r := c.h.AsOrg("acme").Patch(configPath, onOllama(ollamaKey)); r.Code != 200 {
 		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
 	}
 	before := len(c.model.seen())
-	if r := c.h.AsOrg("acme").Post(testLLMPath, `{"model":"glm-5.3"}`); r.Code != 200 {
+	if r := c.h.AsOrg("acme").Post(testLLMPath, `{"model":"glm-5.3","apiKey":"`+ollamaKey2+`"}`); r.Code != 200 {
 		t.Fatalf("test on the saved host: %d %s", r.Code, r.Body.String())
 	}
-	if req := c.model.seen()[before]; req.Authorization != "Bearer "+ollamaKey {
-		t.Fatalf("the stored key was not used: %+v", req)
+	if req := c.model.seen()[before]; req.Authorization != "Bearer "+ollamaKey2 {
+		t.Fatalf("the request's key was not used: %+v", req)
 	}
 	r := c.h.AsOrg("acme").Post(testLLMPath, `{"kind":"anthropic","baseURL":"https://api.anthropic.com/v1"}`)
-	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required_for_new_host")
+	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
 	// A first connect cannot be tested without a key either.
 	r = c.h.AsOrg("globex").Post(testLLMPath, `{"kind":"anthropic"}`)
 	refused(t, r.Code, r.Body.String(), "llm", "llm_field_required")
@@ -444,5 +435,203 @@ func TestConfigLLM_EveryMemberReadsTheAttachCapabilities(t *testing.T) {
 	caps := llmOf(t, resp.Body.Bytes())["capabilities"].(map[string]any)
 	if caps["imageInput"] != "yes" || caps["nativePdf"] != true {
 		t.Fatalf("capabilities = %v", caps)
+	}
+}
+
+// --- the Agent Manager push -----------------------------------------------------
+
+// failingPublisher is an Agent Manager that answers every publish with err.
+type failingPublisher struct{ err error }
+
+func (p *failingPublisher) PublishOrgModelConnection(context.Context, string, modelconn.Connection, string) error {
+	return p.err
+}
+
+func (p *failingPublisher) ClearOrgModelKey(context.Context, string, modelconn.Connection) error {
+	return p.err
+}
+
+// A key save whose Agent Manager push fails answers 502
+// agent_manager_not_updated, and the key stays saved: the vault write and its
+// default-key row are the save, and saving the key again retries the push.
+func TestPatchConfig_AgentManagerPushFailureIs502AndTheKeyStaysSaved(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarnessWithModelProvider(t, &failingPublisher{err: errors.New("amp down")})
+
+	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"sk-ant-testkey-0123456789","model":"claude-x"}}`)
+	if r.Code != 502 {
+		t.Fatalf("want 502, got %d body=%s", r.Code, r.Body.String())
+	}
+	body := r.Body.String()
+	for _, want := range []string{`"code":"agent_manager_not_updated"`, `"body.llm"`,
+		"Key saved; Agent Manager was not updated. Save the key again."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("the response must carry %s: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "amp down") || strings.Contains(body, "sk-ant-testkey") {
+		t.Fatalf("the response leaks the cause or the key: %s", body)
+	}
+	ref, err := organization.NewOrgSecretRepository(c.db).Get(context.Background(), "acme", organization.OrgSecretDefaultKey)
+	if err != nil || ref == nil {
+		t.Fatalf("the vault write and its row stay: default-key row = %+v (%v)", ref, err)
+	}
+	if llm, ok := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["llm"].(map[string]any); !ok || llm["kind"] != "anthropic" {
+		t.Fatalf("GET must read the saved connection: %v", llm)
+	}
+}
+
+// --- the key lives only in vault ------------------------------------------------
+
+// keyOnlyConnect is a first connect on Anthropic's API with a key whose last
+// four characters (6789) the projection must never show.
+const keyOnlyConnect = `{"llm":{"kind":"anthropic","apiKey":"sk-ant-testkey-0123456789","model":"claude-x"}}`
+
+// defaultKeyRef reads the org's default-key reference row (nil when unset).
+func (c *configHarness) defaultKeyRef(t *testing.T, org string) *organization.OrgSecretRef {
+	t.Helper()
+	ref, err := organization.NewOrgSecretRepository(c.db).Get(context.Background(), org, organization.OrgSecretDefaultKey)
+	if err != nil {
+		t.Fatalf("read the default-key row: %v", err)
+	}
+	return ref
+}
+
+// A connection edit (format or base URL) rewrites the whole Agent Manager
+// provider, so it needs the key in the same save: no stored key is reused.
+// A model-only edit saves without the key and without a probe (there is no
+// key to probe with).
+func TestPatchConfig_ConnectionEditWithoutKeyIs400ModelOnlyIsNot(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect); r.Code != 200 {
+		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
+	}
+	probes := len(c.model.seen())
+
+	r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"baseURL":"https://proxy.example.com"}}`)
+	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
+	r = c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"openai-compatible"},"agents":{"runtime":"opencode"}}`)
+	refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
+
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"model":"claude-y"}}`)
+	if resp.Code != 200 || llmOf(t, resp.Body.Bytes())["model"] != "claude-y" {
+		t.Fatalf("model-only edit: %d %s", resp.Code, resp.Body.String())
+	}
+	if got := len(c.model.seen()); got != probes {
+		t.Fatalf("a model-only edit must not probe with a stored key; probe requests %d → %d", probes, got)
+	}
+}
+
+// Test connection probes only with a key the request carries.
+func TestTestConnection_WithoutKeyIs400(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect); r.Code != 200 {
+		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
+	}
+	probes := len(c.model.seen())
+	for _, body := range []string{`{"kind":"anthropic"}`, `{"model":"claude-y"}`} {
+		r := c.h.AsOrg("acme").Post(testLLMPath, body)
+		refused(t, r.Code, r.Body.String(), "llm", "llm_key_required")
+	}
+	if got := len(c.model.seen()); got != probes {
+		t.Fatalf("a keyless Test connection probed: %d → %d requests", probes, got)
+	}
+}
+
+// GET /config shows that a key is set, never any character of it: no key
+// preview, no subscription prefix or last four.
+func TestProjection_HasNoPreviewCharacters(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if r := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"sk-ant-testkey-0123456789","model":"claude-x"},`+
+		`"agents":{"runtime":"claude-code","subscription":{"kind":"claude","token":"`+goodToken+`"}}}`); r.Code != 200 {
+		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
+	}
+	body := c.h.AsOrg("acme").Get(configPath).Body.String()
+	for _, leak := range []string{"6789", "keyPreview", "keyLast4", "keyPrefix", "EFGH", "sk-ant-oat01"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("projection leaks key characters (%s): %s", leak, body)
+		}
+	}
+	if agentsOf(t, []byte(body))["subscription"] == nil {
+		t.Fatalf("the subscription must still read as set: %s", body)
+	}
+}
+
+// The vault write takes the request's key; when it fails the save fails and
+// nothing is saved: no connection on a first connect, and on a rotation the
+// previous reference stays the one the row names.
+func TestPatchConfig_VaultWriteFailureFailsTheSave(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	c.vault.err = errors.New("vault down")
+	r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect)
+	if body := r.Body.String(); r.Code != 502 || !strings.Contains(body, `"code":"secret_store_write_failed"`) ||
+		!strings.Contains(body, `"body.llm"`) || !strings.Contains(body, "Key not saved; the secret store did not accept it. Try again.") ||
+		strings.Contains(body, "vault down") {
+		t.Fatalf("a first connect whose vault write failed: %d %s, want 502 secret_store_write_failed on body.llm", r.Code, body)
+	}
+	if n := c.count(t, `SELECT count(*) FROM org_model_connections WHERE oc_org_id = 'acme'`); n != 0 || c.defaultKeyRef(t, "acme") != nil {
+		t.Fatalf("a failed vault write saved the connection (rows=%d)", n)
+	}
+
+	c.vault.err = nil
+	if r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect); r.Code != 200 {
+		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
+	}
+	before := c.defaultKeyRef(t, "acme")
+	var updatedAt string
+	c.db.Raw(`SELECT updated_at::text FROM org_model_connections WHERE oc_org_id = 'acme'`).Scan(&updatedAt)
+
+	c.vault.err = errors.New("vault down")
+	r = c.h.AsOrg("acme").Patch(configPath, `{"llm":{"apiKey":"sk-ant-testkey-9876543210","model":"claude-z"}}`)
+	if r.Code != 502 || strings.Contains(r.Body.String(), "vault down") {
+		t.Fatalf("a rotation whose vault write failed: %d %s", r.Code, r.Body.String())
+	}
+	after := c.defaultKeyRef(t, "acme")
+	var updatedAfter string
+	c.db.Raw(`SELECT updated_at::text FROM org_model_connections WHERE oc_org_id = 'acme'`).Scan(&updatedAfter)
+	if after == nil || after.Name != before.Name || !c.vault.live[before.Name] || updatedAfter != updatedAt {
+		t.Fatalf("the failed rotation moved the save: row %+v → %+v, live=%v, updated_at %s → %s",
+			before, after, c.vault.live[before.Name], updatedAt, updatedAfter)
+	}
+}
+
+// A key lives only in vault, so an installation with no secret store refuses
+// a key save before anything is written.
+func TestPatchConfig_AKeySaveWithNoSecretStoreIs503(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarnessNoSecrets(t)
+	r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect)
+	if r.Code != 503 || !strings.Contains(r.Body.String(), `"code":"secrets_delivery_unavailable"`) {
+		t.Fatalf("want 503 secrets_delivery_unavailable, got %d %s", r.Code, r.Body.String())
+	}
+	if creds, settings, _ := c.cardRows(t, "acme"); creds+settings != 0 {
+		t.Fatalf("a refused key save wrote rows=%d settings=%d", creds, settings)
+	}
+}
+
+// llm reads as configured only while its default-key reference row exists:
+// a connection row without one (an org connected before the key lived in
+// vault) reads null, and the onboarding wizard asks for the key again.
+func TestGetConfig_LLMIsNullWithoutADefaultKeyRow(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarness(t)
+	if err := c.db.Exec(`INSERT INTO org_model_connections
+		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, connected_at, updated_at)
+		VALUES ('legacy', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-sonnet-5', 'x-api-key', 'yes', now(), now())`).Error; err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if llm := decodeCfg(t, c.h.AsOrg("legacy").Get(configPath).Body.Bytes())["llm"]; llm != nil {
+		t.Fatalf("a connection with no default-key row must read null: %v", llm)
+	}
+
+	if r := c.h.AsOrg("acme").Patch(configPath, keyOnlyConnect); r.Code != 200 {
+		t.Fatalf("connect: %d %s", r.Code, r.Body.String())
+	}
+	if llm := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["llm"]; llm == nil {
+		t.Fatal("a saved connection with its default-key row must read as set")
 	}
 }

@@ -29,7 +29,8 @@ deduplication, recurrence, adoption, dispatch, and human-attention state.
   on exactly one mount, `POST /internal/v1/sre-handoff/mcp`, which serves only
   `search_related_issues` and `create_issue`. It never widens what the Thunder
   JWT verifier accepts, and the public issue operations refuse the fields only
-  the handoff may send. Without `SRE_HANDOFF_TOKEN` the mount does not exist.
+  the handoff may send. `/api/v1` accepts user JWTs only and answers `401` to
+  this key. Without `SRE_HANDOFF_TOKEN` the mount does not exist.
 - The key authenticates the agent, not an org. One agent serves every org on
   its plane, so each call names its org, the alert's OpenChoreo `namespace`.
   That value reaches aep-api through a model that reads pod logs, so it is

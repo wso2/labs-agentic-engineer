@@ -17,8 +17,9 @@
 // model_connection_rule.go — what an `llm` patch leaves, decided purely: the
 // patch merged field by field over the stored connection, the format's
 // defaults on first connect, and the refusals that need no network (the URL's
-// shape, the key's length, a new host without a key). The save and Test
-// connection both start here; agents_rule.go folds the result into the card.
+// shape, the key's length, a connection edit without a key). The save and
+// Test connection both start here; agents_rule.go folds the result into the
+// card.
 package organization
 
 import (
@@ -43,8 +44,9 @@ type connectionDraft struct {
 	BaseURL string
 	Host    string
 	Model   string
-	// Key is the key sent with the patch; "" reuses the stored key, which is
-	// only ever allowed on the stored connection's origin (keyOrigin).
+	// Key is the key sent with the patch; "" keeps the stored one, which is
+	// only allowed when the patch changes nothing but the model. No stored
+	// key is ever read: it lives only in vault.
 	Key string
 }
 
@@ -104,13 +106,12 @@ func draftConnection(stored *OrgModelConnection, w orgconfig.LLMPatch) (connecti
 	}
 	d.BaseURL, d.Host, d.Key = baseURL, host, key
 
-	// Clause 2: a change of origin (host or port) needs a key. A format change
-	// on the same origin keeps it: Ollama serves both formats on one host with
-	// one key.
-	if stored != nil && d.Key == "" {
-		if err := requireKeyForNewOrigin(stored.BaseURL, d.BaseURL); err != nil {
-			return connectionDraft{}, false, err
-		}
+	// Clause 2: a connection edit (format or base URL; the auth scheme follows
+	// from the probe) needs the key in the same save. Agent Manager's provider
+	// holds template, upstream and auth together with the key, so an edit
+	// rewrites it whole, and the stored key is never read back to do it.
+	if stored != nil && d.Key == "" && (d.Format != stored.Format || d.BaseURL != stored.BaseURL) {
+		return connectionDraft{}, false, errKeyRequired("a change of format or base URL rewrites the connection; send the apiKey in the same save")
 	}
 	if d.Key != "" {
 		if err := checkKeyShape(d.Host, d.Key); err != nil {
@@ -146,33 +147,6 @@ func normalizeBaseURL(format modelconn.Format, raw string) (string, string, erro
 		path = "/v1"
 	}
 	return "https://" + authorityOf(u) + path, host, nil
-}
-
-// requireKeyForNewOrigin refuses a save that would send a stored key to
-// another origin (ADR-0038 §5): moving from storedURL to baseURL needs the key
-// for the new origin in the same save. Called only for a save that sent none.
-func requireKeyForNewOrigin(storedURL, baseURL string) error {
-	from, to := keyOrigin(storedURL), keyOrigin(baseURL)
-	if from == to {
-		return nil
-	}
-	return &ValidationError{
-		Code: "llm_key_required_for_new_host",
-		Message: fmt.Sprintf("the connection moves from %s to %s; send the key for %s in the same save "+
-			"(a stored key is never sent to another host)", from, to, to),
-	}
-}
-
-// keyOrigin is where a stored base URL sends its key: host and port, the
-// https default left implied, so https://x and https://x:443 are one origin
-// and https://x:8443 another. The key follows the origin, not the host alone:
-// another port can be another server.
-func keyOrigin(baseURL string) string {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return baseURL
-	}
-	return authorityOf(u)
 }
 
 // authorityOf is u's lower-cased host with its port, dropping https's default.
@@ -233,6 +207,11 @@ func errFormatHasNoRuntime(format modelconn.Format, available []orgconfig.AgentR
 		Message: fmt.Sprintf("no runtime on this installation runs the %s format (available: %s); "+
 			"OpenAI-compatible connections need the OpenCode runner image", format, runtimeNames(available)),
 	}
+}
+
+// errKeyRequired refuses a probe or a connection edit that carries no key.
+func errKeyRequired(msg string) *ValidationError {
+	return &ValidationError{Code: "llm_key_required", Message: msg}
 }
 
 func errFieldRequired(msg string) *ValidationError {

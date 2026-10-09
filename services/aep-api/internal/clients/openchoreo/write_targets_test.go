@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -30,11 +29,8 @@ import (
 
 type fakeProjects struct {
 	byName map[string]*gen.Project
-	list   []gen.Project
-	// pageSize > 0 splits list into cursor-linked pages of that size.
-	pageSize int
-	err      error
-	calls    int
+	err    error
+	calls  int
 }
 
 func (f *fakeProjects) GetProject(_ context.Context, _, name string) (*gen.Project, error) {
@@ -47,28 +43,6 @@ func (f *fakeProjects) GetProject(_ context.Context, _, name string) (*gen.Proje
 		return nil, fmt.Errorf("get project %q: %w", name, ErrNotFound)
 	}
 	return p, nil
-}
-
-func (f *fakeProjects) ListProjects(_ context.Context, _ string, _ int, cursor string) (*gen.ProjectList, error) {
-	f.calls++
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.pageSize <= 0 {
-		return &gen.ProjectList{Items: f.list}, nil
-	}
-	start := 0
-	if cursor != "" {
-		if _, err := fmt.Sscanf(cursor, "%d", &start); err != nil {
-			return nil, err
-		}
-	}
-	end := min(start+f.pageSize, len(f.list))
-	out := &gen.ProjectList{Items: f.list[start:end]}
-	if end < len(f.list) {
-		out.NextCursor = fmt.Sprint(end)
-	}
-	return out, nil
 }
 
 type fakePipelines struct {
@@ -243,52 +217,6 @@ func TestWriteTargets_OrgDefaultRoot(t *testing.T) {
 		var nwt *ErrNoWriteTarget
 		if !errors.As(err, &nwt) {
 			t.Fatalf("err = %v, want *ErrNoWriteTarget", err)
-		}
-	})
-}
-
-func TestWriteTargets_OrgWriteTargets(t *testing.T) {
-	t.Run("distinct targets in first-seen order, broken project unresolved", func(t *testing.T) {
-		fp := &fakeProjects{pageSize: 2, list: []gen.Project{
-			*proj("p1", "default"), *proj("p2", "default"), *proj("p3", "pipeline-b"), *proj("p4", "cyclic"),
-		}}
-		fl := testPipelines()
-		wt := &writeTargets{projects: fp, pipelines: fl}
-		targets, unresolved, err := wt.OrgWriteTargets(context.Background(), "acme")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(targets, []string{"development", "dev-b"}) {
-			t.Fatalf("targets = %v", targets)
-		}
-		if len(unresolved) != 1 || !errors.Is(unresolved["p4"], ErrPipelineCyclic) {
-			t.Fatalf("unresolved = %v", unresolved)
-		}
-		if fl.calls != 3 { // default, pipeline-b, cyclic: each distinct pipeline once
-			t.Fatalf("pipeline reads = %d, want 3", fl.calls)
-		}
-	})
-	t.Run("zero projects", func(t *testing.T) {
-		wt := &writeTargets{projects: &fakeProjects{}, pipelines: testPipelines()}
-		targets, unresolved, err := wt.OrgWriteTargets(context.Background(), "acme")
-		if err != nil || len(targets) != 0 || len(unresolved) != 0 {
-			t.Fatalf("got (%v, %v, %v)", targets, unresolved, err)
-		}
-	})
-	t.Run("list failure", func(t *testing.T) {
-		boom := errors.New("boom")
-		wt := &writeTargets{projects: &fakeProjects{err: boom}, pipelines: testPipelines()}
-		if _, _, err := wt.OrgWriteTargets(context.Background(), "acme"); !errors.Is(err, boom) {
-			t.Fatalf("err = %v", err)
-		}
-	})
-	t.Run("transient pipeline read fails the fan-out", func(t *testing.T) {
-		transient := errors.New("503")
-		pl := testPipelines()
-		pl.err = transient
-		wt := &writeTargets{projects: &fakeProjects{list: []gen.Project{*proj("p1", "default")}}, pipelines: pl}
-		if _, _, err := wt.OrgWriteTargets(context.Background(), "acme"); !errors.Is(err, transient) {
-			t.Fatalf("err = %v", err)
 		}
 	})
 }

@@ -29,12 +29,16 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openSession } from "@aep/playground/src/engine/session.js";
-import { flowSpec, startSpec } from "@aep/playground/src/engine/turn-spec.js";
+import { DESIGN_COMMAND, interviewCommand, START_COMMAND } from "@aep/contracts/commands";
 
-// The design flow, as a fact. In production aep-api classifies the /design
-// token; the evals run without aep-api, so they state the same thing directly —
-// and the agents service composes identical wording for both.
-const designTurn = flowSpec("design");
+// The design flow, sent verbatim as the console sends it: the design agent
+// parses the command and composes the wording.
+const designTurn = DESIGN_COMMAND;
+
+/** The kickoff, with the scenario's idea inline (an inline idea wins over the descriptor's). */
+function startTurn(idea: string): string {
+  return `${START_COMMAND} ${idea.trim()}`;
+}
 import { FIXTURES_DIR, PROJECTS_HOME } from "./config.js";
 import { listRequirementFiles, prepareProject, readProjectFile } from "./project.js";
 import type { ChainScenario, DesignScenario, RequirementsScenario, Rubric, TasksScenario } from "./scenario.js";
@@ -204,14 +208,16 @@ function finishRun(
   };
 }
 
-/** Copy the attached documents where the platform overlays them, and name them for the kickoff. */
-function attachReferences(projectDir: string, names: string[]): string[] {
-  return names.map((name) => {
-    const rel = `specs/requirements/references/${name}`;
+/**
+ * Copy the attached documents where the platform overlays them. The design
+ * agent reads them from its workspace snapshot of that folder, so the kickoff
+ * names nothing.
+ */
+function attachReferences(projectDir: string, names: string[]): void {
+  for (const name of names) {
     mkdirSync(join(projectDir, "specs/requirements/references"), { recursive: true });
-    cpSync(join(FIXTURES_DIR, "references", name), join(projectDir, rel));
-    return rel;
-  });
+    cpSync(join(FIXTURES_DIR, "references", name), join(projectDir, `specs/requirements/references/${name}`));
+  }
 }
 
 /** A feature file's ID: `F2` for specs/requirements/features/F2-approvals.md. */
@@ -229,12 +235,12 @@ async function runRequirementsSection(
   projectDir: string,
   brief: RequirementsScenario["brief"],
 ): Promise<SectionRunResult> {
-  const references = attachReferences(projectDir, brief.references ?? []);
-  const runs = [await runConversationalSection(session, "requirements", startSpec(brief.idea, references), brief)];
+  attachReferences(projectDir, brief.references ?? []);
+  const runs = [await runConversationalSection(session, "requirements", startTurn(brief.idea), brief)];
   if (!runs[0]!.error) {
     const features = listRequirementFiles(projectDir).flatMap((f) => FEATURE_FILE_ID.exec(f)?.[1] ?? []);
     for (const id of features) {
-      const run = await runConversationalSection(session, "requirements", flowSpec("interview", id), brief);
+      const run = await runConversationalSection(session, "requirements", interviewCommand(id), brief);
       runs.push(run);
       if (run.error) break;
     }

@@ -38,12 +38,13 @@ export const STATE_DIR = ".aep-playground";
 export interface ProjectState {
   /** Fence-valid slug (from the directory name at init time). */
   slug: string;
-  /** The uuid segment of the project's single `general` conversation. */
+  /**
+   * The project's current thread (the design agent's conversation id), kept
+   * so the next session resumes it; a rotation replaces it.
+   */
   conversationUuid: string;
   /** Next issue file number to allocate (tasks phase). */
   nextIssueNumber: number;
-  /** Content hash of the spec files map after the last fold (D20 signal). */
-  lastFoldedHash?: string;
   /** The user confirmed coding runs may write this directory (§12 first-run confirm). */
   codingConfirmed?: boolean;
   /** The user confirmed `wire` may build and run this project's images locally. */
@@ -71,7 +72,6 @@ export function loadProjectState(projectDir: string, slug: string): ProjectState
       slug: raw.slug ?? slug,
       conversationUuid: raw.conversationUuid ?? randomUUID(),
       nextIssueNumber: raw.nextIssueNumber ?? 1,
-      ...(raw.lastFoldedHash ? { lastFoldedHash: raw.lastFoldedHash } : {}),
       ...(raw.codingConfirmed ? { codingConfirmed: true } : {}),
       ...(raw.wireConfirmed ? { wireConfirmed: true } : {}),
     };

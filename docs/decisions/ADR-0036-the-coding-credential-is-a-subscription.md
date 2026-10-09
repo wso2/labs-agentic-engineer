@@ -1,7 +1,8 @@
 # ADR-0036 — The coding credential is a Claude subscription, and the AI agents card saves as one unit
 
 **Status:** Accepted · 2026-09-24 · Amended 2026-09-26 (the connection replaces
-the org's API key, last section)
+the org's API key), 2026-10-06 (the vault write is the write), 2026-10-07 (a
+subscription with no recorded token bills the connection's key)
 **Supersedes:** [ADR-0016](ADR-0016-coding-agent-key-is-an-override-not-a-peer.md)
 (the coding-agent key is an override on the org's key). Its reasons for one
 credential variable per run, for persisting `credential_kind`, for the kind-aware
@@ -135,3 +136,37 @@ The rules above hold with these changed facts:
 - **Decision 6 records a disconnected connection.** `llm_disconnected_at` is
   set when the connection is removed, and the onboarding alert names the model
   connection.
+
+## Amendment 2026-10-06 — the vault write is the write
+
+Decision 4's unit of work no longer writes credential bytes to Postgres or
+mirrors them after commit. The subscription token and the connection key are
+the org secrets `coding-agent-key` and `default-key`, whose values live only in
+vault ([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)); the
+save's write order is in
+[ADR-0038](ADR-0038-an-organization-has-one-model-connection.md)'s 2026-10-06
+amendment. A save that succeeds has already written its reference, so
+dispatch never mounts a credential older than the last successful save; a
+failed save leaves the previous credential in place and answers 502. The rest
+of decision 4, and decisions 3 and 5, stand.
+
+## Amendment 2026-10-07 — a subscription with no recorded token bills the connection's key
+
+A subscription saved before its token lived in vault has a credential row and
+no `coding-agent-key` reference row: there is nothing to mount. Decision 5 now
+treats it as no subscription. `ResolveCodingCredential` returns the
+connection's key and logs a value-free WARN naming the org, so the run
+proceeds instead of failing every dispatch. A subscription row whose status is
+not `active` (legacy data) still fails the dispatch. A failed read of the
+reference row is an error too, never the fallback: only a row that was never
+written bills the key.
+
+GET /config reads the subscription off the same fact, the credential row, so
+Settings and dispatch never disagree. Such a subscription, when active, is
+projected with `tokenMissing: true` (by the recorded-reference predicate
+dispatch reads), and the AI agents card shows it set with **Replace** and
+**Remove** and a warning that coding uses the API key until the token is saved
+again. A non-active one is never flagged, since dispatch errors on it: the
+card shows its validation error, or its status, instead. Saving the token
+records the reference; Remove (`agents.subscription: null`) deletes the row.
+No backfill: the org acts on the warning.

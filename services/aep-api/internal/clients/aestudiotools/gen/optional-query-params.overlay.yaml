@@ -1,0 +1,33 @@
+# Applied to the ae-studio-tools internal contract before the aep-api client
+# is generated (oapi-codegen.yaml, output-options.overlay). With
+# prefer-skip-optional-pointer every optional query parameter would be a
+# value the client always sends, so an unset `at` would travel as `at=`
+# (which the pod's pattern refuses) and an unset `state` as `state=`. These
+# parameters are pointers in the client only: unset (nil) is left out of the
+# query. The pod's own server generation is unaffected.
+overlay: 1.0.0
+info:
+  title: aep-api client — optional query parameters are pointers
+  version: 1.0.0
+actions:
+  - target: $.components.parameters.At
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.components.parameters.Local
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.components.parameters.Prefix
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.components.parameters.DefaultBranch
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.paths['/repos/{owner}/{repo}/tags'].get.parameters[?(@.name == 'local')]
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.paths['/repos/{owner}/{repo}/milestones'].get.parameters[?(@.name == 'state')]
+    update:
+      x-go-type-skip-optional-pointer: false
+  - target: $.paths['/repos/{owner}/{repo}/milestones/{number}/issues'].get.parameters[?(@.name == 'state')]
+    update:
+      x-go-type-skip-optional-pointer: false

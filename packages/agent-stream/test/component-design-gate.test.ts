@@ -19,9 +19,7 @@
 /**
  * Write-gate behavior for the two design.json rules this branch adds — the
  * canonical `web-application` type (aliases rejected) and the optional
- * `endpoint` block. These assert the zod source of truth directly; the Go fold
- * gate (agentfold/designgate.go) has its own parity tests, and the two must
- * agree — a design that passes one gate MUST pass the other.
+ * `endpoint` block. These assert the zod source of truth directly.
  */
 
 import { test } from "node:test";
@@ -113,8 +111,7 @@ for (const buildpack of ["go", "react", "node", "nodejs", "Docker", ""]) {
 }
 
 // --- platform-stamped dependency wiring -------------------------------------
-// The Go fold gate has the mirror of this block (agentfold/designgate_test.go
-// TestValidateComponentDesign_Wiring). `wiring` is ACCEPTED rather than rejected
+// `wiring` is ACCEPTED rather than rejected
 // as agent-authored — unlike status/reason it is persisted in design.json, and
 // the design agent reads-edits-writes the file, so a rejection rule would reject
 // its own echo. Design save re-derives and overwrites it, which is what makes

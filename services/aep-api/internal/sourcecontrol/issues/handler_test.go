@@ -22,7 +22,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 )
@@ -33,22 +32,18 @@ func (repo) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourc
 	return &sourcecontrol.GitRepository{OrgID: org, ProjectID: project, RepoURL: "https://github.com/acme/shop"}, nil
 }
 
-type resolver struct{ secrets.Resolver }
-
-func (resolver) Resolve(context.Context, string) (secrets.Credential, error) { return nil, nil }
-
 type host struct {
 	sourcecontrol.IssueOps
 	created sourcecontrol.CreateIssueRequest
 }
 
-func (*host) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+func (*host) ListIssues(context.Context, sourcecontrol.RepoRef, []string) ([]sourcecontrol.IssueInfo, error) {
 	return nil, nil
 }
-func (*host) EnsureLabel(context.Context, string, string, secrets.Credential, string, string) error {
+func (*host) EnsureLabel(context.Context, sourcecontrol.RepoRef, string, string) error {
 	return nil
 }
-func (h *host) CreateIssue(_ context.Context, _, _ string, _ secrets.Credential, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
+func (h *host) CreateIssue(_ context.Context, _ sourcecontrol.RepoRef, req sourcecontrol.CreateIssueRequest) (*sourcecontrol.IssueResult, error) {
 	h.created = req
 	return &sourcecontrol.IssueResult{Number: 42, URL: "https://github.com/acme/shop/issues/42"}, nil
 }
@@ -56,7 +51,7 @@ func (h *host) CreateIssue(_ context.Context, _, _ string, _ secrets.Credential,
 // A REST create never carries the handoff's incident context, so the fields
 // only a trusted handoff may send are refused.
 func TestCreateIssueRejectsHandoffFieldsWithoutIncidentContext(t *testing.T) {
-	h := issues.New(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}))
+	h := issues.New(sourcecontrol.NewIssueService(repo{}, &host{}))
 	_, err := h.CreateIssue(context.Background(), gen.CreateIssueRequestObject{ProjectName: "shop", Body: &gen.CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}})
 	apiError, ok := err.(*apierr.Error)
 	if !ok || apiError.Status != 400 {

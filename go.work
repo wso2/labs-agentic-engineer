@@ -8,6 +8,7 @@ use (
 	// Modules are added here as they are created. The root Makefile discovers
 	// workspace modules dynamically, so adding a `use` line is the only edit
 	// needed to adopt a new Go module.
+	./components/dataplane/ae-system-project/ae-studio/ae-studio-tools
 	./services/aep-api
 	./tools/aectl
 )

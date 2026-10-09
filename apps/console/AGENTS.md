@@ -26,8 +26,9 @@ an area before changing it.
   extracted into a new shared package.
 - **Tests:** unit tests with Vitest (node; `// @vitest-environment jsdom` per
   file for components). The live end-to-end walk lives in `tests/e2e`.
-- Request and response types come from the generated client
-  (`src/generated/aep-api.d.ts`, from `pnpm gen`); never redefine them.
+- Request and response types come from the generated clients
+  (`src/generated/aep-api.d.ts`, and `ae-design-agent.d.ts` for the AE Studio
+  pod, from `pnpm gen`); never redefine them.
 - **Adding a `@aep/*` dep whose `types` resolves to `./dist` means adding a
   `RUN pnpm --filter … build` line to the `Dockerfile`.** The list is
   hand-maintained, host builds hide the omission, and the image build fails
@@ -36,9 +37,12 @@ an area before changing it.
 ## Layout
 
 - `src/auth/`: OIDC sign-in, the session and token handling, copied from the
-  old console. `src/api/`: the `openapi-fetch` client and its 401 handler.
+  old console. `src/api/`: the `openapi-fetch` clients (aep-api, and the AE
+  Studio design agent built from `GET /ae-studio`), their shared 401 handler,
+  error reading, and the query retry that paces an AE Studio restart.
 - `src/features/<feature>/{components,api}`: one folder per area. `shell` is
-  the frame (rail, chat slot, main outlet) and the route→scope mapping the
+  the frame (rail, chat slot, main outlet), the gates in front of it
+  (`GatedShell`: auth, onboarding, AE Studio), and the route→scope mapping the
   rail and chat read.
 - `src/components/`: app-wide primitives copied from the old console
   (`ErrorBoundary`, `EmptyState`). `src/lib/`: small app-wide helpers with no
@@ -47,5 +51,12 @@ an area before changing it.
 - `src/mocks/`: MSW handlers and fixtures for mock mode. Dev-only; never in a
   production build.
 - `Dockerfile`, `nginx.conf`, `docker-entrypoint.sh`: the image (`ghcr.io/wso2/aep/console`).
-  nginx serves the SPA and forwards `/collab` and GitHub's callbacks; the
+  nginx serves the SPA and forwards `/aep-api-service/` to aep-api (nothing
+  else: the Room and GitHub callbacks no longer go through it); the
   entrypoint writes `env-config.js` (`window._env_`) from the pod's env.
+- Chat turns go to the org's AE Studio (its design agent's `/v1`, through
+  `designAgent()` in `src/api/aeStudio.ts`), and the spec Room is AE Studio's
+  Room (`src/features/spec/collab/specRoom.ts`), not `aep-api`; the
+  `AeStudioGate` holds the console, or shows the restart banner or the failed
+  page, by AE Studio's state
+  ([ADR-0004](design/decisions/ADR-0004-the-console-calls-the-orgs-ae-studio-directly.md)).

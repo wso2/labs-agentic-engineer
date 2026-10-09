@@ -33,19 +33,28 @@
 # the heavy half here as its last step; `up` brings it back when a log archive,
 # a trace view or the alert→RCA pipeline is wanted. Unpark between builds: on
 # an 8 GiB VM the plane plus a coding Job overloads the node.
+# The LOGS half is never parked: OpenSearch, the logs adapter and Fluent Bit
+# (about 1.4 CPU and 1.3 GiB) stay running, because run history (the archived
+# logs of finished coding runs) is read from them. Tracing, metrics and the RCA
+# agent are what get parked.
 # WITH_OBSERVABILITY=0 skips the plane altogether, and with it Agent Manager.
 #
 # What "parked" costs, stated plainly:
-#   - The AEP console's log ARCHIVE for finished cycles (observer → OpenSearch)
-#     reads as "logs unavailable". Live pod tails are unaffected: they go
-#     through the OpenChoreo API, not this plane.
-#   - Agent Manager's traces, metrics and logs views are empty.
+#   - Agent Manager's traces and metrics views are empty. Run history (the
+#     archived logs of finished runs) is unaffected: the logs plane stays up.
 #   - No alert is evaluated, so the alert → RCA → coding-agent handoff is off.
-#   - Nothing is lost on `up`: OpenSearch keeps its PVC, and every chart, CR,
+#   - Nothing is lost on `up`: OpenSearch keeps its PVC (it is never scaled
+#     down), and every chart, CR,
 #     ConfigMap patch and HTTPRoute the setup scripts made stays in place.
 #
-# What stays running while parked: observer, controller-manager, the cluster
-# agent, the plane's gateway and amp-observer. They are small, and they are
+# Upgrading from the older script, which parked the logs half too: `up` also
+# restores OpenSearch, the logs adapter and Fluent Bit when it finds them parked
+# (to the replica count remembered at park time, else 1), and `status` lists
+# them. `down` never parks them.
+#
+# What stays running while parked: OpenSearch, the logs adapter, Fluent Bit,
+# observer, controller-manager, the cluster agent, the plane's gateway and
+# amp-observer. They are small, and they are
 # what the two consoles actually call — with the stores parked they answer "no
 # data" instead of refusing the connection.
 #
@@ -56,10 +65,13 @@
 #   - The Prometheus operator is parked FIRST on the way down and restored
 #     FIRST on the way up: it owns the Prometheus/Alertmanager StatefulSets and
 #     would otherwise scale them straight back to their CR's replica count.
-#   - Fluent Bit is a DaemonSet, which has no replica count. It is parked with a
-#     nodeSelector no node carries and restored by removing that selector.
-#   - Absent objects are skipped and named, so the same script serves a cluster
-#     where Agent Manager has been torn down (no metrics or tracing modules).
+#   - A DaemonSet has no replica count. It would be parked with a nodeSelector
+#     no node carries and restored by removing that selector; PARK_DAEMONSETS
+#     is empty now that Fluent Bit stays up, and the helpers remain for it.
+#   - Absent objects are skipped and named (every park and restore checks
+#     existence first), so the same script serves a cluster where only the logs
+#     half is installed or Agent Manager has been torn down (no metrics or
+#     tracing modules).
 #
 # Idempotent: `down` on a parked plane and `up` on a running one are no-ops.
 # A later `helm upgrade` of one of these charts (a setup re-run) resets the
@@ -82,17 +94,27 @@ PARK_DEPLOYMENTS=(
     prometheus-operator
     kube-state-metrics
     metrics-adapter-prometheus
-    logs-adapter-opensearch
     tracing-adapter-opensearch
     opentelemetry-collector
     "$RCA_DEPLOYMENT"
 )
 PARK_STATEFULSETS=(
-    opensearch-master
     prometheus-openchoreo-observability
     alertmanager-openchoreo-observability
 )
-PARK_DAEMONSETS=(
+PARK_DAEMONSETS=()
+
+# The logs half: never parked, but restored by `up` (and shown by `status`)
+# because a cluster parked by the older script still has them at 0 or on the
+# parked nodeSelector. OpenSearch first, so the adapter and the shipper come
+# back to a store that is starting.
+LOGS_STATEFULSETS=(
+    opensearch-master
+)
+LOGS_DEPLOYMENTS=(
+    logs-adapter-opensearch
+)
+LOGS_DAEMONSETS=(
     fluent-bit
 )
 
@@ -170,34 +192,38 @@ restore_daemonset() {
     echo "   ▶️  daemonset/$name → every node"
 }
 
+status_scalable() {
+    local kind="$1" name="$2" replicas ready state
+    exists "$kind" "$name" || return 0
+    replicas="$(k get "$kind" "$name" -o jsonpath='{.spec.replicas}')"
+    ready="$(k get "$kind" "$name" -o jsonpath='{.status.readyReplicas}')"
+    [ "${replicas:-0}" = "0" ] && state=parked || state=running
+    printf '   %-12s %-40s %-9s %-6s %s\n' "$kind" "$name" "${replicas:-0}" "${ready:-0}" "$state"
+}
+
+status_daemonset() {
+    local name="$1" ready state
+    exists daemonset "$name" || return 0
+    ready="$(k get daemonset "$name" -o jsonpath='{.status.numberReady}')"
+    if [ "$(k get daemonset "$name" -o jsonpath="{.spec.template.spec.nodeSelector.aep\.io/parked}")" = "true" ]; then
+        state=parked
+    else
+        state=running
+    fi
+    printf '   %-12s %-40s %-9s %-6s %s\n' daemonset "$name" - "${ready:-0}" "$state"
+}
+
 status() {
     echo "Observability plane workloads in $NS (parked = spec.replicas 0 / no matching node):"
     printf '   %-12s %-40s %-9s %-6s %s\n' KIND NAME REPLICAS READY STATE
-    local kind name replicas ready state
-    for name in "${PARK_DEPLOYMENTS[@]}"; do
-        exists deployment "$name" || continue
-        replicas="$(k get deployment "$name" -o jsonpath='{.spec.replicas}')"
-        ready="$(k get deployment "$name" -o jsonpath='{.status.readyReplicas}')"
-        [ "${replicas:-0}" = "0" ] && state=parked || state=running
-        printf '   %-12s %-40s %-9s %-6s %s\n' deployment "$name" "${replicas:-0}" "${ready:-0}" "$state"
-    done
-    for name in "${PARK_STATEFULSETS[@]}"; do
-        exists statefulset "$name" || continue
-        replicas="$(k get statefulset "$name" -o jsonpath='{.spec.replicas}')"
-        ready="$(k get statefulset "$name" -o jsonpath='{.status.readyReplicas}')"
-        [ "${replicas:-0}" = "0" ] && state=parked || state=running
-        printf '   %-12s %-40s %-9s %-6s %s\n' statefulset "$name" "${replicas:-0}" "${ready:-0}" "$state"
-    done
-    for name in "${PARK_DAEMONSETS[@]}"; do
-        exists daemonset "$name" || continue
-        ready="$(k get daemonset "$name" -o jsonpath='{.status.numberReady}')"
-        if [ "$(k get daemonset "$name" -o jsonpath="{.spec.template.spec.nodeSelector.aep\.io/parked}")" = "true" ]; then
-            state=parked
-        else
-            state=running
-        fi
-        printf '   %-12s %-40s %-9s %-6s %s\n' daemonset "$name" - "${ready:-0}" "$state"
-    done
+    local name
+    for name in "${PARK_DEPLOYMENTS[@]}"; do status_scalable deployment "$name"; done
+    for name in "${PARK_STATEFULSETS[@]}"; do status_scalable statefulset "$name"; done
+    for name in "${PARK_DAEMONSETS[@]}"; do status_daemonset "$name"; done
+    echo "Logs half (never parked; 'parked' here means an older script parked it, and 'up' restores it):"
+    for name in "${LOGS_STATEFULSETS[@]}"; do status_scalable statefulset "$name"; done
+    for name in "${LOGS_DEPLOYMENTS[@]}"; do status_scalable deployment "$name"; done
+    for name in "${LOGS_DAEMONSETS[@]}"; do status_daemonset "$name"; done
 }
 
 kubectl cluster-info --context "$CLUSTER_CONTEXT" --request-timeout=5s &>/dev/null || {
@@ -219,10 +245,13 @@ case "$ACTION" in
         ;;
     up)
         echo "▶️  Restoring the observability workloads in $NS"
+        for name in "${LOGS_STATEFULSETS[@]}"; do restore_scalable statefulset "$name"; done
+        for name in "${LOGS_DEPLOYMENTS[@]}"; do restore_scalable deployment "$name"; done
+        for name in "${LOGS_DAEMONSETS[@]}"; do restore_daemonset "$name"; done
         for name in "${PARK_DEPLOYMENTS[@]}"; do restore_scalable deployment "$name"; done
         for name in "${PARK_STATEFULSETS[@]}"; do restore_scalable statefulset "$name"; done
         for name in "${PARK_DAEMONSETS[@]}"; do restore_daemonset "$name"; done
-        echo "⏳ OpenSearch takes a few minutes to become ready; the adapters recover on their own once it does."
+        echo "⏳ Prometheus and the tracing adapter take a few minutes to become ready; they recover on their own."
         ;;
     status)
         status

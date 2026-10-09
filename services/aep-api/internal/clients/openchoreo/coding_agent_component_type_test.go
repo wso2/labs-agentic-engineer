@@ -16,10 +16,14 @@
 
 package openchoreo
 
-import "testing"
+import (
+	"github.com/wso2/aep/aep-api/internal/config"
+	"reflect"
+	"testing"
+)
 
 func TestCodingAgentComponentType_Pins(t *testing.T) {
-	ct := CodingAgentComponentType()
+	ct := CodingAgentComponentType(CodingAgentResources{})
 	if CodingAgentComponentTypeName != "coding-agent" {
 		t.Fatalf("type name: %q", CodingAgentComponentTypeName)
 	}
@@ -94,7 +98,7 @@ func assertResourceCeilingsPresent(t *testing.T, props map[string]any) {
 // run — and would out-weight every other pod on the node under contention,
 // because cgroup CPU weight is proportional to requests.
 func TestCodingAgentReservesFarLessCPUThanItMayBurstTo(t *testing.T) {
-	ct := CodingAgentComponentType()
+	ct := CodingAgentComponentType(CodingAgentResources{})
 	spec, _ := ct["spec"].(map[string]any)
 	props := mustFindSchemaProps(t, spec)
 
@@ -157,7 +161,7 @@ func mustFindJobPodSpec(t *testing.T, spec map[string]any) map[string]any {
 // shared buffers, and a default (disk-backed) emptyDir would provide the path
 // without the semantics.
 func TestCodingAgentSizesDevShm(t *testing.T) {
-	ct := CodingAgentComponentType()
+	ct := CodingAgentComponentType(CodingAgentResources{})
 	spec, _ := ct["spec"].(map[string]any)
 	podSpec := mustFindJobPodSpec(t, spec)
 
@@ -215,7 +219,7 @@ func TestCodingAgentSizesDevShm(t *testing.T) {
 // label on the Job AND its pod. The pod's label set must still be built from
 // podSelectors, because the observer finds the pod by them.
 func TestCodingAgentCarriesTheRuntime(t *testing.T) {
-	ct := CodingAgentComponentType()
+	ct := CodingAgentComponentType(CodingAgentResources{})
 	spec, _ := ct["spec"].(map[string]any)
 
 	props := mustFindSchemaProps(t, spec)
@@ -248,5 +252,85 @@ func TestCodingAgentCarriesTheRuntime(t *testing.T) {
 	wantPod := `${oc_merge(metadata.podSelectors, {"aep.wso2.com/runtime": parameters.runtime})}`
 	if podMeta["labels"] != wantPod {
 		t.Errorf("pod labels = %v, want %s", podMeta["labels"], wantPod)
+	}
+}
+
+// suspend is what makes a Job OpenChoreo re-creates after the TTL inert: it is
+// an environmentConfig (set per binding, after the run), rendered on
+// Job.spec.suspend, and the TTL stays beside it.
+func TestCodingAgentComponentType_SuspendIsAnEnvironmentConfigRenderedOnTheJob(t *testing.T) {
+	ct := CodingAgentComponentType(CodingAgentResources{})
+	spec := ct["spec"].(map[string]any)
+	ec := spec["environmentConfigs"].(map[string]any)["openAPIV3Schema"].(map[string]any)["properties"].(map[string]any)
+	if got := ec["suspend"]; !reflect.DeepEqual(got, map[string]any{"type": "boolean", "default": false}) {
+		t.Fatalf("environmentConfigs.suspend = %v", got)
+	}
+	job := spec["resources"].([]any)[0].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	if job["suspend"] != "${environmentConfigs.suspend}" {
+		t.Fatalf("Job.spec.suspend = %v", job["suspend"])
+	}
+	if job["ttlSecondsAfterFinished"] != "${parameters.ttlSecondsAfterFinished}" {
+		t.Fatal("the TTL stays")
+	}
+}
+
+func cpuRequestSchema(t *testing.T, ct map[string]any) map[string]any {
+	t.Helper()
+	spec, _ := ct["spec"].(map[string]any)
+	params, _ := spec["parameters"].(map[string]any)
+	schema, _ := params["openAPIV3Schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	cpu, _ := props["cpuRequest"].(map[string]any)
+	if cpu == nil {
+		t.Fatal("cpuRequest schema missing")
+	}
+	return cpu
+}
+
+// An unset request, or the literal default 500m, must render the
+// ComponentType byte-for-byte as before: EnsureComponentType PUTs on any body
+// difference, so a drift would re-write the type on every dispatch. "1" is in
+// the enum, so it keeps the enum and changes only the default.
+func TestCodingAgentComponentType_CPURequestUnsetIsToday(t *testing.T) {
+	today := CodingAgentComponentType(CodingAgentResources{})
+	cpu := cpuRequestSchema(t, today)
+	if cpu["default"] != "500m" || !reflect.DeepEqual(cpu["enum"], []any{"500m", "1"}) {
+		t.Fatalf("unset render: %#v", cpu)
+	}
+	for _, v := range []string{"500m", "1"} {
+		got := CodingAgentComponentType(CodingAgentResources{CPURequest: v})
+		wantDefault := v
+		c := cpuRequestSchema(t, got)
+		if c["default"] != wantDefault || !reflect.DeepEqual(c["enum"], []any{"500m", "1"}) {
+			t.Fatalf("%s: %#v", v, c)
+		}
+	}
+	// "500m" is the default, so it renders identically to unset.
+	if !reflect.DeepEqual(today, CodingAgentComponentType(CodingAgentResources{CPURequest: "500m"})) {
+		t.Fatal("CPURequest 500m must render identically to unset")
+	}
+}
+
+func TestCodingAgentComponentType_CPURequestOverride(t *testing.T) {
+	cpu := cpuRequestSchema(t, CodingAgentComponentType(CodingAgentResources{CPURequest: "100m"}))
+	if cpu["default"] != "100m" {
+		t.Fatalf("default: %#v", cpu["default"])
+	}
+	if !reflect.DeepEqual(cpu["enum"], []any{"100m", "500m", "1"}) {
+		t.Fatalf("enum: %#v", cpu["enum"])
+	}
+}
+
+// The boot check refuses a request above the ceiling it is told; that ceiling
+// must be the schema's own cpuLimit default.
+func TestCodingAgentComponentType_CPUCeilingMatchesLimit(t *testing.T) {
+	spec, _ := CodingAgentComponentType(CodingAgentResources{})["spec"].(map[string]any)
+	params, _ := spec["parameters"].(map[string]any)
+	schema, _ := params["openAPIV3Schema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	limit, _ := props["cpuLimit"].(map[string]any)
+	m, err := config.ParseCPUMillicores(limit["default"].(string))
+	if err != nil || m != config.CodingAgentCPUCeilingMillicores {
+		t.Fatalf("cpuLimit default %v = %dm, %v; config ceiling %dm", limit["default"], m, err, config.CodingAgentCPUCeilingMillicores)
 	}
 }

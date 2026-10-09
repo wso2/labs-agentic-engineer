@@ -29,4 +29,7 @@ type Deps struct {
 	// Config is the /config orchestrator behind the six org-config ops
 	// (get/patch config + the four connect/disconnect/rotate/discover actions).
 	Config *Service
+	// AEStudio answers get-ae-studio. Required: an unwired reader panics at
+	// the first request, like the other fail-loud collaborators.
+	AEStudio AEStudioStatusReader
 }

@@ -113,7 +113,6 @@ export const llmConnectedFixture: LLMProjection = {
   kind: "anthropic",
   baseURL: ANTHROPIC_URL,
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",

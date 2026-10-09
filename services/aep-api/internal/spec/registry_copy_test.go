@@ -210,7 +210,7 @@ func TestCompleteProviderDocuments_FetchesOnce(t *testing.T) {
 		t.Fatalf("a non-OpenAPI body must warn: out=%+v warnings=%+v", out, warnings)
 	}
 	// A registry copy already completed for the same path is not touched.
-	out, _ = completeProviderDocuments(context.Background(), fetch, []WriteOp{pending}, map[string]completedFile{stubPath: {}})
+	out, _ = completeProviderDocuments(context.Background(), fetch, []WriteOp{pending}, map[string]CompletedFile{stubPath: {}})
 	if len(out) != 0 {
 		t.Fatalf("a path the registry copy completed must be skipped")
 	}

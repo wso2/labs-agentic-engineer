@@ -26,24 +26,19 @@
 // The agent itself creates the feature branch and opens the PR with
 // `Closes #<issueNumber>` — see skills/aep/SKILL.md.
 //
-// Authentication — two modes, chosen by whether GITHUB_TOKEN/GH_TOKEN is set:
-//
-//   1. Env token (cloud Jobs mount a PAT as GITHUB_TOKEN): clone and every later
-//      git op use `gh auth git-credential` (same helper `gh auth setup-git`
-//      installs), pinned to the real `gh` binary. No credentials/refresh call.
-//   2. Otherwise: AEP credhelper (lib/credhelper.ts) exchanges the publisher CC
-//      token for a GitHub token via credentials/refresh — used when no env token
-//      is mounted.
+// Authentication: the coding Job mounts the org's gitpat as GITHUB_TOKEN (gh
+// also accepts GH_TOKEN). Clone and every later git op use `gh auth
+// git-credential` (the helper `gh auth setup-git` installs), pinned to the real
+// `gh` binary. Without a token provisioning fails before any network call.
 //
 // Layout inside the workspace:
 //
 //   <workspace>/
 //     .git/                     ← cloned repo, default branch checked out
-//     .gh-config/hosts.yml      ← gh's auth config (refresh-wrapper mode only)
+//     .gh-config/               ← gh's config dir (GH_CONFIG_DIR)
 //     .aep/
 //       bearer                  ← chmod 600 — publisher CC access token snapshot
-//       credhelper.sh           ← chmod 700 — only in refresh mode
-//       gh                      ← chmod 755 — on PATH (passthrough or refresh wrap)
+//       gh                      ← chmod 755 — on PATH, execs the real gh
 //
 // The agent runs with cwd=<workspace> and PATH prefixed with <workspace>/.aep
 // so `gh ...` resolves to the wrapper.
@@ -54,7 +49,6 @@ import { exec, execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { config } from "../config.js";
-import { CREDHELPER_FILE, credHelperScript, ghWrapperScript } from "./credhelper.js";
 import {
   envHasGitHubToken,
   ghGitCredentialHelper,
@@ -73,7 +67,6 @@ export interface WorkspaceLayout {
   ghConfigDir: string;
   bearerFile: string;
   aepDir: string;
-  helperBin: string;
   ghWrapper: string;
 }
 
@@ -84,20 +77,13 @@ export interface ProvisionRequest {
   repoUrl: string;
   bearer: string;
   identity: { name: string; email: string; login?: string };
-  gitServiceUrl: string;
   correlationId?: string;
-  // WS2.6 — full refresh URL, set by oneshot.ts to the path-scoped
-  // `${platformUrl}/internal/v1/executions/{executionId}/credentials/refresh`
-  // (publisher CC; taskId carries the execution id, §9.2). Falls back to a path-scoped URL built from
-  // gitServiceUrl below when unset. Only used when GITHUB_TOKEN/GH_TOKEN is unset.
-  refreshUrl?: string;
   // B2 — the version this run builds (AEP_SPEC_TAG). When set, the clone's
   // specs/ is the version's, not main's (pinSpecsToVersion).
   specTag?: string;
 }
 
-// writeBearerFile persists the platform access token for credhelper/skill
-// readers. Temp-file + rename so a concurrent `cat` never sees a truncated
+// writeBearerFile persists the platform access token for skill readers. Temp-file + rename so a concurrent `cat` never sees a truncated
 // file. No-op when the value is unchanged (MCP proxy calls this per request).
 export async function writeBearerFile(file: string, token: string, previous?: string): Promise<string> {
   if (previous !== undefined && token === previous) {
@@ -126,24 +112,8 @@ export function computeLayout(orgId: string, projectId: string, taskId: string):
     ghConfigDir: path.join(workspace, GH_CONFIG_DIR),
     bearerFile: path.join(aepDir, "bearer"),
     aepDir,
-    helperBin: path.join(aepDir, CREDHELPER_FILE),
     ghWrapper: path.join(aepDir, "gh"),
   };
-}
-
-// resolveRefreshUrl is the one owner of the credentials/refresh endpoint URL.
-// It is baked into the helper script at provisioning time, so the clone and
-// every later git operation cannot end up pointed at different endpoints.
-//
-// WS2.6 — req.refreshUrl (set by oneshot.ts from AEP_PLATFORM_URL) is already
-// the path-scoped endpoint. The fallback builds the same path-scoped URL from
-// gitServiceUrl for the rare case oneshot didn't set it.
-function resolveRefreshUrl(req: ProvisionRequest): string {
-  if (req.refreshUrl && req.refreshUrl !== "") return req.refreshUrl;
-  const url = new URL(req.gitServiceUrl);
-  if (!url.pathname.endsWith("/")) url.pathname += "/";
-  url.pathname += `internal/v1/executions/${encodeURIComponent(req.taskId)}/credentials/refresh`;
-  return url.toString();
 }
 
 async function installCommitIdentity(
@@ -229,8 +199,7 @@ export async function installRunLogExclude(workspace: string): Promise<void> {
 }
 
 // installCredentialExclude keeps the credential directories provisionWorkspace
-// drops inside the clone (the publisher bearer, the credential helper, the gh
-// wrapper and gh's config) out of anything the agent stages: one `git add -A`
+// drops inside the clone (the publisher bearer, the gh wrapper and gh's config) out of anything the agent stages: one `git add -A`
 // would otherwise push the bearer into the customer's repository.
 export async function installCredentialExclude(workspace: string): Promise<void> {
   await appendCloneExclude(workspace, "the runner's credentials", [
@@ -264,99 +233,52 @@ async function installScopedCredentialHelper(workspace: string, scope: string, h
   );
 }
 
-// provisionWorkspace clones the feature branch and writes credentials.
+// provisionWorkspace clones the default branch and wires git/gh to the mounted
+// GITHUB_TOKEN. It throws, before any network call, when no token is mounted.
 // Idempotent: it removes any existing workspace first (§12.1 step 5
 // resume-safety: a crash mid-clone leaves DispatchedAt=null, the resume
 // sweep re-enters this step, which begins with rm -rf).
 //
 // Order matters: `git clone <url> <dir>` refuses to write into an existing
-// non-empty directory. So we stage auth material in a sibling tmp dir, clone
-// into the workspace path (which must not exist yet), and only then drop the
-// .aep/ and .gh-config/ directories inside the cloned tree.
+// non-empty directory, so the workspace path must not exist when we clone; the
+// .aep/ and .gh-config/ directories are dropped inside the cloned tree after.
 export async function provisionWorkspace(req: ProvisionRequest): Promise<WorkspaceLayout> {
+  if (!envHasGitHubToken()) {
+    throw new Error("GITHUB_TOKEN (or GH_TOKEN) is required: the coding Job mounts the org's gitpat");
+  }
   const layout = computeLayout(req.orgId, req.projectId, req.taskId);
-  const stageDir = layout.workspace + ".stage";
-  const useGhToken = envHasGitHubToken();
 
-  // Wipe both the target and any prior stage. Don't pre-create the workspace
-  // dir — git clone will materialise it.
+  // Wipe any prior workspace. Don't pre-create it — git clone will materialise it.
   await fs.promises.rm(layout.workspace, { recursive: true, force: true });
-  await fs.promises.rm(stageDir, { recursive: true, force: true });
   await fs.promises.mkdir(path.dirname(layout.workspace), { recursive: true, mode: 0o755 });
-  await fs.promises.mkdir(stageDir, { recursive: true, mode: 0o700 });
 
   const realGhPath = await resolveRealGhPath();
   const ghHelper = ghGitCredentialHelper(realGhPath);
 
-  try {
-    // No --branch: clone the remote's default branch (HEAD). The agent
-    // creates its own feature branch via `git checkout -b ...` once it
-    // starts working, per the aep skill workflow.
-    if (useGhToken) {
-      // GITHUB_TOKEN/GH_TOKEN in the process env: authenticate via gh's
-      // credential helper (setup-git equivalent). Clone and later push share
-      // this path — credentials/refresh is never consulted for git.
-      await cloneWithHelper({
-        repoUrl: req.repoUrl,
-        destDir: layout.workspace,
-        helperPath: ghHelper,
-        bearerFile: "",
-      });
-    } else {
-      // AEP credhelper: stage bearer + helper outside the not-yet-existing
-      // workspace; clone through `git -c`; install the same helper durably below.
-      const helperBody = credHelperScript({
-        taskId: req.taskId,
-        workspaceDir: layout.workspace,
-        refreshUrl: resolveRefreshUrl(req),
-      });
-      const stageBearer = path.join(stageDir, "bearer");
-      const stageHelper = path.join(stageDir, CREDHELPER_FILE);
-      await fs.promises.writeFile(stageBearer, req.bearer, { mode: 0o600 });
-      await fs.promises.writeFile(stageHelper, helperBody, { mode: 0o700 });
-      await cloneWithHelper({
-        repoUrl: req.repoUrl,
-        destDir: layout.workspace,
-        helperPath: stageHelper,
-        bearerFile: stageBearer,
-      });
-      await fs.promises.mkdir(layout.aepDir, { recursive: true, mode: 0o755 });
-      await fs.promises.writeFile(layout.helperBin, helperBody, { mode: 0o700 });
-    }
+  // No --branch: clone the remote's default branch (HEAD). The agent creates its
+  // own feature branch via `git checkout -b ...` once it starts working, per the
+  // aep skill workflow. Clone and later push share the gh credential helper.
+  await cloneWithHelper({ repoUrl: req.repoUrl, destDir: layout.workspace, helperPath: ghHelper });
 
-    // Materialise the runtime layout inside the cloned tree.
-    await fs.promises.mkdir(layout.aepDir, { recursive: true, mode: 0o755 });
-    await fs.promises.mkdir(layout.ghConfigDir, { recursive: true, mode: 0o755 });
-    if (req.bearer !== "") {
-      await writeBearerFile(layout.bearerFile, req.bearer);
-    }
-
-    // gh on PATH: passthrough when env token auth is active; otherwise the
-    // refresh wrapper that rewrites hosts.yml from credhelper.
-    await fs.promises.writeFile(
-      layout.ghWrapper,
-      useGhToken ? ghPassthroughScript(realGhPath) : ghWrapperScript(realGhPath),
-      { mode: 0o755 },
-    );
-
-    await installCommitIdentity(layout.workspace, req.identity);
-    await installCrashArtefactExclude(layout.workspace);
-    await installRunLogExclude(layout.workspace);
-    await installCredentialExclude(layout.workspace);
-
-    const scope = cloneCredentialScope(req.repoUrl);
-    if (scope) {
-      if (useGhToken) {
-        await installScopedCredentialHelper(layout.workspace, scope, ghHelper);
-      } else {
-        await installScopedCredentialHelper(layout.workspace, scope, layout.helperBin);
-      }
-    }
-
-    if (req.specTag) await pinSpecsToVersion(layout.workspace, req.specTag);
-  } finally {
-    await fs.promises.rm(stageDir, { recursive: true, force: true });
+  // Materialise the runtime layout inside the cloned tree.
+  await fs.promises.mkdir(layout.aepDir, { recursive: true, mode: 0o755 });
+  await fs.promises.mkdir(layout.ghConfigDir, { recursive: true, mode: 0o755 });
+  if (req.bearer !== "") {
+    await writeBearerFile(layout.bearerFile, req.bearer);
   }
+  await fs.promises.writeFile(layout.ghWrapper, ghPassthroughScript(realGhPath), { mode: 0o755 });
+
+  await installCommitIdentity(layout.workspace, req.identity);
+  await installCrashArtefactExclude(layout.workspace);
+  await installRunLogExclude(layout.workspace);
+  await installCredentialExclude(layout.workspace);
+
+  const scope = cloneCredentialScope(req.repoUrl);
+  if (scope) {
+    await installScopedCredentialHelper(layout.workspace, scope, ghHelper);
+  }
+
+  if (req.specTag) await pinSpecsToVersion(layout.workspace, req.specTag);
 
   return layout;
 }

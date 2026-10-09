@@ -378,6 +378,11 @@ func (f fakeRepos) GetRepo(context.Context, string, string) (*sourcecontrol.GitR
 	return f.repo, nil
 }
 
+// GetByOrgAndProjectID serves the row-read port (nil when absent).
+func (f fakeRepos) GetByOrgAndProjectID(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return f.repo, nil
+}
+
 func defaultRepo() *sourcecontrol.GitRepository {
 	return &sourcecontrol.GitRepository{OrgID: "org1", ProjectID: "proj1", RepoURL: "https://github.com/o/r"}
 }

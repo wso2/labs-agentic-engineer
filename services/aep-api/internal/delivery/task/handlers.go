@@ -139,7 +139,7 @@ func mapTaskReadError(err error) error {
 	case errors.Is(err, ErrProjectRepoNotFound):
 		return apierr.NotFound(ErrProjectRepoNotFound.Error())
 	default:
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 }
 
@@ -155,7 +155,7 @@ func mapTaskCommandError(err error) error {
 	case errors.Is(err, ErrComponentNameRequired):
 		return apierr.BadRequest(ErrComponentNameRequired.Error())
 	default:
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 }
 

@@ -39,20 +39,29 @@ type TokenClaims struct {
 	OuName   string `json:"ouName"`
 	OuHandle string `json:"ouHandle"`
 	ClientID string `json:"client_id"`
-	// Task JWT–specific custom claims. Empty for User and Service JWTs.
+	// GrantType is the OAuth grant the token was issued under. Thunder stamps
+	// it on every token it issues; a client_credentials token is a machine's.
+	GrantType string `json:"grant_type"`
+	// Display claims (OIDC standard), read for crediting a user's work.
+	Name       string `json:"name,omitempty"`
+	Email      string `json:"email,omitempty"`
+	GivenName  string `json:"given_name,omitempty"`
+	FamilyName string `json:"family_name,omitempty"`
+	// Custom claims a token may carry beyond the standard set. Thunder user and
+	// client_credentials tokens leave them empty.
 	OcOrgID   string `json:"ocOrgId,omitempty"`
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
 	jwt.RegisteredClaims
 }
 
+const grantClientCredentials = "client_credentials"
+
 type tokenClaimsCtxKey struct{}
-type jwtTokenCtxKey struct{}
 type scopesCtxKey struct{}
 
 var (
 	claimsKey tokenClaimsCtxKey
-	tokenKey  jwtTokenCtxKey
 	scopesKey scopesCtxKey
 )
 
@@ -68,6 +77,10 @@ type Config struct {
 	// ResourceMetadataURL is included in the WWW-Authenticate challenge per
 	// RFC 9728 (OAuth Protected Resource Metadata). Empty disables the hint.
 	ResourceMetadataURL string
+	// UserTokensOnly refuses a client_credentials token, so the route accepts
+	// only tokens issued to a signed-in user. It keys on grant_type, not on a
+	// missing sub: Thunder sets sub to the client's entity id on M2M tokens.
+	UserTokensOnly bool
 }
 
 // Middleware is the standard http.Handler wrapping signature.
@@ -104,7 +117,6 @@ func Authenticator(cfg Config) Middleware {
 
 			ctx := r.Context()
 			ctx = context.WithValue(ctx, claimsKey, claims)
-			ctx = context.WithValue(ctx, tokenKey, tokenString)
 			ctx = context.WithValue(ctx, scopesKey, claims.Scope)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -126,12 +138,6 @@ func GetTokenClaims(ctx context.Context) *TokenClaims {
 // Authenticator context contract without a full JWKS round-trip.
 func ContextWithTokenClaims(ctx context.Context, claims *TokenClaims) context.Context {
 	return context.WithValue(ctx, claimsKey, claims)
-}
-
-// GetJWTFromContext returns the raw bearer token, or "" if absent.
-func GetJWTFromContext(ctx context.Context) string {
-	tok, _ := ctx.Value(tokenKey).(string)
-	return tok
 }
 
 // buildBearerChallenge formats a WWW-Authenticate header value per RFC 6750
@@ -182,6 +188,9 @@ func validateJWT(tokenString string, cfg Config, issuers compiledIssuers, audien
 	}
 	if err := audiences.match(claims.Audience); err != nil {
 		return nil, err
+	}
+	if cfg.UserTokensOnly && claims.GrantType == grantClientCredentials {
+		return nil, fmt.Errorf("client_credentials token on a user-only route (client %s)", claims.ClientID)
 	}
 	return claims, nil
 }

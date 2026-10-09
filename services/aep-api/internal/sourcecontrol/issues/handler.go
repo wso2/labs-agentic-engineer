@@ -27,7 +27,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// Handler serves create-issue and list-issues.
+// Handler serves create-issue and list-issues on /api/v1 (user JWT).
 //
 // The SRE agent's handoff reaches the same issue service through its own MCP
 // surface (sre_mcp.go), not these operations: CreateIssue owns classification
@@ -53,16 +53,7 @@ func (h *Handler) CreateIssue(ctx context.Context, request gen.CreateIssueReques
 		ActionStatuses: request.Body.ActionStatuses,
 	})
 	if err != nil {
-		if errors.Is(err, sourcecontrol.ErrIncidentContextRequired) {
-			return nil, apierr.BadRequest(err.Error())
-		}
-		if errors.Is(err, sourcecontrol.ErrIncidentRecurrenceIneligible) {
-			return nil, apierr.Conflict(err.Error())
-		}
-		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
-			return nil, apierr.NotFound("project repo not found")
-		}
-		return nil, apierr.Internal("failed to create issue")
+		return nil, CreateError(err)
 	}
 	return gen.CreateIssue200JSONResponse(issueResultWire(issue)), nil
 }
@@ -73,12 +64,9 @@ func (h *Handler) ListIssues(ctx context.Context, request gen.ListIssuesRequestO
 	}
 	org := tenant.BoundOrgFromContext(ctx)
 
-	issues, err := h.issues.ListIssues(ctx, org, request.ProjectName, splitLabels(request.Params.Labels))
+	issues, err := h.issues.ListIssues(ctx, org, request.ProjectName, SplitLabels(request.Params.Labels))
 	if err != nil {
-		if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
-			return nil, apierr.NotFound("project repo not found")
-		}
-		return nil, apierr.Internal("failed to list issues")
+		return nil, ListError(err)
 	}
 
 	ranked := sourcecontrol.RankIssuesByQuery(issues, request.Params.Q)
@@ -124,16 +112,39 @@ func issueInfoWire(iss sourcecontrol.IssueInfo) gen.IssueInfo {
 // issueAttentionReason prevents a domain value outside the public contract's
 // closed enum from reaching the console wire. The empty value omits the field.
 func issueAttentionReason(value string) gen.IssueInfoAttentionReason {
-	switch value {
-	case string(gen.UnverifiedFix), string(gen.NoChangeVerdict), string(gen.Escalated):
-		return gen.IssueInfoAttentionReason(value)
-	default:
+	if !sourcecontrol.IsContractAttentionReason(value) {
 		return ""
 	}
+	return gen.IssueInfoAttentionReason(value)
 }
 
-// splitLabels parses the comma-separated `labels` query param, dropping blanks.
-func splitLabels(param string) []string {
+// CreateError maps an IssueService.CreateIssue failure onto the error envelope.
+// The SRE handoff's create op (internal/edge) maps through it too, so both
+// surfaces answer the same statuses.
+func CreateError(err error) error {
+	if errors.Is(err, sourcecontrol.ErrIncidentContextRequired) {
+		return apierr.BadRequest(err.Error())
+	}
+	if errors.Is(err, sourcecontrol.ErrIncidentRecurrenceIneligible) {
+		return apierr.Conflict(err.Error())
+	}
+	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		return apierr.NotFound("project repo not found")
+	}
+	return apierr.WithCause(apierr.Internal("failed to create issue"), err)
+}
+
+// ListError maps an IssueService.ListIssues failure onto the error envelope,
+// shared with the SRE handoff's list op like CreateError.
+func ListError(err error) error {
+	if errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		return apierr.NotFound("project repo not found")
+	}
+	return apierr.WithCause(apierr.Internal("failed to list issues"), err)
+}
+
+// SplitLabels parses the comma-separated `labels` query param, dropping blanks.
+func SplitLabels(param string) []string {
 	if param == "" {
 		return nil
 	}

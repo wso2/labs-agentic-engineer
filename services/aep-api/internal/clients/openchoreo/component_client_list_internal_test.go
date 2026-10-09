@@ -162,49 +162,6 @@ func TestListComponents_DropsInternalComponents(t *testing.T) {
 	}
 }
 
-// TestListInternalComponents_ReturnsOnlyTheProjectsMarkedOnes is the reaper's
-// read: internal-marked, owned by the project, with the cycle label and the
-// creation time the LRU orders on.
-func TestListInternalComponents_ReturnsOnlyTheProjectsMarkedOnes(t *testing.T) {
-	var gotSelector string
-	other := agentComponent("ca-99999999-2608061200", "cycle-9", "2026-08-01T09:00:00Z")
-	other["spec"].(map[string]any)["owner"] = map[string]any{"projectName": "gadgets"}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotSelector = r.URL.Query().Get("labelSelector")
-		writeJSON(t, w, http.StatusOK, componentListPayload(
-			userComponent(),
-			other,
-			agentComponent("ca-11111111-2608061200", "cycle-1", "2026-08-01T11:00:00Z"),
-		))
-	}))
-	defer srv.Close()
-
-	c := NewComponentClient(Config{BaseURL: srv.URL})
-	got, err := c.ListInternalComponents(context.Background(), "wc-acme", "widgets")
-	if err != nil {
-		t.Fatalf("ListInternalComponents: %v", err)
-	}
-	if gotSelector != string(LabelKeyAepInternal)+"="+LabelValueAepInternal {
-		t.Errorf("labelSelector = %q, want the internal marker", gotSelector)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d components, want 1 (another project's must not be returned): %+v", len(got), got)
-	}
-	if got[0].Name != "ca-11111111-2608061200" {
-		t.Errorf("Name = %q, want the friendly ca-… name (DeleteComponent's argument)", got[0].Name)
-	}
-	if got[0].CycleID != "cycle-1" {
-		t.Errorf("CycleID = %q, want cycle-1", got[0].CycleID)
-	}
-	if got[0].TypeName != CodingAgentComponentTypeRef {
-		t.Errorf("TypeName = %q, want %q", got[0].TypeName, CodingAgentComponentTypeRef)
-	}
-	if got[0].CreatedAt.IsZero() {
-		t.Error("CreatedAt must be populated — it is the LRU order")
-	}
-}
-
 // TestCreateComponent_PaymentRequiredIsItsOwnSentinel: the org has no agent
 // concurrency slot left. It is a user-actionable BLOCK, not a failure, so it
 // must be distinguishable from every other create error at the client boundary.
@@ -230,7 +187,7 @@ func TestCreateComponent_PaymentRequiredIsItsOwnSentinel(t *testing.T) {
 }
 
 // TestCreateComponent_StampsMarkerLabels proves the markers reach the CR: the
-// list filter, the reaper's selector and the cancel path all key off them.
+// list filter and the cancel path key off them.
 func TestCreateComponent_StampsMarkerLabels(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

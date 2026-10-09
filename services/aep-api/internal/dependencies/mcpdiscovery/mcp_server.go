@@ -23,12 +23,15 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/mcprpc"
 )
 
-// MCP discovery server. The BFF hosts a minimal Model Context Protocol server
+// MCP discovery server. aep-api hosts a minimal Model Context Protocol server
 // (platform/mcprpc: JSON-RPC over Streamable HTTP, one request, one
-// application/json answer). The
-// agent services connect as MCP clients and the LLM calls the exposed read-only
-// tools during design so it proposes dependencies against resources/endpoints
-// that ALREADY exist in the org instead of inventing names/shapes.
+// application/json answer). The coding runner and the AE Studio tools pod
+// connect as MCP clients and the LLM calls the exposed read-only tools so it
+// proposes dependencies against resources/endpoints that ALREADY exist in the
+// org instead of inventing names/shapes. The two remote-git tools
+// (get_remote_git_file_contents, search_remote_git_code) are not served here:
+// the runner and the tools pod serve them in-process with the org's own GitHub
+// credential.
 //
 // Read-only tools (see mcp_tools.go):
 //   - list_external_resources        → every registered external resource + its config-key schema
@@ -36,16 +39,19 @@ import (
 //   - list_org_endpoints             → every service endpoint published across the org
 //   - list_org_component_endpoints   → list_org_endpoints resolved with repo coords + discovered OpenAPI spec
 //   - list_platform_resource_types   → the platform-provisioned resource types on the cluster
-//   - get_remote_git_file_contents   → read a file/directory from an org repo (endpoint spec discovery)
-//   - search_remote_git_code         → locate a file by code search in an org repo
+//   - list_groups                    → the org's directory groups
 //   - validate_openapi_spec          → validate + normalize an OpenAPI doc the caller already has
 //   - fetch_openapi_spec             → SSRF-hardened fetch of an OpenAPI doc by URL, then validate + normalize
+//   - slice_openapi_spec             → cut the named operations + their schemas out of a provider's OpenAPI doc
+//   - list_guardrail_policies        → the AI-gateway guardrails an ai-agent of the org may declare
 //
-// Mounted at POST /internal/v1/mcp behind auth.AgentsScopedVerifier, which binds
-// the acting org onto the request context from a verified BFF-signed token
-// (ocOrgId claim). The org is read ONLY from that context — never the
-// path/body/header (the source read it from an {orgHandle} path; that is banned
-// here).
+// Mounted at POST /internal/v1/mcp behind auth.MCPGate, which binds the acting
+// org onto the request context from a verified publisher client token
+// (aep-publisher-<org>, the coding runner's) or a verified, recorded AE Studio
+// client token (ae-studio-<org>, the AE Studio tools pod's). The org is read
+// ONLY from that context — never
+// the path/body/header (the source read it from an {orgHandle} path; that is
+// banned here).
 
 // mcpHandler holds the read-only ports the JSON-RPC MCP server exposes.
 type mcpHandler struct {
@@ -53,7 +59,6 @@ type mcpHandler struct {
 	orgEndpoints  OrgEndpointLister
 	resourceTypes ResourceTypeLister
 	groupCatalog  GroupCatalogLister
-	remoteGit     RemoteGitReader
 	validateSpec  SpecValidator
 	normalizeSpec SpecNormalizer
 	fetchSpec     SpecFetcher
@@ -62,23 +67,22 @@ type mcpHandler struct {
 }
 
 // NewMCPHandler returns the JSON-RPC MCP handler over the external-resource
-// reader, the org endpoint lister, the platform resource-type lister, the
-// read-only remote-git reader (endpoint spec discovery), and the OpenAPI spec
-// validate/normalize/fetch functions (validate_openapi_spec, fetch_openapi_spec).
+// reader, the org endpoint lister, the platform resource-type lister, the group
+// catalog, and the OpenAPI spec validate/normalize/fetch/slice functions
+// (validate_openapi_spec, fetch_openapi_spec, slice_openapi_spec).
 // The acting org is resolved from the request context (bound by the auth
 // middleware), never from the request itself. A nil external-resource reader
 // makes the surface unavailable (503 — it is the surface's core catalog). A
-// nil orgEndpoints/resourceTypes/groupCatalog/guardrails degrades that one tool to an empty result; a
-// nil remoteGit makes the two remote-git tools return a tool error; a nil
-// validateSpec/normalizeSpec/fetchSpec makes the two spec tools return a tool
-// error.
+// nil orgEndpoints/resourceTypes/groupCatalog/guardrails degrades that one
+// tool to an empty result; a nil validateSpec/normalizeSpec/fetchSpec/sliceSpec
+// makes the spec tool that needs it return a tool error.
 func NewMCPHandler(
 	er ExternalResourceReader, ep OrgEndpointLister, rt ResourceTypeLister, gc GroupCatalogLister,
-	rg RemoteGitReader, vs SpecValidator, ns SpecNormalizer, fs SpecFetcher, ss SpecSlicer,
+	vs SpecValidator, ns SpecNormalizer, fs SpecFetcher, ss SpecSlicer,
 	gl GuardrailCatalogLister,
 ) http.Handler {
 	h := &mcpHandler{
-		resources: er, orgEndpoints: ep, resourceTypes: rt, groupCatalog: gc, remoteGit: rg,
+		resources: er, orgEndpoints: ep, resourceTypes: rt, groupCatalog: gc,
 		validateSpec: vs, normalizeSpec: ns, fetchSpec: fs, sliceSpec: ss, guardrails: gl,
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

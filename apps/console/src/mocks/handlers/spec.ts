@@ -22,6 +22,7 @@ import type { components } from "../../generated/aep-api";
 import type { MockSpecModel } from "../fixtures/spec";
 import { liveDesign, saveDesign } from "../designState";
 import { specView } from "../specState";
+import { aeStudioReadRefusal } from "./aeStudio";
 
 type SpecState = components["schemas"]["SpecState"];
 
@@ -42,8 +43,9 @@ function extras(model: MockSpecModel): MockSpecExtras {
 }
 
 export const specHandlers = [
-  http.get("*/api/v1/projects/:projectName/spec/state", ({ params }) =>
-    HttpResponse.json<SpecState>(specState(specView(String(params.projectName)))),
+  http.get(
+    "*/api/v1/projects/:projectName/spec/state",
+    ({ params }) => aeStudioReadRefusal() ?? HttpResponse.json<SpecState>(specState(specView(String(params.projectName)))),
   ),
 
   http.get(`*${MOCK_SPEC_PATH}`, ({ params }) => HttpResponse.json<MockSpecExtras>(extras(specView(String(params.projectName))))),

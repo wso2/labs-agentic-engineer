@@ -18,9 +18,9 @@ package ops
 
 import "github.com/wso2/aep/aep-api/internal/gen"
 
-// The domain's ONE wire projection.
+// The domain's ONE public-wire projection.
 //
-// It sits in the root rather than in a slice because all three slices return the
+// It sits in the root rather than in a slice because both slices return the
 // report on the wire — the duplication is real and immediate, which is the
 // domain-root's stated purpose (§5). It cannot sit in a sub-package: a slice
 // importing a sibling is forbidden, and importing httpapi/ would be a cycle.

@@ -38,11 +38,9 @@ const (
 )
 
 // NewBuildRunName produces the WorkflowRun metadata.name for a new build of
-// (projectID, componentName). Stable shape so the BFF can pre-compute the
-// name and stage the per-WorkflowRun build Secret (named
-// `<runName>-git-secret`) before POSTing the WorkflowRun — see
-// docs/design/build-credential-injection.md. The millisecond timestamp
-// keeps successive triggers unique.
+// (projectID, componentName). Stable shape so a caller can pre-compute the
+// name before POSTing the WorkflowRun. The millisecond timestamp keeps
+// successive triggers unique.
 //
 // Composed through k8sname.Bounded against MaxLabelValueLen, for the reason
 // given there: the binding budget on a run name is the 63-char label-value

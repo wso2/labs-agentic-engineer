@@ -81,10 +81,19 @@ type RunFailureRecorder interface {
 	RecordFailure(ctx context.Context, id string, failure delivery.RunFailure) (*delivery.MilestoneRun, error)
 }
 
-// SecretRef is one org credential's refs-only SM-API triplet.
+// jobSuspender suspends a coding cycle's Job binding in one environment, so the
+// Job OpenChoreo re-creates after its TTL never runs the runner again.
+// Satisfied by openchoreo.ComponentClient: a missing binding is
+// openchoreo.ErrNotFound, and a release that predates the suspend schema is
+// openchoreo.ErrSuspendUnsupported with nothing written.
+type jobSuspender interface {
+	SuspendJobBinding(ctx context.Context, org, project, component, environment string) error
+}
+
+// SecretRef is one org credential's SecretReference as a Job mounts it: the
+// reference's name and the key it reads.
 type SecretRef struct {
 	SecretRefName string
-	KVPath        string
 	Property      string
 }
 
@@ -172,13 +181,12 @@ type ProjectRepos interface {
 	GetRepo(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 }
 
-// BuildSecretStager pre-stages the org's build git credential on the workflow
-// plane and returns the secretRef the build WorkflowRun consumes so its
-// checkout-source step can clone a PRIVATE repo (the local plane sets
-// GITHUB_REPO_VISIBILITY=private, so project builds need it). A nil error with
-// an empty secretRef means degrade-to-unauthenticated (correct for the public
-// repos aep creates by default); a non-nil error is an ownership/disconnect
-// refusal or a transient failure that must block the build. Consumer-side port:
+// BuildSecretStager returns the secretRef the build WorkflowRun consumes (the
+// org's github-pat SecretReference name) so its checkout-source step can clone
+// a PRIVATE repo (the local plane sets GITHUB_REPO_VISIBILITY=private, so
+// project builds need it). A nil error always carries a reference; a non-nil
+// error is an ownership/disconnect refusal or a transient failure that must
+// block the build. Consumer-side port:
 // the composition root maps the concrete *orgcreds.BuildCredentialsService's
 // *StageResult onto the secretRef string (the same adapter feature/component
 // uses), so this feature holds no orgcreds import. Optional — nil skips staging.
@@ -192,50 +200,18 @@ type BuildSecretStager interface {
 type LiveTail struct {
 	Text string
 	Pod  openchoreo.RuntimePod
+	// LogMissing: the pod is listed but its log is not (a container not
+	// started yet, or one being reaped). Empty Text is then no answer about
+	// what the agent wrote, and the caller reads the archive.
+	LogMissing bool
 }
 
 // LiveLogSource is the running agent's log, read while its Component still
 // exists. Satisfied by *OCLogSource. A wrapped ErrComponentGone means the
-// Component has been deleted — the archive's turn, or an unavailable state.
+// Component has been deleted — the archive's turn.
 // The environment is the one the cycle's Job was bound into.
 type LiveLogSource interface {
 	Tail(ctx context.Context, orgName, projectName, componentName, environment string, maxBytes int) (LiveTail, error)
-}
-
-// RecordingLogSource is the same pod log read for the RECORDER rather than for
-// a viewer, and three differences are the whole point of a separate port.
-//
-// It reads with a TIME cursor instead of a byte window, and it applies NO byte
-// cut. LiveLogSource keeps the newest 64KiB because a viewer wants fresh content
-// and re-reads two seconds later; that same cut silently DROPPED a burst larger
-// than 64KiB between two polls, which is one of the five losses the recording
-// exists to close. A recorder that cut bytes would write the loss into the file,
-// where it can never be recovered.
-//
-// The cursor is an ABSOLUTE INSTANT, not the OpenChoreo API's coarse
-// `sinceSeconds`. That is a measured fix, not a tidy-up: the recorder used to
-// compute `sinceSeconds` and then spend three sequential OpenChoreo round trips
-// getting to the log call, so a slow binding list or resource tree moved the
-// window's START past lines nobody had read — a permanent hole, since the cursor
-// only ever moves forward. Handing over an instant makes the conversion the
-// source's job, done in the breath before the log call, and no latency in front
-// of it can eat the window.
-//
-// The BINDING is resolved separately and by the caller, because it is FIXED for
-// the attempt: a session resolves it once and re-resolves only when a read says
-// it is gone, which takes a whole round trip out of every poll.
-//
-// Satisfied by *OCLogSource.
-type RecordingLogSource interface {
-	// Binding resolves the cycle Component's release binding in the
-	// environment its Job was bound into. A wrapped ErrComponentGone means the
-	// Component (or its binding) has been deleted, which is a fact about the
-	// world.
-	Binding(ctx context.Context, orgName, projectName, componentName, environment string) (string, error)
-
-	// ReadSince reads everything the pod logged at or after `since` (the zero
-	// time = the whole log the platform still holds), with no byte cut.
-	ReadSince(ctx context.Context, orgName, releaseBindingName string, since time.Time) (LiveTail, error)
 }
 
 // ArchiveScope names one cycle's archived log: its component, the environment
@@ -243,16 +219,22 @@ type RecordingLogSource interface {
 // the observer has no cursor, so the only way to bound a read is to ask for the
 // time the work happened.
 type ArchiveScope struct {
+	// CycleID names the cycle in the read's log event.
+	CycleID       string
 	OrgName       string
 	ProjectName   string
 	ComponentName string
-	Environment   string
-	From          time.Time
-	To            time.Time
+	// ComponentUID is the cycle's recorded Component UID: the archive keeps
+	// only the lines that Component wrote. A cycle without one cannot be read.
+	ComponentUID string
+	Environment  string
+	From         time.Time
+	To           time.Time
 }
 
-// ArchiveLogSource is a finished cycle's log, read from the observability plane
-// while its Component is still retained. Satisfied by *ObserverArchive; nil at
+// ArchiveLogSource is a cycle's log once its pod is gone, read from the
+// observability plane by the cycle's Component UID (component scope while the
+// Component exists, project scope after). Satisfied by *ObserverArchive; nil at
 // the composition root when no observer is configured, which the reader
 // reports to the console as "unavailable" rather than as an empty log.
 type ArchiveLogSource interface {

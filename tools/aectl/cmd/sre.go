@@ -120,7 +120,11 @@ with a new key file rotates it.
 Requires --platform-chart or --platform-version: this command also turns on
 sreAgent.* on the AEP platform release (org, handoff key, MCP hostname) via
 an internal 'aectl platform update', and a pinned chart source keeps that call
-from silently upgrading the release to whatever is latest on GHCR.`,
+from silently upgrading the release to whatever is latest on GHCR.
+
+It also needs the aectl platform config (written by 'make dev-env' / platform
+install) and refuses to start without it: the internal update re-applies the
+platform's AE Studio values.`,
 	RunE: runSreInstall,
 }
 
@@ -130,7 +134,7 @@ func init() {
 
 	f := sreInstallCmd.Flags()
 	f.StringVar(&sreNamespace, "namespace", "wso2-aep", "Namespace where AEP + OpenBao are installed")
-	f.StringVar(&sreObsNamespace, "obs-namespace", "openchoreo-observability-plane", "Observability plane namespace")
+	f.StringVar(&sreObsNamespace, "obs-namespace", defaultObsNamespace, "Observability plane namespace")
 	f.StringVar(&sreObsPlaneVersion, "obs-plane-version", "1.2.5", "openchoreo-observability-plane chart version, when no plane is installed yet (an installed plane keeps its own)")
 	f.StringVar(&sreObsLogsVersion, "obs-logs-version", "0.5.3", "observability-logs-opensearch chart version, when no plane is installed yet")
 	f.StringVar(&sreRcaImageRepo, "rca-image-repo", "ghcr.io/openchoreo/sre-agent", "RCA/SRE agent image repository")
@@ -143,7 +147,7 @@ func init() {
 	f.StringVar(&sreMCPHost, "mcp-hostname", "aep-mcp.openchoreo.localhost", "https hostname aep-api's SRE handoff route answers on, on the control-plane gateway (must match the platform chart's sreAgent.mcpHostname)")
 	f.IntVar(&sreMCPPort, "mcp-port", 8443, "https port of the control-plane gateway listener the SRE handoff route is on (k3d publishes 8443)")
 	f.StringVar(&sreAssetsRoot, "assets-root", "", "AE repository checkout holding the SRE extension assets (deployments/sre-agent-extensions); default: search upward from the working directory")
-	f.StringVar(&srePlatformStore, "platform-secret-store", "aep-platform", "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
+	f.StringVar(&srePlatformStore, "platform-secret-store", defaultPlatformSecretStore, "ClusterSecretStore the platform chart installs for the aep/* OpenBao paths")
 	f.StringVar(&srePlatformChart, "platform-chart", "", "Local path to the AEP platform chart, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --platform-chart; one of --platform-chart/--platform-version is required)")
 	f.StringVar(&srePlatformVersion, "platform-version", "", "AEP platform chart version, for the internal `aectl platform update` that flips sreAgent.* (mirrors `platform update`'s own --version; one of --platform-chart/--platform-version is required)")
 	f.StringVar(&sreLLMAPIKeyFile, "llm-api-key-file", "", "Path to a file holding the SRE agent's OpenAI-compatible API key, probed and written into the agent's Secret — the only way to set or rotate it; required on the first install, a re-run without it keeps the current key (read from this file, never taken as a flag value; must be given with --llm-model)")
@@ -201,6 +205,22 @@ func sreMCPURL(host string, port int) string {
 	return fmt.Sprintf("https://%s:%d%s", host, port, sreHandoffMCPPath)
 }
 
+// sreInstallPreflight holds the checks that must fail before this command
+// writes anything (a secret, the handoff key, a helm install).
+//
+// This command flips sreAgent.* on the AEP platform release via `aectl
+// platform update`'s own code path. Without an explicit chart source that call
+// falls back to the unversioned OCI chart, silently upgrading the platform
+// release to whatever is latest on GHCR. That same call needs a valid aectl
+// config (platformUpdate refuses without one), and reaching it only at step 5
+// would leave the handoff key written on one side only.
+func sreInstallPreflight() error {
+	if srePlatformChart == "" && srePlatformVersion == "" {
+		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
+	}
+	return requireAEStudioConfig()
+}
+
 func runSreInstall(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
@@ -208,13 +228,8 @@ func runSreInstall(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("helm is required but was not found in PATH\nInstall it from https://helm.sh/docs/intro/install/ and try again")
 	}
 
-	// This command flips sreAgent.* on the AEP platform release via `aectl
-	// platform update`'s own code path; without an explicit chart source that
-	// call falls back to the unversioned OCI chart, silently upgrading the
-	// platform release to whatever is latest on GHCR. Fail fast rather than
-	// risk that.
-	if srePlatformChart == "" && srePlatformVersion == "" {
-		return fmt.Errorf("--platform-chart or --platform-version is required (pins the platform chart this command's internal `aectl platform update` upgrades — without one it would silently pull the latest unpinned chart from GHCR)")
+	if err := sreInstallPreflight(); err != nil {
+		return err
 	}
 
 	// Resolve and probe the SRE model before touching the cluster, so a bad
@@ -504,16 +519,38 @@ func onOff(b bool) string {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-func applyTemplate(ctx context.Context, applier *k8s.Applier, fieldManager, ns, tmpl string, p sreParams) error {
-	t, err := template.New(fieldManager).Parse(tmpl)
+// yamlApplier server-side-applies manifests; satisfied by *k8s.Applier.
+type yamlApplier interface {
+	ApplyYAML(ctx context.Context, fieldManager, defaultNamespace, manifests string) error
+}
+
+// objectGetter reads one object, nil when it is not found; satisfied by
+// *k8s.Applier.
+type objectGetter interface {
+	Get(ctx context.Context, apiVersion, kind, namespace, name string) (*unstructured.Unstructured, error)
+}
+
+// renderTemplate renders one of this file's manifest templates.
+func renderTemplate(name, tmpl string, p sreParams) (string, error) {
+	t, err := template.New(name).Parse(tmpl)
 	if err != nil {
-		return err
+		return "", err
 	}
 	var buf bytes.Buffer
 	if err := t.Execute(&buf, p); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+// applyTemplate renders a template and applies it as the aectl-sre field
+// manager, so every writer of these objects is the same SSA owner.
+func applyTemplate(ctx context.Context, applier yamlApplier, name, ns, tmpl string, p sreParams) error {
+	manifests, err := renderTemplate(name, tmpl, p)
+	if err != nil {
 		return err
 	}
-	return applier.ApplyYAML(ctx, "aectl-sre", ns, buf.String())
+	return applier.ApplyYAML(ctx, "aectl-sre", ns, manifests)
 }
 
 // sreAgentPlatformUpdateConfig builds the platformUpdateConfig that turns on
@@ -625,7 +662,7 @@ func waitForSecret(ctx context.Context, client *kubernetes.Clientset, ns, name s
 // waitForExternalSecretRefresh waits until ESO has synced the ExternalSecret
 // at or after since: for a Secret that already exists, the point at which it
 // holds the ExternalSecret's current source.
-func waitForExternalSecretRefresh(ctx context.Context, applier *k8s.Applier, ns, name string, since time.Time, timeout time.Duration) error {
+func waitForExternalSecretRefresh(ctx context.Context, applier objectGetter, ns, name string, since time.Time, timeout time.Duration) error {
 	// refreshTime has second precision.
 	since = since.Truncate(time.Second)
 	deadline := time.Now().Add(timeout)

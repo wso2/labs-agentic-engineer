@@ -28,8 +28,8 @@ import (
 
 // AGENT TOOL RESOLUTION AT DESIGN READ TIME.
 //
-// afmgate.go (internal/platform/agentfold) gates an agent.afm.md document on
-// its OWN shape at write time — it cannot check whether a
+// The agent's write gate (packages/agent-stream agent-afm-schema.ts) gates an
+// agent.afm.md document on its OWN shape at write time — it cannot check whether a
 // `x-aep.tools.openapi[].component` names a real dependency or whether an
 // `allow` entry is a real operationId, because that provider's openapi.yaml
 // may not exist yet: skills/design writes per-component artifacts in no
@@ -50,12 +50,10 @@ import (
 // version-cut hard gate (delivery/build/dependency_gate.go), which blocks on
 // any DependencyStatusUnresolved entry — never on AgentToolStatusUnchecked.
 //
-// This intentionally does not import internal/platform/agentfold: everything
-// afmgate.go exposes for reading front matter is unexported, and
-// reimplementing its full accept/reject rule set here to get a shared type
-// would silently drift from it. So a SECOND, narrower AFM reader exists in
-// this package (afmFrontMatterPattern below), deliberately: it does not
-// validate — afmgate.go's write-time gate already guarantees a committed
+// Reimplementing the write gate's full accept/reject rule set here to get a
+// shared type would silently drift from it. So a SECOND, narrower AFM reader
+// exists in this package (afmFrontMatterPattern below), deliberately: it does
+// not validate — the agent's write-time gate already guarantees a committed
 // document is well-formed — it only extracts the one thing this precedence
 // table reads, `x-aep.tools.openapi[].{component,allow}`. Two parsers is a
 // recorded decision, not an accident: one enforces shape on write, the other
@@ -196,10 +194,9 @@ func operationIDsFromOpenAPISpec(spec string) []string {
 	return ids
 }
 
-// afmFrontMatterPattern is a narrower, LOCAL copy of the fence
-// afmgate.go matches (afmFrontMatterRe in
-// internal/platform/agentfold/afmgate.go) — see the file doc comment above
-// for why this package cannot import that one.
+// afmFrontMatterPattern is a narrower, LOCAL copy of the front-matter fence
+// the agent's write gate matches — see the file doc comment above for why it
+// is a copy.
 var afmFrontMatterPattern = regexp.MustCompile(`^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$`)
 
 // parseAFMToolEntries extracts the `x-aep.tools.openapi[]` entries from an

@@ -23,7 +23,7 @@ import { scopeOfBody, type TurnBody } from "../../features/agent-chat/turnScope"
 import { webApplications } from "../../features/prototype/model/prototypes";
 import { projectSpecDoc } from "../../features/spec/collab/specDoc";
 import { readSpecLines } from "../../features/spec/collab/useSpecLines";
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import { MOCK_USER } from "../../auth/mockSession";
 import {
   conversationIdFor,
@@ -37,6 +37,7 @@ import {
   type MockTurn,
 } from "../chatServer";
 import { createdProjects } from "../createdProjects";
+import { aeStudioUrls } from "../fixtures/aeStudio";
 import { liveDesign } from "../designState";
 import { acmeExpensesHistory } from "../fixtures/conversation";
 import { scriptDesignTurn } from "../fixtures/designTurns";
@@ -44,15 +45,17 @@ import { scriptTurn } from "../fixtures/interview";
 import { scriptPrototypeTurn } from "../fixtures/prototype";
 import { specView } from "../specState";
 
-type ProjectConversationList = components["schemas"]["ProjectConversationList"];
-type GetConversationOutputBody = components["schemas"]["GetConversationOutputBody"];
+type ProjectConversationView = components["schemas"]["ProjectConversationView"];
+type ConversationMessages = components["schemas"]["ConversationMessages"];
 type ConversationMessage = components["schemas"]["ConversationMessage"];
 type TurnOutputBody = components["schemas"]["TurnOutputBody"];
 type TurnConflict = components["schemas"]["TurnConflict"];
 type TurnStatus = components["schemas"]["TurnStatus"];
-type ApiError = components["schemas"]["Error"];
+type Problem = components["schemas"]["Problem"];
 
-// The project conversation: one stable thread per project, its history, and
+// The project conversation on the org's design agent (the pod's `/v1`, on
+// its fixed fake origin, fixtures/aeStudio.ts): one stable thread per
+// project, its history, and
 // its turns. A turn is started (202), found running (turns/active), read
 // (turns/{id}) and streamed as SSE, replayed from its start and then live, so
 // a reload mid-turn attaches to it again. One turn at a time per project: a
@@ -60,7 +63,7 @@ type ApiError = components["schemas"]["Error"];
 // and does is scripted in fixtures/interview.ts (the design review's in
 // fixtures/designTurns.ts, `/prototype` in fixtures/prototype.ts); the turns
 // themselves live in chatServer.ts. A turn's `prototypeFeedback` is refused
-// as aep-api refuses it.
+// as the design agent refuses it.
 //
 // Acme Expenses starts with a conversation; a project made through New
 // project starts with the platform's kickoff (handlers/projects.ts); every
@@ -95,21 +98,21 @@ function statusOf(turn: MockTurn): TurnStatus {
   return {
     turnId: turn.turnId,
     conversationId: turn.conversationId,
-    useCase: "general",
+    kind: "browser",
+    flow: "",
     status: running ? "running" : turn.failure ? "failed" : "completed",
     instruction: turn.instruction,
     authorId: AUTHOR.id,
     authorDisplayName: AUTHOR.displayName,
     createdAt: new Date(turn.startedAt).toISOString(),
-    updatedAt: new Date().toISOString(),
-    ...(running ? {} : { noChanges: !turn.effect?.file }),
+    ...(running ? {} : { finishedAt: new Date().toISOString() }),
     ...(!running && turn.failure ? { message: turn.failure } : {}),
   };
 }
 
 /**
- * Why a turn's `prototypeFeedback` is refused, as aep-api refuses it (400,
- * before any turn): a malformed batch, or one on anything but a room turn of
+ * Why a turn's `prototypeFeedback` is refused, as the design agent refuses it
+ * (400, before any turn): a malformed batch, or one on anything but
  * `/prototype` (bare, or naming the batch's component) without an anchor.
  */
 export function prototypeFeedbackProblem(body: TurnBody): string | null {
@@ -119,7 +122,7 @@ export function prototypeFeedbackProblem(body: TurnBody): string | null {
   if (!command || (command.component !== null && command.component !== body.prototypeFeedback.component)) {
     return "prototypeFeedback goes only with /prototype for its component";
   }
-  if (body.collab !== true || body.anchor || body.intent) return "prototypeFeedback goes only on a room turn without an anchor";
+  if (body.anchor || body.intent) return "prototypeFeedback goes only on a turn without an anchor";
   return null;
 }
 
@@ -208,38 +211,35 @@ function streamOf(turn: MockTurn, from: number): Response {
   return new HttpResponse(stream, { headers: { "Content-Type": "text/event-stream" } });
 }
 
-function notFound(what: string): Response {
-  return HttpResponse.json<ApiError>({ code: "not_found", message: `${what} not found` }, { status: 404 });
+function problem(status: number, code: string, detail: string): Response {
+  return HttpResponse.json<Problem>(
+    { type: "about:blank", title: detail, status, code, detail },
+    { status, headers: { "Content-Type": "application/problem+json" } },
+  );
 }
 
+const POD = `${aeStudioUrls.designAgent}/v1/projects/:projectName`;
+
 export const conversationHandlers = [
-  http.get("*/api/v1/projects/:projectName/agents/conversations", ({ params }) =>
-    HttpResponse.json<ProjectConversationList>({
-      conversations: [
-        {
-          conversationId: conversationIdFor(String(params.projectName)),
-          createdAt: "2026-09-29T09:00:00Z",
-          createdBy: "Developer",
-          current: true,
-        },
-      ],
+  http.get(`${POD}/conversations/current`, ({ params }) =>
+    HttpResponse.json<ProjectConversationView>({
+      conversationId: conversationIdFor(String(params.projectName)),
+      createdAt: "2026-09-29T09:00:00Z",
+      createdBy: "Developer",
+      current: true,
     }),
   ),
 
-  http.get("*/api/v1/projects/:projectName/agents/:conversationId/messages", ({ params }) =>
-    HttpResponse.json<GetConversationOutputBody>({ messages: historyFor(String(params.conversationId)) }),
+  http.get(`${POD}/conversations/:conversationId/messages`, ({ params }) =>
+    HttpResponse.json<ConversationMessages>({ messages: historyFor(String(params.conversationId)) }),
   ),
 
-  http.post("*/api/v1/projects/:projectName/agents/:conversationId/messages", async ({ params, request }): Promise<Response> => {
+  http.post(`${POD}/conversations/:conversationId/turns`, async ({ params, request }): Promise<Response> => {
     const projectName = String(params.projectName);
     const body = (await request.json()) as TurnBody;
-    if (!body.instruction?.trim()) {
-      return HttpResponse.json<ApiError>({ code: "invalid_request", message: "instruction is required" }, { status: 400 });
-    }
+    if (!body.instruction?.trim()) return problem(400, "invalid_turn", "instruction is required");
     const feedbackProblem = prototypeFeedbackProblem(body);
-    if (feedbackProblem) {
-      return HttpResponse.json<ApiError>({ code: "invalid_request", message: feedbackProblem }, { status: 400 });
-    }
+    if (feedbackProblem) return problem(400, "invalid_turn", feedbackProblem);
     if (String(params.conversationId) !== conversationIdFor(projectName)) {
       return HttpResponse.json<TurnConflict>({ code: "conversation_rotated" }, { status: 409 });
     }
@@ -251,20 +251,20 @@ export const conversationHandlers = [
     return HttpResponse.json<TurnOutputBody>({ turnId: turn.turnId }, { status: 202 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/active", ({ params }): Response => {
+  http.get(`${POD}/turns/active`, ({ params }): Response => {
     const running = runningTurn(String(params.projectName));
     return running ? HttpResponse.json<TurnStatus>(statusOf(running)) : new HttpResponse(null, { status: 204 });
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/:turnId/stream", ({ params, request }): Response => {
+  http.get(`${POD}/turns/:turnId/stream`, ({ params, request }): Response => {
     const turn = findTurn(String(params.turnId));
-    if (!turn) return notFound("Turn");
+    if (!turn) return problem(404, "turn_unknown", "Turn not found");
     const from = Number(new URL(request.url).searchParams.get("from") ?? 0) || 0;
     return streamOf(turn, from);
   }),
 
-  http.get("*/api/v1/projects/:projectName/turns/:turnId", ({ params }): Response => {
+  http.get(`${POD}/turns/:turnId`, ({ params }): Response => {
     const turn = findTurn(String(params.turnId));
-    return turn ? HttpResponse.json<TurnStatus>(statusOf(turn)) : notFound("Turn");
+    return turn ? HttpResponse.json<TurnStatus>(statusOf(turn)) : problem(404, "turn_unknown", "Turn not found");
   }),
 ];

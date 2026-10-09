@@ -1,0 +1,286 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package config
+
+import (
+	"errors"
+	"strings"
+	"testing"
+)
+
+func env(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+
+func base() map[string]string {
+	return map[string]string{
+		"AE_ORG_ID": "ou-1", "AE_ORG_HANDLE": "default",
+		"AE_IDP_ISSUER":     "http://thunder.openchoreo.localhost:8080",
+		"AE_IDP_JWKS_URL":   "http://thunder:8090/oauth2/jwks",
+		"AE_USER_AUDIENCES": "aep-console-client, other",
+		"AE_M2M_CLIENT_ID":  "ae-studio-internal-client",
+		"GITHUB_PAT":        "x", "GITHUB_WEBHOOK_SECRET": "y",
+		"AE_IDP_TOKEN_URL":   "http://thunder:8090/oauth2/token",
+		"AEP_API_BASE_URL":   "http://aep-api.aep.svc.cluster.local:9090",
+		"AE_STUDIO_DATA_DIR": "/studio-data", "AE_STORAGE_BUDGET_BYTES": "2147483648",
+		"AE_FILES_SOCKET": "/run/ae/files/files.sock",
+		"AE_MCP_SOCKET":   "/run/ae/mcp/mcp.sock", "AE_TURN_SOCKET": "/run/ae/mcp/turn.sock",
+		"AE_STUDIO_CLIENT_ID": "ae-studio-default", "AE_STUDIO_CLIENT_SECRET": "studio-secret-value",
+		"AE_GITHUB_OWNER": "Acme-GH",
+		"AE_WEBHOOK_URL":  "http://ae-studio-tools.example:8080/webhooks/github",
+	}
+}
+
+func TestLoad_Defaults(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ListenPort != 8082 || c.HealthPort != 9082 {
+		t.Fatalf("ports = %d/%d", c.ListenPort, c.HealthPort)
+	}
+	if len(c.UserAudiences) != 2 || c.UserAudiences[1] != "other" {
+		t.Fatalf("audiences = %v", c.UserAudiences)
+	}
+}
+
+func TestLoad_PortOverrides(t *testing.T) {
+	m := base()
+	m["AE_LISTEN_PORT"], m["AE_HEALTH_PORT"] = "18082", "19082"
+	c, err := Load(env(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ListenPort != 18082 || c.HealthPort != 19082 {
+		t.Fatalf("ports = %d/%d", c.ListenPort, c.HealthPort)
+	}
+}
+
+func TestLoad_InvalidPortIsAnError(t *testing.T) {
+	for _, v := range []string{"abc", "0", "70000", "-1"} {
+		m := base()
+		m["AE_HEALTH_PORT"] = v
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "AE_HEALTH_PORT") {
+			t.Fatalf("AE_HEALTH_PORT=%q: err = %v", v, err)
+		}
+	}
+}
+
+func TestLoad_AudienceListWithOnlySeparatorsIsMissing(t *testing.T) {
+	m := base()
+	m["AE_USER_AUDIENCES"] = " , ,"
+	if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "AE_USER_AUDIENCES") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoad_MissingRequiredNamesEveryKey(t *testing.T) {
+	_, err := Load(env(map[string]string{}))
+	for _, k := range []string{"AE_ORG_ID", "AE_ORG_HANDLE", "AE_IDP_ISSUER", "AE_IDP_JWKS_URL", "AE_USER_AUDIENCES", "AE_M2M_CLIENT_ID", "GITHUB_PAT", "GITHUB_WEBHOOK_SECRET",
+		"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL",
+		"AE_STUDIO_DATA_DIR", "AE_STORAGE_BUDGET_BYTES", "AE_FILES_SOCKET",
+		"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET", "AE_WEBHOOK_URL"} {
+		if err == nil || !strings.Contains(err.Error(), k) {
+			t.Fatalf("error %v does not name %s", err, k)
+		}
+	}
+}
+
+func TestLoad_TokenURLAndAEPAPIKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IDPTokenURL != "http://thunder:8090/oauth2/token" || c.AEPAPIBaseURL != "http://aep-api.aep.svc.cluster.local:9090" {
+		t.Fatalf("token URL/aep-api keys not read")
+	}
+}
+
+// The pod holds only its own client (Task 9.H18): no publisher key is read,
+// so the config loads without one.
+func TestLoad_NoPublisherClientKeys(t *testing.T) {
+	m := base()
+	for _, k := range []string{"AE_PUBLISHER_CLIENT_ID", "AE_PUBLISHER_CLIENT_SECRET"} {
+		if _, ok := m[k]; ok {
+			t.Fatalf("the base env still sets %s", k)
+		}
+	}
+	if _, err := Load(env(m)); err != nil {
+		t.Fatalf("Load without publisher keys: %v", err)
+	}
+}
+
+// Each key is required on its own (fail closed at boot), and the error names
+// the key, never the value of any other key.
+func TestLoad_EachAEPAPIKeyIsRequired(t *testing.T) {
+	for _, k := range []string{"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL"} {
+		m := base()
+		m[k] = "  "
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), "missing "+k) {
+			t.Fatalf("%s blank: err = %v", k, err)
+		}
+		if strings.Contains(err.Error(), "studio-secret-value") {
+			t.Fatalf("%s blank: error leaks the studio client secret", k)
+		}
+	}
+}
+
+func TestLoad_URLKeysMustBeAbsoluteHTTP(t *testing.T) {
+	for _, k := range []string{"AE_IDP_TOKEN_URL", "AEP_API_BASE_URL"} {
+		for _, v := range []string{"aep-api:9090", "/internal", "ftp://x", "http://"} {
+			m := base()
+			m[k] = v
+			if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "invalid "+k) {
+				t.Fatalf("%s=%q: err = %v", k, v, err)
+			}
+		}
+	}
+}
+
+func TestLoad_StudioDataKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.StudioDataDir != "/studio-data" || c.StorageBudgetBytes != 2<<30 {
+		t.Fatalf("studio-data keys not read: dir %q, budget %d", c.StudioDataDir, c.StorageBudgetBytes)
+	}
+}
+
+// Both studio-data keys are required (fail closed at boot): a blank key is
+// missing, a relative dir or a budget that is not a positive int64 is invalid.
+// The error names the key, never the value.
+func TestLoad_StudioDataKeysAreRequiredAndValidated(t *testing.T) {
+	cases := []struct{ key, val, want string }{
+		{"AE_STUDIO_DATA_DIR", " ", "missing AE_STUDIO_DATA_DIR"},
+		{"AE_STUDIO_DATA_DIR", "studio-data", "invalid AE_STUDIO_DATA_DIR"},
+		{"AE_STORAGE_BUDGET_BYTES", "", "missing AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "2Gi", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "0", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "-5", "invalid AE_STORAGE_BUDGET_BYTES"},
+		{"AE_STORAGE_BUDGET_BYTES", "99999999999999999999", "invalid AE_STORAGE_BUDGET_BYTES"},
+	}
+	for _, c := range cases {
+		m := base()
+		m[c.key] = c.val
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s=%q: err = %v, want %q", c.key, c.val, err, c.want)
+		}
+		if strings.TrimSpace(c.val) != "" && strings.Contains(err.Error(), c.val) {
+			t.Fatalf("%s=%q: error echoes the value", c.key, c.val)
+		}
+	}
+}
+
+// The Files socket path is required and absolute; the error names the key,
+// never the value.
+func TestLoad_FilesSocket(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.FilesSocket != "/run/ae/files/files.sock" {
+		t.Fatalf("AE_FILES_SOCKET not read: %q", c.FilesSocket)
+	}
+	for _, tc := range []struct{ val, want string }{
+		{" ", "missing AE_FILES_SOCKET"},
+		{"run/files.sock", "invalid AE_FILES_SOCKET"},
+	} {
+		m := base()
+		m["AE_FILES_SOCKET"] = tc.val
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("AE_FILES_SOCKET=%q: err = %v, want %q", tc.val, err, tc.want)
+		}
+		if strings.TrimSpace(tc.val) != "" && strings.Contains(err.Error(), tc.val) {
+			t.Fatalf("AE_FILES_SOCKET=%q: error echoes the value", tc.val)
+		}
+	}
+}
+
+func TestCheckSecretRev(t *testing.T) {
+	cases := []struct {
+		got, want string
+		ok        bool
+	}{
+		{"r1", "r1", true}, {"r0", "r1", false}, {"", "r1", false}, {"", "", true},
+	}
+	for _, c := range cases {
+		err := CheckSecretRev(env(map[string]string{"AE_SECRET_REV": c.got, "AE_EXPECTED_SECRET_REV": c.want}))
+		if c.ok != (err == nil) || (!c.ok && !errors.Is(err, ErrSecretRevMismatch)) {
+			t.Fatalf("%+v: err=%v", c, err)
+		}
+	}
+}
+
+// Phase 3: the MCP and Turn sockets and the ae-studio client are
+// required (fail closed at boot); AE_GITHUB_OWNER is read but may be empty,
+// which refuses every remote-git call instead.
+func TestLoad_MCPSocketKeys(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MCPSocket != "/run/ae/mcp/mcp.sock" || c.TurnSocket != "/run/ae/mcp/turn.sock" ||
+		c.StudioClientID != "ae-studio-default" || c.StudioClientSecret != "studio-secret-value" || c.GitHubOwner != "Acme-GH" {
+		t.Fatalf("MCP socket keys not read")
+	}
+	for _, k := range []string{"AE_MCP_SOCKET", "AE_TURN_SOCKET", "AE_STUDIO_CLIENT_ID", "AE_STUDIO_CLIENT_SECRET"} {
+		m := base()
+		m[k] = " "
+		_, err := Load(env(m))
+		if err == nil || !strings.Contains(err.Error(), "missing "+k) {
+			t.Fatalf("%s blank: err = %v", k, err)
+		}
+		if strings.Contains(err.Error(), "studio-secret-value") {
+			t.Fatalf("%s blank: error leaks the studio secret", k)
+		}
+	}
+	for _, k := range []string{"AE_MCP_SOCKET", "AE_TURN_SOCKET"} {
+		m := base()
+		m[k] = "run/ae/mcp/x.sock"
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), "invalid "+k) {
+			t.Fatalf("%s relative: err = %v", k, err)
+		}
+	}
+	m := base()
+	m["AE_GITHUB_OWNER"] = "  "
+	c, err = Load(env(m))
+	if err != nil || c.GitHubOwner != "" {
+		t.Fatalf("empty owner: %q %v", c.GitHubOwner, err)
+	}
+}
+
+// Phase 4: AE_WEBHOOK_URL, where the repo hooks the pod registers
+// deliver, is a required absolute http(s) URL: a hook never registers with an
+// empty URL.
+func TestLoad_WebhookURL(t *testing.T) {
+	c, err := Load(env(base()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.WebhookURL != "http://ae-studio-tools.example:8080/webhooks/github" {
+		t.Fatalf("WebhookURL = %q", c.WebhookURL)
+	}
+	for v, want := range map[string]string{" ": "missing AE_WEBHOOK_URL", "/webhooks/github": "invalid AE_WEBHOOK_URL", "ftp://x/y": "invalid AE_WEBHOOK_URL"} {
+		m := base()
+		m["AE_WEBHOOK_URL"] = v
+		if _, err := Load(env(m)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("AE_WEBHOOK_URL=%q: err = %v, want %q", v, err, want)
+		}
+	}
+}

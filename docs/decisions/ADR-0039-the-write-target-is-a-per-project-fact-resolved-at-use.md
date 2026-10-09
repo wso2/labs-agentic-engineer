@@ -108,3 +108,16 @@ when it is needed.**
   and Temporal already retries the transient failures that do.
 - **An ambiguity error for several roots.** OpenChoreo takes the first; a
   stricter rule would refuse a graph OpenChoreo deploys from.
+
+## Amendment 2026-10-06 — org-wide model publishing lists environments
+
+`OrgWriteTargets` is removed from `openchoreo.WriteTargets`. Decision 7's
+org-scoped writes no longer fan out over the org's projects: a key save
+publishes the connection to Agent Manager's provider for every org Environment
+that has an AI gateway binding, once per distinct gateway, and a disconnect
+clears it the same way. An environment with no binding is skipped, and one
+broken environment does not stop the others. The last consequence above (a
+connection reaches only environments that have a project) no longer holds.
+The org's AE Studio binds to its `ae-system` project's write target through
+`Resolve`, like any project
+([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).

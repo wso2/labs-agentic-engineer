@@ -39,6 +39,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -132,14 +133,12 @@ func TestPollMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
 	require.Contains(t, err.Error(), sourcecontrol.ErrRepoNotFound.Error())
 }
 
-// The GraphQL surface answers 200 with an errors[] entry, so a repository
-// deleted on GitHub reaches the supervisor as NOT_FOUND rather than as a 404.
-// It is the same answer and must cost the same one attempt.
-func TestPollMilestoneStopsOnGraphQLNotFound(t *testing.T) {
-	env, port := pollEnv(t, &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-		Type:    sourcecontrol.GraphQLTypeNotFound,
-		Message: "Could not resolve to a Repository with the name 'org1/proj1'.",
-	}}})
+// The pod answers a milestone or repository deleted on GitHub as a
+// github_error carrying GitHub's 404 (GraphQL NOT_FOUND included), so it
+// reaches the supervisor as an HTTPStatusError 404. It is an answer and must
+// cost one attempt.
+func TestPollMilestoneStopsOnGitHubNotFound(t *testing.T) {
+	env, port := pollEnv(t, &sourcecontrol.HTTPStatusError{StatusCode: http.StatusNotFound, Body: "Could not resolve to a Repository"})
 
 	executePoll(env)
 
@@ -254,6 +253,36 @@ func TestPlanMilestoneStopsAtTheFirstPermanentFailure(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	require.Equal(t, 1, planner.count(), "a permanent planning failure must be asked exactly once")
+}
+
+// The provider-limit bound counts provider limits, not Temporal
+// attempts. Four shutdowns first (attempts 1-4) leave all four
+// provider-limit tries (attempts 5-8); the count crosses each retry in the
+// heartbeat details. Under the old attempt-number rule the provider limit at
+// attempt 5 failed the run with no wait at all.
+func TestPlanMilestoneCountsProviderLimitsApartFromInterruptions(t *testing.T) {
+	shutdown := &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeShutdown}
+	limited := &aestudiotools.TurnFailedError{Code: aestudiotools.TurnCodeProviderLimit}
+
+	t.Run("a provider limit after four shutdowns is retried", func(t *testing.T) {
+		env, planner := planEnv(t, shutdown, shutdown, shutdown, shutdown, limited, limited, limited, nil)
+
+		executePlan(env)
+
+		require.True(t, env.IsWorkflowCompleted())
+		require.NoError(t, env.GetWorkflowError())
+		require.Equal(t, 8, planner.count(), "three provider limits after four shutdowns stay inside the bound")
+	})
+
+	t.Run("the bound still holds after an interruption", func(t *testing.T) {
+		env, planner := planEnv(t, shutdown, shutdown, shutdown, limited)
+
+		executePlan(env)
+
+		require.True(t, env.IsWorkflowCompleted())
+		require.Equal(t, 3+planProviderLimitAttempts, planner.count(),
+			"each provider limit is one try of the bound, however many interruptions came first")
+	})
 }
 
 // scriptedGates answers ProvisionForBuild from a queued script — one entry per

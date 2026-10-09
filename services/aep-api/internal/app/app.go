@@ -35,7 +35,6 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/app/crtcatalog"
 	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
-	"github.com/wso2/aep/aep-api/internal/clients/agentsvc"
 	"github.com/wso2/aep/aep-api/internal/clients/observability"
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
@@ -55,7 +54,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
 	"github.com/wso2/aep/aep-api/internal/dependencies"
 	dephttpapi "github.com/wso2/aep/aep-api/internal/dependencies/httpapi"
-	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/dependencies/runtimeconfig"
 	"github.com/wso2/aep/aep-api/internal/edge"
@@ -64,17 +62,15 @@ import (
 	"github.com/wso2/aep/aep-api/internal/ops"
 	opshttpapi "github.com/wso2/aep/aep-api/internal/ops/httpapi"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	"github.com/wso2/aep/aep-api/internal/organization/aestudio"
 	orghttpapi "github.com/wso2/aep/aep-api/internal/organization/httpapi"
 	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/reaper"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/projects"
 	projectshttpapi "github.com/wso2/aep/aep-api/internal/projects/httpapi"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 	schttpapi "github.com/wso2/aep/aep-api/internal/sourcecontrol/httpapi"
 	scissues "github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
@@ -121,6 +117,11 @@ type Seam struct {
 	// Nil = delivery off (no secret writes, no external-secret cleanup).
 	SecretsProvider secretmanagersvc.Provider
 
+	// OpenBaoAuth is the process's one OpenBao session, the same one the
+	// OpenBao-direct SecretsProvider was built with. The environment Thunder
+	// binding reader shares it. Nil (or OPENBAO_ADDR unset) = no reader.
+	OpenBaoAuth secrets.VaultAuth
+
 	// ResourceLabels are stamped on every OpenChoreo resource AEP writes
 	// (openchoreo.Config.ResourceLabels). Nil = none.
 	ResourceLabels map[string]string
@@ -148,14 +149,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return nil, fmt.Errorf("openchoreo resource labels: %w", err)
 	}
 	db := in.DB
-	credStore := in.CredentialStore
-	minter := in.Minter
-	appClientSecret := in.AppClientSecret
-	workspaceEngine := in.Workspace
 
 	// Skills are repo-backed now (one private org-skills repo per org —
-	// docs/design/skills-repo-storage.md). The store needs gitOpsService +
-	// repoService, so it is constructed below once those exist. No startup
+	// docs/design/skills-repo-storage.md). The store needs the org pods' Git
+	// port + repoService, so it is constructed below once those exist. No startup
 	// bootstrap: built-ins seed/reconcile into each org's repo on demand.
 
 	// Repositories
@@ -169,22 +166,16 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// part of its own stamp, so there is no way to run one without the other.
 	usageLedgerRepo := delivery.NewAgentUsageLedgerRepository(db)
 	orgRepo := organization.NewOrganizationRepository(db)
-	orgCredRepo := organization.NewOrgCredentialRepository(db, in.ColumnCipher)
+	orgCredRepo := organization.NewOrgCredentialRepository(db)
 	orgAnthropicRepo := organization.NewOrgAnthropicRepository(db)
 	orgModelConnRepo := organization.NewOrgModelConnectionRepository(db)
 	orgAgentSettingsRepo := organization.NewOrgAgentSettingsRepository(db)
-	// The AI agents card's unit of work: one transaction over the Anthropic
-	// credential rows, the agent-settings row and the secret bytes.
-	agentsCardRepo := organization.NewAgentsCardRepository(db, credStore)
-	idpRepo := organization.NewIDPRepository(db, in.ColumnCipher)
+	// The AI agents card's lock and unit of work: one transaction over the
+	// connection, subscription and agent-settings rows (the keys live only in
+	// vault).
+	agentsCardRepo := organization.NewAgentsCardRepository(db)
+	idpRepo := organization.NewIDPRepository(db)
 	codingAgentLogRepo := delivery.NewCodingAgentLogRepository(db)
-	activityRepo := projects.NewActivityEventRepository(db)
-	activityHub := projects.NewActivityHub()
-	activitySvc := projects.NewActivityService(activityRepo, activityHub)
-	// Shared by the turn + files recorders: a room-scoped turn marks the project
-	// agent-authored; the committer's later files/apply flush claims the mark and
-	// suppresses its user line (issue #239 — see specAuthorship).
-	specAuthored := &specAuthorship{}
 
 	// Temporal runtime for the milestone run supervisor. Constructed always, but
 	// connects lazily in the worker watcher's retry loop (never on the build
@@ -212,10 +203,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// the root of its own deployment pipeline, resolved at use (never cached),
 	// so every package that writes or reads a project's bindings shares it.
 	writeTargets := openchoreo.NewWriteTargets(ocConfig)
-	// GitSecret client lands the per-org build git credential on the workflow
-	// plane (via OC → OpenBao → SecretReference). Used by BuildCredentialsService
-	// for both cloud (CP/WP split) and local k3d — one unified path.
-	gitSecretClient := openchoreo.NewGitSecretClient(ocConfig)
+	// The Resource-model client (ResourceTypes, Resources, their bindings):
+	// the dependency catalogs and provisioners and the deploy path author
+	// through this one (AE Studio builds its own, aeStudioOC).
+	resourceClient := openchoreo.NewResourceClient(ocConfig)
 	// SecretReference client for ai-agent model access (component_service.go's
 	// EnsureComponent → wireModelAccess): always goes through OC's own
 	// SecretReference CRUD directly (docs/glossary.md's SecretReference
@@ -271,101 +262,88 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Secret-ref mirror writer. Constructed ahead of the credential / IDP service
 	// constructors so all consumers can attach via WithSecretRefWriter (the no-op
 	// case when smClient is nil is fine).
-	secretRefWriter := organization.NewSecretRefWriter(smClient, orgCredRepo, orgAnthropicRepo, idpRepo, orgModelConnRepo)
-
-	// Credentials + git-service services and controllers. The credential store,
-	// the App-token minter (post OpenBao key-load / dev seed / bot-identity load),
-	// and the App OAuth client_secret are all resolved in Resolve and arrive via
-	// Infra — Assemble does no OpenBao/network I/O.
-	credResolver := secrets.NewOrgResolver(db, credStore, minter)
-
-	// One git host, selected by GIT_PROVIDER, threaded into every gitrepo
-	// domain service where it narrows to that service's capability port.
-	gitHost, err := buildGitHost(cfg)
-	if err != nil {
-		return nil, err
+	secretRefWriter := organization.NewSecretRefWriter(smClient, idpRepo).
+		// Every Default key save is a new vault path: the deployed direct
+		// ai-agent components' ai-agent-model-access reference moves with it
+		// before the previous path is retired.
+		WithModelKeyConsumers(projects.NewModelAccessRepointer(modelAccessSecretRefClient))
+	// The org secrets (the GitHub PAT, the webhook secret, the two org
+	// clients) are written as a new reference per write, one write per
+	// (org, secret) at a time across replicas. Nil with delivery off.
+	orgSecretRepo := organization.NewOrgSecretRepository(db)
+	var orgSecretWriter *organization.OrgSecretWriter
+	if smClient != nil {
+		orgSecretWriter = organization.NewOrgSecretWriter(smClient, orgSecretRepo, organization.NewOrgSecretLock(db), time.Now)
+		secretRefWriter.WithOrgSecretWriter(orgSecretWriter)
 	}
 
-	// Workspace engine (resolved in Resolve, arrives via Infra) — the disk-backed
-	// git plumbing over the shared /workspaces mount. It backs the disk-lifecycle
-	// pieces (the two best-effort trash hooks below + the reaper watcher) and the
-	// GitOpsService Workspace port.
-	//
-	// Both hooks are phase 1 of the two-phase delete (O(1) rename into
-	// trash/) and best-effort by contract: failures are logged, never
-	// surfaced — the reaper's orphan pass is the correctness backstop.
-	trashWorkspaceRepo := func(ctx context.Context, orgID, projectID, repoSlug string) {
-		if err := workspaceEngine.TrashRepo(ctx, gitfs.RepoRef{OrgID: orgID, ProjectID: projectID, RepoSlug: repoSlug}); err != nil {
-			slog.WarnContext(ctx, "workspace: trash repo subtree failed (reaper will reconcile)",
-				"org", orgID, "project", projectID, "slug", repoSlug, "error", err)
-		}
-	}
-	trashWorkspaceOrg := func(ctx context.Context, ocOrgID string) {
-		if err := workspaceEngine.TrashOrg(ctx, ocOrgID); err != nil {
-			slog.WarnContext(ctx, "workspace: trash org subtree failed (reaper will reconcile)",
-				"ocOrgId", ocOrgID, "error", err)
-		}
-	}
-
-	repoService := sourcecontrol.NewRepoService(repoRepo, gitHost, credResolver, cfg.GitHubRepoVisibility,
-		sourcecontrol.WithWorkspaceTrash(trashWorkspaceRepo))
-	gitOpsService := sourcecontrol.NewGitOpsService(credResolver, workspaceEngine)
-	artifactSvcGit := spec.NewArtifactService(repoRepo, gitOpsService)
-	issueService := sourcecontrol.NewIssueService(repoRepo, gitHost, credResolver)
+	// Credentials services and controllers. The PAT lives only in vault
+	// (written through secretRefWriter); Assemble does no OpenBao/network I/O.
+	credService := organization.NewCredentialService(orgCredRepo)
+	// Builds clone with the org's github-pat SecretReference, read from its
+	// org_secrets row: aep-api passes the reference name, never the value.
+	buildCredService := organization.NewBuildCredentialsService(repoRepo, orgSecretRepo)
+	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo)
+	// The org's model connection as every consumer outside organization reads
+	// it: the ai-agent model access and build evaluation (its key's vault
+	// reference), coding dispatch (which credential a run mounts), AE Studio
+	// and Agent Manager (the connection, no key). Its `priced` reads the same
+	// rate card the usage stamps are priced from. Its key readers take the
+	// reference names from the org secret rows, and the ai-agent model
+	// access its vault path from that reference's SecretReference.
+	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, orgSecretRepo, in.RateStamper).
+		WithSecretRefWriter(secretRefWriter).
+		WithSecretReferences(modelAccessSecretRefClient)
+	// Each org's AE Studio (ADR-0045): its status reads and its converge go
+	// out as aep-api's own identity wherever the install impersonates orgs
+	// (aeStudioOC).
+	aeStudio := aestudio.New(aestudio.Deps{
+		Config:      cfg.AEStudio,
+		OrgSecrets:  orgSecretRepo,
+		Orgs:        orgRepo,
+		Profiles:    idpRepo,
+		Connections: modelConnections,
+		GitHub:      credService,
+		OC:          aeStudioOC(ocConfig),
+	})
+	// The org pods' machine API (/internal/v1), as aep-api's AE-only client:
+	// the kickoff and Plan turns and the reference uploads run through it.
+	studioTools := aeStudioTools(cfg.AEStudio, aeStudio)
+	// A project's repository content is read through its org's pod, and the
+	// version tag is cut there. aep-api's own commits and tags name no
+	// author, committer or tagger: the pod uses its gitpat identity.
+	artifactSvcGit := spec.NewArtifactService(repoRepo, studioTools, studioTools)
+	projFiles := projectFiles{git: studioTools, repos: repoRepo}
+	// Every GitHub call — repositories, issues, milestones, pull requests,
+	// hooks — goes to the org's pod through the same adapter; the project's
+	// repo row names the repository and the org's connected login owns new
+	// ones.
+	repoService := sourcecontrol.NewRepoService(repoRepo, studioTools, studioTools, credService, cfg.GitHubRepoVisibility)
+	issueService := sourcecontrol.NewIssueService(repoRepo, studioTools)
 	// THE delivery-side issue-write surface: every issue the delivery domain
 	// mints, closes, reopens or labels goes through this one writer, so the
 	// label vocabulary and the dedupe contract are decided once rather than once
 	// per sub-package. Its slices (eventcore, task, validation, build) each hold
 	// it; nothing else in delivery writes an issue.
 	deliveryIssues := delivery.NewIssueWriter(issueService)
-	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, gitHost, repoService, issueService, cfg.WebhookDeliveryURL, cfg.WebhookHMACSecret)
-	credRefreshService := organization.NewCredentialsRefreshService(credResolver)
-	credService := organization.NewCredentialService(orgCredRepo, credStore, minter, cfg.WebhookHMACSecret, cfg.GitHubAppClientID, appClientSecret, gitHost)
-	buildCredService := organization.NewBuildCredentialsService(repoRepo, credResolver, gitSecretClient)
-	credService.WithBuildSecretCleaner(buildCredService)
-	anthropicCredService := organization.NewAnthropicCredentialService(orgAnthropicRepo, credStore)
-	// The org's model connection as every consumer outside organization reads
-	// it: the spec agents and task planning (the connection and its key), the
-	// ai-agent model access and build evaluation (its key's vault reference),
-	// coding dispatch (which credential a run mounts) and Agent Manager. Its
-	// `priced` reads the same rate card the usage stamps are priced from.
-	modelConnections := organization.NewModelConnectionService(orgModelConnRepo, orgAnthropicRepo, credStore, in.RateStamper).
-		WithSecretRefWriter(secretRefWriter)
+	webhookRegService := sourcecontrol.NewWebhookService(repoRepo, studioTools, repoService)
 	// How the org's agents run: the model connection, the coding runtime and
 	// the Claude subscription. ONE instance, read by two callers: /config
 	// projects and saves it, and coding dispatch copies the runtime onto the run
 	// it launches.
 	agentSettings := organization.NewAgentSettingsService(orgAgentSettingsRepo, orgRepo, anthropicCredService, modelConnections, agentsCardRepo,
-		runnableAgentRuntimes(cfg))
-
-	// Task JWT manager — RS256. The public key is published on
-	// /auth/external/jwks.json. Used to mint BFF MCP tokens
-	// (IssueServiceToken) for the design agent and playground. Runner
-	// callbacks do not verify Task JWTs.
-	var taskTokens *authn.TaskTokenManager
-	if cfg.TaskTokenSigningKey != "" {
-		mgr, err := authn.NewTaskTokenManager(authn.TaskTokenConfig{
-			PrivateKey: cfg.TaskTokenSigningKey,
-			Issuer:     cfg.TaskTokenIssuer,
-			Audience:   cfg.TaskTokenAudience,
-			TTL:        24 * time.Hour,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("task token manager init: %w", err)
-		}
-		taskTokens = mgr
-		slog.Info("Task token manager", "kid", mgr.KeyID(), "issuer", cfg.TaskTokenIssuer, "audience", cfg.TaskTokenAudience)
-	} else {
-		slog.Warn("BFF_TASK_SIGNING_KEY not set — MCP identity tokens and JWKS will be unavailable")
-	}
+		runnableAgentRuntimes(cfg)).
+		// A save that changes what the pod reads (the Default key, the
+		// connection) rolls the org's AE Studio.
+		WithStudioConverger(aeStudio)
 
 	// Secret-ref mirror writer wired into both credential services. nil-safe via
 	// the Enabled() check.
 	credService.WithSecretRefWriter(secretRefWriter)
 	anthropicCredService.WithSecretRefWriter(secretRefWriter)
 	// A saved model connection must reach the Agent Manager provider that holds
-	// a copy of it, or every governed agent in the org keeps calling the old
-	// upstream with the old credential until the next deploy re-asserts it.
+	// a copy of it: the key save is the provider's only writer (a deploy only
+	// looks it up), so a failed push answers 502 agent_manager_not_updated.
 	anthropicCredService.WithModelProvider(ampModelProviderPublisher{
 		amp: ampClientFactory{cfg: agentmanager.Config{
 			TokenURL:     cfg.AgentManager.TokenURL,
@@ -374,10 +352,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 			Resource:     cfg.AgentManager.Resource,
 			HostHeader:   cfg.AgentManager.HostHeader,
 		}},
-		bindings: environmentClient,
-		targets:  writeTargets,
+		bindings:     environmentClient,
+		environments: environmentClient,
 	})
-	validatorProbes := organization.NewValidatorProbes(credService, gitHost, credResolver, minter)
+	validatorProbes := organization.NewValidatorProbes(credService, studioTools)
 	credValidator := secrets.NewValidator(db, validatorProbes, nil, cfg.CredentialValidatorInterval)
 
 	// Artifact store — in-process via artifactSvcGit. Adds the
@@ -386,77 +364,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	artifactStore := spec.NewArtifactStore(artifactSvcGit)
 
 	// Repo-backed skills store (single source of truth = per-org org-skills
-	// repo). Reads walk the shared-volume mirror at branch tip and writes
-	// commit to main through the Workspace port
-	// (services/aep-api/design/shared-workspace-volume.md). Built-ins + flow
-	// skills seed/reconcile from the embedded files on demand.
+	// repo). Reads and commits go through the org's AE Studio pod, and so does
+	// the project .claude/skills mirror. Built-ins + flow skills
+	// seed/reconcile from the embedded files on demand.
 	// docs/design/skills-repo-storage.md.
-	skillSvc := spec.NewSkillService(gitOpsService, repoService, os.DirFS(cfg.SkillsDir))
+	skillSvc := spec.NewSkillService(studioTools, studioTools, repoService, os.DirFS(cfg.SkillsDir))
 	skillMutationSvc := spec.NewSkillMutationService(skillSvc)
 	skillImportSvc := spec.NewSkillImportService(skillSvc)
 
-	// File-mutation agents service (services/agents) — the requirements/design/
-	// chat generation and task-planning flows. Plain HS256 M2M bearer; the
-	// org's model connection is resolved per turn: the key is forwarded as
-	// X-Model-Key, the connection and model in the turn body.
-	agentsvcClient := agentsvc.New(agentsvc.Config{
-		BaseURL:  cfg.AgentsSvc.BaseURL,
-		Secret:   cfg.AgentsSvc.JWTSecret,
-		Audience: cfg.AgentsSvc.JWTAudience,
-		Issuer:   cfg.AgentsSvc.JWTIssuer,
-	})
-
-	// Files API — generic specs/-scoped, GitHub-at-HEAD reads + atomic apply
-	// (commits straight to main under CAS retry). No local working tree.
-	filesSvc := spec.NewFilesService(repoService, gitOpsService)
-
-	// Unified genai committed-truth turn surface (shared-workspace-volume). It
-	// resolves the org's model connection (no platform fallback), snapshots the
-	// project repo + the org's _skills repo onto the workspace mount, and
-	// runs turns detached behind the durable agent_turns guard. Skills are
-	// NOT pushed inline anymore — agents reads the full catalog (embedded
-	// flow skills seeded into _skills + org skills) from the SkillsRef
-	// snapshot.
-	agentLLMForTurns := func(ctx context.Context, orgID string) (spec.AgentLLM, error) {
-		conn, key, ok, err := modelConnections.Effective(ctx, orgID)
-		if err != nil {
-			return spec.AgentLLM{}, err
-		}
-		if !ok {
-			return spec.AgentLLM{}, nil // no key → a pre-202 4xx
-		}
-		return spec.AgentLLM{Key: key, Connection: conn}, nil
-	}
-	// SkillsRef source for genai + task-plan turns. Reconcile so platform
-	// skills shipped after first provision land before Head/Ensure.
-	skillsRepoForTurns := spec.SkillsRepoForTurns(skillSvc, repoService)
+	// The finished-turn ledger: the org pods record every turn they ran into
+	// it; the status poll, the build gate's design baseline and kickoff read it.
 	turnRepo := spec.NewTurnRepository(db, in.RateStamper)
-	turnBroker := spec.NewTurnBroker()
-	genaiDeps := spec.ServiceDeps{
-		Repos:      repoService,
-		Git:        gitOpsService,
-		LLM:        agentLLMForTurns,
-		Client:     agentsvcClient,
-		Turns:      turnRepo,
-		Broker:     turnBroker,
-		Snapshots:  workspaceEngine,
-		SkillsRepo: skillsRepoForTurns,
-		// #430: the project-scoped thread store — resolve/rotate the current
-		// conversation, and the conversation_rotated admission fence on turns.
-		Conversations: spec.NewConversationRepository(db),
-		Recorder:      turnActivityRecorder{svc: activitySvc, authorship: specAuthored},
-	}
-	// MCP discovery on design-generation turns (dependency-management Phase 5):
-	// the BFF mints a short-lived aud:aep-api-mcp token per turn so the agents
-	// service can call back into /internal/v1/mcp. Wired only when the token
-	// manager exists (a nil *TaskTokenManager would satisfy the interface but
-	// panic on use) AND the internal base URL is configured; otherwise the
-	// additive `mcp` field is simply omitted.
-	if taskTokens != nil && cfg.AEPInternalBaseURL != "" {
-		genaiDeps.MCPTokens = taskTokens
-		genaiDeps.MCPBaseURL = cfg.AEPInternalBaseURL
-	}
-	genaiSvc := spec.NewService(genaiDeps)
 
 	// Services. componentService is constructed before configService so
 	// configService can call back into it to mirror env-var edits onto
@@ -472,6 +390,9 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// resolves the org's own deployment pipeline for /dependencies/environments'
 	// promotion ordering, so it is built once here instead of twice.
 	projectCellClient := openchoreo.NewProjectCellClient(ocConfig)
+	// A create needs the org's AE Studio serving before the OC project exists
+	// because it holds the project's repository.
+	projectService.SetAEStudioReady(studioTools)
 	projectService.SetProjectCellProvisioner(projectCellClient)
 	projectService.SetWriteTargets(writeTargets)
 	// Build/deploy stage sources for the status poll (#184): the milestone-run
@@ -498,15 +419,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 	projectService.SetEndpointGate(endpointGate)
 	organizationService := organization.NewOrganizationService(orgRepo, namespaceClient)
-	// componentService takes repoSvc + buildCredSvc so TriggerBuild can
-	// pre-stage the per-WorkflowRun build Secret in workflows-<orgID>
-	// before the WorkflowRun is created (see
-	// docs/design/build-credential-injection.md). buildCredService is never nil
-	// (NewBuildCredentialsService always returns a value; its gitSecrets are
-	// nil-safe internally), so the stager is always wired.
+	// componentService takes repoSvc + buildCredSvc so TriggerBuild can pass
+	// the org's github-pat SecretReference as the WorkflowRun's
+	// repository.secretRef. buildCredService is never nil, so the stager is
+	// always wired.
 	buildStager := buildSecretStagerAdapter{svc: buildCredService}
 	// modelConnections already satisfies projects.ModelKeyResolver
-	// structurally (KeyRef has the exact same signature) — no adapter
+	// structurally (KeyPathRef has the exact same signature) — no adapter
 	// needed, unlike buildStager above.
 	componentService := projects.NewComponentService(componentClient, observClient, artifactStore, repoService, buildStager, modelConnections, modelAccessSecretRefClient)
 	// deploymentService is built below, so the converger is attached after
@@ -518,12 +437,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Tasks are GitHub issues (the Task/Execution split, tasks-github-native):
 	// the read + plan surface reads them live and fuses executions. The dispatch
 	// half (funnel, coding executor, watchers) is wired below, after
-	// asServiceIdentity. repoService/artifactStore/artifactSvcGit/gitOpsService
+	// asServiceIdentity. repoService/artifactStore/artifactSvcGit
 	// satisfy the task consumer ports directly.
 	taskReads := task.NewReads(issueService, repoService, executionRepo, milestoneRunRepo)
-	taskPlan := task.NewPlanService(repoService, artifactSvcGit, gitOpsService,
-		agentLLMForTurns, agentsvcClient, issueService, deliveryIssues, workspaceEngine,
-		task.SkillsRepoResolver(skillsRepoForTurns))
+	taskPlan := task.NewPlanService(repoRepo, artifactSvcGit, studioTools, issueService, deliveryIssues)
 
 	// Eagerly provision each org's skills repo on project creation.
 	projectService.SetSkillsProvisioner(skillSvc)
@@ -533,29 +450,33 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Stamp specs/.agentic-engineer.toml into each new project's repo: the
 	// Agentic Engineer marker, carrying the idea the user typed at create for
 	// the /start flow to generate requirements from.
-	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(filesSvc))
+	projectService.SetDescriptorWriter(spec.NewDescriptorWriter(studioTools, repoRepo))
 
 	// The journey starts itself (#562): creation fires `/start` server-side,
-	// so the user lands on a project whose agent is already interviewing them
-	// instead of a dashboard asking them to press a button. Wired after the
-	// descriptor writer above because that is the order the create path runs
-	// them in — the turn reads the idea from the file that write commits.
-	projectService.SetKickoffStarter(genaiSvc)
+	// in the org's AE Studio pod, so the user lands on a project whose agent
+	// is already interviewing them instead of a dashboard asking them to press
+	// a button. Wired after the descriptor writer above because that is the
+	// order the create path runs them in — the turn reads the idea from the
+	// file that write commits. The finished-turn ledger is its guard.
+	kickoff := spec.NewKickoffService(studioTools, repoRepo, turnRepo)
+	projectService.SetKickoffStarter(kickoff)
 	// …and the status poll reports whether it is still running, which is the
 	// one thing the git-derived spec fields cannot say.
 	projectService.SetSpecTurnSource(turnRepo)
 	// The build gate's staleness input (#575, per feature since E1): the
-	// completed design runs, newest first — the commit each read and the
-	// features it named. A build whose feature has moved past its design is
+	// completed design runs, latest-finished first — the commit each read and
+	// the features it named. A build whose feature has moved past its design is
 	// refused with the rest of the gate's conditions — the one refusal that is
 	// about the design being WRONG rather than incomplete.
 	artifactSvcGit.SetDesignRunsResolver(func(ctx context.Context, orgID, projectID string) ([]spec.DesignRun, error) {
-		turns, err := turnRepo.CompletedFlows(ctx, orgID, projectID, "design", designRunsConsidered)
+		turns, err := turnRepo.CompletedFlows(ctx, orgID, projectID, spec.FlowDesign, designRunsConsidered)
 		if err != nil {
 			return nil, err
 		}
 		runs := make([]spec.DesignRun, 0, len(turns))
 		for _, t := range turns {
+			// A design turn's Summary holds the feature IDs the pod reported
+			// for it; none means every feature designable at its commit.
 			runs = append(runs, spec.DesignRun{BaseRef: t.BaseRef, Features: spec.DesignedFeatures(t.Summary)})
 		}
 		return runs, nil
@@ -567,28 +488,21 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// applied skills locally, stamped via AEP_SKILLS_REPO_URL above.)
 	execProgressSvc := execution.NewProgressService(executionRepo, componentClient)
 	// One agent-log edge, two callers: the task-level progress endpoint and the
-	// milestone run's per-cycle stream both read through this reader. Live logs
-	// come from OpenChoreo; a finished cycle's come from the observability
-	// plane while its component is retained; when neither can answer the reader
-	// says so rather than serving an empty stream.
-	// The run-feed RECORDING store, on the workspace volume aep-api already
-	// mounts and already sweeps. It is what makes a cycle's feed survive its pod:
-	// the recorder (below, driven by the cycle watcher) writes it once,
-	// server-side, and every viewer reads the file instead of re-deriving the
-	// pod's log per connection. Nil when there is no workspace volume (Fake()),
-	// and every feed then honestly reports `recording: none`.
+	// milestone run's per-cycle stream both read through this reader. A cycle's
+	// log comes from its pod while the pod exists, then from the observability
+	// plane by the cycle's Component UID (component scope while the Component
+	// exists, project scope after the settler deleted it); when neither can
+	// answer the reader says so rather than serving an empty stream. The v2
+	// run feed (CycleFeed) reads the whole log once per tick for every viewer
+	// and keeps the producer's numbering, so the pod → observer switch is
+	// invisible to a connected console.
 	codingLogSource := codingagent.NewOCLogSource(runtimeClient)
 	codingArchive := codingagent.NewObserverArchive(observClient, runtimeClient)
-	runRecordings := codingagent.NewRecordingStore(cfg.Workspace.Root, cfg.Workspace.RecordingMaxBytes)
-	// The archive is attached to the RECORDER, not to the reader, as its
-	// gap-backfill: it is no longer the ordinary post-mortem source for the run
-	// feed (the recording is), and its 200-event window went with that.
-	runRecorder := codingagent.NewCycleRecorder(codingLogSource, runRecordings).
-		WithArchive(codingArchive)
+	runFeed := codingagent.NewCycleFeed(runtimeClient, observClient, writeTargets, cfg.ObserverLogRetention)
 	agentProgressReader := codingagent.NewAgentProgressReader(
 		codingLogSource, writeTargets, codingAgentLogRepo).
 		WithArchive(codingArchive).
-		WithRecordings(runRecordings)
+		WithFeed(runFeed)
 	execProgressSvc.WithCodingProgress(agentProgressReader)
 	// The task-log SSE stream: one connection per open task-detail page carries
 	// the Task's whole live state (status + executions + unified timeline across
@@ -613,13 +527,11 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	deploymentService.SetWriteTargets(writeTargets)
 
 	// Thunder admin client + IDP service. Reads
-	// aep-system-client credentials from env (THUNDER_*) and exposes
-	// EnsureOrgPublisher / RevokeOrgPublisher / RegenerateClientSecret
-	// for per-org publisher OAuth app lifecycle. Optional — when the
-	// Thunder base URL is empty the IDP service still runs and serves
-	// GetProfile / GetOrCreateProfile, but mutating calls fail with
-	// ErrIDPThunderUnavailable (non-fatal — protected components keep
-	// deploying, just without per-org publishers).
+	// aep-system-client credentials from env (THUNDER_*); the IDP service's
+	// EnsureClient (the gitpat submit) is the per-org publisher / studio
+	// client lifecycle. Optional — when the Thunder base URL is empty the IDP
+	// service still runs and serves GetProfile / GetOrCreateProfile, but the
+	// client ensure fails with ErrIDPThunderUnavailable.
 	var thunderAdminClient thundersvc.Client
 	thunderBase := cfg.ThunderAdmin.BaseURL
 	if thunderBase == "" {
@@ -675,7 +587,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// than "does not exist", and its mutations refuse — there is nothing to
 	// write to.
 	var identityTargets identity.TargetResolver
-	if bindingKV, kvErr := environmentThunderCredentials(cfg); kvErr != nil {
+	if bindingKV, kvErr := environmentThunderCredentials(cfg, seam.OpenBaoAuth); kvErr != nil {
 		slog.Warn("roles ensure disabled — the environment Thunder credential store is unreachable",
 			"error", kvErr)
 	} else if bindingKV == nil {
@@ -720,30 +632,19 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		organizationService.SetOUValidator(thunderAdminClient)
 		slog.Info("org OU validation wired — JWT ouId is validated against Thunder before the org→OU mapping is (over)written")
 	}
-	// WithSecretRefWriter mirrors per-org publisher client_secret to SM-API on
-	// EnsureOrgPublisher / RegenerateClientSecret and on
-	// ProvisionPublisherForBuild (POST /build, actor build-provision).
-	// Coding dispatch reads secret_ref_name only and mounts PUBLISHER_CLIENT_ID
-	// and PUBLISHER_CLIENT_SECRET from that SecretReference.
+	// WithSecretRefWriter is where the gitpat submit's EnsureClient stores the
+	// org clients' credentials (only in vault, the org's ae-publisher-client
+	// and ae-studio-client references). WithOrgSecretRefs is what POST /build's
+	// RequirePublisherForBuild reads. Coding dispatch mounts
+	// PUBLISHER_CLIENT_ID and PUBLISHER_CLIENT_SECRET from the reference the
+	// ae-publisher-client row names.
 	idpService := organization.NewIDPService(idpRepo, orgRepo, thunderAdminClient, organization.PlatformIDPConfig{
 		Issuer:  cfg.PlatformIDP.Issuer,
 		JWKSURL: cfg.PlatformIDP.JWKSURL,
-	}).WithSecretRefWriter(secretRefWriter)
-	// Make idpService available to the deployment projection so a
-	// first-protected-deploy provisions the org publisher app lazily.
+	}).WithSecretRefWriter(secretRefWriter).WithOrgSecretRefs(orgSecretRepo)
+	// The deployment projection reads the org's IDP profile (the issuer a
+	// protected API is pinned to); it never creates the publisher app.
 	deploymentService.SetIDPService(idpService)
-
-	// Connect-state JWT issuer (App-mode OAuth CSRF state). This HS256 signing
-	// key only ever leaves the BFF as a JWT signature inside the GitHub OAuth
-	// `state` query param. (Task JWTs use RS256 via taskTokens below.)
-	bearerSvc := organization.NewBearerService(cfg.OAuthStateSigningKey, 24*time.Hour)
-	if cfg.OAuthStateSigningKey == "" {
-		slog.Warn("OAUTH_STATE_SIGNING_KEY not set — connect-state JWTs will fail to mint")
-	}
-
-	// taskTokens (the RS256 Task-JWT manager) is constructed earlier, before
-	// the agents client — that client uses it to mint per-call outbound
-	// identity tokens, so it must exist by then.
 
 	// asServiceIdentity marks OC API calls made from inside dispatch, webhook
 	// handlers, and the watchers as orchestration / async calls: they
@@ -755,13 +656,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		return authn.WithServiceIdentity(ctx)
 	}
 
-	// Webhook receiver wiring. The verifier's HMAC secrets come from the
-	// per-org credential record (via git-service).
-	secretProvider := webhook.NewGitServiceSecretProvider(credService, 30*time.Second)
-	var routingLookup webhook.OcOrgIDLookup = credService
-	webhookVerifier := webhook.NewVerifier(secretProvider).
-		WithRefetchLimiter(webhook.NewRefetchLimiter(1, 5))
-	routingCache := webhook.NewRoutingCache(60 * time.Second)
 	deliveryStore := sourcecontrol.NewDeliveryStore(db)
 	webhookRouter := webhook.NewRouter()
 
@@ -771,43 +665,40 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	codingExecutor := codingagent.NewCodingExecutor(
 		componentClient, repoService, identities{cred: credService},
 		executionRepo,
-		cfg.AgentPlatformURL, cfg.AgentPlatformURL,
-		orgRepo, modelConnections, orgCredRepo, idpRepo)
-	// Dispatch reads secret_ref_name only — it does not call
-	// EnsureOrgPublisher. POST /build provisions the SecretReference while the
-	// console JWT is still on ctx.
+		cfg.AgentPlatformURL,
+		// The GitHub PAT reference a run mounts is the github-pat row's.
+		orgRepo, modelConnections, orgSecretRepo).
+		// The org's GitHub account, stamped as AEP_GITHUB_OWNER: the owner
+		// guard's reference for the runner's in-process remote-git tools.
+		WithGitHubOwners(credService)
+	// Dispatch only reads the ae-publisher-client row's reference name; the
+	// gitpat submit is the one writer of it.
 	// Which runtime and model this org's cycles run on. The values are copied
 	// onto each Job's env, so a change applies from the next cycle.
 	codingExecutor.WithCodingAgentSettings(agentSettings)
 	codingExecutor.WithPublisherCredentials(
-		codingagent.NewIDPPublisherResolver(idpRepo),
+		codingagent.NewIDPPublisherResolver(orgSecretRepo),
 		codingagent.PublisherTokenURLFromJWKS(cfg.PlatformIDP.JWKSURL),
 	)
-	// The OpenChoreo Component dispatch path (phase 08): one Component per run
+	// The OpenChoreo Component dispatch path: one Component per run
 	// cycle in the milestone's own project, rendered by OC into the project's
 	// dataplane namespace. It needs only the OC client and the runner image —
 	// no proxy, no in-cluster Kubernetes client, no per-env branch — and it is
-	// the only coding-agent dispatch path.
-	//
-	// Retention shares the same OC client: before each create it deletes the
-	// project's oldest RETIRED agent components (liveness read from the cycle
-	// rows), because a finished component still holds a billing concurrency
-	// slot.
+	// the only coding-agent dispatch path. A cycle's Component is deleted at
+	// settle by the ComponentSettler (watchers below), which is what frees its
+	// billing concurrency slot.
 	if cfg.AgentRunnerImage != "" {
-		retentionLimit := cfg.CodingAgentComponentRetention
-		if retentionLimit <= 0 {
-			retentionLimit = codingagent.DefaultCodingAgentComponentRetention
-		}
 		ocDispatcher := codingagent.NewOCDispatcher(componentClient, writeTargets).
 			WithImage(cfg.AgentRunnerImage).
 			WithOpenCodeImage(cfg.AgentRunnerImageOpenCode).
-			WithRetention(codingagent.NewComponentRetention(
-				componentClient, runCycleRepo, retentionLimit))
+			WithJobTTL(cfg.CodingAgentJobTTL).
+			WithCPURequest(cfg.CodingAgentCPURequest)
 		codingExecutor.WithOCDispatch(ocDispatcher)
 		slog.Info("coding executor: OpenChoreo component dispatch path enabled",
 			"runnerImage", cfg.AgentRunnerImage,
 			"runnerImageOpenCode", cfg.AgentRunnerImageOpenCode,
-			"componentRetention", retentionLimit)
+			"jobTTL", cfg.CodingAgentJobTTL.String(),
+			"cpuRequest", cfg.CodingAgentCPURequest)
 	}
 	// Build-secret staging so the post-merge build clones a PRIVATE project repo
 	// (the local plane sets GITHUB_REPO_VISIBILITY=private). Reuses the same
@@ -849,10 +740,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		Builds: eventcoreBuilds{oc: componentClient, repos: repoRepo, stager: buildStager},
 		// The wiring-conformance check on the merged-PR fan-out: does what shipped
 		// consume the resources the design declares?
-		Workloads: workloadReader{files: filesSvc},
+		Workloads: workloadReader{projFiles},
 		// The revalidate trigger's last guard: refuse a version with no oracle
 		// rather than starting a run that could only conclude `skipped`.
-		Criteria: acceptanceCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{projFiles},
 		Signaler: runSupervisor,
 		Starter:  runSupervisor,
 		// A first-ever component has no OpenChoreo Component CR, and a merged
@@ -876,12 +767,16 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// freshly filed issue into the deployed version's milestone and start an
 	// incident run over it.
 	taskCommands := task.NewCommands(componentService, eventcoreAdopter{events: eventPlane})
-	webhook.RegisterInstallationHandlers(webhookRouter, credService, issueService, trashWorkspaceOrg)
-	webhookCtrl := webhook.NewWebhookController(webhookVerifier, deliveryStore, webhookRouter, routingLookup, routingCache)
+	// One Ingestor runs every accepted delivery's tail (persist, claim, ack,
+	// detached dispatch): the AE Studio tools pod's ingest-webhook-event.
+	webhookIngestor := webhook.NewIngestor(deliveryStore, webhookRouter, repoRepo)
 
 	// The reconcile sweep (missed webhooks / disaster recovery) + the exec
 	// watcher (OC WorkflowRun → execution-row outcomes + build terminals).
-	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0)
+	// It also repairs the hook of every ready project repository whose row
+	// holds no hook id (a create-time registration that failed).
+	eventPlaneSweep := eventcore.NewSweep(eventPlane, eventcoreRepoLister{repos: repoRepo}, 0).
+		WithHookEnsurer(activeOrgHooks{hooks: webhookRegService, creds: credService})
 	// The build half of the same plane. The ExecWatcher below only reports build
 	// terminals for `kind=build` execution rows, and the run loop records its
 	// cycles in run_cycles instead — so for anything the run loop builds, this
@@ -900,7 +795,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// it shares, and reports outwards rather than importing a peer.
 		WithBuildObserver(eventPlane)
 	// A build that fails at git-clone-auth within budget is re-minted + re-tried
-	// (§7): the build-secret stager is always wired, so the retrier is too.
+	// (the build-secret stager is always wired, so the retrier is too).
 	execWatcher.WithBuildRetrier(codingExecutor, codingExecutor.AuthRetryBudget())
 
 	// Inbound JWT verifier — Thunder publishes the User JWT and Service JWT
@@ -917,18 +812,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Org-scoped GitHub connect/disconnect surface. Tasks are GitHub issues now
-	// (no rows to abandon on disconnect); the disconnect service severs the
-	// credential and the issues become inert to the router (no valid webhook).
+	// (no rows to abandon on disconnect); the disconnect unregisters
+	// the org's repo hooks while its pod still holds the gitpat, deletes its
+	// AE Studio Resource, removes the gitpat's and webhook secret's rows and
+	// references, forgets the hook ids, then severs the credential.
 	disconnectSvc := organization.NewOrgDisconnectService(credService, issueService).
-		WithWorkspaceTrash(trashWorkspaceOrg)
-	orgGitHubCtrl := organization.NewOrgGitHubController(
-		credService,
-		disconnectSvc,
-		bearerSvc,
-		cfg.GitHubAppSlug,
-		cfg.BFFPublicURL,
-		cfg.GitHubAppClientID,
-	)
+		WithRepoHooks(webhookRegService).
+		WithStudioRemover(aeStudio).
+		WithGitHubSecretsRemover(secretRefWriter.RemoveGitHubSecrets)
 
 	// Internal S2S runner authorizer — keyed to the CYCLE: the id in the runner
 	// bearer is the run cycle the pod was dispatched for, and the publisher-cc
@@ -936,7 +827,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// system is launched by the milestone supervisor, so a cycle id is the only
 	// runner identity there is; an execution id named in a path fails closed.
 	publisherVerifier := authn.NewPublisherTokenVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, "aep-publisher-")
-	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleOrgLookup(db))
+	runnerAuth := authn.NewRunnerAuthorizer(publisherVerifier, cycleRunnerLookup(db))
+	// The ae-studio/ internal ops take only the org's ae-studio-<org> client
+	// token, checked against the client id recorded for the org; a publisher
+	// token (what a coding Job holds) never opens them. MCP takes this token
+	// beside the publisher token; runs/ never does.
+	studioClientVerifier := authn.NewStudioClientVerifier(thunderJWKS, cfg.PlatformIDP.Issuer, studioClientRecords{profiles: idpRepo})
+
+	// The RCA-report store the ops domain reads through (console Alerts). No
+	// writer is wired since the SRE handoff moved to its MCP tools; see
+	// internal/ops/README.md.
+	rcaReports := ops.NewRepository(db)
 
 	// Validation-context runner callback: resolves the run's deployed endpoint
 	// URLs so they never enter the public issue.
@@ -967,26 +868,32 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Controllers
 	params := edge.AppParams{
 		Config: cfg,
-		// Runner callbacks are the internal contract-first surface (InternalDeps);
-		// only the connect-callback + webhook controllers remain raw handlers.
+		// Runner callbacks are the internal contract-first route group (InternalDeps);
+		// only the webhook controller remains a raw handler.
 		// Every other feature is served by the strict handlers via params.Deps.
 		InternalDeps: edge.InternalDeps{
-			CredsRefresh:      credRefreshService,
 			RunnerAuth:        runnerAuth,
 			ValidationContext: validationContextSvc,
+			// The SRE handoff MCP built above (both nil when unconfigured);
+			// auto-RCA reads the same verifier.
+			SREHandoffAuth: sreHandoffAuth,
+			SREHandoffMCP:  sreHandoffMCP,
+			// The AE Studio tools pod presents its org's ae-studio-<org>
+			// client token on every ae-studio/ op and on MCP (mcpRoutes).
+			StudioClients:        studioClientVerifier,
+			AEStudioRepositories: aestudio.NewProjectRepositories(repoService),
+			// The org's skills library, reconciled before each turn's
+			// snapshot, as every turn's skills have been.
+			AEStudioSkills: aestudio.NewSkillsRepositories(skillSvc, repoService),
+			// The finished-turn ledger the pod hands its turns to; the status
+			// poll, the build gate's design baseline and kickoff read it.
+			TurnLedger: turnRepo,
+			// The pod's verified GitHub hook deliveries.
+			WebhookIngestor: webhookIngestor,
 		},
-		WebhookController:   webhookCtrl,
-		OrgGitHubController: orgGitHubCtrl,
 		ConfigRepo:          configRepo,
 		ThunderJWKS:         thunderJWKS,
 		OrganizationService: organizationService,
-		SREHandoffAuth:      sreHandoffAuth,
-		SREHandoffMCP:       sreHandoffMCP,
-
-		DB:                   db,
-		CredService:          credService,
-		AnthropicCredService: anthropicCredService,
-		ModelConnections:     modelConnections,
 	}
 
 	// The consolidated /config orchestrator (docs/design/org-config-consolidation.md):
@@ -996,17 +903,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	orgConfigSvc := organization.NewService(
 		credService,
 		disconnectSvc,
-		bearerSvc,
 		idpService,
 		organization.PlatformIDPConfig{Issuer: cfg.PlatformIDP.Issuer, JWKSURL: cfg.PlatformIDP.JWKSURL},
-		cfg.BFFPublicURL,
-		cfg.GitHubAppClientID,
-	).WithAgentSettings(agentSettings)
+	).WithAgentSettings(agentSettings).
+		// The gitpat submit writes the org secrets, then converges AE Studio.
+		WithAEStudio(orgSecretWriter, aeStudio).
+		// A section reads as configured only when its reference rows exist.
+		WithOrgSecretRefs(orgSecretRepo)
 
 	// Strict-handler feature dependencies — everything the contract-first
 	// /api/v1 edge serves (internal/api/handlers_*.go).
 	params.Deps = edge.Deps{
-		TaskTokens:      taskTokens,
 		PublisherTokens: publisherVerifier,
 		// DesignSvc backs the edge's own GET /projects/{name}/design/dependencies
 		// handler (the one op served directly on the composite, not a domain
@@ -1022,14 +929,13 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	}
 
 	// Dependency-management MCP discovery readers (agnostic subset — Phase 4 of
-	// the dependency-management migration). The MCP surface (surfaces.go) is
-	// mounted behind the AgentsScopedVerifier; wire real backends for its four
+	// the dependency-management migration). The MCP route group (routes.go) is
+	// mounted behind auth.MCPGate; wire real backends for its four
 	// read-only tools: the org external-resource catalog (org-namespaced OC
 	// ResourceTypes, Task 3 — no longer the external_resources table) and the
 	// org published endpoints + platform resource types (OC Resource-model
 	// client). The provisioning surface (value/param collection + the
 	// `provision` gate issue funnel) is wired in the Phase-6 block further below.
-	resourceClient := openchoreo.NewResourceClient(ocConfig)
 	// The resolver collaborators (repo locator + design reader) let the endpoint
 	// catalog discover each org-service's real OpenAPI contract + repo coords
 	// (endpoint spec discovery). Wired here so the A3 MCP tool projects them;
@@ -1052,9 +958,17 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// The org docs repo: registered resources' contract documents. Register
 	// writes them; the design write path copies one into a project when a
 	// stub dependency names the resource (spec/registry_copy.go).
-	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, gitOpsService)
+	orgResourceDocs := provisioning.NewGitOrgResourceDocs(repoService, studioTools)
 	registryReader := registeredResourceReader{catalog: externalResourceRTCatalog, docs: orgResourceDocs}
-	filesSvc.SetRegisteredResourceReader(registryReader)
+	// The AE Studio tools pod has its saves' dependency stubs completed here,
+	// over the registry and the guarded fetch.
+	// The request carries the org's AE Studio client token (ae-studio-<org>),
+	// not a user JWT, so the registry's OpenChoreo reads run as the BFF's own
+	// service identity (X-Impersonate-Org from the namespace), as the runner's
+	// validation context and the MCP tool calls do.
+	params.InternalDeps.DependencyCompleter = func(ctx context.Context, org string, writes []spec.WriteOp) (map[string]spec.CompletedFile, []spec.Warning) {
+		return spec.CompleteDependencies(authn.WithServiceIdentity(ctx), registryReader, spec.FetchSpecFromURL, org, writes)
+	}
 	// ops — the Incident RCA domain (P1, the first landed domain). Alerts
 	// (console issues #154, #155, BE handshake #156): the org-scoped store for
 	// RCA-agent reports the console's notification bell and Alerts list/stepper
@@ -1083,25 +997,24 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	// organization — org config + the organizations list (P3). Its handlers are
 	// embedded straight into the edge's composite; the edge holds no org service.
-	orgHandlers, err := orghttpapi.New(organization.Deps{OrgSvc: organizationService, Config: orgConfigSvc})
+	orgHandlers, err := orghttpapi.New(organization.Deps{OrgSvc: organizationService, Config: orgConfigSvc, AEStudio: aeStudio})
 	if err != nil {
 		return nil, fmt.Errorf("assemble organization domain: %w", err)
 	}
 	params.Deps.Organization = orgHandlers
 
-	// spec — the Spec Authoring & Versioning domain (P4): genai turns, files,
-	// tag reads, the org skills library, and the collab oracle/descriptor. Its
+	// spec — the Spec Authoring & Versioning domain (P4): reference uploads,
+	// tag reads, the org skills library, and the dependency definition writes. Its
 	// slice handlers embed straight into the edge's composite.
 	specHandlers, err := spechttpapi.New(spec.Deps{
-		GenAI:         genaiSvc,
-		Files:         filesSvc,
-		FilesActivity: filesActivityRecorder{svc: activitySvc, authorship: specAuthored},
-		Artifacts:     artifactSvcGit,
-		Skills:        skillSvc,
-		SkillMut:      skillMutationSvc,
-		SkillImport:   skillImportSvc,
-		CollabRepo:    repoService,
-		Design:        designService,
+		References:  studioTools,
+		Repos:       repoRepo,
+		Kickoff:     kickoff,
+		Artifacts:   artifactSvcGit,
+		Skills:      skillSvc,
+		SkillMut:    skillMutationSvc,
+		SkillImport: skillImportSvc,
+		Design:      designService,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble spec domain: %w", err)
@@ -1149,7 +1062,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		ComponentSvc: componentService,
 		ConfigSvc:    configService,
 		UsageSvc:     usageService,
-		ActivitySvc:  activitySvc,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assemble projects domain: %w", err)
@@ -1157,7 +1069,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.Deps.Projects = projectsHandlers
 
 	opsHandlers, err := opshttpapi.New(ops.Deps{
-		Reports: ops.NewRepository(db),
+		Reports: rcaReports,
 		Execs:   execution.NewOpsExecutionReader(executionRepo),
 	})
 	if err != nil {
@@ -1170,11 +1082,6 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	params.MCPGroupCatalog = groupCatalogOrNil(groupCatalogSvc)
 	// params.Deps.Dependencies (the strict ListPlatformResourceTypes + provisioning
 	// ops) is assembled below, after provisioningSvc exists.
-	// Endpoint spec discovery: the read-only remote-git reader an agent uses to
-	// read a provider's OpenAPI file from its own repo (Contents + Code Search,
-	// no clone). It resolves the org's credential (token + owner) from
-	// credResolver and refuses any owner that is not the org's GitHub account.
-	params.MCPRemoteGit = mcpdiscovery.NewRemoteGitClient(credResolver)
 	// OpenAPI spec MCP tools (validate_openapi_spec, fetch_openapi_spec): wired
 	// straight to the spec package's spec functions. FetchSpecFromURL is
 	// PLATFORM-TOUCHING SSRF hardening reused as-is — the MCP tool layer only
@@ -1228,14 +1135,14 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	validationSvc := validation.NewService(validation.Deps{
 		Issues:   issueService,
 		Writer:   deliveryIssues,
-		Criteria: acceptanceCriteria{files: filesSvc},
+		Criteria: acceptanceCriteria{projFiles},
 	})
 	buildSvc := build.NewService(build.Deps{
 		Repos:  repoFullNameLookup{repos: repoRepo},
 		Tagger: buildSpecTagger{art: artifactSvcGit},
 		// A repair build (B4) reads the fixed version's final validation the
 		// way the run read it, and files its failures as the run would have.
-		Repairs: runValidation{svc: validationSvc, files: filesSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
+		Repairs: runValidation{projectFiles: projFiles, svc: validationSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
 		Coord: build.NewInputsCoordinator(
 			designService,                          // SpecCollector (CollectSpec)
 			buildDesignDeriver{svc: designService}, // DesignFactDeriver (sentinel translation)
@@ -1318,38 +1225,36 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	runCycleBuilds := runread.NewCycleBuilds(milestoneRunRepo, runCycleRepo,
 		runreadProjectBuilds{oc: componentClient})
 	// The validation read model. It reads the same rows as the run story and the
-	// same Files API the validation minter reads the oracle through, so an
+	// same repository read the validation minter reads the oracle through, so an
 	// attempt's snapshot and the mint that judged it cannot disagree about which
 	// files are the oracle.
 	validationReads := runread.NewValidationReads(milestoneRunRepo, runCycleRepo,
-		acceptanceCriteria{files: filesSvc}).
+		acceptanceCriteria{projFiles}).
 		WithRecordings(agentProgressReader).
 		// The same reading of an attempt the run made (B4): the judge needs no
 		// minter, only the reads.
-		WithJudge(runValidation{files: filesSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo})
+		WithJudge(runValidation{projectFiles: projFiles, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo})
 
 	deliveryDeps := deliveryhttpapi.Deps{
-		BuildSvc:      buildSvc,
-		PreflightSvc:  preflightSvc,
-		BuildActivity: buildActivityRecorder{svc: activitySvc},
-		TaskReads:     taskReads,
-		TaskCommands:  taskCommands,
-		TaskStream:    taskStreamSvc,
-		RunReads:      runReads,
-		RunProgress:   runProgress,
-		// Cancel signals the supervisor AND deletes the cycle's agent
-		// Component, which is what actually stops the pod and frees the org's
-		// billing concurrency slot. Revalidate is the event plane's.
+		BuildSvc:     buildSvc,
+		PreflightSvc: preflightSvc,
+		TaskReads:    taskReads,
+		TaskCommands: taskCommands,
+		TaskStream:   taskStreamSvc,
+		RunReads:     runReads,
+		RunProgress:  runProgress,
+		// Cancel signals the supervisor AND closes the cycle as cancelled and
+		// suspends its Job binding, which is what actually stops the pod. The
+		// Component (and the org's billing slot) goes at settle. Revalidate is
+		// the event plane's.
 		RunCommands: runread.NewCommands(milestoneRunRepo, milestoneRunRepo, runSupervisor, eventcoreRevalidator{events: eventPlane}).
-			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo).
-				WithRecorder(runRecorder)),
+			WithCycleReaper(codingagent.NewCycleReaper(componentClient, runCycleRepo, writeTargets)),
 		RunCycleBuilds: runCycleBuilds,
 		RunValidation:  validationReads,
 	}
-	// WritePublisher stamps secret_ref_name onto the org's IDP profile;
-	// without a SecretsProvider, ProvisionPublisherForBuild fails closed and
-	// every POST /build 503s until a SecretsProvider is injected.
-	deliveryDeps.PublisherProvisioner = idpService
+	// POST /build is refused (409 publisher_credentials_missing, "Reconnect
+	// GitHub ...") while the org has no ae-publisher-client row.
+	deliveryDeps.PublisherGate = idpService
 	deliveryHandlers, err := deliveryhttpapi.New(deliveryDeps)
 	if err != nil {
 		return nil, fmt.Errorf("assemble delivery domain: %w", err)
@@ -1361,9 +1266,10 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 	// Committed-truth write surface for a dependency's directory: the design
 	// service fetches/validates a contract and atomically commits it with the
 	// dependency.json that records it (clearing the needs-contract gate), and
-	// records the user's acceptance of an assumed one, via the Files API.
-	// Composition-root adapter keeps files out of the design feature.
-	designService.SetFileCommitter(designFilesCommitter{files: filesSvc})
+	// records the user's acceptance of an assumed one — read and committed
+	// through the pod. Composition-root adapter keeps the repository port out
+	// of the design feature.
+	designService.SetFileCommitter(designFilesCommitter{git: studioTools, repos: repoRepo})
 	// Grant cascade → design: commit the exposesAPI.orgPublished durability marker
 	// on a provider component when its cross-project access request is granted.
 	// Setter-wired at the root (provisioning holds a narrow design port).
@@ -1594,28 +1500,7 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 
 	slog.Info("OpenChoreo API", "baseURL", cfg.PlatformAPI.BaseURL)
 
-	// R8b readiness gate: true after successful boot layout (Resolve → gitfs.New);
-	// the reaper clears it on root-health failure and sets it again on recovery.
-	var workspaceReady *reaper.ReadyGate
-	if workspaceEngine != nil {
-		workspaceReady = &reaper.ReadyGate{}
-		workspaceReady.Set(true)
-	}
-	params.WorkspaceReady = workspaceReady
 	handler := edge.NewHandler(params)
-
-	// Disk-lifecycle reaper (design §14/D12): trash purge, snapshot age-reap,
-	// DB↔disk orphan reconciliation, quota/LRU eviction. ENOSPC on Ensure/Mutate
-	// triggers ForceSweep (unconditional trash purge + full Sweep). Fake()
-	// leaves Workspace nil (no disk); skip reaper wiring in that case.
-	var workspaceReaper Watcher
-	if workspaceEngine != nil {
-		r := reaper.New(workspaceEngine, reaperRepoLister{repoRepo}, cfg.Workspace, workspaceReady)
-		workspaceEngine.SetOnENOSPC(func() {
-			r.ForceSweep(context.Background())
-		})
-		workspaceReaper = r
-	}
 
 	// Background watchers, launched by main under a shared cancellable context.
 	// State lives in Postgres + GitHub, so a plain goroutine per watcher is
@@ -1658,52 +1543,45 @@ func Assemble(cfg config.Config, in Infra, seam Seam) (*App, error) {
 		// once per cfg.CredentialValidatorInterval (default 24h), probes GitHub,
 		// flags identity drift on confirmed unauthorised secrets.
 		credValidator,
-		// agent_turns crash-safety sweep (design D17): a stale-heartbeat
-		// running turn is failed and the D18 one-active guard released;
-		// locally-buffered streams get the terminal event.
-		spec.NewTurnSweeper(turnRepo, turnBroker, 0, 0),
-		// Moves each org's model connection key off its Anthropic-era storage
-		// names: migrate's phase20 copied the bytes at boot, and this switches
-		// the SM-API mirror at boot; the periodic passes retire the old copies
-		// once none of the org's cycles is open.
-		organization.NewModelKeyRename(organization.NewModelKeyRenameRepository(db, credStore), orgRepo, secretRefWriter, runCycleRepo),
-	}
-	// Disk-lifecycle reaper: global passes self-elect via non-blocking flock.
-	// Omitted when Fake() leaves Workspace nil (no disk at assemble time).
-	if workspaceReaper != nil {
-		watchers = append(watchers, workspaceReaper)
 	}
 	// The pod-truth watcher: it classifies each dispatched cycle from the Pod
 	// OpenChoreo rendered for it, records a terminal agent reason when the agent
 	// died without a pull request (or the run's failure record, when its model
-	// provider's limit stopped it), and banks the run's token spend. It writes no
-	// logs and deletes no components — history is the observability plane's and
-	// deletion is retention's. Always on (no longer gated on cluster-gateway-proxy).
-	watchers = append(watchers, codingagent.NewJobWatcher(runtimeClient, runCycleRepo, writeTargets, asServiceIdentity).
-		WithRecorder(runRecorder).
+	// provider's limit stopped it), banks the run's token spend, and then
+	// suspends the cycle's Job at its first terminal pod. It writes no logs and
+	// deletes no components — history is the observability plane's and deletion
+	// is the settler's. Always on (no longer gated on cluster-gateway-proxy).
+	watchers = append(watchers, codingagent.NewJobWatcher(runtimeClient, runCycleRepo, writeTargets, componentClient, asServiceIdentity).
 		WithAgentDeathNotifier(agentDeathNotifier{runs: milestoneRunRepo, supervisor: runSupervisor}).
 		WithRunFailures(milestoneRunRepo))
 	slog.Info("codingagent.JobWatcher: enabled (OpenChoreo resource tree)")
+	// The settler deletes each closed cycle's Component once no pod is left
+	// (two no-pod reads a grace apart, the Job suspended), and suspends a
+	// closed cycle's Job nobody suspended (the backstop).
+	watchers = append(watchers, codingagent.NewComponentSettler(runtimeClient, componentClient, componentClient,
+		runCycleRepo, writeTargets, asServiceIdentity).WithGrace(cfg.CodingAgentSettleGrace))
 	// The milestone run supervisor's Temporal worker. Registered only when
 	// Temporal is configured (TEMPORAL_HOSTPORT set). The watcher dials in a
 	// retry loop, so a Temporal server that is down at boot is not fatal — the
 	// worker connects when it comes up.
 	if cfg.Temporal.Enabled() {
 		runActs := run.NewActivities(run.Deps{
-			Runs: runRuns{runs: milestoneRunRepo},
-			// A failed settle becomes one feed line (run_failed), read off the
-			// row the settle just wrote.
-			Failed:     runFailedActivityRecorder{svc: activitySvc, runs: milestoneRunRepo},
+			Runs:       runRuns{runs: milestoneRunRepo},
 			Cycles:     runCycles{cycles: runCycleRepo},
 			Milestones: issueService,
 			PRs:        issueService,
 			Design:     designComponents{store: artifactStore},
 			Builds:     runBuilds{oc: componentClient},
-			Validation: runValidation{svc: validationSvc, files: filesSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
+			Validation: runValidation{projectFiles: projFiles, svc: validationSvc, versions: artifactSvcGit, runs: milestoneRunRepo, cycles: runCycleRepo},
 			// The coding executor launches the cycle's runner Job and answers with
 			// its Job ref. It mints no execution row — the cycle record is the
 			// supervisor's own bookkeeping.
 			Dispatcher: codingExecutor,
+			// A re-dispatch reuses the cycle's Component; its binding is
+			// un-suspended after the fenced dispatch write, so only an open
+			// cycle's Job ever runs again, and suspended again when a cancel
+			// raced the dispatch.
+			Jobs: runJobBindings{oc: componentClient},
 			// The deploy stage. The supervisor promotes each cycle's components
 			// itself and waits for them to serve, which is what puts validation
 			// after a running version rather than after a green build.
@@ -1750,7 +1628,7 @@ type Degradation struct {
 }
 
 // Degradations reports every optional capability the assembled app is running
-// without, and why. Required config (JWKSURL, TaskTokenSigningKey) is not listed:
+// without, and why. Required config (JWKSURL) is not listed:
 // config.Validate boot-fails on it, so it can never be a degradation here.
 func (a *App) Degradations() []Degradation { return a.degradations }
 
@@ -1768,9 +1646,6 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	if !secretsDelivery {
 		off("secrets-delivery", "SecretsProvider not injected — secret writes + external-secret cleanup disabled")
 	}
-	if cfg.AEPInternalBaseURL == "" {
-		off("mcp-discovery", "AEP_API_INTERNAL_BASE_URL not set — design-turn MCP discovery omitted")
-	}
 	thunderBase := cfg.ThunderAdmin.BaseURL
 	if thunderBase == "" {
 		thunderBase = cfg.ServiceAuth.TokenURL
@@ -1778,15 +1653,15 @@ func computeDegradations(cfg config.Config, secretsDelivery bool) []Degradation 
 	if cfg.ThunderAdmin.ClientID == "" || cfg.ThunderAdmin.ClientSecret == "" || thunderBase == "" {
 		off("idp-mutations", "THUNDER_ADMIN_URL / THUNDER_SYSTEM_CLIENT_ID / THUNDER_SYSTEM_CLIENT_SECRET not set — per-org publisher IDP mutations 503")
 	}
-	if cfg.OAuthStateSigningKey == "" {
-		off("connect-oauth-state", "OAUTH_STATE_SIGNING_KEY not set — GitHub App connect-state JWTs will fail to mint")
-	}
 	// Working dispatch is the OpenChoreo component path: the BFF creates the run
 	// cycle's Component through platform-api-service and OC renders the Job. It
 	// still needs secrets delivery, because the cycle's ExternalSecrets resolve
 	// against the org's secret store — the BFF writes no secret material itself.
 	if !secretsDelivery {
 		off("coding-dispatch-oc", "secrets delivery not configured — the OpenChoreo coding-agent dispatch path cannot resolve its cycle secret refs")
+	}
+	if a := cfg.AEStudio; a.IDP.TokenURL == "" || a.InternalClientID == "" || a.InternalClientSecret == "" {
+		off("ae-studio-tools", "AE_STUDIO_IDP_TOKEN_URL / AE_STUDIO_INTERNAL_CLIENT_ID / AE_STUDIO_INTERNAL_CLIENT_SECRET not set — calls to an org's ae-studio-tools fail ae_studio_misconfigured")
 	}
 	if !cfg.Temporal.Enabled() {
 		off("run-temporal", "TEMPORAL_HOSTPORT not set — milestone run worker watcher not registered")
@@ -1808,40 +1683,22 @@ func (a buildSecretStagerAdapter) StageBuildSecret(ctx context.Context, ocOrgID,
 	if err != nil {
 		return "", err
 	}
-	if res == nil {
-		return "", nil
-	}
 	return res.SecretRef, nil
-}
-
-// buildGitHost selects the git host implementation named by GIT_PROVIDER and
-// returns it as sourcecontrol.Host. This is the only place a concrete provider client
-// is constructed; every gitrepo domain service narrows Host to its own
-// capability port. Deliberately a plain switch — NOT a registry or capability
-// framework. A GitLab impl later is one new clients/gitlab package + one case.
-// cfg.Validate() already rejects unknown providers at boot; the default arm is
-// defensive.
-func buildGitHost(cfg config.Config) (sourcecontrol.Host, error) {
-	switch cfg.GitProvider {
-	case "github":
-		return githubclient.NewClient(), nil
-	default:
-		return nil, fmt.Errorf("unknown GIT_PROVIDER %q — supported: github", cfg.GitProvider)
-	}
 }
 
 // environmentThunderCredentials opens the secret store the environment-tier
 // Thunder binding's admin credential is read from.
 //
-// (nil, nil) when OPENBAO_ADDR is unset: a stack with no secret store cannot
-// reach any environment's identity provider, and the caller skips the whole
-// feature rather than wiring a resolver that fails every call. It performs no
-// I/O — Assemble stays pure; the first read happens when a build asks.
-func environmentThunderCredentials(cfg config.Config) (bindingCredentialReader, error) {
-	if cfg.OpenBaoAddr == "" {
+// (nil, nil) when OPENBAO_ADDR is unset or there is no OpenBao session: a
+// stack with no secret store cannot reach any environment's identity provider,
+// and the caller skips the whole feature rather than wiring a resolver that
+// fails every call. It performs no I/O — Assemble stays pure; the first read
+// (and, if the session has none yet, the login) happens when a build asks.
+func environmentThunderCredentials(cfg config.Config, auth secrets.VaultAuth) (bindingCredentialReader, error) {
+	if cfg.OpenBaoAddr == "" || auth == nil {
 		return nil, nil
 	}
-	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, cfg.OpenBaoToken, thunderBindingKVMount)
+	kv, err := secrets.NewDeliveryKV(cfg.OpenBaoAddr, thunderBindingKVMount, auth)
 	if err != nil {
 		return nil, err
 	}
@@ -1863,7 +1720,6 @@ func deliveryOpenBaoConfigFromAppConfig(cfg config.Config) *secretmanagersvc.Ope
 	return &secretmanagersvc.OpenBaoConfig{
 		Server: cfg.OpenBaoAddr,
 		Path:   "secret",
-		Auth:   &secretmanagersvc.OpenBaoAuth{Token: cfg.OpenBaoToken},
 	}
 }
 

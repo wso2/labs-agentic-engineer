@@ -23,10 +23,11 @@ package spec
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 )
 
 // mkSkillMD builds a minimal valid SKILL.md; kind == "" leaves the metadata
@@ -120,14 +121,10 @@ func TestStampFrontmatterKind(t *testing.T) {
 
 // ---- provisioning seeds the FLAT layout ---------------------------------------
 
-// lsTree lists every blob path at main on the org's origin.
+// lsTree lists every file path at the tip of the org's skills repo.
 func lsTree(t *testing.T, c *ComponentStore, orgID string) []string {
 	t.Helper()
-	out, err := exec.Command("git", "-C", c.host.origin(orgID).Dir(), "ls-tree", "-r", "--name-only", "main").Output()
-	if err != nil {
-		t.Fatalf("ls-tree: %v", err)
-	}
-	return strings.Fields(strings.TrimSpace(string(out)))
+	return c.host.origin(orgID).Paths(t)
 }
 
 func TestProvision_SeedsFlatLayout(t *testing.T) {
@@ -163,11 +160,11 @@ func TestProvision_SeedsFlatLayout(t *testing.T) {
 	}
 	// Spot-check both kinds land flat, with the platform marker only on
 	// platform skills.
-	goMD := c.host.origin("org1").FileAt(t, "main", "skills/go/SKILL.md")
+	goMD := c.host.origin("org1").FileAt(t, "skills/go/SKILL.md")
 	if strings.Contains(goMD, "kind: platform") {
 		t.Fatalf("org skill must not carry the platform marker:\n%s", goMD)
 	}
-	hlaMD := c.host.origin("org1").FileAt(t, "main", "skills/architecture/SKILL.md")
+	hlaMD := c.host.origin("org1").FileAt(t, "skills/architecture/SKILL.md")
 	if !strings.Contains(hlaMD, "kind: platform") {
 		t.Fatalf("platform skill must carry metadata.aep.kind: platform:\n%s", hlaMD)
 	}
@@ -196,7 +193,7 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 		"skills/custom/mine/scripts/s.sh":     "#!/bin/sh\necho mine\n",
 		"skills/custom/react-webapp/SKILL.md": mkSkillMD("react-webapp", "", "user shadow of an org skill"),
 	}, "test: legacy layout")
-	before := origin.HeadSHA(t)
+	callsBefore := len(c.host.pod.Calls())
 
 	n, err := c.Svc.Reconcile(ctx, "org1")
 	if err != nil {
@@ -207,12 +204,14 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	}
 
 	// ONE migration commit on top of the legacy state.
-	out, err := exec.Command("git", "-C", origin.Dir(), "rev-parse", "main^").Output()
-	if err != nil {
-		t.Fatalf("rev-parse main^: %v", err)
+	commits := 0
+	for _, call := range c.host.pod.Calls()[callsBefore:] {
+		if call.Op == aestudiotest.OpCommit {
+			commits++
+		}
 	}
-	if parent := strings.TrimSpace(string(out)); parent != before {
-		t.Fatalf("migration must be a single commit: head parent = %s, want %s", parent, before)
+	if commits != 1 {
+		t.Fatalf("migration must be a single commit, made %d", commits)
 	}
 
 	// No legacy kind dirs remain.
@@ -267,7 +266,7 @@ func TestReconcile_MigratesLegacyRepo(t *testing.T) {
 	// The migrated legacy-custom skill is stamped with its resolved kind, which
 	// under the fold is org (custom folds into org — legacyKindDirs["custom"]
 	// == SkillKindOrg), not the retired "custom".
-	if !strings.Contains(origin.FileAt(t, "main", "skills/mine/SKILL.md"), "kind: org") {
+	if !strings.Contains(origin.FileAt(t, "skills/mine/SKILL.md"), "kind: org") {
 		t.Fatalf("migrated legacy-custom skill must be stamped kind: org (custom folds into org)")
 	}
 	// Shadow: the user copy owns the name; its diverged content is preserved as
@@ -343,7 +342,7 @@ func TestReconcile_CarriesStandardStructure(t *testing.T) {
 		}
 	}
 	// Files are physically in the org repo.
-	if got := c.host.origin("org1").FileAt(t, "main", "skills/demo/scripts/run.mjs"); got != "console.log(1)\n" {
+	if got := c.host.origin("org1").FileAt(t, "skills/demo/scripts/run.mjs"); got != "console.log(1)\n" {
 		t.Fatalf("org repo scripts file = %q", got)
 	}
 	// Re-reconcile: clean copy, no rewrite.

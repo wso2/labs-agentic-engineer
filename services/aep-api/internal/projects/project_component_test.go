@@ -75,6 +75,8 @@ func (conflictRepoSvc) GetRepo(context.Context, string, string) (*sourcecontrol.
 func (conflictRepoSvc) SetWebhookID(context.Context, string, string, int64) error {
 	panic("SetWebhookID not expected")
 }
+func (conflictRepoSvc) BeginDelete(context.Context, string, string) error { return nil }
+func (conflictRepoSvc) AbortDelete(context.Context, string, string) error { return nil }
 func (conflictRepoSvc) DeleteRepo(context.Context, string, string) error {
 	panic("DeleteRepo not expected")
 }

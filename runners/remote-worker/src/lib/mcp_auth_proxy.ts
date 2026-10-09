@@ -23,10 +23,16 @@
 // SDK's MCP URL; it attaches a live bearer (ClientCredentialsTokenProvider
 // or a snapshot) and runs fetchWith401Retry. Local and cloud use the same
 // proxy; canRefresh is true when the Job can remint via publisher CC.
+//
+// It is also where the runner's own MCP tools are served (`local`, see
+// mcp_local_tools.ts): a call to one is answered here and never reaches the
+// upstream, and the upstream's tools/list gains their descriptors, so the
+// runtime sees one server.
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { FatalAuthError, fetchWith401Retry, type AccessTokenSource } from "./auth_retry.js";
+import { interceptJsonRpc, mergeToolsList, type JsonRpcDisposition, type LocalMcpTools } from "./mcp_local_tools.js";
 
 export interface McpAuthProxy {
   url: string;
@@ -39,6 +45,8 @@ export interface StartMcpAuthProxyOpts {
   canRefresh: boolean;
   onToken?: (token: string) => void | Promise<void>;
   onFatal: (err: FatalAuthError) => void;
+  /** Tools answered in-process instead of upstream. */
+  local?: LocalMcpTools;
 }
 
 const HOP = new Set(["host", "connection", "transfer-encoding", "keep-alive", "authorization", "content-length"]);
@@ -79,6 +87,12 @@ async function handle(
 ): Promise<void> {
   try {
     const body = await readRequestBody(req);
+    const disposition: JsonRpcDisposition = opts.local ? await interceptJsonRpc(body, opts.local) : { kind: "forward" };
+    if (disposition.kind === "answer") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(disposition.payload));
+      return;
+    }
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers)) {
       if (v === undefined || HOP.has(k.toLowerCase())) continue;
@@ -98,8 +112,12 @@ async function handle(
       if (RESP_HOP.has(key.toLowerCase())) return;
       outHeaders[key] = value;
     });
+    let out: Buffer = Buffer.from(await upstream.arrayBuffer());
+    if (disposition.kind === "forward-and-merge-list" && opts.local) {
+      out = mergeToolsList(out, opts.local.descriptors) ?? out;
+    }
     res.writeHead(upstream.status, outHeaders);
-    res.end(Buffer.from(await upstream.arrayBuffer()));
+    res.end(out);
   } catch (err) {
     if (res.headersSent) {
       res.destroy();

@@ -33,26 +33,37 @@ type Client struct {
 
 // vaultPath builds user-app-secrets/{OrgBaseNamespace(orgUUID)}/{SecretRefName}.
 // location.OrgName is the org UUID (vault path only; CR namespace is ControlPlaneNamespace).
+// SecretRefName is location.RefName when set, so a new reference gets its own
+// vault entry and a delete by stored name removes exactly that entry.
 func vaultPath(location secretsprovider.SecretLocation) string {
 	ns := tenant.OrgBaseNamespace(location.OrgName)
 	name := location.SecretRefName()
 	return vaultPathPrefix + "/" + ns + "/" + name
 }
 
-// PushSecret writes the JSON object value to OpenBao and returns the full
-// vault path (stable with SecretRefWriter.resolveVaultKey).
-func (c *Client) PushSecret(ctx context.Context, location secretsprovider.SecretLocation, value []byte, _ *secretsprovider.SecretMetadata) (string, error) {
+// SecretPath is the vault path PushSecret stores location under (pure; no
+// write). It applies PushSecret's required-field checks.
+func (c *Client) SecretPath(location secretsprovider.SecretLocation) (string, error) {
 	if location.OrgName == "" {
 		return "", fmt.Errorf("openbao: OrgName is required")
 	}
 	if location.EntityName == "" {
 		return "", fmt.Errorf("openbao: EntityName is required")
 	}
+	return vaultPath(location), nil
+}
+
+// PushSecret writes the JSON object value to OpenBao and returns the full
+// vault path (stable with SecretRefWriter.resolveVaultKey).
+func (c *Client) PushSecret(ctx context.Context, location secretsprovider.SecretLocation, value []byte, _ *secretsprovider.SecretMetadata) (string, error) {
+	path, err := c.SecretPath(location)
+	if err != nil {
+		return "", err
+	}
 	var data map[string]string
 	if err := json.Unmarshal(value, &data); err != nil {
 		return "", fmt.Errorf("openbao: unmarshal secret data: %w", err)
 	}
-	path := vaultPath(location)
 	if err := c.kv.Put(ctx, path, data); err != nil {
 		return "", err
 	}

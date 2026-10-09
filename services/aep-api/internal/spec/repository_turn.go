@@ -18,7 +18,6 @@ package spec
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -29,163 +28,95 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 )
 
-// The agent_turns store was extracted out of the genai turn engine (now internal/spec) during the
-// spec-domain fold (P4): the ORM stays fenced to repositories/ while the turn
-// VOCABULARY (the TurnTerminal shape, ErrTurnActive, the status/reason strings)
-// re-exports back into the domain via type aliases, so the turn engine reads as
-// one package. The AgentTurn gorm lives here, in the spec domain's own
-// repository, as single write-authority.
+// The agent_turns store: the finished-turn ledger. Every turn an
+// org's AE Studio pod runs lands here once, whole and already finished,
+// through record-turn-usage. The AgentTurn gorm lives here, in the spec
+// domain's own repository, as single write-authority.
 
-// Turn statuses (AgentTurn.Status).
+// Turn statuses (AgentTurn.Status). A ledger row is always finished.
 const (
-	turnStatusRunning   = "running"
 	turnStatusCompleted = "completed"
 	turnStatusFailed    = "failed"
 )
 
-// The two statuses a CONSUMER outside this package branches on: the status
-// poll folds the newest turn row into spec.agent (#562). Exported as aliases
-// of the internal constants so the strings stay authored once — the store is
-// still the only writer.
+// TurnStatusFailed is the status a CONSUMER outside this package branches on:
+// the status poll folds the newest turn row into spec.agent (#562). Exported
+// as an alias of the internal constant so the string stays authored once.
+const TurnStatusFailed = turnStatusFailed
+
+// AE Studio turn kinds (AgentTurn.Kind, TurnRecord.Kind): what started the
+// turn — a user in the browser, the project kickoff, or a task plan.
 const (
-	TurnStatusRunning = turnStatusRunning
-	TurnStatusFailed  = turnStatusFailed
+	TurnKindBrowser = "browser"
+	TurnKindKickoff = "kickoff"
+	TurnKindPlan    = "plan"
 )
 
-// Failure reasons (AgentTurn.Reason and the terminal event's `reason`).
-const (
-	turnReasonStreamDied     = "stream-died"
-	turnReasonFoldParity     = "fold-parity"
-	turnReasonBaseMoved      = "base-moved"
-	turnReasonDispatchFailed = "dispatch-failed"
-	turnReasonInternal       = "internal"
-	// turnReasonAgentError: the agents service ended the turn with a coded
-	// error frame — a failure it could name (AgentTurn.Code says which) — in
-	// place of the manifest. Distinct from stream-died: the stream ended
-	// cleanly, it just vouched for nothing.
-	turnReasonAgentError = "agent-error"
-)
-
-// The error codes a coded agents error frame can carry (TurnErrorPart in
-// packages/agent-stream), stored on the failed turn (AgentTurn.Code) so a
-// reader can say why it failed. Mirrors the contract's TurnStatus.code enum.
-const (
-	TurnErrorProviderLimit   = "provider_limit"
-	TurnErrorOutputTruncated = "output_truncated"
-)
-
-// knownTurnErrorCode reports whether code is one aep-api stores. An unknown
-// code (a newer agents image) degrades to the uncoded path rather than
-// writing a value the contract cannot represent.
-func knownTurnErrorCode(code string) bool {
-	return code == TurnErrorProviderLimit || code == TurnErrorOutputTruncated
-}
-
-// ErrTurnActive is returned by TryStart when another turn holds the D18
-// one-active-turn-per-project guard; the accompanying row is the active turn.
-var ErrTurnActive = errors.New("a turn is already running for this project")
-
-// TurnTerminal is the terminal state Finish stamps onto a running row.
-type TurnTerminal struct {
-	Status    string // turnStatusCompleted | turnStatusFailed
-	CommitSHA string
-	Reason    string
-	Paths     []string
-	NoChanges bool
-	Message   string
-	// Code names why a failed turn failed when the agents service could say
-	// (TurnErrorProviderLimit / TurnErrorOutputTruncated); "" otherwise.
-	// ResetAt is when the provider said its limit resets (provider_limit
-	// only, and only when it said). Host is the model host the code is about —
-	// carried to the terminal event only; the row already holds it as
-	// model_host.
-	Code    string
-	ResetAt *time.Time
-	Host    string
-	// Usage is the turn's token usage off the terminal manifest (#249); nil
-	// when the stream carried none (failed turns, pre-capture agents).
-	Usage *contracts.TokenUsage
-	// ContextTokens is the conversation's context size at the turn's end
-	// (AgentTurn.ContextTokens); nil when the turn left no measure.
+// TurnRecord is one finished turn as an org's AE Studio pod reports it
+// (record-turn-usage, the contract's AEStudioTurnRecord), already resolved to
+// the org's tenancy by the caller.
+type TurnRecord struct {
+	TurnID string
+	// Project is "" for a marketplace turn, which belongs to no project (C7).
+	Project        string
+	ConversationID string
+	Kind           string // TurnKindBrowser | TurnKindKickoff | TurnKindPlan
+	Flow           string
+	Status         string // completed | failed
+	Reason         string
+	Code           string
+	BaseRef        string
+	SkillsRef      string
+	StartedAt      time.Time
+	FinishedAt     time.Time
+	// AuthorID and AuthorName credit the user who sent the turn; both "" for
+	// a turn nobody sent (a kickoff with no credit, a marketplace turn).
+	AuthorID   string
+	AuthorName string
+	// ModelHost and Usage.Model key the rate the turn is priced at.
+	ModelHost     string
+	Usage         contracts.TokenUsage
 	ContextTokens *int64
-	// SpecEdited is true when the turn authored real spec changes: a committed
-	// turn whose fold produced a net change, or a room-scoped turn whose agent
-	// edited the collab doc (issue #239 — the activity feed's agent-authorship
-	// signal). It is independent of NoChanges: a room turn is always NoChanges
-	// (git is untouched until the committer flushes the doc) yet still SpecEdited.
-	SpecEdited bool
-	// EditedPaths lists the collab-doc paths a room turn's manifest touched —
-	// the paths whose later committer flush must be attributed to the agent,
-	// not the flushing user (issue #239). In-process only (never persisted);
-	// empty for a committed turn.
-	EditedPaths []string
+	// DesignFeatures are the feature IDs a design turn named (`/design F1
+	// F2`); none means every feature designable at BaseRef. Stored for a
+	// design turn only (designSummary); ignored on any other flow.
+	DesignFeatures []string
 }
 
-// TurnRepository is the agent_turns row store (design D17/D18): the durable
-// turn record, the one-active guard, and the stale-heartbeat sweep. Lookups
-// miss with (nil, nil), matching the house convention.
+// TurnRepository is the finished-turn ledger. Lookups miss with (nil, nil),
+// matching the house convention.
 type TurnRepository interface {
-	// TryStart INSERTs the running row; on conflict with the D18 partial
-	// unique index it fetches and returns the active row alongside
-	// ErrTurnActive. On success the passed row (ID populated) is returned.
-	TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn, error)
-
-	// Heartbeat bumps heartbeat_at on a still-running row (no-op otherwise).
-	Heartbeat(ctx context.Context, id string) error
-
-	// Finish transitions a running row to its terminal state. Guarded on
-	// status='running' so it never overwrites a swept/terminal row; returns
-	// false when the row was not running anymore.
-	Finish(ctx context.Context, id string, terminal TurnTerminal) (bool, error)
-
-	// Get returns the turn only when it belongs to (orgID, projectID) — the
-	// tenant fence for the status/stream endpoints. (nil, nil) on miss.
-	Get(ctx context.Context, orgID, projectID, turnID string) (*AgentTurn, error)
-
-	// GetActive returns the project's running turn, or (nil, nil).
-	GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
-
-	// LastTerminal returns the most recent completed/failed turn of a
-	// conversation — the D20 filesChangedExternally / divergence-note input.
-	LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error)
-
-	// LastContextTokens returns the context size the conversation's newest
-	// MEASURED turn ended at (AgentTurn.ContextTokens), or nil when none of
-	// its turns has one. An unmeasured later turn (a dispatch failure, a
-	// severed stream) left the saved history as it was, so it is skipped
-	// rather than read as an empty conversation.
-	LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error)
+	// RecordFinished stores org's finished turns, each exactly once: a record
+	// whose turn id org already stored is skipped, never rewritten, so a
+	// resent batch changes nothing. The ledger's identity is (org, turn id),
+	// so another org's row with the same id never stands in for this org's
+	// record. cost_usd is stamped here from the rates in force. The
+	// caller has checked each record's project belongs to org.
+	RecordFinished(ctx context.Context, org string, recs []TurnRecord) error
 
 	// NewestCompletedFlow returns the project's most recent COMPLETED turn of
 	// one flow ("design", "start", …), or (nil, nil) when it has run none.
 	//
 	// The status read's staleness check (#575) asks for the newest successful
 	// design run so it can read the requirements as that run saw them. Scoped
-	// to completed because a failed or running turn never reconciled anything:
-	// treating one as the baseline would clear a staleness warning on the
-	// strength of work that did not land.
+	// to completed because a failed turn never reconciled anything: treating
+	// one as the baseline would clear a staleness warning on the strength of
+	// work that did not land.
 	NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error)
 
 	// CompletedFlows returns up to `limit` of the project's COMPLETED turns of
-	// one flow, newest first. The build gate reads the design runs this way to
-	// find, per feature, the run that last designed it (E1).
+	// one flow, the latest-finished first (finished_at; created_at for a row
+	// with none). The build gate reads the design runs this way to find, per
+	// feature, the run whose design of it landed last (E1).
 	CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error)
 
-	// Newest returns the project's most recent turn row, running or terminal,
-	// across every conversation — or (nil, nil) when nothing has ever run.
+	// Newest returns the project's most recent turn row across every
+	// conversation, or (nil, nil) when nothing has ever run.
 	//
 	// Two callers, both needing "has this project ever had an agent work on
-	// it, and what is it doing now" (#562): the kickoff's idempotence guard,
-	// and the status poll's spec.agent field. Project-scoped rather than
-	// conversation-scoped BECAUSE rotation exists — a rotated thread would
-	// otherwise make an interviewed project look untouched and re-fire the
-	// kickoff into it.
+	// it, and how did the last attempt end" (#562): the kickoff's idempotence
+	// guard, and the status poll's spec.agent field.
 	Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error)
-
-	// SweepStale fails every running row whose heartbeat predates olderThan
-	// (reason stream-died, message "replica crashed or hung") and returns the
-	// swept rows so the caller can emit broker terminals.
-	SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error)
 
 	// SumUsageByProject rolls up captured spec/design turn usage per project
 	// across an org (#291), keyed by project id — one half of the Settings →
@@ -206,165 +137,71 @@ func NewTurnRepository(db *gorm.DB, stamper *modelcost.Stamper) TurnRepository {
 	return &turnRepository{db: db, stamper: stamper}
 }
 
-func (r *turnRepository) TryStart(ctx context.Context, t *AgentTurn) (*AgentTurn, error) {
-	if t.Status == "" {
-		t.Status = turnStatusRunning
+func (r *turnRepository) RecordFinished(ctx context.Context, org string, recs []TurnRecord) error {
+	if len(recs) == 0 {
+		return nil
 	}
-	if t.HeartbeatAt.IsZero() {
-		t.HeartbeatAt = time.Now().UTC()
+	rows := make([]AgentTurn, 0, len(recs))
+	for _, rec := range recs {
+		rows = append(rows, r.ledgerRow(org, rec))
 	}
-	// Two attempts: a conflict whose active row finished between our INSERT
-	// and the GetActive read retries the insert once instead of failing.
-	for attempt := 0; attempt < 2; attempt++ {
-		res := r.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(t)
-		if res.Error != nil {
-			return nil, res.Error
-		}
-		if res.RowsAffected > 0 {
-			return t, nil
-		}
-		active, err := r.GetActive(ctx, t.OrgID, t.ProjectID)
-		if err != nil {
-			return nil, err
-		}
-		if active != nil {
-			return active, ErrTurnActive
-		}
-	}
-	return nil, errors.New("genai: turn start raced the guard twice — give up")
-}
-
-func (r *turnRepository) Heartbeat(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).
-		Model(&AgentTurn{}).
-		Where("id = ? AND status = ?", id, turnStatusRunning).
-		Update("heartbeat_at", time.Now().UTC()).Error
+		Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "org_id"}, {Name: "id"}}, DoNothing: true}).
+		Create(&rows).Error
 }
 
-func (r *turnRepository) Finish(ctx context.Context, id string, terminal TurnTerminal) (bool, error) {
-	updates := map[string]any{
-		"status":     terminal.Status,
-		"commit_sha": terminal.CommitSHA,
-		"reason":     terminal.Reason,
-		"paths":      encodePaths(terminal.Paths),
-		"no_changes": terminal.NoChanges,
-		"message":    terminal.Message,
-		"code":       terminal.Code,
-		"reset_at":   terminal.ResetAt,
+// ledgerRow is rec as org's agent_turns row, its cost stamped at the rate in
+// force now and frozen there (#291): null when unpriceable (no stamper, no
+// (host, model) rate). created_at is the turn's start, as it was for a row the
+// in-process engine admitted: Newest and NewestCompletedFlow order by it, so
+// a batch's order or a late delivery never makes an older turn the newest.
+// It is clamped to now: the start is the pod's clock, and a pod running ahead
+// would otherwise pin its row as Newest (the kickoff guard, spec.agent) until
+// real time caught up. started_at keeps the pod's own value. Summary holds a
+// design turn's feature IDs (designSummary) and is empty for any other turn.
+func (r *turnRepository) ledgerRow(org string, rec TurnRecord) AgentTurn {
+	finished := rec.FinishedAt
+	created := rec.StartedAt
+	if now := time.Now().UTC(); created.After(now) {
+		created = now
 	}
-	if terminal.ContextTokens != nil {
-		updates["context_tokens"] = *terminal.ContextTokens
+	row := AgentTurn{
+		ID:                  rec.TurnID,
+		OrgID:               org,
+		ProjectID:           rec.Project,
+		ConversationID:      rec.ConversationID,
+		Kind:                rec.Kind,
+		Flow:                rec.Flow,
+		BaseRef:             rec.BaseRef,
+		SkillsRef:           rec.SkillsRef,
+		Status:              rec.Status,
+		Reason:              rec.Reason,
+		Code:                rec.Code,
+		Summary:             designSummary(rec.Flow, rec.DesignFeatures),
+		AuthorID:            rec.AuthorID,
+		AuthorDisplayName:   rec.AuthorName,
+		InputTokens:         rec.Usage.InputTokens,
+		OutputTokens:        rec.Usage.OutputTokens,
+		CacheReadTokens:     rec.Usage.CacheReadTokens,
+		CacheCreationTokens: rec.Usage.CacheCreationTokens,
+		ModelID:             rec.Usage.Model,
+		ModelHost:           rec.ModelHost,
+		ContextTokens:       rec.ContextTokens,
+		StartedAt:           rec.StartedAt,
+		FinishedAt:          &finished,
+		CreatedAt:           created,
 	}
-	if u := terminal.Usage; u != nil {
-		updates["input_tokens"] = u.InputTokens
-		updates["output_tokens"] = u.OutputTokens
-		updates["cache_read_tokens"] = u.CacheReadTokens
-		updates["cache_creation_tokens"] = u.CacheCreationTokens
-		updates["model_id"] = u.Model
-		// Stamp USD at capture from the rates in force now (#291): the cost is
-		// frozen on the row and never re-derived, so a later rate change can't
-		// rewrite this turn's spend. Priced on the host the row was admitted
-		// with; null when unpriceable (no (host, model) rate, no host, no model).
-		if r.stamper != nil {
-			host, err := r.modelHost(ctx, id)
-			if err != nil {
-				return false, err
-			}
-			updates["cost_usd"] = r.stamper.Cost(modelcost.Tokens{
-				Host:                host,
-				ModelID:             u.Model,
-				InputTokens:         u.InputTokens,
-				OutputTokens:        u.OutputTokens,
-				CacheReadTokens:     u.CacheReadTokens,
-				CacheCreationTokens: u.CacheCreationTokens,
-			})
-		}
+	if r.stamper != nil {
+		row.CostUsd = r.stamper.Cost(modelcost.Tokens{
+			Host:                rec.ModelHost,
+			ModelID:             rec.Usage.Model,
+			InputTokens:         rec.Usage.InputTokens,
+			OutputTokens:        rec.Usage.OutputTokens,
+			CacheReadTokens:     rec.Usage.CacheReadTokens,
+			CacheCreationTokens: rec.Usage.CacheCreationTokens,
+		})
 	}
-	res := r.db.WithContext(ctx).
-		Model(&AgentTurn{}).
-		Where("id = ? AND status = ?", id, turnStatusRunning).
-		Updates(updates)
-	if res.Error != nil {
-		return false, res.Error
-	}
-	return res.RowsAffected > 0, nil
-}
-
-// modelHost reads the host TryStart wrote on the turn at admission. A missing
-// row reads as no host (unpriced); Finish's guarded update then touches nothing.
-func (r *turnRepository) modelHost(ctx context.Context, id string) (string, error) {
-	var hosts []string
-	if err := r.db.WithContext(ctx).
-		Model(&AgentTurn{}).
-		Where("id = ?", id).
-		Pluck("COALESCE(model_host, '')", &hosts).Error; err != nil {
-		return "", err
-	}
-	if len(hosts) == 0 {
-		return "", nil
-	}
-	return hosts[0], nil
-}
-
-func (r *turnRepository) Get(ctx context.Context, orgID, projectID, turnID string) (*AgentTurn, error) {
-	var t AgentTurn
-	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND id = ?", orgID, projectID, turnID).
-		First(&t).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
-func (r *turnRepository) GetActive(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
-	var t AgentTurn
-	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND status = ?", orgID, projectID, turnStatusRunning).
-		First(&t).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
-func (r *turnRepository) LastTerminal(ctx context.Context, orgID, projectID, conversationID string) (*AgentTurn, error) {
-	var t AgentTurn
-	err := r.db.WithContext(ctx).
-		Where("org_id = ? AND project_id = ? AND conversation_id = ? AND status IN ?",
-			orgID, projectID, conversationID, []string{turnStatusCompleted, turnStatusFailed}).
-		Order("created_at DESC").
-		First(&t).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
-// LastContextTokens reads through the conversation_id index; a conversation
-// holds tens of turns, not thousands, so the sort is over a handful of rows.
-func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID, conversationID string) (*int64, error) {
-	var tokens []int64
-	err := r.db.WithContext(ctx).
-		Model(&AgentTurn{}).
-		Where("org_id = ? AND project_id = ? AND conversation_id = ? AND context_tokens IS NOT NULL",
-			orgID, projectID, conversationID).
-		Order("created_at DESC").
-		Limit(1).
-		Pluck("context_tokens", &tokens).Error
-	if err != nil || len(tokens) == 0 {
-		return nil, err
-	}
-	return &tokens[0], nil
+	return row
 }
 
 // Newest reads one row off `ix_agent_turns_project_newest`
@@ -372,11 +209,6 @@ func (r *turnRepository) LastContextTokens(ctx context.Context, orgID, projectID
 // order IS this query's, so it is a single index read rather than a sort of
 // every turn the project has ever run. That matters: the status poll runs this
 // every 5s per viewer while an agent works.
-//
-// A RUNNING row is always the newest one the project has: TryStart's partial
-// unique admits at most one, and no later row can be inserted while it holds
-// the guard — so ordering by creation is enough to find it, with no status
-// precedence.
 func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
@@ -393,13 +225,14 @@ func (r *turnRepository) Newest(ctx context.Context, orgID, projectID string) (*
 }
 
 // NewestCompletedFlow reads one row off the (org_id, project_id) index,
-// narrowed by the indexed `flow` column.
+// narrowed by the indexed `flow` column: the run that finished last, ordered
+// as CompletedFlows orders them, so both name the same newest run.
 func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, projectID, flow string) (*AgentTurn, error) {
 	var t AgentTurn
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
 			orgID, projectID, flow, turnStatusCompleted).
-		Order("created_at DESC").
+		Order("COALESCE(finished_at, created_at) DESC").
 		First(&t).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
@@ -410,47 +243,19 @@ func (r *turnRepository) NewestCompletedFlow(ctx context.Context, orgID, project
 	return &t, nil
 }
 
-// CompletedFlows reads the newest completed runs of one flow off the
-// (org_id, project_id) index.
+// CompletedFlows reads the completed runs of one flow off the
+// (org_id, project_id) index and orders them by when each finished: two runs
+// can overlap, and the one that finished last wrote last. Rows the in-process
+// engine wrote have no finished_at and fall back to created_at.
 func (r *turnRepository) CompletedFlows(ctx context.Context, orgID, projectID, flow string, limit int) ([]AgentTurn, error) {
 	var turns []AgentTurn
 	err := r.db.WithContext(ctx).
 		Where("org_id = ? AND project_id = ? AND flow = ? AND status = ?",
 			orgID, projectID, flow, turnStatusCompleted).
-		Order("created_at DESC").
+		Order("COALESCE(finished_at, created_at) DESC").
 		Limit(limit).
 		Find(&turns).Error
 	return turns, err
-}
-
-func (r *turnRepository) SweepStale(ctx context.Context, olderThan time.Time) ([]AgentTurn, error) {
-	// One guarded UPDATE ... RETURNING so concurrent sweeps (or a Finish
-	// racing the sweep) each claim a row at most once.
-	var swept []AgentTurn
-	err := r.db.WithContext(ctx).Raw(`
-		UPDATE agent_turns
-		SET status = ?, reason = ?, message = ?, updated_at = now()
-		WHERE status = ? AND heartbeat_at < ?
-		RETURNING *`,
-		turnStatusFailed, turnReasonStreamDied, "replica crashed or hung",
-		turnStatusRunning, olderThan.UTC()).
-		Scan(&swept).Error
-	if err != nil {
-		return nil, err
-	}
-	return swept, nil
-}
-
-// encodePaths stores the conflicting-path list as a JSON array ("" for none).
-func encodePaths(paths []string) string {
-	if len(paths) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(paths)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }
 
 func (r *turnRepository) SumUsageByProject(ctx context.Context, orgID string) (map[string]contracts.StampedUsage, error) {
@@ -520,16 +325,4 @@ func usageRowsToMap(rows []usageByProjectRow) map[string]contracts.StampedUsage 
 		out[row.ProjectID] = contracts.StampedUsage{Tokens: u, CostUsd: row.CostUsd, Host: row.Host}
 	}
 	return out
-}
-
-// decodePaths reads the JSON array back (nil for empty/invalid).
-func decodePaths(raw string) []string {
-	if raw == "" {
-		return nil
-	}
-	var paths []string
-	if err := json.Unmarshal([]byte(raw), &paths); err != nil {
-		return nil
-	}
-	return paths
 }

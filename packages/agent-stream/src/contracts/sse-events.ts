@@ -22,15 +22,15 @@
  *
  * The wire stays RAW `StreamPart` (the SDK's `TextStreamPart`, one frame per
  * part); this module does NOT add an envelope. It exists so the producer (the
- * Express SSE route in `server.ts`), the eval, and the playground share ONE
+ * design agent's `/v1` edge), the eval, and the playground share ONE
  * definition of: the emitted event catalog, the payloads carried inside the
  * frames (`OpResult`, the per-tool `*Input` shapes), the reviewable `Change`
- * projection, and the turn-request body (`TurnRequest`).
+ * projection, and the turn facts (`TurnSpec`, `TurnAim`, `TurnAttachment`).
  *
  * Ownership: this module is the leaf source of truth for the wire, published by
- * the `@aep/agent-stream` package so the producer (the agents service SSE
- * route), the fold consumers (evals, playground, console), and the BFF share ONE
- * definition. The domain (`bundle.ts`) and the agents-service `tool.ts` import
+ * the `@aep/agent-stream` package so the producer (the design agent's `/v1`
+ * edge) and the fold consumers (evals, playground, console) share ONE
+ * definition. The domain (`bundle.ts`) and the design agent's `tool.ts` import
  * these types and their Zod schemas carry a compile-time drift guard asserting
  * they stay assignable to the `*Input` types here — so there is no
  * hand-maintained parallel copy. This stream is NOT part of the generated
@@ -115,7 +115,7 @@ export type OpResult = OpOk | OpErr;
 // --- Per-tool input shapes (the `tool-call.input` value) --------------------
 //
 // These are the WIRE source of truth. The Zod `inputSchema`s in
-// `@aep/agents` `tool.ts` carry a compile-time assert that `z.infer<schema>`
+// `@aep/ae-design-agent` `tool.ts` carry a compile-time assert that `z.infer<schema>`
 // stays equal to these — divergence fails that package's typecheck.
 
 export interface AddFileInput {
@@ -208,7 +208,7 @@ export interface AskQuestionOption {
 
 /**
  * The `ask_question` tool input — a single structured question. WIRE source of
- * truth; drift-guarded against the agents-service Zod schema.
+ * truth; drift-guarded against the design agent's Zod schema.
  */
 export interface AskQuestionInput {
   question: string;
@@ -305,7 +305,7 @@ export const DECLARE_PLAN_TOOL = "declare_plan" as const;
  * The `declare_plan` tool input. WIRE source of truth.
  *
  * NOT yet drift-guarded: the tool is registered — with the Zod schema and the
- * `Equal<>` assert every other input here carries — when the agents-service
+ * `Equal<>` assert every other input here carries — when the design agent's
  * half lands via the handshake. Until then the console renders this shape from
  * typed mocks and no producer emits it.
  */
@@ -321,8 +321,8 @@ export interface DeclarePlanInput {
 
 // --- Skills (progressive disclosure, ADR-0002) ------------------------------
 //
-// Skills are GUIDANCE, not code, and they never travel on the wire: the turn's
-// `WorkspaceRef.skillsRef` names an immutable `_skills` snapshot on the shared
+// Skills are GUIDANCE, not code, and they never travel on the wire: the
+// turn's skills snapshot (named by the project lookup) sits on the shared
 // mount, and the service reads the catalog (and, lazily, the bodies) from
 // there. The system prompt shows only a name+description catalog; the agent
 // pulls a body on demand via the `loadSkill` tool. The body enters context only
@@ -378,68 +378,13 @@ export type LoadSkillReferenceResult =
   | { ok: true; name: string; path: string; content: string }
   | { ok: false; name: string; path: string; error: string; available: string[] };
 
-// --- MCP discovery (caller-supplied, dependency-management migration Phase 5) -
-//
-// The org's dependency-discovery MCP server (aep-api
-// `internal/feature/dependencies/mcp_server.go`, mounted at `POST
-// /internal/v1/mcp`) lists read-only tools (list_external_resources,
-// get_external_resource_schema, list_org_endpoints,
-// list_platform_resource_types) so the main agent proposes `dependencies`
-// entries that reuse resources/endpoints already registered in the org instead
-// of inventing new names/shapes. Mirrors `WorkspaceRef`: the CALLER (the BFF)
-// resolves the endpoint and mints a short-lived, org-bound bearer token, and
-// pushes both in the turn payload; the service never reads either from its own
-// env. Omitted → no `tools/list` fetch and no discovery tools registered
-// (byte-identical to a turn without `mcp`).
-
-/** Caller-supplied MCP discovery endpoint for this turn. */
-export interface McpConfig {
-  /** The MCP JSON-RPC endpoint (aep-api's `/internal/v1/mcp`, org-bound). */
-  url: string;
-  /**
-   * Bearer token for that endpoint. Short-lived (minted per call, ~5 min TTL on
-   * the aep-api side, `AudienceMCP`/`aep-api-mcp`) — a turn that outlives it sees
-   * the discovery tools 401 partway through; `loadMcpTools` degrades that to "no
-   * tools" up front, but a mid-turn `tools/call` 401 surfaces as a failed tool
-   * call (best-effort, not retried).
-   */
-  token: string;
-}
-
-/**
- * Caller-supplied collab-room reference for a room-scoped turn (#86 phase 4).
- * Mirrors `McpConfig`: the BFF resolves the room and forwards the caller's
- * bearer; the service never reads either from its own env (the ws URL alone
- * comes from service config — the BFF doesn't know the agents-side route).
- * Present → the agents service joins the room as a live Yjs peer, reads the
- * file bundle FROM the doc, and applies file ops to it; nothing is committed
- * to git (persistence is the #86 phase-3 committer). Omitted → the
- * committed-truth snapshot turn, byte-identical to today.
- */
-export interface CollabConfig {
-  /** The room id (`spec-<org>-<project>`), resolved by the BFF. */
-  roomId: string;
-  /**
-   * The caller's bearer, forwarded request-scoped (#86 decision 7): the
-   * collab server's BFF oracle validates it exactly like a browser join.
-   */
-  token: string;
-}
-
-/** Runtime guard for an untrusted `collab` value (the server's pre-stream 400 check). */
-export function isCollabConfig(v: unknown): v is CollabConfig {
-  if (typeof v !== "object" || v === null) return false;
-  const c = v as Record<string, unknown>;
-  return typeof c.roomId === "string" && c.roomId !== "" && typeof c.token === "string" && c.token !== "";
-}
-
 // --- The reviewable change (§7) ---------------------------------------------
 
 /**
  * A reviewable projection of one `tool-result` part: the op intent plus its
  * result. A browser folds these into a live diff; the eval reconstructs files
  * via `applyToolCall` instead. Pure field projection — see `toChange` in
- * `@aep/agents` `change.ts`.
+ * `@aep/ae-design-agent` `change.ts`.
  */
 export interface Change {
   toolCallId: string;
@@ -454,45 +399,18 @@ export interface Change {
   result: OpResult;
 }
 
-// --- The turn request (the `POST /conversations/:id/turns` body) -------------
-
-/**
- * The shared-volume workspace reference (shared-workspace-volume, D9): IDs +
- * shas only — **no filesystem path ever crosses the boundary**. The
- * agents service derives
- * `$WORKSPACE_MOUNT_ROOT/repos/<org>/<proj>/<repoSlug>/snapshots/<ref>/` (and
- * the `_skills` analog) itself from these fields, so a hostile payload has no
- * path input to traverse: the tenancy fence is structural, not validated-in.
- */
-export interface WorkspaceRef {
-  /**
-   * The namespaced conversation id, `org_<orgId>--proj_<projectId>--<useCase>--<uuid>`.
-   * Must equal the URL `:id`; supplies the org/proj path segments and the org
-   * value asserted against the caller's `X-Org-Id` claim (the IDOR fence).
-   */
-  conversationId: string;
-  /** Per-dispatch uuid (turn attribution/tracing; never used in path derivation). */
-  turnId: string;
-  /** The repo directory segment (`git_repositories.repo_slug`; validated slug format). */
-  repoSlug: string;
-  /** 40-hex committed base sha — the turn reads `snapshots/<ref>/`. */
-  ref: string;
-  /** 40-hex `_skills` head sha — skills load from `_skills/org-skills/snapshots/<skillsRef>/`. */
-  skillsRef: string;
-}
-
 /**
  * What a turn is FOR, as facts rather than prose. The caller states the intent
  * and the values only it can know (the captured idea, the milestone scope);
- * the agents service turns that into instruction text. No caller composes
+ * the design agent turns that into instruction text. No caller composes
  * prompt wording — that is the whole point of this type.
  *
  *  - `chat`  — an ordinary user message, sent verbatim.
  *  - `flow`  — a `/<command>`: load a skill and follow it, with the user's
  *              trailing text (if any) riding along. `skill` carries the
  *              command's TOKEN as typed; most tokens are the skill name, and
- *              the few that name a branch of one instead resolve in the agents
- *              service, which is where wording lives. `references` names the
+ *              the few that name a branch of one instead resolve in the design
+ *              agent, which is where wording lives. `references` names the
  *              attached reference documents exactly as on `start` — a flow
  *              generates artifacts (wireframes above all) that must be
  *              grounded in an attached sketch or spec.
@@ -530,7 +448,7 @@ export type PrototypeFeedbackRequest = FeedbackRequest;
 /**
  * A batch of review requests on ONE web-application prototype, revised in a
  * single `/prototype` turn: the kit's feedback submission plus the `component`
- * the batch is about. The caller forwards it as facts; the agents service alone
+ * the batch is about. The caller forwards it as facts; the design agent alone
  * words it.
  */
 export interface PrototypeFeedback extends FeedbackSubmission {
@@ -631,44 +549,6 @@ export function isTurnScope(v: unknown): v is TurnScope {
 }
 
 /**
- * A turn's display record (#463): the raw client-sent instruction and the
- * acting user. `author` mirrors the console's live author shape
- * (`{id: email, displayName}`) so a rehydrated row is attributable — and
- * self-vs-teammate distinguishable — exactly like a live one; it is omitted
- * for M2M callers with no human identity.
- */
-export interface TurnJournal {
-  text: string;
-  author?: { id: string; displayName: string };
-  /**
-   * File NAMES attached to this message (#428) — never bytes. The display read
-   * replaces a user row's content with `text`, so without these a reload would
-   * show the agent discussing a document that appears nowhere in the thread.
-   * Names only: the journal is a DISPLAY record, and a chip is not a download.
-   */
-  attachments?: string[];
-  /**
-   * What this message was aimed at (#666). Journaled for the same reason as
-   * attachment names: the console renders it as a tag above the message, and
-   * without the journal a reload would leave "make this shorter" with nothing
-   * saying what "this" was. A record of the words but not the target is not a
-   * record of what happened.
-   */
-  anchor?: TurnAnchor;
-  /**
-   * What the user was looking at when they sent this message (S6). Journaled
-   * so a reloaded thread can say which feature each message was about.
-   */
-  scope?: TurnScope;
-  /**
-   * The prototype review this message sent (#860). Journaled because the wire
-   * text is only `/prototype <component>`: without the batch a reloaded thread,
-   * and every teammate's, could not say what was asked for.
-   */
-  prototypeFeedback?: PrototypeFeedback;
-}
-
-/**
  * One chat attachment (#428): conversation-scoped model content the user
  * attached to a single message.
  *
@@ -752,10 +632,11 @@ export interface ModelCapabilities {
 }
 
 /**
- * The organization's model connection for one turn, beside the turn's `model`:
- * which API format, which URL, how the key authenticates, the limits aep-api
- * resolved, and what it supports. The key itself rides the `X-Model-Key`
- * header, never the body.
+ * The organization's model connection, beside the turn's `model`: which API
+ * format, which URL, how the key authenticates, the limits aep-api resolved,
+ * and what it supports. The key is not part of this shape: the pod reads it
+ * from the `ANTHROPIC_API_KEY` secret and `connectionFromWire`
+ * (ae-design-agent `shared/model.ts`) pairs it with this connection.
  */
 export interface TurnConnection {
   format: ModelFormat;
@@ -880,110 +761,6 @@ export interface PlanContextFile {
 }
 
 /**
- * The turn-request body (D9/§12): the body carries a `WorkspaceRef` and the
- * service reads the file snapshot AND the skills from the shared read-only
- * mount — no file content or skill bodies ever cross the wire.
- *
- * `filesChangedExternally` flags an out-of-band edit so the server prepends a
- * CURRENT-STATE-authoritative note. The producer (server) validates an
- * untrusted body against this shape; the eval client (and the BFF) construct
- * it — one definition, no drift.
- */
-export interface TurnRequest {
-  /**
-   * What this turn is for. The agents service composes the instruction text
-   * from it — see `TurnSpec`.
-   */
-  turn: TurnSpec;
-  /**
-   * What the user was looking at when they sent this turn (S6): a feature, or
-   * the design review. Absent → the whole product. The service renders it into
-   * the instruction and journals it; callers never format it.
-   */
-  scope?: TurnScope;
-  /**
-   * The previous turn of this conversation FAILED (D20): its changes never
-   * reached git, though the conversation history claims they did. The service
-   * prepends the note that reconciles the two.
-   */
-  previousTurnFailed?: boolean;
-  /**
-   * No interview is possible in this run (the playground's headless phases):
-   * the service tells the agent to generate on stated assumptions rather than
-   * calling the question tools.
-   */
-  headless?: boolean;
-  /**
-   * The model this turn runs on: the organization's chosen model id, resolved
-   * by the caller per turn. Absent → the service's default (`AGENT_MODEL`),
-   * which is what a local caller such as the playground relies on.
-   */
-  model?: string;
-  /**
-   * The connection `model` is served from (aep-api resolves it per turn, the
-   * key rides `X-Model-Key`). Absent → Anthropic's own API with the key as
-   * `x-api-key`.
-   */
-  connection?: TurnConnection;
-  /** Where to read files + skills from the shared mount (IDs + shas only). */
-  workspace: WorkspaceRef;
-  filesChangedExternally?: boolean;
-  /**
-   * Caller-supplied MCP discovery endpoint for this turn (dependency-management
-   * migration Phase 5). Present → the turn loop fetches `tools/list` from it
-   * (best-effort) and registers each as a dynamic tool, merged under a
-   * shadow-guard so a discovered tool can never shadow a built-in one. Omitted →
-   * no fetch, no discovery tools (byte-identical to an mcp-free turn).
-   */
-  mcp?: McpConfig;
-  /**
-   * The turn's display record (#463): the raw client-sent instruction (exactly
-   * what the sender's UI rendered as the user bubble) plus a best-effort acting
-   * user. Journaled beside the transcript and served for user rows on the
-   * get-conversation read — never woven into the model prompt. Omitted (older
-   * callers, evals) → no journal entry; the read falls back to the raw stored
-   * message for that turn.
-   */
-  journal?: TurnJournal;
-  /**
-   * Room-scoped turn (#86 phase 4): join this collab room as a live Yjs peer,
-   * read files from the doc, apply ops to the doc, commit nothing. Omitted →
-   * the committed-truth snapshot turn (byte-identical to today).
-   */
-  collab?: CollabConfig;
-  /**
-   * Give this turn a `web_search` tool (external-dependency-discovery #252) —
-   * lets the model verify a candidate external API/SDK actually exists before
-   * proposing a `dependencies` entry for it. The caller (BFF) sets this true
-   * under the SAME condition as `mcp` (design-generate or any collab
-   * room-scoped turn), but unlike `mcp` it needs no BFF-minted credential.
-   * Which tool it is follows the connection's `capabilities.webSearch`; with
-   * `none`, or omitted/false, the tool map is byte-identical to a turn
-   * without it.
-   */
-  webSearch?: boolean;
-  /**
-   * Chat attachments for THIS turn (#428) — bytes inline, see `TurnAttachment`.
-   * Absent/empty → the turn's messages are byte-identical to one built before
-   * this field existed.
-   */
-  attachments?: TurnAttachment[];
-  /**
-   * Where the person reading this turn's prose is sitting (#580). The right
-   * vocabulary belongs to the SURFACE, not to the skill: in a local run the
-   * user is standing in the repo, so `design.cell` is the right word; in the
-   * console it names nothing on screen. The agents service inlines the
-   * surface's narration skill into the system prompt — see
-   * `buildNarrationBlock`. Omitted → no narration policy, and the prompt is
-   * byte-identical to a turn without it (the playground's case).
-   *
-   * This is the one turn property that genuinely cannot be derived: it is who
-   * is asking, not what is being asked for.
-   */
-  surface?: Surface;
-}
-
-/**
  * The surfaces a turn's prose can be read on. A surface's narration policy is
  * the skill of the SAME NAME (`skills/console/`), so there is no second table
  * mapping one to the other.
@@ -998,7 +775,7 @@ export function isSurface(v: unknown): v is Surface {
 }
 
 /**
- * The registrable tool sets. NOT a wire field: the agents service derives the
+ * The registrable tool sets. NOT a wire field: the design agent derives the
  * set from `TurnSpec.kind` (`plan` → task-plan, everything else → files), so a
  * caller cannot ask for a tool set that disagrees with what its turn is for.
  */
@@ -1100,7 +877,7 @@ function isPlanContextOrAbsent(v: unknown): boolean {
   });
 }
 
-// --- The terminal manifest (shared-workspace-volume D14) --------------------
+// --- The terminal manifest (D14) --------------------
 
 /**
  * Per-turn token usage carried on the terminal manifest (#249). Field names are
@@ -1122,13 +899,13 @@ export interface TurnUsage {
 /**
  * The terminal manifest frame — ALWAYS emitted (possibly empty) after a turn
  * completes successfully, before `[DONE]`; a severed/failed stream carries NO
- * manifest, which is exactly what lets the consumer (the aep-api fold) treat
+ * manifest, which is exactly what lets the consumer treat
  * its absence as "do not commit". Covers ONLY the paths mutated THIS turn:
  * `files` maps each still-present touched path to the sha256 (lowercase hex,
  * over the UTF-8 bytes) of its final content; `deleted` lists the touched
  * paths no longer present. A chat-only or task-plan turn emits
  * `{files: {}, deleted: []}`. Structurally a `StreamPart` (open type), named
- * here so both fold sides hash-check against ONE definition.
+ * here so producer and consumer hash-check against ONE definition.
  */
 export interface ManifestPart {
   type: "manifest";
@@ -1137,8 +914,8 @@ export interface ManifestPart {
   /** Paths mutated this turn that are no longer present at turn end. */
   deleted: string[];
   /**
-   * The turn's token spend (#249). Present on every manifest the agents
-   * service emits today; optional so older producers/recorded streams stay
+   * The turn's token spend (#249). Present on every manifest the design
+   * agent emits today; optional so older producers/recorded streams stay
    * valid. Manifest-only ⇒ a failed/severed turn carries no usage (v1).
    */
   usage?: TurnUsage;
@@ -1193,13 +970,13 @@ export const AGENT_SSE_EVENT_TYPES = [
   "tool-call",
   // The call's VERDICT, and it rides that call's own `tool-call` — a file write
   // is applied and reported at its own `tool-input-end`
-  // (`services/agents/src/agents/main/tools/write-ledger.ts`), not at the tail
+  // (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/agents/main/tools/write-ledger.ts`), not at the tail
   // of the step. That matters because the SDK underneath does the opposite: it
   // queues a step's calls and executes them all after the whole assistant
   // message has streamed, which for a step batching five `addFile`s would leave
   // file 1's verdict waiting on file 5's body. Exactly ONE result per call
   // reaches the wire. The ordering is pinned by
-  // `services/agents/test/frame-order.test.ts` (it needs the real SDK loop).
+  // `components/dataplane/ae-system-project/ae-studio/ae-design-agent/test/frame-order.test.ts` (it needs the real SDK loop).
   "tool-result",
   "tool-error",
   "error",

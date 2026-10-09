@@ -20,13 +20,13 @@
 // generate requirements from.
 //
 // The descriptor is deliberately invisible to the agent. Every dot-led path
-// segment is skipped by the turn-snapshot walk (agentfold.InTurnSnapshot, and
-// its TS mirror in services/agents load-workspace.ts), and `.toml` is not an
-// admitted extension in KeepInTurnSnapshot either — so the model can never
-// read this file even by asking. The idea reaches a turn ONLY through the
-// server-side steering append (ideaSteer, wired in genai_service). That is why
-// there is no "read the descriptor" tool and no instruction telling the agent
-// where the file lives.
+// segment is skipped by the design agent's turn-snapshot walk
+// (components/dataplane/ae-system-project/ae-studio/ae-design-agent
+// load-workspace.ts), and `.toml` is not an admitted extension there either —
+// so the model can never read this file even by asking. The idea reaches a
+// turn ONLY through the `/start` expansion in the org's AE Studio pod. That is
+// why there is no "read the descriptor" tool and no instruction telling the
+// agent where the file lives.
 //
 // It is equally invisible in the console's Spec view: toSpecEntry keeps only
 // `specs/<requirements|design|validation>/<file>`, and this path has too few
@@ -42,8 +42,8 @@ package spec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -90,40 +90,28 @@ func MarshalDescriptor(d Descriptor) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ParseDescriptor reads descriptor TOML. A malformed file is an error, never a
-// silently-empty descriptor — callers that want best-effort behavior (the
-// steering read) decide that for themselves.
-func ParseDescriptor(raw []byte) (Descriptor, error) {
-	var d Descriptor
-	if _, err := toml.Decode(string(raw), &d); err != nil {
-		return Descriptor{}, fmt.Errorf("decode descriptor: %w", err)
-	}
-	return d, nil
-}
-
-// DescriptorWriter stamps the descriptor into a project repo. It writes through
-// the ordinary Files API apply path — the descriptor lives under specs/, so it
-// needs no gate widening (validatePath already admits it, dot-prefix and all).
+// DescriptorWriter stamps the descriptor into a project repo, one commit
+// through the org's AE Studio pod.
 type DescriptorWriter struct {
-	files FilesService
+	git   sourcecontrol.Git
+	repos sourcecontrol.ProjectRepoRows
 	now   func() time.Time
 }
 
-// NewDescriptorWriter wires the writer over the Files service.
-func NewDescriptorWriter(files FilesService) *DescriptorWriter {
-	return &DescriptorWriter{files: files, now: time.Now}
+// NewDescriptorWriter wires the writer over the Git port and the project's
+// repository row.
+func NewDescriptorWriter(git sourcecontrol.Git, repos sourcecontrol.ProjectRepoRows) *DescriptorWriter {
+	return &DescriptorWriter{git: git, repos: repos, now: time.Now}
 }
 
 // SpecIgnorePath is the ignore file scaffolded beside the descriptor, and
 // SpecIgnoreContent is what it holds. It lives UNDER specs/ rather than at the
-// repo root for one practical reason: the Files API's write scope is specs/-only
-// (validatePath), so a root .gitignore would need a gate widening, while
-// patterns in specs/.gitignore are already relative to specs/ and say the same
-// thing. Dot-prefixed like the descriptor, so the same rule keeps it invisible
-// to the agent.
+// repo root: the spec tree is what the platform writes, and patterns in
+// specs/.gitignore are relative to specs/ and say the same thing. Dot-prefixed
+// like the descriptor, so the same rule keeps it invisible to the agent.
 //
 // What it guards: reference documents are overlaid into the turn's snapshot at
-// specs/requirements/references/ (gitfs.ReferenceOverlayDir) and must never be
+// specs/requirements/references/ (by the org's AE Studio pod) and must never be
 // committed back from there. This is the guard that covers the coding-agent
 // runner, which clones for real and stages with git — a path no server-side
 // predicate sees. The collab committer's own reference predicate is NOT made
@@ -141,54 +129,37 @@ const (
 // field rather than skipped: the file's other job is to MARK the repo as an
 // Agentic Engineer project.
 //
-// One apply, so a new repo is never left marked-but-unguarded (or the reverse)
-// by a failure between two commits.
+// One commit, so a new repo is never left marked-but-unguarded (or the
+// reverse) by a failure between two commits. Each attempt reads both paths'
+// blob shas at the tip as the commit's baseShas; a concurrent writer that
+// moved one first is re-read and retried (sourcecontrol.CommitRetrying).
 func (w *DescriptorWriter) WriteDescriptor(ctx context.Context, orgID, projectID, name, idea string) error {
-	if w == nil || w.files == nil {
+	if w == nil || w.git == nil || w.repos == nil {
 		return nil
 	}
 	raw, err := MarshalDescriptor(NewDescriptor(name, idea, w.now().UTC().Format(time.RFC3339)))
 	if err != nil {
 		return err
 	}
-	_, _, err = w.files.Apply(ctx, orgID, projectID, ApplyRequest{
-		Writes: []WriteOp{
-			{Path: DescriptorPath, Content: string(raw)},
-			{Path: SpecIgnorePath, Content: SpecIgnoreContent},
-		},
-		Message: "chore: initialize the agentic-engineer project descriptor",
+	ref, _, err := sourcecontrol.RepoRefFor(ctx, w.repos, orgID, projectID)
+	if err != nil {
+		return err
+	}
+	files := []sourcecontrol.FileWrite{
+		{Path: DescriptorPath, Content: string(raw)},
+		{Path: SpecIgnorePath, Content: SpecIgnoreContent},
+	}
+	_, err = sourcecontrol.CommitRetrying(ctx, w.git, ref, func(ctx context.Context) (sourcecontrol.CommitRequest, error) {
+		req := sourcecontrol.CommitRequest{Message: "chore: initialize the agentic-engineer project descriptor"}
+		for _, f := range files {
+			_, base, err := w.git.ReadFile(ctx, ref, "", f.Path)
+			if err != nil && !errors.Is(err, sourcecontrol.ErrPathNotFound) {
+				return sourcecontrol.CommitRequest{}, fmt.Errorf("read %s: %w", f.Path, err)
+			}
+			f.BaseSHA = base
+			req.Writes = append(req.Writes, f)
+		}
+		return req, nil
 	})
 	return err
-}
-
-// readProjectIdea reads the captured idea at `at`, best-effort: a project with
-// no descriptor, an unreadable one, or a corrupt one yields "" and the turn
-// proceeds without it. Deliberately never an error — losing the idea costs the
-// user one extra question from the start skill, whereas failing the turn costs
-// them their kickoff.
-//
-// The exact-path predicate is what makes this work at all: ReadBundle applies
-// ONLY the caller's filter (gitfs lsTree lists dot-entries like any other), so
-// the descriptor is readable here even though the turn-snapshot walk that
-// builds the agent's view drops it.
-func (s *Service) readProjectIdea(ctx context.Context, ref sourcecontrol.RepoRef, at string) string {
-	files, _, err := s.git.Workspace().ReadBundle(ctx, ref, at, func(rel string) bool {
-		return rel == DescriptorPath
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "descriptor unreadable; turn continues without the captured idea",
-			"path", DescriptorPath, "error", err)
-		return ""
-	}
-	raw := files[DescriptorPath]
-	if strings.TrimSpace(raw) == "" {
-		return "" // no descriptor: an older project, or a best-effort write that failed
-	}
-	d, err := ParseDescriptor([]byte(raw))
-	if err != nil {
-		slog.WarnContext(ctx, "descriptor malformed; turn continues without the captured idea",
-			"path", DescriptorPath, "error", err)
-		return ""
-	}
-	return d.Idea
 }

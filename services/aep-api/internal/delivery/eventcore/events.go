@@ -101,7 +101,10 @@ var _ delivery.BuildTerminalObserver = (*Events)(nil)
 // pull_request fires the merge policy on open AND on every push to the branch
 // (synchronize) — the agent force-pushes a rebase to clear a conflict, and
 // that push is the only signal that the conflict is resolved. ready_for_review
-// and reopened are the same decision arriving by another route.
+// and reopened are the same decision arriving by another route. edited is how
+// a retried cycle ADOPTS a pull request already open on its milestone's branch:
+// it pushes nothing, so its rewrite of the body is the only event it makes
+// (cycleAsOf keeps an edit from before the cycle off it).
 //
 // issues covers the six actions that can change a milestone's membership or an
 // issue's state, which is what the dispatch predicate is computed over.
@@ -110,6 +113,7 @@ func (e *Events) RegisterHandlers(register RegisterFunc) {
 	register("pull_request", "synchronize", e.OnPullRequest)
 	register("pull_request", "ready_for_review", e.OnPullRequest)
 	register("pull_request", "reopened", e.OnPullRequest)
+	register("pull_request", "edited", e.OnPullRequest)
 	register("pull_request", "closed", e.OnPullRequestClosed)
 	for _, action := range []string{"closed", "reopened", "milestoned", "demilestoned", "labeled", "unlabeled"} {
 		register("issues", action, e.OnIssues)
@@ -231,12 +235,19 @@ func (e *Events) isEcho(sender string) bool {
 // request it is waiting behind, because a cycle parked on a draft is otherwise
 // indistinguishable from one whose agent never opened a pull request at all.
 // `ready_for_review` brings the same pull request back through here.
+//
+// A pull request that is no longer open is not news here: `closed` has its own
+// handler, and `edited` also fires on a pull request that already merged — an
+// earlier cycle's outcome, which must not be recorded onto the open cycle.
 func (e *Events) OnPullRequest(ctx context.Context, _, _ string, payload []byte) error {
 	var p pullRequestPayload
 	if err := json.Unmarshal(payload, &p); err != nil {
 		return nil // malformed delivery — swallow (matches the router's no-op policy)
 	}
 	if p.PullRequest.Number == 0 || p.Repository.FullName == "" {
+		return nil
+	}
+	if strings.EqualFold(p.PullRequest.State, "closed") {
 		return nil
 	}
 	owner, err := e.resolvePRRun(ctx, p.Repository.FullName, p.PullRequest.Head.Ref)

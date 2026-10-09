@@ -70,7 +70,7 @@ Three properties make this hold:
 ## Consequences
 
 - **A `design.json` schema change is a multi-image deploy.** Two running
-  containers embed the strict schema: `aep-api` (the fold gate) and `aep-agents`
+  containers embed the strict schema: `aep-api` (the fold gate) and `ae-design-agent`
   (every design.json write passes `FileBundle.commit` → `checkComponentDesign`).
   Shipping only `aep-api` leaves the first re-generation over a stamped design
   failing `SCHEMA_VIOLATION`.

@@ -23,16 +23,15 @@ import { promisify } from "node:util";
 const execAsync = promisify(exec);
 
 /**
- * Cloud coding Jobs mount a long-lived GitHub PAT as GITHUB_TOKEN (gh also
- * accepts GH_TOKEN). When present, git authenticates through `gh auth
- * git-credential` — the same helper `gh auth setup-git` installs — instead of
- * the AEP credhelper → credentials/refresh path.
+ * Coding Jobs mount the org's gitpat as GITHUB_TOKEN (gh also accepts
+ * GH_TOKEN). git authenticates through `gh auth git-credential` — the same
+ * helper `gh auth setup-git` installs. This is the only git credential path.
  *
  * Why not call `gh auth setup-git` itself: it writes --global config, and a bare
  * `!gh auth git-credential` resolves `gh` via PATH. The agent's PATH puts
- * `.aep/gh` first (the refresh wrapper), which would reintroduce the broken
- * refresh hop. We install the same helper value locally, pinned to the real
- * binary's absolute path.
+ * `.aep/gh` first, so a bare helper would resolve through the workspace wrapper.
+ * We install the same helper value locally, pinned to the real binary's
+ * absolute path.
  */
 export function envHasGitHubToken(env: NodeJS.ProcessEnv = process.env): boolean {
   // Check each independently: `GITHUB_TOKEN=""` must not mask a set GH_TOKEN
@@ -75,7 +74,7 @@ export function ghGitCredentialHelper(realGhPath: string): string {
 /** Minimal wrapper: exec the real gh. Env GITHUB_TOKEN/GH_TOKEN is enough for auth. */
 export function ghPassthroughScript(realGhPath: string): string {
   return `#!/usr/bin/env bash
-# Env-token mode: exec the real gh binary. GitHub auth comes from
+# Passthrough: exec the real gh binary. GitHub auth comes from
 # GITHUB_TOKEN/GH_TOKEN in the environment — no platform token exchange.
 exec ${JSON.stringify(realGhPath)} "$@"
 `;

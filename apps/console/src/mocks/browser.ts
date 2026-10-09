@@ -28,6 +28,7 @@ import { settingsHandlers } from "./handlers/settings";
 import { skillsHandlers } from "./handlers/skills";
 import { specHandlers } from "./handlers/spec";
 import { usageHandlers } from "./handlers/usage";
+import { aeStudioHandlers } from "./handlers/aeStudio";
 
 // Mock mode's worker. Each screen adds its handlers here as it is built.
 export const worker = setupWorker(
@@ -42,4 +43,5 @@ export const worker = setupWorker(
   ...skillsHandlers,
   ...resourcesHandlers,
   ...usageHandlers,
+  ...aeStudioHandlers,
 );

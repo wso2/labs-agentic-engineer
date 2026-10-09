@@ -1,0 +1,11 @@
+# Build context is this folder; keep it to what the Go build needs.
+Dockerfile
+.dockerignore
+.golangci.yml
+AGENTS.md
+CLAUDE.md
+Makefile
+scripts/
+**/*_test.go
+*.env
+*.env.local

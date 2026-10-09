@@ -18,7 +18,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorCode, apiErrorMessage, retryAfterMs } from "../../../api/errors";
+import { queryRetry } from "../../../api/retry";
 import type { components } from "../../../generated/aep-api";
 
 // Today's build reads, copied from the old console (features/builds/api/queries.ts
@@ -181,14 +182,17 @@ export function useValidationSnapshot(
   return useQuery({
     queryKey: runKeys.snapshot(projectName, tag, cycleId, settled),
     enabled: enabled && Boolean(tag) && Boolean(cycleId),
-    // A missing snapshot is a deterministic answer, not a transient failure.
-    retry: false,
+    // A missing snapshot is a deterministic answer, not a transient failure;
+    // an AE Studio restart (aep-api reads the report through it) is waited out.
+    retry: (failureCount, error) => apiErrorCode(error) === "ae_studio_unavailable" && queryRetry(failureCount, error),
     staleTime: settled ? Infinity : 30_000,
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/validations/{tag}/cycles/{cycleId}/report", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/validations/{tag}/cycles/{cycleId}/report", {
         params: { path: { projectName, tag, cycleId } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Failed to load this attempt's report"));
+      if (error || data === undefined) {
+        throw new ApiRequestError(error, "Failed to load this attempt's report", { retryAfterMs: retryAfterMs(response) });
+      }
       return data;
     },
   });

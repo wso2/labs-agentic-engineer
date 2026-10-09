@@ -122,3 +122,78 @@ describe("what the Build card says above its tasks", () => {
     expect(buildExplanation({ run: undefined, tasks: [], claims: noClaims, environment: null })).toBeNull();
   });
 });
+
+// F1: an agent the cluster never started. The platform closes the cycle with
+// `startup_failed:<reason>[: <message>]` and the run with agent-start-failed.
+describe("an agent that could not start", () => {
+  const cycle = (kind: string, agentReason: string, over: Record<string, unknown> = {}) => ({
+    id: "c1",
+    kind,
+    attempts: 1,
+    createdAt: "2026-09-11T07:40:00Z",
+    endedAt: "2026-09-11T07:50:00Z",
+    agentReason,
+    recording: "kept",
+    ...over,
+  });
+  const startFailed = (...cycles: Record<string, unknown>[]) =>
+    failureExplanation(run({ state: "failed", terminalReason: "agent-start-failed", cycles: cycles as never }));
+
+  it("says the coding agent never started, why, that nothing ran, and when Retry can help", () => {
+    const e = startFailed(cycle("coding", "startup_failed:Unschedulable: 0/1 nodes are available: 1 Insufficient memory."));
+    expect(e?.tone).toBe("error");
+    expect(e?.title).toBe("The coding agent could not start");
+    expect(e?.body).toBe(
+      "The cluster had no room for it (CPU, memory or a scheduling rule). Nothing ran; no pull request was opened. " +
+        "Retry once the cluster has room. The cluster reported: Unschedulable: 0/1 nodes are available: 1 Insufficient memory.",
+    );
+    expect(e?.body).not.toMatch(/stopped|started it/);
+    expect(e?.details?.code).toBe("agent-start-failed");
+  });
+
+  it("does not deny the pull request an earlier session of the same build opened", () => {
+    const e = startFailed(
+      cycle("coding", "", { id: "c0", prNumber: 7, mergeSha: "abc" }),
+      cycle("fix", "startup_failed:Unschedulable: no room"),
+    );
+    expect(e?.body).toContain("Nothing ran this time, so no new pull request was opened; #7, opened earlier in this build, is unchanged.");
+  });
+
+  it("names the validation agent on a validation cycle, and sends the reader to its Validation card to try again", () => {
+    const e = startFailed(cycle("validation", "startup_failed:Unschedulable: no room"));
+    expect(e?.title).toBe("The validation agent could not start");
+    expect(e?.body).toContain("Nothing ran; the version was not validated.");
+    expect(e?.body).toContain("Validate it again from its Validation card once the cluster has room.");
+    expect(e?.next).toEqual({ label: "Go to Validation", to: "/projects/$projectName/validations" });
+  });
+
+  it("asks for the cause to be fixed when it is not a matter of room", () => {
+    const e = startFailed(cycle("coding", "startup_failed:ImagePullBackOff"));
+    expect(e?.body).toContain("The cluster could not pull its container image.");
+    expect(e?.body).toContain("Retry once that is fixed.");
+  });
+
+  it("ends the cluster's report with exactly one period, whether or not it brought its own", () => {
+    expect(startFailed(cycle("coding", "startup_failed:Unschedulable: preemption is not helpful. "))?.body).toMatch(
+      /The cluster reported: Unschedulable: preemption is not helpful\.$/,
+    );
+    expect(startFailed(cycle("coding", "startup_failed:Unschedulable: no room"))?.body).toMatch(/The cluster reported: Unschedulable: no room\.$/);
+    expect(startFailed(cycle("coding", "startup_failed:Unschedulable: no room!"))?.body).toMatch(/no room!$/);
+  });
+});
+
+describe("the runner's own reason", () => {
+  it("ends with one period, whether or not the runner brought its own", () => {
+    const stopped = (agentReason: string) =>
+      failureExplanation(
+        run({
+          state: "failed",
+          terminalReason: "redispatch-budget",
+          cycles: [{ id: "c1", kind: "coding", attempts: 2, createdAt: "2026-09-11T07:40:00Z", agentReason, recording: "kept" }] as never,
+        }),
+      )?.body;
+    expect(stopped("timed_out")).toContain("The runner reported: timed_out. The coding");
+    expect(stopped("the agent exited.")).toContain("The runner reported: the agent exited. The coding");
+  });
+});
+

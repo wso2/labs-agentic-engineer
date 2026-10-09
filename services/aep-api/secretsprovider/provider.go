@@ -52,6 +52,18 @@ type SecretReferenceManager interface {
 	ManagesSecretReferences() bool
 }
 
+// SecretPathResolver is an optional interface a SecretsClient implements when
+// the path PushSecret stores a location under is a pure function of the
+// location. It lets the high-level client author the SecretReference that
+// points at a value before writing the value (the reference reserves a fresh
+// name, so a name clash never overwrites another reference's value).
+// SecretPath must return exactly the path PushSecret returns for the same
+// location. Required of every client whose provider does not manage
+// SecretReferences.
+type SecretPathResolver interface {
+	SecretPath(location SecretLocation) (string, error)
+}
+
 // SecretsClient performs secret operations on a backend.
 // This interface follows the external-secrets SecretsClient pattern.
 // Each provider interprets the SecretLocation according to its storage model:
@@ -62,6 +74,14 @@ type SecretsClient interface {
 	// Returns the secret reference (KV path for OpenBao, secret ID for cloud).
 	// If the secret already exists, it will be fully replaced.
 	// Metadata is used for ownership tracking (managed-by).
+	//
+	// A location with RefName set asks for a new reference: the value is
+	// one JSON object, and every top-level key becomes its own stored
+	// property (so `{token, password}` is two properties in one write).
+	// A provider that names references itself (SecretReferenceManager)
+	// creates a new reference per call and returns its own name, never
+	// updating an existing one; RefName is then only a hint. Other
+	// providers store the value under RefName and return its path.
 	PushSecret(ctx context.Context, location SecretLocation, value []byte, metadata *SecretMetadata) (string, error)
 
 	// PatchSecret merges data with an existing secret (server-side merge).
@@ -73,6 +93,12 @@ type SecretsClient interface {
 	// DeleteSecret removes a secret from the backend.
 	// Returns nil if the secret doesn't exist (idempotent).
 	// Only deletes secrets where the managed-by metadata matches the provided metadata.
+	//
+	// A location with RefName set names exactly the reference to remove
+	// (the name a previous PushSecret returned and the caller stored): the
+	// provider deletes that one, and a provider that manages references
+	// deletes the reference too. It never resolves the target by label or
+	// by a name derived from the other location fields.
 	DeleteSecret(ctx context.Context, location SecretLocation, metadata *SecretMetadata) error
 
 	// GetSecret retrieves secret metadata without values.

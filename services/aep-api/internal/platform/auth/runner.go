@@ -31,7 +31,16 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// CycleOrgLookup returns the owning org handle of a run cycle. It is injected
+// RunnerCycle is what the authorizer needs to know about the cycle a runner
+// callback names: the org that owns it, and whether it is still open.
+type RunnerCycle struct {
+	OrgHandle string
+	// Open is false once the cycle has ended (ended_at set). A runner of a
+	// closed cycle has nothing left to do: its run has moved on.
+	Open bool
+}
+
+// CycleLookup returns the run cycle a runner callback names. It is injected
 // (from the composition root) so this package — the auth layer — never imports a
 // feature package. Publisher-cc tokens are org-scoped and must confirm the
 // path cycle belongs to the token's org.
@@ -39,7 +48,7 @@ import (
 // The CYCLE is the runner's identity: every agent pod is launched by the
 // milestone supervisor, which carries the cycle id to the pod. A lookup that
 // misses fails the request closed.
-type CycleOrgLookup func(ctx context.Context, cycleID string) (orgHandle string, err error)
+type CycleLookup func(ctx context.Context, cycleID string) (RunnerCycle, error)
 
 // RunnerAuthorizer verifies a runner-callback publisher-cc bearer and
 // resolves the acting org. It is the inbound half of the S2S identity
@@ -48,7 +57,7 @@ type CycleOrgLookup func(ctx context.Context, cycleID string) (orgHandle string,
 // in the task controller.
 type RunnerAuthorizer struct {
 	publisher *PublisherTokenVerifier
-	cycleOrg  CycleOrgLookup
+	cycles    CycleLookup
 }
 
 // HTTPError is the neutral transport error the authorizer returns (401/403);
@@ -69,13 +78,14 @@ const cycleUnavailable = "cycle not found"
 
 // NewRunnerAuthorizer builds the authorizer. publisher may be nil — then every
 // runner callback 401s (fail closed).
-func NewRunnerAuthorizer(publisher *PublisherTokenVerifier, cycleOrg CycleOrgLookup) *RunnerAuthorizer {
-	return &RunnerAuthorizer{publisher: publisher, cycleOrg: cycleOrg}
+func NewRunnerAuthorizer(publisher *PublisherTokenVerifier, cycles CycleLookup) *RunnerAuthorizer {
+	return &RunnerAuthorizer{publisher: publisher, cycles: cycles}
 }
 
 // Authorize verifies authHeader for a runner callback scoped to cycleID and
 // returns the verified caller. Only a Thunder publisher-cc token is accepted
-// (org-bound: the path cycle MUST belong to the token's org). Returns an
+// (org-bound: the path cycle MUST belong to the token's org; open-bound: the
+// cycle must not have ended). Returns an
 // *HTTPError on any failure; the caller (the internal surface's auth gate)
 // maps it onto its envelope.
 func (a *RunnerAuthorizer) Authorize(ctx context.Context, authHeader, cycleID string) (tenant.Caller, error) {
@@ -94,7 +104,7 @@ func (a *RunnerAuthorizer) Authorize(ctx context.Context, authHeader, cycleID st
 		slog.WarnContext(ctx, "runner callback: publisher bearer rejected", "cycle", cycleID, "error", err)
 		return tenant.Caller{}, &HTTPError{Status: 401, Message: "invalid bearer"}
 	}
-	if a.cycleOrg == nil {
+	if a.cycles == nil {
 		slog.WarnContext(ctx, "runner callback: cycle lookup not configured", "cycle", cycleID)
 		return tenant.Caller{}, &HTTPError{Status: 403, Message: cycleUnavailable}
 	}
@@ -109,15 +119,25 @@ func (a *RunnerAuthorizer) Authorize(ctx context.Context, authHeader, cycleID st
 	// the two are identical anyway: neither is a cycle it may act on. The
 	// distinction survives in the logs, where the operator can see it and the
 	// prober cannot.
-	cycleOrg, lerr := a.cycleOrg(ctx, cycleID)
-	if lerr != nil || cycleOrg == "" {
+	cycle, lerr := a.cycles(ctx, cycleID)
+	if lerr != nil || cycle.OrgHandle == "" {
 		slog.WarnContext(ctx, "runner callback: cycle lookup failed",
 			"cycle", cycleID, "error", lerr)
 		return tenant.Caller{}, &HTTPError{Status: 403, Message: cycleUnavailable}
 	}
-	if cycleOrg != claims.OrgHandle {
+	if cycle.OrgHandle != claims.OrgHandle {
 		slog.WarnContext(ctx, "runner callback: publisher org mismatch",
-			"cycle", cycleID, "cycleOrg", cycleOrg, "publisherOrg", claims.OrgHandle)
+			"cycle", cycleID, "cycleOrg", cycle.OrgHandle, "publisherOrg", claims.OrgHandle)
+		return tenant.Caller{}, &HTTPError{Status: 403, Message: cycleUnavailable}
+	}
+	// Open-bound, AFTER the org check so another org's closed cycle answers
+	// (and logs) as the org mismatch it is. A closed cycle's run has moved on,
+	// so a runner still calling for it is at best late and at worst a zombie —
+	// a pod that started after its cycle was closed startup_failed, before its
+	// Job was suspended. The same answer again: "closed" must not become a
+	// third, distinguishable arm.
+	if !cycle.Open {
+		slog.WarnContext(ctx, "runner callback: cycle closed", "cycle", cycleID)
 		return tenant.Caller{}, &HTTPError{Status: 403, Message: cycleUnavailable}
 	}
 	return tenant.Caller{

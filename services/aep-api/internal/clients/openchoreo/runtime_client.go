@@ -37,13 +37,15 @@ import (
 type RuntimeClient interface {
 	// ReleaseBindingName resolves the component's binding in one environment.
 	// Wrapped ErrNotFound means the Component (or its binding) is gone —
-	// deleted by retention or by a cancel — which callers treat as a fact, not
+	// deleted at settle or by a project delete — which callers treat as a fact, not
 	// a failure.
 	ReleaseBindingName(ctx context.Context, orgName, projectName, componentName, environment string) (string, error)
 
-	// PodSnapshot returns the newest Pod node in the binding's resource tree.
-	// A tree with no Pod yet returns RuntimePod{Found:false} and a nil error:
-	// "not scheduled yet" is an ordinary state on the way to Running.
+	// PodSnapshot returns the newest Pod node in the binding's resource tree,
+	// and from the same read whether a Job node exists and when the newest was
+	// created (JobFound, JobCreatedAt). A tree with no Pod yet returns
+	// Found:false and a nil error: "not scheduled yet" is an ordinary state on
+	// the way to Running, and "no Job yet" one before it.
 	PodSnapshot(ctx context.Context, orgName, releaseBindingName string) (RuntimePod, error)
 
 	// PodLogs reads the pod's log. sinceSeconds <= 0 reads what the platform
@@ -109,9 +111,17 @@ func (c *runtimeClient) PodSnapshot(ctx context.Context, orgName, releaseBinding
 	}
 	var newest RuntimePod
 	var newestAt time.Time
+	jobFound, jobCreatedAt := false, time.Time{}
 	for _, release := range resp.JSON200.RenderedReleases {
 		for i := range release.Nodes {
 			node := &release.Nodes[i]
+			if node.Kind == "Job" {
+				jobFound = true
+				if node.CreatedAt != nil && node.CreatedAt.After(jobCreatedAt) {
+					jobCreatedAt = *node.CreatedAt
+				}
+				continue
+			}
 			if node.Kind != "Pod" {
 				continue
 			}
@@ -125,8 +135,10 @@ func (c *runtimeClient) PodSnapshot(ctx context.Context, orgName, releaseBinding
 				continue
 			}
 			newest, newestAt = PodFromNodeObject(node.Object, node.Name), at
+			newest.CreatedAt = at
 		}
 	}
+	newest.JobFound, newest.JobCreatedAt = jobFound, jobCreatedAt
 	return newest, nil
 }
 

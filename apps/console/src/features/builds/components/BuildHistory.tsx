@@ -29,6 +29,8 @@ import { useBuildOutcome } from "../hooks/useBuildOutcome";
 import { isBuilding, versionRows, versionState, type VersionRow } from "../model/ledger";
 import { offeredRows } from "../model/picker";
 import { BuildButton } from "./BuildButton";
+import { AeStudioUnavailableNotice } from "../../ae-studio/components/AeStudioUnavailableNotice";
+import { aeStudioUnavailable } from "../../ae-studio/model/unavailable";
 
 // Build history, a project's Page: the ledger of its versions, newest first,
 // each with its state, what it built and when. A version opens its Build card
@@ -104,7 +106,10 @@ export function BuildHistory({ projectName }: { projectName: string }) {
   const rows = ledger.data && builds.data ? versionRows(ledger.data, builds.data) : null;
 
   let body: ReactNode;
-  if (ledger.isError || builds.isError) {
+  const unavailable = aeStudioUnavailable(builds.error);
+  if (unavailable) {
+    body = <AeStudioUnavailableNotice kind={unavailable} />;
+  } else if (ledger.isError || builds.isError) {
     const retry = () => void Promise.all([ledger.refetch(), builds.refetch()]);
     body = (
       <Alert severity="error" action={<Button onClick={retry}>Retry</Button>}>

@@ -107,7 +107,16 @@ const (
 	// Terminal reasons. Each names exactly ONE failure class so the reason a run
 	// stopped is never ambiguous. Empty while the run is non-terminal, and empty
 	// on a succeeded run.
-	RunReasonRedispatchBudget     = "redispatch-budget"
+	RunReasonRedispatchBudget = "redispatch-budget"
+	// RunReasonAgentStartFailed — the cycle's agent never started: its pod
+	// did not reach Running by RunCycle.StartupDeadline (no room in the
+	// cluster, an image that does not pull, a secret not yet synced, a Job
+	// OpenChoreo never applied), so the watcher
+	// closed the cycle startup_failed and suspended its Job. Nothing ran and
+	// no pull request was opened. Its own class rather than
+	// redispatch-budget, because the fix is the cluster's, not the agent's,
+	// and because one dispatch was made, not the budget's worth.
+	RunReasonAgentStartFailed     = "agent-start-failed"
 	RunReasonBuildRetriggerBudget = "build-retrigger-budget"
 	// RunReasonDeployBudget — the cycle's components built, but a deployment
 	// never reached Ready and no fix issue arrived to recover it.
@@ -224,6 +233,20 @@ var ValidationVerdicts = map[string]bool{
 // would make the overview contradict itself.
 func IsValidationTerminalReason(reason string) bool {
 	return reason == RunReasonValidationFailed || reason == RunReasonValidationUnreported
+}
+
+// EndedInValidation reports whether a settled run of `kind` ended on judging a
+// version rather than on building it, so a reader of the BUILD must not render
+// it red: the reasons IsValidationTerminalReason names, on any kind, and
+// RunReasonAgentStartFailed on a validation run (its agent is the validation
+// agent; on a dev or task run it is the coding agent, a build failure).
+//
+// The overview's build stage reads it for the newest dev run; the build ledger
+// reads it for validation runs only (a dev run's ledger row keeps its own
+// ending), which is where the overview never looks.
+func EndedInValidation(kind, reason string) bool {
+	return IsValidationTerminalReason(reason) ||
+		(kind == RunKindValidation && reason == RunReasonAgentStartFailed)
 }
 
 // ValidationVerdictFailsRun reports whether a verdict ends the run unsuccessfully,

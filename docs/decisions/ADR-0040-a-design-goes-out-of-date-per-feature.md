@@ -1,6 +1,6 @@
 # ADR-0040 — A design goes out of date per feature
 
-**Status:** Accepted · 2026-10-01
+**Status:** Accepted · 2026-10-01 · Amended 2026-10-07 (the pod reports what a design run covered)
 **Related:** [ADR-0039](ADR-0039-requirements-are-features-with-stable-ids.md),
 [ADR-0041](ADR-0041-a-build-is-a-selection-of-features.md)
 
@@ -35,3 +35,14 @@ requirements, a design can be judged per feature.
 
 - Editing Approvals leaves Submit expenses buildable.
 - A design turn can be scoped (`/design F2`) to bring one feature up to date.
+
+## Amendment 2026-10-07 — the pod reports what a design run covered
+
+Design turns run in the org's AE Studio
+([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)), so
+aep-api no longer keeps a turn's instruction. Decision 2 now reads: the design
+agent reports the feature IDs a `/design F1 F2` turn named with the turn's
+usage (`record-turn-usage`), and aep-api's turn ledger keeps them with the
+turn's base commit (`agent_turns.summary`, `services/aep-api/internal/spec/design_runs.go`).
+A bare `/design` reports none, which still means every feature designable at
+that commit.

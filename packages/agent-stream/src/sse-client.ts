@@ -17,30 +17,29 @@
  */
 
 /**
- * The reference SSE consumer — exactly what a browser fold is. POSTs one turn and
- * yields each raw `StreamPart` frame until `[DONE]`, buffered across chunk
- * boundaries. The JSON payload is always a single physical line (`data: <json>`),
+ * The reference SSE consumer — exactly what a browser fold is. Starts one turn,
+ * streams it, and yields each raw `StreamPart` frame until `[DONE]`, buffered
+ * across chunk boundaries. The JSON payload is always a single physical line (`data: <json>`),
  * since the SDK `JSON.stringify`s each part (embedded newlines are escaped), but a
- * frame is a multi-line SSE record: the BFF prefixes an `id: <index>` line (for
- * `Last-Event-ID` resume) ahead of the `data:` line, and the agents service emits
- * the bare `data:` line. So a frame is parsed line-by-line — the `data:` line(s)
- * are the payload; `id:`/`event:` metadata and `: keep-alive` comment lines carry
- * no payload and are skipped.
+ * frame is a multi-line SSE record: an `id: <index>` line (the part's index in
+ * the turn's replay buffer, for `?from=` resume) may precede the `data:` line.
+ * So a frame is parsed line-by-line — the `data:` line(s) are the payload, the
+ * `id:` line its resume index; `event:` metadata and `: keep-alive` comment
+ * lines carry neither and are skipped.
  */
 
-import { SSE_DONE, type TurnRequest } from "./contracts/sse-events.js";
+import { SSE_DONE, type TurnAimIntent, type TurnAnchor, type TurnScope } from "./contracts/sse-events.js";
 import type { StreamPart } from "./stream-types.js";
 
-// The turn-request body is the shared contract type (one definition, no drift).
-export type { TurnRequest };
-
-export interface StreamTurnOptions {
-  /**
-   * Extra request headers merged over `content-type`. The caller (BFF, eval,
-   * playground) supplies the M2M `Authorization: Bearer <jwt>` and the
-   * `X-Model-Key` here — this reader is transport-only and holds no creds.
-   */
-  headers?: Record<string, string>;
+/** A `/v1` turn start body (the design agent's `CreateTurnRequest`, JSON form). */
+export interface TurnStartBody {
+  /** Verbatim: `/<command>` lines are parsed by the design agent. */
+  instruction: string;
+  /** What the user was looking at (S6); absent = the whole product. */
+  scope?: TurnScope;
+  /** An aimed turn (#666): both `anchor` and `intent`, or neither. */
+  anchor?: TurnAnchor;
+  intent?: TurnAimIntent;
 }
 
 /**
@@ -51,26 +50,46 @@ export interface StreamTurnOptions {
 export type SseStreamEnd = "done" | "eof";
 
 /**
+ * One parsed frame: the part, and the frame's `id:` when it carried a valid
+ * one. The design agent's turn stream numbers every part by its index in the
+ * turn's replay buffer, so a reader whose stream dies resumes with
+ * `?from=<last id + 1>` and folds no frame twice.
+ */
+export interface SseFrame {
+  id?: number;
+  part: StreamPart;
+}
+
+/** A frame's `id:` value as a buffer index, or undefined when it is not a non-negative integer. */
+function frameId(lines: string[]): number | undefined {
+  const line = lines.filter((l) => l.startsWith("id:")).pop();
+  if (line === undefined) return undefined;
+  const value = line.slice("id:".length).replace(/^ /, "");
+  return /^\d+$/.test(value) ? Number(value) : undefined;
+}
+
+/**
  * The raw frame parser, extracted so a caller that owns its own `fetch` (e.g. a
  * browser that must add auth headers, a custom request body shape, and its own
  * pre-stream HTTP-status error mapping) folds the SAME wire through ONE
  * definition instead of reimplementing the buffered `data:`/`[DONE]` loop.
- * Yields each `StreamPart` until `[DONE]`; skips keep-alive comment frames.
+ * Yields each frame (its `StreamPart` and `id:`) until `[DONE]`; skips
+ * keep-alive comment frames.
  *
  * The generator's RETURN value reports how the stream ended (`SseStreamEnd`).
  * `for await` consumers ignore it — a caller that must distinguish a complete
  * stream from a mid-turn disconnect iterates manually:
  *
- *   const it = parseSseStream(body)[Symbol.asyncIterator]();
+ *   const it = parseSseFrames(body)[Symbol.asyncIterator]();
  *   while (true) {
  *     const r = await it.next();
  *     if (r.done) { const end = r.value; break; }  // "done" | "eof"
- *     fold(r.value);
+ *     fold(r.value.part);
  *   }
  */
-export async function* parseSseStream(
+export async function* parseSseFrames(
   body: ReadableStream<Uint8Array>,
-): AsyncGenerator<StreamPart, SseStreamEnd> {
+): AsyncGenerator<SseFrame, SseStreamEnd> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -90,31 +109,30 @@ export async function* parseSseStream(
         const frame = buffer.slice(0, sep);
         buffer = buffer.slice(sep + 2);
         // A frame is a multi-line SSE record. Collect its `data:` line(s) —
-        // the BFF prefixes an `id:` line (Last-Event-ID resume) that must not
-        // hide the payload, and `id:`/`event:`/`: comment` lines carry none.
-        // Per the SSE spec, multiple data lines join with "\n" (our payload is
-        // one line, but stay spec-correct). One optional space after the colon
-        // is stripped.
-        const data = frame
-          .split(/\r?\n/)
+        // an `id:` line may precede them, and `id:`/`event:`/`: comment`
+        // lines carry no payload. Per the SSE spec, multiple data lines join
+        // with "\n" (our payload is one line, but stay spec-correct). One
+        // optional space after the colon is stripped.
+        const lines = frame.split(/\r?\n/);
+        const data = lines
           .filter((line) => line.startsWith("data:"))
           .map((line) => line.slice("data:".length).replace(/^ /, ""))
           .join("\n")
           .trim();
         if (data === "") continue; // comment / metadata-only frame — no data line
         if (data === SSE_DONE) return "done";
-        // A frame that doesn't parse is a truncation remnant (the BFF closes a
-        // partial in-flight frame with a blank line before its synthetic error
-        // frame when the upstream dies). Wire frames are single-line JSON, so
-        // nothing legitimate is skipped — and the error/[DONE] frames that
-        // follow (or the "eof" return) carry the failure signal.
+        // A frame that doesn't parse is a truncation remnant (a proxy closes a
+        // partial in-flight frame with a blank line when the upstream dies).
+        // Wire frames are single-line JSON, so nothing legitimate is skipped —
+        // and the missing terminal (or the "eof" return) carries the failure.
         let part: StreamPart;
         try {
           part = JSON.parse(data) as StreamPart;
         } catch {
           continue;
         }
-        yield part;
+        const id = frameId(lines);
+        yield id === undefined ? { part } : { id, part };
       }
     }
   } finally {
@@ -122,20 +140,73 @@ export async function* parseSseStream(
   }
 }
 
-export async function* streamTurn(
+/**
+ * `parseSseFrames` without the ids, for a reader that never resumes. The
+ * return value reports how the stream ended, as there.
+ */
+export async function* parseSseStream(
+  body: ReadableStream<Uint8Array>,
+): AsyncGenerator<StreamPart, SseStreamEnd> {
+  const frames = parseSseFrames(body);
+  for (;;) {
+    const next = await frames.next();
+    if (next.done) return next.value;
+    yield next.value.part;
+  }
+}
+
+/**
+ * Why `startAndStreamTurn` started no turn: the `/v1` refusal's status and its
+ * code (a problem's `code`, or a TurnConflict's, e.g. `conversation_rotated`).
+ */
+export class TurnRefusedError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    detail: string,
+  ) {
+    super(`turn refused: HTTP ${status} ${code}${detail ? `: ${detail}` : ""}`);
+    this.name = "TurnRefusedError";
+  }
+}
+
+async function refusal(res: Response): Promise<TurnRefusedError> {
+  const text = await res.text().catch(() => "");
+  let body: { code?: unknown; detail?: unknown; message?: unknown } = {};
+  try {
+    body = JSON.parse(text) as typeof body;
+  } catch {
+    // not JSON: the status alone names the refusal
+  }
+  const code = typeof body.code === "string" ? body.code : `http_${res.status}`;
+  const detail = typeof body.detail === "string" ? body.detail : typeof body.message === "string" ? body.message : "";
+  return new TurnRefusedError(res.status, code, detail);
+}
+
+/**
+ * One browser turn on the design agent's `/v1` edge (the console's flow, for
+ * server-side callers such as the playground and the evals): `POST
+ * /v1/projects/{project}/conversations/{conversationId}/turns`, then `GET
+ * /v1/projects/{project}/turns/{turnId}/stream?from=0`, yielding each part
+ * until `[DONE]`. A refused start throws `TurnRefusedError` and opens no
+ * stream. `headers` carries the caller's credential; this reader holds none.
+ */
+export async function* startAndStreamTurn(
   baseUrl: string,
-  id: string,
-  body: TurnRequest,
-  opts: StreamTurnOptions = {},
-): AsyncIterable<StreamPart> {
-  const res = await fetch(`${baseUrl}/conversations/${encodeURIComponent(id)}/turns`, {
+  project: string,
+  conversationId: string,
+  body: TurnStartBody,
+  headers: Record<string, string> = {},
+): AsyncGenerator<StreamPart, SseStreamEnd> {
+  const projectUrl = `${baseUrl}/v1/projects/${encodeURIComponent(project)}`;
+  const started = await fetch(`${projectUrl}/conversations/${encodeURIComponent(conversationId)}/turns`, {
     method: "POST",
-    headers: { "content-type": "application/json", ...opts.headers },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`turn failed: HTTP ${res.status} ${text}`);
-  }
-  yield* parseSseStream(res.body);
+  if (started.status !== 202) throw await refusal(started);
+  const { turnId } = (await started.json()) as { turnId: string };
+  const res = await fetch(`${projectUrl}/turns/${encodeURIComponent(turnId)}/stream?from=0`, { headers });
+  if (!res.ok || !res.body) throw await refusal(res);
+  return yield* parseSseStream(res.body);
 }

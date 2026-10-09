@@ -20,14 +20,11 @@ import "fmt"
 
 // afmFrontMatter is the minimal shape ComputeAgentToolStatus needs out of an
 // `agent.afm.md` document's YAML front matter: just the `x-aep.tools.openapi`
-// entries an ai-agent component declares. It intentionally does NOT reuse a
-// type from internal/platform/agentfold (afmgate.go): that package's AFM
-// parsing (validateAgentAfm and friends) works over map[string]any with
-// unexported known-key sets and returns an accept/reject *designProblem, not
-// a decoded value — nothing there is exported, so nothing is importable
-// across the package boundary. Reimplementing that whole accept/reject gate
-// here to get a typed struct would duplicate afmgate.go's rules and drift
-// from them silently, which is worse than this narrow, single-purpose type:
+// entries an ai-agent component declares. The document's full shape is the
+// agent's write gate's (packages/agent-stream agent-afm-schema.ts), enforced
+// when the agent writes it. Reimplementing that whole accept/reject gate
+// here to get a typed struct would duplicate its rules and drift from them
+// silently, which is worse than this narrow, single-purpose type:
 // the caller (deriveAgentToolStatuses / parseAFMToolEntries in
 // derive_agent_tools.go) parses the YAML front matter itself — leniently,
 // since afmgate.go's write-time gate already guarantees a committed

@@ -40,6 +40,7 @@ on:
       - '**/Dockerfile'
       - 'runners/remote-worker/**'
       - 'services/**'
+      - 'components/**'
       - 'apps/console/**'
       - 'apps/tryit/**'
       - 'packages/**'
@@ -57,11 +58,11 @@ jobs:
     name: build changed images
     runs-on: ubuntu-latest
     # A budget, not just a ceiling: the images build in sequence in one slot,
-    # and a shared-input change builds all nine. remote-worker is the outlier
+    # and a shared-input change builds every image. remote-worker is the outlier
     # — it compiles the `bal library` tool, installs a JDK and a chromium,
     # smoke-tests the browser, and does half of that under emulation; the
-    # release has measured its two-platform build at 28 min cold, and the other
-    # eight follow it here rather than run beside it. remote-worker-opencode
+    # release has measured its two-platform build at 28 min cold, and every other
+    # image follows it here rather than run beside it. remote-worker-opencode
     # comes right after it and reuses every shared layer from this builder. Raise this rather than trim
     # an image if a cold all-images run legitimately grows past it.
     timeout-minutes: 90
@@ -105,8 +106,9 @@ jobs:
             "remote-worker|runners/remote-worker|runners/remote-worker/Dockerfile|$RUNNER_CONTEXTS|linux/amd64,linux/arm64|"
             "remote-worker-opencode|runners/remote-worker|runners/remote-worker/Dockerfile|$RUNNER_CONTEXTS|linux/amd64,linux/arm64|runner-opencode"
             "aep-api|services/aep-api|services/aep-api/Dockerfile|skills=skills||"
-            "agents|.|services/agents/Dockerfile|||"
-            "collab|.|services/collab/Dockerfile|||"
+            "ae-design-agent|.|components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile|||"
+            "ae-collab|.|components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile|||"
+            "ae-studio-tools|components/dataplane/ae-system-project/ae-studio/ae-studio-tools|components/dataplane/ae-system-project/ae-studio/ae-studio-tools/Dockerfile|||"
             "console|.|apps/console/Dockerfile|||"
             "tryit|.|apps/tryit/Dockerfile|||"
             "thunder-app-operator|deployments/single-cluster/resource-types/thunder-app/operator|deployments/single-cluster/resource-types/thunder-app/operator/Dockerfile|||"

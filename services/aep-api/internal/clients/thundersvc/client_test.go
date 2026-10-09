@@ -105,6 +105,10 @@ func (m *thunderMock) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(apps)
 
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/applications/"):
+			if m.appID == "" || strings.TrimPrefix(r.URL.Path, "/applications/") != m.appID {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
 			cfg := map[string]any{"clientId": m.clientID, "grantTypes": []string{"client_credentials"}}
 			if m.hasTokenClaims {
 				cfg["token"] = map[string]any{"accessToken": map[string]any{
@@ -175,7 +179,7 @@ func (m *thunderMock) server(t *testing.T) *httptest.Server {
 			m.createdAttrs = tokenAttributesOf(body.Rest)
 			m.createCount++
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"clientId": m.appName, "clientSecret": "fresh-secret",
+				"id": "app-new", "clientId": m.appName, "clientSecret": "fresh-secret",
 			})
 
 		default:
@@ -196,7 +200,8 @@ func TestEnsurePublisherApp_HealsWrongOU(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv.URL)
 
-	id, secret, created, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,8 +214,11 @@ func TestEnsurePublisherApp_HealsWrongOU(t *testing.T) {
 	if !created || secret != "fresh-secret" {
 		t.Errorf("want created=true with rotated secret, got created=%v secret=%q", created, secret)
 	}
-	if id != "aep-publisher-org1" {
-		t.Errorf("client_id changed: got %q", id)
+	if clientID != "aep-publisher-org1" {
+		t.Errorf("client_id changed: got %q", clientID)
+	}
+	if app.EntityID != "app-new" {
+		t.Errorf("entity id = %q, want the recreated app's app-new", app.EntityID)
 	}
 }
 
@@ -222,7 +230,8 @@ func TestEnsurePublisherApp_HealsWrongOU_DeleteReturns500ButGone(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv.URL)
 
-	_, secret, created, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	_, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("heal must tolerate a 500-but-deleted delete, got error: %v", err)
 	}
@@ -241,7 +250,8 @@ func TestEnsurePublisherApp_PhantomOU_KeepsExistingApp(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv.URL)
 
-	id, secret, created, err := c.EnsurePublisherApp(context.Background(), "org1", "phantom-ou")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "phantom-ou", "")
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,8 +261,8 @@ func TestEnsurePublisherApp_PhantomOU_KeepsExistingApp(t *testing.T) {
 	if created || secret != "" {
 		t.Errorf("expected no recreate (created=false, empty secret), got created=%v secret=%q", created, secret)
 	}
-	if id != "aep-publisher-org1" {
-		t.Errorf("should return the existing client_id, got %q", id)
+	if clientID != "aep-publisher-org1" || app.EntityID != "app-1" {
+		t.Errorf("should return the existing app, got client_id %q entity id %q", clientID, app.EntityID)
 	}
 }
 
@@ -263,7 +273,8 @@ func TestEnsurePublisherApp_CorrectOU_NoHeal(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv.URL)
 
-	_, _, created, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	_, _, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,7 +293,8 @@ func TestEnsurePublisherApp_CreatesUnderOrgOU(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv.URL)
 
-	_, _, created, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	_, _, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +419,8 @@ func TestEnsurePublisherApp_CreateDeclaresM2MType(t *testing.T) {
 	defer srv.Close()
 
 	c := newTestClient(srv.URL)
-	_, secret, created, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := c.EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	_, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("EnsurePublisherApp: %v", err)
 	}
@@ -454,12 +467,13 @@ func TestEnsurePublisherApp_HealsMissingTokenClaims(t *testing.T) {
 	srv := m.server(t)
 	defer srv.Close()
 
-	id, secret, created, err := newTestClient(srv.URL).EnsurePublisherApp(context.Background(), "org1", "org-ou-1")
+	app, err := newTestClient(srv.URL).EnsurePublisherApp(context.Background(), "org1", "org-ou-1", "")
+	clientID, secret, created := app.ClientID, app.Secret, app.Created
 	if err != nil {
 		t.Fatalf("EnsurePublisherApp: %v", err)
 	}
-	if created || secret != "" || id != "aep-publisher-org1" {
-		t.Fatalf("id=%q secret=%q created=%v, want the existing app untouched apart from its token config", id, secret, created)
+	if created || secret != "" || clientID != "aep-publisher-org1" || app.EntityID != "app-1" {
+		t.Fatalf("client_id=%q entity=%q secret=%q created=%v, want the existing app untouched apart from its token config", clientID, app.EntityID, secret, created)
 	}
 	if m.putCount != 1 {
 		t.Fatalf("putCount=%d, want exactly one PUT adding the token claims", m.putCount)
@@ -476,7 +490,7 @@ func TestEnsurePublisherApp_KeepsTokenClaimsWhenPresent(t *testing.T) {
 	srv := m.server(t)
 	defer srv.Close()
 
-	if _, _, _, err := newTestClient(srv.URL).EnsurePublisherApp(context.Background(), "org1", "org-ou-1"); err != nil {
+	if _, err := newTestClient(srv.URL).EnsurePublisherApp(context.Background(), "org1", "org-ou-1", ""); err != nil {
 		t.Fatalf("EnsurePublisherApp: %v", err)
 	}
 	if m.putCount != 0 {

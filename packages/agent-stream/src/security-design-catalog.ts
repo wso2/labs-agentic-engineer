@@ -22,7 +22,7 @@
  *
  * Every gate that has to answer "is this handle declared?" or "does this role
  * hold it?" (the referential checks, the openapi.yaml security gate, the console
- * Security page) folds the document the same way, so the fold lives once. No
+ * Security page) reads the document the same way, so the lookup lives once. No
  * runtime imports: types only, no validation, no I/O — a caller that already
  * holds a parsed document can use these without pulling Zod in.
  */

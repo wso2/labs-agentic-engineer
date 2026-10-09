@@ -21,6 +21,7 @@ import {
   decodeJwtClaims,
   identityFromClaims,
   resolveOrgHandle,
+  sessionUserId,
 } from "./claims";
 
 function jwt(payload: Record<string, unknown>): string {
@@ -104,5 +105,25 @@ describe("identityFromClaims", () => {
 
   it("returns empty email when no source has one", () => {
     expect(identityFromClaims({ name: "N" }).email).toBe("");
+  });
+});
+
+describe("sessionUserId", () => {
+  // The pods name a turn's author by the `sub` of the token they verify — the
+  // access token, the /v1 bearer — so the console's own id is that claim.
+  it("is the access token's sub", () => {
+    expect(sessionUserId({ sub: "u-access" }, { sub: "u-access", email: "ada@x.com" })).toBe("u-access");
+  });
+
+  it("prefers the access token's sub when the two tokens disagree", () => {
+    expect(sessionUserId({ sub: "u-access" }, { sub: "u-id-token" })).toBe("u-access");
+  });
+
+  it("falls back to the ID token's sub when the access token has none", () => {
+    expect(sessionUserId({}, { sub: "u-id-token" })).toBe("u-id-token");
+  });
+
+  it("is empty when neither carries one", () => {
+    expect(sessionUserId({}, { email: "ada@x.com" })).toBe("");
   });
 });

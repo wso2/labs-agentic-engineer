@@ -93,8 +93,9 @@ addition.
 AEP selects one secrets provider per process (no fallback chain):
 - **Cloud / overlay:** SM-API HTTP client (`ManagesSecretReferences()=true`) —
   the server owns `SecretReference` CR creation.
-- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` (and
-  `OPENBAO_TOKEN`) are set. The provider writes KV only
+- **Local / OSS:** in-process OpenBao-direct provider when `OPENBAO_ADDR` is
+  set; it logs in by Kubernetes auth (role `aep-api`, write-only policy
+  `aep-api-writer`, no static token). The provider writes KV only
   (`ManagesSecretReferences()=false`); the high-level client authors
   `SecretReference` CRs via OpenChoreo into the Workload control-plane
   namespace (not the vault `wc-…` segment). See
@@ -107,9 +108,9 @@ Cloud overlay may use a different backend via SM-API.
 
 ### `effective-key` — retired
 The git-service endpoint that returned the org's Anthropic key for the spec
-agents. aep-api now reads the model connection's key itself
-(`ConnectionReader.Effective`) and hands it to the agents service per turn in
-`X-Model-Key`.
+agents. aep-api never reads the key: the org's `default-key` Org secret is
+mounted into the org's `ae-design-agent` env by reference when the key is saved;
+the pod rolls.
 
 ---
 
@@ -259,17 +260,15 @@ sourced from Vault on cloud; a literal env var locally.
 The organization's Thunder confidential OAuth app (`aep-publisher-{org}`).
 The coding-agent Job authenticates to aep-api as this client
 (`client_credentials`) for platform callbacks and MCP — local and cloud.
-Distinct from other M2M clients and from the design
-agent's BFF MCP token.
+Distinct from other M2M clients and from AE Studio's
+`ae-studio` client.
 
-### `Task JWT`
-Retired as the coding-agent Job's callback credential (that is the
-publisher client). The BFF still mints short-lived RS256 identity JWTs
-(`IssueServiceToken` / `IssueMCPToken`) for design-agent MCP and outbound
-S2S; they carry org in `ocOrgId` and do not use the cycle id as subject.
-Verifiers fetch the BFF's public key from `/auth/external/jwks.json`.
-Distinct from Thunder user/M2M tokens and from the retired
-`AEP_BFF_TO_REMOTE_WORKER` client.
+### `Task JWT` — retired
+The BFF no longer mints identity JWTs and serves no JWKS
+(`/auth/external/jwks.json` is 404). The coding-agent Job's bearer is the
+organization's publisher client token (`client_credentials`), a Thunder token
+that aep-api verifies against Thunder's published keys; a JWT signed by any
+other key is rejected with 401.
 
 ---
 
@@ -396,14 +395,15 @@ earlier phases.
 A cycle is also the **unit the coding agent runs as**: each one dispatches
 exactly one ephemeral `coding-agent` job Component into the milestone's project,
 never reused across cycles. While its pod lives, progress is the pod's own log
-read through the OC API; once the pod is gone, the cycle's log is an observer
-query, which is answerable only while the Component is retained. A finished
-cycle's Component is **retained** and later **pruned oldest-first** past the
-retention cap; a **cancelled** cycle's Component is deleted at once, because that
-is what stops the pod and frees the org's entitlement slot — and with it the
-cycle's agent log (cancelled runs keep no progress history). A cycle whose
-Component has been pruned reports its log as unavailable — the platform keeps no
-second copy.
+read through the OC API. Once the pod is gone, the cycle's log is an observer
+query filtered on the Component UID the cycle stored at dispatch: by component
+scope while the Component exists, by project scope once it is deleted. Every
+closed cycle's Component is **deleted at settle**: its Job is suspended, and
+once no pod is left (two no-pod reads a grace apart) the Component goes, which
+frees the org's entitlement slot. The cycle's log stays readable
+(`recording: kept`) until `OBSERVER_LOG_RETENTION` after it ended, then reads
+`expired`; `unavailable` means only that a recent read failed. The platform
+keeps no second copy beyond the observability plane.
 
 The console calls one of these a **build session** — the same object, under a
 name that reads as a unit of work rather than as loop machinery. The rename is
@@ -576,7 +576,7 @@ plan is closed and its bugs have left.
 The one endpoint every agent of an organization calls: an API **format**
 (`anthropic` Messages or `openai-compatible`), a **base URL**, a **key** and a
 **model**. One row per org in `org_model_connections` (absent = not connected),
-the key in `org_secrets` `model/key`; the `/config` section `llm`. Anthropic's
+the key only in the vault (the org secret `default-key`); the `/config` section `llm`. Anthropic's
 own API is one connection among others, not a special case. What a connection
 supports (Claude Code, the Claude subscription, web search, native PDFs, image
 input, generated agents) is its **capabilities**, computed only by
@@ -613,7 +613,7 @@ replayed to another, so a model change on the same host keeps the history.
 ### Provider limit
 A model provider's 429 that means "the plan is spent", not "wait a moment": a
 `retry-after` past 5 minutes, or 5 minutes of 429s in all. One rule decides in
-the agents service and the runner. A spec turn ends with a `provider_limit`
+the design agent and the runner. A spec turn ends with a `provider_limit`
 frame; a coding run settles **blocked** with reason `model-provider-limit` and
 the reset time when the provider gave one, spending no re-dispatch budget.
 Shorter 429s are **waits**, retried and reported ("waiting on the model
@@ -636,9 +636,9 @@ poison `wc-` namespace derivation and the publisher OU binding.
 
 ### Committed-truth
 aep-api's rule that a spec (requirements + design) is authoritative only once it is
-committed to git `main`. An agent turn's output is hash-parity checked by the fold
-(`platform/agentfold`) before commit; a mismatch rejects the turn and leaves `main`
-untouched. The git commit — not any draft buffer — is the source of truth.
+committed to git `main`. An agent turn's file edits land in the Room; the Room's
+committer commits them to `main`. The git commit — not any draft buffer — is the
+source of truth.
 
 ## Skills
 
@@ -648,7 +648,7 @@ naming which agent the guidance is written for. **Absent means both**, so
 narrowing is opt-in and an unmarked or org-authored skill is never hidden by
 omission. The design agent's catalog still *lists* a coding-audience skill (it
 has to name one in order to pin it) but `load()` refuses to serve the body.
-Audience never crosses a service boundary: the agents service is always the
+Audience never crosses a service boundary: the design agent is always the
 design side, the runner always the coding side. ADR-0014.
 
 ### Skill availability (enabled / disabled)

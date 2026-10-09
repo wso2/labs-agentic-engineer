@@ -71,7 +71,7 @@ func TestReleaseBindingName_PicksTheEnvironmentsBinding(t *testing.T) {
 	}
 }
 
-// A cycle whose Component has been deleted (retention, or a cancel) has no
+// A cycle whose Component has been deleted (at settle) has no
 // binding. That is ErrNotFound and not a transport failure: it is exactly the
 // signal the watcher counts toward its sustained-404 rule and the progress
 // reader turns into "logs unavailable".
@@ -125,6 +125,11 @@ func TestPodSnapshot_FindsTheJobsPod(t *testing.T) {
 	if !pod.Found || pod.Name != "ca-abc-9x2" || pod.Phase != "Running" {
 		t.Fatalf("unexpected pod: %+v", pod)
 	}
+	// The node's createdAt is what tells a re-dispatched cycle's watcher that
+	// the pod predates the current attempt.
+	if want := time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC); !pod.CreatedAt.Equal(want) {
+		t.Fatalf("pod.CreatedAt = %v, want %v", pod.CreatedAt, want)
+	}
 	if gotPath != "/api/v1/namespaces/acme/releasebindings/rb-dev/k8sresources/tree" {
 		t.Fatalf("unexpected path %q", gotPath)
 	}
@@ -154,6 +159,47 @@ func TestPodSnapshot_NoPodNodeIsNotFoundPodNotError(t *testing.T) {
 	}
 	if pod.Found {
 		t.Fatalf("a tree with no Pod node must report Found=false, got %+v", pod)
+	}
+}
+
+// The same tree read says whether OpenChoreo has applied the Job yet and when
+// it was created: the watcher's startup clock starts at the Job (or its pod),
+// not at the dispatch, because Cloud OpenChoreo applies a release minutes
+// after it is requested. The newest Job wins; a tree with no Job node says so.
+func TestPodSnapshot_CarriesTheJobsCreation(t *testing.T) {
+	nodes := []interface{}{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]interface{}{
+			"renderedReleases": []interface{}{
+				map[string]interface{}{"name": "rel-2", "targetPlane": "dataplane", "nodes": nodes},
+			},
+		})
+	}))
+	defer srv.Close()
+	client := newTestRuntimeClient(t, srv)
+
+	pod, err := client.PodSnapshot(context.Background(), "acme", "rb-dev")
+	if err != nil {
+		t.Fatalf("PodSnapshot: %v", err)
+	}
+	if pod.Found || pod.JobFound || !pod.JobCreatedAt.IsZero() {
+		t.Fatalf("an empty tree has no Job: %+v", pod)
+	}
+
+	nodes = []interface{}{
+		map[string]interface{}{"kind": "Job", "name": "ca-abc", "createdAt": "2026-08-06T09:00:00Z", "object": map[string]interface{}{}},
+		map[string]interface{}{"kind": "Job", "name": "ca-abc", "createdAt": "2026-08-06T10:12:00Z", "object": map[string]interface{}{}},
+		map[string]interface{}{"kind": "Deployment", "name": "other", "createdAt": "2026-08-06T11:00:00Z", "object": map[string]interface{}{}},
+	}
+	pod, err = client.PodSnapshot(context.Background(), "acme", "rb-dev")
+	if err != nil {
+		t.Fatalf("PodSnapshot: %v", err)
+	}
+	if pod.Found || !pod.JobFound {
+		t.Fatalf("a tree with a Job and no Pod: %+v", pod)
+	}
+	if want := time.Date(2026, 8, 6, 10, 12, 0, 0, time.UTC); !pod.JobCreatedAt.Equal(want) {
+		t.Fatalf("JobCreatedAt = %v, want the newest Job's %v", pod.JobCreatedAt, want)
 	}
 }
 

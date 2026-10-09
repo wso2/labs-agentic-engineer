@@ -50,6 +50,14 @@ const (
 	CodeBadGateway         = "bad_gateway"
 	CodeGatewayTimeout     = "gateway_timeout"
 	CodeServiceUnavailable = "service_unavailable"
+
+	// The AE Studio answers. Only the edge's classifier writes them:
+	// a slice never constructs these, it keeps the sentinel in the chain.
+	CodeGitHubNotConnected    = "github_not_connected"
+	CodeAEStudioUnavailable   = "ae_studio_unavailable"
+	CodeAEStudioMisconfigured = "ae_studio_misconfigured"
+	CodeGitHubRateLimited     = "github_rate_limited"
+	CodeOwnerNotAllowed       = "owner_not_allowed"
 )
 
 // Error is the transport error strict handlers and middleware return; the edge's
@@ -60,9 +68,29 @@ type Error struct {
 	Code    string
 	Message string
 	Details []gen.ErrorDetail
+	// RetryAfter, in seconds, becomes the Retry-After header when positive.
+	RetryAfter int
+	// Cause is the failure a server-side answer (5xx) stands for. It never
+	// reaches the wire; it keeps the error chain intact so the edge can still
+	// recognise an AE Studio answer behind a slice's fallback (WithCause).
+	Cause error
 }
 
 func (e *Error) Error() string { return e.Message }
+
+// Unwrap exposes Cause to errors.Is / errors.As.
+func (e *Error) Unwrap() error { return e.Cause }
+
+// WithCause attaches cause to an *Error built by this package and returns it;
+// any other err is returned unchanged. A slice uses it on its fallback answer
+// (`WithCause(Internal("…"), err)`) so the failure it could not classify stays
+// classifiable by the edge.
+func WithCause(err, cause error) error {
+	if e, ok := err.(*Error); ok {
+		e.Cause = cause
+	}
+	return err
+}
 
 // New builds an Error with an explicit status/code — for the handful of cases
 // outside the constructors below (413, and codes a slice owns).

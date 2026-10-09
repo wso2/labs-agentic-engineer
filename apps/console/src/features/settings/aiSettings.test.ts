@@ -72,7 +72,6 @@ const anthropic: LLMProjection = {
   kind: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -121,9 +120,13 @@ describe("keyRequired", () => {
     expect(keyRequired(unconnected, draft({}, unconnected))).toBe(true);
   });
 
-  it("keeps the stored key on the same host, even across a format or model change", () => {
+  it("keeps the stored key across a model change only", () => {
     expect(keyRequired(connected, draft({ model: "claude-haiku-4-5" }))).toBe(false);
-    expect(keyRequired(connected, draft({ kind: "openai-compatible" }))).toBe(false);
+  });
+
+  it("asks for the key again when the format or the base URL changes, even on the same host", () => {
+    expect(keyRequired(connected, draft({ kind: "openai-compatible" }))).toBe(true);
+    expect(keyRequired(connected, draft({ baseURL: "https://api.anthropic.com/v2" }))).toBe(true);
   });
 
   it("asks for a new key when the host moves", () => {
@@ -265,7 +268,7 @@ describe("aiSettingsPatch", () => {
       config({
         agents: {
           ...config().agents,
-          subscription: { kind: "claude", keyPrefix: "sk-ant-oat01-", keyLast4: "9f2c", status: "connected", connectedAt: "" },
+          subscription: { kind: "claude", status: "active", connectedAt: "" },
         },
       }),
     );
@@ -291,6 +294,10 @@ describe("draftProblem", () => {
     });
   });
 
+  it("holds back a same-host format change without a key", () => {
+    expect(draftProblem(connected, draft({ kind: "openai-compatible" }), false)?.field).toBe("apiKey");
+  });
+
   it("holds back a format no coding agent here runs", () => {
     const noOpenCode = aiSettingsFrom(config({ llmFormats: [formats[0]!, { ...formats[1]!, runtimes: [] }] }));
     const next = draft({ kind: "openai-compatible", baseURL: "https://ollama.com/v1", apiKey: "ollama-key-0123456789" }, noOpenCode);
@@ -312,7 +319,9 @@ describe("refusedField", () => {
   it.each([
     ["llm_key_rejected", "apiKey"],
     ["llm_key_too_short", "apiKey"],
-    ["llm_key_required_for_new_host", "apiKey"],
+    ["llm_key_required", "apiKey"],
+    ["secret_store_write_failed", "apiKey"],
+    ["agent_manager_not_updated", "connection"],
     ["llm_host_refused", "baseURL"],
     ["llm_base_url_invalid", "baseURL"],
     ["llm_unreachable", "connection"],
@@ -327,6 +336,7 @@ describe("refusedField", () => {
     ["agents_runtime_unavailable", "runtime"],
     ["agents_subscription_requires_anthropic_host", "subscription"],
     ["agents_subscription_requires_connection", "subscription"],
+    ["secret_store_write_failed", "subscription"],
   ])("puts %s on %s", (code, field) => {
     expect(refusedField(["body.agents"], code)).toBe(field);
   });

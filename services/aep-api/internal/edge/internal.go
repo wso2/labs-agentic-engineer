@@ -20,39 +20,75 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
+
+	"github.com/getkin/kin-openapi/routers"
 
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
+	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/igen"
-	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 )
 
-// The internal service-to-service surface (/internal/v1), served CONTRACT-FIRST
+// The internal service-to-service route group (/internal/v1), served CONTRACT-FIRST
 // from packages/contracts/api/internal/v1 (generated strict server in
-// internal/igen). It is NOT wrapped by the user-JWT middleware: every
-// operation passes runnerAuthGate, which verifies the caller's publisher-cc
-// bearer against the execution named in the path (the INT-6
-// fence) and binds the verified org into the context. The spec is non-public —
-// never gateway-advertised.
+// internal/igen), mounted once at /internal/v1/. It is NOT wrapped by the
+// user-JWT middleware. Authenticate, then parse: every request is body-capped
+// (capInternalBody, which finds its route once); every generated operation then
+// passes internalGate, which verifies the caller's credential for the op's
+// route group (a runner's publisher-cc bearer against the cycle named in the
+// path, the INT-6 fence; an org's ae-studio-<org> client token for
+// ae-studio/) and binds the verified org into the context; only an
+// authenticated request is validated against the embedded internal spec
+// (internalValidator). The raw MCP routes carry their own gates: mcp takes a
+// publisher or recorded ae-studio-<org> token (auth.MCPGate), sre-handoff/mcp
+// the install-time SRE handoff key (auth.SREHandoffVerifier). The spec is non-public, never gateway-advertised, but the path
+// is reachable through the console's /aep-api-service/ route, so nothing on it
+// parses a body for an anonymous caller.
 //
-// RUNNER LOCKSTEP: the credentials-refresh response body is projected from the
-// organization domain's RefreshResponse onto igen.RefreshResponse (toIgenRefresh)
-// — the schema pins the wire shape, so the bytes cannot drift from what the
-// runner expects (igen stays a leaf; it cannot import the domain — §7).
-
 // InternalDeps carries the services + authorizer the internal S2S operations
 // need. main.go (internal/app) fills it with real instances.
 type InternalDeps struct {
-	CredsRefresh organization.CredentialsRefreshService
-	// RunnerAuth verifies runner publisher-cc bearers against the
-	// path execution id. nil fails closed: every internal op answers 503.
+	// RunnerAuth verifies runner publisher-cc bearers against the path
+	// cycle id: the token's org must own that run cycle (the cycle fence).
+	// nil fails closed: every runner op answers 503.
 	RunnerAuth *auth.RunnerAuthorizer
+	// StudioClients verifies an org's ae-studio-<org> client token for the
+	// ae-studio/ ops and MCP (the AE Studio tools pod) and binds the org
+	// recorded for that client. nil fails closed: every ae-studio/ op answers
+	// 401, and MCP refuses the pod's token.
+	StudioClients *auth.StudioClientVerifier
+	// AEStudioRepositories backs get-ae-studio-project-repository; nil
+	// answers 503.
+	AEStudioRepositories ProjectRepositoryLookup
+	// AEStudioSkills backs get-ae-studio-skills-repository; nil answers 503.
+	AEStudioSkills SkillsRepositoryLookup
+	// DependencyCompleter backs complete-ae-studio-dependencies
+	// (spec.CompleteDependencies over the org registry and the guarded URL
+	// fetch); nil answers 503.
+	DependencyCompleter DependencyCompleter
+	// TurnLedger backs record-turn-usage (the finished-turn ledger,
+	// spec.TurnRepository); nil answers 503.
+	TurnLedger TurnLedger
+	// WebhookIngestor backs ingest-webhook-event (webhook.Ingestor); nil
+	// answers 503.
+	WebhookIngestor WebhookIngestor
 	// ValidationContext backs the validation-context runner callback; a nil
 	// provider answers 503 for that op. A test user's login is NOT served here —
 	// it is published on the roles gate ticket, which is where the validation
 	// agent reads it (ADR-0022).
 	ValidationContext validation.ContextProvider
+	// MCP serves POST /internal/v1/mcp (call-mcp-tool), already wrapped in
+	// auth.MCPGate; nil leaves the route unmounted.
+	MCP http.Handler
+	// SREHandoffAuth guards SREHandoffMCP, the OpenChoreo SRE agent's handoff
+	// tools (sourcecontrol/issues/sre_mcp.go), with the install-time handoff
+	// key. Either nil (the default) leaves POST /internal/v1/sre-handoff/mcp
+	// unmounted. Each tool call names its org, which the tools verify against
+	// the observer's recorded alerts.
+	SREHandoffAuth *auth.SREHandoffVerifier
+	SREHandoffMCP  http.Handler
 }
 
 // internalServer implements igen.StrictServerInterface.
@@ -62,57 +98,240 @@ type internalServer struct {
 
 var _ igen.StrictServerInterface = (*internalServer)(nil)
 
-// newInternalV1Handler assembles the internal edge: runner-auth gate → strict
-// wrapper (envelope error writers) → generated router.
+// newInternalV1Handler assembles the internal edge, outermost first:
+//
+//	body cap (capInternalBody)    finds the route once; 1 MiB default, per-op overrides
+//	→ internalGate                authenticates the matched op's caller, binds the org
+//	→ internalValidator           kin-openapi against the embedded internal spec
+//	→ inner mux                   raw MCP routes + generated router
+//	→ requireInternalGate         backstop: a generated op the gate did not clear is 401
+//	→ strict wrapper              envelope error writers
+//
+// The inner mux registers full paths, so a path no row names 404s.
 func newInternalV1Handler(deps InternalDeps) http.Handler {
 	strict := igen.NewStrictHandlerWithOptions(
 		&internalServer{deps: deps},
-		[]igen.StrictMiddlewareFunc{runnerAuthGate(deps.RunnerAuth)},
+		[]igen.StrictMiddlewareFunc{requireInternalGate},
 		igen.StrictHTTPServerOptions{
 			RequestErrorHandlerFunc:  writeRequestError,
 			ResponseErrorHandlerFunc: writeResponseError,
 		},
 	)
 	mux := http.NewServeMux()
+	if deps.MCP != nil {
+		mux.Handle("POST "+internalV1+"/mcp", deps.MCP)
+	}
+	if deps.SREHandoffAuth != nil && deps.SREHandoffMCP != nil {
+		mux.Handle("POST "+internalV1+"/sre-handoff/mcp", deps.SREHandoffAuth.Middleware(deps.SREHandoffMCP))
+	}
 	igen.HandlerWithOptions(strict, igen.StdHTTPServerOptions{
 		BaseURL:          internalV1,
 		BaseRouter:       mux,
 		ErrorHandlerFunc: writeRequestError,
 	})
-	return mux
+	return capInternalBody(internalRouter(), internalBodyCaps, internalGate(deps, internalValidator(mux)))
 }
 
-// runnerAuthGate is the internal surface's deny-by-default gate: every
-// operation must present a bearer the authorizer accepts for the CYCLE id named
-// in the request, and the verified org is bound into the context. There are
-// deliberately NO carve-outs here. An operation whose request shape the gate does
-// not know is denied outright — adding an internal op means teaching this gate
-// where its cycle id lives first.
-//
-// The refresh operation still spells its parameter `executionId` on the wire; the
-// value is the dispatched cycle id, the same naming debt AEP_TASK_ID carries.
-func runnerAuthGate(authorizer *auth.RunnerAuthorizer) igen.StrictMiddlewareFunc {
-	return func(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
-		return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
-			if authorizer == nil {
-				return nil, errServiceUnavailable("runner auth not configured")
+// internalDefaultBodyBytes caps every /internal/v1 request body;
+// internalBodyCaps lists the operations allowed more, keyed by the embedded
+// spec's operation id.
+const internalDefaultBodyBytes int64 = 1 << 20
+
+var internalBodyCaps = map[string]int64{
+	"ingest-webhook-event": ingestBodyCapBytes,
+}
+
+// internalRouteMatch is the embedded-spec operation a request matched, found
+// once by capInternalBody and read from the context by internalGate and
+// internalValidator. A route miss (unknown path, wrong method, or a raw MCP
+// route the embedded spec lacks) stores nothing. pathParams are kin's values,
+// still URL-escaped (kin matches the escaped path); the handlers are served
+// the ServeMux's decoded PathValue, so the gate unescapes before fencing.
+type internalRouteMatch struct {
+	route      *routers.Route
+	pathParams map[string]string
+}
+
+type internalRouteKey struct{}
+
+func internalRouteFrom(ctx context.Context) (internalRouteMatch, bool) {
+	m, ok := ctx.Value(internalRouteKey{}).(internalRouteMatch)
+	return m, ok
+}
+
+// capInternalBody bounds every internal request body before anything reads it.
+// It is the one route lookup per request: a matched operation is stored in the
+// context for the gate and the validator. The limit is the matched operation's
+// entry in caps, else internalDefaultBodyBytes. A declared Content-Length over the limit is
+// answered 413 here, before next runs: call-mcp-tool is absent from the
+// embedded spec (excluded from generation), so the validator never reads an
+// MCP body, and an over-limit one would otherwise reach mcpdiscovery truncated
+// and come back as a JSON-RPC parse error. MCP bodies are therefore capped but
+// not schema-validated. A body of unknown length (chunked) is bounded by
+// http.MaxBytesReader instead: whoever reads past the limit gets a
+// *http.MaxBytesError (the validator maps it to the same 413).
+func capInternalBody(router routers.Router, caps map[string]int64, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		limit := internalDefaultBodyBytes
+		if route, pathParams, err := findInternalRoute(router, r); err == nil && route.Operation != nil {
+			if c, ok := caps[route.Operation.OperationID]; ok {
+				limit = c
 			}
-			var cycleID string
-			switch req := request.(type) {
-			case igen.RunnerRefreshCredentialsRequestObject:
-				cycleID = req.ExecutionID
-			case igen.RunnerValidationContextRequestObject:
-				cycleID = req.CycleID
-			default:
-				return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
-			}
-			caller, err := authorizer.Authorize(ctx, r.Header.Get("Authorization"), cycleID)
-			if err != nil {
-				return nil, mapRunnerAuthError(err)
-			}
-			return f(tenant.WithBoundOrg(ctx, string(caller.Org)), w, r, request)
+			r = r.WithContext(context.WithValue(r.Context(), internalRouteKey{},
+				internalRouteMatch{route: route, pathParams: pathParams}))
 		}
+		if r.ContentLength > limit {
+			writeBodyTooLarge(w)
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// findInternalRoute matches r against the embedded spec. A HEAD the spec does
+// not declare matches the path's GET operation: the inner ServeMux serves HEAD
+// through a GET pattern, so the gate must authenticate (and the validator
+// validate) it as that GET, exactly as /api/v1 does, rather than let it reach
+// the strict backstop unauthenticated.
+func findInternalRoute(router routers.Router, r *http.Request) (*routers.Route, map[string]string, error) {
+	route, pathParams, err := router.FindRoute(r)
+	if err == nil || r.Method != http.MethodHead {
+		return route, pathParams, err
 	}
+	get := r.WithContext(r.Context())
+	get.Method = http.MethodGet
+	return router.FindRoute(get)
+}
+
+// internalCredential is the credential a route group's operations require.
+type internalCredential int
+
+const (
+	// runnerCredential: a coding runner's publisher-cc bearer, fenced to the
+	// cycle the path names (INT-6).
+	runnerCredential internalCredential = iota + 1
+	// aeStudioCredential: the org's ae-studio-<org> client token, presented
+	// by its AE Studio tools pod; no cycle fence, the org is the one that
+	// client is recorded for. An org's publisher token (what its coding Jobs
+	// hold) never clears it.
+	aeStudioCredential
+)
+
+// internalOpGate is one operation's gate entry.
+type internalOpGate struct {
+	credential internalCredential
+	// cycleParam names the path parameter carrying the cycle id a runner op
+	// is fenced to.
+	cycleParam string
+}
+
+// internalOpGates is the gate table, keyed by embedded-spec operation id.
+// TestInternalGate_CoversEverySpecOperation pins it to the spec both ways.
+var internalOpGates = map[string]internalOpGate{
+	"runner-validation-context":        {credential: runnerCredential, cycleParam: "cycleId"},
+	"get-ae-studio-project-repository": {credential: aeStudioCredential},
+	"get-ae-studio-skills-repository":  {credential: aeStudioCredential},
+	"complete-ae-studio-dependencies":  {credential: aeStudioCredential},
+	"record-turn-usage":                {credential: aeStudioCredential},
+	"ingest-webhook-event":             {credential: aeStudioCredential},
+}
+
+// internalGate is /internal/v1's deny-by-default gate (internalOpGates), one
+// credential per route group (path prefix under /internal/v1). It runs after the body cap and
+// before the validator, so an unauthenticated caller gets 401 and never a
+// schema-detail 400 or a body parse:
+//
+//	runs/                      coding runner   publisher token, cycle fence (cycle id in the path)
+//	ae-studio/                 AE Studio pod   ae-studio-<org> client token, binds its recorded org (no cycle)
+//	mcp                        runner, pod     route miss here: own gate (auth.MCPGate), publisher or recorded ae-studio-<org> token, binds the verified org
+//	sre-handoff/mcp            SRE agent       route miss here: own gate (auth.SREHandoffVerifier), install-time handoff key; org per tool call, verified against observer alerts
+//	any other embedded op      -               denied (401)
+//
+// A route miss passes through untouched: the inner mux answers 404 or 405, or
+// serves a raw MCP route that verifies its own caller. Each generated operation
+// must present the credential of its route group, and the verified org is bound
+// into the context. A credential opens its own group only (mcp, the one group
+// two callers share, takes both of theirs): a publisher token never clears
+// ae-studio/, an ae-studio-<org> client token never clears a runner op, the
+// SRE handoff key opens only sre-handoff/mcp, and no other
+// token (a user JWT, the AE-only client) clears ae-studio/. There are deliberately NO carve-outs: an operation absent from internalOpGates is
+// denied outright, so adding an internal op means teaching this gate its
+// credential first. The cycle fence checks the decoded path value, the one
+// the handler is served. requireInternalGate denies any generated op that reaches
+// the strict wrapper without this gate's verdict.
+func internalGate(deps InternalDeps, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m, ok := internalRouteFrom(r.Context())
+		if !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, err := authenticateInternal(r.Context(), deps, r.Header.Get("Authorization"), m)
+		if err != nil {
+			writeResponseError(w, r, err)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, internalGateKey{}, true)))
+	})
+}
+
+// authenticateInternal verifies authHeader for the matched operation's route
+// group and returns ctx with the verified org bound.
+func authenticateInternal(ctx context.Context, deps InternalDeps, authHeader string, m internalRouteMatch) (context.Context, error) {
+	op := m.route.Operation.OperationID
+	gate, ok := internalOpGates[op]
+	switch {
+	case ok && gate.credential == aeStudioCredential:
+		return authenticateAEStudio(ctx, deps.StudioClients, authHeader)
+	case ok && gate.credential == runnerCredential:
+		if deps.RunnerAuth == nil {
+			return nil, errServiceUnavailable("runner auth not configured")
+		}
+		cycleID, err := url.PathUnescape(m.pathParams[gate.cycleParam])
+		if err != nil {
+			return nil, errUnauthorized("malformed cycle id in path")
+		}
+		caller, err := deps.RunnerAuth.Authorize(ctx, authHeader, cycleID)
+		if err != nil {
+			return nil, mapRunnerAuthError(err)
+		}
+		return tenant.WithBoundOrg(ctx, string(caller.Org)), nil
+	default:
+		return nil, errUnauthorized("unauthenticated internal operation: " + op)
+	}
+}
+
+// internalGateKey marks a request internalGate authenticated.
+type internalGateKey struct{}
+
+// requireInternalGate is the strict-wrapper backstop: a generated operation
+// runs only if internalGate cleared its request. The gate keys on kin's route
+// match; a path the generated router serves but kin's router misses would skip
+// the gate, and is denied here instead of served unauthenticated.
+func requireInternalGate(f igen.StrictHandlerFunc, operationID string) igen.StrictHandlerFunc {
+	return func(ctx context.Context, w http.ResponseWriter, r *http.Request, request any) (any, error) {
+		if cleared, _ := ctx.Value(internalGateKey{}).(bool); !cleared {
+			return nil, errUnauthorized("unauthenticated internal operation: " + operationID)
+		}
+		return f(ctx, w, r, request)
+	}
+}
+
+// internalValidator validates an authenticated request against the embedded
+// internal spec, using the route capInternalBody found. A route miss falls
+// through: the raw MCP routes are absent from the embedded spec (call-mcp-tool
+// and call-sre-handoff-mcp-tool are excluded from generation), so their bodies
+// are capped, not validated.
+func internalValidator(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m, ok := internalRouteFrom(r.Context())
+		if !ok || validateRequest(w, r, m.route, m.pathParams) {
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 // mapRunnerAuthError translates the authorizer's neutral auth.HTTPError onto
@@ -128,38 +347,6 @@ func mapRunnerAuthError(err error) error {
 		}
 	}
 	return errUnauthorized("invalid bearer")
-}
-
-func (s *internalServer) RunnerRefreshCredentials(ctx context.Context, request igen.RunnerRefreshCredentialsRequestObject) (igen.RunnerRefreshCredentialsResponseObject, error) {
-	if s.deps.CredsRefresh == nil {
-		return nil, errServiceUnavailable("credentials refresh not configured")
-	}
-	org := tenant.BoundOrgFromContext(ctx)
-	resp, err := s.deps.CredsRefresh.Refresh(ctx, request.ExecutionID, org)
-	if err != nil {
-		return nil, errInternal("failed to refresh credentials")
-	}
-	return igen.RunnerRefreshCredentials200JSONResponse(toIgenRefresh(*resp)), nil
-}
-
-// toIgenRefresh projects the org domain's RefreshResponse onto the S2S wire
-// shape. igen must stay a leaf, so it cannot import the domain that owns the
-// value type — hence a mapping here rather
-// than the former x-go-type alias. The wire keys are byte-identical (the
-// Identity sub-object marshals capitalized either way); only Go field ORDER
-// differs between the two Identity structs, which forbids a whole-struct
-// conversion, so the three fields are copied by name.
-func toIgenRefresh(r organization.RefreshResponse) igen.RefreshResponse {
-	return igen.RefreshResponse{
-		Token:     r.Token,
-		ExpiresAt: r.ExpiresAt,
-		Identity: igen.Identity{
-			Name:  r.Identity.Name,
-			Email: r.Identity.Email,
-			Login: r.Identity.Login,
-		},
-		TaskID: r.TaskID,
-	}
 }
 
 func (s *internalServer) RunnerValidationContext(ctx context.Context, request igen.RunnerValidationContextRequestObject) (igen.RunnerValidationContextResponseObject, error) {
@@ -179,7 +366,7 @@ func (s *internalServer) RunnerValidationContext(ctx context.Context, request ig
 
 // toIgenValidationContext projects the validation service's own struct onto the
 // S2S wire shape. igen must stay a leaf, so it cannot import the feature/domain
-// that owns the value type (§7) — hence a mapping here rather than the former
+// that owns the value type — hence a mapping here rather than the former
 // x-go-type alias. The wire keys are byte-identical; a nil endpoints slice stays
 // nil (marshals `null`) exactly as the alias did, never silently becoming `[]`.
 func toIgenValidationContext(r validation.ValidationContextResponse) igen.ValidationContextResponse {
@@ -191,4 +378,24 @@ func toIgenValidationContext(r validation.ValidationContextResponse) igen.Valida
 		}
 	}
 	return igen.ValidationContextResponse{Endpoints: eps}
+}
+
+// mcpRoutes returns the internal MCP discovery handler (POST /internal/v1/mcp,
+// raw JSON-RPC). The MCP server answers the coding runner's and the AE Studio
+// tools pod's queries for the org's external resources, endpoints, platform
+// resource types and OpenAPI specs, gated by auth.MCPGate: an org's
+// aep-publisher-<org> client token (the runner's) or its recorded
+// ae-studio-<org> client token (the pod's), and the acting org comes from the
+// verifier that accepted it, never the request. Without either verifier
+// nothing could verify a caller, so mcp is nil and the path 404s instead of
+// 503-ing. routes() hands both to newInternalV1Handler via InternalDeps.
+func mcpRoutes(p AppParams) http.Handler {
+	var mcp http.Handler
+	if p.Deps.PublisherTokens != nil || p.InternalDeps.StudioClients != nil {
+		mcp = auth.MCPGate(p.Deps.PublisherTokens, p.InternalDeps.StudioClients, mcpdiscovery.NewMCPHandler(
+			p.MCPExternalResources, p.MCPOrgEndpoints, p.MCPResourceTypes, p.MCPGroupCatalog,
+			p.MCPSpecValidator, p.MCPSpecNormalizer, p.MCPSpecFetcher, p.MCPSpecSlicer,
+			p.MCPGuardrailCatalog))
+	}
+	return mcp
 }

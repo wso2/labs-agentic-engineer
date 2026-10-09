@@ -51,7 +51,7 @@ func (f *fakeGroupCatalog) ListGroupCatalog(_ context.Context, orgHandle string)
 // these cases exercise; the external-resource reader is required for the
 // surface to answer at all.
 func groupCatalogHandler(gc GroupCatalogLister) http.Handler {
-	return NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, gc, nil,
+	return NewMCPHandler(newExternalCatalogFixture(nil), nil, nil, gc,
 		spec.ValidateOpenAPI, spec.NormalizeOpenAPIYAML, spec.FetchSpecFromURL, spec.SliceOpenAPI, nil)
 }
 

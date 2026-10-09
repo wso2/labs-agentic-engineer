@@ -60,7 +60,7 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
 | `ComponentEnvVarReader` · `RuntimeFileProvider` | needs | the config slice and `dependencies/runtimeconfig` — the two projections whose values ride the binding's workload overrides. Both are declared consumer-side and both distinguish "no values" from "cannot compute yet": an unready projection leaves its field UNMANAGED rather than writing an empty one over the user's values |
 | CRT catalog · binding patcher · `ThunderApplicationReader` | needs | after OC Ready, a web-app whose platform-resource CRT carries `ConsumerURLEnvConfig` stays pending until the ThunderApplication CR carries THAT web app's callback. Registration is PROJECT-scoped and happens once per read, ahead of the per-component fold (`thunderPass`), because several web apps can share one dependency and therefore one callback field. Wired via `SetResourceCatalog` / `SetResourceClient` / `SetThunderApplicationReader`. Any nil (or a nil store) skips the wait, so OC-only `DeploymentState` tests stay green. Service components never enter it. This domain consumes `ThunderApplicationView`; it does not GET Kubernetes |
 | `EndpointGate` | needs | after OC Ready, a component that advertises an external URL stays pending until that URL ANSWERS. ONE gate, wired via `SetEndpointGate` onto BOTH the deploy-stage read (`DeploymentState`) and the status poll (`holdUnreachable`), so the supervisor and the console cannot answer differently about one component and the first probe serves both. The URL rides `ReleaseBindingSummary.ExternalURL` — the same object, no second request. Nil skips the gate, and the composition root wires one only when the data-plane gateway fronts TLS: a plane without it has no certificate to wait for, and its `*.openchoreoapis.localhost` names resolve to loopback from this process. A component that advertises no URL passes untouched |
-| `OrgPublisher` | needs | `organization` — per-org Thunder publisher provisioning + the IDP profile a protected API's JWT validation is pinned to. Best-effort: a failure composes an unpinned trait rather than failing a version's deploy |
+| `OrgIDPProfiles` | needs | `organization` — the IDP profile a protected API's JWT validation is pinned to. Read-only: a deploy never creates or heals the publisher app (the gitpat submit does). Fails closed: a failed read refuses the deploy (logs `deployment: org IdP profile unreadable; the deploy is refused`, `orgID`, `projectID`) before any component is written, because an unpinned trait trusts every keymanager on the cluster. The error is plain, not `ErrDeployPermanent`, so the promote activity retries until the profile reads. A saved BYO profile with a blank issuer (rows older than the write-side check) is refused the same retryable way, so the deploy goes through once the admin saves an issuer (logs `deployment: org IdP profile has no issuer; the deploy is refused`, `orgID`, `projectID`, `kind`). The issuer read runs before governance, so a refused deploy registers nothing. No profile row is the platform-IdP org: nothing to pin |
 | `ProjectLister` | needs | `sourcecontrol`, at the root — every project the platform tracks, for the converge sweep. The git-repository index rather than the executions table, because the run loop mints no execution rows and a sweep reading those saw nothing on that rail |
 | `Service` · `ComponentService` · `ConfigService` | offers | the edge — every op this domain serves. The authoritative list is `edge/method_origin_test.go`'s `opOwner` ledger (a reflection gate fails if an op is served by an embed the ledger does not name), so it is not restated here to go stale |
 
@@ -181,11 +181,32 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   (CORS origins, an OIDC callback) orders nothing and is written by the converge. A cycle among hard edges
   is `ErrDeployPermanent` — nobody can go first — see
   [ADR-0019](../../../../docs/decisions/ADR-0019-deploy-order-follows-the-hard-wiring-edges.md).
-- **Everything after the OC project + repo is best-effort.** Skills provisioning, the webhook, and the
-  project descriptor are each logged-and-continued on failure: none of them may destroy a creation the
-  user already committed to. The one exception stays the repo-NAME conflict, which can never succeed on
-  retry and so compensates the project away and fails. A missing descriptor costs the user one question
-  from the `/start` skill, nothing more.
+- **A create needs the org's AE Studio serving before the OC project exists** ([ADR-0045](../../../../docs/decisions/ADR-0045-design-work-runs-in-the-organizations-ae-studio.md),
+  `SetAEStudioReady`, served by the `aestudiotools` adapter's endpoint resolve): absent answers 409
+  `github_not_connected`, not serving 503 `ae_studio_unavailable`, and nothing is half-made.
+- **Everything after the OC project + repo is best-effort; the repo is not.** Skills provisioning, the
+  webhook, and the project descriptor are each logged-and-continued on failure: none of them may destroy
+  a creation the user already committed to. A hook that failed is installed later by the eventcore
+  sweep's hook repair (a ready row with no hook id). A failed repo create compensates the project away
+  and fails the create with the repo error unchanged: a name conflict reads as one, and an AE
+  Studio answer reaches the edge's classifier (409 `github_not_connected`, 503 `ae_studio_unavailable`).
+  A create-repo answer lost after GitHub made the repo leaves it standing, and a retry under the same
+  name reads as the name conflict. The compensation runs on the request's values but
+  not its cancellation (bounded, 30 s), so a client that went away still leaves no OC project. A
+  missing descriptor costs the user one question from
+  the `/start` skill, nothing more. The OC project delete a compensation makes takes the
+  ProjectReleaseBindings the create authored with it (OpenChoreo's Project finalizer).
+- **Delete marks the repo row, runs the OC project first, then the platform's half.** The row is marked
+  `deleting` first (no sweep lists it, no hook id lands on it); a delete that could not reach OpenChoreo
+  puts the mark back and stops before it touches anything else (an already-gone OC project goes on). Then the run
+  supervisors, the repo hook, the pod's mirror and reference documents (`DeleteRepo` trashes them
+  through the pod before it drops the row that names them), the repo row, the executions and the runs,
+  each best-effort. The GitHub repository stays.
+- **A create finishes a leftover delete.** A create whose `CreateRepo` meets the row of a delete that
+  stopped after its OC project went (`ErrRepoDeletePending`) logs `project.create_finishing_teardown`,
+  runs that delete's post-OC half (`finishTeardown`: supervisors, hook, repo row, executions, runs; it
+  never touches OpenChoreo) and asks `CreateRepo` once more. A row still `deleting` after that
+  compensates like any repo failure and maps to 409 `project_delete_pending`.
 - **Slug guards run before any service touch.** projectName/componentName/buildName path params are validated
   as DNS-label slugs (`RequireSlug`) and 400 on malformed BEFORE the OC client / repo is reached.
 - **The wire quirks the contract-first cutover pinned stay pinned**: get-component-config returns a literal
@@ -195,8 +216,11 @@ delivery's kernel: shared behaviour belongs in the root the slices import.
   four sources concurrently — spec from a fetch-free local-mirror snapshot, build from the newest
   `milestone_runs` row (a version's delivery IS its run), deploy from the project's `development`
   USER-COMPONENT release bindings, and the newest `agent_turns` row — with no GitHub API, Temporal
-  query, or origin fetch. Any source failure fails the whole read (the console keeps last-good); the
-  one carve-out: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500.
+  query, or origin fetch. Any source failure fails the whole read (the console keeps last-good), with
+  two carve-outs: a deploy tag missing from the local mirror degrades to a 0 denominator, not a 500;
+  and the org's AE Studio being absent, unavailable or misconfigured (the snapshot, the deploy count or
+  the design-staleness baseline) answers 200 with `spec.availability = "unavailable"` and `spec.unavailableReason` (the edge code of the cause), the git-derived
+  spec facts and the flat hasSpec/hasDesign/specStatus/phase unset, build and deploy intact.
 - **`spec.agent` is the one spec field git cannot answer.** exists/version/dirty all read committed truth,
   and a turn writes nothing until it lands — so through the whole kickoff (#562), the busiest moment in a
   project's life, git says the project is untouched. The newest turn row says otherwise, and folds to three

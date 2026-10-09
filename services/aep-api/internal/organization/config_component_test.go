@@ -35,6 +35,7 @@ package organization_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,13 +57,10 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/contracttest"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 const (
 	configPath   = "/api/v1/config"
-	configAESKey = "0123456789abcdef0123456789abcdef"
-	configEnvSec = "platform-webhook-secret"
 	goodAnthKey  = "sk-ant-api03-CONFIGtestKeyABCDEFGHIJKLmnop"
 	goodAnthKey2 = "sk-ant-api03-SECONDkeyZYXWVUTSRQPonmlk9999"
 	platformIss  = "http://platform.test/issuer"
@@ -172,35 +170,36 @@ type configHarness struct {
 	gh    *cfgFakeGH
 	anth  *anthropicFake // the Claude subscription probe
 	model *modelEndpoint // the model connection's endpoint, for every host
-	conns *organization.ModelConnectionService
+	// vault is the secrets client every key and PAT write goes to; nil on
+	// an installation with no secrets provider.
+	vault *submitVault
 }
 
 // newConfigHarness assembles the real orgconfig.Service over one shared dbtest
 // Postgres with real Anthropic/GitHub/IDP services and faked external probes.
-// Thunder is nil and the GitHub App client id empty (the state-changing action
-// routes that need them are covered separately via newConfigHarnessOpts).
+// Thunder is nil (the state-changing action routes that need it are covered
+// separately via newConfigHarnessWithThunder).
 func newConfigHarness(t *testing.T) *configHarness {
-	return newConfigHarnessOpts(t, nil, "")
+	return newConfigHarnessWithThunder(t, nil)
 }
 
-// newConfigHarnessOpts is newConfigHarness with the two knobs the action-route
-// tests need: a fake Thunder admin client (for IDP client-secret rotation) and
-// a GitHub App client id (for the connect-sessions authorize URL).
-func newConfigHarnessOpts(t *testing.T, thunder thundersvc.Client, appClientID string) *configHarness {
+// newConfigHarnessWithThunder is newConfigHarness with the knob the action-route
+// tests need: a fake Thunder admin client (the action routes never reach it).
+func newConfigHarnessWithThunder(t *testing.T, thunder thundersvc.Client) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, thunder, appClientID, orgconfig.AgentRuntimes)
+	return newConfigHarnessOn(t, thunder, orgconfig.AgentRuntimes)
 }
 
 // newConfigHarnessRuntimes is newConfigHarness on an installation that runs
 // only runtimes — one deployed without a runtime's runner image.
 func newConfigHarnessRuntimes(t *testing.T, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessOn(t, nil, "", runtimes)
+	return newConfigHarnessOn(t, nil, runtimes)
 }
 
-func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime) *configHarness {
+func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, thunder, appClientID, runtimes, false)
+	return newConfigHarnessProbing(t, thunder, runtimes, false)
 }
 
 // newConfigHarnessGuarded is newConfigHarness with the production probe
@@ -208,48 +207,82 @@ func newConfigHarnessOn(t *testing.T, thunder thundersvc.Client, appClientID str
 // endpoint to reach.
 func newConfigHarnessGuarded(t *testing.T) *configHarness {
 	t.Helper()
-	return newConfigHarnessProbing(t, nil, "", orgconfig.AgentRuntimes, true)
+	return newConfigHarnessProbing(t, nil, orgconfig.AgentRuntimes, true)
 }
 
-func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, appClientID string, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+// newConfigHarnessNoSecrets is newConfigHarness on an installation with no
+// secrets provider (secrets delivery off): no vault to keep a token in.
+func newConfigHarnessNoSecrets(t *testing.T) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, configHarnessOpts{runtimes: orgconfig.AgentRuntimes})
+}
+
+func newConfigHarnessProbing(t *testing.T, thunder thundersvc.Client, runtimes []orgconfig.AgentRuntime, guarded bool) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, configHarnessOpts{thunder: thunder, runtimes: runtimes, guarded: guarded, secretsDelivery: true})
+}
+
+// newConfigHarnessWithModelProvider is newConfigHarness with Agent Manager's
+// provider behind the key save (the publisher a governed installation wires)
+// and the key's default-key reference written to the fake vault.
+func newConfigHarnessWithModelProvider(t *testing.T, provider organization.ModelProviderPublisher) *configHarness {
+	t.Helper()
+	return newConfigHarnessWith(t, configHarnessOpts{runtimes: orgconfig.AgentRuntimes, secretsDelivery: true, modelProvider: provider})
+}
+
+// configHarnessOpts are the harness's knobs. With secretsDelivery, the
+// credential service writes the PAT's github-pat reference to a fake vault
+// (the gitpat submit's write); without, the installation has no secrets
+// provider. With modelProvider (which needs secretsDelivery), the key save
+// publishes to it and writes the key's default-key reference.
+type configHarnessOpts struct {
+	thunder                  thundersvc.Client
+	runtimes                 []orgconfig.AgentRuntime
+	guarded, secretsDelivery bool
+	modelProvider            organization.ModelProviderPublisher
+}
+
+// newConfigHarnessWith assembles the harness.
+func newConfigHarnessWith(t *testing.T, o configHarnessOpts) *configHarness {
 	t.Helper()
 	db := dbtest.New(t) // self-skips under -short
 	gh := newCfgFakeGH(t)
 	anth := newAnthropicFake(t)
 
-	store, err := secrets.NewDBStore(db, []byte(configAESKey))
-	if err != nil {
-		t.Fatalf("NewDBStore: %v", err)
-	}
-	minter, err := secrets.NewAppTokenMinter(nil)
-	if err != nil {
-		t.Fatalf("NewAppTokenMinter: %v", err)
-	}
-
 	model := newModelEndpoint(t, http.StatusOK)
 	anthropicRepo := organization.NewOrgAnthropicRepository(db)
-	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo, store).WithAnthropicAPIBase(anth.URL)
-	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, store, sonnetRates())
-	cardRepo := organization.NewAgentsCardRepository(db, store)
-	if !guarded {
+	anthropicSvc := organization.NewAnthropicCredentialService(anthropicRepo).WithAnthropicAPIBase(anth.URL)
+	conns := organization.NewModelConnectionService(organization.NewOrgModelConnectionRepository(db), anthropicRepo, organization.NewOrgSecretRepository(db), sonnetRates())
+	if !o.guarded {
 		conns.WithProbeClient(model.client())
 	}
-	credSvc := organization.NewCredentialService(organization.NewOrgCredentialRepository(db, nil), store, minter, configEnvSec, "", "", nil).WithGitHubAPIBase(gh.URL)
+	credRepo := organization.NewOrgCredentialRepository(db)
+	credSvc := organization.NewCredentialService(credRepo).WithGitHubAPIBase(gh.URL)
+	var vault *submitVault
+	if o.secretsDelivery {
+		vault = &submitVault{log: &submitLog{}, live: map[string]bool{}, data: map[string]map[string]string{}, writes: map[string]int{}}
+		orgSecrets := organization.NewOrgSecretWriter(vault, organization.NewOrgSecretRepository(db), organization.NewOrgSecretLock(db), time.Now)
+		refWriter := organization.NewSecretRefWriter(vault, organization.NewIDPRepository(db)).WithOrgSecretWriter(orgSecrets)
+		credSvc.WithSecretRefWriter(refWriter)
+		conns.WithSecretRefWriter(refWriter)
+		anthropicSvc.WithSecretRefWriter(refWriter)
+		if o.modelProvider != nil {
+			anthropicSvc.WithModelProvider(o.modelProvider)
+		}
+	}
 	disconnectSvc := organization.NewOrgDisconnectService(credSvc, nil)
-	bearerSvc := organization.NewBearerService("state-key", time.Minute)
-	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db, nil), organization.NewOrganizationRepository(db), thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
+	idpSvc := organization.NewIDPService(organization.NewIDPRepository(db), organization.NewOrganizationRepository(db), o.thunder, organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS})
 
 	svc := organization.NewService(
-		credSvc, disconnectSvc, bearerSvc, idpSvc,
+		credSvc, disconnectSvc, idpSvc,
 		organization.PlatformIDPConfig{Issuer: platformIss, JWKSURL: platformJWKS},
-		"http://localhost:8090", appClientID,
-	).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
-		organization.NewOrganizationRepository(db), anthropicSvc, conns, cardRepo, runtimes))
+	).WithOrgSecretRefs(organization.NewOrgSecretRepository(db)).WithAgentSettings(organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
+		organization.NewOrganizationRepository(db), anthropicSvc, conns, organization.NewAgentsCardRepository(db), o.runtimes))
 
 	// The harness wires the DOMAIN, not a loose service: the edge embeds
 	// organization's handlers, so this assembles the same graph production does.
 	h := componenttest.New(t, componenttest.Options{Deps: edge.Deps{Organization: mustNewOrgHandlers(t, organization.Deps{Config: svc})}})
-	return &configHarness{h: h, db: db, gh: gh, anth: anth, model: model, conns: conns}
+	return &configHarness{h: h, db: db, gh: gh, anth: anth, model: model, vault: vault}
 }
 
 // mustNewOrgHandlers assembles the real organization domain around the given
@@ -319,7 +352,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	c.gh.patHappy()
 
 	// Connect llm + gitProvider through the real PATCH path, and seed a custom
-	// idp with a stored secret.
+	// idp whose publisher secret is recorded.
 	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
 		t.Fatalf("llm connect: %d %s", r.Code, r.Body.String())
 	}
@@ -327,6 +360,7 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 		t.Fatalf("gitProvider connect: %d %s", r.Code, r.Body.String())
 	}
 	seedCustomIDP(t, c.db, "acme")
+	seedPublisherClientRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	if resp.Code != 200 {
@@ -346,10 +380,9 @@ func TestConfigComponent_B2_AllConnectedNoSecrets(t *testing.T) {
 	if idpSec["kind"] != "custom" || idpSec["hasClientSecret"] != true {
 		t.Fatalf("idp projection drifted: %v", idpSec)
 	}
-	// No FULL secret material anywhere in the body. (The keyPreview display
-	// fragment is intentional and safe — only the full apiKey/pat/clientSecret
-	// must never appear.)
-	for _, secret := range []string{goodAnthKey, "ghp_live", "the-stored-secret"} {
+	// No secret material anywhere in the body: no apiKey, PAT or client
+	// secret, and no character of a key (TestProjection_HasNoPreviewCharacters).
+	for _, secret := range []string{goodAnthKey, "ghp_live"} {
 		if strings.Contains(body, secret) {
 			t.Fatalf("GET /config leaks secret material %q: %s", secret, body)
 		}
@@ -362,10 +395,14 @@ func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	t.Parallel()
 	c := newConfigHarness(t)
 	if err := c.db.Exec(`INSERT INTO org_model_connections
-		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, key_preview, connected_at, updated_at)
+		(oc_org_id, format, base_url, host, model, auth_scheme, image_input, connected_at, updated_at)
 		VALUES ('acme', 'anthropic', 'https://api.anthropic.com/v1', 'api.anthropic.com', 'claude-haiku-4-5',
-		        'x-api-key', 'yes', 'sk-a…9999', now(), now())`).Error; err != nil {
+		        'x-api-key', 'yes', now(), now())`).Error; err != nil {
 		t.Fatalf("seed a migrated connection: %v", err)
+	}
+	if err := organization.NewOrgSecretRepository(c.db).Upsert(context.Background(), "acme",
+		organization.OrgSecretRef{Secret: organization.OrgSecretDefaultKey, Name: "acme-default-key-0000beef"}, ""); err != nil {
+		t.Fatalf("seed its default-key row: %v", err)
 	}
 
 	m := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())
@@ -373,7 +410,7 @@ func TestConfigComponent_B3_MigratedConnectionHasNoAuthor(t *testing.T) {
 	if v, present := llm["updatedBy"]; !present || v != nil {
 		t.Fatalf("updatedBy must be present and null on a migrated connection: %v", llm)
 	}
-	if llm["model"] != "claude-haiku-4-5" || llm["keyPreview"] != "sk-a…9999" || llm["priced"] != false {
+	if llm["model"] != "claude-haiku-4-5" || llm["priced"] != false {
 		t.Fatalf("llm projection drifted: %v", llm)
 	}
 }
@@ -396,6 +433,7 @@ func TestConfigComponent_B4_GitHubAppMode(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed app row: %v", err)
 	}
+	seedGitHubPATRef(t, c.db, "acme")
 
 	resp := c.h.AsOrg("acme").Get(configPath)
 	m := decodeCfg(t, resp.Body.Bytes())
@@ -439,11 +477,15 @@ func TestConfigComponent_B6_CustomIDP(t *testing.T) {
 	if idpSec["kind"] != "custom" || idpSec["issuer"] != "https://byo.example" || idpSec["jwksUrl"] != "https://byo.example/jwks" {
 		t.Fatalf("custom idp drifted: %v", idpSec)
 	}
-	if idpSec["hasClientSecret"] != true {
-		t.Fatalf("hasClientSecret must reflect the stored secret: %v", idpSec)
+	// The profile alone says nothing about the secret: it lives only in vault.
+	if idpSec["hasClientSecret"] != false {
+		t.Fatalf("hasClientSecret without an ae-publisher-client row: %v", idpSec)
 	}
-	if strings.Contains(resp.Body.String(), "the-stored-secret") {
-		t.Fatalf("idp leaked the stored secret: %s", resp.Body.String())
+
+	seedPublisherClientRef(t, c.db, "acme")
+	resp = c.h.AsOrg("acme").Get(configPath)
+	if idpSec := decodeCfg(t, resp.Body.Bytes())["idp"].(map[string]any); idpSec["hasClientSecret"] != true {
+		t.Fatalf("hasClientSecret must be the ae-publisher-client row's presence: %v", idpSec)
 	}
 }
 
@@ -475,8 +517,8 @@ func TestConfigComponent_C1_FirstConnect(t *testing.T) {
 	}
 	m := decodeCfg(t, resp.Body.Bytes())
 	llm := m["llm"].(map[string]any)
-	if llm["keyPreview"] != goodAnthKey[:4]+"…"+goodAnthKey[len(goodAnthKey)-4:] {
-		t.Fatalf("post-write projection preview drifted: %v", llm)
+	if llm["kind"] != "anthropic" || c.defaultKeyRef(t, "acme") == nil || c.vault.data[c.defaultKeyRef(t, "acme").Name]["api-key"] != goodAnthKey {
+		t.Fatalf("post-write projection %v: want the connection, its key in the vault under the default-key row", llm)
 	}
 	// A following GET is identical, less the save's own probe result.
 	if _, ok := m["llmCheck"]; !ok {
@@ -494,13 +536,14 @@ func TestConfigComponent_C2_ReplaceKey(t *testing.T) {
 	if r := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey)); r.Code != 200 {
 		t.Fatalf("first connect: %d %s", r.Code, r.Body.String())
 	}
+	first := c.defaultKeyRef(t, "acme").Name
 	resp := c.h.AsOrg("acme").Patch(configPath, llmConnect(goodAnthKey2))
 	if resp.Code != 200 {
 		t.Fatalf("replace: %d %s", resp.Code, resp.Body.String())
 	}
-	llm := decodeCfg(t, resp.Body.Bytes())["llm"].(map[string]any)
-	if llm["keyPreview"] != goodAnthKey2[:4]+"…"+goodAnthKey2[len(goodAnthKey2)-4:] {
-		t.Fatalf("replace did not swap the key preview: %v", llm)
+	second := c.defaultKeyRef(t, "acme").Name
+	if second == first || c.vault.data[second]["api-key"] != goodAnthKey2 || c.vault.live[first] {
+		t.Fatalf("replace: default-key %s → %s, want a new reference holding the new key and the old one retired", first, second)
 	}
 }
 
@@ -612,6 +655,36 @@ func TestConfigComponent_D2_PatProbeFails(t *testing.T) {
 	c.db.Model(&organization.OrgCredential{}).Where("oc_org_id = ?", "acme").Count(&count)
 	if count != 0 {
 		t.Fatalf("failed probe must persist nothing, found %d", count)
+	}
+}
+
+// With no secrets provider the PAT has nowhere to live: the save is refused
+// before anything is written (no credential row, no reference row), instead
+// of answering 200 for a token it kept nowhere.
+func TestConfigComponent_D2b_PatConnectWithoutSecretsDelivery(t *testing.T) {
+	t.Parallel()
+	c := newConfigHarnessNoSecrets(t)
+	c.gh.patHappy()
+
+	resp := c.h.AsOrg("acme").Patch(configPath, `{"gitProvider":{"kind":"github","mode":"pat","pat":"ghp_live","githubLogin":"ada"}}`)
+	if resp.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d body=%s", resp.Code, resp.Body.String())
+	}
+	p := componenttest.DecodeEnvelope(t, resp.Body.String())
+	if p.Code != "secrets_delivery_unavailable" || len(p.Details) == 0 || p.Details[0].Field != "body.gitProvider" {
+		t.Fatalf("want secrets_delivery_unavailable on body.gitProvider: %s", resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "ghp_live") {
+		t.Fatal("the refusal echoes the token")
+	}
+	for _, table := range []string{"org_credentials", "org_secrets"} {
+		var n int64
+		if err := c.db.Raw(`SELECT count(*) FROM ` + table + ` WHERE oc_org_id = 'acme'`).Scan(&n).Error; err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("%s has %d rows for the refused save", table, n)
+		}
 	}
 }
 
@@ -729,6 +802,34 @@ func TestConfigComponent_E4_WholesaleReplaceClearsOmitted(t *testing.T) {
 	}
 	if idpSec["jwksUrl"] != "" {
 		t.Fatalf("omitted jwksUrl must be CLEARED (wholesale replace), got %v", idpSec["jwksUrl"])
+	}
+}
+
+// A BYO idp without an issuer is refused before ANY section is written: the
+// llm section sent beside it is not persisted, and the idp stays platform.
+func TestConfigComponent_E5_BYOWithoutIssuerRejected(t *testing.T) {
+	t.Parallel()
+	for _, idp := range []string{
+		`{"kind":"custom"}`,
+		`{"kind":"custom","issuer":"  ","jwksUrl":"https://byo.example/jwks"}`,
+		`{"kind":"asgardeo"}`,
+	} {
+		c := newConfigHarness(t)
+		resp := c.h.AsOrg("acme").Patch(configPath, `{"llm":{"kind":"anthropic","apiKey":"`+goodAnthKey+`"},"idp":`+idp+`}`)
+		if resp.Code != 400 {
+			t.Fatalf("idp %s: want 400, got %d body=%s", idp, resp.Code, resp.Body.String())
+		}
+		if p := componenttest.DecodeEnvelope(t, resp.Body.String()); len(p.Details) == 0 || p.Details[0].Field != "body.idp" {
+			t.Fatalf("idp %s: 400 must point at body.idp: %s", idp, resp.Body.String())
+		}
+		var llmCount int64
+		c.db.Model(&organization.OrgModelConnection{}).Where("oc_org_id = ?", "acme").Count(&llmCount)
+		if llmCount != 0 {
+			t.Fatalf("idp %s: the llm section was persisted beside a refused idp", idp)
+		}
+		if k := decodeCfg(t, c.h.AsOrg("acme").Get(configPath).Body.Bytes())["idp"].(map[string]any)["kind"]; k != "platform" {
+			t.Fatalf("idp %s: kind = %v after a refused patch; want platform", idp, k)
+		}
 	}
 }
 
@@ -867,7 +968,7 @@ func TestConfigComponent_G2_TenantIsolation(t *testing.T) {
 	// Seed org B's connection row directly.
 	if err := c.db.Create(&organization.OrgModelConnection{
 		OcOrgID: "orgb", Format: "anthropic", BaseURL: "https://api.anthropic.com/v1", Host: "api.anthropic.com",
-		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes", KeyPreview: "sk-a…0000",
+		Model: "claude-sonnet-5", AuthScheme: "x-api-key", ImageInput: "yes",
 		ConnectedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}).Error; err != nil {
 		t.Fatalf("seed org B: %v", err)
@@ -948,20 +1049,41 @@ func TestConfigComponent_H1b_SkillsRenamed(t *testing.T) {
 
 // --- test helpers -----------------------------------------------------------
 
+// seedGitHubPATRef records the github-pat reference row the gitpat submit's
+// vault write leaves, for a credential row seeded without a submit; GET
+// /config projects gitProvider only with one.
+func seedGitHubPATRef(t *testing.T, db *gorm.DB, org string) {
+	t.Helper()
+	ref := organization.OrgSecretRef{Secret: organization.OrgSecretGitHubPAT, Name: org + "-github-pat-0000beef"}
+	if err := organization.NewOrgSecretRepository(db).Upsert(context.Background(), org, ref, ""); err != nil {
+		t.Fatalf("seed the github-pat row: %v", err)
+	}
+}
+
 func seedCustomIDP(t *testing.T, db *gorm.DB, org string) {
 	t.Helper()
 	now := time.Now().UTC()
 	if err := db.Create(&organization.OrganizationIDPProfile{
-		OrgID:                 org,
-		Kind:                  "custom",
-		Issuer:                "https://byo.example",
-		JWKSURL:               "https://byo.example/jwks",
-		PublisherClientID:     "pub-client",
-		PublisherClientSecret: "the-stored-secret",
-		CreatedAt:             now,
-		UpdatedAt:             now,
+		OrgID:             org,
+		Kind:              "custom",
+		Issuer:            "https://byo.example",
+		JWKSURL:           "https://byo.example/jwks",
+		PublisherClientID: "pub-client",
+		CreatedAt:         now,
+		UpdatedAt:         now,
 	}).Error; err != nil {
 		t.Fatalf("seed custom idp: %v", err)
+	}
+}
+
+// seedPublisherClientRef records the ae-publisher-client reference row the
+// gitpat submit's client ensure leaves: the only record that the publisher's
+// secret was written (it lives only in vault).
+func seedPublisherClientRef(t *testing.T, db *gorm.DB, org string) {
+	t.Helper()
+	ref := organization.OrgSecretRef{Secret: organization.OrgSecretPublisherClient, Name: org + "-ae-publisher-client-1a2b"}
+	if err := organization.NewOrgSecretRepository(db).Upsert(context.Background(), org, ref, ""); err != nil {
+		t.Fatalf("seed the ae-publisher-client row: %v", err)
 	}
 }
 

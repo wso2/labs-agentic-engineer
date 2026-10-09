@@ -142,13 +142,34 @@ func (a runCycles) Append(ctx context.Context, cycle *delivery.RunCycle) (string
 	return cycle.ID, nil
 }
 
-func (a runCycles) NoteDispatch(ctx context.Context, cycleID, jobRef string) error {
-	_, err := a.cycles.NoteDispatch(ctx, cycleID, jobRef)
+func (a runCycles) NoteDispatch(ctx context.Context, cycleID, jobRef string) (*delivery.RunCycle, error) {
+	return a.cycles.NoteDispatch(ctx, cycleID, jobRef)
+}
+
+// runJobBindings projects the OpenChoreo component client onto the
+// supervisor's JobBindings. A legacy release renders no suspend, so there is
+// nothing to write there: that answer is nil, the port's "nothing to do". So is
+// a suspend of a binding that is gone.
+type runJobBindings struct{ oc openchoreo.ComponentClient }
+
+func (a runJobBindings) ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error {
+	err := a.oc.ResumeJobBinding(ctx, orgID, projectID, component, environment)
+	if errors.Is(err, openchoreo.ErrSuspendUnsupported) {
+		return nil
+	}
 	return err
 }
 
-func (a runCycles) NoteLaunch(ctx context.Context, cycleID, host, environment string) error {
-	_, err := a.cycles.NoteLaunch(ctx, cycleID, host, environment)
+func (a runJobBindings) SuspendJobBinding(ctx context.Context, orgID, projectID, component, environment string) error {
+	err := a.oc.SuspendJobBinding(ctx, orgID, projectID, component, environment)
+	if errors.Is(err, openchoreo.ErrSuspendUnsupported) || errors.Is(err, openchoreo.ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+func (a runCycles) NoteLaunch(ctx context.Context, cycleID, host, environment, componentUID string) error {
+	_, err := a.cycles.NoteLaunch(ctx, cycleID, host, environment, componentUID)
 	return err
 }
 
@@ -205,8 +226,8 @@ func (a runBuilds) ListBuildRuns(ctx context.Context, orgID, projectID, componen
 // within what the version built, and against the previous validated version —
 // which is the whole reason this type exists at the boundary.
 type runValidation struct {
+	projectFiles
 	svc      *validation.Service
-	files    spec.FilesService
 	versions interface {
 		ValidationScope(ctx context.Context, orgID, projectID, version string) (spec.ValidationScope, bool, error)
 	}
@@ -347,7 +368,7 @@ func (a runValidation) readAs(ctx context.Context, orgID, projectID, version, at
 	if !scoped {
 		return report, nil
 	}
-	criteria, err := (acceptanceCriteria{files: a.files}).criteriaAt(ctx, orgID, projectID, at)
+	criteria, err := (acceptanceCriteria{a.projectFiles}).criteriaAt(ctx, orgID, projectID, at)
 	if err != nil {
 		return validation.Report{}, err
 	}
@@ -424,14 +445,11 @@ func judged(verdict string) bool {
 // stale read. Nil bytes are a report with nothing in it, whose verdict is
 // `unreported`.
 func (a runValidation) report(ctx context.Context, orgID, projectID, at string) ([]byte, error) {
-	fc, err := a.files.ReadAt(ctx, orgID, projectID, validation.ReportFilePath, at)
-	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return nil, nil
-		}
+	content, _, found, err := a.readFile(ctx, orgID, projectID, at, validation.ReportFilePath)
+	if err != nil || !found {
 		return nil, err
 	}
-	return []byte(fc.Content), nil
+	return []byte(content), nil
 }
 
 // runreadProjectBuilds reads every build WorkflowRun in a project so the run

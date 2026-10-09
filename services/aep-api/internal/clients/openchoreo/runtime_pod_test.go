@@ -19,6 +19,7 @@ package openchoreo
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func podObject(phase, reason string, containerState map[string]interface{}) map[string]interface{} {
@@ -142,5 +143,23 @@ func TestPodFromNodeObject_ContainerWaitingWinsOverScheduledCondition(t *testing
 	got := PodFromNodeObject(obj, "pod-creating")
 	if got.WaitingReason != "ContainerCreating" {
 		t.Fatalf("WaitingReason = %q, want ContainerCreating", got.WaitingReason)
+	}
+}
+
+// A terminated container's finishedAt is the pod's finish time: it tells a pod
+// that ended before a re-dispatch from one that was still running at it.
+func TestPodFromNodeObject_FinishedAtIsTheContainersTermination(t *testing.T) {
+	got := PodFromNodeObject(podObject("Succeeded", "", map[string]interface{}{
+		"terminated": map[string]interface{}{"reason": "Completed", "exitCode": 0.0,
+			"startedAt": "2026-08-06T10:00:00Z", "finishedAt": "2026-08-06T12:30:00Z"},
+	}), "ca-abc-xyz")
+	if want := time.Date(2026, 8, 6, 12, 30, 0, 0, time.UTC); !got.FinishedAt.Equal(want) {
+		t.Fatalf("FinishedAt = %v, want %v", got.FinishedAt, want)
+	}
+	running := PodFromNodeObject(podObject("Running", "", map[string]interface{}{
+		"running": map[string]interface{}{"startedAt": "2026-08-06T10:00:00Z"},
+	}), "ca-abc-xyz")
+	if !running.FinishedAt.IsZero() {
+		t.Fatalf("a running pod has no finish time, got %v", running.FinishedAt)
 	}
 }

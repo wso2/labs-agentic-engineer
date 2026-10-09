@@ -593,11 +593,12 @@ func TestCycleProgress_ArchiveErrorOnAnOpenCycleStaysNonFinal(t *testing.T) {
 // A cycle's log is read in the environment its Job was bound into, live and
 // archived alike, without asking for the project's write target.
 func TestCycleProgress_ReadsTheCyclesRecordedEnvironment(t *testing.T) {
-	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}}
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: false}}}
 	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived\n"}
 	targets := &fakeWriteTargets{env: "moved-on"}
 	cycle := liveCycle("c1")
 	cycle.Environment = "dev-b"
+	cycle.ComponentUID = "uid-c1"
 
 	if _, err := NewAgentProgressReader(live, targets, nil).WithArchive(archive).
 		CycleProgress(context.Background(), cycle, 0); err != nil {
@@ -606,8 +607,8 @@ func TestCycleProgress_ReadsTheCyclesRecordedEnvironment(t *testing.T) {
 	if len(live.envs) != 1 || live.envs[0] != "dev-b" {
 		t.Fatalf("live tail read in %v, want [dev-b]", live.envs)
 	}
-	if len(archive.scopes) != 1 || archive.scopes[0].Environment != "dev-b" {
-		t.Fatalf("archive scopes = %+v, want one in dev-b", archive.scopes)
+	if len(archive.scopes) != 1 || archive.scopes[0].Environment != "dev-b" || archive.scopes[0].ComponentUID != "uid-c1" {
+		t.Fatalf("archive scopes = %+v, want one in dev-b for the cycle's Component UID", archive.scopes)
 	}
 	if n := targets.resolves(); n != 0 {
 		t.Fatalf("resolved the write target %d times, want never for a cycle that recorded one", n)
@@ -617,7 +618,7 @@ func TestCycleProgress_ReadsTheCyclesRecordedEnvironment(t *testing.T) {
 // A cycle with no recorded environment reads in the project's write target
 // now, never in "".
 func TestCycleProgress_ACycleWithNoRecordedEnvironmentUsesTheProjectsWriteTarget(t *testing.T) {
-	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}}
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: false}}}
 	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived\n"}
 
 	if _, err := NewAgentProgressReader(live, &fakeWriteTargets{env: "dev-b"}, nil).WithArchive(archive).
@@ -750,17 +751,79 @@ func TestCycleProgress_OpenEmptyLiveFallsThroughToArchiveWhenArchiveHasLines(t *
 	}
 }
 
-func TestCycleProgress_OpenEmptyLiveOnTerminalPodFallsThroughToArchive(t *testing.T) {
-	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Phase: "Succeeded"}}}
-	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived after succeeded pod\n"}
+// The source switches on whether a pod EXISTS: a finished pod's log is whole,
+// so an empty one is the agent's own silence and the archive is not asked.
+func TestCycleProgress_AnExistingPodIsTheSourceWhateverItsPhase(t *testing.T) {
+	live := &stubLive{tail: LiveTail{
+		Text: "2026-08-06T10:00:01Z from the finished pod\n",
+		Pod:  openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"},
+	}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived\n"}
+	cycle := liveCycle("c13")
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
 
 	resp, err := NewAgentProgressReader(live, testWriteTargets(), nil).WithArchive(archive).
-		CycleProgress(context.Background(), liveCycle("c13"), 0)
+		CycleProgress(context.Background(), cycle, 0)
 	if err != nil {
 		t.Fatalf("CycleProgress: %v", err)
 	}
-	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived after succeeded pod" {
-		t.Fatalf("unexpected lines: %+v", resp.Lines)
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "from the finished pod" || !resp.Final {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(archive.scopes) != 0 {
+		t.Fatalf("archive read %d times while the pod exists, want never", len(archive.scopes))
+	}
+
+	live.tail.Text = ""
+	resp, _ = NewAgentProgressReader(live, testWriteTargets(), nil).WithArchive(archive).
+		CycleProgress(context.Background(), liveCycle("c14"), 0)
+	if len(resp.Lines) != 0 || len(archive.scopes) != 0 {
+		t.Fatalf("open cycle, silent terminal pod: lines %+v, archive reads %d; want none of either", resp.Lines, len(archive.scopes))
+	}
+}
+
+// Fix round 1: a closed cycle whose pod is listed but whose log 404s
+// (the pod is being reaped) reads the archive, as the v2 feed does — never a
+// final "no output".
+func TestCycleProgress_AListedPodWithAMissingLogReadsTheArchive(t *testing.T) {
+	live := &stubLive{tail: LiveTail{Pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, LogMissing: true}}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived while the pod is reaped\n"}
+	cycle := liveCycle("reaped")
+	cycle.ComponentUID = "uid-reaped"
+	ended := time.Now().UTC()
+	cycle.EndedAt = &ended
+
+	resp, err := NewAgentProgressReader(live, testWriteTargets(), nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0)
+	if err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	if len(resp.Lines) != 1 || resp.Lines[0].Summary != "archived while the pod is reaped" || !resp.Final {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(archive.scopes) != 1 || archive.scopes[0].ComponentUID != "uid-reaped" {
+		t.Fatalf("archive scopes %+v, want one read by the cycle's UID", archive.scopes)
+	}
+}
+
+// The archive window covers the cycle's lifetime and reaches past the suspend.
+func TestCycleProgress_ArchiveWindowCoversTheCycle(t *testing.T) {
+	live := &stubLive{err: fmt.Errorf("%w: ca-w", ErrComponentGone)}
+	archive := &stubArchive{text: "2026-08-06T10:00:01Z archived\n"}
+	cycle := liveCycle("w")
+	cycle.ComponentUID = "uid-w"
+	ended := time.Now().UTC().Add(-time.Hour)
+	suspended := ended.Add(30 * time.Minute)
+	cycle.EndedAt, cycle.JobSuspendedAt = &ended, &suspended
+
+	if _, err := NewAgentProgressReader(live, testWriteTargets(), nil).WithArchive(archive).
+		CycleProgress(context.Background(), cycle, 0); err != nil {
+		t.Fatalf("CycleProgress: %v", err)
+	}
+	sc := archive.scopes[0]
+	if sc.From.After(cycle.CreatedAt) || sc.To.Before(suspended) || sc.CycleID != "w" || sc.ComponentUID != "uid-w" {
+		t.Fatalf("scope %+v", sc)
 	}
 }
 

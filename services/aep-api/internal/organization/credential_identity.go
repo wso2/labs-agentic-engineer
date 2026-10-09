@@ -24,6 +24,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // ----------------------------------------------------------------------------
@@ -56,6 +58,21 @@ func (s *CredentialService) IdentityFor(ctx context.Context, ocOrgID string) (*I
 	}, nil
 }
 
+// GitHubOwner answers the GitHub account the org's repositories are created
+// under: the github_login it connected (sourcecontrol.OwnerLookup). An org
+// with no GitHub connection is sourcecontrol.ErrAEStudioAbsent, the same
+// answer its pod gives.
+func (s *CredentialService) GitHubOwner(ctx context.Context, ocOrgID string) (string, error) {
+	row, err := s.repo.GetByOrg(ctx, ocOrgID)
+	if err != nil {
+		return "", fmt.Errorf("read github connection: %w", err)
+	}
+	if row == nil || row.GitHubLogin == "" {
+		return "", sourcecontrol.ErrAEStudioAbsent
+	}
+	return row.GitHubLogin, nil
+}
+
 // RecordIdentityFromGitHub atomically updates an OrgCredential row's
 // identity columns (login/name/email) and last_validated_at. If the new
 // login differs from stored identity_login, it also records prev_identity_login
@@ -63,7 +80,7 @@ func (s *CredentialService) IdentityFor(ctx context.Context, ocOrgID string) (*I
 //
 // Used by:
 //   - the PAT-replace flow
-//   - the periodic validator on a successful GET /user / /app/installations/{id}
+//   - the periodic validator on a successful identity read
 //
 // Caller passes (login, name, email) — the same triple ghIdentity carries.
 // Returns true if drift was recorded.
@@ -98,18 +115,6 @@ func (s *CredentialService) RecordIdentityFromGitHub(ctx context.Context, ocOrgI
 		return false, fmt.Errorf("update identity: %w", err)
 	}
 	return drifted, nil
-}
-
-// TouchValidatedAt updates last_validated_at without modifying identity. Used
-// by the validator's no-drift App-mode path to record the heartbeat.
-func (s *CredentialService) TouchValidatedAt(ctx context.Context, ocOrgID string) error {
-	now := time.Now().UTC()
-	return s.repo.UpdateColumns(ctx, ocOrgID, map[string]any{"last_validated_at": now})
-}
-
-// UpdateGitHubLogin sets github_login (App-mode rename drift). Validator-only.
-func (s *CredentialService) UpdateGitHubLogin(ctx context.Context, ocOrgID, githubLogin string) error {
-	return s.repo.UpdateColumns(ctx, ocOrgID, map[string]any{"github_login": githubLogin})
 }
 
 // ListActiveRows returns all OrgCredential rows in 'active' or 'suspended'

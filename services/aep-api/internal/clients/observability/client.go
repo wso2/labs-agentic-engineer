@@ -20,13 +20,12 @@ package observability
 //
 // ONE endpoint serves both readers: `POST /api/v1/logs/query`, whose
 // `searchScope` is either a WORKFLOW scope (a build's WorkflowRun) or a
-// COMPONENT scope (a deployed component's pods — which is what an ephemeral
-// coding-agent cycle is). The observer offers no cursor and no offset, so
-// paging is done by moving the time window past the last entry returned.
+// COMPONENT scope (namespace + project + environment, and optionally one
+// component). A coding cycle is read by the second shape — see cycle_logs.go
+// for how its paging works on an API with no cursor.
 //
-// This is telemetry, not a log system of record: the observer answers only
-// while the component/run it indexes still exists, and its retention is the
-// dataplane's, not ours.
+// This is telemetry, not a log system of record: the observer's retention is
+// the dataplane's, not ours.
 
 import (
 	"bytes"
@@ -34,6 +33,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -41,16 +41,11 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
-// queryPageLimit is the observer's own per-query cap. Asking for more is not
-// honoured, so it doubles as the "there is another page" signal.
+// queryPageLimit is the observer's own per-query cap (a larger limit is a 400),
+// so a page this long is the "there may be another page" signal.
 const queryPageLimit = 1000
 
-// maxQueryPages bounds a windowed read. At the page limit that is 20k lines —
-// far past anything a console renders, and the stop that keeps a misbehaving
-// backend from turning one poll into an unbounded loop.
-const maxQueryPages = 20
-
-// defaultLookback is how far back a cursor-less read starts.
+// defaultLookback is how far back a build-log read starts.
 const defaultLookback = 30 * 24 * time.Hour
 
 // Client reads logs from the observability plane.
@@ -60,27 +55,48 @@ type Client interface {
 	// `since` reads the whole retention window.
 	GetBuildLogs(ctx context.Context, orgName, projectName, componentName, buildName string, since time.Time) (*gen.BuildLogs, error)
 
-	// QueryComponentLogs reads a component's archived pod logs across a time
-	// window, following the observer's windowed paging. It is what serves a
-	// finished coding cycle whose pod is gone but whose Component is retained.
-	QueryComponentLogs(ctx context.Context, q ComponentLogQuery) ([]LogLine, error)
+	// QueryCycleLogs reads one coding cycle's pod lines across the cycle's
+	// window: every line the Component with q.ComponentUID wrote, each once, in
+	// index order. It reads the Component scope while the Component exists
+	// and the project scope after it is deleted (q.Component == "").
+	QueryCycleLogs(ctx context.Context, q CycleLogQuery) ([]LogLine, CycleLogStats, error)
 }
 
-// ComponentLogQuery scopes an archive read. Namespace is the OpenChoreo
-// namespace (the org handle), Component the SCOPED component name.
-type ComponentLogQuery struct {
-	Namespace   string
-	Project     string
-	Component   string
-	Environment string
-	From        time.Time
-	To          time.Time
+// CycleLogStats describes how a cycle read went, for the caller's log and its
+// completeness signal.
+type CycleLogStats struct {
+	// Pages is the number of observer requests the read made.
+	Pages int
+	// LinesMissing reports that the window holds lines the read could not
+	// return: the page cap was hit, or one second held more lines (or more
+	// identical lines) than two pages can tell apart.
+	LinesMissing bool
 }
 
-// LogLine is one archived line.
+// CycleLogQuery scopes one cycle's read. Namespace is the OpenChoreo namespace
+// (the org handle).
+type CycleLogQuery struct {
+	Namespace, Project, Environment string
+	// Component is the SCOPED component name. Empty reads the project scope:
+	// the only scope that still answers once the Component is deleted, since
+	// the observer resolves a component NAME to its UID on every query.
+	Component string
+	// ComponentUID is required. Lines whose metadata.componentUid differs are
+	// dropped: other Components on a project read, and a later Component that
+	// reuses the name (a new UID) on either read.
+	ComponentUID string
+	// From and To bound the read and are sent as given (the observer allows
+	// at most 30 days). Both are exclusive at the observer, to the second.
+	From, To time.Time
+}
+
+// LogLine is one indexed pod line. Timestamp is the observer's, to the SECOND:
+// it orders lines across seconds, never within one.
 type LogLine struct {
-	Timestamp time.Time
-	Log       string
+	Timestamp    time.Time
+	Log          string
+	ComponentUID string
+	PodName      string
 }
 
 type observabilityClient struct {
@@ -89,10 +105,11 @@ type observabilityClient struct {
 }
 
 // NewClient creates a new observability client. baseURL is the observer's base
-// URL (e.g. https://observer.obs.dp.example.com).
+// URL (e.g. https://observer.obs.dp.example.com), with any path prefix it is
+// served under; a trailing slash is dropped so the join never reads `//api/…`.
 func NewClient(baseURL string) Client {
 	return &observabilityClient{
-		baseURL:    baseURL,
+		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
@@ -114,17 +131,25 @@ type workflowScope struct {
 }
 
 type logsQueryRequest struct {
-	SearchScope any    `json:"searchScope"`
-	StartTime   string `json:"startTime"`
-	EndTime     string `json:"endTime"`
-	Limit       int    `json:"limit,omitempty"`
-	SortOrder   string `json:"sortOrder,omitempty"`
+	SearchScope  any    `json:"searchScope"`
+	StartTime    string `json:"startTime"`
+	EndTime      string `json:"endTime"`
+	Limit        int    `json:"limit,omitempty"`
+	SortOrder    string `json:"sortOrder,omitempty"`
+	SearchPhrase string `json:"searchPhrase,omitempty"`
 }
 
 type logsQueryEntry struct {
 	Timestamp string `json:"timestamp"`
 	Log       string `json:"log"`
 	Level     string `json:"level"`
+	// Metadata is present on component-scope entries only.
+	Metadata *logsQueryMetadata `json:"metadata,omitempty"`
+}
+
+type logsQueryMetadata struct {
+	ComponentUID string `json:"componentUid"`
+	PodName      string `json:"podName"`
 }
 
 type logsQueryResponse struct {
@@ -134,6 +159,17 @@ type logsQueryResponse struct {
 	// carries only the older name must not read as zero results.
 	Total      *int `json:"total,omitempty"`
 	TotalCount *int `json:"totalCount,omitempty"`
+}
+
+// total is the match count of the request's window, when the body carries one.
+func (r *logsQueryResponse) total() (int, bool) {
+	switch {
+	case r.Total != nil:
+		return *r.Total, true
+	case r.TotalCount != nil:
+		return *r.TotalCount, true
+	}
+	return 0, false
 }
 
 func (c *observabilityClient) GetBuildLogs(ctx context.Context, orgName, projectName, componentName, buildName string, since time.Time) (*gen.BuildLogs, error) {
@@ -158,10 +194,8 @@ func (c *observabilityClient) GetBuildLogs(ctx context.Context, orgName, project
 	}
 
 	logs := &gen.BuildLogs{Logs: []gen.BuildLogEntry{}}
-	if resp.Total != nil {
-		logs.TotalCount = int64(*resp.Total)
-	} else if resp.TotalCount != nil {
-		logs.TotalCount = int64(*resp.TotalCount)
+	if total, ok := resp.total(); ok {
+		logs.TotalCount = int64(total)
 	}
 	for _, e := range resp.Logs {
 		entry := gen.BuildLogEntry{Log: e.Log, Level: e.Level}
@@ -173,55 +207,6 @@ func (c *observabilityClient) GetBuildLogs(ctx context.Context, orgName, project
 		logs.Logs = append(logs.Logs, entry)
 	}
 	return logs, nil
-}
-
-func (c *observabilityClient) QueryComponentLogs(ctx context.Context, q ComponentLogQuery) ([]LogLine, error) {
-	scope := componentScope{
-		Namespace:   q.Namespace,
-		Project:     q.Project,
-		Component:   q.Component,
-		Environment: q.Environment,
-	}
-	from, to := q.From.UTC(), q.To.UTC()
-	if to.IsZero() {
-		to = time.Now().UTC()
-	}
-	if from.IsZero() {
-		from = to.Add(-defaultLookback)
-	}
-
-	var out []LogLine
-	for page := 0; page < maxQueryPages; page++ {
-		resp, err := c.query(ctx, logsQueryRequest{
-			SearchScope: scope,
-			StartTime:   from.Format(time.RFC3339),
-			EndTime:     to.Format(time.RFC3339),
-			Limit:       queryPageLimit,
-			SortOrder:   "asc",
-		})
-		if err != nil {
-			return nil, err
-		}
-		var last time.Time
-		for _, e := range resp.Logs {
-			line := LogLine{Log: e.Log}
-			if ts, perr := time.Parse(time.RFC3339, e.Timestamp); perr == nil {
-				line.Timestamp = ts.UTC()
-				last = line.Timestamp
-			}
-			out = append(out, line)
-		}
-		if len(resp.Logs) < queryPageLimit {
-			return out, nil
-		}
-		if last.IsZero() || !last.Before(to) {
-			// A full page whose entries carry no usable timestamp cannot be
-			// advanced past; stop rather than re-request the same window.
-			return out, nil
-		}
-		from = last.Add(time.Millisecond)
-	}
-	return out, nil
 }
 
 // query issues one POST /api/v1/logs/query. The caller's bearer is forwarded:

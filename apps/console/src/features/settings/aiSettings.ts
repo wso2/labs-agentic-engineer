@@ -67,6 +67,12 @@ export const FORMAT_LABELS: Record<LLMFormat, { label: string; modelNote?: strin
  */
 export const SUBSCRIPTION_TOKEN_PREFIX = "sk-ant-oat";
 
+/**
+ * The only subscription status coding dispatch accepts; the server refuses a
+ * run on any other, so the card does not say who it bills.
+ */
+export const SUBSCRIPTION_ACTIVE = "active";
+
 /** What the server holds, in the card's terms. */
 export interface AiSettings {
   /** The org's model connection, key masked; null when it has none. */
@@ -171,13 +177,15 @@ export function hostOf(url: string): string {
 }
 
 /**
- * Whether the draft needs a new key: a first connect, or a host change, since
- * the stored key is never sent to another host. A format change on the same
- * host keeps the key (one provider can serve both formats with one key).
+ * Whether the draft needs a typed key: a first connect, or any change to the
+ * format or the base URL. The stored key is never reused for a different
+ * endpoint, and the server refuses such an edit without one. A model change
+ * alone keeps the key.
  */
 export function keyRequired(saved: AiSettings, draft: AiDraft): boolean {
-  if (saved.connection === null) return true;
-  return hostOf(draft.baseURL) !== hostOf(saved.connection.baseURL);
+  const c = saved.connection;
+  if (c === null) return true;
+  return draft.kind !== c.kind || draft.baseURL.trim() !== c.baseURL;
 }
 
 /**
@@ -430,8 +438,8 @@ export function draftProblem(saved: AiSettings, draft: AiDraft, offered: boolean
 
 /**
  * The connection as the draft names it, for `POST /config/llm/test`. The key
- * rides only when typed: the server uses the stored one for the saved host,
- * and refuses a new host without one.
+ * rides only when typed; the server refuses a test without one, so callers ask
+ * for it first.
  */
 export function testBody(draft: AiDraft): LLMPatch {
   const apiKey = draft.apiKey.trim();
@@ -502,11 +510,12 @@ export type AiField =
 const LLM_FIELD_BY_CODE: Record<string, AiField> = {
   llm_base_url_invalid: "baseURL",
   llm_host_refused: "baseURL",
-  llm_key_required_for_new_host: "apiKey",
+  llm_key_required: "apiKey",
   llm_key_too_short: "apiKey",
   llm_key_rejected: "apiKey",
   anthropic_key_invalid: "apiKey",
   anthropic_oauth_token_coding_only: "apiKey",
+  secret_store_write_failed: "apiKey",
 };
 
 const AGENTS_FIELD_BY_CODE: Record<string, AiField> = {

@@ -25,21 +25,18 @@ import (
 
 // OrgAnthropicRepository reads the per-org, per-role Anthropic credential
 // metadata rows (`org_anthropic_credentials`, PK (oc_org_id, role) — the
-// non-secret projection fields; the encrypted bytes live in org_secrets) and
-// stamps their secret-ref columns. Every accessor is keyed by BOTH oc_org_id and
+// non-secret projection fields; the token lives only in the vault, behind the
+// org's coding-agent-key reference row). Every accessor is keyed by BOTH oc_org_id and
 // role, so a dropped filter is a missing method, not a cross-org write or a
 // cross-role one.
 //
-// It has no insert or delete: a credential row is written only by the AI agents
-// card's unit of work (AgentsCardTx), together with its bytes and the setting
-// the same save changes.
+// It is read-only: a credential row is written only by the AI agents card's
+// unit of work (AgentsCardTx), together with the setting the same save
+// changes.
 type OrgAnthropicRepository interface {
 	// GetByOrg returns the row for (ocOrgID, role), or nil when absent (not an
 	// error).
 	GetByOrg(ctx context.Context, ocOrgID string, role AnthropicRole) (*OrgAnthropicCredential, error)
-	// UpdateColumns writes the given columns onto the row scoped to
-	// (oc_org_id, role) (a map so nil values are written as NULL, not skipped).
-	UpdateColumns(ctx context.Context, ocOrgID string, role AnthropicRole, updates map[string]any) error
 }
 
 type orgAnthropicRepository struct {
@@ -61,11 +58,4 @@ func (r *orgAnthropicRepository) GetByOrg(ctx context.Context, ocOrgID string, r
 		return nil, err
 	}
 	return &row, nil
-}
-
-func (r *orgAnthropicRepository) UpdateColumns(ctx context.Context, ocOrgID string, role AnthropicRole, updates map[string]any) error {
-	return r.db.WithContext(ctx).
-		Model(&OrgAnthropicCredential{}).
-		Where("oc_org_id = ? AND role = ?", ocOrgID, role).
-		Updates(updates).Error
 }

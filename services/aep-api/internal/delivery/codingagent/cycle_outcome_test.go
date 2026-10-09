@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 func TestClassifyPod(t *testing.T) {
@@ -105,5 +106,20 @@ func TestStartupFailureReason_UsesTheWarningEventWhenThePodIsSilent(t *testing.T
 func TestStartupFailureReason_FallsBackWhenNothingExplainsIt(t *testing.T) {
 	if got := StartupFailureReason(openchoreo.RuntimePod{}, nil); got != "startup_failed:no_pod_scheduled" {
 		t.Fatalf("StartupFailureReason = %q, want startup_failed:no_pod_scheduled", got)
+	}
+}
+
+// Every reason the startup verdict writes is one the readers (the run loop,
+// the settler, the watcher's catch-up) recognise as a startup failure.
+func TestStartupFailureReason_IsReadAsAStartupFailure(t *testing.T) {
+	for _, r := range []string{
+		StartupFailureReason(openchoreo.RuntimePod{Found: true, WaitingReason: "Unschedulable", Message: "0/1 nodes"}, nil),
+		StartupFailureReason(openchoreo.RuntimePod{}, []openchoreo.RuntimeEvent{{Type: "Warning", Reason: "FailedCreate"}}),
+		StartupFailureReason(openchoreo.RuntimePod{Found: true}, nil),
+		StartupFailureReason(openchoreo.RuntimePod{}, nil),
+	} {
+		if !delivery.IsStartupFailure(r) {
+			t.Errorf("%q is not read as a startup failure", r)
+		}
 	}
 }

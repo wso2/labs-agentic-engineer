@@ -21,6 +21,8 @@ import { createLink, useNavigate } from "@tanstack/react-router";
 import { Alert, Box, Button, Link, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { GitHub } from "@wso2/oxygen-ui-icons-react";
 import { EmptyState } from "../../../components/EmptyState";
+import { AeStudioUnavailableNotice } from "../../ae-studio/components/AeStudioUnavailableNotice";
+import { aeStudioUnavailable } from "../../ae-studio/model/unavailable";
 import { stamp } from "../../../lib/stamp";
 import { chatStore } from "../../agent-chat/useProjectChat";
 import { CardOverlay } from "../../projects/components/CardOverlay";
@@ -41,6 +43,7 @@ import { BuildLogs } from "./BuildLogs";
 import { BuildTasks } from "./BuildTasks";
 import { CardSection } from "./CardSection";
 import { ExplanationNotice } from "./ExplanationNotice";
+import { StartupWaitNotice } from "./StartupWaitNotice";
 import { NextStepsBar } from "./NextStepsBar";
 import { PhaseStrip } from "./PhaseStrip";
 
@@ -206,6 +209,8 @@ function BuildBody({ projectName, version, data }: { projectName: string; versio
   // The stream's validation cycle is fresher than the run poll's, while the card watches one.
   const liveValidation = data.progress.cycles.filter((c) => c.cycle.kind === "validation").at(-1)?.cycle;
   const result = useBuildOutcome(projectName, version, liveValidation);
+  const unavailable = aeStudioUnavailable(data.buildsError);
+  if (unavailable) return <AeStudioUnavailableNotice kind={unavailable} />;
   if (data.buildsError) {
     return (
       <Alert severity="error" action={<Button onClick={data.retryBuilds}>Retry</Button>}>
@@ -234,6 +239,7 @@ function BuildBody({ projectName, version, data }: { projectName: string; versio
       <Summary data={data} version={version} outcome={result.outcome} />
       <PhaseStrip steps={data.steps} loading={data.replaying} />
       {data.explanation && <ExplanationNotice projectName={projectName} explanation={data.explanation} />}
+      <StartupWaitNotice cycle={data.current?.cycles.at(-1)} />
       <TasksSection projectName={projectName} data={data} />
       <CardSection title="Coding agent's log" meta={agentMeta ?? "newest first"} defaultOpen={streaming}>
         <AgentLog projectName={projectName} runs={data.runs} progress={data.progress} />

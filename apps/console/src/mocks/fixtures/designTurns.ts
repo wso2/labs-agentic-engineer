@@ -25,7 +25,7 @@ import { projectSpecDoc } from "../../features/spec/collab/specDoc";
 import { readSpecLines } from "../../features/spec/collab/useSpecLines";
 import { designBasis, designWork } from "../../features/spec/model/designWork";
 import { productWideItems, readRequirements } from "../../features/spec/model/requirements";
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import type { ScriptFrame } from "../chatServer";
 import { liveDesign, teachingSent, type DesignEffect } from "../designState";
 import { dependencyOf, designCatalog, feedbackFor, type DesignTweak } from "./design";

@@ -23,7 +23,7 @@
  * the agent's prompt (free, prefill-cached), so re-emitting a file body to
  * change two lines is the expensive thing. `editFile` is an anchored
  * search/replace whose output cost scales with the EDIT, not the file. See
- * services/agents/design/ADR-0001-anchored-file-edits.md for the full rationale.
+ * components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/ADR-0001-anchored-file-edits.md for the full rationale.
  *
  * Design invariants this class enforces (pure, no I/O, fully testable):
  *  - Matching is LITERAL substring with NO structural normalization, so

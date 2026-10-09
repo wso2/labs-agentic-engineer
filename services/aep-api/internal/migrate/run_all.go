@@ -69,11 +69,9 @@ func BaseModels() []any {
 		&delivery.Execution{},
 		&spec.AgentTurn{},
 		&modelcost.ModelRate{},
-		&projects.ActivityEvent{},
 		&delivery.MilestoneRun{},
 		&delivery.RunCycle{},
 		&delivery.AgentUsageLedgerEntry{},
-		&spec.ProjectConversation{},
 		// The platform's record of the SHARED directory objects it created at
 		// build time: the roles a design declares, the test users that exercise
 		// them, and the per-project references that join the two. Plain tables
@@ -100,12 +98,9 @@ func BaseModels() []any {
 // — nothing runs until database.Run applies the list — so TestStepOrderGolden
 // asserts the sequence without needing a database.
 //
-// credKey is the 32-byte AES-256 key for encrypt-in-place credential-column
-// migrations (phase12). Pass nil only for step-order tests that never Run.
-//
 // RunBootstrapGrants is NOT part of this list: it is a non-fatal self-grant the
 // caller runs before migrating.
-func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
+func Steps(db *gorm.DB, deploymentTier string) []database.Step {
 	// dbStep: the migration takes only *gorm.DB and manages its own timeout.
 	dbStep := func(name string, fn func(*gorm.DB) error) database.Step {
 		return database.DBStep(name, db, fn)
@@ -128,7 +123,12 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// CHECK constraints + partial indexes win over GORM struct-tag inference.
 		ctxStep("phase2_pra_schema", RunPhase2PRASchema),
 		ctxStep("phase2_prc", RunPhase2PRC),
+		// org_secrets in its legacy (key, value) shape; phase29, last, makes
+		// it reference rows only, on fresh and upgraded databases alike.
 		ctxStep("org_secrets", RunOrgSecretsMigration),
+		// The reference columns of org_secrets, named 26 by phase but ordered
+		// here.
+		ctxStep("phase26_org_secret_refs", RunPhase26OrgSecretRefs),
 		ctxStep("per_org_secret_name", RunPerOrgSecretName),
 		ctxStep("org_anthropic_credentials", RunOrgAnthropicCredentialsMigration),
 		ctxStep("phase3_thunder_org_uuid", RunPhase3ThunderOrgUUID),
@@ -142,8 +142,8 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// Executions table (AutoMigrated from the model) gains its partial
 		// admission-mutex unique index, which AutoMigrate cannot express.
 		ctxStep("executions", RunExecutions),
-		// agent_turns table (AutoMigrated from the model) gains the D18
-		// one-active-turn-per-project partial unique index.
+		// agent_turns table (AutoMigrated from the model) gains its
+		// newest-turn index, which AutoMigrate cannot express.
 		ctxStep("agent_turns", RunAgentTurns),
 		// tasks-github-native cutover: drop component_tasks + the
 		// git_repositories.github_project_id cache column (both AutoMigrate-only,
@@ -186,25 +186,21 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// model_rates seed (#291): runs after AutoMigrate creates the table;
 		// ops-managed thereafter.
 		ctxStep("model_rates_seed", RunModelRatesSeed),
-		// secret_ref_* columns, backfilled from leftover sm_api_* if present.
-		// Do not ADD sm_api_* here — phase14 drops leftovers that already exist.
+		// secret_ref_* triplet columns: RETIRED tombstone (phase29 drops the
+		// triplet; see phase11_secret_ref_columns.go).
 		ctxStep("phase11_secret_ref_columns", RunPhase11SecretRefColumns),
-		// Encrypt publisher_client_secret + webhook_secrets in place
-		// (phase-03 items 15–16). Uses the same credential-encryption-key.
-		ctxStep("phase12_encrypt_credential_columns", func(ctx context.Context, db *gorm.DB) error {
-			return RunPhase12EncryptCredentialColumns(ctx, db, credKey)
-		}),
+		// Seal publisher_client_secret + webhook_secrets in place: RETIRED
+		// tombstone (phase29 drops both columns).
+		ctxStep("phase12_encrypt_credential_columns", RunPhase12EncryptCredentialColumns),
 		// Re-key org_anthropic_credentials to (oc_org_id, role) so an org can
 		// hold a coding credential beside its default key (ADR-0016; since
 		// phase16 that credential is a Claude subscription only, ADR-0036).
-		// Follows phase11, which added the secret_ref_* columns the new row
-		// carries just like the default row does.
 		ctxStep("phase13_anthropic_credential_role", RunPhase13AnthropicCredentialRole),
-		// project_conversations (AutoMigrated from the model) gains the #430
-		// one-current-thread-per-scope partial unique index — the admission
-		// fence lazy create and rotation race against.
+		// project_conversations: RETIRED tombstone. The conversation store went
+		// with aep-api's turn orchestration; the step is kept for
+		// frozen order and does nothing. phase27 drops the table.
 		ctxStep("project_conversations", RunProjectConversations),
-		// Drop leftover sm_api_* columns. secret_ref_* stay.
+		// Drop leftover sm_api_* columns.
 		ctxStep("phase14_drop_sm_api_columns", RunPhase14DropSMAPIColumns),
 		// milestone_runs.kind: backfill the kind from the origin, then move the
 		// per-project build mutex onto it. Ordered AFTER the milestone_runs step
@@ -241,10 +237,9 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// model column. Follows phase17 and every step that shaped
 		// org_anthropic_credentials.
 		ctxStep("phase19_model_connection", RunPhase19ModelConnection),
-		// The connection key's bytes move from org_secrets 'anthropic/key' to
-		// 'model/key' (copy only; organization.ModelKeyRename moves the SM-API
-		// mirror after assembly and retires the old copies). Follows phase19,
-		// which left the key under the old name.
+		// The connection key's sealed bytes moved from org_secrets
+		// 'anthropic/key' to 'model/key': RETIRED tombstone (value rows are
+		// gone, phase29).
 		ctxStep("phase20_model_key_rename", RunPhase20ModelKeyRename),
 		// The endpoint each governed ai-agent's key was stored beside, so the
 		// govern stage can tell when a connection switch moved its base path.
@@ -261,6 +256,40 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 		// phase22's table and the SRE rows in org_secrets. Runs after phase22
 		// so a fresh database creates and drops the table in one boot.
 		ctxStep("phase24_drop_sre_model_connections", RunPhase24DropSreModelConnections),
+		// The activity feed is gone (no reader: the console's feed was deleted,
+		// apps/console ADR-0022). AutoMigrate never drops a table, so this is
+		// the explicit drop. Idempotent.
+		dbStep("phase25_drop_activity_events", RunPhase25DropActivityEvents),
+		// agent_turns becomes the finished-turn ledger: turns run in
+		// the org's AE Studio pod, so the in-process engine's rows get a kind
+		// and a start time, its running rows, guard index and columns go, the
+		// primary key widens to (org_id, id), and project_conversations is
+		// dropped. Appended last because the list is append-only.
+		ctxStep("phase27_agent_turns_ledger", RunPhase27AgentTurnsLedger),
+		// The coding Component settle sweep's partial index over closed,
+		// undeleted coding cycles, ordered least recently checked first.
+		// settle_checked_at itself comes from AutoMigrate. Appended last because
+		// the list is append-only.
+		ctxStep("phase28_run_cycle_settling", RunPhase28RunCycleSettling),
+		// Postgres holds secret reference names only: org_secrets becomes
+		// (oc_org_id, secret, secret_ref_name, written_at), its ref-less value
+		// rows go, and every value, preview and vault-path column of the
+		// credential tables is dropped. Last, so every step above meets the
+		// legacy shape on a first boot; each of them tolerates the converged
+		// shape on the boots after. Appended last because the list is
+		// append-only.
+		ctxStep("phase29_secrets_refs_only", RunPhase29SecretsRefsOnly),
+		// run_cycles gains the durable startup wait: why the current attempt's
+		// pod is stuck before Running and since when, so the run view shows the
+		// wait without a cluster read. Two plain columns, no backfill (a row
+		// written before them has no wait to show). Appended last because the
+		// list is append-only.
+		ctxStep("phase30_run_cycle_startup_wait", RunPhase30RunCycleStartupWait),
+		// run_cycles gains the start clock: the startup grace counts from when
+		// the attempt's Job or pod exists, not from its dispatch. One nullable
+		// column, no backfill (a row without it is bounded by the apply cap).
+		// Appended last because the list is append-only.
+		ctxStep("phase31_run_cycle_startup_clock", RunPhase31RunCycleStartupClock),
 	}
 }
 
@@ -268,7 +297,7 @@ func Steps(db *gorm.DB, deploymentTier string, credKey []byte) []database.Step {
 // ordered list main used to inline as ~19 copy-pasted blocks (each with its own
 // context/os.Exit); the ordering constraints that lived in the comments between
 // those blocks are preserved on the steps in Steps. Fails fast on the first
-// error, naming the offending step. credKey must be 32 bytes for phase12.
-func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string, credKey []byte) error {
-	return database.Run(ctx, db, Steps(db, deploymentTier, credKey))
+// error, naming the offending step.
+func RunAll(ctx context.Context, db *gorm.DB, deploymentTier string) error {
+	return database.Run(ctx, db, Steps(db, deploymentTier))
 }

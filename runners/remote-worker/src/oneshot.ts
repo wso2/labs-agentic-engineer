@@ -83,11 +83,13 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
   const componentName = requireEnv("AEP_COMPONENT_NAME");
   const repoUrl = requireEnv("AEP_REPO_URL");
   // Publisher CC is the Job's only platform credential (local and cloud).
-  const gitServiceUrl = requireEnv("AEP_GIT_SERVICE_URL");
   const prompt = requireEnv("AEP_PROMPT");
   const identityName = requireEnv("AEP_IDENTITY_NAME");
   const identityEmail = requireEnv("AEP_IDENTITY_EMAIL");
   const identityLogin = process.env.AEP_IDENTITY_LOGIN || "";
+  // The org's GitHub account: the owner guard's reference for the in-process
+  // remote-git tools. Required — a run that cannot guard them must not start.
+  const githubOwner = requireEnv("AEP_GITHUB_OWNER");
   const correlationId = process.env.AEP_CORRELATION_ID || randomUUID();
   // Endpoint Spec Discovery (B1/B2) — BFF MCP server coordinates. The BFF
   // stamps AEP_MCP_URL; the runner presents the publisher CC token (minted
@@ -132,7 +134,7 @@ function readDispatchFromEnv(): { req: DispatchRequest; publisher: PublisherCred
       repoUrl,
       bearer: "",
       identity: { name: identityName, email: identityEmail, login: identityLogin || undefined },
-      gitServiceUrl,
+      githubOwner,
       prompt,
       correlationId,
       mcpUrl: mcpUrl || undefined,
@@ -175,12 +177,6 @@ async function main(): Promise<number> {
     clientId: publisher.clientId,
     clientSecret: publisher.clientSecret,
   });
-
-  const platformURL = process.env.AEP_PLATFORM_URL ?? "";
-  if (platformURL) {
-    const base = platformURL.endsWith("/") ? platformURL.slice(0, -1) : platformURL;
-    req.refreshUrl = `${base}/internal/v1/executions/${encodeURIComponent(req.taskId)}/credentials/refresh`;
-  }
 
   try {
     const ccToken = await ccProvider.getToken();
@@ -247,6 +243,7 @@ async function main(): Promise<number> {
     // agent starts. Fatal on purpose — an agent that cannot learn its targets has
     // no honest way forward, and when this was the skill's own `curl` a 404 sent
     // it scanning the pod network for half an hour instead of stopping.
+    const platformURL = process.env.AEP_PLATFORM_URL ?? "";
     let endpoints: ComponentEndpoint[];
     try {
       const ctx = await fetchValidationContext({

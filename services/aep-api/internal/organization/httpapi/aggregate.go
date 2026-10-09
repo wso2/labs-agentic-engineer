@@ -18,13 +18,12 @@ package httpapi
 
 import (
 	"github.com/wso2/aep/aep-api/internal/organization"
-	"github.com/wso2/aep/aep-api/internal/organization/connectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/disconnectgithub"
 	"github.com/wso2/aep/aep-api/internal/organization/discoveridp"
+	"github.com/wso2/aep/aep-api/internal/organization/getaestudio"
 	"github.com/wso2/aep/aep-api/internal/organization/getconfig"
 	"github.com/wso2/aep/aep-api/internal/organization/listorgs"
 	"github.com/wso2/aep/aep-api/internal/organization/patchconfig"
-	"github.com/wso2/aep/aep-api/internal/organization/rotateidp"
 	"github.com/wso2/aep/aep-api/internal/organization/testllm"
 )
 
@@ -34,11 +33,10 @@ type (
 	getconfigHandler        = getconfig.Handler
 	patchconfigHandler      = patchconfig.Handler
 	testllmHandler          = testllm.Handler
-	connectgithubHandler    = connectgithub.Handler
 	disconnectgithubHandler = disconnectgithub.Handler
-	rotateidpHandler        = rotateidp.Handler
 	discoveridpHandler      = discoveridp.Handler
 	listorgsHandler         = listorgs.Handler
+	getaestudioHandler      = getaestudio.Handler
 )
 
 // Handlers is the organization domain's slice handlers, embedded so Go promotes
@@ -47,16 +45,15 @@ type Handlers struct {
 	*getconfigHandler
 	*patchconfigHandler
 	*testllmHandler
-	*connectgithubHandler
 	*disconnectgithubHandler
-	*rotateidpHandler
 	*discoveridpHandler
 	*listorgsHandler
+	*getaestudioHandler
 }
 
 // New assembles the domain: pure wiring, constructor injection only.
 //
-// The seven /config ops share the one *organization.Service orchestrator;
+// The /config ops share the one *organization.Service orchestrator;
 // list-organizations reads the OrganizationService. Both are fail-LOUD: the
 // pre-migration handlers had no nil guard, so an unwired collaborator panics
 // exactly as it did before (the edge assigns deps.Organization directly, no
@@ -66,10 +63,9 @@ func New(d organization.Deps) (*Handlers, error) {
 		getconfigHandler:        getconfig.New(d.Config),
 		patchconfigHandler:      patchconfig.New(d.Config),
 		testllmHandler:          testllm.New(d.Config),
-		connectgithubHandler:    connectgithub.New(d.Config),
 		disconnectgithubHandler: disconnectgithub.New(d.Config),
-		rotateidpHandler:        rotateidp.New(d.Config),
 		discoveridpHandler:      discoveridp.New(d.Config),
 		listorgsHandler:         listorgs.New(d.OrgSvc),
+		getaestudioHandler:      getaestudio.New(d.AEStudio),
 	}, nil
 }

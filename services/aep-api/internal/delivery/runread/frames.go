@@ -108,33 +108,44 @@ func (f *frameWriter) keepAlive() bool {
 // therefore always precedes its own feed, so the console can open the section
 // before filling it.
 //
+// The feed is READ before the cycle is projected, though it is WRITTEN after.
+// The projection's `recording` is what the platform could serve of the cycle's
+// log, and the platform learns that by reading it: a failed read is what turns
+// a cycle `unavailable`. Projecting first would describe the PREVIOUS read, and
+// a finished run's stream makes one pass and closes, so its only frame would say
+// `kept` beside this read's "logs unavailable" notice.
+//
 // last is the CONNECTION's cycle dedup state, keyed by cycle id. A cycle id is
 // unique across runs, so the version stream shares one map across every run it
 // stitches rather than keeping a set per run — and a cycle re-read on the next
-// tick emits nothing unless a webhook actually changed it.
+// tick emits nothing unless a webhook, or a read's outcome, actually changed it.
 //
-// emitFeed is the caller's, and is the one thing the two streams do NOT share:
-// the run stream sends v2 `event` frames and the version stream v1 `line` frames.
-// It takes the cycle's 1-based position WITHIN THIS RUN, which is what the
-// contract's `cycleIndex` says it is. The version stream deliberately does not
-// renumber it: see build_progress.go.
+// readFeed is the caller's, and is the one thing the two streams do NOT share:
+// the run stream reads v2 `event` frames and the version stream v1 `line`
+// frames. It returns the cycle's new frames, ready to write. It takes the
+// cycle's 1-based position WITHIN THIS RUN, which is what the contract's
+// `cycleIndex` says it is. The version stream deliberately does not renumber
+// it: see build_progress.go.
 //
 // False means the client is gone.
-func (s *ProgressService) emitCycles(ctx context.Context, cycles []delivery.RunCycle,
-	last map[string]string, emitCycle func(*gen.RunCycleView) bool,
-	emitFeed func(context.Context, *delivery.RunCycle, int) bool) bool {
+func (s *ProgressService) emitCycles(ctx context.Context, out *frameWriter, cycles []delivery.RunCycle,
+	last map[string]string, cycleFrame func(*gen.RunCycleView) any,
+	readFeed func(context.Context, *delivery.RunCycle, int) []any) bool {
 	for i := range cycles {
 		c := &cycles[i]
+		feed := readFeed(ctx, c, i+1)
 		view := CycleView(c, RecordingOf(s.recordings, c))
 		b, _ := json.Marshal(view)
 		if last[c.ID] != string(b) {
 			last[c.ID] = string(b)
-			if !emitCycle(&view) {
+			if !out.write(cycleFrame(&view)) {
 				return false
 			}
 		}
-		if !emitFeed(ctx, c, i+1) {
-			return false
+		for _, f := range feed {
+			if !out.write(f) {
+				return false
+			}
 		}
 	}
 	return true

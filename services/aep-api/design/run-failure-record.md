@@ -66,7 +66,6 @@ three, and the record says `permanent: true`.
 | `MilestoneRunView.failure` (`runread.failureView`) | the whole record + `workflowId` derived from `MilestoneRunWorkflowID` | the build page's failure card |
 | `BuildSummary.failureCode` (`build.failureCodeFor`) | the code, only on a FAILED run | the Builds ledger chip |
 | `ProjectStatus.build.failureCode` (`projects/status_stages.go`) | the code, only on a failed newest dev run | the overview's Build leg |
-| `activity_events` `run_failed` (`app.runFailedActivityRecorder`, from `Activities.SettleRun`) | `tag`, `component`, `reason` = code or terminal reason | the project feed |
 
 The console owns every sentence (console ADR-0031, `features/builds/lib/failure.ts`).
 Codes cross the wire; prose does not — the `RunEvent.notice` rule.

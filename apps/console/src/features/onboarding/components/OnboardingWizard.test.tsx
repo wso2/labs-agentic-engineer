@@ -42,6 +42,11 @@ vi.mock("../../skills/api/skills", () => ({
   useSyncSkills: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
 }));
 
+// The skills step waits on AE Studio; here it is already up.
+vi.mock("../../ae-studio/api/queries", () => ({
+  useAeStudio: () => ({ data: { state: "ready" }, isPending: false, isFetching: false, isError: false, refetch: vi.fn() }),
+}));
+
 vi.mock("../../../auth/SessionContext", () => ({
   useSession: () => ({
     user: { name: "Dev", email: "dev@acme.example" },
@@ -184,7 +189,6 @@ describe("OnboardingWizard's Connect a model step", () => {
           kind: "anthropic",
           baseURL: "https://api.anthropic.com/v1",
           model: "claude-sonnet-5",
-          keyPreview: "wxyz",
           connectedAt: "2026-09-26T08:00:00Z",
           updatedAt: "2026-09-26T08:00:00Z",
           updatedBy: "dev@acme.example",

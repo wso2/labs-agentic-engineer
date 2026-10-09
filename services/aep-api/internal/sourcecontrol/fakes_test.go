@@ -16,81 +16,36 @@
 
 package sourcecontrol_test
 
-// Shared fakes for the sourcecontrol unit tier. Fakes sit only at the two real
-// edges of these services — the credential seam (secrets.Resolver /
-// Credential) and the persistence seam (sourcecontrol.RepoRepository). The
-// git-exec paths run against a real gittest.Remote, and the GitHub HTTP paths
-// run through the REAL githubhost client pointed at a gittest.Stub (WithAPIBase
-// for REST, WithGraphQLEndpoint for the milestone predicate). No service or
-// client is mocked.
+// Shared fakes for the sourcecontrol unit tier. Fakes sit only at the real
+// edges of these services — the GitHub owner lookup (OwnerLookup) and the
+// persistence seam (sourcecontrol.RepoRepository); the org's pod is the
+// in-memory aestudiotest.Fake. No service is mocked.
 //
 // These tests live in the external sourcecontrol_test package (not white-box
-// sourcecontrol): they construct the real client from githubhost, which imports
-// sourcecontrol, so a white-box test would form an import cycle.
-// Unexported-helper tests (detectDefaultBranch, slugifyProjectName) stay
-// white-box in repo_internal_test.go.
+// sourcecontrol): aestudiotest imports sourcecontrol, so a white-box test
+// would form an import cycle. Unexported-helper tests (slugifyProjectName)
+// stay white-box in repo_internal_test.go.
 
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// ---- credential seam -------------------------------------------------------
+// ---- owner seam ------------------------------------------------------------
 
-// fakeCred is a static secrets.Credential. Zero value: token "test-token",
-// owner "test-org", strategy WebhookPerRepo, empty identity.
-type fakeCred struct {
-	token    string
-	owner    string
-	strategy secrets.WebhookStrategy
-	identity secrets.Identity
-	tokenErr error
+// fakeOwners answers owner for every org, unless err is set.
+type fakeOwners struct {
+	owner string
+	err   error
 }
 
-func (c fakeCred) Token(context.Context) (string, time.Time, error) {
-	if c.tokenErr != nil {
-		return "", time.Time{}, c.tokenErr
-	}
-	t := c.token
-	if t == "" {
-		t = "test-token"
-	}
-	return t, time.Time{}, nil
-}
-func (c fakeCred) Identity() secrets.Identity { return c.identity }
-func (c fakeCred) RepoOwner() string {
-	if c.owner == "" {
-		return "test-org"
-	}
-	return c.owner
-}
-func (c fakeCred) WebhookStrategy() secrets.WebhookStrategy { return c.strategy }
-
-var _ secrets.Credential = fakeCred{}
-
-// fakeResolver resolves every org to `cred` (or fakeCred{} when nil), unless
-// `err` is set.
-type fakeResolver struct {
-	cred secrets.Credential
-	err  error
+func (f fakeOwners) GitHubOwner(context.Context, string) (string, error) {
+	return f.owner, f.err
 }
 
-func (f fakeResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.cred != nil {
-		return f.cred, nil
-	}
-	return fakeCred{}, nil
-}
-
-var _ secrets.Resolver = fakeResolver{}
+var _ sourcecontrol.OwnerLookup = fakeOwners{}
 
 // ---- persistence seam ------------------------------------------------------
 
@@ -133,6 +88,10 @@ func (f *fakeRepoRepo) GetByOrgAndProjectID(_ context.Context, orgID, projectID 
 	return &cp, nil
 }
 
+func (f *fakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (f *fakeRepoRepo) GetByOrgAndSlug(_ context.Context, orgID, repoSlug string) (*sourcecontrol.GitRepository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -169,16 +128,6 @@ func (f *fakeRepoRepo) ListByOrg(_ context.Context, ocOrgID string) ([]sourcecon
 	return out, nil
 }
 
-func (f *fakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	var out []sourcecontrol.GitRepository
-	for _, r := range f.rows {
-		out = append(out, *r)
-	}
-	return out, nil
-}
-
 func (f *fakeRepoRepo) Create(_ context.Context, repo *sourcecontrol.GitRepository) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -195,6 +144,40 @@ func (f *fakeRepoRepo) Update(_ context.Context, repo *sourcecontrol.GitReposito
 	f.put(repo)
 	f.updates++
 	return nil
+}
+
+func (f *fakeRepoRepo) SetWebhookIDIfReady(_ context.Context, orgID, projectID string, hookID int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.rows[repoKey(orgID, projectID)]
+	if !ok || r.Status != sourcecontrol.RepoStatusReady {
+		return false, nil
+	}
+	id := hookID
+	r.WebhookID = &id
+	return true, nil
+}
+
+func (f *fakeRepoRepo) ClearWebhookIDs(_ context.Context, orgID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.rows {
+		if r.OrgID == orgID {
+			r.WebhookID = nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeRepoRepo) SetStatusIf(_ context.Context, orgID, projectID, from, to string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.rows[repoKey(orgID, projectID)]
+	if !ok || r.Status != from {
+		return false, nil
+	}
+	r.Status = to
+	return true, nil
 }
 
 func (f *fakeRepoRepo) DeleteByOrgAndProjectID(_ context.Context, orgID, projectID string) error {

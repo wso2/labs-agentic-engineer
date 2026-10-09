@@ -18,7 +18,7 @@ pnpm --filter @aep/sse-cassette record -- \
 # then run the console with API_PROXY_TARGET=http://localhost:9091
 ```
 
-`authorization`, `x-model-key`, `x-api-key`, `cookie`, … are redacted before a cassette
+`authorization`, `x-api-key`, `cookie`, … are redacted before a cassette
 touches disk.
 
 ## Replay
@@ -42,7 +42,7 @@ pnpm --filter @aep/sse-cassette serve -- --dir test/fixtures/turns --port 9092
 Requests match on method + path (volatile id segments wildcarded) + the JSON
 body's `useCase`; duplicate recordings of the same key are served in recorded
 order. `--fallback http://localhost:9090` proxies unmatched requests to the
-live BFF so a real browser session works end to end.
+live `aep-api` so a real browser session works end to end.
 
 ## Inspect
 

@@ -58,9 +58,9 @@ const (
 )
 
 // JWKSCache caches a single JWKS source. One instance per JWKS URL — services
-// that verify tokens from multiple issuers (e.g., git-service verifies Service
-// JWTs from Thunder and Task JWTs from the BFF) should hold one cache per
-// source so refreshes don't cross-contaminate.
+// that verify tokens from multiple issuers (e.g., the publisher verifier for
+// per-org client_credentials tokens beside the user-JWT verifier) should hold
+// one cache per source so refreshes don't cross-contaminate.
 type JWKSCache struct {
 	url                string
 	httpClient         *http.Client

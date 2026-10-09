@@ -43,8 +43,8 @@ type ValidationReads struct {
 	runs      ValidationRunReader
 	cycles    ValidationCycleReader
 	snapshots ValidationSnapshotReader
-	// recordings answers RunCycleView.recording. Optional: nil reports `none`,
-	// which is the honest answer on a boot that records nothing.
+	// recordings answers RunCycleView.recording. Optional: nil reports
+	// `unavailable` — a boot with no feed can serve none.
 	recordings RecordingReader
 	// judge reads an attempt as its version (B4). Optional: nil leaves the
 	// snapshot without scope or standing, as for a version cut before builds

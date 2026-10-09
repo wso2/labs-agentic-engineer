@@ -59,12 +59,13 @@ export function mergedCycle(runs: readonly MilestoneRunView[]): RunCycleView | u
 /**
  * Is an agent writing the version now? Not the run's state: a run stays open
  * through the merge, the component builds and the rollout, long after its
- * agent stopped.
+ * agent stopped. Nor an open session the cluster has not started yet
+ * (`startupWait`): that agent is waiting, not writing.
  */
 export function isAgentStreaming(runs: readonly MilestoneRunView[]): boolean {
   const newest = runs[0];
   if (!newest || isTerminalRun(newest.state)) return false;
-  return buildCycles(newest.cycles).some((c) => !c.endedAt);
+  return buildCycles(newest.cycles).some((c) => !c.endedAt && !c.startupWait);
 }
 
 /**

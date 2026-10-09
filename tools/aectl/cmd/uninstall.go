@@ -48,7 +48,7 @@ var uninstallCmd = &cobra.Command{
 
 This command reverses exactly what aep platform install did:
   - helm uninstall <platform-release>
-  - deletes workspaces PVCs (Helm never removes these)
+  - deletes the platform's PersistentVolumeClaims (Helm never removes these)
   - optionally deletes the aep-cli-config ConfigMap (--purge-config)
 
 What it does NOT touch:
@@ -70,7 +70,7 @@ func init() {
 func runUninstall(cmd *cobra.Command, args []string) error {
 	if !uninstallYes {
 		fmt.Printf("\n  This will uninstall chart %q from namespace %q\n", uninstallPlatformRelease, uninstallNamespace)
-		fmt.Printf("  and delete all workspaces PVCs in that namespace.\n")
+		fmt.Printf("  and delete all of the platform's PVCs in that namespace.\n")
 		if uninstallPurgeConfig {
 			fmt.Printf("  The aep-cli-config ConfigMap will also be deleted.\n")
 		}
@@ -99,7 +99,7 @@ func runUninstall(cmd *cobra.Command, args []string) error {
 		ui.Success(fmt.Sprintf("Chart %q uninstalled", uninstallPlatformRelease))
 	}
 
-	ui.Step("Deleting workspaces PVCs")
+	ui.Step("Deleting platform PVCs")
 	pvcs, err := client.CoreV1().PersistentVolumeClaims(uninstallNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/part-of=wso2-aep",
 	})

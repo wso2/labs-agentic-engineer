@@ -14,24 +14,24 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// credential_connect.go — the Connect/replace flow: kind dispatch,
-// the PAT path (validate + seal + seed webhook secret + SM-API mirror) and
-// the App-installation path.
+// credential_connect.go — the Connect/replace flow: kind dispatch, the PAT
+// path (validate + record the connection row), and the
+// PAT's reference write the submit runs after it. The PAT itself lives only
+// in vault, behind its github-pat reference.
 
 package organization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// Connect creates or replaces the credential record for ocOrgID. PAT mode
-// runs the full validation chain (GET /user, membership probe, repo-read
-// probe). App mode mints a JWT and looks up the install's account login.
+// Connect creates or replaces the credential record for ocOrgID. The one kind
+// is "user-pat": it runs the full validation chain (GET /user, membership
+// probe, repo-read probe); any other kind is a kind_invalid ValidationError.
 //
 // 409 (ConflictError) if an existing ACTIVE row is a different kind (the
 // connect-time mode is fixed; disconnect before switching kind).
@@ -39,15 +39,14 @@ import (
 // 400 (ValidationError) for any GitHub-side validation failure — wrapped
 // with a cause code that the UI maps to a specific error message.
 func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req ConnectRequest) (*Projection, error) {
-	// finalize carries the post-commit work (SM-API mirror, projection
-	// re-fetch, success logging) for the chosen kind. It runs AFTER repo.Tx
-	// commits and releases the advisory lock — exactly the commit-then-mirror
-	// ordering the inline transaction used.
+	// finalize carries the post-commit work (projection re-fetch, success
+	// logging) for the chosen kind. It runs AFTER repo.Tx commits and
+	// releases the advisory lock.
 	var finalize func() (*Projection, error)
 	err := s.repo.Tx(ctx, func(tx OrgCredentialTx) error {
-		// Acquire org-scoped advisory lock for the duration of the txn so the
-		// callback handler and a concurrent webhook (installation.created) can't
-		// race the INSERT/UPDATE.
+		// Acquire the org-scoped advisory lock for the duration of the txn so
+		// two concurrent connects (or a connect and a disconnect) for the org
+		// can't race the INSERT/UPDATE.
 		if err := tx.AdvisoryLock("org:" + ocOrgID); err != nil {
 			return fmt.Errorf("connect: org lock: %w", err)
 		}
@@ -70,13 +69,6 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 			}
 			finalize = fn
 			return nil
-		case "app-installation":
-			fn, err := s.connectApp(ctx, tx, ocOrgID, hadRow, existing, req)
-			if err != nil {
-				return err
-			}
-			finalize = fn
-			return nil
 		default:
 			return &ValidationError{Code: "kind_invalid", Message: fmt.Sprintf("unknown kind %q", req.Kind)}
 		}
@@ -88,10 +80,9 @@ func (s *CredentialService) Connect(ctx context.Context, ocOrgID string, req Con
 }
 
 // connectPAT runs inside Connect's transaction (the org advisory lock is held).
-// It does GitHub validation + the credential-store write + the row write, then
-// returns the finalize closure Connect calls AFTER the commit: the SM-API
-// mirror, the post-commit projection re-fetch (REPLACE), and the success log —
-// preserving the original commit-then-mirror ordering.
+// It does GitHub validation + the row write, then returns the finalize closure Connect calls AFTER the commit: the post-commit
+// projection re-fetch (REPLACE) and the success log. The PAT is not stored
+// here: the caller writes it to vault once per submit (WritePATRef).
 func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, ocOrgID string, hadRow bool, existing *OrgCredential, req ConnectRequest) (func() (*Projection, error), error) {
 	identity, err := s.validatePAT(ctx, req.PAT, req.GitHubLogin)
 	if err != nil {
@@ -100,25 +91,7 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 
 	now := time.Now().UTC()
 
-	// Persist the PAT to the credential store first; if the DB row insert
-	// fails below the credential entry is harmless (no referencing row yet).
-	if err := s.store.Put(ctx, ocOrgID, "github/pat", []byte(req.PAT)); err != nil {
-		return nil, fmt.Errorf("connect: write PAT: %w", err)
-	}
-
 	if !hadRow {
-		// CREATE — use the platform's GITHUB_WEBHOOK_SECRET so per-repo
-		// webhook registrations (which sign with the same env value) verify
-		// against this row's secret list. Fall back to a fresh random value
-		// only if env is unset (test mode).
-		secret := s.envWebhookSecret
-		if secret == "" {
-			gen, err := generateRandomHex(32)
-			if err != nil {
-				return nil, fmt.Errorf("connect: gen webhook secret: %w", err)
-			}
-			secret = gen
-		}
 		row := OrgCredential{
 			OcOrgID:         ocOrgID,
 			Kind:            "user-pat",
@@ -129,25 +102,19 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 			Status:          "active",
 			ConnectedAt:     now,
 			LastValidatedAt: &now,
-			WebhookSecrets: WebhookSecrets{
-				{Secret: secret, AddedAt: now},
-			},
 		}
 		if err := tx.Create(&row); err != nil {
 			return nil, fmt.Errorf("connect: insert: %w", err)
 		}
 		return func() (*Projection, error) {
 			slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "user-pat", "identityLogin", identity.Login)
-			s.mirrorPATToSMAPI(ctx, ocOrgID, req.PAT)
 			return projectionFromRow(&row), nil
 		}, nil
 	}
 
-	// REPLACE — preserve webhook_secrets, possibly record identity drift.
-	// Cross-mode reconnect (after disconnect): also flip `kind`, clear App-only
-	// columns (installation_id, selected_repos), and seed webhook_secrets if
-	// the prior row was App-mode (which has webhook_secrets=NULL per the
-	// CHECK constraint).
+	// REPLACE — possibly record identity drift. Cross-mode reconnect (after
+	// disconnect): also flip `kind` and clear the App-only columns
+	// (installation_id, selected_repos).
 	updates := map[string]any{
 		"kind":              "user-pat",
 		"github_login":      req.GitHubLogin,
@@ -166,25 +133,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 		updates["prev_identity_login"] = &prev
 		updates["identity_changed_at"] = now
 	}
-	// If switching from App → PAT, the prior row had webhook_secrets=NULL
-	// (the secrets_shape_per_kind CHECK requires NOT NULL with array_length>=1
-	// for user-pat). Seed using the platform's GITHUB_WEBHOOK_SECRET so the
-	// per-repo hooks (registered by the webhook feature against the
-	// same env value) verify against it.
-	if existing.Kind == "app-installation" {
-		secret := s.envWebhookSecret
-		if secret == "" {
-			// No env secret available — fall back to a fresh random value.
-			// PAT-mode webhooks may not verify against pre-existing repos in
-			// this case, but we keep the constraint satisfied.
-			gen, sErr := generateRandomHex(32)
-			if sErr != nil {
-				return nil, fmt.Errorf("connect: generate webhook secret: %w", sErr)
-			}
-			secret = gen
-		}
-		updates["webhook_secrets"] = WebhookSecrets{{Secret: secret, AddedAt: now}}
-	}
 	if err := tx.UpdateColumns(ocOrgID, updates); err != nil {
 		return nil, fmt.Errorf("connect: update: %w", err)
 	}
@@ -195,7 +143,6 @@ func (s *CredentialService) connectPAT(ctx context.Context, tx OrgCredentialTx, 
 			return nil, err
 		}
 		slog.InfoContext(ctx, "secrets.replaced", "ocOrgId", ocOrgID, "kind", "user-pat", "identityLogin", identity.Login, "drift", identity.Login != existing.IdentityLogin)
-		s.mirrorPATToSMAPI(ctx, ocOrgID, req.PAT)
 		return projectionFromRow(row), nil
 	}, nil
 }
@@ -237,174 +184,35 @@ func (s *CredentialService) ValidatePAT(ctx context.Context, pat, githubLogin st
 	return err
 }
 
-// mirrorPATToSMAPI fires the SM-API write best-effort after a Connect.
-// Logged-and-swallowed on error — the org_secrets path keeps working when
-// SM-API is down, so the user-facing Connect doesn't 5xx. The SM-API row
-// is created/refreshed on the next successful Connect.
-func (s *CredentialService) mirrorPATToSMAPI(ctx context.Context, ocOrgID, pat string) {
+// ErrSecretsDeliveryUnavailable refuses a PAT save on an installation with
+// no secrets provider: the PAT lives only in vault, so there is nowhere to
+// keep it.
+var ErrSecretsDeliveryUnavailable = errors.New("credentials: no secrets provider is configured")
+
+// RequireSecretsDelivery reports ErrSecretsDeliveryUnavailable when a PAT
+// cannot be stored (no secrets provider). The /config save checks it before
+// it writes anything.
+func (s *CredentialService) RequireSecretsDelivery() error {
 	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return
+		return ErrSecretsDeliveryUnavailable
+	}
+	return nil
+}
+
+// WritePATRef stores the org's PAT as a new github-pat reference
+// (SecretRefWriter.WriteGitHubPAT), the only place it is kept. The gitpat
+// submit calls it once, after Connect committed and released the org lock,
+// so the org-secret lock is never taken inside the org lock's transaction.
+// An error fails the submit: AE Studio and the build read the token only
+// from that reference. With no secrets provider it returns
+// ErrSecretsDeliveryUnavailable (the save refuses that state before it
+// writes anything).
+func (s *CredentialService) WritePATRef(ctx context.Context, ocOrgID, pat string) error {
+	if err := s.RequireSecretsDelivery(); err != nil {
+		return err
 	}
 	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, pat); err != nil {
-		slog.WarnContext(ctx, "credentials: SM-API mirror failed (legacy store still authoritative)",
-			"ocOrgId", ocOrgID, "error", err)
+		return fmt.Errorf("credentials: write PAT reference: %w", err)
 	}
-}
-
-// ResyncSecretRef re-pushes the org's GitHub PAT through the in-process
-// SecretRefWriter (local OpenBao repair). Returns (false, nil) when there is
-// nothing to push (no active PAT row, no triplet, missing cred-store value, or
-// writer disabled). ctx must carry an ouId claim (repair injects thunder_org_uuid).
-//
-// Replaces the old PrepareSMAPISeed path that returned plaintext over HTTP.
-func (s *CredentialService) ResyncSecretRef(ctx context.Context, ocOrgID string) (bool, error) {
-	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return false, nil
-	}
-	row, err := s.repo.GetByOrg(ctx, ocOrgID)
-	if err != nil {
-		return false, fmt.Errorf("credentials resync: load row: %w", err)
-	}
-	if row == nil {
-		return false, nil
-	}
-	if row.Kind != "user-pat" || row.Status != "active" {
-		return false, nil
-	}
-	kvPath := row.SecretRefKVPath
-	prop := row.SecretRefProperty
-	if kvPath == nil || prop == nil || *kvPath == "" || *prop == "" {
-		return false, nil
-	}
-	pat, err := s.store.Get(ctx, ocOrgID, "github/pat")
-	if err != nil || len(pat) == 0 {
-		return false, nil
-	}
-	if _, err := s.secretRefWriter.WriteGitHubPAT(ctx, ocOrgID, string(pat)); err != nil {
-		return false, fmt.Errorf("credentials resync: write: %w", err)
-	}
-	return true, nil
-}
-
-// connectApp runs inside Connect's transaction (the org advisory lock is
-// held). It takes the install-scoped advisory lock, validates the installation
-// against GitHub, writes the row, and returns the finalize closure Connect
-// calls AFTER the commit (post-commit projection re-fetch + success log).
-func (s *CredentialService) connectApp(ctx context.Context, tx OrgCredentialTx, ocOrgID string, hadRow bool, existing *OrgCredential, req ConnectRequest) (func() (*Projection, error), error) {
-	if req.InstallationID == 0 {
-		return nil, &ValidationError{Code: "installation_id_missing", Message: "installationId is required"}
-	}
-	if s.minter == nil || s.minter.AppID() == 0 {
-		return nil, &ConflictError{Reason: "GitHub App not configured on this deployment"}
-	}
-
-	// Race-fix advisory lock keyed on installation_id (phase2.md §6.4).
-	if err := tx.AdvisoryLock(fmt.Sprintf("install:%d", req.InstallationID)); err != nil {
-		return nil, fmt.Errorf("connect: install lock: %w", err)
-	}
-
-	// Cross-org install check: if the same installation_id already maps
-	// to a different ocOrgId, refuse.
-	clash, err := tx.GetByInstallationID(req.InstallationID)
-	if err != nil {
-		return nil, fmt.Errorf("connect: install lookup: %w", err)
-	}
-	if clash != nil {
-		if clash.OcOrgID != ocOrgID {
-			return nil, &ConflictError{Reason: fmt.Sprintf("installation %d already bound to org %s", req.InstallationID, clash.OcOrgID)}
-		}
-		if clash.Status == "active" && hadRow && existing.OcOrgID == ocOrgID {
-			// Idempotent re-connect — return current projection.
-			slog.InfoContext(ctx, "secrets.connect.idempotent", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", req.InstallationID)
-			return func() (*Projection, error) {
-				return projectionFromRow(clash), nil
-			}, nil
-		}
-	}
-
-	// Fetch installation + bot identity.
-	accountLogin, accountType, selectedRepos, err := s.fetchInstallation(ctx, req.InstallationID)
-	if err != nil {
-		return nil, err
-	}
-	// Refuse User-account installs. GitHub's POST /user/repos is not
-	// accessible to App installation tokens (returns 403 "Resource not
-	// accessible by integration"), so any first-class repo provisioning
-	// fails silently after bind. Surface it at connect time instead so
-	// the user knows to install on an Organization account.
-	if accountType == "User" {
-		return nil, &ValidationError{
-			Code:    "user_account_install_unsupported",
-			Message: fmt.Sprintf("GitHub App was installed on a personal user account (%s). Install on an Organization account instead — App tokens cannot create repositories on user accounts.", accountLogin),
-		}
-	}
-	if s.minter.BotIdentity().Login == "" {
-		// First connect — populate the bot identity once.
-		botID, err := s.fetchAppBotIdentity(ctx)
-		if err != nil {
-			slog.WarnContext(ctx, "fetch bot identity failed", "error", err)
-			// Use a deterministic fallback so the row passes NOT NULL constraints.
-			botID = secrets.Identity{
-				Name:  "AEP Platform Bot",
-				Email: "bot@aep.dev",
-				Login: "aep-platform[bot]",
-			}
-		}
-		s.minter.SetBotIdentity(botID)
-	}
-	bot := s.minter.BotIdentity()
-
-	now := time.Now().UTC()
-	id := req.InstallationID
-	if !hadRow {
-		row := OrgCredential{
-			OcOrgID:         ocOrgID,
-			Kind:            "app-installation",
-			GitHubLogin:     accountLogin,
-			IdentityName:    bot.Name,
-			IdentityEmail:   bot.Email,
-			IdentityLogin:   bot.Login,
-			InstallationID:  &id,
-			SelectedRepos:   JSONStringList(selectedRepos),
-			Status:          "active",
-			ConnectedAt:     now,
-			LastValidatedAt: &now,
-		}
-		if err := tx.Create(&row); err != nil {
-			return nil, fmt.Errorf("connect: insert app: %w", err)
-		}
-		return func() (*Projection, error) {
-			slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", id, "githubLogin", accountLogin)
-			return projectionFromRow(&row), nil
-		}, nil
-	}
-
-	// Updating existing row to App mode (post-disconnect-then-reconnect).
-	updates := map[string]any{
-		"kind":              "app-installation",
-		"github_login":      accountLogin,
-		"identity_name":     bot.Name,
-		"identity_email":    bot.Email,
-		"identity_login":    bot.Login,
-		"installation_id":   id,
-		"selected_repos":    JSONStringList(selectedRepos),
-		"status":            "active",
-		"connected_at":      now,
-		"last_validated_at": now,
-		// PAT-mode specific fields are nulled by the CHECK constraint —
-		// caller side must clear webhook_secrets.
-		"webhook_secrets": nil,
-		"pat_secret_ref":  nil,
-	}
-	if err := tx.UpdateColumns(ocOrgID, updates); err != nil {
-		return nil, fmt.Errorf("connect: update app: %w", err)
-	}
-	return func() (*Projection, error) {
-		row, err := s.fetchRow(ctx, ocOrgID)
-		if err != nil {
-			return nil, err
-		}
-		slog.InfoContext(ctx, "secrets.connected", "ocOrgId", ocOrgID, "kind", "app-installation", "installationId", id, "githubLogin", accountLogin)
-		return projectionFromRow(row), nil
-	}, nil
+	return nil
 }

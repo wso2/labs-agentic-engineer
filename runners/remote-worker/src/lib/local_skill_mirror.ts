@@ -34,7 +34,7 @@
  *
  * Availability has no local admin surface, so AEP_DISABLED_SKILLS stands in for
  * the org toggle — the same variable the playground's design side already uses
- * for the agents-service snapshot, so one run's two halves agree.
+ * for the design agent's snapshot, so one run's two halves agree.
  */
 
 import fs from "node:fs";
@@ -51,7 +51,7 @@ const AUDIENCE_CODING = "coding";
 /**
  * The audiences a SKILL.md declares (`metadata.aep.audience`). Unrecognised
  * values are dropped; nothing declared resolves to EVERY audience — the
- * permissive default the Go and agents-service parsers both apply, so an
+ * permissive default the Go and design-agent parsers both apply, so an
  * unmarked or org-authored skill keeps working.
  */
 export function skillAudience(skillMd: string): string[] {

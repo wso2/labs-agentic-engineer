@@ -15,8 +15,8 @@
 // under the License.
 
 // registry_copy.go — the platform's copy of a Registered External resource
-// into a project, made at the design write (FilesService.Apply, the single
-// specs/ write chokepoint).
+// into a project, made at the design write (the AE Studio pod's saves call
+// CompleteDependencies through the dependency-completions op).
 //
 // The design agent asks for a registered resource by name: it writes a STUB
 // dependency.json — `{ "name": n, "resource": { "ref": n, "name": n } }` —
@@ -30,9 +30,8 @@
 // changed org document is detectable later (the `stale` flag) and a refresh
 // is a re-copy.
 //
-// The registry is read BEFORE Workspace.Mutate — that fn re-runs on every CAS
-// retry, and a catalog read inside it would run once per retry. The lookup
-// never fails the apply: a batch is all-or-nothing over unrelated spec edits,
+// The registry is read before the pod commits. The lookup never fails the
+// save: a batch is all-or-nothing over unrelated spec edits,
 // so an unreachable catalog lands the stub with a warning and the dependency
 // reads needs-input until the registry answers (the status ladder's rule 2);
 // a name nobody registered lands the same way, with a warning that says so.
@@ -44,6 +43,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -73,13 +73,80 @@ const (
 	WarningRegistryCopied      = "registry-copied"
 )
 
-// completedFile is one dependency file the platform completed at the write:
+// CompletedFile is one dependency file the platform completed at the write:
 // the dependency.json content that replaces what the agent wrote, and the
 // document landed beside it (path → content) — a registry copy, or a
 // provider's document fetched by URL.
-type completedFile struct {
+type CompletedFile struct {
 	Definition string
 	Files      map[string]string
+}
+
+// WriteOp is one file write a completion scans: its path and content.
+type WriteOp struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// Warning is a non-blocking note attached to a written file.
+type Warning struct {
+	Path    string `json:"path"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// CompleteDependencies is the one completion step for a batch of writes: the
+// registry copy for each registry stub, then the provider-document fetch for
+// each dependency file that owes one (and was not just copied). It returns,
+// per completed stub path, what replaces it and the documents to land beside
+// it, plus the warnings for every stub it touched. Only stubs are completed or
+// warned about (isRegistryStub, providerDocumentOwed); every other write is
+// ignored. It never fails: a stub it cannot complete lands as written, with a
+// warning.
+//
+// Its caller is the AE Studio tools pod's dependency-completions op,
+// which keeps the registry read and the fetch of a model-chosen URL on
+// aep-api's side of the CP/DP seam, away from the container that holds the
+// org's git credential (SSRF).
+func CompleteDependencies(ctx context.Context, reg RegisteredResourceReader, fetch func(context.Context, string) ([]byte, error), orgID string, writes []WriteOp) (map[string]CompletedFile, []Warning) {
+	completed, warnings := completeRegistryCopies(ctx, reg, orgID, writes)
+	fetched, fetchWarnings := completeProviderDocuments(ctx, fetch, writes, completed)
+	for p, c := range fetched {
+		completed[p] = c
+	}
+	return completed, append(warnings, fetchWarnings...)
+}
+
+// IsDependencyFilePath reports whether p is a canonical, in-scope
+// dependency definition path: specs/design/dependencies/<name>/dependency.json.
+func IsDependencyFilePath(p string) bool {
+	if !isCanonicalSpecPath(p) {
+		return false
+	}
+	_, ok := dependencyFileDir(p)
+	return ok
+}
+
+// isCanonicalSpecPath reports whether p is repo-relative, canonical, free of
+// traversal and under specs/.
+func isCanonicalSpecPath(p string) bool {
+	if p == "" || path.Clean(p) != p || strings.HasPrefix(p, "/") || !strings.HasPrefix(p, "specs/") {
+		return false
+	}
+	return !slices.Contains(strings.Split(p, "/"), "..")
+}
+
+// isRegistryStub: the agent named a registered resource and typed none of it
+// (a ref, no provider).
+func isRegistryStub(def DependencyDefinition) bool {
+	return def.Resource.Ref != "" && def.Resource.Provider == ""
+}
+
+// providerDocumentOwed: the contract is the provider's, named by URL, and its
+// hash is still empty (the fetch has not happened yet).
+func providerDocumentOwed(def DependencyDefinition) bool {
+	c := def.Resource.Contract
+	return c != nil && c.Origin == DependencyContractOriginProvider && def.Provenance != nil && def.Provenance.SourceURL != "" && def.Provenance.SHA256 == ""
 }
 
 // completeRegistryCopies scans a batch for stub dependency files that name a
@@ -88,8 +155,8 @@ type completedFile struct {
 // not complete. A dependency file that already carries its provider is not a
 // stub and is left alone — a refresh is an explicit act, never a side effect
 // of an unrelated save.
-func completeRegistryCopies(ctx context.Context, reg RegisteredResourceReader, orgID string, writes []WriteOp) (map[string]completedFile, []Warning) {
-	out := map[string]completedFile{}
+func completeRegistryCopies(ctx context.Context, reg RegisteredResourceReader, orgID string, writes []WriteOp) (map[string]CompletedFile, []Warning) {
+	out := map[string]CompletedFile{}
 	var warnings []Warning
 	for _, w := range writes {
 		dir, ok := dependencyFileDir(w.Path)
@@ -97,7 +164,7 @@ func completeRegistryCopies(ctx context.Context, reg RegisteredResourceReader, o
 			continue
 		}
 		def, err := parseDependencyDefinitionJSON(dir, w.Content)
-		if err != nil || def.Resource.Ref == "" || def.Resource.Provider != "" {
+		if err != nil || !isRegistryStub(def) {
 			continue // not a stub — or not even a definition; the save gate reports that
 		}
 		if reg == nil {
@@ -122,7 +189,7 @@ func completeRegistryCopies(ctx context.Context, reg RegisteredResourceReader, o
 				Message: fmt.Sprintf("the registered resource %q could not be rendered into this project: %v", def.Name, err)})
 			continue
 		}
-		out[w.Path] = completedFile{Definition: completed, Files: files}
+		out[w.Path] = CompletedFile{Definition: completed, Files: files}
 		// A record with no document, or one of a type a project cannot code
 		// against, lands its block and no contract: say that, rather than
 		// promise a document the commit does not contain.
@@ -160,7 +227,11 @@ func renderRegistryCopy(stub DependencyDefinition, rec RegisteredResource, now t
 		def.Resource.Contract = &ResourceContract{Type: rec.Resource.Contract.Type, Path: file, Origin: DependencyContractOriginRegistry}
 		sum := sha256.Sum256([]byte(rec.Document))
 		def.Provenance = &ResourceProvenance{Registry: rec.Resource.Contract.Path, SHA256: fmt.Sprintf("%x", sum), ReadOn: now.Format(time.RFC3339)}
-		files[DesignDir+"/"+dependencyDirPrefix+stub.Name+"/"+file] = rec.Document
+		docPath, ok := dependencyDocumentPath(stub.Name, file)
+		if !ok {
+			return "", nil, fmt.Errorf("registry contract path %q names no file a project can hold", rec.Resource.Contract.Path)
+		}
+		files[docPath] = rec.Document
 	} else {
 		def.Resource.Contract = nil
 	}
@@ -185,6 +256,19 @@ func dependencyFileDir(p string) (string, bool) {
 	return rest, true
 }
 
+// dependencyDocumentPath returns the repo path of a dependency's document:
+// file directly in specs/design/dependencies/<name>/, canonical, and never the
+// definition itself. ok is false for anything else (a traversal, a subdir, an
+// absolute path), so a completion never lands a file outside its dependency.
+func dependencyDocumentPath(name, file string) (string, bool) {
+	dir := DesignDir + "/" + dependencyDirPrefix + name
+	p := dir + "/" + file
+	if file == "" || file == DependencyDesignFile || !isCanonicalSpecPath(p) || path.Dir(p) != dir {
+		return "", false
+	}
+	return p, true
+}
+
 // Warning codes the provider-document fetch attaches.
 const (
 	WarningProviderDocumentFetched     = "provider-document-fetched"
@@ -203,8 +287,8 @@ const (
 // definition as written with a warning; the dependency reads
 // needs-contract until the user provides the document (Provide interface)
 // or the agent writes one itself.
-func completeProviderDocuments(ctx context.Context, fetch func(context.Context, string) ([]byte, error), writes []WriteOp, alreadyCopied map[string]completedFile) (map[string]completedFile, []Warning) {
-	out := map[string]completedFile{}
+func completeProviderDocuments(ctx context.Context, fetch func(context.Context, string) ([]byte, error), writes []WriteOp, alreadyCopied map[string]CompletedFile) (map[string]CompletedFile, []Warning) {
+	out := map[string]CompletedFile{}
 	var warnings []Warning
 	inBatch := map[string]bool{}
 	for _, w := range writes {
@@ -219,14 +303,18 @@ func completeProviderDocuments(ctx context.Context, fetch func(context.Context, 
 			continue
 		}
 		def, err := parseDependencyDefinitionJSON(dir, w.Content)
-		if err != nil {
+		if err != nil || !providerDocumentOwed(def) {
 			continue
 		}
 		c := def.Resource.Contract
-		if c == nil || c.Origin != DependencyContractOriginProvider || def.Provenance == nil || def.Provenance.SourceURL == "" || def.Provenance.SHA256 != "" {
+		docPath, ok := dependencyDocumentPath(def.Name, c.Path)
+		if !ok {
+			// contract.path is model output: a path that leaves the
+			// dependency's own directory is refused before anything is fetched.
+			warnings = append(warnings, Warning{Path: w.Path, Code: WarningProviderDocumentUnavailable,
+				Message: fmt.Sprintf("contract.path %q must name a file directly in this dependency's directory; the document was not fetched and the dependency reads needs-contract", c.Path)})
 			continue
 		}
-		docPath := DesignDir + "/" + dependencyDirPrefix + def.Name + "/" + c.Path
 		if inBatch[docPath] {
 			continue // the agent landed the document itself (a small one); nothing to fetch
 		}
@@ -262,7 +350,7 @@ func completeProviderDocuments(ctx context.Context, fetch func(context.Context, 
 		if err != nil {
 			continue
 		}
-		out[w.Path] = completedFile{Definition: string(rendered), Files: map[string]string{docPath: content}}
+		out[w.Path] = CompletedFile{Definition: string(rendered), Files: map[string]string{docPath: content}}
 		warnings = append(warnings, Warning{Path: w.Path, Code: WarningProviderDocumentFetched,
 			Message: fmt.Sprintf("the provider's document was fetched from %s and landed as %s", def.Provenance.SourceURL, c.Path)})
 	}

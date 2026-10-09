@@ -18,36 +18,38 @@ package spec
 
 import "time"
 
-// AgentTurn is one committed-truth generation turn (design D16/D17): the
-// durable record behind
-// the 202-then-attach turn API. The row is the one-active-turn-per-project
-// guard (D18) — a partial unique index ux_agent_turns_active on
-// (org_id, project_id) WHERE status = 'running' (created by the agent_turns
-// migration; AutoMigrate cannot express a partial index) — and the
-// crash-safety anchor: the running replica heartbeats the row, and a stale
-// heartbeat lets the sweep fail it and release the guard.
+// AgentTurn is one row of the finished-turn ledger: every turn an
+// org's AE Studio pod ran lands here once, whole and already finished,
+// through TurnRepository.RecordFinished (record-turn-usage). Nothing runs
+// here and no row is ever updated after it is written.
 //
-// The in-memory part buffer is deliberately NOT durable (D17) — only the
-// terminal outcome lands here.
+// The identity is (org_id, id): the pod chooses the turn id (the kickoff's is
+// deterministic, uuidv5 of org/project), so another org's row with the same
+// id must never stand in for this org's (migrate's phase27 moved the primary
+// key off id alone). OrgID leads so the key serves org-scoped reads.
+//
+// Older rows came from aep-api's in-process turn engine;
+// phase27 gave them a kind and a start time and dropped the columns only that
+// engine wrote.
 type AgentTurn struct {
+	OrgID     string `gorm:"primaryKey;index;not null" json:"-"`
 	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()" json:"id"`
-	OrgID     string `gorm:"index;not null" json:"-"`
 	ProjectID string `gorm:"index;not null" json:"projectId"`
 
-	// ConversationID is the FE-chosen conversation uuid (NOT the namespaced
-	// agents-service id — that is reconstructed from org/project/useCase when
-	// dispatching). It keys the D20 filesChangedExternally / divergence-note
-	// derivation: "the last terminal turn of this conversation".
+	// ConversationID is the conversation the turn ran in, as the pod reported
+	// it.
 	ConversationID string `gorm:"index;not null" json:"conversationId"`
-	UseCase        string `gorm:"not null" json:"useCase"`
+
+	// Kind is what started the turn in AE Studio: browser | kickoff | plan
+	// (TurnKind*). The ledger's rows carry it from record-turn-usage; phase27
+	// derived it for the rows the in-process engine wrote.
+	Kind string `gorm:"type:text;not null;default:'browser'" json:"-"`
 
 	// Flow is the `/<skill>` token this turn ran ("design", "start", …); "" for
 	// plain chat. Recorded (#575) because the status read has to find "the
 	// newest successful DESIGN run" to answer whether the requirements have
 	// moved since — and a turn is otherwise indistinguishable from any other
-	// once it has finished. NOT a conversation-identity dimension (see
-	// useCaseGeneral): every turn of a project shares one thread whatever its
-	// flow, and this column only ever narrows a lookup.
+	// once it has finished. This column only ever narrows a lookup.
 	Flow string `gorm:"type:text;index" json:"-"`
 
 	// BaseRef is the main-tip commit SHA the turn ran against (its snapshot
@@ -55,47 +57,24 @@ type AgentTurn struct {
 	BaseRef   string `gorm:"not null" json:"baseRef"`
 	SkillsRef string `gorm:"type:text" json:"skillsRef,omitempty"`
 
-	// Status is running | completed | failed (canonical values live in
-	// feature/genai; stored as plain strings per the model convention).
+	// Status is completed | failed, as the pod reported it.
 	Status string `gorm:"not null;index" json:"status"`
 
-	// CommitSHA is the landed commit for a completed turn ("" for a
-	// no-changes completion). Reason is the failure class for a failed turn:
-	// stream-died | fold-parity | base-moved | dispatch-failed | internal |
-	// agent-error.
-	// Paths is a JSON array of the conflicting paths for base-moved.
-	// Message carries a human-readable failure detail.
-	CommitSHA string `gorm:"type:text" json:"commitSha,omitempty"`
-	Reason    string `gorm:"type:text" json:"reason,omitempty"`
-	Paths     string `gorm:"type:text" json:"-"`
-	NoChanges bool   `json:"noChanges,omitempty"`
-	Message   string `gorm:"type:text" json:"message,omitempty"`
-
-	// Code names the failure when the agents service could (reason
-	// agent-error): provider_limit (the model provider's usage limit) or
-	// output_truncated (the output limit cut a file write off). ResetAt is
-	// when the provider said a provider_limit resets, nil when it did not say.
-	// Both nullable, added by AutoMigrate; empty/nil on every other turn.
+	// Reason is the failure class of a failed turn and Code names it when the
+	// agent could (provider_limit, output_truncated), as the pod reported
+	// them. Message and ResetAt hold what the in-process engine wrote on its
+	// own failed turns; ledger rows leave them empty.
+	Reason  string     `gorm:"type:text" json:"reason,omitempty"`
+	Message string     `gorm:"type:text" json:"message,omitempty"`
 	Code    string     `gorm:"type:text" json:"-"`
 	ResetAt *time.Time `json:"-"`
 
-	// SpecTag is the D19 lineage stamp for design turns: the latest approved
-	// requirements tag (vN) at gate time. BaseRef covers the baseSha half.
-	SpecTag string `gorm:"type:text" json:"specTag,omitempty"`
-
-	// The turn's DISPLAY record (#562): the transcript line for the message
-	// that started it, and who sent it. The same facts the journal carries to
-	// the agents service — held here as well because that store persists a
-	// turn's transcript only when the turn ENDS, so between dispatch and
-	// landing there is nowhere else to read them from. That window is the
-	// whole of a kickoff, and the browser that lands on a freshly created
-	// project never sent the turn, so it has no local copy either: without
-	// these it renders the agent narrating under a blank space.
-	//
-	// AuthorID is EMAIL-anchored to match the console's live author identity —
-	// that equality is what lets a rendered row read as "you" rather than a
-	// teammate. Both empty for an unattributable turn (an M2M token) and for
-	// every row written before this existed.
+	// Who sent the turn: the pod's credit (the verified caller's subject and
+	// display name); both empty for a turn nobody sent (a kickoff with no
+	// credit, a marketplace turn). Summary holds a design turn's feature IDs,
+	// space-joined ("F1 F2"; empty = every designable feature), read back by
+	// DesignedFeatures; empty on every other ledger row. Rows the in-process
+	// engine wrote hold the transcript line there instead.
 	Summary           string `gorm:"type:text" json:"-"`
 	AuthorID          string `gorm:"type:text" json:"-"`
 	AuthorDisplayName string `gorm:"type:text" json:"-"`
@@ -111,33 +90,28 @@ type AgentTurn struct {
 	CacheCreationTokens int64    `gorm:"not null;default:0" json:"-"`
 	ModelID             string   `gorm:"type:text;not null;default:''" json:"-"`
 	CostUsd             *float64 `gorm:"column:cost_usd" json:"-"`
-	// ModelHost is the host of the model connection the turn was admitted on,
-	// written by TryStart with the rest of the running row, and the host
-	// Finish prices the turn's usage against: rates are keyed by (host, model).
+	// ModelHost is the host of the model connection the turn ran on, the host
+	// its usage is priced against: rates are keyed by (host, model).
 	// Nullable on purpose: a row that predates the column reads NULL until
 	// migrate's phase18 backfills it to api.anthropic.com, and NULL-only is what
 	// keeps that backfill one-shot (see RunPhase18ModelHost).
 	ModelHost string `gorm:"type:text" json:"-"`
 
 	// ContextTokens is how much context the conversation held when the turn
-	// ended: the last model step's whole prompt plus its output, read off the
-	// stream's final finish-step part (agentfold.StepContextOf). It is the
-	// measure the rotation check reads (context_rotation.go), which the
-	// summed usage above cannot be: that adds every step's prompt together.
-	// Written only when the agents service vouched for the turn with a
-	// manifest, because only then did it save the turn into the
-	// conversation's history. Nullable, added by AutoMigrate: NULL on every
-	// other turn and on rows that predate it.
+	// ended (the last model step's prompt plus its output), as the pod
+	// reported it. Nullable: NULL when the turn left no measure.
 	ContextTokens *int64 `json:"-"`
 
-	// HeartbeatAt is bumped by the running replica (~15s); the sweep fails
-	// rows whose heartbeat went stale (~60s) and releases the D18 guard.
-	HeartbeatAt time.Time `gorm:"index" json:"-"`
+	// StartedAt and FinishedAt are when the turn ran, as the AE Studio pod
+	// that ran it reported (record-turn-usage). For rows the in-process
+	// engine wrote, phase27 set StartedAt from created_at; FinishedAt is nil.
+	StartedAt  time.Time  `json:"-"`
+	FinishedAt *time.Time `json:"-"`
 
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // TableName pins the table name so a struct rename cannot silently move the
-// table (and the partial-index migration keeps targeting it).
+// table (and the index migration keeps targeting it).
 func (AgentTurn) TableName() string { return "agent_turns" }

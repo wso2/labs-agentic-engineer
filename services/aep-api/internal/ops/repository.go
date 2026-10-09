@@ -32,21 +32,16 @@ import (
 // slice that reached for the ORM would have escaped the seam that lets it be
 // tested without a database.
 
-// ErrInvalidReport wraps a create request that fails validation; the
-// createreport slice maps it to a 400.
-//
 // There is deliberately NO ErrReportNotFound: Get reports absence as (nil, nil),
 // and the getreport slice turns that into the 404. The pre-P1 code carried such
 // a sentinel, and porting it would have shipped an exported error nothing
 // returns and nothing checks — which the next domain would then copy.
-var ErrInvalidReport = errors.New("invalid rca agent report")
 
 // Repository is the org-scoped store backing the console's Alerts notification
 // bell and Alerts list/stepper (issues #154, #155). Narrow enough to fake in a
-// slice's unit tests without a database.
+// slice's unit tests without a database. It is read-only: nothing writes RCA
+// reports since the SRE handoff moved to its MCP tools (see README.md).
 type Repository interface {
-	// Create inserts report, populating its server-assigned ID and CreatedAt.
-	Create(ctx context.Context, report *RcaAgentReport) error
 	// Get returns one report by (org, id), or (nil, nil) when absent.
 	Get(ctx context.Context, orgID, id string) (*RcaAgentReport, error)
 	// List returns up to limit reports for orgID, newest first, continuing after
@@ -58,19 +53,6 @@ type repository struct{ db *gorm.DB }
 
 // NewRepository returns the gorm-backed Repository.
 func NewRepository(db *gorm.DB) Repository { return &repository{db: db} }
-
-func (r *repository) Create(ctx context.Context, report *RcaAgentReport) error {
-	if report == nil {
-		return fmt.Errorf("rca_agent_reports: report is required")
-	}
-	if report.OrgID == "" {
-		return fmt.Errorf("rca_agent_reports: orgID is required")
-	}
-	if err := r.db.WithContext(ctx).Create(report).Error; err != nil {
-		return fmt.Errorf("rca_agent_reports: create: %w", err)
-	}
-	return nil
-}
 
 func (r *repository) Get(ctx context.Context, orgID, id string) (*RcaAgentReport, error) {
 	var report RcaAgentReport

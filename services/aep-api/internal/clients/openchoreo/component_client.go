@@ -22,7 +22,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/clients/agentmanager"
 	"net/http"
 	"strings"
-	"time"
 
 	ocgen "github.com/wso2/aep/aep-api/internal/clients/openchoreo/gen"
 	"github.com/wso2/aep/aep-api/internal/gen"
@@ -58,14 +57,9 @@ type ComponentClient interface {
 	// type and PUTs body only if the stored spec has drifted from it, so an org
 	// seeded by an older platform build stops validating today's dispatches
 	// against yesterday's schema. body is the raw CR map (e.g.
-	// CodingAgentComponentType()) posted via the gen client's WithBody path —
+	// CodingAgentComponentType(res)) posted via the gen client's WithBody path —
 	// no typed converter.
 	EnsureComponentType(ctx context.Context, orgName string, body map[string]any) error
-
-	// ListInternalComponents returns the project's aep-internal coding-agent
-	// Components — the ONLY read that can see what ListComponents filters out.
-	// Drives the retention reaper.
-	ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error)
 
 	// The explicit deploy chain. EnsureWorkload is the ephemeral half — an
 	// agent cycle has no build to post a Workload, so the dispatcher posts it —
@@ -81,6 +75,25 @@ type ComponentClient interface {
 	// ephemeral component's binding is never re-pinned; this one re-pins on
 	// every cycle, which is what a deploy IS.
 	ApplyReleaseBinding(ctx context.Context, orgName, projectName string, in ReleaseBindingDesired) error
+
+	// SuspendJobBinding sets the coding-agent `suspend` environmentConfig on
+	// the component's binding in one environment, so its Job never runs the
+	// runner again (a Job OpenChoreo re-creates after the TTL is born
+	// suspended). UPDATE-ONLY: a missing binding is ErrNotFound and nothing is
+	// created, unlike ApplyReleaseBinding. Every other field survives; an
+	// already-suspended binding is not rewritten. A binding whose release
+	// predates the suspend schema is ErrSuspendUnsupported with nothing
+	// written (OpenChoreo would accept the key and not render it). A 400 is a
+	// malformed request (ErrBadRequest), never a legacy release.
+	SuspendJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
+
+	// ResumeJobBinding sets the binding's `suspend` environmentConfig back to
+	// false, for a re-dispatch that reuses the cycle's Component (whose binding
+	// may still carry the previous attempt's suspend). Same contract as
+	// SuspendJobBinding: update-only, other fields kept, ErrSuspendUnsupported
+	// with nothing written over a legacy release; a binding that is not
+	// suspended is not rewritten.
+	ResumeJobBinding(ctx context.Context, orgName, projectName, componentName, environment string) error
 
 	// GetReleaseBindingStatus reads one binding's aggregate Ready condition, or
 	// (nil, nil) when it does not exist yet. The deploy stage's readiness poll:
@@ -143,12 +156,11 @@ type ComponentClient interface {
 
 	// Build (workflow runs). `runName` is the WorkflowRun metadata.name; if
 	// empty the OC client auto-generates one via NewBuildRunName. Callers
-	// that need to know the name ahead of time (so they can stage a
-	// per-WorkflowRun build Secret) MUST pass it.
+	// that need to know the name ahead of time MUST pass it.
 	// secretRef sets parameters.repository.secretRef so the dockerfile-builder
-	// workflow synthesises the git Secret from the org's SecretReference
-	// (provisioned by BuildCredentialsService). Empty leaves it blank — the
-	// build clones unauthenticated (public repos only).
+	// workflow synthesises the git Secret from the org's github-pat
+	// SecretReference (named by BuildCredentialsService). Empty leaves it
+	// blank — the build clones unauthenticated (public repos only).
 	TriggerBuild(ctx context.Context, orgName, projectName, componentName, secretRef, runName string) (*gen.WorkflowRun, error)
 	// TriggerBuildAtCommit creates a WorkflowRun pinned to commitSHA via
 	// params.repository.revision.commit. Mirrors agent-manager's pattern at
@@ -454,96 +466,6 @@ func (c *componentClient) ListComponents(ctx context.Context, orgName, projectNa
 		items = append(items, componentToModel(comp))
 	}
 	return &gen.ComponentList{Items: items}, nil
-}
-
-// internalComponentFrom lifts the reaper's view off the CR. The project is read
-// from spec.owner (authoritative) and the identity from the marker labels.
-func internalComponentFrom(c ocgen.Component) InternalComponent {
-	var projectName, typeName string
-	if c.Spec != nil {
-		projectName = c.Spec.Owner.ProjectName
-		typeName = c.Spec.ComponentType.Name
-	}
-	var created time.Time
-	if c.Metadata.CreationTimestamp != nil {
-		created = c.Metadata.CreationTimestamp.UTC()
-	}
-	return InternalComponent{
-		Name:      FriendlyComponentName(c.Metadata.Name, projectName),
-		TypeName:  typeName,
-		CycleID:   label(c.Metadata.Labels, string(LabelKeyAepCycle)),
-		RunName:   label(c.Metadata.Labels, string(LabelKeyAepRunName)),
-		CreatedAt: created,
-	}
-}
-
-// IsCodingAgentTypeName reports whether typeName is a coding-agent ComponentType
-// reference. OC may surface either the bare name (`coding-agent`) or the
-// workload-qualified form (`job/coding-agent`). Shared by the internal lister
-// and retention so a surface that returns one form cannot be silently pruned
-// by a check that only accepts the other.
-func IsCodingAgentTypeName(typeName string) bool {
-	return typeName == CodingAgentComponentTypeRef || typeName == CodingAgentComponentTypeName
-}
-
-// ListInternalComponents returns the project's aep-internal coding-agent
-// Components, following pagination. It selects on the internal MARKER (not on
-// the project label) and matches ownership client-side against
-// spec.owner.projectName, for the reason ListProjectReleaseBindings does:
-// ownership is the authoritative fact, and a label OC did or did not copy onto
-// the CR is not.
-//
-// This is the deliberate counterpart to ListComponents' filter: one method hides
-// internal components from users, the other is the only way the platform's own
-// machinery can see them. Only coding-agent typed internals are returned — the
-// retention reaper must not touch other future internal kinds.
-func (c *componentClient) ListInternalComponents(ctx context.Context, orgName, projectName string) ([]InternalComponent, error) {
-	sel := ocgen.LabelSelectorParam(string(LabelKeyAepInternal) + "=" + LabelValueAepInternal)
-	params := &ocgen.ListComponentsParams{LabelSelector: &sel}
-	var out []InternalComponent
-	for {
-		resp, err := c.oc.ListComponentsWithResponse(ctx, orgName, params)
-		if err != nil {
-			return nil, fmt.Errorf("failed to list internal components: %w", err)
-		}
-		if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil {
-			return nil, handleErrorResponse(resp.StatusCode(), ErrorResponses{
-				JSON400: resp.JSON400,
-				JSON401: resp.JSON401,
-				JSON403: resp.JSON403,
-				JSON500: resp.JSON500,
-			})
-		}
-		for _, comp := range resp.JSON200.Items {
-			var ann, lbls map[string]string
-			if comp.Metadata.Annotations != nil {
-				ann = *comp.Metadata.Annotations
-			}
-			if comp.Metadata.Labels != nil {
-				lbls = *comp.Metadata.Labels
-			}
-			if !isInternalComponent(ann, lbls) {
-				continue
-			}
-			if comp.Spec == nil || comp.Spec.Owner.ProjectName != projectName {
-				continue
-			}
-			if !IsCodingAgentTypeName(comp.Spec.ComponentType.Name) {
-				continue
-			}
-			out = append(out, internalComponentFrom(comp))
-		}
-		next := resp.JSON200.Pagination.NextCursor
-		if next == nil || *next == "" {
-			return out, nil
-		}
-		// A non-advancing cursor would spin this loop forever — fail instead.
-		if params.Cursor != nil && *next == string(*params.Cursor) {
-			return nil, fmt.Errorf("list internal components: pagination did not advance (cursor %q)", *next)
-		}
-		cur := ocgen.CursorParam(*next)
-		params.Cursor = &cur
-	}
 }
 
 func (c *componentClient) GetComponent(ctx context.Context, orgName, projectName, componentName string) (*gen.Component, error) {
@@ -1056,7 +978,7 @@ func (c *componentClient) ListDeployments(ctx context.Context, orgName, projectN
 // loop already filters by project here, so one more test is free, and the 5s
 // status poll must not depend on openchoreo-api honouring a selector on
 // releasebindings. Bindings created before the marker existed carry no label and
-// are still returned; they age out with the retention pass.
+// are still returned; they go when the settler deletes their Component.
 func (c *componentClient) ListProjectReleaseBindings(ctx context.Context, orgName, projectName string) ([]ReleaseBindingSummary, error) {
 	var out []ReleaseBindingSummary
 	params := &ocgen.ListReleaseBindingsParams{}
@@ -1159,10 +1081,10 @@ func (c *componentClient) TriggerBuildAtCommit(ctx context.Context, orgName, pro
 // from `pull_request.closed`'s merge_commit_sha.
 //
 // When runName is empty the BFF gets a fresh NewBuildRunName-shaped name —
-// retained for tests / call sites that don't need to pre-stage anything.
-// Production callers (dispatch path, console "Build" button) pass runName
-// because they staged the per-WorkflowRun build Secret with that name
-// upfront.
+// retained for tests / call sites that don't need to know the name ahead of
+// time. Production callers (dispatch path, console "Build" button) pass
+// runName; the build itself only references the org's github-pat
+// SecretReference, nothing is staged under that name.
 func (c *componentClient) triggerBuildInner(ctx context.Context, orgName, projectName, componentName, commitSHA, secretRef, runName string) (*gen.WorkflowRun, error) {
 	scopedComp := ScopedComponentName(projectName, componentName)
 

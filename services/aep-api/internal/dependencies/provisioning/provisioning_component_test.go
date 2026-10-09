@@ -850,9 +850,9 @@ func TestProvisioningComponent_ListWorkloadDependencies_ResourceAndOrgServiceRow
 	for i := range got {
 		row := &got[i]
 		switch {
-		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.Platform:
+		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.WorkloadDependencyDTOTagPlatform:
 			platform = row
-		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.External:
+		case row.Kind == gen.WorkloadDependencyDTOKindResource && row.Tag == gen.WorkloadDependencyDTOTagExternal:
 			external = row
 		case row.Kind == gen.WorkloadDependencyDTOKindOrgService:
 			orgSvc = row
@@ -948,7 +948,7 @@ func TestProvisioningComponent_ListWorkloadDependencies_ExternalFallsBackToTypeN
 		t.Fatalf("rows = %+v, want 1 live ResourceType (dangling GetResource 404 omitted)", got)
 	}
 	row := got[0]
-	if row.Kind != gen.WorkloadDependencyDTOKindResource || row.Tag != gen.External || row.Ref != "custom-rt" || row.Name != "custom-rt" {
+	if row.Kind != gen.WorkloadDependencyDTOKindResource || row.Tag != gen.WorkloadDependencyDTOTagExternal || row.Ref != "custom-rt" || row.Name != "custom-rt" {
 		t.Fatalf("external without annotation = %+v, want ref/name custom-rt (spec.type.Name)", row)
 	}
 }

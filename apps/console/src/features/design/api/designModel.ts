@@ -181,8 +181,12 @@ export interface DesignRun {
 }
 
 export interface DesignModel {
-  /** Bumped by every turn that changes the design; 0 before the first. */
-  revision: number;
+  /**
+   * Bumped by every turn that changes the design; 0 before the first. null
+   * where the design tracks no revisions: on the platform the design is read
+   * from the room's files, which carry none.
+   */
+  revision: number | null;
   running: DesignRun | null;
   artifacts: DesignArtifact[];
   dependencies: DesignDependency[];

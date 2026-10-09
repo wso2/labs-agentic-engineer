@@ -1,0 +1,212 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package github
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestRegisterWebhook_FindsExistingHookAcrossPages(t *testing.T) {
+	const hookURL = "https://tools.example/webhooks/github"
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[{"message":"Hook already exists on this repository"}]}`))
+	})
+	mux.HandleFunc("GET /repos/acme/greeter/hooks", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`[{"id":202,"config":{"url":"` + hookURL + `"}}]`))
+			return
+		}
+		w.Header().Set("Link", `<`+srv.URL+`/repos/acme/greeter/hooks?per_page=100&page=2>; rel="next"`)
+		_, _ = w.Write([]byte(`[{"id":101,"config":{"url":"https://other.example/hook"}}]`))
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: hookURL, HookSecret: "s"})
+	id, existed, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 202 || !existed {
+		t.Fatalf("hook id = %d, want 202 (found on page 2)", id)
+	}
+}
+
+// TestRegisterWebhook_FollowsGitHubsRepositoriesNextLink: GitHub's real
+// next-page links address the repository by id
+// (https://api.github.com/repositories/<id>/hooks?page=2), not by
+// owner/repo; that is still inside the API base, so the walk follows it.
+func TestRegisterWebhook_FollowsGitHubsRepositoriesNextLink(t *testing.T) {
+	const hookURL = "https://tools.example/webhooks/github"
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"message":"Validation Failed","errors":[{"message":"Hook already exists on this repository"}]}`))
+	})
+	mux.HandleFunc("GET /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", `<`+srv.URL+`/repositories/123456/hooks?per_page=100&page=2>; rel="next", <`+srv.URL+`/repositories/123456/hooks?per_page=100&page=2>; rel="last"`)
+		_, _ = w.Write([]byte(`[{"id":101,"config":{"url":"https://other.example/hook"}}]`))
+	})
+	mux.HandleFunc("GET /repositories/123456/hooks", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") != "2" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":303,"config":{"url":"` + hookURL + `"}}]`))
+	})
+	srv = httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: hookURL, HookSecret: "s"})
+	id, existed, err := c.RegisterWebhook(context.Background(), "acme", "greeter", []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 303 || !existed {
+		t.Fatalf("hook id = %d, want 303 (found on the repositories/<id> page)", id)
+	}
+}
+
+// TestListIssues_EscapesTheLabelFilter: a label is a query value, never
+// query syntax.
+func TestListIssues_EscapesTheLabelFilter(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query().Get("labels")
+		if r.URL.Query().Get("state") != "all" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t")})
+	if _, err := c.ListIssues(context.Background(), "acme", "greeter", []string{"aep:status/x", "a&state=open"}); err != nil {
+		t.Fatal(err)
+	}
+	if got != "aep:status/x,a&state=open" {
+		t.Fatalf("labels = %q", got)
+	}
+}
+
+// TestCreateOrgRepo_UserFallbackOnlyForTheGitpatsOwnAccount: a 404 on
+// /orgs/{owner}/repos falls back to /user/repos only when owner is the
+// gitpat's user (case-insensitively); otherwise the 404 is the answer and
+// nothing is created.
+func TestCreateOrgRepo_UserFallbackOnlyForTheGitpatsOwnAccount(t *testing.T) {
+	for _, tc := range []struct {
+		login        string
+		wantFallback bool
+	}{{"gitpat-user", false}, {"ACME", true}} {
+		t.Run(tc.login, func(t *testing.T) {
+			fellBack := false
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /orgs/acme/repos", func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			})
+			mux.HandleFunc("GET /user", func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(`{"login":"` + tc.login + `","id":7}`))
+			})
+			mux.HandleFunc("POST /user/repos", func(w http.ResponseWriter, _ *http.Request) {
+				fellBack = true
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write([]byte(`{"name":"x","owner":{"login":"` + tc.login + `"},"default_branch":"main"}`))
+			})
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+			got, err := New(Config{APIBase: srv.URL, Token: staticToken("t")}).CreateOrgRepo(context.Background(), "acme", CreateOrgRepoRequest{Name: "x"})
+			if fellBack != tc.wantFallback {
+				t.Fatalf("fell back = %v, want %v", fellBack, tc.wantFallback)
+			}
+			if tc.wantFallback {
+				if err != nil || got.Owner != tc.login {
+					t.Fatalf("got %+v, %v", got, err)
+				}
+				return
+			}
+			if !IsHTTPStatus(err, http.StatusNotFound) {
+				t.Fatalf("err = %v, want HTTPStatusError 404", err)
+			}
+		})
+	}
+}
+
+// TestWrites_ReturnHTTPStatusError: a write GitHub refuses is a typed
+// *HTTPStatusError, except DeleteWebhook, for which 404 is success (the hook
+// is already gone).
+func TestWrites_ReturnHTTPStatusError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t")})
+	for name, call := range map[string]func() error{
+		"close":    func() error { return c.CloseIssue(context.Background(), "acme", "greeter", 7) },
+		"register": func() error { _, _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); return err },
+	} {
+		if err := call(); !IsHTTPStatus(err, http.StatusNotFound) {
+			t.Errorf("%s: err = %v, want *HTTPStatusError 404", name, err)
+		}
+	}
+	if err := c.DeleteWebhook(context.Background(), "acme", "greeter", 9); err != nil {
+		t.Errorf("delete: err = %v, want nil (404 is success)", err)
+	}
+}
+
+// TestRegisterWebhook_NeverFollowsANextPageOffTheAPIBase: the hook list's
+// Link header is followed only within the API base, so the gitpat is never
+// sent to another host.
+func TestRegisterWebhook_NeverFollowsANextPageOffTheAPIBase(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("request reached another host with Authorization %q", r.Header.Get("Authorization"))
+	}))
+	defer other.Close()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"errors":[{"message":"Hook already exists on this repository"}]}`))
+	})
+	mux.HandleFunc("GET /repos/acme/greeter/hooks", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Link", `<`+other.URL+`/repos/acme/greeter/hooks?page=2>; rel="next"`)
+		_, _ = w.Write([]byte(`[]`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := New(Config{APIBase: srv.URL, Token: staticToken("t"), HookURL: "https://tools.example/webhooks/github"})
+	if _, _, err := c.RegisterWebhook(context.Background(), "acme", "greeter", nil); err == nil {
+		t.Fatal("err = nil, want a refusal to follow the off-base next page")
+	}
+}
+
+// TestHTTPStatusError_MessageLeavesTheBodyOut: the body stays a field for
+// the caller; a logged error carries no GitHub content.
+func TestHTTPStatusError_MessageLeavesTheBodyOut(t *testing.T) {
+	e := &HTTPStatusError{StatusCode: http.StatusUnprocessableEntity, Body: `{"message":"title: Secret plan"}`, URL: "https://api.github.com/repos/a/b/issues"}
+	if strings.Contains(e.Error(), "Secret plan") || !strings.Contains(e.Error(), "422") {
+		t.Fatalf("Error() = %q", e.Error())
+	}
+}
+
+func staticToken(v string) func(context.Context) (string, error) {
+	return func(context.Context) (string, error) { return v, nil }
+}

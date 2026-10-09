@@ -19,69 +19,63 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
-// designFilesCommitter adapts the Files API (feature/files) to design's narrow
+// designFilesCommitter adapts the project repository to design's narrow
 // designFileCommitter port — the committed-truth single-commit write surface
 // the design service uses to persist a dependency's contract + its
 // dependency.json (and the user's acceptance of an assumed contract) atomically
-// to main. It lives at the composition root so the
-// design feature imports only artifacts (arch boundary), never the files service directly.
+// to main, through the org's AE Studio pod. The design service's writes are
+// already complete files, so they commit raw: no scaffolding, completion or
+// soft validation runs on them (the pod runs those for the Room's
+// edits). It lives at the composition root so the design feature names no
+// repository port (arch boundary).
 type designFilesCommitter struct {
-	files spec.FilesService
+	git   sourcecontrol.Git
+	repos sourcecontrol.ProjectRepoRows
 }
 
 // workloadReader is the eventcore wiring-conformance check's file read: the
-// shipped workload.yaml at HEAD. It is the same Files surface designFilesCommitter
-// uses, projected onto the narrower shape eventcore holds (no CAS token — the
-// check never writes).
+// shipped workload.yaml at HEAD, projected onto the narrower shape eventcore
+// holds (no CAS token — the check never writes).
 type workloadReader struct {
-	files spec.FilesService
+	projectFiles
 }
 
 func (a workloadReader) ReadFile(ctx context.Context, orgID, projectID, path string) (string, bool, error) {
-	fc, err := a.files.Read(ctx, orgID, projectID, path)
-	if err != nil {
-		if errors.Is(err, spec.ErrFileNotFound) {
-			return "", false, nil
-		}
-		return "", false, err
-	}
-	return fc.Content, true, nil
+	content, _, found, err := a.readFile(ctx, orgID, projectID, "", path)
+	return content, found, err
 }
 
 // ReadFile returns a file's current content + blob sha (the CAS token). A file
 // absent at HEAD is reported as ok=false with no error (a fresh spec create).
 func (a designFilesCommitter) ReadFile(ctx context.Context, orgID, projectID, path string) (content, sha string, ok bool, err error) {
-	fc, rerr := a.files.Read(ctx, orgID, projectID, path)
-	if rerr != nil {
-		if errors.Is(rerr, spec.ErrFileNotFound) {
-			return "", "", false, nil
-		}
-		return "", "", false, rerr
-	}
-	return fc.Content, fc.SHA, true, nil
+	return projectFiles{git: a.git, repos: a.repos}.readFile(ctx, orgID, projectID, "", path)
 }
 
-// Commit writes every file in one atomic apply → main under per-file baseSha
-// CAS. A stale precondition (concurrent design edit) surfaces as
-// spec.ErrSpecCommitConflict so the route can 409.
+// Commit writes every file in one commit on main, each under its own baseSha
+// (the sha the design service read; "" = the file must not exist yet). A
+// baseSha that no longer holds (a concurrent design edit) is
+// spec.ErrSpecCommitConflict so the route can 409; it is not retried, since
+// the caller's baseSha is the point.
 func (a designFilesCommitter) Commit(ctx context.Context, orgID, projectID string, writes []spec.DesignFileWrite, message string) error {
-	ops := make([]spec.WriteOp, 0, len(writes))
-	for _, w := range writes {
-		ops = append(ops, spec.WriteOp{Path: w.Path, Content: w.Content, BaseSHA: w.BaseSHA})
-	}
-	_, conflicts, err := a.files.Apply(ctx, orgID, projectID, spec.ApplyRequest{Writes: ops, Message: message})
+	ref, _, err := sourcecontrol.RepoRefFor(ctx, a.repos, orgID, projectID)
 	if err != nil {
-		if errors.Is(err, spec.ErrApplyConflict) {
-			return spec.ErrSpecCommitConflict
-		}
 		return err
 	}
-	if len(conflicts) > 0 {
-		return spec.ErrSpecCommitConflict
+	req := sourcecontrol.CommitRequest{Message: message}
+	for _, w := range writes {
+		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: w.Path, Content: w.Content, BaseSHA: w.BaseSHA})
+	}
+	if _, err := a.git.Commit(ctx, ref, req); err != nil {
+		if errors.Is(err, sourcecontrol.ErrCommitConflict) {
+			return fmt.Errorf("%w: %w", spec.ErrSpecCommitConflict, err)
+		}
+		return err
 	}
 	return nil
 }

@@ -43,7 +43,7 @@ import {
   type LLMFormat,
 } from "../aiSettings";
 import type { useAiSettings } from "../hooks/useAiSettings";
-import { MaskedCredential, SecretField } from "./CredentialField";
+import { CredentialField, SecretField } from "./CredentialField";
 
 type AiSettingsState = ReturnType<typeof useAiSettings>;
 
@@ -81,7 +81,7 @@ export function ModelConnectionRow({
   const askForKey = ai.keyRequired || replacing;
   const keyHelp =
     stored !== null && ai.keyRequired && host
-      ? `A new host needs its own key: the saved key is never sent to ${host}.`
+      ? `A different format or URL needs its own key: the saved key is never sent to ${host}.`
       : "Checked against the endpoint when you test or save.";
 
   const defaults = formatOption(saved.formats, draft.kind);
@@ -99,7 +99,14 @@ export function ModelConnectionRow({
     !ai.testing &&
     draft.baseURL.trim() !== "" &&
     draft.model.trim() !== "" &&
-    (!ai.keyRequired || draft.apiKey.trim() !== "");
+    (!askForKey || draft.apiKey.trim() !== "");
+
+  // The server tests only with a key in the request, so a saved connection's
+  // Test connection asks for one rather than sending a probe it would refuse.
+  const test = () => {
+    if (askForKey) ai.testConnection();
+    else setReplacing(true);
+  };
 
   const columns = onboarding ? "1fr" : { xs: "1fr", md: "1fr 1fr" };
 
@@ -156,11 +163,9 @@ export function ModelConnectionRow({
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {!askForKey && stored ? (
             <>
-              <Typography variant="body2" fontWeight={500}>
-                API key
-              </Typography>
-              <MaskedCredential
-                preview={stored.keyPreview}
+              <CredentialField
+                label="API key"
+                set
                 onReplace={() => setReplacing(true)}
                 disabled={busy}
               >
@@ -172,7 +177,7 @@ export function ModelConnectionRow({
                 >
                   Disconnect
                 </Button>
-              </MaskedCredential>
+              </CredentialField>
               <Typography variant="body2" color="text.secondary">
                 Connected {new Date(stored.connectedAt).toLocaleString()}
               </Typography>
@@ -222,7 +227,7 @@ export function ModelConnectionRow({
       </Box>
 
       <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1.5 }}>
-        <Button variant="outlined" onClick={ai.testConnection} disabled={!canTest}>
+        <Button variant="outlined" onClick={test} disabled={!canTest}>
           {ai.testing ? "Testing…" : "Test connection"}
         </Button>
         <TestStatus ai={ai} />

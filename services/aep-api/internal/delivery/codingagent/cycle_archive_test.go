@@ -32,7 +32,7 @@ import (
 type fakeObserver struct {
 	lines []observability.LogLine
 	err   error
-	got   observability.ComponentLogQuery
+	got   observability.CycleLogQuery
 	calls int
 }
 
@@ -40,10 +40,10 @@ func (f *fakeObserver) GetBuildLogs(context.Context, string, string, string, str
 	panic("fakeObserver: GetBuildLogs not expected")
 }
 
-func (f *fakeObserver) QueryComponentLogs(_ context.Context, q observability.ComponentLogQuery) ([]observability.LogLine, error) {
+func (f *fakeObserver) QueryCycleLogs(_ context.Context, q observability.CycleLogQuery) ([]observability.LogLine, observability.CycleLogStats, error) {
 	f.calls++
 	f.got = q
-	return f.lines, f.err
+	return f.lines, observability.CycleLogStats{Pages: 1}, f.err
 }
 
 func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testi
 
 	from := time.Date(2026, 8, 6, 9, 55, 0, 0, time.UTC)
 	text, err := NewObserverArchive(obs, rt).CycleArchive(context.Background(), ArchiveScope{
-		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", Environment: "dev-b",
+		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", ComponentUID: "uid-abc", Environment: "dev-b",
 		From: from, To: from.Add(time.Hour),
 	})
 	if err != nil {
@@ -63,6 +63,12 @@ func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testi
 	}
 	if obs.got.Component != openchoreo.ScopedComponentName("shop", "ca-abc") {
 		t.Fatalf("component = %q, want the scoped name", obs.got.Component)
+	}
+	if obs.got.ComponentUID != "uid-abc" {
+		t.Fatalf("componentUid = %q, want the cycle's recorded UID", obs.got.ComponentUID)
+	}
+	if !obs.got.From.Equal(from) || !obs.got.To.Equal(from.Add(time.Hour)) {
+		t.Fatalf("window = %v..%v, want the scope's", obs.got.From, obs.got.To)
 	}
 	if obs.got.Namespace != "acme" || obs.got.Environment != "dev-b" {
 		t.Fatalf("unexpected scope: %+v", obs.got)
@@ -75,21 +81,38 @@ func TestCycleArchive_QueriesTheComponentScopeAndRendersTimestampedText(t *testi
 	}
 }
 
-// The observer indexes on the component CR. Once retention deletes it the
-// archive is gone too, so a deleted component is answered without a query at
-// all — asking would only produce a confusing empty result.
-func TestCycleArchive_DeletedComponentIsComponentGone(t *testing.T) {
-	obs := &fakeObserver{}
+// A deleted Component no longer resolves for the component scope, but its
+// lines are still in the index: the project scope reads them, filtered on the
+// cycle's Component UID.
+func TestCycleArchive_DeletedComponentReadsTheProjectScope(t *testing.T) {
+	obs := &fakeObserver{lines: []observability.LogLine{{Timestamp: time.Date(2026, 8, 6, 10, 0, 1, 0, time.UTC), Log: "kept"}}}
 	rt := &fakeRuntime{bindingErr: fmt.Errorf("%w: gone", openchoreo.ErrNotFound)}
 
-	_, err := NewObserverArchive(obs, rt).CycleArchive(context.Background(), ArchiveScope{
+	from := time.Date(2026, 8, 6, 9, 55, 0, 0, time.UTC)
+	text, err := NewObserverArchive(obs, rt).CycleArchive(context.Background(), ArchiveScope{
+		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", ComponentUID: "uid-abc", Environment: "development",
+		From: from, To: from.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("CycleArchive: %v", err)
+	}
+	if obs.got.Component != "" || obs.got.ComponentUID != "uid-abc" || obs.got.Project != "shop" {
+		t.Fatalf("query %+v, want the project scope filtered on the UID", obs.got)
+	}
+	if text != "2026-08-06T10:00:01Z kept\n" {
+		t.Fatalf("text %q", text)
+	}
+}
+
+// A cycle from before UID capture has nothing to filter the index on; an
+// unfiltered read would hand it every Component's lines.
+func TestCycleArchive_NoComponentUIDIsNotRead(t *testing.T) {
+	obs := &fakeObserver{}
+	_, err := NewObserverArchive(obs, &fakeRuntime{}).CycleArchive(context.Background(), ArchiveScope{
 		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", Environment: "development",
 	})
-	if !errors.Is(err, ErrComponentGone) {
-		t.Fatalf("err = %v, want ErrComponentGone", err)
-	}
-	if obs.calls != 0 {
-		t.Fatalf("a deleted component must not be queried, got %d calls", obs.calls)
+	if !errors.Is(err, ErrComponentGone) || obs.calls != 0 {
+		t.Fatalf("err = %v, calls = %d, want ErrComponentGone and no query", err, obs.calls)
 	}
 }
 
@@ -106,7 +129,8 @@ func TestCycleArchive_ObserverFailureIsUnavailable(t *testing.T) {
 	obs := &fakeObserver{err: errors.New("observer: 503")}
 
 	_, err := NewObserverArchive(obs, &fakeRuntime{}).CycleArchive(context.Background(), ArchiveScope{
-		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", Environment: "development",
+		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", ComponentUID: "uid-abc", Environment: "development",
+		From: time.Now().Add(-time.Hour), To: time.Now(),
 	})
 	if !errors.Is(err, ErrArchiveUnavailable) {
 		t.Fatalf("err = %v, want ErrArchiveUnavailable", err)
@@ -117,7 +141,8 @@ func TestCycleArchive_EmptyResultIsEmptyTextNotAnError(t *testing.T) {
 	obs := &fakeObserver{}
 
 	text, err := NewObserverArchive(obs, &fakeRuntime{}).CycleArchive(context.Background(), ArchiveScope{
-		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", Environment: "development",
+		OrgName: "acme", ProjectName: "shop", ComponentName: "ca-abc", ComponentUID: "uid-abc", Environment: "development",
+		From: time.Now().Add(-time.Hour), To: time.Now(),
 	})
 	if err != nil {
 		t.Fatalf("CycleArchive: %v", err)

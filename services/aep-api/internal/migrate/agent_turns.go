@@ -23,37 +23,26 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunAgentTurns creates the agent_turns indexes AutoMigrate cannot express
-// from the model: a partial (WHERE-clause) unique index, and a composite one
-// with a descending column.
+// RunAgentTurns creates the agent_turns index AutoMigrate cannot express
+// from the model: a composite one with a descending column.
 //
-//  1. The one-active-turn-per-project guard: at most one running turn per
-//     (org_id, project_id), across every use case. Turn start is INSERT ...
-//     ON CONFLICT DO NOTHING against this index, so racing POSTs resolve to
-//     exactly one admitted turn and the loser reads the active row for its
-//     409 {activeTurnId}.
+// The newest-turn lookup behind the status poll's spec.agent (#562), the
+// kickoff's idempotence guard and the build gate's design baseline runs
+// `WHERE org_id = ? AND project_id = ? ORDER BY created_at DESC LIMIT 1`.
+// The model's single-column indexes cannot serve it, so without this Postgres
+// scans the project's whole turn history and sorts it on every status poll.
+// Descending so the index order IS the query order, making it a one-row read
+// rather than a sort of the matched set.
 //
-//  2. The newest-turn lookup behind the status poll's spec.agent (#562) and
-//     the kickoff's idempotence guard. Both run `WHERE org_id = ? AND
-//     project_id = ? ORDER BY created_at DESC LIMIT 1`, and the status one
-//     runs every 5s per viewer while an agent works. The model's single-column
-//     indexes cannot serve it and the partial unique above covers only running
-//     rows, so without this Postgres scans the project's whole turn history and
-//     sorts it — on a poll whose entire budget is "cheap enough for 5s".
-//     Descending so the index order IS the query order, making it a one-row
-//     read rather than a sort of the matched set.
+// The in-process engine's one-active-turn guard (ux_agent_turns_active) is
+// no longer created here: turns run in the org's AE Studio pod, and phase27
+// drops the index.
 //
 // Idempotent: CREATE INDEX IF NOT EXISTS is a no-op on re-run, and the step
 // no-ops entirely if the table is not present yet.
 func RunAgentTurns(ctx context.Context, db *gorm.DB) error {
 	if !hasTable(db, "agent_turns") {
 		return nil
-	}
-	if err := db.WithContext(ctx).Exec(`
-		CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_turns_active
-		ON agent_turns (org_id, project_id)
-		WHERE status = 'running'`).Error; err != nil {
-		return fmt.Errorf("agent_turns active-guard index: %w", err)
 	}
 	if err := db.WithContext(ctx).Exec(`
 		CREATE INDEX IF NOT EXISTS ix_agent_turns_project_newest

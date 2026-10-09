@@ -39,8 +39,6 @@ type chainRecorder = fakeOCSurface
 
 func (r *chainRecorder) client() OCJobSurface { return r }
 
-func strPtr(s string) *string { return &s }
-
 type fakeOrgRepo struct {
 	org *organization.Organization
 }
@@ -131,29 +129,7 @@ func ollamaConnection() modelconn.Connection {
 	}
 }
 
-type fakeGitHubCreds struct {
-	row *organization.OrgCredential
-}
-
-func (f fakeGitHubCreds) GetByOrg(context.Context, string) (*organization.OrgCredential, error) {
-	return f.row, nil
-}
-func (f fakeGitHubCreds) GetByInstallationID(context.Context, int64) (*organization.OrgCredential, error) {
-	return nil, nil
-}
-func (f fakeGitHubCreds) UpdateColumns(context.Context, string, map[string]any) error { return nil }
-func (f fakeGitHubCreds) ListActiveRows(context.Context) ([]organization.OrgCredential, error) {
-	return nil, nil
-}
-func (f fakeGitHubCreds) ListBoundInstallations(context.Context) ([]organization.BoundInstallation, error) {
-	return nil, nil
-}
-func (f fakeGitHubCreds) OrgIDByRepoURL(context.Context, string) (string, error) { return "", nil }
-func (f fakeGitHubCreds) Tx(context.Context, func(organization.OrgCredentialTx) error) error {
-	return nil
-}
-
-func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
+func fullSecretRefs() (fakeCodingKey, fakeOrgSecrets) {
 	// No subscription — the org bills its API key — is the common case, so both
 	// answers name the same row here. Tests that care about the difference set
 	// defaultRef themselves.
@@ -162,28 +138,32 @@ func fullSecretRefs() (fakeCodingKey, *organization.OrgCredential) {
 		KVPath:   "user-app-secrets/wc-acme/acme-anthropic-secrets",
 		Property: "api-key",
 	}
-	return fakeCodingKey{ref: defaultRef, defaultRef: defaultRef}, &organization.OrgCredential{
-		SecretRefName:     strPtr("acme-github-pat-secrets"),
-		SecretRefKVPath:   strPtr("user-app-secrets/wc-acme/acme-github-pat-secrets"),
-		SecretRefProperty: strPtr("token"),
+	return fakeCodingKey{ref: defaultRef, defaultRef: defaultRef}, fakeOrgSecrets{
+		"acme/github-pat": "acme-github-pat-secrets",
 	}
 }
 
-func newCodingDispatchExecutor(anthropic fakeCodingKey, github *organization.OrgCredential) *CodingExecutor {
+func newCodingDispatchExecutor(anthropic fakeCodingKey, orgSecrets fakeOrgSecrets) *CodingExecutor {
 	orgUUID := uuid.MustParse("d3adbeef-1234-4321-abcd-c0ffee123456")
 	return NewCodingExecutor(
 		nil,
 		fakeRepos{repo: &sourcecontrol.GitRepository{RepoURL: "https://github.com/acme/widgets", RepoSlug: "acme-widgets"}},
 		fakeIdentities{},
 		newFakeExecRepo(),
-		"http://git",
 		"http://platform",
 		fakeOrgRepo{org: &organization.Organization{Name: "acme", UUID: orgUUID}},
 		anthropic,
-		fakeGitHubCreds{row: github},
-		nil,
-	)
+		orgSecrets,
+	).WithGitHubOwners(fakeOwners{owner: "acme-gh"})
 }
+
+// fakeOwners answers the org's GitHub owner (sourcecontrol.OwnerLookup).
+type fakeOwners struct {
+	owner string
+	err   error
+}
+
+func (f fakeOwners) GitHubOwner(context.Context, string) (string, error) { return f.owner, f.err }
 
 func codingMilestoneDispatch() delivery.MilestoneDispatch {
 	return delivery.MilestoneDispatch{
@@ -303,7 +283,7 @@ func TestDispatch_UnresolvableAnthropicKey_ErrorsNoFallback(t *testing.T) {
 	rec := &chainRecorder{}
 	_, github := fullSecretRefs()
 	anthropic := fakeCodingKey{err: errors.New(
-		"coding-agent Anthropic key for org \"acme\" is configured but secret_ref_kv_path is not populated")}
+		"coding-agent Anthropic key for org \"acme\" is configured but its reference row is missing")}
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).WithImage("ghcr.io/wso2/aep/remote-worker:latest"))
@@ -312,7 +292,7 @@ func TestDispatch_UnresolvableAnthropicKey_ErrorsNoFallback(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when the anthropic secret ref cannot be resolved")
 	}
-	if !strings.Contains(err.Error(), "Anthropic") || !strings.Contains(err.Error(), "secret_ref_kv_path") {
+	if !strings.Contains(err.Error(), "Anthropic") || !strings.Contains(err.Error(), "reference row is missing") {
 		t.Fatalf("error must carry the resolver's diagnosis, got: %v", err)
 	}
 	if len(rec.calls) != 0 {
@@ -332,6 +312,29 @@ func TestCodingAgentRunNameFor_IsStableAcrossRetries(t *testing.T) {
 	}
 	if !strings.HasPrefix(a, "ca-") {
 		t.Fatalf("run name = %q, want ca- prefix", a)
+	}
+}
+
+// TestDispatch_TheRunnerGetsTheVersionItBuilds (B2, API-24): the cycle's
+// version reaches the run as AEP_SPEC_TAG, the bare tag name: the runner
+// fetches refs/tags/<name> and pins specs/ to it (pinSpecsToVersion).
+func TestDispatch_TheRunnerGetsTheVersionItBuilds(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec)
+	req := codingMilestoneDispatch()
+	req.SpecTag = "release-2"
+
+	if _, err := e.Dispatch(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	var tag string
+	for _, ev := range rec.load.Env {
+		if ev.Key == "AEP_SPEC_TAG" {
+			tag = ev.Value
+		}
+	}
+	if tag != "release-2" {
+		t.Errorf("AEP_SPEC_TAG = %q, want the cycle's version release-2", tag)
 	}
 }
 
@@ -420,7 +423,7 @@ func podEnv(rec *chainRecorder, key string) string {
 func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	rec := &chainRecorder{}
 	anthropic, github := fullSecretRefs()
-	github.SecretRefName = nil
+	delete(github, "acme/github-pat")
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).WithImage("runner:1"))
 
@@ -433,6 +436,51 @@ func TestDispatch_OCPathStillRequiresTheOrgsSecretRefs(t *testing.T) {
 	}
 	if len(rec.calls) != 0 {
 		t.Errorf("nothing may be created before the refs resolve, saw %v", rec.calls)
+	}
+}
+
+// TestDispatchViaOC_StampsTheOrgGitHubOwner: the runner's in-process
+// remote-git tools refuse any owner but the org's own GitHub account, so the
+// pod is told which account that is: the github_login the org connected
+// (OwnerLookup), never the commit identity's login.
+func TestDispatchViaOC_StampsTheOrgGitHubOwner(t *testing.T) {
+	rec := &chainRecorder{}
+	e := newOCDispatchExecutor(rec).WithGitHubOwners(fakeOwners{owner: "Acme-Org"})
+
+	if _, err := e.Dispatch(context.Background(), codingMilestoneDispatch()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if got := podEnv(rec, "AEP_GITHUB_OWNER"); got != "Acme-Org" {
+		t.Errorf("AEP_GITHUB_OWNER = %q, want the org's GitHub owner %q", got, "Acme-Org")
+	}
+	if got := podEnv(rec, "AEP_IDENTITY_LOGIN"); got == "Acme-Org" {
+		t.Fatalf("test is vacuous: the identity login equals the owner")
+	}
+}
+
+// TestDispatchViaOC_NoOwnerFailsTheDispatch: without the owner the guard has
+// no reference, so no Job is created at all.
+func TestDispatchViaOC_NoOwnerFailsTheDispatch(t *testing.T) {
+	for name, owners := range map[string]sourcecontrol.OwnerLookup{
+		"lookup errors":        fakeOwners{err: sourcecontrol.ErrAEStudioAbsent},
+		"lookup not wired":     nil,
+		"lookup answers empty": fakeOwners{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := &chainRecorder{}
+			e := newOCDispatchExecutor(rec).WithGitHubOwners(owners)
+
+			_, err := e.Dispatch(context.Background(), codingMilestoneDispatch())
+			if err == nil {
+				t.Fatal("expected the dispatch to fail without the org's GitHub owner")
+			}
+			if !strings.Contains(err.Error(), "github owner") {
+				t.Errorf("error must name the missing owner, got %v", err)
+			}
+			if len(rec.calls) != 0 {
+				t.Errorf("nothing may be created without the owner, saw %v", rec.calls)
+			}
+		})
 	}
 }
 
@@ -813,7 +861,7 @@ func TestDispatch_CodingCycleCarriesTheThreeHourDeadline(t *testing.T) {
 // what OpenChoreo rejects against, so a deadline raised on this side alone would
 // not time a run out — it would fail the dispatch outright.
 func TestDeadlinesFitTheComponentTypeSchema(t *testing.T) {
-	spec, _ := openchoreo.CodingAgentComponentType()["spec"].(map[string]any)
+	spec, _ := openchoreo.CodingAgentComponentType(openchoreo.CodingAgentResources{})["spec"].(map[string]any)
 	params, _ := spec["parameters"].(map[string]any)
 	schema, _ := params["openAPIV3Schema"].(map[string]any)
 	props, _ := schema["properties"].(map[string]any)
@@ -908,7 +956,7 @@ func TestDispatch_TheOrgsCodingAgentSettingIsCopiedOntoTheRun(t *testing.T) {
 
 const openCodeRunnerImage = "aep-runner-opencode:dev"
 
-func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github *organization.OrgCredential, opencodeImage string) *CodingExecutor {
+func newOpenCodeDispatchExecutor(rec *chainRecorder, anthropic fakeCodingKey, github fakeOrgSecrets, opencodeImage string) *CodingExecutor {
 	e := newCodingDispatchExecutor(anthropic, github)
 	e.WithPublisherCredentials(fakePublisher{name: "acme-publisher-secrets"}, "http://thunder.example/oauth2/token")
 	e.WithOCDispatch(NewOCDispatcher(rec.client(), testWriteTargets()).

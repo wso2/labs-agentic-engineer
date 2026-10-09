@@ -32,6 +32,15 @@
       "words": "Amounts are entered as P3 describes; a submitted claim goes to F2 for approval."
     },
     {
+      "words": "A receipt photo is stored under its receipt_id and kept unchanged after the claim is submitted."
+    },
+    {
+      "words": "Expenses paid in a foreign currency are converted at the day's rate, as the rate policy sets."
+    },
+    {
+      "words": "Paper receipts are accepted scanned on arrival."
+    },
+    {
       "words": "Corporate card transactions. Staff pay and claim back."
     }
   ],

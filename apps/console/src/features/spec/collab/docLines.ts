@@ -74,6 +74,15 @@ function line(node: PmNode, pos: number, parent: Parent): DocLine {
   const emphasis: LineBlock["emphasis"] = [];
   const agentRuns: AgentRun[] = [];
   node.forEach((child, childOffset) => {
+    if (child.type.name === "hardBreak") {
+      // A hard break means whitespace: aep-api's reader joins the wrapped line
+      // with a space, and a design's basis is compared by string. A browser
+      // edit turns a soft wrap into one, so it is common. It is one position
+      // in the document, so it is one character of the line's text.
+      segments.push({ offset: text.length, pos: pos + 1 + childOffset, length: 1 });
+      text += " ";
+      return;
+    }
     if (!child.isText) return;
     const start = text.length;
     const value = child.text ?? "";

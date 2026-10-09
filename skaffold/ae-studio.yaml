@@ -1,0 +1,62 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The three images of the ae-studio data-plane pod (ae-design-agent,
+# ae-collab, ae-studio-tools), build-only, with a unique tag per build.
+#
+# Unlike skaffold.yaml (one fixed dev-local tag, rolled by a restart), these
+# refs are values aep-api writes into the OpenChoreo Resource's parameters.
+# A mutable tag would leave those parameters unchanged, so converge would see
+# no drift and the pod would never roll. skaffold names the built image by its
+# image id, so the ref in --file-output is unique per build and stable per
+# content (a rebuild of unchanged sources is a cache hit with the same ref);
+# tagPolicy inputDigest is the pre-build name only.
+#
+# `make dev-images` builds this with --file-output=.skaffold/ae-studio-images.json,
+# imports the resulting refs into k3d and pins them; `make dev-update` and
+# `make dev-env` read the same file to set aeStudio.images.* on the platform
+# release.
+#
+# --provenance=false --sbom=false: with the containerd image store buildx emits
+# an OCI index with attestation manifests, which `k3d image import` reports as
+# imported but the node's containerd cannot run (the kubelet then tries a
+# registry pull of this local-only ref). Same reasoning as build-runner.sh.
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: ae-studio
+build:
+  tagPolicy:
+    inputDigest: {}
+  local:
+    push: false
+    useBuildkit: true
+  artifacts:
+    - image: ghcr.io/wso2/aep/ae-design-agent
+      context: .
+      docker:
+        dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
+        cliFlags: [--provenance=false, --sbom=false]
+    - image: ghcr.io/wso2/aep/ae-collab
+      context: .
+      docker:
+        dockerfile: components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile
+        cliFlags: [--provenance=false, --sbom=false]
+    - image: ghcr.io/wso2/aep/ae-studio-tools
+      context: components/dataplane/ae-system-project/ae-studio/ae-studio-tools
+      docker:
+        dockerfile: Dockerfile
+        cliFlags: [--provenance=false, --sbom=false]

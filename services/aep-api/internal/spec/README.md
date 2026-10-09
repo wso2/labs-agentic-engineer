@@ -9,49 +9,49 @@ library. **Single write-authority over the git spec-content store and its versio
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
-  CB(["/collab/validate"]) -.-> SL
   subgraph spec
-    SL["slices — genaiturns · files · tags · skills · collab"]
-    CORE["artifacts store/versioning + turn engine + files + design + skills services"]
+    SL["slices — files · tags · skills · designdeps"]
+    CORE["artifacts store/versioning + kickoff + design + skills services"]
     SL --> CORE
     CORE --> GIT[("git: prd.md · specs/design/** · version tags · org-skills repo")]
-    CORE --> TURNS[("agent_turns")]
+    CORE --> TURNS[("agent_turns (finished-turn ledger)")]
   end
-  CORE -->|Workspace · GitOps engine| SC[[sourcecontrol]]
+  CORE -->|Git reads · commits · tags · mirror-skills| SC[[sourcecontrol]]
   CORE -->|CRTType port| DEP[[dependencies]]
-  CORE -->|anthropic key · git tokens| SEC[[platform/secrets]]
-  CORE -->|the genai fold| FOLD[["platform/agentfold"]]
+  CORE -->|kickoff · references · git reads| POD[["clients/aestudiotools (the org's AE Studio pod)"]]
 ```
 
 ## Slices
 | Slice | Use-cases | Entry |
 |---|---|---|
-| `genaiturns` | create / get / active / stream turn + get-conversation (the AgentTurn lifecycle) + list/rotate the project's conversation threads (#430) | `.../agents/{cid}/messages`, `.../agents/conversations`, `.../turns/...` |
-| `files` | list / read / apply files over the project workspace | `GET/POST .../files...` |
+| `files` | upload a project's reference documents (a pass-through to the org's AE Studio pod) | `PUT .../references` |
 | `tags` | list the project's spec version tags, newest first by creation time | `GET .../tags` |
 | `skills` | list / create / update / delete / import / sync / get the org Skill library | `/skills...` |
-| `collab` | the collab session descriptor + the S2S room-access oracle | `.../spec/collab-session`, `GET /collab/validate` |
 | `designdeps` | the two writes into an external dependency's directory: provide its contract (a URL the platform fetches, or the document itself), and record the user's authorization to build on the design agent's assumed contract — before the agent writes it (the resolve flow's card) or after (the definition's acceptance box) | `POST .../dependencies/{name}/contract`, `POST .../dependencies/{name}/assumption` |
 
 *Still flat in the domain root (not carved into finer slices): the artifacts store/versioning machinery,
-the genai turn engine (runner/broker/sweeper), and the files / design / skills services.*
+the kickoff, the finished-turn ledger, and the design / skills services. Agent turns themselves run
+in the org's AE Studio pod ([turn-runtime](../../../../components/dataplane/ae-system-project/ae-studio/ae-design-agent/design/turn-runtime.md)); aep-api starts only the kickoff and stores what the pod records.*
 
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `Workspace` · `GitOpsService` · `RepoService` | needs | `sourcecontrol` — the gitfs engine hosting all spec + skills git content |
+| `sourcecontrol.Git` | needs | the org's AE Studio pod (`clients/aestudiotools`) — every read (bundles, trees, files, tags, the status snapshot: local head + local tags, then sha-addressed reads the adapter caches) and every write: the version tag (`Tag`), the skills library and the descriptor (`Commit` through `sourcecontrol.CommitRetrying`: each attempt reads the base, a conflict re-reads, 3 tries); no author or tagger is sent, the pod uses its gitpat identity |
+| `sourcecontrol.ReferenceListOps` | needs | the pod's list-repo-references — the attached documents' names `GET /projects/{p}/spec/state` lists (the pod's store, not git) |
+| `SkillMirrorPort` (= `sourcecontrol.SkillsMirrorOps`) · `RepoService` | needs | the pod's mirror-skills (the project `.claude/skills` copy; the copy rule is the pod's) · the skills repo row, provisioned on first use |
 | `resourceTypeCatalog` (returns `CRTType`) | needs | `dependencies` — the PE-authored CRT markers + declared outputs, projected at the root |
-| `AgentLLMResolver` · git-token `Resolver` | needs | `organization` (wired at the root) — the org's model connection + its key (sent to the agents service as the turn body's `connection` + `X-Model-Key`) · `platform/secrets` — sealed git tokens |
 | `ArtifactService` · `ArtifactStore` · `SplitFrontmatter` | offers | `delivery` / `projects` / `dependencies` / `identity` — design reads, spec-save, status snapshots; `identity` reads `security.json` from the design bundle AT THE TAG being built, never at HEAD |
 | `HardConfigEdges` | offers | `projects` (deploy order) — which sibling addresses a component cannot start without |
 | `DescriptorWriter` | offers | `projects` — stamps `specs/.agentic-engineer.toml` into a repo at project create |
-| `Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn |
-| `TurnRepository.Newest` | offers | `projects` — the status poll's `spec.agent`: is an agent working on the spec right now |
-| `CredentialsRefreshService`-adjacent turn/tag reads | offers | delivery/build (SpecTagger, validation criteria) |
+| `KickoffService.Kickoff` | offers | `projects` (create) · `spec/files` (references upload) — fires the project's opening `/start` turn in the org's AE Studio pod |
+| `aestudiotools.Turns` · `aestudiotools.References` | needs | `clients/aestudiotools` — the org pod's `/internal/v1` turns (kickoff) and reference store (the references upload, a pass-through) |
+| `TurnRepository.Newest` · `NewestCompletedFlow` · `SumUsageByProject` | offers | `projects` — the status poll's `spec.agent` (has the project run a turn, and did the newest fail), the build gate's design baseline, Settings → Usage |
+| `TurnRepository.RecordFinished` | offers | `edge` — `record-turn-usage`, the pod's finished turns |
+| Turn and tag reads | offers | delivery/build (SpecTagger, validation criteria) |
 
 ## Owns
 - git spec content (`prd.md`, `specs/design/**`), the annotated version tag (the version store),
-  the org-skills repo, `AgentTurn` (turn lifecycle) + the resumable-turn SSE broker (in-memory seam).
+  the org-skills repo, `AgentTurn` (the finished-turn ledger).
 - **One external dependency, one definition** (ADR-0027). An external dependency lives in
   `specs/design/dependencies/<name>/` — `dependency.json` holds a full `resource` block in the one
   shape a resource has everywhere (name, description, provider, config keys, `contract {type, path,
@@ -68,14 +68,21 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   contract file on disk → needs-contract; an assumed contract with no acceptance → needs-acceptance;
   else resolved, flagged registered / assumed / derived / sdk-only / stale (the copy's document hash
   no longer matches the registry's) — and the build gate blocks on nothing else. The write-gates
-  (zod in `@aep/agent-stream`, `agentfold/dependencygate.go`, `designspec` at save) validate the
-  file; `consumptionInstructions` and `contract.accepted` are the fields only the platform writes
+  (zod in `@aep/agent-stream` at write, `designspec` at save: the schema plus
+  `dependency_shape.go`, the shape rules the schema cannot say) validate the file; `consumptionInstructions` and `contract.accepted` are the fields only the platform writes
   (the registry copy, `designdeps`). **The platform copies at the design write** (`registry_copy.go`,
-  inside `FilesService.Apply`): a stub `{ name, resource: { ref, name } }` is completed from the org
+  for the AE Studio pod's saves): a stub `{ name, resource: { ref, name } }` is completed from the org
   record — block, document, provenance — and a `contract` of origin `provider` with a
   `provenance.sourceUrl` and no hash has its document fetched (https, 5 MiB) and landed beside it.
-  Both read the registry / the URL BEFORE `Workspace.Mutate` and never fail the apply: a miss lands the
-  stub with a warning and the dependency reads needs-input / needs-contract. **Promote reuses the
+  Both read the registry / the URL before the pod commits and never fail the save: a miss lands the
+  stub with a warning and the dependency reads needs-input / needs-contract. Only stubs are completed or
+  warned about, and a landed document is always a file directly in its dependency's directory
+  (`dependencyDocumentPath`; an escaping `contract.path` is refused before any fetch). `CompleteDependencies` is the one entry point, run for the AE
+  Studio tools pod's `POST /internal/v1/ae-studio/dependency-completions` (`edge/internal_aestudio.go`),
+  so the registry read and the fetch of a model-chosen URL stay in aep-api, never in the container that
+  holds the org's git credential. That answer encodes at most 24 MiB of completions (inside the pod's
+  32 MiB read cap): a completion past it is left out, its stub lands as written, and its success warning
+  becomes the kind's not-completed one. **Promote reuses the
   same renderer** (`promote.go`): `ReadProjectResource` hands the project's own block and document to
   the registry side, and `RewriteAsRegistryCopy` lands `renderRegistryCopy` of a stub over the
   existing files under their CAS tokens — so a promoted dependency and a reused one are the same bytes.
@@ -115,62 +122,78 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
 - **The project descriptor** (`specs/.agentic-engineer.toml`, `descriptor.go`) — the marker identifying a
   repo as an Agentic Engineer project, carrying the idea the user gave at creation. Written by `projects`
   at create through the `DescriptorWriter` port (best-effort: a failed write never fails the create) and
-  read back here to put the idea on a `/start` turn. TOML rather than the YAML/JSON used elsewhere because its one
+  read in the org's AE Studio pod to put the idea on a `/start` turn. TOML rather than the YAML/JSON used elsewhere because its one
   load-bearing field is a paragraph of free text a user typed — a real encoder keeps quotes, backslashes
   and newlines intact.
-- **Flow-command recognition** (`start_command.go`) — every `/<skill>` command arrives VERBATIM and the
-  server classifies it into an `agentsvc.TurnSpec`: what the turn is FOR, never its wording. `/start`
-  additionally carries the descriptor's idea, which only the server can read. The agents service composes
-  the instruction and derives the flow's eager skills from the spec, so a console CTA, a typed command and
-  a playground run produce identical turns (services/agents/design/ADR-0003). This domain holds NO prompt
-  text; the flow token is kept here because it also gates web search and MCP minting for design turns.
-- **The kickoff** (`kickoff.go`) — the project's opening `/start`, fired server-side at creation so the
-  journey starts itself instead of waiting on a Generate-spec click. Room-scoped like every console turn,
-  carrying the creating user's bearer (which is what lets the agent join the spec room), on the project's
-  current thread. Idempotent on "has this project ever run a turn", because it has two triggers: project
-  create, and the references upload a create with `referencesPending` held it for. Runs INLINE, so the
-  create answers only once the turn row exists — that is what keeps `spec.agent == "never-started"`
-  meaning "no turn has ever run" rather than also "starting right now", which no surface could tell
-  apart. (`""` is a different fact: a turn HAS run and the newest one completed.) Bounded
-  (20s) and error-swallowing: a kickoff that cannot start never fails the creation, and the spec
-  view's empty state offers it instead.
-- **Design staleness is derived, never stored** (#575). "Have the requirements moved since the
-  design was written?" is answered by reading the requirements at the commit the newest successful
-  `/design` turn recorded reading the project at, and comparing that reduction against today's —
-  `RequirementsFingerprint` over a tree listing (path + blob sha, so no content is read). Nothing is
-  stamped, so nothing falls out of sync, and the question is answerable for projects predating the
-  check. A stored fingerprint was rejected because a turn NEVER commits: its file changes stream to
-  the collab doc and the collab server commits them later, carrying no turn id and no author — there
-  is no moment the platform controls, and no way to tell that flush from a hand edit. The build gate
-  refuses on it (`DESIGN_OUTDATED`), which is what makes it a block rather than a display.
-- **A running turn carries its own display record** (#562). `agent_turns` stores the transcript
-  line the turn started from plus its author, and `TurnStatus` serves them. Not redundant with the
-  journal that rides to the agents service: that store persists a turn's transcript only when the
-  turn ENDS, so between dispatch and landing there is nowhere else to read them from — and that
-  window is the whole of a kickoff, which no browser sent and none has a local copy of. Empty for
-  an unattributable turn (an M2M token) and for every row written before the record existed, which
-  the console renders as "paint nothing" rather than an empty bubble.
+- **The kickoff** (`kickoff.go`, `KickoffService`) — the project's opening `/start`, fired server-side
+  at creation so the journey starts itself instead of waiting on a Generate-spec click. It is a `start`
+  turn in the org's AE Studio pod (`aestudiotools.Turns`), credited to the verified caller
+  (`display_identity.go`: the claims' subject and display name, never the raw bearer). It has two
+  triggers, project create and the references upload a create with `referencesPending` held it for, so
+  it is idempotent twice: the finished-turn ledger (`Newest`) refuses a project that already ran a turn,
+  and the turn id is uuidv5 of `org/project`, so a retry while the interview runs reattaches to it. The
+  start is INLINE (the create answers once the pod has the turn); the stream is then followed in the
+  background only to log the outcome. Bounded (20s on aep-api's side; the pod runs the turn on) and
+  error-swallowing: a kickoff that cannot start never fails the creation, and the spec view's empty
+  state offers it instead.
+- **The references upload** (`files/references.go`) — a pass-through to the org's pod, which stores and
+  validates the documents. The strict server hands over a `*multipart.Reader`, so each `files` part is
+  re-streamed through an `io.Pipe` (same field, name and content type, never buffered whole); a body
+  that breaks off aborts the pod's upload. The one exception is an Office document (`.docx`, `.xlsx`,
+  `.pptx`, `officetext.Extensions`): the models do not read it and the pod does not store it, so it is
+  held whole up to the pod's per-document limit (`sourcecontrol.MaxReferenceBytes`, 5 MiB), converted
+  by `platform/officetext` and streamed as `<name>.md`. The markdown is held to the same limit while it
+  is built, since a small zip can expand into far more text. One over the limit, one whose markdown
+  would be, or one that does not convert is a 400 that aborts the upload, so the pod stores nothing.
+  The conversion runs on the copy goroutine, which net/http does not recover, so a converter panic is
+  recovered there as the "could not be read" 400 and logged as `references.office_conversion_panicked`
+  with the panic's class only (its value can carry document text). The held kickoff fires only on the pod's
+  `2xx`.
+- **Design staleness is derived per feature, never stored** (#575, E1). A feature's design is out
+  of date when its basis (`reqspec.Basis`: its file plus the product-wide items that reach it) differs
+  between today and the commit the run that last designed it read. That run is the newest completed
+  design run (`CompletedFlows`, latest-finished first, the last 50) that covered the feature: one
+  that named it (`/design F1 F2`, the IDs in the run's ledger `Summary`), or a bare `/design`, which
+  covered every feature designable at its commit (`designedFrom`). `SaveSpec` (`staleFeatures`)
+  marks each such feature unavailable: a build that carries or needs it (no pick carries every
+  designable feature) is refused `FEATURE_NOT_BUILDABLE` ("update the design for F<n> first"); a
+  pick that leaves it out builds without it. `GET /spec/state` (`SpecState.DesignedFrom`) reports the same per-feature basis, so the
+  console's "out of date" and the gate's agree. A run whose commit is unreadable is skipped. The
+  status poll's `designOutdated` flag is coarser and display-only: the whole requirements tree
+  (`RequirementsFingerprint`, path + blob sha) now versus at the newest completed design run
+  (`NewestCompletedFlow`, the run that finished last, as `CompletedFlows` orders them). Nothing is stamped because a turn NEVER commits: its file changes stream
+  to the project's Room and the Room's committer (`ae-collab`) commits them later with no turn id
+  and no author, so there is no moment the platform controls and no way to tell that flush from a
+  hand edit. Only the run's base commit and the feature IDs it named are recorded.
 - **Persistence**: the `agent_turns` gorm lives in this domain (`repository_turn.go` over the
-  `agent_turn.go` entity), single write-authority — as does `project_conversations`
-  (`repository_conversation.go`): the project's CURRENT chat thread pointer (#430), server-minted,
-  one current row per (org, project, use case) under a partial unique index; StartTurn refuses a
-  non-current id with 409 `conversation_rotated` (the single-era rule — it relaxes to "belongs to
-  this project" when multiple live threads land). Spec content itself is not gorm — it lives in git,
-  reached through sourcecontrol's `Workspace`/gitfs engine.
-- **A conversation rotates near a smaller context window** (`context_rotation.go`). The spec agents
-  have no compaction. When the org's model connection states a `ContextWindow`, StartTurn reads the
-  conversation's last measured context (`agent_turns.context_tokens`: the final `finish-step`
-  part's whole prompt plus output, stamped only on turns that carried a manifest, since only those
-  joined the saved history) and, past 80% of the window, rotates the thread with
-  `RotateIfCurrent` (the scope lock makes concurrent senders mint one successor) and answers the
-  send with the ordinary 409 `conversation_rotated`. The message is not auto-continued on the new
-  thread, where it would lose the history it refers to. A running turn blocks it (409
-  `turn_in_progress`). A connection with no window (first-party Anthropic) skips the check before
-  any query. The summed `input_tokens` cannot stand in: it adds every step's prompt together.
+  `agent_turn.go` entity), single write-authority. Spec content itself is not gorm — it lives in git,
+  read and written through the org's AE Studio pod (`sourcecontrol.Git`). aep-api's own writes are
+  complete files committed raw: no scaffolding, completions or soft validation run on them (the pod
+  runs those for the Room's edits); the design service's writes carry the caller's baseSha, and a
+  stale one is `ErrSpecCommitConflict` (409), not retried.
+- **`agent_turns` is the finished-turn ledger.** An org's AE Studio tools pod hands
+  over the turns its design agent ran through `record-turn-usage` (`POST
+  /internal/v1/ae-studio/turn-usage`, the org's ae-studio client token, ≤ 100 records). `RecordFinished`
+  writes each record once (`ON CONFLICT (org_id, id) DO NOTHING`, so a resent batch changes nothing) with
+  its `kind` (`browser | kickoff | plan`), `started_at`/`finished_at`, and `cost_usd` stamped at
+  ingest from the `(host, model)` rate then in force. `summary` holds a design turn's feature IDs
+  (the record's `designFeatures`, space-joined: `F1 F2`; empty = every designable feature, read back
+  by `DesignedFeatures`) and is empty on every other turn: the field is ignored off a design turn,
+  and the line the user typed never reaches aep-api. `created_at` is the turn's start, so
+  `Newest` orders ledger rows by when the turn ran, whatever order they arrive in;
+  `NewestCompletedFlow` and `CompletedFlows` order by when the run finished
+  (`COALESCE(finished_at, created_at)`): of two overlapping runs, the one that finished last wrote last. The edge refuses the whole batch with 404 when any record names a project outside
+  the token's org; a record with no project (a marketplace turn) is stored under
+  `project_id = ''`. The primary key is `(org_id, id)`: the pod chooses turn ids (the kickoff's
+  is uuidv5 of `org/project`, which anyone can compute), so another org's row with the same id
+  never stands in for this org's record. Nothing runs here: whether a turn is running right now is
+  the pod's to say. Rows written by aep-api's former in-process turn engine were reshaped by
+  migrate's `phase27_agent_turns_ledger`: it gave them a kind and a start, deleted the running ones
+  and dropped that engine's columns, guard index and `project_conversations`.
 
 ## Invariants — don't break
 - **Single write-authority** over the git spec-content store and its version tags — every save/tag/discard
-  runs through this domain's gitfs Workspace engine; no other domain writes spec content.
+  runs through this domain's writers over the Git port; no other domain writes spec content.
 - **A version carries the name the user gave it** (console ADR-0030, `version_naming.go`). The name is
   the tag, the milestone title and the `/builds/<name>` address; `v<N>` is only what the build dialog
   SUGGESTS (`v<count + 1>`, stepped past any taken name). Two consequences: a tag is recognised as a
@@ -185,21 +208,6 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   with the newest version's and reuses that version when they match — the requested name is ignored on
   that path, because cutting a second tag over an identical tree would spend a planning turn to change
   a word. `BuildVersionFacts` reads the same comparison out as the build dialog's change list.
-- **A `/start` turn carries what the agent cannot read for itself, and nothing more.** Two channels,
-  both best-effort and both silent when empty: the captured idea (from the dot-led descriptor, which
-  every turn snapshot strips) and the reference documents attached at create (paths only). References
-  are NOT git content and there is no base commit to read them from — they are stored off-git and
-  overlaid into the turn's snapshot at `specs/requirements/references/` (console ADR-0017), which is
-  the path listed. Text references land in the turn's text map; binary ones (PDF, images) never do —
-  they reach the agents service as native file attachments instead, which is what keeps a PDF's bytes
-  out of the text channel. Neither steer may fail a kickoff: an unreadable descriptor or an unlistable
-  store degrades to "no steer". When both are empty the turn is byte-identical to one from before
-  either channel existed — which is the path every pre-existing project takes.
-- **The Files API is text-only.** `WriteOp.encoding` and `FileContent.encoding` are gone with the
-  reference-document reversal (ADR-0017): the one binary this platform had to carry now travels the
-  references endpoint, off git, so nothing binary reaches `files/apply` or `read-file` at all. The
-  5 MiB cap measures the bytes as sent. A future binary-in-git need must argue for an encoding field
-  on its own merits rather than inheriting one.
 - **One authority for which wiring edges are HARD** (`wiring_edges.go`). A hard edge is an address the
   platform must have before a component can serve its first useful byte — today a web app's sibling
   *services*, whose cluster Service URLs are injected as pod env for nginx (`<DEP>_URL`). `projects`
@@ -262,17 +270,11 @@ the genai turn engine (runner/broker/sweeper), and the files / design / skills s
   - **A missing sibling narrows the check, it never refuses.** No `design.json` → no security verdict
     (the premise is unknowable); no `security.json` → the structural rules still run and only catalog
     membership and ownership wait. The build gate is the backstop that sees every file at the tag.
-- The `/collab/validate` oracle recovers the acting org from VERIFIED claims and refuses any room whose
-  `spec-<org>-` prefix mismatches — never a hint of whether the room exists. Platform-wide rules (tenant
-  gate, secrets fence) → [../../README.md](../../README.md).
-- The genai turn is **committed-truth**: the fold (`platform/agentfold`) verifies hash-parity before the
-  commit; a mismatch rejects the turn and leaves `main` untouched.
+- Platform-wide rules (tenant gate, secrets fence) → [../../README.md](../../README.md). Who may join a
+  project's Room is decided in the org's AE Studio pod, not here
+  ([room](../../../../components/dataplane/ae-system-project/ae-studio/ae-collab/design/room.md)).
 - **Skill read-only is enforced by the mutation guards, not by visibility.** `Resolve`/`List` return every
   kind — platform skills list read-only on the skills page; reserved names/prefixes block name collisions.
 - **The descriptor is unreadable by the agent, structurally.** Its dot-led segment is stripped from every
-  turn snapshot (`agentfold.InTurnSnapshot` and its TS mirror), and `.toml` is not an admitted extension
-  either — so the captured idea reaches a turn ONLY via the `/start` expansion, never by the model opening
-  the file. Do not "fix" this by widening the snapshot filter.
-- **The kickoff is never signalled through `useCase`.** That field is part of the conversation identity
-  (`namespacedID`), so keying `/start` on it would put the turn in a different conversation from the chat
-  around it — and `/start` runs an interview whose answers arrive as ordinary chat turns.
+  turn snapshot the design agent loads, and `.toml` is not an admitted extension either — so the captured
+  idea reaches a turn ONLY via the `/start` expansion, never by the model opening the file.

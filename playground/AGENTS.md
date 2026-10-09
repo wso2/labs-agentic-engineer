@@ -3,7 +3,8 @@
 The playground runs the real engineering agent and the real coding agent on a
 plain project directory on this machine. It needs no git, no GitHub, no AEP
 database and no cluster. `wire` builds and runs the app on this machine. Nothing
-deploys.
+deploys. The engineering agent is the design agent's `/v1` edge and Turn socket,
+booted in-process with the playground's adapters (`engine/agents-app.ts`).
 
 `pnpm play --help` is the reference for each verb, flag and environment
 variable. Do not copy that text into this file.
@@ -167,10 +168,11 @@ it serves the app as that role. To stop all of it, quit. Its state is in
 
 The bytes that reach the model are the same as in production:
 
-- the same server code path (auth middleware, TurnGuard, workspace shape,
-  snapshot filter, write gates);
-- the same instruction composition: the playground sends a `TurnSpec`, and the
-  agents service composes it, as it does for aep-api;
+- the same server code path (the `/v1` edge and Turn socket, TurnStarter,
+  TurnDesk, ThreadBook, snapshot layout and filter, write gates);
+- the same instruction composition: the playground sends the line verbatim, and
+  the design agent parses `/<command>` and composes it, as it does for the
+  console;
 - the same skills materialization;
 - the same runner session options (`runners/remote-worker/src/runtime/claude/runtime.ts`);
 - the same authored `aep` skill, assembled for `mode: "local"`.
@@ -180,14 +182,19 @@ The bytes that reach the model are the same as in production:
 
 The project idea is in `specs/.agentic-engineer.toml`, the same descriptor that
 aep-api commits. A turn snapshot removes dot-files. Thus the idea reaches a turn
-only as a fact on the turn spec (`engine/turn-spec.ts`), as in production.
+only through the project lookup (`engine/tools-fake.ts` reads it, as
+ae-studio-tools does in production), and the design agent puts it on the
+`/start` turn.
 
 ### Divergences from production
 
 | divergence | why | parity path |
 |---|---|---|
 | spec-turn snapshots exclude `issues/` | production spec turns never see tasks (they are in GitHub) | none needed: this is parity |
-| MCP is always off | there is no cluster to mint a token | none |
+| MCP is the catalog stubs: the design tools are listed, every call answers "no platform catalog" | no cluster, no ae-studio-tools (`engine/tools-fake.ts`) | none locally; the pod's tools socket serves the org's catalog |
+| no Room: a turn's edits stream back and the playground folds them to disk | no ae-collab locally; the folder is the source of truth | the pod joins the Room (`collab/local-room.ts`) |
+| `/v1` admits the session's dev bearer secret (`kit/auth.ts`), on loopback | no Platform IdP locally | the pod's `idpAuthenticate` |
+| `filesChangedExternally` follows the pod's rule (the last turn's snapshot differs), so it is set after any writing turn and resets with each session | the design agent keeps the last turn's facts in memory | the pod's behaviour, per pod lifetime |
 | `code` derives `wiring` and `exposesAPI.auth` from the repo's resource-type manifests, not from the cluster's catalog | there is no cluster; the derivation code is production's (`services/aep-api/cmd/design-derive`, ADR-0003) | a cluster with other resource types derives differently |
 | no CRT-annotation append, no lineage diffs in replans | platform resources and tags do not exist locally | edit by hand; replan stays file-based |
 | issue `key` lineage is the constant `"local"`; no spec or design tags | no builds or tags locally | dedupe across replans still works |
@@ -199,6 +206,11 @@ only as a fact on the turn spec (`engine/turn-spec.ts`), as in production.
 
 ### Where the rest is
 
+`src/ports/` holds the swapped adapters (FsSpecWorkspace, FileConversationStore,
+FsIssueStore). `src/engine/` holds session boot (`agents-app.ts`: the design
+agent with the dev verifier, `tools-fake.ts`, the file store and the Turn
+socket), the turn loop (`turn.ts`, `/v1`), Plan turns (`plan-turn.ts`, the Turn
+socket), the project's thread (`thread.ts`) and the coding-run spawn.
 Each TUI screen is also a headless verb in `src/commands.ts`. A project keeps
 its playground state in `<project>/.aep-playground/`. The engineering agent
 never sees a dot-directory.

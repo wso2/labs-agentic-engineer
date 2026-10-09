@@ -18,14 +18,16 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { AcceptanceView } from "@aep/ui-acceptance-view";
-import { Alert, Box, Button, ButtonBase, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Alert, AlertTitle, Box, Button, ButtonBase, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { stamp } from "../../../lib/stamp";
 import { useBuilds } from "../../builds/api/builds";
 import { useValidationSnapshot, useVersionLedger } from "../../builds/api/runs";
 import { NextStepsBar } from "../../builds/components/NextStepsBar";
+import { StartupWaitNotice } from "../../builds/components/StartupWaitNotice";
 import { LogLines } from "../../builds/components/CardSection";
 import { useNextInterview } from "../../builds/hooks/useNextInterview";
 import { useRunProgress } from "../../builds/hooks/useRunProgress";
+import { agentStartFailedCopy, isStartupFailure } from "../../builds/model/agentStart";
 import { fixedBy, isBuilding, versionRows } from "../../builds/model/ledger";
 import { nextSteps } from "../../builds/model/nextSteps";
 import { agentLogLines } from "../../builds/model/run";
@@ -33,7 +35,15 @@ import { groupByFeature, validationOutcome } from "../../builds/model/validation
 import { CardOverlay } from "../../projects/components/CardOverlay";
 import { PHONE } from "../../shell/layout";
 import { useRevalidate, useValidation } from "../api/validations";
-import { attemptResult, attemptsOf, noAttemptsReason, revalidateRefusal, type Attempt, type VerdictTone } from "../model/attempts";
+import {
+  attemptResult,
+  attemptsOf,
+  noAttemptsReason,
+  revalidateRefusal,
+  validateLabel,
+  type Attempt,
+  type VerdictTone,
+} from "../model/attempts";
 import { ValidationByFeature } from "./ValidationByFeature";
 
 // A version's Validation card, over the Validation ledger: every attempt down
@@ -142,7 +152,20 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-function AttemptView({ projectName, version, attempt, newest }: { projectName: string; version: string; attempt: Attempt; newest: boolean }) {
+function AttemptView({
+  projectName,
+  version,
+  attempt,
+  newest,
+  hasVerdict,
+}: {
+  projectName: string;
+  version: string;
+  attempt: Attempt;
+  newest: boolean;
+  /** Whether any attempt has a verdict: what the header's ask-again button reads. */
+  hasVerdict: boolean;
+}) {
   const { cycle } = attempt;
   const settled = Boolean(cycle.endedAt);
   const landed = !settled || Boolean(cycle.mergeSha);
@@ -173,7 +196,17 @@ function AttemptView({ projectName, version, attempt, newest }: { projectName: s
   const toggle = (which: "report" | "log") => setShown((s) => (s === which ? null : which));
 
   let body: ReactNode;
-  if (!landed) {
+  if (cycle.startupWait && !settled) {
+    body = <StartupWaitNotice cycle={cycle} />;
+  } else if (settled && isStartupFailure(cycle.agentReason)) {
+    const copy = agentStartFailedCopy(cycle, [], validateLabel(hasVerdict));
+    body = (
+      <Alert severity="error" role="status">
+        <AlertTitle>{copy.title}</AlertTitle>
+        <Typography variant="body2">{copy.body}</Typography>
+      </Alert>
+    );
+  } else if (!landed) {
     body = <Typography variant="body2" color="text.secondary">This attempt never landed, so it has no report.</Typography>;
   } else if (snapshot.isError) {
     body = <Alert severity="info">This attempt produced no report: it reached no usable results.</Alert>;
@@ -254,7 +287,7 @@ function Revalidate({ detail, revalidate, hasVerdict }: {
       loading={revalidate.isPending}
       onClick={() => revalidate.mutate()}
     >
-      {hasVerdict ? "Revalidate" : "Validate"}
+      {validateLabel(hasVerdict)}
     </Button>
   );
   // A disabled button swallows the hover its tooltip needs; the span keeps the reason reachable.
@@ -302,7 +335,14 @@ export function ValidationCard({ projectName, version }: { projectName: string; 
       <Box sx={{ display: "flex", height: "100%", minHeight: 0, [PHONE]: { flexDirection: "column" } }}>
         <AttemptList attempts={attempts} chosen={attempt.number} onChoose={setPicked} />
         <Box sx={{ flex: 1, minWidth: 0, overflowY: "auto", px: 3.5, pt: 3, pb: 11, [PHONE]: { px: 2, pb: 17.5 } }}>
-          <AttemptView key={attempt.cycle.id} projectName={projectName} version={version} attempt={attempt} newest={attempt === newest} />
+          <AttemptView
+            key={attempt.cycle.id}
+            projectName={projectName}
+            version={version}
+            attempt={attempt}
+            newest={attempt === newest}
+            hasVerdict={hasVerdict}
+          />
         </Box>
       </Box>
     );

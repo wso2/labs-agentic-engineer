@@ -1,0 +1,678 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package repo
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"golang.org/x/sync/singleflight"
+)
+
+// Engine is the disk-backed implementation of Workspace: git plumbing over
+// bare clones under one root (the studio-data volume). It is
+// stateless apart from the root path — safe for concurrent use, and multiple
+// Engine instances (processes, replicas) may share one root because every
+// object-DB-touching section runs under the per-repo flock and every
+// materialization is tmp/ + rename.
+type Engine struct {
+	root    string
+	locks   Locker
+	askpass string
+	// cred mints the token for each remote op; nil for credential-less
+	// origins (file:// in tests).
+	cred Credential
+	// execHook, when set (tests only, via export_test.go), observes every
+	// git invocation's argv + env before it runs. It is the seam for the
+	// credential-hygiene assertions and crash injection.
+	execHook func(args []string, env []string)
+	// diskUsagePct is the last UsagePct recorded by the reaper (-1 =
+	// unknown). It feeds DiskFullError.UsedPct.
+	diskUsagePct atomic.Int32
+	// snapshotUse serializes a lookup's reuse of a snapshot (markUsed) with
+	// the reaper's trash of one (TrashSnapshot); one process does both.
+	snapshotUse sync.Mutex
+	// usageGauge, when set (reaper.New), answers the live studio-data
+	// pressure for admission (DiskAdmissionRefusePct). Without it admission
+	// reads diskUsagePct.
+	usageGauge func() int
+	// onENOSPC, when set (reaper.New), runs on detected ENOSPC before
+	// DiskFullError is returned. It must not block: it runs on the failing
+	// request's goroutine.
+	onENOSPC func()
+	// usedBytes is the studio-data usage: the reaper's last du of the root
+	// plus every clone since (usage.go).
+	usedBytes atomic.Int64
+	// clones coalesces this process's cold clones of one repository (keyed
+	// by its git dir): concurrent first readers share one clone.
+	clones singleflight.Group
+}
+
+// cloneTimeout bounds one cold clone. The clone runs detached from the
+// request that started it (ensureMirror), so this, not the request, is what
+// ends a clone that never finishes.
+const cloneTimeout = 5 * time.Minute
+
+// Compile-time port compliance.
+var (
+	_ Workspace = (*Engine)(nil)
+)
+
+// RootLayout reports whether New found an existing workspace root directory
+// or created it (R8b boot identity — affinity-scatter diagnosis).
+type RootLayout string
+
+const (
+	RootFound   RootLayout = "found"
+	RootCreated RootLayout = "created"
+)
+
+// New builds an Engine rooted at root, minting remote tokens from cred (nil
+// for credential-less origins): creates repos/, tmp/, trash/,
+// snapshots/projects/ and snapshots/skills/ and writes the askpass shim. root
+// is made absolute so git child processes are immune to cwd changes. layout
+// is RootFound when abs already existed as a directory before layout
+// creation, RootCreated when New created it.
+func New(root string, cred Credential) (*Engine, RootLayout, error) {
+	abs, err := absPath(root)
+	if err != nil {
+		return nil, "", fmt.Errorf("repo: resolve root %q: %w", root, err)
+	}
+	layout := RootCreated
+	if st, err := os.Stat(abs); err == nil {
+		if !st.IsDir() {
+			return nil, "", fmt.Errorf("repo: root %q exists and is not a directory", abs)
+		}
+		layout = RootFound
+	} else if !os.IsNotExist(err) {
+		return nil, "", fmt.Errorf("repo: stat root %q: %w", abs, err)
+	}
+	for _, d := range []string{ReposDir(abs), TmpDir(abs), TrashDir(abs), ProjectSnapshotsDir(abs), SkillsSnapshotsDir(abs)} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return nil, "", fmt.Errorf("repo: create %s: %w", d, err)
+		}
+	}
+	shim, err := writeAskpassShim(abs)
+	if err != nil {
+		return nil, "", err
+	}
+	e := &Engine{root: abs, locks: flockLocker{}, askpass: shim, cred: cred}
+	e.diskUsagePct.Store(-1)
+	return e, layout, nil
+}
+
+// Root returns the absolute workspace root the engine operates under.
+func (e *Engine) Root() string { return e.root }
+
+// SetDiskUsagePct records the reaper's last usage percentage: the higher of
+// the budget share and the node statfs used%.
+func (e *Engine) SetDiskUsagePct(pct int) { e.diskUsagePct.Store(int32(pct)) }
+
+// DiskUsagePct returns the last recorded pressure percentage, or 0 when unknown.
+func (e *Engine) DiskUsagePct() int {
+	v := e.diskUsagePct.Load()
+	if v < 0 {
+		return 0
+	}
+	return int(v)
+}
+
+// SetUsageGauge registers the live pressure source admission reads
+// (reaper.New wires its UsagePct, so admission sees the clones and snapshots
+// written since the last sweep). Call it before the engine serves.
+func (e *Engine) SetUsageGauge(fn func() int) { e.usageGauge = fn }
+
+// DiskAdmissionRefusePct is the pressure at which new snapshots and
+// reference uploads are refused (design/clone-storage.md). Commits, tags and reads are
+// never gated.
+const DiskAdmissionRefusePct = 90
+
+// admit refuses a new snapshot or reference upload at DiskAdmissionRefusePct.
+func (e *Engine) admit() error {
+	pct := e.DiskUsagePct()
+	if e.usageGauge != nil {
+		pct = e.usageGauge()
+	}
+	if pct >= DiskAdmissionRefusePct {
+		return fmt.Errorf("%w (usage=%d%%)", ErrDiskAdmission, pct)
+	}
+	return nil
+}
+
+// SetOnENOSPC registers the emergency handler invoked when mapDiskErr detects
+// ENOSPC (reaper.New wires a non-blocking forced-sweep request). Call it
+// before the engine serves; pass nil to clear.
+func (e *Engine) SetOnENOSPC(fn func()) { e.onENOSPC = fn }
+
+// mapDiskErr translates ENOSPC into DiskFullError after invoking onENOSPC.
+// Non-ENOSPC errors (and nil) pass through unchanged.
+func (e *Engine) mapDiskErr(err error) error {
+	if err == nil || !isENOSPC(err) {
+		return err
+	}
+	if e.onENOSPC != nil {
+		e.onENOSPC()
+	}
+	return &DiskFullError{Root: e.root, UsedPct: e.DiskUsagePct()}
+}
+
+func absPath(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	return filepath.Abs(p)
+}
+
+// trashDest derives a fresh unique trash/<id> destination: a sortable
+// nanosecond timestamp prefix plus random suffix (the reaper only needs
+// uniqueness and rough age ordering).
+func trashDest(root string) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	id := fmt.Sprintf("%016x-%s", uint64(time.Now().UnixNano()), hex.EncodeToString(b[:]))
+	return filepath.Join(TrashDir(root), id)
+}
+
+// ----- git execution (hermetic child env, design D2/§8) -----
+
+// forcedConfig is git config the engine imposes on every child, whatever the
+// mirror's own config file says.
+//
+// maintenance.auto is here because the reaper must be the only thing that
+// repacks a shared mirror — it is the only thing that does so under the
+// per-repo EX flock. Git's default is the opposite: `fetch`, `push` and
+// `commit` all end by spawning `git maintenance run --auto --detach`, which
+// double-forks, so it goes on rewriting the object DB after the engine's
+// critical section has closed and the lock is gone. Two concurrent repacks on
+// one object DB is precisely the state the flock exists to prevent, and the
+// detached one holds nothing. The value has to be maintenance.auto: git's auto
+// strategy is geometric-repack, which never consults gc.auto.
+//
+// It is forced through the environment rather than stamped into each mirror
+// because the shared volume outlives any single release. A stamp written at
+// clone time cannot reach a mirror that was cloned before the rule existed;
+// env-supplied config outranks the repo's own file and so covers every mirror
+// already on disk.
+var forcedConfig = []gitConfigRule{
+	{"maintenance.auto", "false"},
+}
+
+// gitConfigRule is one config key/value the engine imposes on git children.
+type gitConfigRule struct{ key, value string }
+
+// forcedConfigEnv renders forcedConfig as git's GIT_CONFIG_COUNT /
+// GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n triplets (equivalent to `git -c`, and
+// higher precedence than any config file). The indices are derived from the
+// slice, so adding a rule above is the whole change — there is no count to
+// keep in step by hand.
+//
+// MINIMUM GIT 2.31, which is where these variables were added. Below it they
+// are inert and every rule above silently stops applying. The image installs
+// Alpine's unversioned `git` package (services/aep-api/Dockerfile) and is not
+// pinned to a floor: 2.31 shipped in March 2021, the image currently resolves
+// 2.47, and pinning an apk version would break the build the first time the
+// package is superseded — a certainty, against a regression that is not. What
+// guards it instead is TestGitResolvesEveryForcedConfigRule, which asks the
+// git binary on the box what it RESOLVES for every rule here: on a git too old
+// to read this environment, that test fails rather than the platform quietly
+// losing the rule.
+func forcedConfigEnv() map[string]string {
+	env := map[string]string{"GIT_CONFIG_COUNT": strconv.Itoa(len(forcedConfig))}
+	for i, c := range forcedConfig {
+		n := strconv.Itoa(i)
+		env["GIT_CONFIG_KEY_"+n] = c.key
+		env["GIT_CONFIG_VALUE_"+n] = c.value
+	}
+	return env
+}
+
+// baseEnv is the scrubbed environment every git child gets: no user/system
+// config, no terminal prompts, C locale for machine-stable output, HOME
+// pointed into tmp/ so nothing ambient leaks in, plus the forcedConfig rules
+// the engine imposes on every mirror.
+func (e *Engine) baseEnv() map[string]string {
+	env := map[string]string{
+		"PATH":                os.Getenv("PATH"),
+		"HOME":                TmpDir(e.root),
+		"GIT_CONFIG_GLOBAL":   os.DevNull,
+		"GIT_CONFIG_SYSTEM":   os.DevNull,
+		"GIT_TERMINAL_PROMPT": "0",
+		"LC_ALL":              "C",
+	}
+	for k, v := range forcedConfigEnv() {
+		env[k] = v
+	}
+	return env
+}
+
+// execOpts parametrizes one git invocation.
+type execOpts struct {
+	env   map[string]string // overlaid on the hermetic base env
+	stdin []byte
+}
+
+// git runs one git command with the hermetic env (+overlay), returning raw
+// stdout. Errors wrap the exit error with the command line and trimmed
+// stderr — tokens never appear in either (askpass keeps them out of argv).
+func (e *Engine) git(ctx context.Context, opts execOpts, args ...string) ([]byte, error) {
+	cmd := e.buildCmd(ctx, opts, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return stdout.Bytes(), fmt.Errorf("git %s: %w: %s",
+			strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.Bytes(), nil
+}
+
+// gitStream runs one git command and hands its stdout to consume as a stream
+// (a snapshot's `git archive` is never buffered whole). The rest of stdout is
+// drained so the child never blocks on a full pipe, then the child is reaped;
+// a git failure wins over consume's error, as it is the cause.
+func (e *Engine) gitStream(ctx context.Context, opts execOpts, consume func(io.Reader) error, args ...string) error {
+	cmd := e.buildCmd(ctx, opts, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("git %s: stdout pipe: %w", strings.Join(args, " "), err)
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("git %s: start: %w", strings.Join(args, " "), err)
+	}
+	consumeErr := consume(out)
+	_, _ = io.Copy(io.Discard, out)
+	if err := cmd.Wait(); err != nil {
+		return fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return consumeErr
+}
+
+func (e *Engine) buildCmd(ctx context.Context, opts execOpts, args ...string) *exec.Cmd {
+	env := e.baseEnv()
+	for k, v := range opts.env {
+		env[k] = v
+	}
+	flat := make([]string, 0, len(env))
+	for _, k := range sortedEnvKeys(env) {
+		flat = append(flat, k+"="+env[k])
+	}
+	if e.execHook != nil {
+		e.execHook(append([]string{"git"}, args...), flat)
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = flat
+	if opts.stdin != nil {
+		cmd.Stdin = bytes.NewReader(opts.stdin)
+	}
+	return cmd
+}
+
+func sortedEnvKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// remoteGit runs one remote-touching git op (clone/fetch/push) with a token
+// minted immediately before it (design D7). A mid-op auth failure re-mints
+// once and retries the op.
+func (e *Engine) remoteGit(ctx context.Context, ref RepoRef, opts execOpts, args ...string) ([]byte, error) {
+	run := func() ([]byte, error) {
+		credEnv, err := e.credEnv(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		merged := execOpts{stdin: opts.stdin, env: map[string]string{}}
+		for k, v := range opts.env {
+			merged.env[k] = v
+		}
+		for k, v := range credEnv {
+			merged.env[k] = v
+		}
+		return e.git(ctx, merged, args...)
+	}
+	out, err := run()
+	if err != nil && e.cred != nil && isAuthFailure(err) {
+		out, err = run() // re-mint once + retry (token revoked/expired mid-op)
+	}
+	return out, err
+}
+
+// ----- mirror lifecycle -----
+
+// ensureMirror guarantees the bare clone exists, cloning it on demand
+// (cloneMirror). Returns whether the mirror was just cloned (a fresh clone is
+// fresh — callers skip the next fetch).
+//
+// The clone is detached from ctx: studio-data is emptied on every pod roll,
+// so the first request per repository after one pays for a full clone, and a
+// caller that gives up first (ae-collab's per-call deadline, a closed
+// browser tab) must not kill git and throw the staging dir away, or a repo
+// whose clone outlasts every caller could never be cloned. The clone keeps
+// ctx's values, runs under its own cloneTimeout, and is shared by every
+// concurrent caller for the same repository; a cancelled caller just stops
+// waiting, and the next one finds the mirror (or joins the clone still
+// running).
+func (e *Engine) ensureMirror(ctx context.Context, ref RepoRef, p repoPaths) (cloned bool, err error) {
+	if mirrorExists(p.gitDir) {
+		return false, nil
+	}
+	done := e.clones.DoChan(p.gitDir, func() (any, error) {
+		cloneCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cloneTimeout)
+		defer cancel()
+		return e.cloneMirror(cloneCtx, ref, p)
+	})
+	select {
+	case res := <-done:
+		if res.Err != nil {
+			return false, res.Err
+		}
+		return res.Val.(bool), nil
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+}
+
+// cloneMirror clones the bare mirror atomically: `git clone --bare` into tmp/
+// staging, an explicit refspec fetch, gc.auto=0 + repack.writeBitmaps=false
+// stamped, then os.Rename into the canonical path — a crash mid-clone leaves
+// only tmp/ debris, never a half-populated mirror. It runs under the per-repo
+// flock, so another process's clone of the same repository wins cleanly.
+func (e *Engine) cloneMirror(ctx context.Context, ref RepoRef, p repoPaths) (cloned bool, err error) {
+	if err := os.MkdirAll(p.repoDir, 0o755); err != nil {
+		return false, fmt.Errorf("repo: create repo dir: %w", err)
+	}
+	release, err := e.locks.Lock(ctx, p.lockPath)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	if mirrorExists(p.gitDir) { // lost the clone race — someone else did it
+		return false, nil
+	}
+	staging, err := os.MkdirTemp(TmpDir(e.root), "clone-*")
+	if err != nil {
+		return false, fmt.Errorf("repo: clone staging: %w", err)
+	}
+	defer os.RemoveAll(staging) // no-op debris cleanup after a successful rename
+	stagingGit := filepath.Join(staging, "git")
+	started := time.Now()
+	if _, err := e.remoteGit(ctx, ref, execOpts{}, "clone", "--bare", ref.CloneURL, stagingGit); err != nil {
+		return false, fmt.Errorf("repo: bare clone %s: %w", ref.FullName(), err)
+	}
+	// A bare clone carries no fetch refspec and no PR refs. Configure the
+	// refresh refspecs so a plain `fetch origin` keeps branches and tags
+	// current; the engine also passes them explicitly on every fetch.
+	for _, args := range [][]string{
+		{"config", "remote.origin.fetch", "+refs/heads/*:refs/heads/*"},
+		{"config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*"},
+	} {
+		if _, err := e.git(ctx, execOpts{}, append([]string{"--git-dir", stagingGit}, args...)...); err != nil {
+			return false, err
+		}
+	}
+	if _, err := e.remoteGit(ctx, ref, execOpts{}, "--git-dir", stagingGit, "fetch", "--prune", "origin"); err != nil {
+		return false, fmt.Errorf("repo: initial fetch %s: %w", ref.FullName(), err)
+	}
+	// gc.auto=0 turns off the classic `gc --auto` path only; automatic
+	// maintenance is closed by forcedConfig (maintenance.auto=false) on every
+	// child. The stamp is the narrower belt-and-braces for a git that still
+	// routes through gc --auto.
+	if _, err := e.git(ctx, execOpts{}, "--git-dir", stagingGit, "config", "gc.auto", "0"); err != nil {
+		return false, err
+	}
+	// Bitmaps are pure overhead: nothing clones FROM these repos.
+	if _, err := e.git(ctx, execOpts{}, "--git-dir", stagingGit, "config", "repack.writeBitmaps", "false"); err != nil {
+		return false, err
+	}
+	if err := os.Rename(stagingGit, p.gitDir); err != nil {
+		if mirrorExists(p.gitDir) {
+			return false, nil // concurrent clone won the rename — fine
+		}
+		return false, fmt.Errorf("repo: publish clone: %w", err)
+	}
+	e.AddUsage(DirBytes(p.gitDir))
+	slog.InfoContext(ctx, "repo.clone", "repo", ref.FullName(), "mode", "bare", "ms", time.Since(started).Milliseconds())
+	return true, nil
+}
+
+func mirrorExists(gitDir string) bool {
+	_, err := os.Stat(filepath.Join(gitDir, "HEAD"))
+	return err == nil
+}
+
+// fetch refreshes all branches and tags from origin.
+// Caller MUST hold the exclusive flock.
+func (e *Engine) fetch(ctx context.Context, ref RepoRef, p repoPaths) error {
+	_, err := e.remoteGit(ctx, ref, execOpts{},
+		"--git-dir", p.gitDir, "fetch", "--prune", "origin",
+		"+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
+	if err != nil {
+		return fmt.Errorf("repo: fetch %s: %w", ref.FullName(), err)
+	}
+	return nil
+}
+
+// freshenFor implements the freshness rule (design brief): reads addressed
+// by branch/tag name fetch first; reads addressed by raw 40-hex shas use
+// local objects, fetching only when an object is missing. cloned skips the
+// fetch a fresh clone already implies.
+func (e *Engine) freshenFor(ctx context.Context, ref RepoRef, p repoPaths, cloned bool, ats ...string) error {
+	if cloned {
+		return nil
+	}
+	needs := false
+	for _, at := range ats {
+		if !isHex40(at) {
+			needs = true // symbolic addressing (branch/tag/"") → fetch first
+			break
+		}
+	}
+	if !needs {
+		for _, at := range ats {
+			ok, err := e.objectExists(ctx, ref, p, at)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				needs = true
+				break
+			}
+		}
+	}
+	if !needs {
+		return nil
+	}
+	release, err := e.locks.Lock(ctx, p.lockPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return e.fetch(ctx, ref, p)
+}
+
+// objectExists reports whether sha resolves to a commit in the local object
+// DB (a pure object read — shared flock).
+func (e *Engine) objectExists(ctx context.Context, ref RepoRef, p repoPaths, sha string) (bool, error) {
+	release, err := e.locks.RLock(ctx, p.lockPath)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	_, gerr := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "cat-file", "-e", sha+"^{commit}")
+	return gerr == nil, nil
+}
+
+// ----- ref resolution -----
+
+// defaultBranch applies the "main" fallback.
+func defaultBranch(ref RepoRef) string {
+	if ref.DefaultBranch == "" {
+		return "main"
+	}
+	return ref.DefaultBranch
+}
+
+// atExpr normalizes an `at` address into a rev-parse expression: "" → the
+// default branch, "tags/X"/"heads/X" → fully qualified, raw shas and bare
+// names pass through (git's refname resolution order handles bare tag /
+// branch names).
+func atExpr(ref RepoRef, at string) string {
+	switch {
+	case at == "":
+		return "refs/heads/" + defaultBranch(ref)
+	case isHex40(at):
+		return at
+	case strings.HasPrefix(at, "tags/"), strings.HasPrefix(at, "heads/"):
+		return "refs/" + at
+	default:
+		return at
+	}
+}
+
+// resolveCommit resolves `at` to a commit sha, peeling annotated tags.
+// Only a genuinely missing ref/object maps to ErrRefNotFound (`--verify
+// --quiet` exits 1 for "not a valid object name"); repo-level failures —
+// trashed/corrupt mirror (exit 128), killed subprocess — surface as plain
+// errors so callers that treat "ref not found" as a valid state (an empty
+// repo, a 404) never mistake an infrastructure failure for one. Caller must
+// hold a flock (shared is enough — this is a pure ref/object read).
+func (e *Engine) resolveCommit(ctx context.Context, ref RepoRef, p repoPaths, at string) (string, error) {
+	expr := atExpr(ref, at)
+	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir,
+		"rev-parse", "--verify", "--quiet", "--end-of-options", expr+"^{commit}")
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return "", fmt.Errorf("repo: resolve %q in %s: %w: %w", at, ref.FullName(), ErrRefNotFound, err)
+		}
+		return "", fmt.Errorf("repo: resolve %q in %s: %w", at, ref.FullName(), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ----- mirror maintenance (consumed by the reaper) -----
+
+// maintainLockTimeout bounds EX flock acquisition for MaintainMirror only
+// Git repack/prune/pack-refs use the caller ctx — never this budget —
+// so a contended lock skips within ~2s without SIGKILLing a slow maintain.
+const maintainLockTimeout = 2 * time.Second
+
+// MaintainMirror runs the reaper's git maintenance sequence under the EX
+// flock: repack -ad --quiet, prune --expire=2.hours.ago, pack-refs --all --prune.
+// Never git gc. Never git maintenance --task=loose-objects.
+// Lock acquisition is bounded by maintainLockTimeout; git work uses ctx.
+func (e *Engine) MaintainMirror(ctx context.Context, ref RepoRef) error {
+	p, err := e.pathsFor(ref)
+	if err != nil {
+		return err
+	}
+	if !mirrorExists(p.gitDir) {
+		return nil
+	}
+	lockCtx, cancel := context.WithTimeout(ctx, maintainLockTimeout)
+	release, err := e.locks.Lock(lockCtx, p.lockPath)
+	cancel()
+	if err != nil {
+		return err
+	}
+	defer release()
+	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "repack", "-ad", "--quiet"); err != nil {
+		return fmt.Errorf("repo: repack %s: %w", ref.FullName(), err)
+	}
+	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "prune", "--expire=2.hours.ago"); err != nil {
+		return fmt.Errorf("repo: prune %s: %w", ref.FullName(), err)
+	}
+	if _, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "pack-refs", "--all", "--prune"); err != nil {
+		return fmt.Errorf("repo: pack-refs %s: %w", ref.FullName(), err)
+	}
+	return nil
+}
+
+// CountObjects returns loose-object and pack counts for a mirror (count-objects -v).
+func (e *Engine) CountObjects(ctx context.Context, ref RepoRef) (loose, packs int, err error) {
+	p, err := e.pathsFor(ref)
+	if err != nil {
+		return 0, 0, err
+	}
+	out, err := e.git(ctx, execOpts{}, "--git-dir", p.gitDir, "count-objects", "-v")
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		switch {
+		case strings.HasPrefix(line, "count: "):
+			loose, _ = strconv.Atoi(strings.TrimPrefix(line, "count: "))
+		case strings.HasPrefix(line, "packs: "):
+			packs, _ = strconv.Atoi(strings.TrimPrefix(line, "packs: "))
+		}
+	}
+	return loose, packs, nil
+}
+
+// ----- trash primitives (consumed by the reaper, design D12) -----
+
+// TrashRepo renames the repo's whole on-disk subtree (git/, repo.lock) into
+// trash/<id> — the O(1) phase-1 of the two-phase delete. A project's
+// snapshots are not under it: the snapshot-age pass and budget eviction
+// reclaim them (TrashSnapshot). A missing subtree is a no-op. Mid-flight readers keep working through open
+// fds (POSIX inode semantics); the next engine op on the ref self-heals by
+// re-cloning.
+func (e *Engine) TrashRepo(ctx context.Context, ref RepoRef) error {
+	p, err := e.pathsFor(ref)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(p.repoDir); os.IsNotExist(err) {
+		return nil
+	}
+	// Serialize with in-flight critical sections; the flock file moves with
+	// the subtree, which is fine — held locks live on the open fd.
+	release, err := e.locks.Lock(ctx, p.lockPath)
+	if err != nil {
+		return err
+	}
+	defer release()
+	dest := trashDest(e.root)
+	if err := os.Rename(p.repoDir, dest); err != nil {
+		if os.IsNotExist(err) {
+			return nil // concurrently trashed
+		}
+		return fmt.Errorf("repo: trash repo %s: %w", ref.FullName(), err)
+	}
+	return nil
+}

@@ -66,6 +66,11 @@ Requires OC ≥ 1.2.5, with no upper bound (`minOCVersion`, skippable with
 `--skip-oc-version-check`) and pinning the platform chart
 (`--platform-chart` or `--platform-version` — required, so this command can
 never silently upgrade the platform release to whatever is latest on GHCR).
+It also refuses, before it writes anything, without a valid aectl platform
+config (the `aep-cli-config` ConfigMap; `requireAEStudioConfig` in
+`tools/aectl/cmd/update.go`): step 5's in-process `aectl platform update`
+re-derives the platform release's `aeStudio.*` values from it and applies them
+with `sreAgent.*`.
 Detects the observability plane (looks for the `sre-agent` Deployment, or
 `ai-rca-agent` on older chart versions, in the obs namespace); warns if
 absent, then installs/upgrades (idempotent). It then:

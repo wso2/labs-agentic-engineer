@@ -267,3 +267,12 @@ the gate stays open so the next build recreates it.
 includes the callback landing on the CR, not only OpenChoreo Ready. A failed
 wait is a deploy failure. APIs are unchanged. Higher-environment callback union
 is out of this decision.
+
+## Amendment 2026-10-06 — publisher secret
+
+The comparison above to `publisher_client_secret` is history: that column is
+dropped, and the publisher client's secret is the org secret
+`ae-publisher-client`, held only in vault
+([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)). Test-user
+passwords are still sealed with `secrets.ColumnCipher` under
+`credential-encryption-key`; they are the one sealed column left.

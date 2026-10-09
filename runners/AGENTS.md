@@ -10,9 +10,9 @@ Skills are **authored in `<repo>/skills/`, not here** (`skills/AGENTS.md` has
 the authoring rules) and **delivered by the BFF, not here either**: a run reads
 the `.claude/skills/` mirror in its own clone. What this package owns is
 consuming that mirror correctly — the always-on workflow, the allowlist, and the
-playground's stand-in for the BFF write. The dev flow bind-mounts the library
-into the runner pod at `/app/skills` for live skill edits (see
-`deployments/scripts/setup-k3d.sh`), which is what the playground mirrors from.
+playground's stand-in for the BFF write. The runner image bakes the library
+at `/app/skills` (`deployments/scripts/build-runner.sh` passes the `skills`
+build context), which is what the playground mirrors from.
 
 ## Conventions
 
@@ -22,17 +22,17 @@ into the runner pod at `/app/skills` for live skill edits (see
   messages (which the BFF forwards to the console build log), into `ps`, and into
   `.git/config`. Rationale inline in `git_clone.ts`; the BFF keeps a shape-based
   second line of defense in `delivery/codingagent/redact.go`.
-- **Git credentials — two modes, one helper value in `.git/config`.**
-  When `GITHUB_TOKEN` / `GH_TOKEN` is set (cloud Jobs mount the org PAT),
+- **Git credentials — one path, one helper value in `.git/config`.**
+  The coding Job mounts the org's gitpat as `GITHUB_TOKEN` (or `GH_TOKEN`);
   `workspace.ts` installs `gh auth git-credential` (the same helper
   `gh auth setup-git` uses), pinned to the **real** `gh` absolute path so the
-  `.aep/gh` wrapper cannot intercept. Clone and push share that path; they do
-  **not** call `credentials/refresh`. When those env vars are absent, every
-  authenticated git op goes through `lib/credhelper.ts` → refresh (clone via
-  `git -c`, then the same script installed durably). No GIT_ASKPASS, no token
-  in argv or URL. Don't add a third path. Changes to the generated refresh
-  scripts must keep `credhelper.test.ts` green — it drives them with real `git`.
-  `.aep/` (the publisher bearer, the credential helper, the `gh` wrapper) and
+  `.aep/gh` wrapper cannot intercept. Clone and push share that path. Without
+  either variable `provisionWorkspace` throws before any network call and
+  `oneshot.ts` exits 2. The runner never calls `aep-api` for a credential;
+  the remote-git tools (`lib/remote_git.ts`) are served in-process with the
+  mounted gitpat, and there is no fallback.
+  No GIT_ASKPASS, no token in argv or URL. Don't add a second path.
+  `.aep/` (the publisher bearer, the `gh` wrapper) and
   `.gh-config/`, which `provisionWorkspace` drops inside the clone, are in the
   clone's `.git/info/exclude`: one `git add -A` would otherwise push the bearer
   into the customer's repository.
@@ -47,8 +47,7 @@ into the runner pod at `/app/skills` for live skill edits (see
   enrolling from `lib/credential_env.ts` — which MIRRORS the Go dispatch
   constants with nothing mechanical between them, so a credential added there
   is added here too. One the scrubber cannot enroll is reported by name rather
-  than dropped in silence. Rationale, and the credhelper path this cannot
-  reach: ADR-0002 decision 19.
+  than dropped in silence. Rationale: ADR-0002 decision 19.
 - **The progress contract is RUN EVENTS v2, and it is GENERATED, not written
   here.** `RunEvent` lives in `packages/contracts/api/v1/openapi.yaml` and
   reaches this package through `openapi-typescript` (see the generated-types
@@ -108,7 +107,9 @@ into the runner pod at `/app/skills` for live skill edits (see
   `runtime/claude/runtime.ts` turns the guards into `PreToolUse` hooks, the
   capability classes into `disallowedTools` (`runtime/claude/tools.ts`), and the
   MCP policy into an `http` server behind a loopback auth proxy, because this
-  SDK's MCP config only accepts a static header. The test for whether something
+  SDK's MCP config only accepts a static header. The proxy also answers the
+  runner's local tools (`lib/mcp_local_tools.ts`) itself, so the runtime sees
+  one server. The test for whether something
   belongs in the port is whether a second runtime would write it the same way; if
   it names a tool, a hook or an SDK option, it does not.
   **There are TWO adapters**: `runtime/claude/` and `runtime/opencode/`.

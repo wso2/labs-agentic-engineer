@@ -67,14 +67,8 @@ type OpenBaoConfig struct {
 	// Path is the mount path for the KV secrets engine (e.g., "secret").
 	Path string `json:"path"`
 
-	// Auth contains authentication configuration.
-	Auth *OpenBaoAuth `json:"auth"`
-}
-
-// OpenBaoAuth contains authentication configuration for OpenBao.
-type OpenBaoAuth struct {
-	// Token is a static token for authentication.
-	Token string `json:"token,omitempty"`
+	// There is no static token: the OSS provider logs in by Kubernetes auth
+	// (internal/platform/secrets.NewKubernetesAuth, OPENBAO_AUTH_*).
 }
 
 // SecretLocation identifies where a secret lives in the KV hierarchy.
@@ -123,6 +117,15 @@ type SecretLocation struct {
 	// when set the KVPath addresses a single value rather than the
 	// whole record.
 	SecretKey string
+
+	// RefName, when set, names exactly this SecretReference:
+	// SecretRefName returns it unchanged, a write lands under it, and a
+	// delete removes exactly it (never a label or derived-name lookup).
+	// The high-level client sets it: a freshly minted name on a write
+	// (every write is a new reference), the caller's stored name on a
+	// delete. Empty keeps the derived per-entity name used by the older
+	// replace-in-place callers.
+	RefName string
 }
 
 func sanitizeSegment(s string) (string, error) {
@@ -200,18 +203,22 @@ func (l SecretLocation) KVPath() (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
-// SecretRefName derives the OC SecretReference name from the location.
-// Sanitized to a DNS-label (lowercase, max 63 chars). Includes TaskID
+// SecretRefName is the OC SecretReference name for the location: RefName
+// when set, otherwise one derived from the location. The derived name is
+// sanitized to a DNS-label (lowercase, max 63 chars) and includes TaskID
 // when set so per-task secrets don't collide with per-project ones.
 func (l SecretLocation) SecretRefName() string {
+	if l.RefName != "" {
+		return l.RefName
+	}
 	var name string
 	switch {
 	case l.TaskID != "":
 		name = fmt.Sprintf("%s-%s-secrets",
-			sanitizeForK8sName(l.TaskID),
-			sanitizeForK8sName(l.EntityName))
+			SanitizeForK8sName(l.TaskID),
+			SanitizeForK8sName(l.EntityName))
 	default:
-		name = fmt.Sprintf("%s-secrets", sanitizeForK8sName(l.EntityName))
+		name = fmt.Sprintf("%s-secrets", SanitizeForK8sName(l.EntityName))
 	}
 	if len(name) > 63 {
 		name = strings.TrimRight(name[:63], "-")
@@ -219,7 +226,10 @@ func (l SecretLocation) SecretRefName() string {
 	return name
 }
 
-func sanitizeForK8sName(s string) string {
+// SanitizeForK8sName lowercases s and replaces every character outside
+// [a-z0-9-] with '-', trimming leading and trailing dashes. It does not
+// enforce the 63-character limit; callers that build a name trim it.
+func SanitizeForK8sName(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	var b strings.Builder
 	for _, r := range s {

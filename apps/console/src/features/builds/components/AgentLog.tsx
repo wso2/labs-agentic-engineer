@@ -23,6 +23,7 @@ import { stamp } from "../../../lib/stamp";
 import { useRunProgress, type RunProgressCycle, type RunProgressState } from "../hooks/useRunProgress";
 import { agentLogLines, buildCycles } from "../model/run";
 import { LogLines } from "./CardSection";
+import { CycleLogState } from "./CycleLogState";
 
 // The coding agent's log: what it did, newest first, one box per build
 // session (a run's coding, fix or conflict cycle), each with its pull request.
@@ -37,8 +38,15 @@ function connection(phase: RunProgressState["phase"]): string | null {
   return null;
 }
 
-function Session({ section, label }: { section: RunProgressCycle; label: string }) {
+function Session({ section, label, onRetry }: { section: RunProgressCycle; label: string; onRetry: () => void }) {
   const { cycle, events } = section;
+  // A log the platform no longer keeps, or cannot read now, says so in place
+  // of its lines: an empty box would read as an agent that did nothing. The
+  // server still sends its "log is not available" notice for such a cycle, and
+  // lines drawn from that notice alone read as a hole in a kept log beside no
+  // reason. So the RECORDING decides, never the event count; a kept log with a
+  // hole keeps its lines and the inline gap notice.
+  const missing = cycle.recording === "expired" || cycle.recording === "unavailable";
   return (
     <Box sx={{ "& + &": { borderTop: 1, borderColor: "divider" } }}>
       <Box sx={{ display: "flex", alignItems: "center", gap: 1, px: 1.75, py: 0.75 }}>
@@ -47,7 +55,7 @@ function Session({ section, label }: { section: RunProgressCycle; label: string 
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {cycle.kind} · {stamp(cycle.createdAt)}
-          {cycle.endedAt ? "" : " · writing now"}
+          {cycle.endedAt ? "" : cycle.startupWait ? " · waiting to start" : " · writing now"}
         </Typography>
         <Box sx={{ flex: 1 }} />
         {cycle.prUrl && cycle.prNumber ? (
@@ -56,7 +64,13 @@ function Session({ section, label }: { section: RunProgressCycle; label: string 
           </Link>
         ) : null}
       </Box>
-      <LogLines lines={agentLogLines(events)} empty="No output yet." maxHeight={280} />
+      {missing ? (
+        <Box sx={{ px: 1.75, pb: 1 }}>
+          <CycleLogState recording={cycle.recording} onRetry={onRetry} />
+        </Box>
+      ) : (
+        <LogLines lines={agentLogLines(events)} empty="No output yet." maxHeight={280} />
+      )}
     </Box>
   );
 }
@@ -78,6 +92,7 @@ function RunSessions({ progress, runNumber }: { progress: RunProgressState; runN
             <Session
               key={section.cycle.id}
               section={section}
+              onRetry={progress.reconnect}
               label={runNumber === null ? `Session ${n}` : `Run ${runNumber} · session ${n}`}
             />
           );

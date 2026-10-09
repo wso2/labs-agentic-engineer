@@ -39,7 +39,7 @@ generated/
 *.env
 !.env.example
 
-# Dev playground threads (services/agents/playground)
+# Dev playground threads (components/dataplane/ae-system-project/ae-studio/ae-design-agent/playground)
 chat_playground/
 
 # Editor / OS
@@ -122,3 +122,6 @@ tools/aectl/aectlv2
 # Python bytecode from the deployment helper scripts
 __pycache__/
 *.pyc
+
+# skaffold --file-output artifacts (make dev-images)
+/.skaffold/

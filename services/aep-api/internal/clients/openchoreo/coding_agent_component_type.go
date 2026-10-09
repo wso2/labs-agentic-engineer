@@ -16,21 +16,48 @@
 
 package openchoreo
 
-import "github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+import (
+	"slices"
+
+	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
+)
 
 // CodingAgentComponentTypeName is the namespaced ComponentType name seeded
 // per org. Billing aliases key on this exact string (and job/coding-agent).
 const CodingAgentComponentTypeName = "coding-agent"
 
-// codingAgentDeadlineCeilingSeconds is the schema's activeDeadlineSeconds
+// CodingAgentDeadlineCeilingSeconds is the schema's activeDeadlineSeconds
 // maximum (3h). It bounds BOTH cycle kinds: a validation cycle passes 2h and a
 // coding cycle 3h, and the schema — never the caller — is what rejects anything
 // past it.
-const codingAgentDeadlineCeilingSeconds = 10800
+const CodingAgentDeadlineCeilingSeconds = 10800
 
 // CodingAgentComponentTypeRef is what a Component's spec.componentType.name
 // carries — {workloadType}/{typeName}. Matches OC's API name format.
 const CodingAgentComponentTypeRef = "job/coding-agent"
+
+// CodingAgentResources is the deploy-time tuning of the ComponentType. The zero
+// value renders the schema every org already has.
+type CodingAgentResources struct {
+	// CPURequest is the Job's CPU request default (CODING_AGENT_CPU_REQUEST).
+	// Empty or "500m" leaves the schema byte-for-byte as before:
+	// EnsureComponentType PUTs on any body difference. Memory is not tunable.
+	CPURequest string
+}
+
+// cpuRequestSchema renders the cpuRequest parameter. A default outside the base
+// enum is added to it so the schema accepts its own default.
+func (r CodingAgentResources) cpuRequestSchema() map[string]any {
+	enum := []any{"500m", "1"}
+	def := "500m"
+	if r.CPURequest != "" {
+		def = r.CPURequest
+		if !slices.Contains(enum, any(def)) {
+			enum = append([]any{def}, enum...)
+		}
+	}
+	return map[string]any{"type": "string", "default": def, "enum": enum}
+}
 
 // CodingAgentComponentType returns the desired namespaced ComponentType body
 // for EnsureComponentType. workloadType=job; ExternalSecrets from
@@ -42,7 +69,14 @@ const CodingAgentComponentTypeRef = "job/coding-agent"
 // dropped; ttlSecondsAfterFinished added; restartPolicy Never (side-effectful
 // runner — never auto-retry). Pod template labels MUST use
 // ${metadata.podSelectors} so the observer query path finds the pod.
-func CodingAgentComponentType() map[string]any {
+//
+// The TTL and suspend work as a pair. The TTL is the only path that deletes a
+// finished Job's pod with a propagation policy, so it stays. But OpenChoreo
+// re-creates a TTL-deleted Job from the binding it still renders, and that
+// copy would run the runner a second time. The `suspend` environmentConfig,
+// set true on the cycle's binding once the run is over (SuspendJobBinding), is
+// what makes the re-created Job inert: it is born suspended.
+func CodingAgentComponentType(res CodingAgentResources) map[string]any {
 	return map[string]any{
 		"apiVersion": "openchoreo.dev/v1alpha1",
 		"kind":       "ComponentType",
@@ -70,7 +104,7 @@ func CodingAgentComponentType() map[string]any {
 						// mid-run) and a validation cycle 7200. The maximum is the
 						// larger of the two, so it is what actually bounds the Job.
 						"activeDeadlineSeconds": map[string]any{
-							"type": "integer", "default": 3600, "maximum": codingAgentDeadlineCeilingSeconds,
+							"type": "integer", "default": 3600, "maximum": CodingAgentDeadlineCeilingSeconds,
 						},
 						"ttlSecondsAfterFinished": map[string]any{
 							"type": "integer", "default": 86400,
@@ -98,10 +132,7 @@ func CodingAgentComponentType() map[string]any {
 						// REQUESTS, so a bursting runner is squeezed back toward its
 						// 500m share as soon as anything else becomes runnable,
 						// rather than holding 3 cores against it.
-						"cpuRequest": map[string]any{
-							"type": "string", "default": "500m",
-							"enum": []any{"500m", "1"},
-						},
+						"cpuRequest": res.cpuRequestSchema(),
 						"cpuLimit": map[string]any{
 							"type": "string", "default": "3",
 							"enum": []any{"500m", "1", "2", "3"},
@@ -172,6 +203,19 @@ func CodingAgentComponentType() map[string]any {
 					},
 				},
 			},
+			"environmentConfigs": map[string]any{
+				"openAPIV3Schema": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						// Set true on the cycle's binding at the first terminal pod,
+						// at settle and on cancel. A suspended Job keeps a completed
+						// pod until the TTL and deletes a running one gracefully; a
+						// Job OpenChoreo re-creates after the TTL is born suspended,
+						// so it never runs the runner a second time (research/07 Q1-Q2).
+						"suspend": map[string]any{"type": "boolean", "default": false},
+					},
+				},
+			},
 			"resources": codingAgentComponentTypeResources(),
 		},
 	}
@@ -213,6 +257,7 @@ func codingAgentComponentTypeResources() []any {
 					"backoffLimit":            "${parameters.backoffLimit}",
 					"activeDeadlineSeconds":   "${parameters.activeDeadlineSeconds}",
 					"ttlSecondsAfterFinished": "${parameters.ttlSecondsAfterFinished}",
+					"suspend":                 "${environmentConfigs.suspend}",
 					"template": map[string]any{
 						"metadata": map[string]any{
 							// Observer query footgun: must be podSelectors, not

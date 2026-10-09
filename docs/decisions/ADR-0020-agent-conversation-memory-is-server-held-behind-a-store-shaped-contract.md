@@ -118,7 +118,7 @@ access already is (ADR-0016).
   build and those concerns need to live in code the platform owns, once,
   outside any single agent's trust domain. Org is the isolation line because it
   is already the platform's trust boundary (keys, Thunder OUs); the design
-  agent's own store (`services/agents/src/store/`) is the proven prototype —
+  agent's own store (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/store/`) is the proven prototype —
   the same JSONB aggregate, load-append-save and org fence — and the end state
   is that store, extracted and given an end-user fence. The shapes rejected on
   the way are under *Alternatives considered*.
@@ -150,3 +150,14 @@ Rejected: keeping files in history like the console chat (ADR-0019) — heavy
 rows and a token cost on every later turn; multipart or upload-then-reference
 transport — a parser or file storage in every agent. Base64 inside the JSON
 message is what model APIs themselves do for small per-message files.
+
+## Amendment 2026-10-06 — AE Studio
+
+The design agent's own conversations live in memory in `ae-design-agent`, the
+org's AE Studio container ([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)):
+one current thread per project (`src/conversations/thread-book.ts`) over the
+in-memory store (`src/store/memory-store.ts`), lost when the pod rolls. The
+store it cites above as the proven prototype is therefore proven for its
+contract's shape (whole-aggregate load-append-save behind
+`src/store/conversation-store.ts`), not for durable storage. The decision
+about generated `ai-agent` components is unchanged.

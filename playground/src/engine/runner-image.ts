@@ -18,7 +18,7 @@
 
 /**
  * Which runner image a runtime runs on. Its own module so `evals/codegen` reads
- * it without importing `@aep/agents`, which merges `deployments/.env` at load.
+ * it without importing `@aep/ae-design-agent`, which merges `deployments/.env` at load.
  */
 
 import type { RuntimeName } from "remote-worker/src/runtime/port.js";

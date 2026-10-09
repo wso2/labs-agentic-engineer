@@ -103,7 +103,7 @@ a key and a model. Every agent uses it.**
    records the connection that wrote it (`format@host`). Turns from the current
    connection replay byte for byte, so the prompt cache holds; turns another
    connection wrote lose their reasoning and provider-executed tool calls
-   (`services/agents/src/conversation/history-for.ts`). The model is not part
+   (`components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/conversation/history-for.ts`). The model is not part
    of the fingerprint: Anthropic's API accepts one Claude model's signed
    thinking replayed to another (checked `claude-haiku-4-5` ↔
    `claude-sonnet-5`, both ways), so a model change keeps the history as it
@@ -223,3 +223,23 @@ too (re-running the installer without a key file never wipes it). Removal is
 `aectl sre uninstall`, unchanged. See
 [`services/aep-api/design/sre-model-connection.md`](../../services/aep-api/design/sre-model-connection.md)
 for the mechanism.
+
+## Amendment 2026-10-06 — AE Studio and the key's write order
+
+- **The design agent reads the connection from its pod.** The connection's
+  non-secret fields reach `ae-design-agent` as `AE_MODEL_CONNECTION` and the
+  key as the pod's `ANTHROPIC_API_KEY` secret, both rendered by `aep-api` into
+  the org's AE Studio
+  ([ADR-0045](ADR-0045-design-work-runs-in-the-organizations-ae-studio.md)).
+  A save that changes either rolls the pod. `aep-api` sends no per-turn key,
+  so decision 6's `X-Model-Key` header is gone; `createModel` keeps one branch
+  per format, and the OpenAI-compatible path stands.
+- **The key lives only in vault.** It is the org secret `default-key`
+  ([ADR-0047](ADR-0047-an-org-secrets-value-lives-only-in-vault.md)), not
+  `org_secrets` bytes under `model/key`. The vault write is the write: under
+  the card's lock the request's key goes to vault as a new reference, and the
+  row transaction runs inside that write. A vault failure saves nothing (502
+  `secret_store_write_failed`). A failed commit undoes the new reference.
+  After the commit, still under the lock, the key's consumers repoint, Agent
+  Manager's provider gets the request's key, the AE Studio pod converges, and
+  the old reference is retired. Nothing is mirrored after commit.

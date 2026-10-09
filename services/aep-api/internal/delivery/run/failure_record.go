@@ -117,9 +117,13 @@ var sentinelPrefixes = []string{
 }
 
 // planFailure builds the record for a PlanMilestone error, nil for no error.
-// The planning turn retries unbounded on a blip (MaxAttempts 0) and fails on
-// the first permanent source-control answer.
-func planFailure(err error, attempt int) *delivery.RunFailure {
+// The planning turn retries unbounded on a blip (MaxAttempts 0), a bounded
+// planProviderLimitAttempts on a provider limit, and fails on the first
+// permanent answer (planPermanent, the same test planErr applies); only a
+// source-control one is `repository-unavailable`. A provider limit's record
+// counts the provider-limited tries (providerLimits), the number its bound
+// applies to, rather than the activity's attempt.
+func planFailure(err error, attempt, providerLimits int) *delivery.RunFailure {
 	if err == nil {
 		return nil
 	}
@@ -131,9 +135,13 @@ func planFailure(err error, attempt int) *delivery.RunFailure {
 		FirstAt:   now,
 		LastAt:    now,
 		Detail:    delivery.ScrubFailureDetail(err.Error()),
-		Permanent: sourcecontrol.IsPermanent(err),
+		Permanent: planPermanent(err, providerLimits),
 	}
-	if f.Permanent {
+	if providerLimited(err) {
+		f.Attempts = providerLimits
+		f.MaxAttempts = planProviderLimitAttempts
+	}
+	if sourcecontrol.IsPermanent(err) {
 		f.Code = delivery.RunFailureCodeRepositoryUnavailable
 	}
 	return f
@@ -172,8 +180,7 @@ func (a *Activities) recordNoWriteTarget(ctx context.Context, runID string, err 
 
 // recordPlanningFault writes the record (or clears a stale one) on the run
 // row. Best-effort: the fault the activity is about to return is the fact that
-// matters, and a bookkeeping write must not mask or replace it — the same
-// stance the activity feed takes.
+// matters, and a bookkeeping write must not mask or replace it.
 //
 // A nil failure on the first attempt is the ordinary success and writes
 // nothing; a nil failure on a LATER attempt means an earlier one recorded a

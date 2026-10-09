@@ -19,8 +19,7 @@
 /**
  * Write-gate behavior for `specs/design/dependencies/<name>/dependency.json`
  * and its `sdk.json` — the one definition of an external dependency. These
- * assert the zod source of truth directly; the Go fold gate has its own parity
- * tests (agentfold/dependencygate_test.go), and the two must agree.
+ * assert the zod source of truth directly.
  */
 
 import { test } from "node:test";

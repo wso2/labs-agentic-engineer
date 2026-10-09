@@ -3,7 +3,7 @@
 Glossary of domain terms for the Agentic Engineer Platform. Implementation-free:
 this file defines what terms *mean*, not how anything works.
 
-## Agents service (`services/agents`)
+## Design agent (`components/dataplane/ae-system-project/ae-studio/ae-design-agent`)
 
 **Skill**:
 A unit of procedural guidance — a `SKILL.md` (frontmatter `name` + `description`,
@@ -42,8 +42,20 @@ mutates during a turn. Lives only in the service process; never sent to a sandbo
 _Avoid_: workspace, repo, project.
 
 **Turn**:
-One request→response cycle of the main agent: a user instruction plus the current
-spec bundle in, a stream of file mutations out. One turn = one POST.
+One cycle of the main agent: a user instruction plus the current spec bundle in, a
+stream of file mutations into the project's **Room** out. Started by one request,
+watched over a replayable stream.
+
+**Conversation**:
+The agent's thread of turns for one entity: a project, a Skill, a Resource, or the
+organization; the chat shows the Conversation of the entity in view. A project has
+one current Conversation, shared by everyone working on it; the user may rotate it,
+and it rotates by itself at 80 % of the model connection's context window (or past
+8 MiB of thread when the connection declares none). The design agent also serves
+marketplace Conversations: each belongs to the user who started it, and a user may
+hold several (no console page opens one today). Conversations live only in the
+design agent's memory, so a pod roll starts a new one.
+_Avoid_: session, chat (the chat is the panel that shows a Conversation, not the thread).
 
 ## Org skills (`services/aep-api`)
 
@@ -104,6 +116,14 @@ will need.
 _Avoid_: engineering agent (coding is engineering too), architect (a role heading
 inside a skill's body, not the agent).
 
+**AE Studio**:
+The organization's design workspace: chat with the design agent, the live spec and
+the project files. One per organization; the design agent, the Room and every git
+operation for that organization run in it, and in nothing shared with another
+organization. Its `ae-studio` client is how it calls the platform on the
+organization's behalf.
+_Avoid_: studio pod, tools pod (name the workspace, not where it runs).
+
 **Coding agent**:
 The agent that implements a component — it builds, verifies, and opens the pull
 request. It reads skills as guidance for construction. When it calls the
@@ -133,11 +153,13 @@ _Avoid_: platform key (the platform provides none), primary key (implies a
 secondary that does not exist, and collides with the SQL sense).
 
 **Coding agent key**:
-An organization's optional second Anthropic API key, used by the coding agent and
-by nothing else. It is an override on the default key, not a peer: it can only
-exist while a default key exists, and it changes which key is billed, never
-whether an agent can run.
-_Avoid_: secondary key, coding LLM credential.
+An organization's optional second credential for the coding agent, used by it and
+by nothing else: the org's Claude subscription token, the **Org secret**
+`coding-agent-key`. A Claude Code coding Job mounts it by reference instead of the
+default key; any other coding run keeps the default key. It is an override on the
+default key, not a peer: it can only exist while a default key exists, and it
+changes which key is billed, never whether an agent can run.
+_Avoid_: coding agent token, secondary key, coding LLM credential.
 
 **Reuse**:
 The state of an org that has no coding agent key, so the coding agent runs on the
@@ -482,11 +504,6 @@ A small window over a Page for one short task, used without the agent: the build
 picker, Try it. It has no address and leaves the Turn scope as it was.
 _Avoid_: Card, modal.
 
-**Conversation**:
-The chat thread that belongs to one entity: a project, a Skill, a Resource, or the
-organization. The chat shows the Conversation of the entity in view.
-_Avoid_: session, chat (the chat is the panel that shows a Conversation).
-
 **Turn scope**:
 What one turn of a Conversation is about, set by the Card in view: a feature, the
 whole product, the design review. It focuses the agent and fences nothing.
@@ -565,17 +582,16 @@ live face while a room is open).
 
 **Room**:
 One live collaboration session over a single project's spec bundle. While a room is
-live for a project, the live doc is that project's spec authority and the session's
-committer is the sole writer to committed truth.
+live for a project, the live doc is that project's spec authority. Every
+file-writing **Turn** streams its file mutations into the live doc and commits
+nothing itself; the room's committer is the one writer to committed truth.
 _Avoid_: workspace, session-id (a room is scoped to one project's spec bundle).
 
-**Room-mode (turn)**:
-A generation Turn that runs while a room is live: it streams its file mutations into
-the live doc and commits nothing itself — the room's committer lands them. This is
-what keeps the two write paths from racing (only one writer to committed truth while
-a room is open).
-_Avoid_: dry-run, preview turn (a room-mode turn's edits are real, just landed by the
-committer rather than the turn).
+**Room-mode (turn)** — _retired_:
+Formerly the special case of a Turn that ran while a room was live. Every
+file-writing Turn now writes through the Room, so there is one write path and
+nothing to distinguish.
+_Avoid_: room-mode turn (say Turn).
 
 ## Secrets
 
@@ -584,6 +600,14 @@ An OpenChoreo CR that names a vault path for a secret. It lives in the same
 control-plane namespace as the Workload that consumes it. The vault path's
 `wc-…` segment (`OrgBaseNamespace`) is a storage key, not that namespace.
 _Avoid_: treating OrgBaseNamespace as the SecretReference CR namespace.
+
+**Org secret**:
+One of the six secrets an organization holds: `github-pat`, `github-webhook-secret`,
+`default-key`, `coding-agent-key`, `ae-publisher-client` and `ae-studio-client`.
+Its value lives only in the vault; the platform database records just the name of
+its **SecretReference**, and a recorded name means the secret is set. The two
+client secrets belong to the org's **Publisher client** and its `ae-studio` client.
+_Avoid_: credential (too broad), key (only two of the six hold an LLM credential).
 
 ## Requirements model (`skills/prd-contract`, `services/aep-api/internal/platform/reqspec`)
 

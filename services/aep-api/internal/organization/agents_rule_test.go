@@ -62,7 +62,7 @@ func anthropicConn() *OrgModelConnection {
 	return &OrgModelConnection{
 		OcOrgID: "acme", Format: modelconn.FormatAnthropic, BaseURL: modelconn.AnthropicBaseURL,
 		Host: modelconn.AnthropicHost, Model: modelconn.DefaultAnthropicModel, AuthScheme: modelconn.AuthXAPIKey,
-		ImageInput: modelconn.Yes, KeyPreview: "sk-a…mnop", UpdatedAt: time.Unix(100, 0),
+		ImageInput: modelconn.Yes, UpdatedAt: time.Unix(100, 0),
 	}
 }
 
@@ -71,7 +71,7 @@ func ollamaConn() *OrgModelConnection {
 	return &OrgModelConnection{
 		OcOrgID: "acme", Format: modelconn.FormatOpenAICompatible, BaseURL: "https://ollama.com/v1",
 		Host: modelconn.OllamaHost, Model: "gpt-oss:20b", AuthScheme: modelconn.AuthBearer,
-		ImageInput: modelconn.No, KeyPreview: "olla…6789", UpdatedAt: time.Unix(100, 0),
+		ImageInput: modelconn.No, UpdatedAt: time.Unix(100, 0),
 	}
 }
 
@@ -175,49 +175,42 @@ func TestDraftConnection_BaseURLShape(t *testing.T) {
 	}
 }
 
-// --- clause 2: the key and the host ------------------------------------------------
+// --- clause 2: a connection edit needs the key -------------------------------------
 
-func TestJudgeCard_AHostChangeNeedsAKey(t *testing.T) {
-	refusal(t, cardState{conn: anthropicConn(), settings: onRuntime("opencode")},
-		orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{Kind: "openai-compatible", BaseURL: "https://ollama.com/v1"})},
-		"llm", "llm_key_required_for_new_host")
-}
-
-// The key follows the origin, not the host alone: another port can be another
-// server, so a port change needs a key; the https default port is no change.
-func TestJudgeCard_APortChangeNeedsAKey(t *testing.T) {
+// A connection edit (format or base URL) rewrites Agent Manager's provider
+// whole, so it needs the key in the same save: no stored key is reused, on any
+// host, port or format.
+func TestJudgeCard_AConnectionEditNeedsTheKey(t *testing.T) {
 	onOllama := cardState{conn: ollamaConn(), settings: onRuntime("opencode")}
-	refusal(t, onOllama, orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{BaseURL: "https://ollama.com:8443/v1"})},
-		"llm", "llm_key_required_for_new_host")
-
+	for name, w := range map[string]orgconfig.LLMPatch{
+		"a host change":                {Kind: "openai-compatible", BaseURL: "https://proxy.example.com/v1"},
+		"a port change":                {BaseURL: "https://ollama.com:8443/v1"},
+		"a path change":                {BaseURL: "https://ollama.com/api/v1"},
+		"a format change on that host": {Kind: "anthropic"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			refusal(t, onOllama, orgconfig.ConfigPatch{LLM: llm(w)}, "llm", "llm_key_required")
+		})
+	}
+	// The https default port is no change.
 	eff := mustJudge(t, onOllama, orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{BaseURL: "https://ollama.com:443/v1"})})
 	if eff.writeConn != nil {
 		t.Fatalf("draft = %+v, want https://ollama.com:443/v1 to be the stored URL, unchanged", eff.writeConn)
 	}
-
-	onPort := cardState{conn: ollamaConn(), settings: onRuntime("opencode")}
-	onPort.conn.BaseURL = "https://ollama.com:8443/v1"
-	refusal(t, onPort, orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{BaseURL: "https://ollama.com/v1"})},
-		"llm", "llm_key_required_for_new_host")
-}
-
-// Ollama serves both formats on one host with one key: switching format there
-// reuses the stored key (the draft carries none).
-func TestJudgeCard_AFormatChangeOnTheSameHostKeepsTheKey(t *testing.T) {
-	eff := mustJudge(t, cardState{conn: ollamaConn(), settings: onRuntime("opencode")},
-		orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{Kind: "anthropic"})})
-	if eff.writeConn == nil || eff.writeConn.Key != "" || eff.writeConn.Format != modelconn.FormatAnthropic ||
-		eff.writeConn.BaseURL != "https://ollama.com/v1" {
-		t.Fatalf("draft = %+v, want the Anthropic format on the stored URL, reusing the stored key", eff.writeConn)
+	// With the key, the edit is a draft carrying it.
+	eff = mustJudge(t, onOllama, orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{Kind: "anthropic", APIKey: ruleOllamaKy})})
+	if eff.writeConn == nil || eff.writeConn.Key != ruleOllamaKy || eff.writeConn.Format != modelconn.FormatAnthropic {
+		t.Fatalf("draft = %+v, want the Anthropic format with the request's key", eff.writeConn)
 	}
 }
 
-// A model-only save re-probes (the draft is written) with the stored key.
-func TestJudgeCard_AModelOnlySaveReprobesWithTheStoredKey(t *testing.T) {
+// A model-only save needs no key: the draft is written without one (and
+// without a probe, AgentSettingsService.probe).
+func TestJudgeCard_AModelOnlySaveNeedsNoKey(t *testing.T) {
 	eff := mustJudge(t, cardState{conn: anthropicConn()},
 		orgconfig.ConfigPatch{LLM: llm(orgconfig.LLMPatch{Model: "claude-haiku-4-5"})})
 	if eff.writeConn == nil || eff.writeConn.Model != "claude-haiku-4-5" || eff.writeConn.Key != "" {
-		t.Fatalf("draft = %+v, want the new model on the stored key", eff.writeConn)
+		t.Fatalf("draft = %+v, want the new model with no key", eff.writeConn)
 	}
 }
 
@@ -475,17 +468,6 @@ func TestConnectionsAround(t *testing.T) {
 	}
 }
 
-func TestKeyPreview(t *testing.T) {
-	for key, want := range map[string]string{
-		"sk-ant-api03-RULEtestKeyABCDEFGHIJKLmnop": "sk-a…mnop",
-		"ollama-key-0123":                          "…0123",
-	} {
-		if got := keyPreview(key); got != want {
-			t.Errorf("keyPreview(%q) = %q, want %q", key, got, want)
-		}
-	}
-}
-
 // Test connection is rationed per org on a sliding window: the eleventh call
 // in a minute is refused, and the allowance returns as the window slides.
 func TestLLMTestLimiter(t *testing.T) {
@@ -509,40 +491,5 @@ func TestLLMTestLimiter(t *testing.T) {
 	}
 	if l.allow("acme") {
 		t.Fatal("only one call had left the window")
-	}
-}
-
-// lockRecordingCard records the advisory locks a save takes, then stops it.
-type lockRecordingCard struct{ locks []string }
-
-func (c *lockRecordingCard) Tx(_ context.Context, fn func(tx AgentsCardTx) error) error {
-	return fn(&lockRecordingTx{card: c})
-}
-
-type lockRecordingTx struct {
-	AgentsCardTx // every other method: never reached
-	card         *lockRecordingCard
-}
-
-func (t *lockRecordingTx) AdvisoryLock(key string) error {
-	t.card.locks = append(t.card.locks, key)
-	return nil
-}
-
-func (t *lockRecordingTx) GetSettings(string) (*OrgAgentSettings, error) {
-	return nil, errors.New("stop after the locks")
-}
-
-// The save and the copies after it take both lock names, the previous
-// release's first, so a rolling deploy never has two replicas writing one
-// org's card under different locks.
-func TestAgentSettings_TheSaveAndItsCopiesTakeBothLockNamesOldThenNew(t *testing.T) {
-	card := &lockRecordingCard{}
-	svc := NewAgentSettingsService(nil, nil, &AnthropicCredentialService{}, &ModelConnectionService{}, card, everyRuntime)
-	_ = svc.apply(context.Background(), "acme", "ada", orgconfig.ConfigPatch{}, cardProbe{})
-	svc.syncCopies(context.Background(), "acme", cardCopies{forgotToken: "claude-subscription-ref"})
-	want := "org_anthropic:acme,org_model:acme,org_anthropic:acme,org_model:acme"
-	if got := strings.Join(card.locks, ","); got != want {
-		t.Fatalf("locks = %s, want %s", got, want)
 	}
 }

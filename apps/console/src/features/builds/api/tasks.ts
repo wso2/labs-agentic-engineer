@@ -18,7 +18,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, retryAfterMs } from "../../../api/errors";
 
 // A version's tasks: its GitHub issues, copied from the old console
 // (features/tasks/api/queries.ts). The read is GitHub-backed, so unlike the
@@ -39,10 +39,10 @@ export function useVersionTasks(projectName: string, tag: string, live: boolean)
   return useQuery({
     queryKey: taskKeys.version(projectName, tag),
     queryFn: async () => {
-      const { data, error } = await client.GET("/projects/{projectName}/tasks", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/tasks", {
         params: { path: { projectName }, query: { state: "all", tag } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Failed to load the tasks"));
+      if (error || data === undefined) throw new ApiRequestError(error, "Failed to load the tasks", { retryAfterMs: retryAfterMs(response) });
       return data;
     },
     refetchInterval: live ? TASKS_POLL_MS : false,

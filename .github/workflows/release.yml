@@ -34,13 +34,13 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      # No max-parallel: all nine start at once. GitHub already queues a job
+      # No max-parallel: all images start at once. GitHub already queues a job
       # when the org's concurrency limit is reached, so a cap prevents no
       # failure — it only stops the release using runners that are idle.
       matrix:
         include:
           # DECLARED FIRST so the long poles take a slot in the first batch when
-          # the pool is short, rather than queueing behind six shorter builds.
+          # the pool is short, rather than queueing behind the shorter builds.
           # Slot order following declaration order is observed, not documented —
           # a hint, so the worst case is a slower run, never a wrong one.
           #
@@ -81,12 +81,15 @@ jobs:
             dockerfile: services/aep-api/Dockerfile
             context: services/aep-api
             buildContexts: skills=skills
-          - name: agents
-            dockerfile: services/agents/Dockerfile
+          - name: ae-design-agent
+            dockerfile: components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile
             context: .
-          - name: collab
-            dockerfile: services/collab/Dockerfile
+          - name: ae-collab
+            dockerfile: components/dataplane/ae-system-project/ae-studio/ae-collab/Dockerfile
             context: .
+          - name: ae-studio-tools
+            dockerfile: components/dataplane/ae-system-project/ae-studio/ae-studio-tools/Dockerfile
+            context: components/dataplane/ae-system-project/ae-studio/ae-studio-tools
           - name: console
             dockerfile: apps/console/Dockerfile
             context: .
@@ -140,8 +143,8 @@ jobs:
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:${{ inputs.version }}
             ${{ env.IMAGE_PREFIX }}/${{ matrix.name }}:latest
           # Registry cache rather than type=gha. The Actions cache is capped at
-          # 10 GB per repository and CI's own entries already fill it, so eight
-          # images x two platforms of mode=max layers were evicted by LRU between
+          # 10 GB per repository and CI's own entries already fill it, so every
+          # image's two platforms of mode=max layers were evicted by LRU between
           # releases and every release rebuilt from scratch. GHCR has no such cap.
           #
           # Kept under a buildcache/ prefix so it is not a tag on the released
@@ -201,12 +204,9 @@ jobs:
           yq -i '.aepApi.image.repository = strenv(IMAGE_PREFIX) + "/aep-api"' /tmp/platform/values.yaml
           yq -i '.aepApi.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.aepApi.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.repository = strenv(IMAGE_PREFIX) + "/agents"' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.aepAgents.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
-          yq -i '.collab.image.repository = strenv(IMAGE_PREFIX) + "/collab"' /tmp/platform/values.yaml
-          yq -i '.collab.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
-          yq -i '.collab.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
+          yq -i '.aeStudio.images.designAgent = strenv(IMAGE_PREFIX) + "/ae-design-agent:" + strenv(VERSION)' /tmp/platform/values.yaml
+          yq -i '.aeStudio.images.collab = strenv(IMAGE_PREFIX) + "/ae-collab:" + strenv(VERSION)' /tmp/platform/values.yaml
+          yq -i '.aeStudio.images.studioTools = strenv(IMAGE_PREFIX) + "/ae-studio-tools:" + strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.repository = strenv(IMAGE_PREFIX) + "/console"' /tmp/platform/values.yaml
           yq -i '.console.image.tag = strenv(VERSION)' /tmp/platform/values.yaml
           yq -i '.console.image.pullPolicy = "IfNotPresent"' /tmp/platform/values.yaml
@@ -251,8 +251,9 @@ jobs:
           ### Images
 
           - \`ghcr.io/wso2/aep/aep-api:${{ inputs.version }}\`
-          - \`ghcr.io/wso2/aep/agents:${{ inputs.version }}\`
-          - \`ghcr.io/wso2/aep/collab:${{ inputs.version }}\`
+          - \`ghcr.io/wso2/aep/ae-design-agent:${{ inputs.version }}\`
+          - \`ghcr.io/wso2/aep/ae-collab:${{ inputs.version }}\`
+          - \`ghcr.io/wso2/aep/ae-studio-tools:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/remote-worker-opencode:${{ inputs.version }}\`
           - \`ghcr.io/wso2/aep/console:${{ inputs.version }}\`

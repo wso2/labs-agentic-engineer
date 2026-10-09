@@ -19,8 +19,13 @@ package spec
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 )
+
+var fortyHex = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // ListSpecVersionTags (#117): the spec is versioned as ONE incrementing
 // `v<N>` sequence over the whole specs/ tree; legacy `v<N>-<M>` design tags
@@ -51,7 +56,7 @@ func TestListSpecVersionTags_NoTags(t *testing.T) {
 func TestListSpecVersionTags_LatestCleanAtTag(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", specTagSubject+"v1")
+	r.tag("v1", specTagSubject+"v1")
 
 	got, err := r.svc.ListSpecVersionTags(context.Background(), r.org, r.proj)
 	if err != nil {
@@ -68,8 +73,8 @@ func TestListSpecVersionTags_LatestCleanAtTag(t *testing.T) {
 func TestListSpecVersionTags_DirtyWhenSpecsMovedAfterTag(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", specTagSubject+"v1")
-	r.remote.Seed(t, map[string]string{
+	r.tag("v1", specTagSubject+"v1")
+	r.seed(map[string]string{
 		"specs/requirements/prd.md": "# Reqs — edited after v1\n",
 	}, "post-tag spec edit")
 
@@ -85,8 +90,8 @@ func TestListSpecVersionTags_DirtyWhenSpecsMovedAfterTag(t *testing.T) {
 func TestListSpecVersionTags_NonSpecCommitStaysClean(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", specTagSubject+"v1")
-	r.remote.Seed(t, map[string]string{
+	r.tag("v1", specTagSubject+"v1")
+	r.seed(map[string]string{
 		"src/main.go": "package main // agents wrote code\n",
 	}, "post-tag code commit")
 
@@ -102,12 +107,12 @@ func TestListSpecVersionTags_NonSpecCommitStaysClean(t *testing.T) {
 func TestListSpecVersionTags_SequenceAndLegacyExclusion(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, seedSpec())
-	r.remote.Tag(t, "v1", specTagSubject+"v1")
-	r.remote.Tag(t, "v1-1", "legacy design revision")
-	r.remote.Seed(t, map[string]string{
+	r.tag("v1", specTagSubject+"v1")
+	r.tag("v1-1", "legacy design revision")
+	r.seed(map[string]string{
 		"specs/design/domain-model.md": "# Design r2\n",
 	}, "spec change")
-	r.remote.Tag(t, "v2", specTagSubject+"v2")
+	r.tag("v2", specTagSubject+"v2")
 
 	got, err := r.svc.ListSpecVersionTags(context.Background(), r.org, r.proj)
 	if err != nil {
@@ -121,5 +126,36 @@ func TestListSpecVersionTags_SequenceAndLegacyExclusion(t *testing.T) {
 	}
 	if got.SpecDirty {
 		t.Fatalf("HEAD == v2: want clean, got dirty")
+	}
+}
+
+// The Spec-view tags poll (~10 s) never re-transfers the tree: the tip is
+// resolved on the pod's mirror (Head, Local) and both tree listings are
+// sha-addressed, so the adapter's read cache serves them.
+func TestListSpecVersionTags_ReadsTreesAtResolvedShas(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, seedSpec())
+	r.tag("v1", specTagSubject+"v1")
+	before := len(r.pod.Calls())
+
+	if _, err := r.svc.ListSpecVersionTags(context.Background(), r.org, r.proj); err != nil {
+		t.Fatalf("ListSpecVersionTags: %v", err)
+	}
+	sawLocalHead := false
+	for _, c := range r.pod.Calls()[before:] {
+		switch c.Op {
+		case aestudiotest.OpHead:
+			if c.At != "" || !c.Local {
+				t.Errorf("head call = {at:%q local:%t}, want the mirror's tip (at omitted, local)", c.At, c.Local)
+			}
+			sawLocalHead = true
+		case aestudiotest.OpList:
+			if !fortyHex.MatchString(c.At) {
+				t.Errorf("list at %q, want a 40-hex sha (cacheable)", c.At)
+			}
+		}
+	}
+	if !sawLocalHead {
+		t.Error("no local Head call: the tip must be resolved on the mirror")
 	}
 }

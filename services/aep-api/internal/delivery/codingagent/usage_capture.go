@@ -124,7 +124,7 @@ func settledProviderLimit(raw string) (*providerLimit, bool) {
 		ProviderDetail string     `json:"providerDetail"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &ev); err != nil ||
-		gen.RunEventV(ev.V) != gen.RunEventV2 ||
+		gen.RunEventV(ev.V) != gen.RunEventVTwo ||
 		gen.RunEventKind(ev.Kind) != gen.RunEventKindRunSettled {
 		return nil, false
 	}
@@ -164,7 +164,7 @@ func terminalUsage(raw string) (*contracts.CapturedUsage, bool) {
 		Usage *contracts.CapturedUsage `json:"usage"`
 	}
 	if err := json.Unmarshal([]byte(trimmed), &v2); err == nil &&
-		gen.RunEventV(v2.V) == gen.RunEventV2 &&
+		gen.RunEventV(v2.V) == gen.RunEventVTwo &&
 		gen.RunEventKind(v2.Kind) == gen.RunEventKindRunSettled &&
 		v2.Usage != nil {
 		u := *v2.Usage

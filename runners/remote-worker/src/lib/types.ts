@@ -35,17 +35,9 @@ export interface DispatchRequest {
   repoUrl: string;
   bearer: string;
   identity: DispatchIdentity;
-  gitServiceUrl: string;
   prompt: string;
-  /** Optional correlation ID for distributed tracing. Forwarded to git-service via credhelper. */
+  /** Optional correlation ID for distributed tracing. Carried into the agent's environment. */
   correlationId?: string;
-  /**
-   * WS2.6 — full URL for the credentials/refresh endpoint used during
-   * workspace bootstrap. oneshot.ts sets it to the path-scoped
-   * `${platformUrl}/internal/v1/executions/{executionId}/credentials/refresh`
-   * (taskId carries the execution id, §9.2). Accepts the publisher CC token.
-   */
-  refreshUrl?: string;
   /**
    * Endpoint Spec Discovery (B1/B2) — the BFF's in-process MCP endpoint
    * (`<platform>/internal/v1/mcp`), stamped unconditionally by the BFF's
@@ -58,6 +50,13 @@ export interface DispatchRequest {
    * access token. Absent when mint failed.
    */
   mcpToken?: string;
+  /**
+   * The org's GitHub account (AEP_GITHUB_OWNER, stamped by aep-api from the
+   * github_login the org connected): the only owner the in-process remote-git
+   * tools read (`lib/remote_git.ts`). Absent on a playground run, which builds
+   * its own request and offers no platform MCP.
+   */
+  githubOwner?: string;
   /**
    * Task kind from AEP_TASK_KIND (default "implementation"). Validation
    * tasks preload the `aep:aep-validation` skill body alongside `aep:aep`

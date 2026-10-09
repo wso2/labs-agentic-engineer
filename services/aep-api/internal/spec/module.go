@@ -19,6 +19,7 @@ package spec
 import (
 	"context"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
@@ -29,14 +30,13 @@ import (
 // that builds the slice handlers) lives in httpapi/ — see httpapi/doc.go for why
 // the domain's composition cannot sit here.
 type Deps struct {
-	// GenAI is the committed-truth turn orchestrator behind the five turn ops
-	// (create / get / active / stream / rehydrate).
-	GenAI *Service
-	// Files is the spec-workspace read+apply service (list / read / apply).
-	Files FilesService
-	// FilesActivity records the spec_updated feed line when an apply commits
-	// (issue #239). Optional — nil simply records nothing.
-	FilesActivity SpecUpdatedRecorder
+	// References is the org pods' reference-document store (references upload).
+	References aestudiotools.References
+	// Repos reads a project's repository row (references upload).
+	Repos sourcecontrol.ProjectRepoRows
+	// Kickoff fires the kickoff a create held for its reference documents.
+	// Nil: an upload fires none.
+	Kickoff *KickoffService
 	// Artifacts is the spec-version tag reader (list-project-tags).
 	Artifacts ArtifactService
 	// Skills is the org-scoped skills catalogue reader (list / get / updates / sync).
@@ -45,8 +45,6 @@ type Deps struct {
 	SkillMut *SkillMutationService
 	// SkillImport is the AgentSkills-tarball import service.
 	SkillImport *SkillImportService
-	// CollabRepo is the project-ownership oracle behind the two collab ops.
-	CollabRepo sourcecontrol.RepoService
 	// Design backs the dependency definition view's two writes (provide a contract,
 	// accept an assumption). *designService satisfies it.
 	Design DependencyContractService

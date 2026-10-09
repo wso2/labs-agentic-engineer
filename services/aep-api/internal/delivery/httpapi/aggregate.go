@@ -30,12 +30,9 @@ import (
 type Deps struct {
 	BuildSvc     *build.Service
 	PreflightSvc *build.PreflightService
-	// BuildActivity records the spec_published feed line on build start
-	// (issue #239); nil disables recording.
-	BuildActivity build.SpecPublishedRecorder
-	TaskReads     *task.Reads
-	TaskCommands  *task.Commands
-	TaskStream    *execution.TaskStreamService
+	TaskReads    *task.Reads
+	TaskCommands *task.Commands
+	TaskStream   *execution.TaskStreamService
 
 	// The milestone run read surface: a version's runs + cycles, the per-run
 	// progress stream, and cancel.
@@ -47,9 +44,9 @@ type Deps struct {
 	// attempts, and one attempt's evidence.
 	RunValidation *runread.ValidationReads
 
-	// PublisherProvisioner is nil in tests that do not care. Wired on
-	// Handler via WithPublisherProvisioner so StartProjectBuild cannot see it.
-	PublisherProvisioner build.PublisherProvisioner
+	// PublisherGate is nil in tests that do not care. Wired on Handler via
+	// WithPublisherGate: only POST /build is gated, never StartProjectBuild.
+	PublisherGate build.PublisherGate
 }
 
 // Every slice names its type Handler, so embedding them directly would be
@@ -74,9 +71,9 @@ type Handlers struct {
 // handlers are fail-LOUD on a wired-but-nil service and 503 on an entirely
 // unwired one (each slice's nil guard), matching the pre-migration edge.
 func New(d Deps) (*Handlers, error) {
-	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc, d.BuildActivity)
-	if d.PublisherProvisioner != nil {
-		bh = bh.WithPublisherProvisioner(d.PublisherProvisioner)
+	bh := build.NewHandler(d.BuildSvc, d.PreflightSvc)
+	if d.PublisherGate != nil {
+		bh = bh.WithPublisherGate(d.PublisherGate)
 	}
 	return &Handlers{
 		buildHandler:     bh,

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { ArtifactDepth, DesignArtifact, DesignDependency } from "../api/designModel";
+import type { ArtifactDepth, DesignArtifact, DesignDependency, DesignModel } from "../api/designModel";
 
 // The design card's artifact list, worked out from the design model and the
 // live spec: one list, filtered by depth, each artifact with the features it
@@ -44,16 +44,18 @@ export function filterArtifacts(
  * What happened to an artifact lately. "out of date": a feature it covers
  * changed in the spec since it was designed, and wins over the rest.
  * Otherwise "new" when the latest design turn added it and "changed" when the
- * latest turn changed it; nothing once a later turn has passed it by.
+ * latest turn changed it; nothing once a later turn has passed it by, or
+ * when the design tracks no revisions (the platform's: `revision` null).
  */
 export type ArtifactMarker = "out of date" | "new" | "changed";
 
 export function artifactMarker(
   artifact: Pick<DesignArtifact, "features" | "addedIn" | "changedIn">,
-  revision: number,
+  revision: number | null,
   outOfDate: readonly string[],
 ): ArtifactMarker | null {
   if (artifact.features.some((f) => outOfDate.includes(f))) return "out of date";
+  if (revision === null) return null;
   if (artifact.addedIn === revision) return "new";
   if (artifact.changedIn === revision) return "changed";
   return null;
@@ -82,4 +84,9 @@ export function openArtifact(
   if (dependency) return { kind: "dependency", dependency };
   const artifact = artifacts.find((a) => a.id === art) ?? artifacts[0];
   return artifact ? { kind: "artifact", artifact } : null;
+}
+
+/** Something is designed: the design has an artifact. Before that, design is offered in the design card's body. */
+export function isDesigned(design: Pick<DesignModel, "artifacts">): boolean {
+  return design.artifacts.length > 0;
 }

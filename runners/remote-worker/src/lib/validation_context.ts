@@ -62,7 +62,7 @@ export interface FetchValidationContextOptions {
 /** The callback URL for a cycle's validation context. */
 export function validationContextUrl(platformUrl: string, cycleId: string): string {
   const base = platformUrl.endsWith("/") ? platformUrl.slice(0, -1) : platformUrl;
-  return `${base}/internal/v1/validation/${encodeURIComponent(cycleId)}/context`;
+  return `${base}/internal/v1/runs/${encodeURIComponent(cycleId)}/validation-context`;
 }
 
 /**

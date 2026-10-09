@@ -43,11 +43,6 @@ func TestSpecAgentState(t *testing.T) {
 			want:   "never-started",
 		},
 		{
-			name:   "a turn is in flight",
-			newest: &spec.AgentTurn{Status: spec.TurnStatusRunning},
-			want:   "working",
-		},
-		{
 			name:   "the newest turn died",
 			newest: &spec.AgentTurn{Status: spec.TurnStatusFailed},
 			want:   "failed",

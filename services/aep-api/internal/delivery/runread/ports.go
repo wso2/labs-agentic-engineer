@@ -94,7 +94,7 @@ type ValidationCycleReader interface {
 
 // ValidationSnapshotReader reads one attempt's evidence AT A COMMIT: the report
 // the runner committed, and the acceptance criteria it was judged against.
-// Satisfied by an app adapter over spec.FilesService.
+// Satisfied by an app adapter over the Git port (app.acceptanceCriteria).
 //
 // Both halves come from the same commit and that is the entire reason this is
 // one port with one `at` rather than two reads a caller pairs up. The report
@@ -160,14 +160,15 @@ type ProjectBuildLister interface {
 // surface:
 //
 //   - CycleEvents is the v2 RunEvent feed and is what the RUN progress stream
-//     serves. It reads the platform's own RECORDING of the cycle — never the
-//     pod, never the archive. Its cursor is an OPAQUE string: a caller carries
-//     back whatever it was handed and starts from "". Opaque on purpose — it is
-//     a byte offset into a per-attempt file today, and a reader that parsed it
-//     would pin that. Its second return is the ATTEMPT the events came from,
-//     which the frame carries: seqs restart at 1 on a re-dispatch, so a client
-//     deduping on seq alone would silently drop the retry's whole feed. One call
-//     serves one attempt.
+//     serves. It reads the cycle's pod log while the pod exists and the
+//     observability plane after, numbered by the producer's own seq so either
+//     source serves the same events. run is the cycle's run row, whose cancel
+//     stamp marks a cycle a cancel closed. Its cursor is an OPAQUE string: a
+//     caller carries back whatever it was handed and starts from "". Its
+//     second return is the ATTEMPT the events came from, which the frame
+//     carries: seqs restart at 1 on a re-dispatch, so a client deduping on seq
+//     alone would silently drop the retry's whole feed. One call serves one
+//     attempt.
 //   - CycleProgress is the v1 shape, and survives for the VERSION build-progress
 //     stream, which stitches many runs into one narrative and has not moved. It
 //     still derives per viewer from the pod log or the observability archive,
@@ -177,7 +178,7 @@ type ProjectBuildLister interface {
 // cycle, and splitting them would invite a boot where a cycle is readable on one
 // stream and silent on the other.
 type CycleLogReader interface {
-	CycleEvents(ctx context.Context, cycle *delivery.RunCycle, cursor string) (events []gen.RunEvent, attempt int, next string, err error)
+	CycleEvents(ctx context.Context, run *delivery.MilestoneRun, cycle *delivery.RunCycle, cursor string) (events []gen.RunEvent, attempt int, next string, err error)
 	CycleProgress(ctx context.Context, cycle *delivery.RunCycle, sinceMillis int64) (*contracts.ProgressResponse, error)
 }
 
@@ -186,13 +187,13 @@ type CycleLogReader interface {
 //
 // It is a question about the PLATFORM, not about the cycle, which is why it is
 // its own port and why the cycle projection takes the answer as an argument
-// rather than deriving it: a read model that had to open a file to describe a
-// row would no longer be the free-to-poll read this package is built to be, and
-// the one caller that cannot answer (a boot with no store) must still be able to
-// project a cycle.
+// rather than deriving it. The answer comes from the row alone (open, within
+// the log retention, a recent failed read) — no log is read to describe a row,
+// so this stays the free-to-poll read this package is built to be. The answer
+// remembers the last read, so a stream that does read the feed asks AFTER that
+// read (emitCycles): a frame's state then describes the read behind its feed.
 //
-// nil → every cycle reports `none`, which is the honest answer for a platform
-// that is recording nothing.
+// nil → every cycle reports `unavailable`: a boot with no feed serves none.
 type RecordingReader interface {
 	RecordingState(cycle *delivery.RunCycle) gen.RunCycleViewRecording
 }
@@ -225,13 +226,14 @@ type CancelRequester interface {
 	RequestCancel(ctx context.Context, runID string) (*delivery.MilestoneRun, error)
 }
 
-// CycleReaper deletes the cancelled run's in-flight agent Component. Satisfied
-// by codingagent.CycleReaper, reached as a port because dispatch and its
-// cleanup belong to that slice.
+// CycleReaper stops the cancelled run's in-flight agent: it closes the cycle as
+// cancelled and suspends its Job binding (the Component is deleted later, at
+// settle). Satisfied by codingagent.CycleReaper, reached as a port because
+// dispatch and its cleanup belong to that slice.
 //
 // Optional: a boot without the OpenChoreo client cancels without reaping (the
-// run still settles; the leaked component is swept). Cancel never fails on a
-// reap error — see Commands.Cancel.
+// run still settles; the settler's backstop suspends the closed cycle). Cancel
+// never fails on a reap error — see Commands.Cancel.
 type CycleReaper interface {
 	ReapRunCycle(ctx context.Context, orgID, projectID, runID string) error
 }

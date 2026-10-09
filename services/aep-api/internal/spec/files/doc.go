@@ -14,9 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package files serves the spec workspace for the bound org: list the tree,
-// read a file at the branch tip, and apply an atomic write/delete batch.
+// Package files serves the project reference-documents upload for the bound
+// org: a pass-through to the org's AE Studio pod, which stores the documents
+// Spec file reads and writes run in the pod too.
 //
-// Trigger: list-files / read-file / apply-spec.
-// Ports:   spec.FilesService (the workspace mirror read + atomic apply).
+// Trigger: put-project-references.
+// Ports:   aestudiotools.References, sourcecontrol.ProjectRepoRows, the held-kickoff starter.
 package files

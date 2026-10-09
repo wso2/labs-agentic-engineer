@@ -117,8 +117,10 @@ type RunStore interface {
 // loop never trusts a merge signal's payload on its own.
 type CycleStore interface {
 	Append(ctx context.Context, cycle *delivery.RunCycle) (cycleID string, err error)
-	NoteDispatch(ctx context.Context, cycleID, jobRef string) error
-	NoteLaunch(ctx context.Context, cycleID, host, environment string) error
+	// NoteDispatch returns the updated row, or nil when the cycle was already
+	// closed (the write is fenced on an open cycle and changed nothing).
+	NoteDispatch(ctx context.Context, cycleID, jobRef string) (*delivery.RunCycle, error)
+	NoteLaunch(ctx context.Context, cycleID, host, environment, componentUID string) error
 	Finish(ctx context.Context, cycleID, mergeSHA string) error
 	// SetValidationVerdict records one validation ATTEMPT's outcome on its own cycle
 	// row — the verdict, the issue it was dispatched at, and the DIGEST of the
@@ -320,15 +322,6 @@ type Gates interface {
 	ProvisionForBuild(ctx context.Context, orgID, projectID, tag string, milestoneNumber int, inputs []delivery.ProvisionInput) error
 }
 
-// RunFailedRecorder is told when a run settles FAILED, so a surface a reader
-// is not looking at (the project's activity feed) can carry the fact. It is
-// handed the run id and nothing else: the recorder reads the row — tag,
-// failure code, component — itself, so the workflow carries no copy of facts
-// the row already holds. Best-effort by contract: it never returns an error.
-type RunFailedRecorder interface {
-	RecordRunFailed(ctx context.Context, orgID, runID string)
-}
-
 // Planner runs the version's planning turn, minting one prose issue per planned
 // Task into the milestone. Satisfied by `*task.PlanService` at the composition
 // root; declaring it here rather than importing keeps `task ⊥ run` intact, which
@@ -363,6 +356,24 @@ type DeployGate interface {
 // deployPollInterval until the answer settles.
 type DeploymentReader interface {
 	DeploymentState(ctx context.Context, orgID, projectID string, components []string) ([]delivery.ComponentDeploy, error)
+}
+
+// JobBindings writes a re-dispatched cycle's Job binding `suspend` flag.
+//
+// A re-dispatch reuses the cycle's Component, whose binding may still carry the
+// suspend the cycle watcher set at the previous attempt's terminal pod; left
+// there, the new attempt's Job is born suspended and never runs, so the
+// re-dispatch resumes it. A cancel that raced the re-dispatch is the one reason
+// to suspend it again (see Activities.NoteCycleDispatch).
+//
+// Both writes are update-only: neither creates a binding. Each answers nil when
+// there is nothing to write, including a legacy release that renders no
+// suspend and, for the suspend, a binding that is gone. Satisfied at the
+// composition root by the OpenChoreo component client. nil → nothing is
+// written.
+type JobBindings interface {
+	ResumeJobBinding(ctx context.Context, orgID, projectID, component, environment string) error
+	SuspendJobBinding(ctx context.Context, orgID, projectID, component, environment string) error
 }
 
 // WorkHalter marks the working-set issues a FAILED run could not finish, so the

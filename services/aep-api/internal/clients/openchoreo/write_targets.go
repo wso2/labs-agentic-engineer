@@ -36,10 +36,6 @@ type WriteTargets interface {
 	// OrgDefaultRoot is the root of the org's default pipeline, for org-scoped
 	// reads with no project in hand.
 	OrgDefaultRoot(ctx context.Context, org string) (string, error)
-	// OrgWriteTargets is the distinct write targets of the org's projects, for
-	// org-scoped writes. Projects whose target cannot be resolved are returned
-	// in unresolved rather than failing the whole fan-out.
-	OrgWriteTargets(ctx context.Context, org string) (targets []string, unresolved map[string]error, err error)
 }
 
 // ErrNoWriteTarget is a project (or org) whose pipeline yields no usable write
@@ -64,13 +60,8 @@ func (e *ErrNoWriteTarget) Error() string {
 
 func (e *ErrNoWriteTarget) Unwrap() error { return e.Cause }
 
-// orgProjectPageSize is the page size OrgWriteTargets lists projects with,
-// matching the console's project list.
-const orgProjectPageSize = 100
-
 type projectReader interface {
 	GetProject(ctx context.Context, orgName, projectName string) (*gen.Project, error)
-	ListProjects(ctx context.Context, orgName string, limit int, cursor string) (*gen.ProjectList, error)
 }
 
 type pipelineReader interface {
@@ -138,58 +129,4 @@ func (w *writeTargets) OrgDefaultRoot(ctx context.Context, org string) (string, 
 			Cause: fmt.Errorf("no pipeline named \"default\" and not exactly one candidate: %v", names)}
 	}
 	return w.rootOf(ctx, org, "", name)
-}
-
-func (w *writeTargets) OrgWriteTargets(ctx context.Context, org string) ([]string, map[string]error, error) {
-	if org == "" {
-		return nil, nil, errors.New("resolve org write targets: org is required")
-	}
-	type rootResult struct {
-		root string
-		err  error
-	}
-	// Memoized for this call only: many projects share one pipeline.
-	byPipeline := map[string]rootResult{}
-	seen := map[string]bool{}
-	var targets []string
-	unresolved := map[string]error{}
-
-	cursor := ""
-	for {
-		page, err := w.projects.ListProjects(ctx, org, orgProjectPageSize, cursor)
-		if err != nil {
-			return nil, nil, fmt.Errorf("resolve org write targets: %w", err)
-		}
-		for _, p := range page.Items {
-			if p.DeploymentPipeline == "" {
-				unresolved[p.Name] = &ErrNoWriteTarget{Org: org, Project: p.Name, Cause: ErrPipelineRefMissing}
-				continue
-			}
-			res, done := byPipeline[p.DeploymentPipeline]
-			if !done {
-				res.root, res.err = w.rootOf(ctx, org, p.Name, p.DeploymentPipeline)
-				byPipeline[p.DeploymentPipeline] = res
-			}
-			if res.err != nil {
-				var nwt *ErrNoWriteTarget
-				if !errors.As(res.err, &nwt) {
-					return nil, nil, res.err
-				}
-				// The memoized error names the first project that hit this
-				// pipeline; re-attribute it to this one.
-				own := *nwt
-				own.Project = p.Name
-				unresolved[p.Name] = &own
-				continue
-			}
-			if root := res.root; !seen[root] {
-				seen[root] = true
-				targets = append(targets, root)
-			}
-		}
-		if page.NextCursor == "" {
-			return targets, unresolved, nil
-		}
-		cursor = page.NextCursor
-	}
 }

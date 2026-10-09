@@ -25,6 +25,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/eventcore"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 
 	"gorm.io/gorm"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/wso2/aep/aep-api/internal/delivery/task"
 	"github.com/wso2/aep/aep-api/internal/dependencies/provisioning"
 	"github.com/wso2/aep/aep-api/internal/organization"
+	authn "github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -45,8 +47,19 @@ import (
 // Satisfies eventcore.RepoLookup and provisioning.RepoLocator.
 type repoLocator struct{ db *gorm.DB }
 
-func (r repoLocator) ByFullName(_ context.Context, fullName string) (string, string, error) {
-	return sourcecontrol.LookupOrgProjectByRepoURL(r.db, fullName)
+func (r repoLocator) ByFullName(ctx context.Context, fullName string) (string, string, error) {
+	return lookupRepoByFullName(ctx, r.db, fullName)
+}
+
+// lookupRepoByFullName resolves a GitHub full name to its org + project. A
+// webhook handler's ctx carries the delivery org, and the lookup then stays in
+// it: a delivery naming another org's repository resolves to nothing. Without
+// one (a reconcile sweep) the repository row is the authority.
+func lookupRepoByFullName(ctx context.Context, db *gorm.DB, fullName string) (string, string, error) {
+	if org, ok := webhook.DeliveryOrg(ctx); ok {
+		return sourcecontrol.LookupOrgProjectByRepoURLInOrg(db.WithContext(ctx), org, fullName)
+	}
+	return sourcecontrol.LookupOrgProjectByRepoURL(db, fullName)
 }
 
 // taskSnapshotAdapter reads a Task's current snapshot for the task-log stream's
@@ -249,8 +262,8 @@ func (r repoNamer) RepoFullName(ctx context.Context, orgID, projectID string) (s
 // ByFullName is the reverse lookup (`<owner>/<repo>` → org/project) the
 // issues/closed webhook uses to find the provider project of a declined
 // org-publish gate issue. Satisfies provisioning.RepoLocator.
-func (r repoNamer) ByFullName(_ context.Context, fullName string) (string, string, error) {
-	return sourcecontrol.LookupOrgProjectByRepoURL(r.db, fullName)
+func (r repoNamer) ByFullName(ctx context.Context, fullName string) (string, string, error) {
+	return lookupRepoByFullName(ctx, r.db, fullName)
 }
 
 // provisionProjects enumerates an org's ready projects for the provisioning
@@ -344,8 +357,8 @@ func githubBotLogin(appSlug string) string {
 	return appSlug + "[bot]"
 }
 
-// cycleOrgLookup resolves a run-cycle id to its owning org handle — the
-// RunnerAuthorizer's publisher-cc branch.
+// cycleRunnerLookup resolves a run-cycle id to its owning org handle and
+// whether it is still open — the RunnerAuthorizer's publisher-cc branch.
 //
 // It reads run_cycles because that is what a runner callback names: every agent
 // pod is launched by the milestone supervisor, which carries the cycle id to the
@@ -353,12 +366,12 @@ func githubBotLogin(appSlug string) string {
 // The only rows left there are dependency-provisioning gates, which run no agent
 // and are not a callback identity, so an execution id named in a path resolves to
 // nothing and the request fails closed.
-func cycleOrgLookup(db *gorm.DB) func(ctx context.Context, cycleID string) (string, error) {
-	return func(ctx context.Context, cycleID string) (string, error) {
+func cycleRunnerLookup(db *gorm.DB) authn.CycleLookup {
+	return func(ctx context.Context, cycleID string) (authn.RunnerCycle, error) {
 		var row delivery.RunCycle
-		if err := db.WithContext(ctx).Select("org_id").First(&row, "id = ?", cycleID).Error; err != nil {
-			return "", err
+		if err := db.WithContext(ctx).Select("org_id", "ended_at").First(&row, "id = ?", cycleID).Error; err != nil {
+			return authn.RunnerCycle{}, err
 		}
-		return row.OrgID, nil
+		return authn.RunnerCycle{OrgHandle: row.OrgID, Open: row.EndedAt == nil}, nil
 	}
 }

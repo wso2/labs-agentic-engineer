@@ -161,7 +161,7 @@ func (s *Service) claimVersion(ctx context.Context, orgID, projectID string, sco
 		Description: "Delivery increment and ledger for spec " + tag + ".",
 	})
 	if err != nil {
-		return nil, &EdgeError{Status: 502, Message: "create milestone: " + err.Error()}
+		return nil, &EdgeError{Status: 502, Message: "create milestone: " + err.Error(), Err: err}
 	}
 	// Supersede BEFORE the run row is admitted, and never a milestone of the title
 	// being claimed: a re-tag that lands on the SAME milestone tops it up, and

@@ -19,7 +19,6 @@ package organization
 import (
 	"database/sql/driver"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -31,8 +30,9 @@ import (
 // One row per OC org. Mode is fixed at connect time (kind ∈
 // {app-installation, user-pat}).
 //
-// CHECK constraints (secrets_shape_per_kind, app_fields) live in raw SQL
-// in the migration — GORM does not model them well.
+// The row holds no secret: the PAT lives only in the vault, behind the org's
+// github-pat reference row in org_secrets. The app_fields CHECK lives in raw
+// SQL in the migration — GORM does not model it well.
 type OrgCredential struct {
 	OcOrgID           string         `gorm:"primaryKey;type:text" json:"ocOrgId"`
 	Kind              string         `gorm:"type:text;not null;column:kind" json:"kind"`
@@ -42,20 +42,11 @@ type OrgCredential struct {
 	IdentityLogin     string         `gorm:"type:text;not null;column:identity_login" json:"identityLogin"`
 	InstallationID    *int64         `gorm:"column:installation_id" json:"installationId,omitempty"`
 	SelectedRepos     JSONStringList `gorm:"type:jsonb;column:selected_repos" json:"selectedRepos,omitempty"`
-	PATSecretRef      *string        `gorm:"type:text;column:pat_secret_ref" json:"-"`
-	WebhookSecrets    WebhookSecrets `gorm:"type:jsonb;column:webhook_secrets" json:"-"`
 	Status            string         `gorm:"type:text;not null;default:active;column:status" json:"status"`
 	ConnectedAt       time.Time      `gorm:"column:connected_at;not null;default:now()" json:"connectedAt"`
 	LastValidatedAt   *time.Time     `gorm:"column:last_validated_at" json:"lastValidatedAt,omitempty"`
 	IdentityChangedAt *time.Time     `gorm:"column:identity_changed_at" json:"identityChangedAt,omitempty"`
 	PrevIdentityLogin *string        `gorm:"type:text;column:prev_identity_login" json:"prevIdentityLogin,omitempty"`
-
-	// Secret-ref triplet + write timestamp. See OrgAnthropicCredential for
-	// lifecycle.
-	SecretRefName      *string    `gorm:"type:text;column:secret_ref_name" json:"-"`
-	SecretRefKVPath    *string    `gorm:"type:text;column:secret_ref_kv_path" json:"-"`
-	SecretRefProperty  *string    `gorm:"type:text;column:secret_ref_property" json:"-"`
-	SecretRefWrittenAt *time.Time `gorm:"column:secret_ref_written_at" json:"-"`
 }
 
 // TableName pins the underlying table to org_credentials. Without this
@@ -103,53 +94,5 @@ func (l *JSONStringList) Scan(value any) error {
 		return err
 	}
 	*l = s
-	return nil
-}
-
-// WebhookSecretEntry is one entry in the webhook_secrets JSONB list. The
-// list shape (rather than scalar) is what enables N-of-M rotation per
-// evolution-doc §7.6. Secret is AES-256-GCM sealed at rest (same framing
-// as org_secrets / publisher_client_secret).
-type WebhookSecretEntry struct {
-	Secret  string    `json:"secret"`
-	AddedAt time.Time `json:"added_at"`
-}
-
-// WebhookSecrets is a JSONB-backed list of WebhookSecretEntry. nil/empty
-// is stored as JSON null (used by App-mode rows where the list lives
-// platform-wide at _platform/github/app/webhook_secret rather than on
-// the row).
-type WebhookSecrets []WebhookSecretEntry
-
-func (w WebhookSecrets) Value() (driver.Value, error) {
-	if w == nil {
-		return nil, nil
-	}
-	return json.Marshal([]WebhookSecretEntry(w))
-}
-
-func (w *WebhookSecrets) Scan(value any) error {
-	if value == nil {
-		*w = nil
-		return nil
-	}
-	var b []byte
-	switch v := value.(type) {
-	case []byte:
-		b = v
-	case string:
-		b = []byte(v)
-	default:
-		return errors.New("WebhookSecrets.Scan: unsupported source type")
-	}
-	if len(b) == 0 || string(b) == "null" {
-		*w = nil
-		return nil
-	}
-	var s []WebhookSecretEntry
-	if err := json.Unmarshal(b, &s); err != nil {
-		return err
-	}
-	*w = s
 	return nil
 }

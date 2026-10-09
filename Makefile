@@ -13,6 +13,8 @@
 #   make typecheck    typecheck TS (tsc) + Go (go vet)
 #   make license      add license headers to all in-scope sources
 #   make license-check  fail if any in-scope source is missing a header
+#   make check-image-names  fail if the chart's platform image lists disagree,
+#                     or release.yml's matrix and images.yml's IMAGES differ
 #   make e2e-walk     the live walk (tests/e2e) against dev-env; on demand only
 #   make tools        install pinned Go tools (golangci-lint)
 #   make clean        remove build output and caches
@@ -49,7 +51,7 @@ LICENSE_HEADER := .github/license-header.txt
 LICENSE_MATCH = grep -E '\.(go|ts|tsx|sh)$$|(^|/)Dockerfile$$' | \
 	grep -vE '\.gen\.(go|ts)$$|_mock\.go$$|/mocks/|/node_modules/|/dist/|/generated/|(^|/)\.(agents|claude)/'
 
-.PHONY: install gen build dev test lint eval-ui eval-codegen typecheck license license-check tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images dev-update dev-runner obs-park obs-unpark obs-status bal-library-tool e2e-walk
+.PHONY: install gen build dev test lint eval-ui eval-codegen typecheck license license-check check-image-names tools clean eval cover build-runner workflow-skill deadcode-ts deadcode-ts-check manifests-check dev-env dev-images ae-studio-refs-check dev-update dev-runner ae-studio-check obs-park obs-unpark obs-status bal-library-tool e2e-walk
 
 install:
 	$(PNPM) install
@@ -93,16 +95,16 @@ manifests-check:
 	@bash $(ROOT)/deployments/scripts/check-trait-copies.sh
 
 # Local coverage summary — coverage is not gated in CI. Go: the aep-api module's fast-lane
-# cover target (-short, no Docker). TS: @aep/agents via node:test's
+# cover target (-short, no Docker). TS: @aep/ae-design-agent via node:test's
 # --experimental-test-coverage. Report-only — the TS side never fails the verb,
 # and spends no tokens. Extend module-by-module as other packages grow tests.
 cover:
 	@echo ">> Go coverage — services/aep-api (fast lane, -short)"
 	@$(MAKE) -C services/aep-api cover || true
 	@echo ""
-	@echo ">> TS coverage — @aep/agents (node:test --experimental-test-coverage)"
-	@$(PNPM) --filter @aep/agents exec node --experimental-test-coverage --import tsx --test "test/**/*.test.ts" 2>/dev/null \
-		| grep -E '^# (tests|pass|fail|all files)' || echo "  (TS coverage unavailable — run 'pnpm --filter @aep/agents test' to debug)"
+	@echo ">> TS coverage — @aep/ae-design-agent (node:test --experimental-test-coverage)"
+	@$(PNPM) --filter @aep/ae-design-agent exec node --experimental-test-coverage --import tsx --test "test/**/*.test.ts" 2>/dev/null \
+		| grep -E '^# (tests|pass|fail|all files)' || echo "  (TS coverage unavailable — run 'pnpm --filter @aep/ae-design-agent test' to debug)"
 
 # Spec-agent evals (evals/spec-agents). On-demand only — never wired into CI.
 #   make eval                 run every eval (real model calls, costs money)
@@ -140,6 +142,9 @@ license:
 license-check:
 	@git ls-files | $(LICENSE_MATCH) | tr '\n' '\0' | xargs -0 $(ADDLICENSE) -check -f $(LICENSE_HEADER)
 
+check-image-names:
+	@deployments/scripts/check-image-names.sh
+
 tools:
 	GOTOOLCHAIN=$(GO_TOOLCHAIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
@@ -150,9 +155,9 @@ e2e-walk:
 	bash tests/e2e/acme-expenses-walk.sh
 
 # TS dead-code gate (knip) — the counterpart of services/aep-api's Go
-# `deadcode-check`. Whole-program unused-export/file/dependency analysis over the
-# agents runtime + the playground that consumes it, run with --production so
-# *.test.ts never count as consumers. Config + rationale live in knip.jsonc.
+# `deadcode-check`. Whole-program unused-export/file/dependency analysis, run with
+# --production so *.test.ts never count as consumers. The packages it covers, the
+# config and the rationale live in knip.jsonc.
 #   make deadcode-ts        human report (never fails)
 #   make deadcode-ts-check  CI gate (fails on any finding)
 deadcode-ts:
@@ -225,8 +230,8 @@ workflow-skill:
 #   WITH_OBSERVABILITY=0  skips the observability plane, and with it the SRE
 #                         agent (the agent has nothing to read alerts from)
 #   WITH_SRE=0            keeps the plane but skips the SRE agent, and parks
-#                         the plane's heavy half last (park-observability.sh)
-#                         since nothing then reads it
+#                         tracing, metrics and RCA last (park-observability.sh)
+#                         since nothing then reads them; the logs plane stays up
 #
 # An SRE-only profile that saves the most memory:
 #   WITH_AGENT_MANAGER=0 make dev-env
@@ -279,9 +284,13 @@ dev-env:
 	cd tools/aectl && go build -o aectl-skaffold .
 	AE_DOMAIN=$(AE_DOMAIN) WITH_SKAFFOLD_CLIENT=1 bash deployments/scripts/setup-env-for-aectl.sh
 	$(MAKE) dev-images
+	$(MAKE) ae-studio-refs-check
 	./tools/aectl/aectl-skaffold platform config import --config skaffold/defaults.yaml
 	ANTHROPIC_API_KEY=none AEP_THUNDER_ADMIN_CLIENT_SECRET=ae-install-client-secret \
-		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local
+		./tools/aectl/aectl-skaffold platform install --addons=all --platform-version=latest --platform-chart=deployments/helm-charts/platform --image-tag=dev-local \
+		--ae-studio-image-design-agent="$(call ae_studio_ref,ae-design-agent)" \
+		--ae-studio-image-collab="$(call ae_studio_ref,ae-collab)" \
+		--ae-studio-image-studio-tools="$(call ae_studio_ref,ae-studio-tools)"
 	@if [ "$${WITH_AGENT_MANAGER:-1}" != "1" ]; then \
 		echo "⏭️  Skipping Agent Manager (WITH_AGENT_MANAGER=0)"; \
 	elif [ "$${WITH_OBSERVABILITY:-1}" != "1" ]; then \
@@ -308,8 +317,39 @@ dev-env:
 #
 # Needs the cluster to exist: skaffold is given its kube-context, and the
 # import targets it by name.
+#
+# The three ae-studio pod images are a second skaffold config
+# (skaffold/ae-studio.yaml) because they need a UNIQUE tag per build: aep-api
+# writes the refs into the OpenChoreo Resource, and a fixed tag would leave it
+# unchanged so the pod would never roll. Its --file-output is the single
+# source of those refs for dev-env and dev-update. Every ref is imported AND
+# pinned: a local-only tag has no registry to be pulled back from, so kubelet's
+# image GC must not evict it (the pinning build-runner.sh does for the runners).
+AE_STUDIO_IMAGES_JSON := .skaffold/ae-studio-images.json
+
+# The ref skaffold built for one ae-studio image. `sub("@.*";"")` drops a
+# trailing @sha256:<id> if a skaffold version appends one: a local (push:false)
+# build has no registry digest, and the suffix would break the import and the
+# Resource's image ref.
+ae_studio_ref = $$(jq -r '.builds[] | select(.imageName | endswith("$(1)")) | .tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON))
+
+# The `--set aeStudio.images.<k>=<ref>` pairs for the three ae-studio images.
+AE_STUDIO_IMAGE_SET = --set aeStudio.images.designAgent="$(call ae_studio_ref,ae-design-agent)" \
+	--set aeStudio.images.collab="$(call ae_studio_ref,ae-collab)" \
+	--set aeStudio.images.studioTools="$(call ae_studio_ref,ae-studio-tools)"
+
+# Fails loudly when dev-images' file-output lacks a ref for any of the three
+# images, rather than letting an empty `--set aeStudio.images.<k>=` through.
+ae-studio-refs-check:
+	@for n in ae-design-agent ae-collab ae-studio-tools; do \
+		jq -e --arg n "$$n" '.builds[] | select(.imageName | endswith($$n)) | select(.tag | length > 0)' $(AE_STUDIO_IMAGES_JSON) >/dev/null \
+			|| { echo "❌ no $$n ref in $(AE_STUDIO_IMAGES_JSON): run 'make dev-images'" >&2; exit 1; }; \
+	done
+
 dev-images:
 	skaffold build --kube-context k3d-openchoreo -f skaffold.yaml
+	mkdir -p .skaffold
+	skaffold build --kube-context k3d-openchoreo -f skaffold/ae-studio.yaml --file-output=$(AE_STUDIO_IMAGES_JSON)
 	# skaffold's own build cache lives in the HOST docker daemon, not the k3d
 	# cluster's containerd — a cache hit ("Found Locally") skips its internal
 	# k3d-import too, so a recreated/fresh cluster silently never receives an
@@ -317,17 +357,19 @@ dev-images:
 	# cache hit or not; re-importing an image the cluster already has is cheap.
 	k3d image import \
 		ghcr.io/wso2/aep/aep-api:dev-local \
-		ghcr.io/wso2/aep/agents:dev-local \
-		ghcr.io/wso2/aep/collab:dev-local \
 		ghcr.io/wso2/aep/console:dev-local \
 		ghcr.io/wso2/aep/tryit:dev-local \
+		$$(jq -r '.builds[].tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON)) \
 		--cluster openchoreo
+	for ref in $$(jq -r '.builds[].tag | sub("@.*";"")' $(AE_STUDIO_IMAGES_JSON)); do \
+		bash deployments/scripts/lib/pin-image.sh "$$ref" || exit 1; \
+	done
 
-# The observability plane's heavy half (OpenSearch, Prometheus, collectors,
-# adapters): `make dev-env` installs it running and parks it last, unless the
-# SRE agent runs (the default), which needs OpenSearch, Fluent Bit and the logs
-# adapter up to evaluate alerts. Unpark to read traces, metrics or archived
-# logs, between builds on an 8 GiB VM.
+# The observability plane's tracing, metrics and RCA workloads (Prometheus,
+# collectors, tracing adapter): `make dev-env` installs them running and parks
+# them last, unless the SRE agent runs (the default). The logs plane
+# (OpenSearch, Fluent Bit, the logs adapter) is never parked: run history reads
+# it. Unpark to read traces or metrics, between builds on an 8 GiB VM.
 obs-park:
 	bash deployments/scripts/park-observability.sh down
 obs-unpark:
@@ -337,10 +379,13 @@ obs-status:
 
 # Edit source, then run this: rebuilds only the images whose dependencies
 # changed (dev-images above), then re-points the aep-platform release at them
-# directly via `helm upgrade --reuse-values` — a plain CLI flag skaffold's own v4beta11
-# HelmRelease schema has no field for (see skaffold.yaml's header), and
-# load-bearing: without it this would reset every value `aectl platform
-# install` set (Thunder/OpenBao/webhook URLs, etc.) back to chart defaults.
+# with `aectl platform update` (helm upgrade --reset-then-reuse-values) — a
+# plain CLI flag skaffold's own v4beta11 HelmRelease schema has no field for
+# (see skaffold.yaml's header), and load-bearing: it keeps every value
+# `aectl platform install` set (Thunder/OpenBao URLs, etc.) while rendering on
+# the current chart's defaults, so a default the chart gained since the
+# install (aeStudio.webhookRelay.image) applies. Plain --reuse-values would
+# keep the install-time chart's defaults instead.
 #
 # The tag is always the same literal string (dev-local), so a repeat
 # `helm upgrade --set image.tag=dev-local` is byte-identical to the Deployment
@@ -350,6 +395,29 @@ obs-status:
 # picks up the new content; without it every dev-update after the first is a
 # no-op as far as the running pods are concerned.
 #
+# The ae-studio pod images get a unique tag per build (dev-images; the tag is
+# the built image id, stable per content), so the
+# helm upgrade changes aep-api's env and Helm rolls aep-api by itself; the
+# ae-studio pod then rolls at the next console visit, when aep-api's converge
+# sees the new image refs. Never `kubectl rollout restart` it: the Deployment
+# is OpenChoreo's, not ours.
+#
+# The upgrade is `aectl platform update`, not bare
+# helm, so it also re-applies the aeStudio.* values aectl derives from its
+# config (gateway host, IdP URLs, console origins, egress): an install that
+# predates them converges here, with no secret touched.
+#
+# deployments/scripts/openbao-aep-api-auth.sh runs before the upgrade: the
+# local OpenBao is in memory, so a restart forgets aep-api's write-only policy
+# and Kubernetes-auth role, and the new aep-api must find its role at its
+# first write. Idempotent (~2 s).
+#
+# `aectl platform sync-clients` runs after the upgrade because an update never
+# runs the install's Thunder setup: on an install that predates a Thunder
+# client it seeds that client's missing vault key (never rotating an existing
+# one) and registers it. Idempotent, and it touches no database or Thunder
+# admin secret.
+#
 # One-shot, not a watch loop. Run after `make dev-env`.
 # Console: http://console.ae.localhost:8080
 #
@@ -357,13 +425,16 @@ obs-status:
 # host-side TS dev servers per package) and already means something else.
 dev-update:
 	$(MAKE) dev-images
-	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
+	$(MAKE) ae-studio-refs-check
+	cd tools/aectl && go build -o aectl-skaffold .
+	bash deployments/scripts/openbao-aep-api-auth.sh
+	./tools/aectl/aectl-skaffold platform update --platform-chart deployments/helm-charts/platform \
 		--set aepApi.image.repository=ghcr.io/wso2/aep/aep-api --set aepApi.image.tag=dev-local \
-		--set aepAgents.image.repository=ghcr.io/wso2/aep/agents --set aepAgents.image.tag=dev-local \
-		--set collab.image.repository=ghcr.io/wso2/aep/collab --set collab.image.tag=dev-local \
 		--set console.image.repository=ghcr.io/wso2/aep/console --set console.image.tag=dev-local \
-		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local
-	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-agents deployment/collab-server deployment/aep-console deployment/aep-tryit
+		--set tryIt.image.repository=ghcr.io/wso2/aep/tryit --set tryIt.image.tag=dev-local \
+		$(AE_STUDIO_IMAGE_SET)
+	./tools/aectl/aectl-skaffold platform sync-clients
+	kubectl -n wso2-aep rollout restart deployment/aep-api deployment/aep-console deployment/aep-tryit
 
 # Builds the coding-agent runner images from this checkout (Claude Code and
 # OpenCode, deployments/scripts/build-runner.sh), imports them into k3d, and
@@ -371,13 +442,21 @@ dev-update:
 # released ghcr image and no OpenCode image, which takes OpenCode off the
 # runtime menu. Run after `make dev-env`, and again after changing
 # runners/remote-worker or a package it bakes in (agent-eval, web-search,
-# skills, bal-library-tool). Like dev-update, --reuse-values keeps aectl's
-# settings; the image values change, so Helm rolls aep-api by itself.
+# skills, bal-library-tool). Like dev-update, --reset-then-reuse-values keeps
+# aectl's settings on the current chart's defaults; the image values change, so
+# Helm rolls aep-api by itself.
 dev-runner:
 	FORCE=1 bash deployments/scripts/build-runner.sh
-	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reuse-values \
+	helm upgrade aep-platform deployments/helm-charts/platform -n wso2-aep --reset-then-reuse-values \
 		--set codingAgentRunner.image=aep-runner:dev \
 		--set codingAgentRunner.opencodeImage=aep-runner-opencode:dev
+
+# Read-only check of the live ae-studio Resource, pod and public hosts
+# (deployments/scripts/ae-studio-check.sh). CP_CONTEXT/DP_CONTEXT are separate
+# kube contexts for the control plane and the dataplane; both default to the
+# current context. Example: make ae-studio-check ORG=default
+ae-studio-check:
+	ORG="$(ORG)" CP_CONTEXT="$(CP_CONTEXT)" DP_CONTEXT="$(DP_CONTEXT)" bash deployments/scripts/ae-studio-check.sh
 
 clean:
 	$(TURBO) run build --force >/dev/null 2>&1 || true

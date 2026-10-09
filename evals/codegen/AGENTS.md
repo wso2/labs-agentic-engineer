@@ -17,7 +17,7 @@ All of it lives in `src/credentials.ts`; do not build a child env anywhere else.
   `AEP_CODING_ANTHROPIC_KEY`. SDK sessions get the token as
   `CLAUDE_CODE_OAUTH_TOKEN` and no API key; `system/init`'s `apiKeySource` is
   checked and an API key aborts the attempt as a harness error.
-- Do not import a playground module that loads `@aep/agents`: its module scope
+- Do not import a playground module that loads `@aep/ae-design-agent`: its module scope
   merges `deployments/.env`, API key included, into this process.
 
 ## Conventions

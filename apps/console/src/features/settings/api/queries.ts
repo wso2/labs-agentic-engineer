@@ -16,10 +16,11 @@
  * under the License.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { configKeys } from "./keys";
+import { aeStudioKeys } from "../../ae-studio/api/queries";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
@@ -28,6 +29,14 @@ type LLMPatch = components["schemas"]["LLMPatch"];
 
 function errorMessage(error: unknown, fallback: string): string {
   return apiErrorMessage(error, fallback);
+}
+
+// Every org config write rolls the org's AE Studio (its pod reads the GitHub
+// token and the model connection), so the cached state is stale the moment
+// one succeeds: re-read it, which is what lets the gate show the restart and
+// keeps onboarding's skills step from starting on a `ready` from before.
+function invalidateAeStudio(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: aeStudioKeys.all });
 }
 
 // --- Org config: GitHub + the model connection --------------------------
@@ -46,6 +55,10 @@ export function useConfig() {
   });
 }
 
+// Refusals that arrive after the save was committed: the server wrote the
+// settings and then failed a follow-up step, so the cached config is stale.
+const COMMITTED_SAVE_CODES = new Set(["agent_manager_not_updated"]);
+
 // The AI agents card's one Save: sends the patch aiSettingsPatch built.
 export function useSaveAiSettings() {
   const queryClient = useQueryClient();
@@ -61,6 +74,13 @@ export function useSaveAiSettings() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      invalidateAeStudio(queryClient);
+    },
+    onError: (error) => {
+      if (error instanceof ApiRequestError && error.code !== undefined && COMMITTED_SAVE_CODES.has(error.code)) {
+        void queryClient.invalidateQueries({ queryKey: configKeys.all });
+        invalidateAeStudio(queryClient);
+      }
     },
   });
 }
@@ -99,24 +119,26 @@ export function useConnectGitHubPat() {
     },
     onSuccess: (data: ConfigProjection) => {
       queryClient.setQueryData(configKeys.all, data);
+      invalidateAeStudio(queryClient);
     },
   });
 }
 
-// Disconnect: drops the org's GitHub connection, and with `uninstall` also
-// uninstalls the GitHub App (left installed, a later connect re-adopts it).
-// The config refetch then finds no connection, and onboarding takes over.
+// Disconnect: drops the org's GitHub connection (the platform no longer
+// installs or uninstalls a GitHub App). The config refetch then finds no
+// connection, and onboarding takes over.
 export function useDisconnectGitProvider() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (uninstall: boolean) => {
-      const { error } = await client.POST("/config/git-provider/disconnect", {
-        params: { query: { uninstall } },
-      });
-      if (error) throw new Error(errorMessage(error, "Failed to disconnect GitHub"));
+    mutationFn: async () => {
+      const { error } = await client.POST("/config/git-provider/disconnect");
+      if (error) {
+        throw new Error(errorMessage(error, "Failed to disconnect GitHub"));
+      }
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: configKeys.all });
+      invalidateAeStudio(queryClient);
     },
   });
 }

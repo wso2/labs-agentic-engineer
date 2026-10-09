@@ -86,7 +86,7 @@ func TestStageDerivation_FullPipeline(t *testing.T) {
 	}
 	st := mustStatus(t, fx)
 
-	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true}); st.Spec != want {
+	if want := (gen.SpecStage{Exists: true, Version: "v2", Dirty: true, Design: true, Availability: gen.SpecStageAvailabilityAvailable}); st.Spec != want {
 		t.Errorf("spec = %+v, want %+v", st.Spec, want)
 	}
 
@@ -265,6 +265,15 @@ func TestBuildStage_ValidationFailureAttribution(t *testing.T) {
 		{
 			name:      "a plan failure is the build's own",
 			runs:      failedFor(delivery.RunReasonPlanFailed),
+			wantBuild: "failed", wantValidation: "failed",
+		},
+		{
+			// On a dev run the agent that could not start is the CODING agent:
+			// nothing was built, so the build failed. Only a validation run's
+			// agent-start-failed is carved out (delivery.EndedInValidation), and
+			// the overview's build stage never reads a validation run.
+			name:      "a coding agent that could not start is the build's own",
+			runs:      failedFor(delivery.RunReasonAgentStartFailed),
 			wantBuild: "failed", wantValidation: "failed",
 		},
 		{
@@ -581,8 +590,9 @@ func TestRepoNotReady_ZeroValueStages(t *testing.T) {
 	if st.Phase != "repo-cloning" {
 		t.Fatalf("phase = %q, want repo-cloning", st.Phase)
 	}
-	if st.Spec != (gen.SpecStage{}) {
-		t.Errorf("spec = %+v, want zero-valued", st.Spec)
+	// Zero-valued facts, but the required enum still carries a member.
+	if st.Spec != (gen.SpecStage{Availability: gen.SpecStageAvailabilityAvailable}) {
+		t.Errorf("spec = %+v, want zero-valued facts, availability available", st.Spec)
 	}
 	if st.Build.Status != "idle" || st.Build.Version != "" {
 		t.Errorf("build = %+v, want idle zero-valued", st.Build)

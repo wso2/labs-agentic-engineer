@@ -20,20 +20,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
-
-// RetentionEnforcer frees finished coding-agent Component slots before create.
-// Task 5 fills the LRU implementation; nil or a no-op is fine for Task 4.
-type RetentionEnforcer interface {
-	Enforce(ctx context.Context, orgID, projectID string) error
-}
 
 // OCJobSurface is the narrow OpenChoreo port the dispatcher needs. ComponentClient
 // satisfies it once EnsureWorkload / EnsureRelease / EnsureReleaseBinding land;
@@ -133,14 +127,18 @@ const (
 // EnsureComponentType → CreateComponent → EnsureWorkload → EnsureRelease →
 // EnsureReleaseBinding into the project's write target.
 type OCDispatcher struct {
-	oc        OCJobSurface
-	retention RetentionEnforcer
+	oc OCJobSurface
 	// targets names the environment each cycle's Job is bound into: the
 	// project's write target, resolved once per dispatch.
 	targets writeTargetResolver
 	// images is the runner image per runtime, used when OCDispatchInputs.Image
 	// is empty. Two tags built from one Dockerfile, sharing every heavy layer.
 	images map[orgconfig.AgentRuntime]runnerImage
+	// jobTTLSeconds is rendered as each Component's ttlSecondsAfterFinished;
+	// 0 leaves the ComponentType's schema default.
+	jobTTLSeconds int
+	// resources tunes the ComponentType ensured before every dispatch.
+	resources openchoreo.CodingAgentResources
 }
 
 // runnerImage is one runtime's runner image and the deploy setting it comes
@@ -157,6 +155,9 @@ type runnerImage struct {
 type OCDispatchResult struct {
 	RunName     string
 	Environment string
+	// ComponentUID is the Component's UID, read from CreateComponent (which
+	// re-reads the existing Component on a 409).
+	ComponentUID string
 }
 
 // NewOCDispatcher wires the dispatcher against an OC surface and the resolver
@@ -186,9 +187,18 @@ func (d *OCDispatcher) withRunnerImage(runtime orgconfig.AgentRuntime, image str
 	return d
 }
 
-// WithRetention sets the pre-create retention helper (Task 5). Nil skips.
-func (d *OCDispatcher) WithRetention(r RetentionEnforcer) *OCDispatcher {
-	d.retention = r
+// WithJobTTL sets how long a finished cycle Job (and its pod) is kept before
+// Kubernetes deletes it, rendered per Component as ttlSecondsAfterFinished in
+// whole seconds. Zero or less leaves the schema default.
+func (d *OCDispatcher) WithJobTTL(ttl time.Duration) *OCDispatcher {
+	d.jobTTLSeconds = max(0, int(ttl/time.Second))
+	return d
+}
+
+// WithCPURequest sets the CPU request default the ComponentType carries
+// (CODING_AGENT_CPU_REQUEST); empty keeps the schema default.
+func (d *OCDispatcher) WithCPURequest(quantity string) *OCDispatcher {
+	d.resources.CPURequest = quantity
 	return d
 }
 
@@ -209,15 +219,8 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		return OCDispatchResult{}, err
 	}
 
-	if err := d.oc.EnsureComponentType(ctx, in.OrgID, openchoreo.CodingAgentComponentType()); err != nil {
+	if err := d.oc.EnsureComponentType(ctx, in.OrgID, openchoreo.CodingAgentComponentType(d.resources)); err != nil {
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: ensure ComponentType: %w", err)
-	}
-
-	if d.retention != nil {
-		if err := d.retention.Enforce(ctx, in.OrgID, in.ProjectID); err != nil {
-			slog.WarnContext(ctx, "oc dispatch: retention enforce failed; continuing create",
-				"org", in.OrgID, "project", in.ProjectID, "error", err)
-		}
 	}
 
 	image := d.resolveImage(in)
@@ -234,9 +237,10 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		AutoBuild:   false,
 		AutoDeploy:  false,
 		Labels:      labels,
-		Parameters:  componentParameters(in),
+		Parameters:  componentParameters(in, d.jobTTLSeconds),
 	}
-	if _, err := d.oc.CreateComponent(ctx, in.OrgID, in.ProjectID, req); err != nil {
+	component, err := d.oc.CreateComponent(ctx, in.OrgID, in.ProjectID, req)
+	if err != nil {
 		if errors.Is(err, openchoreo.ErrPaymentRequired) {
 			return OCDispatchResult{}, fmt.Errorf("%w: create component %q", delivery.ErrAgentQuotaExceeded, in.RunName)
 		}
@@ -261,7 +265,11 @@ func (d *OCDispatcher) Dispatch(ctx context.Context, in OCDispatchInputs) (OCDis
 		return OCDispatchResult{}, fmt.Errorf("oc dispatch: release binding for %q: %w", in.RunName, err)
 	}
 
-	return OCDispatchResult{RunName: in.RunName, Environment: environment}, nil
+	componentUID := ""
+	if component != nil {
+		componentUID = component.UID
+	}
+	return OCDispatchResult{RunName: in.RunName, Environment: environment, ComponentUID: componentUID}, nil
 }
 
 // writeTarget resolves the environment this cycle's Job is bound into. The
@@ -342,11 +350,15 @@ func (d *OCDispatcher) markers(in OCDispatchInputs) map[string]string {
 
 // componentParameters are the ComponentType parameters this cycle sets. The
 // runtime is always stamped, so the rendered Job's label states the runtime
-// rather than inheriting the schema's default.
-func componentParameters(in OCDispatchInputs) map[string]any {
+// rather than inheriting the schema's default. The Job TTL is the dispatcher's
+// configuration, the same for every cycle.
+func componentParameters(in OCDispatchInputs, jobTTLSeconds int) map[string]any {
 	params := map[string]any{"runtime": string(runtimeOrDefault(in.Runtime))}
 	if in.ActiveDeadlineSeconds > 0 {
 		params["activeDeadlineSeconds"] = in.ActiveDeadlineSeconds
+	}
+	if jobTTLSeconds > 0 {
+		params["ttlSecondsAfterFinished"] = jobTTLSeconds
 	}
 	return params
 }

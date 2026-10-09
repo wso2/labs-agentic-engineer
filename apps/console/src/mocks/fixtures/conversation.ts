@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 
 type ConversationMessage = components["schemas"]["ConversationMessage"];
 

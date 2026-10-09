@@ -79,7 +79,7 @@ targets, isolated render.
   `Function.prototype` before the module runs, so prototype pollution throws.
   `RENDER_TIMEOUT_MS` is 15 s. The child is spawned asynchronously, so
   `checkPrototypeFiles` and `checkPrototype` return promises and a host keeps
-  its event loop while a prototype renders (the agents service serves other
+  its event loop while a prototype renders (the design agent serves other
   conversations; the CLI preview keeps answering).
 - Limits of the render check: see ADR-0042, Consequences.
 
@@ -104,9 +104,11 @@ The one TS definition of a reviewer's requests: `FeedbackRequest`,
 `prototypeHash` (SHA-256 of manifest, NUL, source). The hash is plain
 JavaScript and synchronous: Web Crypto's `crypto.subtle` exists only in secure
 contexts, and a console served over plain HTTP must still name a revision. The
-CLI, `@aep/agent-stream` and the console import it; the Go BFF and the OpenAPI
-contract mirror it, held by `test/fixtures/feedback-cases.json`, which the kit,
-agent-stream and Go all assert.
+CLI, `@aep/agent-stream`, the console and the design agent's turn-input checks
+(`ae-design-agent/src/edge/turn-input.ts`) import it; the design agent's
+contract (`api/ae-design-agent/v1/openapi.yaml`) mirrors the limits. The table
+`test/fixtures/feedback-cases.json` holds them together: the kit, agent-stream
+and the design agent (`test/v1-turn-inputs.test.ts`) all assert it.
 
 The review's comment queue is headless here too (`queue.ts`), so the console
 and the CLI host keep it alike and only draw their own UI: `FeedbackQueue`

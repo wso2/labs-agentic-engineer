@@ -17,20 +17,25 @@
  */
 
 /**
- * Session assembly: wire the playground adapters around the real agents app
+ * Session assembly: wire the playground adapters around the real design agent
  * for one project directory. Everything phase commands need — the booted
  * in-process service, the workspace materializer, project state, and the
  * working-tree skills dir — behind one open/close pair.
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { LanguageModel } from "ai";
+import { anthropicConnection } from "@aep/ae-design-agent/shared/model";
 import { bootAgentsApp } from "./agents-app.js";
-import { playgroundModel, type PlaygroundModel } from "../kit/model-connection.js";
+import { PlaygroundToolsSocket } from "./tools-fake.js";
+import { playgroundModel } from "../kit/model-connection.js";
 import { REPO_ROOT } from "../paths.js";
-import { FsSpecWorkspace, playConversationId } from "../ports/spec-workspace.js";
+import { FsSpecWorkspace } from "../ports/spec-workspace.js";
 import { FileConversationStore } from "../ports/conversation-store.js";
 import { conversationsDir, loadProjectState, rememberProject, saveProjectState } from "../state/project.js";
+import { rotateThread } from "./thread.js";
 import type { TurnSession } from "./turn.js";
 
 /** The working-tree skill library (edits apply next turn — no rebuild). */
@@ -42,12 +47,14 @@ export interface PlaygroundSession extends TurnSession {
 }
 
 export interface OpenOptions {
-  /** `--fresh`: rotate the project's `general` conversation before the first turn. */
+  /** `--fresh`: rotate the project's current thread before the first turn. */
   fresh?: boolean;
   /** Test seam: scripted model instead of the `AEP_MODEL_*` / `ANTHROPIC_API_KEY` connection. */
   model?: LanguageModel;
   /** Override the skills library dir (tests). */
   skillsDir?: string;
+  /** No one answers questions in this session (the one-shot phase verbs). */
+  headless?: boolean;
 }
 
 /**
@@ -56,38 +63,51 @@ export interface OpenOptions {
  * connection) unless a model is injected.
  */
 export async function openSession(projectDir: string, opts: OpenOptions = {}): Promise<PlaygroundSession> {
-  const turnModel: PlaygroundModel = opts.model ? { apiKey: "playground-mock" } : playgroundModel();
+  const connection = opts.model ? anthropicConnection("playground-mock") : playgroundModel();
 
   const ws = new FsSpecWorkspace(projectDir);
   const state = loadProjectState(projectDir, ws.slug);
-  saveProjectState(projectDir, state); // persist the minted conversation uuid on first open
+  saveProjectState(projectDir, state); // persist the minted thread id on first open
   rememberProject(projectDir);
 
+  const skillsDir = opts.skillsDir ?? SKILLS_DIR;
   const store = new FileConversationStore(conversationsDir(projectDir));
-  if (opts.fresh) {
-    store.reset(playConversationId(state.slug, "general", state.conversationUuid));
-  }
-
+  // The Turn socket's private dir (mkdtemp: 0700, so only this user reaches it).
+  const socketDir = mkdtempSync(join(tmpdir(), "aep-play-sock-"));
   const app = await bootAgentsApp({
     store,
-    workspaceMountRoot: ws.mountRoot,
-    apiKey: turnModel.apiKey,
+    tools: new PlaygroundToolsSocket(ws, skillsDir),
+    snapshotsDir: ws.mountRoot,
+    socketDir,
+    connection,
+    thread: { project: ws.slug, conversationId: state.conversationUuid },
     ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.headless ? { headless: true } : {}),
   });
 
-  return {
+  const session: PlaygroundSession = {
     projectDir,
     ws,
+    project: ws.slug,
     baseUrl: app.baseUrl,
     headers: app.headers,
-    ...(turnModel.connection ? { connection: turnModel.connection } : {}),
-    ...(turnModel.model ? { model: turnModel.model } : {}),
+    turnSocket: app.turnSocket,
     state,
-    skillsDir: opts.skillsDir ?? SKILLS_DIR,
+    skillsDir,
     store,
     close: async () => {
       await app.close();
       ws.cleanup();
+      rmSync(socketDir, { recursive: true, force: true });
     },
   };
+  if (opts.fresh) {
+    try {
+      await rotateThread(session);
+    } catch (err) {
+      await session.close();
+      throw err;
+    }
+  }
+  return session;
 }

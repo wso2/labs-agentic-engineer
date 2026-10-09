@@ -54,7 +54,7 @@ var (
 type Service struct {
 	client         openchoreo.ProjectClient
 	repoSvc        sourcecontrol.RepoService
-	webhookSvc     sourcecontrol.WebhookService
+	webhookSvc     projectWebhooks
 	artifactSvc    spec.ArtifactService
 	execs          delivery.ExecutionRepository
 	skillsProv     skillsProvisioner
@@ -72,7 +72,30 @@ type Service struct {
 	endpointGate   *EndpointGate          // deploy stage: is a Ready binding reachable (status_stages.go); may be nil
 	writeTargets   writeTargetResolver    // deploy stage: which environment's bindings count (status_stages.go)
 	cellWait       cellReadyWait          // how long CreateProject waits for the cells to report Ready
+	aeStudio       aeStudioReady          // the org's AE Studio must serve before a create; may be nil
 }
+
+// projectWebhooks is the per-project hook lifecycle a create registers and a
+// delete removes; sourcecontrol.WebhookService satisfies it.
+type projectWebhooks interface {
+	Register(ctx context.Context, orgID, projectID string) (*int64, error)
+	Unregister(ctx context.Context, orgID, projectID string) error
+}
+
+// aeStudioReady answers whether the org's AE Studio serves: nil when it does,
+// sourcecontrol.ErrAEStudioAbsent when the org has none (GitHub not
+// connected), sourcecontrol.ErrAEStudioUnavailable when it is not serving.
+// The aestudiotools adapter satisfies it.
+type aeStudioReady interface {
+	RequireReady(ctx context.Context, org string) error
+}
+
+// SetAEStudioReady wires the check CreateProject runs before it makes the
+// OpenChoreo project, so a create the org's AE Studio cannot serve
+// is refused (409 / 503) before anything exists to compensate. Nil skips it;
+// the repo create then refuses the same way, after the OC project, and
+// compensates it.
+func (s *Service) SetAEStudioReady(r aeStudioReady) { s.aeStudio = r }
 
 // cellReadyWait bounds the two readiness waits on a new project: the Project
 // itself, inside the create request, and its ProjectReleaseBindings, watched
@@ -228,7 +251,7 @@ func (s *Service) SetProjectCellProvisioner(c projectCellProvisioner) { s.cells 
 func NewProjectService(
 	client openchoreo.ProjectClient,
 	repoSvc sourcecontrol.RepoService,
-	webhookSvc sourcecontrol.WebhookService,
+	webhookSvc projectWebhooks,
 	artifactSvc spec.ArtifactService,
 	execs delivery.ExecutionRepository,
 ) *Service {
@@ -304,6 +327,15 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	if req != nil && strings.TrimSpace(req.DisplayName) == "" {
 		req.DisplayName = req.Name
 	}
+	// The org's AE Studio holds the project's repository, so it must serve
+	// BEFORE the OpenChoreo project exists: refused here, a create
+	// leaves nothing half-made. The error is returned unchanged for the edge
+	// to speak for (409 github_not_connected / 503 ae_studio_unavailable).
+	if s.aeStudio != nil {
+		if err := s.aeStudio.RequireReady(ctx, orgName); err != nil {
+			return nil, err
+		}
+	}
 	project, err := s.client.CreateProject(ctx, orgName, req)
 	if err != nil {
 		return nil, translateHTTPError(err)
@@ -312,9 +344,9 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	// Give the project its cell namespace in every environment its pipeline
 	// promotes through, before anything else is attached to it.
 	//
-	// FATAL, and compensating — the only other failure in this function that is
-	// (the repo-name conflict below). Both share a shape: retrying the create
-	// cannot fix them, because OpenChoreo now answers 409. Leaving the project
+	// FATAL, and compensating, like the project-type wait, the write-target
+	// check and the repo provisioning failure below. They share a shape:
+	// retrying the create cannot fix them, because OpenChoreo now answers 409. Leaving the project
 	// in place instead would leave a project that looks healthy in every status
 	// it reports and cannot deploy a single component.
 	//
@@ -374,90 +406,98 @@ func (s *Service) CreateProject(ctx context.Context, orgName string, req *gen.Cr
 	// Provision + clone the platform-owned git repo (async — polling via GetRepoStatus).
 	if s.repoSvc != nil {
 		repoInfo, createErr := s.repoSvc.CreateRepo(ctx, orgName, project.Name, req.Name, req.RepoName)
+		if errors.Is(createErr, sourcecontrol.ErrRepoDeletePending) {
+			// The row belongs to an earlier delete of this project that
+			// stopped after its OC project went. That delete cannot be re-run
+			// from anywhere (its OC project is gone, and this create is making
+			// a new one under the same name), so the create finishes its
+			// teardown and asks once more. A row still `deleting` after that
+			// compensates below like any other repo failure.
+			slog.WarnContext(ctx, "project.create_finishing_teardown", "org", orgName, "project", project.Name)
+			s.finishTeardown(ctx, orgName, project.Name)
+			repoInfo, createErr = s.repoSvc.CreateRepo(ctx, orgName, project.Name, req.Name, req.RepoName)
+		}
 		if createErr != nil {
-			// A repo name that already exists — user-chosen or derived from
-			// the project name — can never succeed on retry: compensate the
-			// OC project away and fail the create so the user picks another
-			// name. Every other repo failure stays best-effort (clone happens
-			// async and can be retried).
-			if sourcecontrol.IsRepoNameConflict(createErr) {
-				s.compensateCreate(ctx, orgName, project.Name, "repo name conflict")
-				return nil, createErr
+			// Any repo failure stops the create and compensates the OC
+			// project away: a project without its repository has
+			// nothing to hold its spec, and nothing repairs it later. The
+			// error is returned unchanged, so a name conflict still reads as
+			// one (the user picks another name) and an AE Studio answer —
+			// GitHub not connected, AE Studio restarting — reaches the edge
+			// that speaks for it (409 / 503).
+			s.compensateCreate(ctx, orgName, project.Name, "repo provisioning failure")
+			return nil, createErr
+		}
+		// Build credentials are now pre-staged per WorkflowRun as a K8s
+		// Secret named `<workflowRunName>-git-secret` in
+		// workflows-<orgID> immediately before each dispatch — see
+		// docs/design/build-credential-injection.md. Project creation
+		// no longer participates in any secret provisioning;
+		// OcSecretRefName is unused on new flows.
+		if repoInfo == nil {
+			slog.ErrorContext(ctx, "nil repoInfo on CreateRepo", "project", project.Name)
+		}
+		// Register the per-repo webhook so the BFF starts receiving events
+		// (pull_request, push, issue_comment) on this repo. Best-effort.
+		if s.webhookSvc != nil {
+			if _, hookErr := s.webhookSvc.Register(ctx, orgName, project.Name); hookErr != nil {
+				slog.ErrorContext(ctx, "failed to register webhook on repo",
+					"project", project.Name, "error", hookErr)
 			}
-			slog.ErrorContext(ctx, "failed to provision repo", "project", project.Name, "error", createErr)
-			// Don't fail project creation — clone happens async and can be retried.
-		} else {
-			// Build credentials are now pre-staged per WorkflowRun as a K8s
-			// Secret named `<workflowRunName>-git-secret` in
-			// workflows-<orgID> immediately before each dispatch — see
-			// docs/design/build-credential-injection.md. Project creation
-			// no longer participates in any secret provisioning;
-			// OcSecretRefName is unused on new flows.
-			if repoInfo == nil {
-				slog.ErrorContext(ctx, "nil repoInfo on CreateRepo", "project", project.Name)
+		}
+		// Stamp the project descriptor. This is the ONLY durable copy of
+		// the idea the user typed — it is what the /start flow reads back
+		// to generate requirements from, on any device and any client.
+		// Written even with an empty prompt: the file is also the marker
+		// that says "an Agentic Engineer project lives here".
+		//
+		// Best-effort, like every other post-create step above: a write
+		// failure must not destroy a creation the user already committed
+		// to, and /start degrades by asking for the idea instead.
+		if s.descriptors != nil {
+			if derr := s.descriptors.WriteDescriptor(ctx, orgName, project.Name, project.Name, req.Prompt); derr != nil {
+				slog.ErrorContext(ctx, "failed to write project descriptor (project usable; /start will ask for the idea)",
+					"project", project.Name, "error", derr)
 			}
-			// Register the per-repo webhook so the BFF starts receiving events
-			// (pull_request, push, issue_comment) on this repo. Best-effort.
-			if s.webhookSvc != nil {
-				if _, hookErr := s.webhookSvc.Register(ctx, orgName, project.Name); hookErr != nil {
-					slog.ErrorContext(ctx, "failed to register webhook on repo",
-						"project", project.Name, "error", hookErr)
-				}
-			}
-			// Stamp the project descriptor. This is the ONLY durable copy of
-			// the idea the user typed — it is what the /start flow reads back
-			// to generate requirements from, on any device and any client.
-			// Written even with an empty prompt: the file is also the marker
-			// that says "an Agentic Engineer project lives here".
-			//
-			// Best-effort, like every other post-create step above: a write
-			// failure must not destroy a creation the user already committed
-			// to, and /start degrades by asking for the idea instead.
-			if s.descriptors != nil {
-				if derr := s.descriptors.WriteDescriptor(ctx, orgName, project.Name, project.Name, req.Prompt); derr != nil {
-					slog.ErrorContext(ctx, "failed to write project descriptor (project usable; /start will ask for the idea)",
-						"project", project.Name, "error", derr)
-				}
-			}
+		}
 
-			// Seed `.claude/skills/` so a clone carries the org's coding
-			// guidance before any design or task exists. ASYNC for the same
-			// reason the skills-repo provisioning above is: this may have to
-			// create the org repo on first touch (its read path provisions
-			// lazily), and GitHub repo creation must not sit in the create
-			// latency the user waits on. Best-effort — every later refresh at
-			// design save and at dispatch is diff-first, so a project that
-			// misses this seed heals on its first build.
-			if s.skillMirrorSvc != nil {
-				mirror, projectName := s.skillMirrorSvc, project.Name
-				async.Go(context.Background(), "project skills seed", func(context.Context) {
-					bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					defer cancel()
-					if merr := mirror.SyncProjectSkills(bg, orgName, projectName); merr != nil {
-						slog.WarnContext(bg, "skills: project mirror seed failed (heals on the next refresh)",
-							"org", orgName, "project", projectName, "error", merr)
-					}
-				})
-			}
+		// Seed `.claude/skills/` so a clone carries the org's coding
+		// guidance before any design or task exists. ASYNC for the same
+		// reason the skills-repo provisioning above is: this may have to
+		// create the org repo on first touch (its read path provisions
+		// lazily), and GitHub repo creation must not sit in the create
+		// latency the user waits on. Best-effort — every later refresh at
+		// design save and at dispatch is diff-first, so a project that
+		// misses this seed heals on its first build.
+		if s.skillMirrorSvc != nil {
+			mirror, projectName := s.skillMirrorSvc, project.Name
+			async.Go(context.Background(), "project skills seed", func(context.Context) {
+				bg, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				if merr := mirror.SyncProjectSkills(bg, orgName, projectName); merr != nil {
+					slog.WarnContext(bg, "skills: project mirror seed failed (heals on the next refresh)",
+						"org", orgName, "project", projectName, "error", merr)
+				}
+			})
+		}
 
-			// The journey starts itself (#562): fire `/start` rather than
-			// land the user on a dashboard asking them to press a button for
-			// work the platform can already do. AFTER the descriptor commit
-			// above — that file is where the turn reads the idea from — and
-			// BEFORE this call returns, so the client arrives at a project
-			// whose turn already exists rather than one that looks unstarted
-			// for the couple of seconds the dispatch takes.
-			//
-			// HELD when the caller says reference documents are still coming:
-			// they are the primary brief, and a kickoff dispatched before the
-			// upload would interview the user about a document the agent
-			// never saw. The references call fires it instead. An abandoned
-			// upload therefore leaves the project un-started, which the spec
-			// card offers as a CTA — the honest outcome, and better than an
-			// interview conducted blind.
-			if s.kickoff != nil && !req.ReferencesPending {
-				s.kickoff.Kickoff(ctx, orgName, project.Name)
-			}
+		// The journey starts itself (#562): fire `/start` rather than
+		// land the user on a dashboard asking them to press a button for
+		// work the platform can already do. AFTER the descriptor commit
+		// above — that file is where the turn reads the idea from — and
+		// BEFORE this call returns, so the client arrives at a project
+		// whose turn already exists rather than one that looks unstarted
+		// for the couple of seconds the dispatch takes.
+		//
+		// HELD when the caller says reference documents are still coming:
+		// they are the primary brief, and a kickoff dispatched before the
+		// upload would interview the user about a document the agent
+		// never saw. The references call fires it instead. An abandoned
+		// upload therefore leaves the project un-started, which the spec
+		// card offers as a CTA — the honest outcome, and better than an
+		// interview conducted blind.
+		if s.kickoff != nil && !req.ReferencesPending {
+			s.kickoff.Kickoff(ctx, orgName, project.Name)
 		}
 	}
 
@@ -494,6 +534,16 @@ type guardrailRecords interface {
 func (s *Service) SetGuardrailRecords(r guardrailRecords) { s.guardrails = r }
 
 func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string) error {
+	// Mark the repo row `deleting` before anything is torn down: from here no
+	// sweep lists the project and no hook id can land on its row, so the hook
+	// repair never installs a hook the teardown below would miss. A delete
+	// that stops before the OC project goes puts the mark back.
+	if s.repoSvc != nil {
+		if err := s.repoSvc.BeginDelete(ctx, orgName, projectName); err != nil {
+			return err
+		}
+	}
+
 	// Deprovision the project's OC Resource model FIRST — while its design (the
 	// dependency inventory) is still readable and before the OC Project delete,
 	// which does not cascade the logically-owned Resources/bindings. Best-effort.
@@ -539,9 +589,26 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 	// a project that still exists there would strand the project instead.
 	if err := translateHTTPError(s.client.DeleteProject(ctx, orgName, projectName)); err != nil &&
 		!errors.Is(err, ErrProjectNotFound) {
+		if s.repoSvc != nil {
+			if aerr := s.repoSvc.AbortDelete(context.WithoutCancel(ctx), orgName, projectName); aerr != nil {
+				slog.ErrorContext(ctx, "failed to unmark the repo row after a refused delete — the project's sweeps skip it until it is deleted",
+					"org", orgName, "project", projectName, "error", aerr)
+			}
+		}
 		return err
 	}
 
+	s.finishTeardown(ctx, orgName, projectName)
+	return nil
+}
+
+// finishTeardown is the half of a project delete that comes after the OC
+// project is gone: the run supervisors, the webhook, the repository row, the
+// executions and the run ledger. None of it touches OpenChoreo, and every step
+// is idempotent and best-effort, so it is safe to run again. DeleteProject runs
+// it after the OC delete; CreateProject runs it when it meets the repo row of a
+// delete that stopped partway through it.
+func (s *Service) finishTeardown(ctx context.Context, orgName, projectName string) {
 	// The run SUPERVISORS come down before the things they read do — before the
 	// repository they poll and before the rows they write.
 	//
@@ -578,7 +645,8 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 		}
 	}
 
-	// Drop the platform's own repository record and its workspace clone.
+	// Drop the platform's own repository record, after DeleteRepo has asked
+	// the org's pod to trash its mirror and the project's reference documents.
 	//
 	// The REMOTE is deliberately not touched, and that is the one piece of this
 	// teardown that leaves something behind: the GitHub repository survives a
@@ -621,8 +689,6 @@ func (s *Service) DeleteProject(ctx context.Context, orgName, projectName string
 			slog.ErrorContext(ctx, "failed to purge guardrail records for project", "org", orgName, "project", projectName, "error", err)
 		}
 	}
-
-	return nil
 }
 
 func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName string) (*gen.ProjectStatus, error) {
@@ -631,6 +697,9 @@ func (s *Service) GetProjectStatus(ctx context.Context, orgName, projectName str
 	status := &gen.ProjectStatus{}
 	status.Build.Status = buildIdle
 	status.Deploy.Status = deployNone
+	// Known-empty until the repo is ready, not unreadable: the required enum
+	// says so on every answer, including the no-repo / cloning / error ones.
+	status.Spec.Availability = gen.SpecStageAvailabilityAvailable
 
 	// Check git repo
 	if s.repoSvc == nil {
@@ -674,6 +743,11 @@ func applyRepoToProjectStatus(status *gen.ProjectStatus, repo *sourcecontrol.Git
 	status.RepoURL = repo.RepoURL
 
 	switch repo.Status {
+	case sourcecontrol.RepoStatusDeleting:
+		// The project is being deleted: it reads as having no repository.
+		status.RepoStatus = ""
+		status.Phase = "no-repo"
+		return true
 	case "pending", "cloning":
 		status.Phase = "repo-cloning"
 		return true
@@ -685,11 +759,19 @@ func applyRepoToProjectStatus(status *gen.ProjectStatus, repo *sourcecontrol.Git
 	return false
 }
 
+// compensateTimeout bounds the OC delete a failed create compensates with.
+const compensateTimeout = 30 * time.Second
+
 // compensateCreate deletes the OC project a failed create just made, so the
 // failure leaves nothing behind. Best-effort: the create's own error is the
-// one the caller returns, and a failed delete is only logged.
+// one the caller returns, and a failed delete is only logged. It runs on the
+// request's values but not its cancellation: a client that went away, or a
+// gateway that timed the request out, is often WHY the create failed, and
+// the compensation must still run (bounded by compensateTimeout).
 func (s *Service) compensateCreate(ctx context.Context, orgName, projectName, cause string) {
-	if delErr := s.client.DeleteProject(ctx, orgName, projectName); delErr != nil {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), compensateTimeout)
+	defer cancel()
+	if delErr := s.client.DeleteProject(cctx, orgName, projectName); delErr != nil {
 		slog.ErrorContext(ctx, "failed to compensate project after "+cause,
 			"project", projectName, "error", delErr)
 	}

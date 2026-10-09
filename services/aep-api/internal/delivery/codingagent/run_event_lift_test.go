@@ -132,7 +132,7 @@ func TestLiftV1KindsOntoTheirV2Counterparts(t *testing.T) {
 	// Every lifted event carries the envelope version, so a stored feed stays
 	// readable years later.
 	for _, ev := range []gen.RunEvent{ph, st, act, tu, tr, gc, gp, gh, pi, lg, rs} {
-		if ev.V != gen.RunEventV2 {
+		if ev.V != gen.RunEventVTwo {
 			t.Errorf("%s event has v=%d, want 2", ev.Kind, ev.V)
 		}
 	}
@@ -435,7 +435,7 @@ func TestLiftARealV1Recording(t *testing.T) {
 	byKind := map[gen.RunEventKind]int{}
 	for _, ev := range got {
 		byKind[ev.Kind]++
-		if ev.V != gen.RunEventV2 || ev.AgentID == "" || !ev.Kind.Valid() {
+		if ev.V != gen.RunEventVTwo || ev.AgentID == "" || !ev.Kind.Valid() {
 			t.Fatalf("lifted event breaks the contract's required fields: %+v", ev)
 		}
 	}

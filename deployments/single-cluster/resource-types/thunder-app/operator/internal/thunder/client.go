@@ -585,7 +585,7 @@ func (c *client) EnsureApplication(ctx context.Context, app DesiredApp) (string,
 
 // needsVerify reports whether this app has anything for verifyWritten to diff —
 // it spares the create path a list + get round trip for an m2m client that
-// declared no scopes, which is every confidential app before phase 2.
+// declared no scopes, which is every confidential app that predates scope declarations.
 func needsVerify(app DesiredApp) bool {
 	return app.ClientType != "confidential" || len(app.Scopes) > 0
 }

@@ -63,9 +63,6 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			ListDeploymentsFunc: func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error) {
 //				panic("mock out the ListDeployments method")
 //			},
-//			ListInternalComponentsFunc: func(ctx context.Context, orgName string, projectName string) ([]openchoreo.InternalComponent, error) {
-//				panic("mock out the ListInternalComponents method")
-//			},
 //			ListProjectReleaseBindingsFunc: func(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error) {
 //				panic("mock out the ListProjectReleaseBindings method")
 //			},
@@ -74,6 +71,12 @@ var _ openchoreo.ComponentClient = &ComponentClientMock{}
 //			},
 //			ListWorkflowRunsFunc: func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error) {
 //				panic("mock out the ListWorkflowRuns method")
+//			},
+//			ResumeJobBindingFunc: func(ctx context.Context, orgName string, projectName string, componentName string, environment string) error {
+//				panic("mock out the ResumeJobBinding method")
+//			},
+//			SuspendJobBindingFunc: func(ctx context.Context, orgName string, projectName string, componentName string, environment string) error {
+//				panic("mock out the SuspendJobBinding method")
 //			},
 //			TriggerBuildFunc: func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*gen.WorkflowRun, error) {
 //				panic("mock out the TriggerBuild method")
@@ -133,9 +136,6 @@ type ComponentClientMock struct {
 	// ListDeploymentsFunc mocks the ListDeployments method.
 	ListDeploymentsFunc func(ctx context.Context, orgName string, projectName string, componentName string) (*gen.DeploymentList, error)
 
-	// ListInternalComponentsFunc mocks the ListInternalComponents method.
-	ListInternalComponentsFunc func(ctx context.Context, orgName string, projectName string) ([]openchoreo.InternalComponent, error)
-
 	// ListProjectReleaseBindingsFunc mocks the ListProjectReleaseBindings method.
 	ListProjectReleaseBindingsFunc func(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error)
 
@@ -144,6 +144,12 @@ type ComponentClientMock struct {
 
 	// ListWorkflowRunsFunc mocks the ListWorkflowRuns method.
 	ListWorkflowRunsFunc func(ctx context.Context, orgName string, projectName string, componentName string, limit int, cursor string) (*gen.WorkflowRunList, error)
+
+	// ResumeJobBindingFunc mocks the ResumeJobBinding method.
+	ResumeJobBindingFunc func(ctx context.Context, orgName string, projectName string, componentName string, environment string) error
+
+	// SuspendJobBindingFunc mocks the SuspendJobBinding method.
+	SuspendJobBindingFunc func(ctx context.Context, orgName string, projectName string, componentName string, environment string) error
 
 	// TriggerBuildFunc mocks the TriggerBuild method.
 	TriggerBuildFunc func(ctx context.Context, orgName string, projectName string, componentName string, secretRef string, runName string) (*gen.WorkflowRun, error)
@@ -318,15 +324,6 @@ type ComponentClientMock struct {
 			// ComponentName is the componentName argument value.
 			ComponentName string
 		}
-		// ListInternalComponents holds details about calls to the ListInternalComponents method.
-		ListInternalComponents []struct {
-			// Ctx is the ctx argument value.
-			Ctx context.Context
-			// OrgName is the orgName argument value.
-			OrgName string
-			// ProjectName is the projectName argument value.
-			ProjectName string
-		}
 		// ListProjectReleaseBindings holds details about calls to the ListProjectReleaseBindings method.
 		ListProjectReleaseBindings []struct {
 			// Ctx is the ctx argument value.
@@ -363,6 +360,32 @@ type ComponentClientMock struct {
 			Limit int
 			// Cursor is the cursor argument value.
 			Cursor string
+		}
+		// ResumeJobBinding holds details about calls to the ResumeJobBinding method.
+		ResumeJobBinding []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Environment is the environment argument value.
+			Environment string
+		}
+		// SuspendJobBinding holds details about calls to the SuspendJobBinding method.
+		SuspendJobBinding []struct {
+			// Ctx is the ctx argument value.
+			Ctx context.Context
+			// OrgName is the orgName argument value.
+			OrgName string
+			// ProjectName is the projectName argument value.
+			ProjectName string
+			// ComponentName is the componentName argument value.
+			ComponentName string
+			// Environment is the environment argument value.
+			Environment string
 		}
 		// TriggerBuild holds details about calls to the TriggerBuild method.
 		TriggerBuild []struct {
@@ -424,10 +447,11 @@ type ComponentClientMock struct {
 	lockListBuildRuns                          sync.RWMutex
 	lockListComponents                         sync.RWMutex
 	lockListDeployments                        sync.RWMutex
-	lockListInternalComponents                 sync.RWMutex
 	lockListProjectReleaseBindings             sync.RWMutex
 	lockListProjectWorkflowRuns                sync.RWMutex
 	lockListWorkflowRuns                       sync.RWMutex
+	lockResumeJobBinding                       sync.RWMutex
+	lockSuspendJobBinding                      sync.RWMutex
 	lockTriggerBuild                           sync.RWMutex
 	lockTriggerBuildAtCommit                   sync.RWMutex
 	lockUpdateComponentTraitEnvironmentConfigs sync.RWMutex
@@ -1065,46 +1089,6 @@ func (mock *ComponentClientMock) ListDeploymentsCalls() []struct {
 	return calls
 }
 
-// ListInternalComponents calls ListInternalComponentsFunc.
-func (mock *ComponentClientMock) ListInternalComponents(ctx context.Context, orgName string, projectName string) ([]openchoreo.InternalComponent, error) {
-	if mock.ListInternalComponentsFunc == nil {
-		panic("ComponentClientMock.ListInternalComponentsFunc: method is nil but ComponentClient.ListInternalComponents was just called")
-	}
-	callInfo := struct {
-		Ctx         context.Context
-		OrgName     string
-		ProjectName string
-	}{
-		Ctx:         ctx,
-		OrgName:     orgName,
-		ProjectName: projectName,
-	}
-	mock.lockListInternalComponents.Lock()
-	mock.calls.ListInternalComponents = append(mock.calls.ListInternalComponents, callInfo)
-	mock.lockListInternalComponents.Unlock()
-	return mock.ListInternalComponentsFunc(ctx, orgName, projectName)
-}
-
-// ListInternalComponentsCalls gets all the calls that were made to ListInternalComponents.
-// Check the length with:
-//
-//	len(mockedComponentClient.ListInternalComponentsCalls())
-func (mock *ComponentClientMock) ListInternalComponentsCalls() []struct {
-	Ctx         context.Context
-	OrgName     string
-	ProjectName string
-} {
-	var calls []struct {
-		Ctx         context.Context
-		OrgName     string
-		ProjectName string
-	}
-	mock.lockListInternalComponents.RLock()
-	calls = mock.calls.ListInternalComponents
-	mock.lockListInternalComponents.RUnlock()
-	return calls
-}
-
 // ListProjectReleaseBindings calls ListProjectReleaseBindingsFunc.
 func (mock *ComponentClientMock) ListProjectReleaseBindings(ctx context.Context, orgName string, projectName string) ([]openchoreo.ReleaseBindingSummary, error) {
 	if mock.ListProjectReleaseBindingsFunc == nil {
@@ -1242,6 +1226,102 @@ func (mock *ComponentClientMock) ListWorkflowRunsCalls() []struct {
 	mock.lockListWorkflowRuns.RLock()
 	calls = mock.calls.ListWorkflowRuns
 	mock.lockListWorkflowRuns.RUnlock()
+	return calls
+}
+
+// ResumeJobBinding calls ResumeJobBindingFunc.
+func (mock *ComponentClientMock) ResumeJobBinding(ctx context.Context, orgName string, projectName string, componentName string, environment string) error {
+	if mock.ResumeJobBindingFunc == nil {
+		panic("ComponentClientMock.ResumeJobBindingFunc: method is nil but ComponentClient.ResumeJobBinding was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Environment:   environment,
+	}
+	mock.lockResumeJobBinding.Lock()
+	mock.calls.ResumeJobBinding = append(mock.calls.ResumeJobBinding, callInfo)
+	mock.lockResumeJobBinding.Unlock()
+	return mock.ResumeJobBindingFunc(ctx, orgName, projectName, componentName, environment)
+}
+
+// ResumeJobBindingCalls gets all the calls that were made to ResumeJobBinding.
+// Check the length with:
+//
+//	len(mockedComponentClient.ResumeJobBindingCalls())
+func (mock *ComponentClientMock) ResumeJobBindingCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+	Environment   string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}
+	mock.lockResumeJobBinding.RLock()
+	calls = mock.calls.ResumeJobBinding
+	mock.lockResumeJobBinding.RUnlock()
+	return calls
+}
+
+// SuspendJobBinding calls SuspendJobBindingFunc.
+func (mock *ComponentClientMock) SuspendJobBinding(ctx context.Context, orgName string, projectName string, componentName string, environment string) error {
+	if mock.SuspendJobBindingFunc == nil {
+		panic("ComponentClientMock.SuspendJobBindingFunc: method is nil but ComponentClient.SuspendJobBinding was just called")
+	}
+	callInfo := struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}{
+		Ctx:           ctx,
+		OrgName:       orgName,
+		ProjectName:   projectName,
+		ComponentName: componentName,
+		Environment:   environment,
+	}
+	mock.lockSuspendJobBinding.Lock()
+	mock.calls.SuspendJobBinding = append(mock.calls.SuspendJobBinding, callInfo)
+	mock.lockSuspendJobBinding.Unlock()
+	return mock.SuspendJobBindingFunc(ctx, orgName, projectName, componentName, environment)
+}
+
+// SuspendJobBindingCalls gets all the calls that were made to SuspendJobBinding.
+// Check the length with:
+//
+//	len(mockedComponentClient.SuspendJobBindingCalls())
+func (mock *ComponentClientMock) SuspendJobBindingCalls() []struct {
+	Ctx           context.Context
+	OrgName       string
+	ProjectName   string
+	ComponentName string
+	Environment   string
+} {
+	var calls []struct {
+		Ctx           context.Context
+		OrgName       string
+		ProjectName   string
+		ComponentName string
+		Environment   string
+	}
+	mock.lockSuspendJobBinding.RLock()
+	calls = mock.calls.SuspendJobBinding
+	mock.lockSuspendJobBinding.RUnlock()
 	return calls
 }
 

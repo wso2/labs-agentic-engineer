@@ -24,20 +24,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 )
 
-var secretRefColumns = []struct{ table, column string }{
-	{"org_anthropic_credentials", "secret_ref_name"},
-	{"org_anthropic_credentials", "secret_ref_kv_path"},
-	{"org_anthropic_credentials", "secret_ref_property"},
-	{"org_credentials", "secret_ref_name"},
-	{"org_credentials", "secret_ref_kv_path"},
-	{"org_credentials", "secret_ref_property"},
-	{"org_credentials", "secret_ref_written_at"},
-	{"organization_idp_profiles", "secret_ref_name"},
-	{"organization_idp_profiles", "secret_ref_kv_path"},
-	{"organization_idp_profiles", "secret_ref_property"},
-	{"organization_idp_profiles", "secret_ref_written_at"},
-}
-
 var leftoverSMAPIColumns = []struct{ table, column string }{
 	{"org_anthropic_credentials", "sm_api_secret_ref_name"},
 	{"org_anthropic_credentials", "sm_api_kv_path"},
@@ -58,11 +44,6 @@ func TestPhase14DropSMAPIColumns_Contract(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
 
-	for _, col := range secretRefColumns {
-		if !leftoverColumnExists(t, db, col.table, col.column) {
-			t.Fatalf("secret_ref_* column %s.%s must survive the drop, missing", col.table, col.column)
-		}
-	}
 	for _, col := range leftoverSMAPIColumns {
 		if leftoverColumnExists(t, db, col.table, col.column) {
 			t.Fatalf("sm_api_* column %s.%s must be gone after boot, still present", col.table, col.column)
@@ -82,11 +63,6 @@ func TestPhase14DropSMAPIColumns_Contract(t *testing.T) {
 	for _, col := range leftoverSMAPIColumns {
 		if leftoverColumnExists(t, db, col.table, col.column) {
 			t.Fatalf("sm_api_* column %s.%s must be gone after drop, still present", col.table, col.column)
-		}
-	}
-	for _, col := range secretRefColumns {
-		if !leftoverColumnExists(t, db, col.table, col.column) {
-			t.Fatalf("secret_ref_* column %s.%s must survive the drop, missing", col.table, col.column)
 		}
 	}
 

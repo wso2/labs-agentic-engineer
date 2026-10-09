@@ -2287,7 +2287,7 @@ func dropRoleFromExpenseTracker(t *testing.T) string {
 
 // A USER principal on a project role survives a converge. Nothing in
 // security.json can describe one — they come from self-service registration
-// (phase 7) and from an administrator assigning a role by hand — so a converge
+// and from an administrator assigning a role by hand — so a converge
 // that treated "not in assignTo" as "remove" would revoke every one of them on
 // every build, silently, and the account would simply stop working.
 func TestEnsureLeavesUserAndAppPrincipalsOnARoleAlone(t *testing.T) {

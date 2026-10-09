@@ -177,3 +177,31 @@ func TestProjectCellClient_ReadinessReadFailure(t *testing.T) {
 		t.Error("ProjectReleaseBindingReadiness: want error on 503")
 	}
 }
+
+// A missing resource is ErrNotFound, so a caller can tell it from a failed
+// read (AE Studio treats a missing ProjectReleaseBinding as drift).
+func TestProjectCellClient_ReadinessNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	c := &projectCellClient{baseURL: srv.URL, http: srv.Client()}
+	if _, err := c.ProjectReleaseBindingReadiness(context.Background(), "acme", "ae-system", "development"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ProjectReleaseBindingReadiness on 404: err %v, want ErrNotFound", err)
+	}
+	if _, err := c.ProjectReadiness(context.Background(), "acme", "shop"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ProjectReadiness on 404: err %v, want ErrNotFound", err)
+	}
+}
+
+// A failed read is not ErrNotFound.
+func TestProjectCellClient_ReadinessFailureIsNotNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"down"}`, http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	c := &projectCellClient{baseURL: srv.URL, http: srv.Client()}
+	if _, err := c.ProjectReleaseBindingReadiness(context.Background(), "acme", "ae-system", "development"); err == nil || errors.Is(err, ErrNotFound) {
+		t.Errorf("on 503: err %v, want a non-ErrNotFound error", err)
+	}
+}

@@ -21,6 +21,7 @@ import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
 import { ApiRequestError, apiErrorMessage } from "../../../api/errors";
 import { useConfig } from "../../settings/api/queries";
+import { isSystemProject, withoutSystemProjects } from "../systemProject";
 
 export type Project = components["schemas"]["Project"];
 type CreateProjectRequest = components["schemas"]["CreateProjectRequest"];
@@ -44,7 +45,7 @@ export function useProjects() {
     queryFn: async () => {
       const { data, error } = await client.GET("/projects");
       if (error) throw new ApiRequestError(error, "Couldn't load projects");
-      return data.items ?? [];
+      return withoutSystemProjects(data).items ?? [];
     },
   });
 }
@@ -65,7 +66,7 @@ export function useRepoProjectNames(refetchInterval: number) {
       do {
         const { data, error } = await client.GET("/projects", { params: { query: cursor ? { cursor } : {} } });
         if (error) throw new ApiRequestError(error, "Couldn't load projects");
-        names.push(...(data.items ?? []).filter((p) => p.repoUrl).map((p) => p.name));
+        names.push(...(data.items ?? []).filter((p) => p.repoUrl && !isSystemProject(p.name)).map((p) => p.name));
         cursor = data.nextCursor || undefined;
       } while (cursor);
       return names;
@@ -87,7 +88,7 @@ export function useProjectPages(search: string, limit: number) {
         params: { query: { limit, ...(search ? { search } : {}), ...(pageParam ? { cursor: pageParam } : {}) } },
       });
       if (error) throw new ApiRequestError(error, "Couldn't load projects");
-      return data;
+      return withoutSystemProjects(data);
     },
     initialPageParam: "",
     getNextPageParam: (last) => last.nextCursor || undefined,

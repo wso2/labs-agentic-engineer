@@ -18,7 +18,7 @@
 // published JSON Schema definition (docs/design/agents-generation-migration.md
 // §8): packages/contracts/schemas/component-design.schema.json, mirrored here as
 // a vendored embed because go:embed cannot cross the aep-api Go module boundary.
-// The agent's FileBundle write-gate (services/agents) and this Go validator both
+// The agent's FileBundle write-gate (components/dataplane/ae-system-project/ae-studio/ae-design-agent) and this Go validator both
 // key off that single file, so BFF and agent never drift into two hand-kept
 // copies.
 //

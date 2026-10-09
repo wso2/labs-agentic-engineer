@@ -50,8 +50,8 @@ func (s *stubObservClient) GetBuildLogs(ctx context.Context, orgName, projectNam
 	return s.GetBuildLogsFunc(ctx, orgName, projectName, componentName, buildName, since)
 }
 
-func (s *stubObservClient) QueryComponentLogs(context.Context, observability.ComponentLogQuery) ([]observability.LogLine, error) {
-	panic("stubObservClient: QueryComponentLogs not expected")
+func (s *stubObservClient) QueryCycleLogs(context.Context, observability.CycleLogQuery) ([]observability.LogLine, observability.CycleLogStats, error) {
+	panic("stubObservClient: QueryCycleLogs not expected")
 }
 
 // --- sourcecontrol.RepoService (only GetRepo is consulted by TriggerBuild) ----------
@@ -80,6 +80,8 @@ func (s *stubRepoSvc) EnsureBareRepo(context.Context, string, string, string) (*
 func (s *stubRepoSvc) SetWebhookID(context.Context, string, string, int64) error {
 	panic("stubRepoSvc: SetWebhookID not expected")
 }
+func (s *stubRepoSvc) BeginDelete(context.Context, string, string) error { return nil }
+func (s *stubRepoSvc) AbortDelete(context.Context, string, string) error { return nil }
 func (s *stubRepoSvc) DeleteRepo(context.Context, string, string) error {
 	panic("stubRepoSvc: DeleteRepo not expected")
 }
@@ -154,16 +156,16 @@ func (s *stubComponentSvc) GetBuildLogs(context.Context, string, string, string,
 // --- ModelKeyResolver (ai-agent model access) ---------------------------------
 
 type stubModelKeyResolver struct {
-	KeyRefFunc func(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
+	KeyPathRefFunc func(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error)
 }
 
 var _ ModelKeyResolver = (*stubModelKeyResolver)(nil)
 
-func (s *stubModelKeyResolver) KeyRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error) {
-	if s.KeyRefFunc == nil {
-		panic("stubModelKeyResolver: KeyRef not set")
+func (s *stubModelKeyResolver) KeyPathRef(ctx context.Context, ocOrgID string) (modelconn.Connection, organization.SecretRefTriplet, error) {
+	if s.KeyPathRefFunc == nil {
+		panic("stubModelKeyResolver: KeyPathRef not set")
 	}
-	return s.KeyRefFunc(ctx, ocOrgID)
+	return s.KeyPathRefFunc(ctx, ocOrgID)
 }
 
 // --- secretmanagersvc.OpenChoreoSecretReferenceClient (model access SecretReference) ---

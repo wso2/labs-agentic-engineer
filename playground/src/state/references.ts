@@ -20,11 +20,10 @@
  * Reference documents — the files a user attaches to a project, which the
  * `/start` kickoff names so the start skill reads them as the primary brief.
  *
- * This is the playground's half of aep-api's `listReferenceDocs`
- * (internal/spec/start_command.go): the platform lists the folder out of git
- * at the turn's base commit, the playground lists it off disk. Both hand the
- * turn PATHS only — the documents are ordinary spec content the agent reads
- * from the project itself.
+ * This is the playground's half of the project lookup's `references`
+ * (ae-studio-tools lists the folder out of git at the turn's base commit; the
+ * playground's tools socket lists it off disk). Both answer NAMES only; the
+ * design agent turns them into the snapshot paths a kickoff or flow names.
  */
 
 import { existsSync, readdirSync } from "node:fs";
@@ -34,8 +33,8 @@ import { join } from "node:path";
 export const REFERENCES_DIR = "specs/requirements/references";
 
 /**
- * The reference documents in `projectDir`, as repo-relative paths, sorted so a
- * given folder always produces the same turn. No folder (the ordinary case) is
+ * The reference documents in `projectDir`, as file names, sorted so a given
+ * folder always produces the same turn. No folder (the ordinary case) is
  * not an error: it yields an empty list and the kickoff simply says nothing
  * about documents — same best-effort posture as the captured idea, where
  * losing the steer costs a question, never the run.
@@ -51,5 +50,5 @@ export function readReferences(projectDir: string): string[] {
   } catch {
     return []; // unreadable folder — degrade to "no references", never throw
   }
-  return names.sort().map((n) => `${REFERENCES_DIR}/${n}`);
+  return names.sort();
 }

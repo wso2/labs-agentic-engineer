@@ -77,7 +77,7 @@ func (s *artifactService) ListVersions(ctx context.Context, orgID, projectID str
 		if !ok {
 			continue
 		}
-		files, err := s.readBundleAtTag(ctx, ref, t.Name, requirementsPrefix, requirementsBundleFilter)
+		files, err := s.readBundleAtTag(ctx, ref, t.Name, requirementsBundle)
 		if err != nil {
 			return nil, fmt.Errorf("read requirements at %s: %w", t.Name, err)
 		}
@@ -151,7 +151,7 @@ func (s *artifactService) ValidationScope(ctx context.Context, orgID, projectID,
 	slices.SortFunc(out.Features, reqspec.CompareIDs)
 	slices.SortFunc(out.HeldBack, reqspec.CompareIDs)
 
-	files, err := s.readBundleAtTag(ctx, ref, version, requirementsPrefix, requirementsBundleFilter)
+	files, err := s.readBundleAtTag(ctx, ref, version, requirementsBundle)
 	if err != nil {
 		return out, false, fmt.Errorf("read requirements at %s: %w", version, err)
 	}

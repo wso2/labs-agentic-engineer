@@ -17,7 +17,6 @@
 package reqspec
 
 import (
-	"html"
 	"regexp"
 	"strings"
 )
@@ -109,24 +108,23 @@ func readDoc(content string) document {
 			inPara = false
 			continue
 		case strings.HasPrefix(trimmed, "## "):
-			doc.sections = append(doc.sections, section{title: unescape(strings.TrimSpace(trimmed[3:]))})
+			doc.sections = append(doc.sections, section{title: readLine(trimmed[3:])})
 			cur = &doc.sections[len(doc.sections)-1]
 			closeAll()
 		case strings.HasPrefix(trimmed, "# ") && doc.title == "" && cur == nil:
-			doc.title = unescape(strings.TrimSpace(trimmed[2:]))
+			doc.title = readLine(trimmed[2:])
 		case strings.HasPrefix(trimmed, "#"):
 			closeAll()
 		case cur == nil:
 			// Text above the first section: nothing the contract reads.
 		default:
 			indent := len(raw) - len(strings.TrimLeft(raw, " \t"))
-			// The text as markdown means it: the collab room's serializer
-			// escapes what would otherwise be markup (`\[org default\]`), and a
-			// line ending in `\` is a hard break. The console reads the room's
-			// unescaped text, so this reader must too.
-			trimmed = unescape(trimmed)
+			// A line ending in `\` is a hard break, not a character. The rest of
+			// the markdown is read once the item or paragraph is whole (below),
+			// so markup over a wrapped line reads as one.
+			trimmed = dropHardBreak(trimmed)
 			if m := listItemRE.FindStringSubmatch(raw); m != nil {
-				text := unescape(strings.TrimSpace(m[2]))
+				text := dropHardBreak(strings.TrimSpace(m[2]))
 				if len(m[1]) >= 2 && inItem {
 					last := &cur.items[len(cur.items)-1]
 					last.children = append(last.children, text)
@@ -155,16 +153,51 @@ func readDoc(content string) document {
 		}
 		sawBlank = false
 	}
+	for i := range doc.sections {
+		s := &doc.sections[i]
+		for j := range s.items {
+			s.items[j].text = readLine(s.items[j].text)
+			for k := range s.items[j].children {
+				s.items[j].children[k] = readLine(s.items[j].children[k])
+			}
+		}
+		for j := range s.paragraphs {
+			s.paragraphs[j] = readLine(s.paragraphs[j])
+		}
+	}
 	return doc
 }
 
-var escapedRE = regexp.MustCompile(`\\([!-/:-@\[-` + "`" + `{-~])`)
+func dropHardBreak(s string) string {
+	return strings.TrimSuffix(strings.TrimRight(s, " "), "\\")
+}
 
-// unescape reads a line of markdown as its words: an entity reference is the
-// character it names (`&amp;`, which the room's serializer writes for `&`), a
-// backslash escape is the character it escapes (CommonMark: any ASCII
-// punctuation), and a trailing backslash — a hard line break — is dropped.
-func unescape(s string) string {
-	s = strings.TrimSuffix(strings.TrimRight(s, " "), "\\")
-	return strings.TrimSpace(html.UnescapeString(escapedRE.ReplaceAllString(s, "$1")))
+// readLine reads a line of markdown as its words, the text the console reads
+// for it from the collab room (inline.go): escapes and entity references are
+// the characters they stand for, and inline markup is its text. The one mark
+// kept is a closing tag (`*assumed*`), written back the way parseLine finds
+// it — the console finds it the same way, as the line's last italic run.
+func readLine(s string) string {
+	in := readInline(strings.TrimSpace(s))
+	if tag := closingTag(in); tag != nil {
+		return strings.TrimSpace(in.text[:tag.start] + "*" + in.text[tag.start:tag.end] + "*" + in.text[tag.end:])
+	}
+	return strings.TrimSpace(in.text)
+}
+
+var trailingPunctRE = regexp.MustCompile(`^[\s.,;:]*$`)
+
+// closingTag is the italic tag word closing the line, with nothing after it
+// but punctuation (console model/ids.ts closingTag), or nil.
+func closingTag(in inlineText) *span {
+	for i := len(in.italic) - 1; i >= 0; i-- {
+		r := in.italic[i]
+		word := in.text[r.start:r.end]
+		trimmed := strings.TrimSpace(word)
+		if (trimmed == tagAssumed || trimmed == tagBlocking) && trailingPunctRE.MatchString(in.text[r.end:]) {
+			start := r.start + strings.Index(word, trimmed)
+			return &span{start, start + len(trimmed)}
+		}
+	}
+	return nil
 }

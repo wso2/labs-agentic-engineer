@@ -20,7 +20,7 @@ import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { hasAuthParams, useAuth } from "react-oidc-context";
 import { env } from "../config/env";
 import { getUserManager } from "./userManager";
-import { decodeJwtClaims, identityFromClaims, type TokenClaims } from "./claims";
+import { decodeJwtClaims, identityFromClaims, sessionUserId, type TokenClaims } from "./claims";
 import { MOCK_ORG, MOCK_USER, isMockSignedOut, setMockSignedOut } from "./mockSession";
 import { AuthScreen } from "./AuthScreen";
 import { BillingActivation } from "./BillingActivation";
@@ -120,7 +120,7 @@ function OidcGuard({ children }: PropsWithChildren) {
       : {};
     const identity = identityFromClaims(idClaims, accessClaims);
     return {
-      user: { name: identity.name, email: identity.email },
+      user: { id: sessionUserId(accessClaims, idClaims), name: identity.name, email: identity.email },
       orgHandle: identity.orgHandle,
       signOut: () => void signOut(),
     };

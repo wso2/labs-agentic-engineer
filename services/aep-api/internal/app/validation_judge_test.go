@@ -18,10 +18,13 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/delivery/validation"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
 
@@ -43,22 +46,28 @@ func reportWith(outcome string) string {
 		`"steps":[{"keyword":"Then","text":"the claim is there","command":"x","exit":1,"observed":"empty"}],"evidence":{"network":[]}}]}`
 }
 
-// judgeFiles serves a report and the oracle per commit.
-type judgeFiles struct {
-	spec.FilesService
-	reports map[string]string
-}
-
-func (f judgeFiles) ReadAt(_ context.Context, _, _, path, at string) (*spec.FileContent, error) {
-	r, ok := f.reports[at]
-	if !ok || path != validation.ReportFilePath {
-		return nil, spec.ErrFileNotFound
+// judgeRepo is the project repository with the oracle committed once and one
+// commit per report, in order; it returns each report commit's sha.
+func judgeRepo(t *testing.T, reports ...string) (projectFiles, []string) {
+	t.Helper()
+	ctx := context.Background()
+	f, pf := greeterFiles(t, map[string]string{validation.AcceptanceDirPath + "/F2-approvals.feature": approvalsOracle})
+	shas := make([]string, 0, len(reports))
+	for i, r := range reports {
+		_, base, err := f.ReadFile(ctx, greeterRef, "", validation.ReportFilePath)
+		if err != nil && !errors.Is(err, sourcecontrol.ErrPathNotFound) {
+			t.Fatal(err)
+		}
+		res, err := f.Commit(ctx, greeterRef, sourcecontrol.CommitRequest{
+			Writes:  []sourcecontrol.FileWrite{{Path: validation.ReportFilePath, Content: r, BaseSHA: base}},
+			Message: fmt.Sprintf("report %d", i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		shas = append(shas, res.CommitSHA)
 	}
-	return &spec.FileContent{Path: path, Content: r}, nil
-}
-
-func (f judgeFiles) Bundle(context.Context, string, string, string, string) (*spec.FileBundle, error) {
-	return &spec.FileBundle{Files: []spec.FileContent{{Path: "specs/validation/acceptance/F2-approvals.feature", Content: approvalsOracle}}}, nil
+	return pf, shas
 }
 
 type judgeScopes map[string]spec.ValidationScope
@@ -100,12 +109,10 @@ func TestRunValidation_JudgesAgainstThePreviousValidatedVersion(t *testing.T) {
 	cycle := func(sha, verdict string) delivery.RunCycle {
 		return delivery.RunCycle{Kind: delivery.CycleKindValidation, MergeSHA: sha, ValidationVerdict: verdict}
 	}
+	pf, shas := judgeRepo(t, reportWith("failed"), reportWith("passed"), reportWith("failed"))
+	v1First, v1Final, v3Now := shas[0], shas[1], shas[2]
 	a := runValidation{
-		files: judgeFiles{reports: map[string]string{
-			"v1-final": reportWith("passed"),
-			"v1-first": reportWith("failed"),
-			"v3-now":   reportWith("failed"),
-		}},
+		projectFiles: pf,
 		versions: judgeScopes{
 			"v1": {Features: []string{"F2"}},
 			"v3": {Features: []string{"F2", "F4"}, Built: []string{"F4 Spending reports"}, Earlier: []string{"v2", "v1"}},
@@ -118,23 +125,23 @@ func TestRunValidation_JudgesAgainstThePreviousValidatedVersion(t *testing.T) {
 			},
 		},
 		cycles: judgeCycles{byRun: map[string][]delivery.RunCycle{
-			"r1": {cycle("v1-first", delivery.ValidationVerdictFailed), cycle("v1-final", delivery.ValidationVerdictPassed)},
+			"r1": {cycle(v1First, delivery.ValidationVerdictFailed), cycle(v1Final, delivery.ValidationVerdictPassed)},
 		}},
 	}
-	j, err := a.judge(context.Background(), "org", "proj", "v3", "v3-now")
+	j, err := a.judge(context.Background(), "default", "p", "v3", v3Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if j.Baseline == nil || j.Baseline.Version != "v1" || j.Baseline.Commit != "v1-final" {
+	if j.Baseline == nil || j.Baseline.Version != "v1" || j.Baseline.Commit != v1Final {
 		t.Fatalf("baseline = %+v, want v1 at its final attempt (v2 was never validated)", j.Baseline)
 	}
 	if f := j.Failures(); len(f) != 1 || f[0].Was != validation.WasPassing || f[0].Stories[0] != "F2.1" {
 		t.Errorf("failures = %+v, want one regression on F2.1", f)
 	}
-	if v, _, n, _ := a.Verdict(context.Background(), "org", "proj", "v3", "v3-now"); v != delivery.ValidationVerdictFailed || n != 1 {
+	if v, _, n, _ := a.Verdict(context.Background(), "default", "p", "v3", v3Now); v != delivery.ValidationVerdictFailed || n != 1 {
 		t.Errorf("verdict = %q with %d regressions", v, n)
 	}
-	st, err := a.Standing(context.Background(), "org", "proj", "v3", "v3-now")
+	st, err := a.Standing(context.Background(), "default", "p", "v3", v3Now)
 	if err != nil || !st.Scoped || st.BaselineVersion != "v1" || len(st.Regressions) != 1 {
 		t.Errorf("standing = %+v, %v", st, err)
 	}

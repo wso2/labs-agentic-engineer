@@ -1,0 +1,375 @@
+openapi: 3.0.3
+info:
+  title: ae-studio MCP socket
+  description: |-
+    Unix-socket API between ae-design-agent and ae-studio-tools inside one AE
+    Studio pod (socket path in AE_MCP_SOCKET, served by ae-studio-tools, mode
+    0660). The mount is the gate, so there is no security scheme. It is the
+    agent's only door out of the pod: the MCP tools, the turn usage ledger
+    and the project and skills snapshots. (The agent joins its collab Room on
+    ae-collab's Room socket, not through this one.) Errors are RFC
+    9457 problems (application/problem+json); a JSON-RPC failure is a 200 with
+    an `error` member, as the protocol has it.
+  version: 1.0.0
+servers:
+- url: /
+tags:
+- name: MCP
+  description: JSON-RPC 2.0 tool surface.
+- name: Usage
+  description: The turn usage ledger.
+- name: Snapshots
+  description: Project and Org skills snapshots.
+paths:
+  /mcp:
+    post:
+      operationId: call-mcp
+      summary: MCP JSON-RPC (initialize, tools/list, tools/call)
+      description: |-
+        Protocol version 2024-11-05. `tools/list` answers exactly the eleven
+        design tools whatever aep-api serves, and `tools/call` of any other name
+        is refused here. Two tools are served in the pod
+        (get_remote_git_file_contents, search_remote_git_code, owner-guarded),
+        the rest are forwarded to aep-api. A notification (no `id`) is accepted
+        with 202 and no body.
+      tags:
+      - MCP
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+      responses:
+        '200':
+          description: JSON-RPC response (a result or an error member)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: A notification, accepted; no body
+        '400':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /turn-usage:
+    post:
+      operationId: post-turn-usage
+      summary: Hand over one finished turn's record
+      description: Accepted into the outbox, delivered to aep-api asynchronously.
+      tags:
+      - Usage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnRecord'
+      responses:
+        '202':
+          description: Accepted
+        '400':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /projects/{projectName}:
+    get:
+      operationId: lookup-project
+      summary: Resolve a project and write its snapshots
+      description: |-
+        Resolves the repository, writes the repo snapshot at `at` (the head when
+        omitted, fetched) with the stored reference documents overlaid at
+        `specs/requirements/references/`, and the Org skills snapshot, and
+        answers the shas and the reference document names (sorted). The agent
+        reads `/snapshots/projects/{projectName}/{headSha}` and
+        `/snapshots/skills/{skillsSha}`. `idea` is the project idea from the
+        descriptor at that commit, read best-effort. 404 `project_unknown` means the
+        project is not this org's, and then no snapshot is written; 404
+        `ref_not_found` means `at` names no commit of the repository. 503
+        `disk_full` refuses a new snapshot at 90 % of the studio's storage.
+      tags:
+      - Snapshots
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - name: at
+        in: query
+        description: Commit to snapshot, a hex object name. Omitted snapshots the
+          default-branch head.
+        schema:
+          type: string
+          pattern: '^[0-9a-fA-F]{7,64}$'
+      responses:
+        '200':
+          description: The project is known to this studio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSnapshot'
+        '400':
+          $ref: '#/components/responses/Problem'
+        '404':
+          $ref: '#/components/responses/Problem'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+  /skills:
+    get:
+      operationId: get-skills
+      summary: Write the Org skills snapshot
+      description: |-
+        Resolves the org's skills repository, writes its snapshot at the tip
+        and answers the sha; the agent reads `/snapshots/skills/{skillsSha}`.
+      tags:
+      - Snapshots
+      responses:
+        '200':
+          description: The snapshot's sha
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillsSnapshot'
+        '502':
+          $ref: '#/components/responses/Problem'
+        '503':
+          $ref: '#/components/responses/Problem'
+components:
+  parameters:
+    ProjectName:
+      name: projectName
+      in: path
+      required: true
+      description: Project name (DNS-label slug)
+      schema:
+        type: string
+  responses:
+    Problem:
+      description: 'RFC 9457 problem. Codes: project_unknown, ref_not_found, path_invalid,
+        invalid_request, invalid_record, disk_full, aep_api_unavailable, idp_unavailable,
+        github_error.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+    JsonRpcRequest:
+      type: object
+      description: A JSON-RPC 2.0 request. Absent `id` makes it a notification.
+      required:
+      - jsonrpc
+      - method
+      properties:
+        jsonrpc:
+          type: string
+          enum:
+          - '2.0'
+        id:
+          description: A string or an integer.
+        method:
+          type: string
+          description: initialize, tools/list or tools/call. Any other method is
+            answered with a JSON-RPC method-not-found error.
+        params:
+          type: object
+          additionalProperties: true
+    JsonRpcResponse:
+      type: object
+      required:
+      - jsonrpc
+      properties:
+        jsonrpc:
+          type: string
+          enum:
+          - '2.0'
+        id:
+          description: The request's id.
+        result:
+          type: object
+          additionalProperties: true
+        error:
+          $ref: '#/components/schemas/JsonRpcError'
+    JsonRpcError:
+      type: object
+      required:
+      - code
+      - message
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        data: {}
+    ProjectSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+      - known
+      - headSha
+      - skillsSha
+      - references
+      properties:
+        known:
+          type: boolean
+          enum:
+          - true
+        headSha:
+          type: string
+        skillsSha:
+          type: string
+        references:
+          type: array
+          description: File names of the project's stored reference documents.
+          items:
+            type: string
+        idea:
+          type: string
+          description: The project idea captured at creation (`idea` in
+            `specs/.agentic-engineer.toml` at `headSha`), trimmed. The snapshot
+            keeps the dot-led descriptor out of the agent's reads, so this is how
+            a `/start` turn gets it. Absent when the commit has no descriptor,
+            it does not parse, or its idea is blank.
+    SkillsSnapshot:
+      type: object
+      additionalProperties: false
+      required:
+      - skillsSha
+      properties:
+        skillsSha:
+          type: string
+    TurnRecord:
+      type: object
+      additionalProperties: false
+      description: One finished turn, as the ledger stores it. Idempotent on turnId.
+      required:
+      - turnId
+      - conversationId
+      - kind
+      - flow
+      - status
+      - baseRef
+      - skillsRef
+      - startedAt
+      - finishedAt
+      - model
+      - modelHost
+      - inputTokens
+      - outputTokens
+      - cacheReadTokens
+      - cacheCreationTokens
+      properties:
+        turnId:
+          type: string
+          format: uuid
+        project:
+          type: string
+          description: Absent on a marketplace turn.
+        conversationId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - browser
+          - kickoff
+          - plan
+        flow:
+          type: string
+        status:
+          type: string
+          enum:
+          - completed
+          - failed
+        reason:
+          type: string
+          enum:
+          - agent-error
+          - stream-died
+          - shutdown
+          - internal
+        code:
+          type: string
+        baseRef:
+          type: string
+          description: The repo snapshot sha the turn read.
+        skillsRef:
+          type: string
+          description: The Org skills snapshot sha the turn read.
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        author:
+          $ref: '#/components/schemas/TurnRecordAuthor'
+          # A pointer under the global prefer-skip-optional-pointer: absent must
+          # omit the key, which omitempty cannot do for a struct value.
+          x-go-type-skip-optional-pointer: false
+        model:
+          type: string
+        modelHost:
+          type: string
+        inputTokens:
+          type: integer
+          format: int64
+        outputTokens:
+          type: integer
+          format: int64
+        cacheReadTokens:
+          type: integer
+          format: int64
+        cacheCreationTokens:
+          type: integer
+          format: int64
+        contextTokens:
+          type: integer
+          format: int64
+        designFeatures:
+          type: array
+          maxItems: 200
+          description: |-
+            The features a `design` turn designed, as the `/design F1 F2`
+            line named them, in that order; IDs only, never the line. Absent
+            or empty means every feature designable at baseRef (a bare
+            `/design`). Send it only on a `design` turn; aep-api ignores it on
+            any other flow. Same schema as aep-api's
+            AEStudioTurnRecord.designFeatures, which refuses a whole batch for
+            one bad item, so a record with an item off this schema is refused
+            here (400 invalid_request) and never queued: drop an ID that does
+            not match rather than send it.
+          items:
+            type: string
+            pattern: '^F[0-9]+$'
+            maxLength: 16
+    TurnRecordAuthor:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string

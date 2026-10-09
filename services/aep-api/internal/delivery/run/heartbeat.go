@@ -18,9 +18,12 @@ package run
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/activity"
+
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
 
 // MAKING A CANCEL REACH THE WORK, not just the waiting.
@@ -88,10 +91,17 @@ const (
 // The beat stops when fn returns, on the deferred close: a goroutine still
 // heartbeating for a finished activity would keep the attempt looking alive.
 func heartbeating(ctx context.Context, fn func(context.Context) error) error {
+	return heartbeatingWith(ctx, func() { activity.RecordHeartbeat(ctx) }, fn)
+}
+
+// heartbeatingWith is heartbeating with the activity's own beat, for an
+// activity whose beats carry details: Temporal keeps only the LAST beat's
+// details, so every beat, the clock's included, must carry them whole.
+func heartbeatingWith(ctx context.Context, beat func(), fn func(context.Context) error) error {
 	if !activity.IsActivity(ctx) {
 		return fn(ctx)
 	}
-	activity.RecordHeartbeat(ctx)
+	beat()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -104,9 +114,85 @@ func heartbeating(ctx context.Context, fn func(context.Context) error) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				activity.RecordHeartbeat(ctx)
+				beat()
 			}
 		}
 	}()
 	return fn(ctx)
 }
+
+// planBeatDetails is what every beat of the planning activity carries.
+//
+// ProviderLimits is the one that outlives an attempt. Temporal hands the
+// last beat's details to the next attempt (activity.GetHeartbeatDetails), and
+// a failed attempt's buffered beat is flushed before its failure is reported,
+// so the count of provider-limited tries survives every retry, a shutdown's
+// or a dead stream's included, without being confused with the attempt
+// number. Events is this attempt's own progress.
+type planBeatDetails struct {
+	// Events is how many turn events this attempt has seen.
+	Events int `json:"events"`
+	// ProviderLimits is how many attempts so far the provider's limit stopped.
+	ProviderLimits int `json:"providerLimits"`
+}
+
+// planBeat is the planning activity's heartbeat: the clock's beats and the
+// turn's per-event beats (delivery.ReportProgress), each carrying the
+// details whole. Outside an activity it records nothing and starts its count
+// at zero.
+type planBeat struct {
+	ctx            context.Context
+	events         atomic.Int64
+	providerLimits atomic.Int64
+}
+
+// newPlanBeat starts the attempt's beat from the count the last attempt's
+// beat carried. A beat from before the count existed (an int event count)
+// does not decode, and counts as none.
+func newPlanBeat(ctx context.Context) *planBeat {
+	b := &planBeat{ctx: ctx}
+	if !activity.IsActivity(ctx) || !activity.HasHeartbeatDetails(ctx) {
+		return b
+	}
+	var prior planBeatDetails
+	if activity.GetHeartbeatDetails(ctx, &prior) == nil {
+		b.providerLimits.Store(int64(prior.ProviderLimits))
+	}
+	return b
+}
+
+// beat records one heartbeat carrying the details.
+func (b *planBeat) beat() {
+	if !activity.IsActivity(b.ctx) {
+		return
+	}
+	activity.RecordHeartbeat(b.ctx, planBeatDetails{
+		Events:         int(b.events.Load()),
+		ProviderLimits: int(b.providerLimits.Load()),
+	})
+}
+
+// withTurnBeats installs the progress beat a long agent turn reports per
+// event: each report counts the event and beats, so the beats say the turn
+// is moving, not only that the worker is. Outside an activity ctx is
+// returned unchanged.
+func (b *planBeat) withTurnBeats(ctx context.Context) context.Context {
+	if !activity.IsActivity(ctx) {
+		return ctx
+	}
+	return delivery.WithProgress(ctx, func() {
+		b.events.Add(1)
+		b.beat()
+	})
+}
+
+// countProviderLimit counts this attempt as provider-limited and beats at
+// once, so the count reaches the next attempt. It answers the count so far.
+func (b *planBeat) countProviderLimit() int {
+	n := b.providerLimits.Add(1)
+	b.beat()
+	return int(n)
+}
+
+// providerLimitCount is the count so far.
+func (b *planBeat) providerLimitCount() int { return int(b.providerLimits.Load()) }

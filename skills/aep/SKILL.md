@@ -295,8 +295,13 @@ The run can be a restart of a run that stopped:
 
 - If work is pushed and no PR is open, open the PR. Put a `Resolves` line for
   each `(#N)` in `git log origin/main..HEAD`.
-- If a PR is open and the working set is empty, add the missing `Resolves`
-  lines with `gh pr edit --body ...`, and stop. Do not open a second PR.
+- If a PR is open and the working set is empty, rewrite its body with
+  `gh pr edit <number> --body ...`. Put a `Resolves #N` line for each `(#N)` on
+  the branch, keep the rest of the body, and make the last line
+  `Adopted: <date -u +%Y-%m-%dT%H:%M:%SZ>`. Replace an earlier `Adopted:` line.
+  Rewrite the body also when the list is complete: this edit is how the
+  platform learns that the cycle waits for the PR, and the new `Adopted:` line
+  makes sure that the body changes. Then stop. Do not open a second PR.
 - If the working set is empty and nothing is pushed, stop and say so.
 
 # Never

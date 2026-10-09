@@ -22,7 +22,7 @@ package openchoreo
 // records what it was sent, because what matters is the wire: wso2cloud's
 // build workflow reads `cloud.wso2.com/product-name` off the WorkflowRun the
 // API receives, and the platform API does not stamp it on an impersonated
-// write (ticket 14).
+// write.
 
 import (
 	"context"

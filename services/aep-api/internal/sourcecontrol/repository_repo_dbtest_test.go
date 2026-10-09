@@ -169,28 +169,6 @@ func TestRepoRepository_ListAllReady(t *testing.T) {
 	}
 }
 
-// TestRepoRepository_ListAll returns every row across orgs and ALL statuses —
-// the disk reaper's orphan pass must see pending/error rows too, or their
-// dirs would be misread as orphans.
-func TestRepoRepository_ListAll(t *testing.T) {
-	t.Parallel()
-	db := dbtest.New(t)
-	repo := sourcecontrol.NewRepoRepository(db)
-	ctx := context.Background()
-
-	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p1", RepoURL: "https://github.com/a/p1", Status: "ready"})
-	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orgb", ProjectID: "p2", RepoURL: "https://github.com/b/p2", Status: "pending"})
-	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p3", RepoURL: "https://github.com/a/p3", Status: "error"})
-
-	got, err := repo.ListAll(ctx)
-	if err != nil {
-		t.Fatalf("ListAll: %v", err)
-	}
-	if len(got) != 3 {
-		t.Fatalf("want all 3 rows regardless of status; got %d (%+v)", len(got), got)
-	}
-}
-
 // TestRepoRepository_Update round-trips a full-row Save.
 func TestRepoRepository_Update(t *testing.T) {
 	t.Parallel()
@@ -316,5 +294,83 @@ func TestRepoRepository_ListByOrg(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("ListByOrg(orgc) = %d rows, want 0", len(empty))
+	}
+}
+
+// FindInOrgByFullName finds only the org's own row, by the bare or .git clone
+// URL, and never by a pattern: the same repository URL on another org's row,
+// a longer name sharing the prefix, or another host is no match.
+func TestRepoRepository_FindInOrgByFullName(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := sourcecontrol.NewRepoRepository(db)
+	ctx := context.Background()
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p1", RepoURL: "https://github.com/acme/greeter.git", Status: "ready"})
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orgb", ProjectID: "p9", RepoURL: "https://github.com/acme/other", Status: "ready"})
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p2", RepoURL: "https://evil.example/acme/hosted", Status: "ready"})
+
+	got, err := repo.FindInOrgByFullName(ctx, "orga", "acme/greeter")
+	if err != nil || got == nil || got.ProjectID != "p1" {
+		t.Fatalf("orga acme/greeter = %+v %v, want p1", got, err)
+	}
+	for _, tc := range []struct{ org, name string }{
+		{"orgb", "acme/greeter"}, // another org's repository
+		{"orga", "acme/other"},   // orgb's repository, asked in orga
+		{"orga", "acme/greet"},   // a prefix
+		{"orga", "acme/hosted"},  // another host
+		{"orga", ""},
+		{"", "acme/greeter"},
+	} {
+		if got, err := repo.FindInOrgByFullName(ctx, tc.org, tc.name); err != nil || got != nil {
+			t.Errorf("FindInOrgByFullName(%q, %q) = %+v %v, want nil", tc.org, tc.name, got, err)
+		}
+	}
+}
+
+// The hook id and the delete mark are column updates: a store lands only on
+// a ready row, never re-creates a row a delete dropped, and the mark moves
+// only from the status it expects.
+func TestRepoRepository_HookIDAndDeleteMarkAreColumnUpdates(t *testing.T) {
+	t.Parallel()
+	db := dbtest.New(t)
+	repo := sourcecontrol.NewRepoRepository(db)
+	ctx := context.Background()
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orga", ProjectID: "p1", RepoURL: "https://github.com/a/p1", Status: "ready"})
+	mkRepo(t, repo, &sourcecontrol.GitRepository{OrgID: "orgb", ProjectID: "p2", RepoURL: "https://github.com/b/p2", Status: "ready"})
+
+	if took, err := repo.SetWebhookIDIfReady(ctx, "orga", "p1", 7); err != nil || !took {
+		t.Fatalf("store on a ready row: took=%v err=%v", took, err)
+	}
+	if took, err := repo.SetWebhookIDIfReady(ctx, "orga", "gone", 8); err != nil || took {
+		t.Fatalf("store on no row: took=%v err=%v", took, err)
+	}
+	if got, _ := repo.GetByOrgAndProjectID(ctx, "orga", "gone"); got != nil {
+		t.Fatal("a store re-created a row")
+	}
+
+	if moved, err := repo.SetStatusIf(ctx, "orga", "p1", sourcecontrol.RepoStatusReady, sourcecontrol.RepoStatusDeleting); err != nil || !moved {
+		t.Fatalf("mark deleting: moved=%v err=%v", moved, err)
+	}
+	if moved, _ := repo.SetStatusIf(ctx, "orga", "p1", sourcecontrol.RepoStatusReady, sourcecontrol.RepoStatusDeleting); moved {
+		t.Fatal("a second mark moved a row that is not ready")
+	}
+	if took, _ := repo.SetWebhookIDIfReady(ctx, "orga", "p1", 9); took {
+		t.Fatal("a deleting row took a hook id")
+	}
+	if rows, _ := repo.ListAllReady(ctx); len(rows) != 1 || rows[0].ProjectID != "p2" {
+		t.Fatalf("ListAllReady = %v, want only orgb/p2", rows)
+	}
+
+	if _, err := repo.SetWebhookIDIfReady(ctx, "orgb", "p2", 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ClearWebhookIDs(ctx, "orga"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.GetByOrgAndProjectID(ctx, "orga", "p1"); got.WebhookID != nil {
+		t.Fatalf("orga/p1 keeps hook id %d", *got.WebhookID)
+	}
+	if got, _ := repo.GetByOrgAndProjectID(ctx, "orgb", "p2"); got.WebhookID == nil || *got.WebhookID != 10 {
+		t.Fatal("another org's hook id was cleared")
 	}
 }

@@ -74,9 +74,9 @@ func mapTaskStreamError(err error) error {
 	case errors.Is(err, ErrTaskStreamTaskNotFound):
 		return apierr.NotFound("task not found")
 	case errors.Is(err, ErrTaskStreamSnapshot):
-		return apierr.Internal("task snapshot failed")
+		return apierr.WithCause(apierr.Internal("task snapshot failed"), err)
 	default:
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 }
 

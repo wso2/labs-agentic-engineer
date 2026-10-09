@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/ocerr"
 	"github.com/wso2/aep/aep-api/internal/platform/validate"
@@ -59,6 +60,11 @@ const codeNoWriteTarget = "no_write_target"
 // OpenChoreo cannot find the org's ProjectType for the new project.
 const codeProjectTypeNotFound = "project_type_not_found"
 
+// A create met the repository row of an earlier delete of the same project
+// and could not finish that delete's teardown (CreateProject tries once). Its
+// own code, so the console does not read it as a taken repository name.
+const codeProjectDeletePending = "project_delete_pending"
+
 // MapProjectError translates project + OpenChoreo sentinel errors into the
 // envelope. The feature sentinels (translated from OC by the service's
 // translateHTTPError) carry the fixed user-facing messages; any remaining raw
@@ -74,6 +80,9 @@ func MapProjectError(err error) error {
 		return apierr.Forbidden("insufficient permissions to perform this action")
 	case sourcecontrol.IsRepoNameConflict(err):
 		return apierr.Conflict("a repository with this name already exists — choose another repository name")
+	case errors.Is(err, sourcecontrol.ErrRepoDeletePending):
+		return apierr.New(http.StatusConflict, codeProjectDeletePending,
+			"An earlier delete of this project is still finishing. Try again in a minute.", nil)
 	case errors.As(err, &nwt):
 		// The project's pipeline names no write target: the caller's
 		// configuration to fix, so the resolver's words go back verbatim.
@@ -90,7 +99,7 @@ func MapProjectError(err error) error {
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}
-	return apierr.Internal("internal error")
+	return apierr.WithCause(apierr.Internal("internal error"), err)
 }
 
 // paymentRequiredMessage strips the "payment required: " sentinel prefix so the
@@ -121,10 +130,15 @@ func paymentRequiredMessage(err error) string {
 // logs-unavailable, 404 openapi-not-found) are handled at the call site before
 // delegating here.
 func MapComponentError(err error, internalMsg string) error {
+	if errors.Is(err, organization.ErrOrgDisconnected) {
+		// The org has no github-pat reference (never connected, or
+		// disconnected): a state the caller fixes by connecting GitHub.
+		return apierr.Conflict("GitHub is not connected for this organization; connect GitHub before triggering a build")
+	}
 	if status, ok := ocerr.Status(err); ok {
 		return errFromStatus(status, err.Error())
 	}
-	return apierr.Internal(internalMsg)
+	return apierr.WithCause(apierr.Internal(internalMsg), err)
 }
 
 // errFromStatus maps a sentinel-classified HTTP status (e.g. an OpenChoreo

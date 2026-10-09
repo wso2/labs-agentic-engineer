@@ -16,44 +16,26 @@
  * under the License.
  */
 
-import { useState } from "react";
-import {
-  Alert,
-  Button,
-  Checkbox,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
-  FormControlLabel,
-} from "@wso2/oxygen-ui";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle } from "@wso2/oxygen-ui";
 import { useDisconnectGitProvider } from "../api/queries";
 
 /**
- * The Disconnect Panel: confirms dropping the org's GitHub connection. A
- * connection made through the GitHub App can also uninstall it (the default);
- * left installed, a later connect re-adopts it. Once disconnected the org has
- * no GitHub, so onboarding takes over the console until one is connected.
+ * The Disconnect Panel: confirms dropping the org's GitHub connection. The
+ * platform installs no GitHub App, so there is nothing to uninstall. Once
+ * disconnected the org has no GitHub, so onboarding takes over the console
+ * until one is connected.
  */
-export function DisconnectGitHubPanel({ appInstalled, onClose }: { appInstalled: boolean; onClose: () => void }) {
-  const [uninstall, setUninstall] = useState(true);
+export function DisconnectGitHubPanel({ onClose }: { onClose: () => void }) {
   const disconnect = useDisconnectGitProvider();
 
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Disconnect GitHub?</DialogTitle>
       <DialogContent>
-        <DialogContentText sx={{ mb: appInstalled ? 2 : 0 }}>
+        <DialogContentText>
           Projects relying on this org&apos;s GitHub connection will lose spec and code access until it&apos;s
           reconnected.
         </DialogContentText>
-        {appInstalled && (
-          <FormControlLabel
-            control={<Checkbox checked={uninstall} onChange={(e) => setUninstall(e.target.checked)} />}
-            label="Uninstall the GitHub App (leave unchecked to keep it installed for later re-adoption)"
-          />
-        )}
         {disconnect.isError && (
           <Alert severity="error" sx={{ mt: 2 }}>
             {disconnect.error.message}
@@ -65,7 +47,7 @@ export function DisconnectGitHubPanel({ appInstalled, onClose }: { appInstalled:
         <Button
           color="error"
           variant="contained"
-          onClick={() => disconnect.mutate(appInstalled && uninstall, { onSuccess: onClose })}
+          onClick={() => disconnect.mutate(undefined, { onSuccess: onClose })}
           disabled={disconnect.isPending}
         >
           {disconnect.isPending ? "Disconnecting…" : "Disconnect"}

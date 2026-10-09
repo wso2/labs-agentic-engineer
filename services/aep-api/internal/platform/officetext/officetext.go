@@ -23,6 +23,13 @@
 // headings and paragraphs (and its tables, as rows), an Excel workbook's
 // sheets as tables, a PowerPoint deck's slides in order. Layout, images and
 // formatting do not. Only the standard library: the formats are zipped XML.
+//
+// Output bounded by the caller's budget (changed from main #878 S5, to
+// upstream): Markdown fails with ErrTooLarge as soon as the markdown would pass
+// maxBytes, and every XML part it reads, re-reads included, counts toward one
+// document-wide bound. A small zip can name one large part many times (deck
+// entries, shared strings), so bounding each read alone does not bound the
+// work or the text.
 package officetext
 
 import (
@@ -45,36 +52,49 @@ var Extensions = map[string]bool{".docx": true, ".xlsx": true, ".pptx": true}
 // ErrUnreadable is a file that is not the Office document its name says.
 var ErrUnreadable = errors.New("officetext: not a readable Office document")
 
-// maxPartBytes bounds one XML part as read out of the zip: a small file can
-// inflate to anything, and a requirements document never needs more.
-const maxPartBytes = 32 << 20
+// ErrTooLarge is a document whose markdown would pass the caller's budget.
+var ErrTooLarge = errors.New("officetext: the converted text is too large")
+
+// maxXMLBytes bounds the XML read out of the zip, every part and every re-read
+// of one together: a small file can inflate to anything, and a requirements
+// document never needs more.
+const maxXMLBytes = 32 << 20
 
 // maxRows bounds a sheet: past it, the rest is summarised in a line.
 const maxRows = 2000
 
-// Markdown converts the document to markdown, by its extension (".docx").
-func Markdown(ext string, content []byte) (string, error) {
+// Markdown converts the document to markdown, by its extension (".docx"). The
+// markdown is at most maxBytes long; a document that would pass it is
+// ErrTooLarge, refused while it is converted.
+func Markdown(ext string, content []byte, maxBytes int) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
-	parts := map[string]*zip.File{}
+	d := &document{parts: map[string]*zip.File{}, xmlLeft: maxXMLBytes}
 	for _, f := range zr.File {
-		parts[f.Name] = f
+		d.parts[f.Name] = f
 	}
 	switch strings.ToLower(ext) {
 	case ".docx":
-		return word(parts)
+		return d.word(&mdWriter{max: maxBytes, sep: "\n\n"})
 	case ".xlsx":
-		return excel(parts)
+		return d.excel(&mdWriter{max: maxBytes, sep: "\n"})
 	case ".pptx":
-		return powerPoint(parts)
+		return d.powerPoint(&mdWriter{max: maxBytes, sep: "\n"})
 	}
 	return "", fmt.Errorf("%w: %s is not an Office type", ErrUnreadable, ext)
 }
 
-func read(parts map[string]*zip.File, name string) ([]byte, error) {
-	f, ok := parts[name]
+// document is an Office file's zip parts and what is left of its XML bound.
+type document struct {
+	parts   map[string]*zip.File
+	xmlLeft int
+}
+
+// read reads one XML part, counting it toward the document's XML bound.
+func (d *document) read(name string) ([]byte, error) {
+	f, ok := d.parts[name]
 	if !ok {
 		return nil, fmt.Errorf("%w: no %s", ErrUnreadable, name)
 	}
@@ -83,14 +103,53 @@ func read(parts map[string]*zip.File, name string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
 	defer rc.Close()
-	b, err := io.ReadAll(io.LimitReader(rc, maxPartBytes+1))
+	b, err := io.ReadAll(io.LimitReader(rc, int64(d.xmlLeft)+1))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrUnreadable, err)
 	}
-	if len(b) > maxPartBytes {
-		return nil, fmt.Errorf("%w: %s is too large", ErrUnreadable, name)
+	if len(b) > d.xmlLeft {
+		return nil, fmt.Errorf("%w: its XML passes %d MiB at %s", ErrUnreadable, maxXMLBytes>>20, name)
 	}
+	d.xmlLeft -= len(b)
 	return b, nil
+}
+
+// mdWriter builds the markdown line by line, separated by sep, and refuses a
+// line (ErrTooLarge) that would take it past max.
+type mdWriter struct {
+	b     strings.Builder
+	max   int
+	sep   string
+	lines int
+}
+
+// fits reports whether a line of n bytes still fits.
+func (w *mdWriter) fits(n int) bool {
+	if w.lines > 0 {
+		n += len(w.sep)
+	}
+	return w.b.Len()+n <= w.max
+}
+
+func (w *mdWriter) line(s string) error {
+	if !w.fits(len(s)) {
+		return ErrTooLarge
+	}
+	if w.lines > 0 {
+		w.b.WriteString(w.sep)
+	}
+	w.b.WriteString(s)
+	w.lines++
+	return nil
+}
+
+// done appends trailer and returns the markdown.
+func (w *mdWriter) done(trailer string) (string, error) {
+	if w.b.Len()+len(trailer) > w.max {
+		return "", ErrTooLarge
+	}
+	w.b.WriteString(trailer)
+	return w.b.String(), nil
 }
 
 // tokens walks an XML part, calling fn for each start and end element and each
@@ -136,14 +195,14 @@ var headingStyle = regexp.MustCompile(`(?i)^(?:heading|title)\s*([1-6])?$`)
 // word reads word/document.xml: each paragraph a line, a Heading N paragraph a
 // markdown heading (Title as the first level), a table one `|`-separated row
 // per table row, each cell's paragraphs joined.
-func word(parts map[string]*zip.File) (string, error) {
-	b, err := read(parts, "word/document.xml")
+func (d *document) word(md *mdWriter) (string, error) {
+	b, err := d.read("word/document.xml")
 	if err != nil {
 		return "", err
 	}
 	var out []string
 	var para strings.Builder
-	var row []string
+	var row []*strings.Builder
 	level, cells := 0, 0
 	err = tokens(b, func(tok xml.Token) {
 		switch t := tok.(type) {
@@ -167,7 +226,7 @@ func word(parts map[string]*zip.File) (string, error) {
 				row = nil
 			case "tc":
 				cells++
-				row = append(row, "")
+				row = append(row, &strings.Builder{})
 			}
 		case xml.CharData:
 			para.Write(t)
@@ -179,11 +238,11 @@ func word(parts map[string]*zip.File) (string, error) {
 				switch {
 				case text == "":
 				case cells > 0 && len(row) > 0:
-					if row[len(row)-1] == "" {
-						row[len(row)-1] = text
-					} else {
-						row[len(row)-1] += " " + text
+					cell := row[len(row)-1]
+					if cell.Len() > 0 {
+						cell.WriteString(" ")
 					}
+					cell.WriteString(text)
 				case level > 0:
 					out = append(out, strings.Repeat("#", level)+" "+text)
 				default:
@@ -193,7 +252,11 @@ func word(parts map[string]*zip.File) (string, error) {
 				cells--
 			case "tr":
 				if len(row) > 0 {
-					out = append(out, "| "+strings.Join(row, " | ")+" |")
+					texts := make([]string, len(row))
+					for i, c := range row {
+						texts[i] = c.String()
+					}
+					out = append(out, "| "+strings.Join(texts, " | ")+" |")
 				}
 				row = nil
 			}
@@ -202,39 +265,47 @@ func word(parts map[string]*zip.File) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.Join(out, "\n\n") + "\n", nil
+	for _, l := range out {
+		if err := md.line(l); err != nil {
+			return "", err
+		}
+	}
+	return md.done("\n")
 }
 
 // ---- Excel -----------------------------------------------------------------
 
 // excel reads each sheet, in workbook order, as a markdown table under
 // `## Sheet: <name>`; the first row is its header.
-func excel(parts map[string]*zip.File) (string, error) {
-	shared, err := sharedStrings(parts)
+func (d *document) excel(md *mdWriter) (string, error) {
+	shared, err := d.sharedStrings()
 	if err != nil {
 		return "", err
 	}
-	sheets, err := workbookSheets(parts)
+	sheets, err := d.workbookSheets()
 	if err != nil {
 		return "", err
 	}
-	var out []string
 	for _, s := range sheets {
-		rows, err := sheetRows(parts, s.target, shared)
+		rows, err := d.sheetRows(s.target, shared)
 		if err != nil {
 			return "", err
 		}
-		out = append(out, "## Sheet: "+s.name)
-		out = append(out, table(rows)...)
+		if err := md.line("## Sheet: " + s.name); err != nil {
+			return "", err
+		}
+		if err := table(rows, md); err != nil {
+			return "", err
+		}
 	}
-	return strings.Join(out, "\n") + "\n", nil
+	return md.done("\n")
 }
 
-func sharedStrings(parts map[string]*zip.File) ([]string, error) {
-	if _, ok := parts["xl/sharedStrings.xml"]; !ok {
+func (d *document) sharedStrings() ([]string, error) {
+	if _, ok := d.parts["xl/sharedStrings.xml"]; !ok {
 		return nil, nil
 	}
-	b, err := read(parts, "xl/sharedStrings.xml")
+	b, err := d.read("xl/sharedStrings.xml")
 	if err != nil {
 		return nil, err
 	}
@@ -267,12 +338,12 @@ func sharedStrings(parts map[string]*zip.File) ([]string, error) {
 type sheetRef struct{ name, target string }
 
 // workbookSheets lists the sheets in workbook order with their part paths.
-func workbookSheets(parts map[string]*zip.File) ([]sheetRef, error) {
-	rels, err := relationships(parts, "xl/_rels/workbook.xml.rels", "xl")
+func (d *document) workbookSheets() ([]sheetRef, error) {
+	rels, err := d.relationships("xl/_rels/workbook.xml.rels", "xl")
 	if err != nil {
 		return nil, err
 	}
-	b, err := read(parts, "xl/workbook.xml")
+	b, err := d.read("xl/workbook.xml")
 	if err != nil {
 		return nil, err
 	}
@@ -288,8 +359,8 @@ func workbookSheets(parts map[string]*zip.File) ([]sheetRef, error) {
 }
 
 // relationships maps a part's relationship IDs to the part paths they name.
-func relationships(parts map[string]*zip.File, name, base string) (map[string]string, error) {
-	b, err := read(parts, name)
+func (d *document) relationships(name, base string) (map[string]string, error) {
+	b, err := d.read(name)
 	if err != nil {
 		return nil, err
 	}
@@ -317,14 +388,36 @@ func columnIndex(ref string) int {
 	return n - 1
 }
 
-// sheetRows reads a sheet's cells into rows of text.
-func sheetRows(parts map[string]*zip.File, name string, shared []string) ([][]string, error) {
-	b, err := read(parts, name)
+// sheetRows is a sheet's text: the first maxRows rows that are not blank, as
+// cells, its widest row, and how many more rows have text.
+type sheetRows struct {
+	rows  [][]string
+	width int
+	more  int
+}
+
+// sheetCell is one cell's text at its column.
+type sheetCell struct {
+	col  int
+	text string
+}
+
+// maxColumns bounds a row: cells past it are dropped.
+const maxColumns = 1000
+
+// sheetRows reads a sheet's cells into rows of text. A row's cells are held
+// sparsely and padded only when the row is kept: blank rows are dropped and
+// rows past maxRows only counted, since every kept row pads to its widest
+// cell. A cell whose reference names no column (or a column past maxColumns)
+// is dropped.
+func (d *document) sheetRows(name string, shared []string) (sheetRows, error) {
+	var out sheetRows
+	b, err := d.read(name)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	var rows [][]string
-	var row []string
+	var cells []sheetCell
+	rowLen, blank := 0, true
 	var cellType, cellRef string
 	var val strings.Builder
 	inV := false
@@ -333,7 +426,7 @@ func sheetRows(parts map[string]*zip.File, name string, shared []string) ([][]st
 		case xml.StartElement:
 			switch t.Name.Local {
 			case "row":
-				row = nil
+				cells, rowLen, blank = nil, 0, true
 			case "c":
 				cellType, cellRef = attr(t, "t"), attr(t, "r")
 				val.Reset()
@@ -355,59 +448,92 @@ func sheetRows(parts map[string]*zip.File, name string, shared []string) ([][]st
 						text = shared[i]
 					}
 				}
-				col := len(row)
+				col := rowLen
 				if cellRef != "" {
 					col = columnIndex(cellRef)
 				}
-				for len(row) <= col && col < 1000 {
-					row = append(row, "")
+				if col < 0 || col >= maxColumns {
+					break
 				}
-				if col < len(row) {
-					row[col] = strings.TrimSpace(text)
+				rowLen = max(rowLen, col+1)
+				text = strings.TrimSpace(text)
+				if text != "" {
+					blank = false
+					cells = append(cells, sheetCell{col: col, text: text})
 				}
 			case "row":
-				rows = append(rows, row)
+				if blank {
+					break
+				}
+				out.width = max(out.width, rowLen)
+				if len(out.rows) >= maxRows {
+					out.more++
+					break
+				}
+				row := make([]string, rowLen)
+				for _, c := range cells {
+					row[c.col] = c.text
+				}
+				out.rows = append(out.rows, row)
 			}
 		}
 	})
-	return rows, err
+	return out, err
 }
 
-func table(rows [][]string) []string {
-	var keep [][]string
-	width := 0
-	for _, r := range rows {
-		if strings.TrimSpace(strings.Join(r, "")) == "" {
-			continue
+// table writes a sheet as a markdown table, its first row the header, each
+// line checked against the budget before it is built.
+func table(s sheetRows, md *mdWriter) error {
+	if len(s.rows) == 0 {
+		return writeLines(md, "", "(empty)", "")
+	}
+	line := func(r []string) (string, error) {
+		n := len("| ") + len(" |") + len(" | ")*(s.width-1)
+		for _, c := range r {
+			n += len(c) + strings.Count(c, "|")
 		}
-		keep = append(keep, r)
-		width = max(width, len(r))
-	}
-	if len(keep) == 0 {
-		return []string{"", "(empty)", ""}
-	}
-	cut := 0
-	if len(keep) > maxRows {
-		cut = len(keep) - maxRows
-		keep = keep[:maxRows]
-	}
-	line := func(r []string) string {
-		cells := make([]string, width)
+		if !md.fits(n) {
+			return "", ErrTooLarge
+		}
+		cells := make([]string, s.width)
 		for i := range cells {
 			if i < len(r) {
 				cells[i] = strings.ReplaceAll(r[i], "|", "\\|")
 			}
 		}
-		return "| " + strings.Join(cells, " | ") + " |"
+		return "| " + strings.Join(cells, " | ") + " |", nil
 	}
-	out := []string{"", line(keep[0]), "|" + strings.Repeat(" --- |", width)}
-	for _, r := range keep[1:] {
-		out = append(out, line(r))
+	header, err := line(s.rows[0])
+	if err != nil {
+		return err
 	}
-	if cut > 0 {
-		out = append(out, "", fmt.Sprintf("(%d more rows not shown)", cut))
+	if err := writeLines(md, "", header, "|"+strings.Repeat(" --- |", s.width)); err != nil {
+		return err
 	}
-	return append(out, "")
+	for _, r := range s.rows[1:] {
+		l, err := line(r)
+		if err != nil {
+			return err
+		}
+		if err := md.line(l); err != nil {
+			return err
+		}
+	}
+	if s.more > 0 {
+		if err := writeLines(md, "", fmt.Sprintf("(%d more rows not shown)", s.more)); err != nil {
+			return err
+		}
+	}
+	return md.line("")
+}
+
+func writeLines(md *mdWriter, lines ...string) error {
+	for _, l := range lines {
+		if err := md.line(l); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- PowerPoint ------------------------------------------------------------
@@ -415,14 +541,13 @@ func table(rows [][]string) []string {
 var slideName = regexp.MustCompile(`^ppt/slides/slide(\d+)\.xml$`)
 
 // powerPoint reads each slide's text, in deck order, under `## Slide N`.
-func powerPoint(parts map[string]*zip.File) (string, error) {
-	order, err := slideOrder(parts)
+func (d *document) powerPoint(md *mdWriter) (string, error) {
+	order, err := d.slideOrder()
 	if err != nil {
 		return "", err
 	}
-	var out []string
 	for i, name := range order {
-		b, err := read(parts, name)
+		b, err := d.read(name)
 		if err != nil {
 			return "", err
 		}
@@ -447,20 +572,26 @@ func powerPoint(parts map[string]*zip.File) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		out = append(out, fmt.Sprintf("## Slide %d", i+1), "")
-		for _, l := range lines {
-			out = append(out, "- "+l)
+		if err := writeLines(md, fmt.Sprintf("## Slide %d", i+1), ""); err != nil {
+			return "", err
 		}
-		out = append(out, "")
+		for _, l := range lines {
+			if err := md.line("- " + l); err != nil {
+				return "", err
+			}
+		}
+		if err := md.line(""); err != nil {
+			return "", err
+		}
 	}
-	return strings.Join(out, "\n"), nil
+	return md.done("")
 }
 
 // slideOrder is the deck's order (presentation.xml), else the slides by number.
-func slideOrder(parts map[string]*zip.File) ([]string, error) {
-	if _, ok := parts["ppt/presentation.xml"]; ok {
-		if rels, err := relationships(parts, "ppt/_rels/presentation.xml.rels", "ppt"); err == nil {
-			b, err := read(parts, "ppt/presentation.xml")
+func (d *document) slideOrder() ([]string, error) {
+	if _, ok := d.parts["ppt/presentation.xml"]; ok {
+		if rels, err := d.relationships("ppt/_rels/presentation.xml.rels", "ppt"); err == nil {
+			b, err := d.read("ppt/presentation.xml")
 			if err != nil {
 				return nil, err
 			}
@@ -478,7 +609,7 @@ func slideOrder(parts map[string]*zip.File) ([]string, error) {
 		}
 	}
 	var out []string
-	for name := range parts {
+	for name := range d.parts {
 		if slideName.MatchString(name) {
 			out = append(out, name)
 		}

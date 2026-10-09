@@ -89,6 +89,6 @@ func mapError(err error, fallback string) error {
 	case errors.Is(err, spec.ErrDependencyNotAssumed), errors.Is(err, spec.ErrDependencyNotChosen), errors.Is(err, spec.ErrSpecCommitConflict):
 		return apierr.Conflict(err.Error())
 	default:
-		return apierr.Internal(fallback)
+		return apierr.WithCause(apierr.Internal(fallback), err)
 	}
 }

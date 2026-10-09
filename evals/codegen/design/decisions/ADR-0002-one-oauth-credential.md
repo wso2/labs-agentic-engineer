@@ -35,7 +35,7 @@ OAuth prefix is refused before anything is spent. All of this lives in
 **The file is parsed, not loaded.** `util.parseEnv` reads the one key.
 `process.loadEnvFile` would put the file's API key into this process's
 environment. For the same reason the harness does not import playground modules
-that load `@aep/agents`, whose module scope merges the file into `process.env`.
+that load `@aep/ae-design-agent`, whose module scope merges the file into `process.env`.
 
 **The token is never logged, archived or put on argv.** Error messages say what
 the value is not, never what it is. Provenance records paths and ids, never env

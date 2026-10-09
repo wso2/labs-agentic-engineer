@@ -26,7 +26,7 @@ func TestColumnCipher_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewColumnCipher: %v", err)
 	}
-	plain := []byte("publisher-client-secret-value")
+	plain := []byte("generated-test-user-password")
 	sealed, err := c.Seal(plain)
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
@@ -34,50 +34,12 @@ func TestColumnCipher_RoundTrip(t *testing.T) {
 	if sealed == string(plain) {
 		t.Fatal("Seal returned plaintext")
 	}
-	if !c.IsSealed(sealed) {
-		t.Fatal("IsSealed(sealed) = false")
-	}
 	got, err := c.Open(sealed)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	if !bytes.Equal(got, plain) {
 		t.Fatalf("Open = %q; want %q", got, plain)
-	}
-}
-
-func TestColumnCipher_OpenTolerant_Plaintext(t *testing.T) {
-	c, err := NewColumnCipher(make([]byte, 32))
-	if err != nil {
-		t.Fatalf("NewColumnCipher: %v", err)
-	}
-	got, err := c.OpenTolerant("still-plaintext")
-	if err != nil {
-		t.Fatalf("OpenTolerant: %v", err)
-	}
-	if string(got) != "still-plaintext" {
-		t.Fatalf("OpenTolerant = %q", got)
-	}
-	if c.IsSealed("still-plaintext") {
-		t.Fatal("plaintext must not report IsSealed")
-	}
-}
-
-func TestColumnCipher_OpenTolerant_Ciphertext(t *testing.T) {
-	c, err := NewColumnCipher(make([]byte, 32))
-	if err != nil {
-		t.Fatalf("NewColumnCipher: %v", err)
-	}
-	sealed, err := c.Seal([]byte("secret"))
-	if err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
-	got, err := c.OpenTolerant(sealed)
-	if err != nil {
-		t.Fatalf("OpenTolerant: %v", err)
-	}
-	if string(got) != "secret" {
-		t.Fatalf("OpenTolerant = %q", got)
 	}
 }
 

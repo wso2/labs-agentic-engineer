@@ -21,7 +21,7 @@ import type * as Y from "yjs";
 import { readDocFile } from "@aep/collab-doc";
 import { manifestPath, sourcePath } from "../../features/prototype/model/prototypes";
 import type { PrototypeFeedback } from "../../features/agent-chat/turnScope";
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import type { ScriptFrame } from "../chatServer";
 import { Script } from "./interview";
 

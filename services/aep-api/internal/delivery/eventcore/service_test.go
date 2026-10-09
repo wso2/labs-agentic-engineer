@@ -19,41 +19,24 @@ package eventcore
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
+	"slices"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/delivery"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-	githubclient "github.com/wso2/aep/aep-api/internal/sourcecontrol/githubhost"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
-// SERVICE TIER — the REAL issue service driving the REAL GitHub client against
-// a route-registry stub. Nothing between the event plane and HTTP is faked, so
-// these tests see what the fakes cannot: the actual requests (a PUT to the
-// merge route, one POST to the issues route) and the dedupe label round-trip
-// that makes minting idempotent.
+// SERVICE TIER — the REAL issue service driving the org's pod, here the
+// in-memory aestudiotest.Fake. Nothing between the event plane and the pod
+// port is faked, so these tests see what the event-plane fakes cannot: the
+// actual pod calls (one merge, one issue create) and the dedupe label
+// round-trip that makes minting idempotent.
 
-// stubResolver / stubCred are the credential seam — the one edge a stub server
-// cannot serve.
-type stubCred struct{}
-
-func (stubCred) Token(context.Context) (string, time.Time, error) {
-	return "test-token", time.Time{}, nil
-}
-func (stubCred) Identity() secrets.Identity               { return secrets.Identity{} }
-func (stubCred) RepoOwner() string                        { return "acme" }
-func (stubCred) WebhookStrategy() secrets.WebhookStrategy { return secrets.WebhookPerRepo }
-func (stubResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return stubCred{}, nil
-}
-
-type stubResolver struct{}
+// widgets is the repository the project row resolves to.
+var widgets = sourcecontrol.RepoRef{Org: testOrg, Owner: "acme", Repo: "widgets"}
 
 // stubRepoRepo answers the ONE repository read the issue service makes, by
 // embedding the interface: any other method would panic, which is the point —
@@ -67,30 +50,23 @@ func (r stubRepoRepo) GetByOrgAndProjectID(context.Context, string, string) (*so
 	return r.row, nil
 }
 
-// newIssueSvcOnStub builds the real issue service over the real client, aimed
-// at the stub. Every call lands under /repos/acme/widgets.
-func newIssueSvcOnStub(stub *gittest.Stub) sourcecontrol.IssueService {
-	return sourcecontrol.NewIssueService(
-		stubRepoRepo{row: &sourcecontrol.GitRepository{
-			OrgID: testOrg, ProjectID: testProject, RepoSlug: "widgets",
-			RepoURL: "https://github.com/acme/widgets",
-		}},
-		githubclient.NewClient(githubclient.WithAPIBase(stub.URL)),
-		stubResolver{},
-	)
-}
-
 // serviceHarness is the event plane with its GitHub-facing ports served by the
 // real service, and only the run/cycle/build/supervisor seams faked.
 type serviceHarness struct {
 	*harness
-	stub *gittest.Stub
+	pod *aestudiotest.Fake
 }
 
 func newServiceHarness(t *testing.T, rows ...delivery.MilestoneRun) *serviceHarness {
 	t.Helper()
-	stub := gittest.NewStub(t)
-	svc := newIssueSvcOnStub(stub)
+	pod := aestudiotest.New()
+	svc := sourcecontrol.NewIssueService(
+		stubRepoRepo{row: &sourcecontrol.GitRepository{
+			OrgID: testOrg, ProjectID: testProject, RepoSlug: "widgets",
+			RepoURL: "https://github.com/acme/widgets",
+		}},
+		pod,
+	)
 
 	h := &harness{
 		runs:   newFakeRuns(rows...),
@@ -116,74 +92,77 @@ func newServiceHarness(t *testing.T, rows ...delivery.MilestoneRun) *serviceHarn
 	h.events.RegisterHandlers(func(event, action string, fn func(ctx context.Context, event, action string, payload []byte) error) {
 		h.router.Register(event, action, webhook.EventHandlerFunc(fn))
 	})
-	return &serviceHarness{harness: h, stub: stub}
+	return &serviceHarness{harness: h, pod: pod}
 }
 
-func (s *serviceHarness) countRequests(method, path string) int {
-	n := 0
-	for _, r := range s.stub.Requests() {
-		if r.Method == method && r.Path == path {
-			n++
+// seedMilestones mints milestones 1..n on the pod, so a run's milestone
+// number resolves.
+func (s *serviceHarness) seedMilestones(t *testing.T, n int) {
+	t.Helper()
+	for i := 1; i <= n; i++ {
+		if _, err := s.pod.CreateMilestone(context.Background(), widgets, sourcecontrol.CreateMilestoneRequest{Title: fmt.Sprintf("v%d", i)}); err != nil {
+			t.Fatal(err)
 		}
 	}
-	return n
+}
+
+// calls answers the pod calls of op, in order.
+func (s *serviceHarness) calls(op string) []aestudiotest.Call {
+	var out []aestudiotest.Call
+	for _, c := range s.pod.Calls() {
+		if c.Op == op {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // TestService_AutoMergeIssuesTheSquashMergeOnce drives the whole merge row
-// through real HTTP: the milestone membership read, the ground-truth PR read,
-// and the merge itself — twice, to prove a redelivery merges nothing.
+// through the pod port: the milestone membership read, the ground-truth PR
+// read, and the merge itself — twice, to prove a redelivery merges nothing.
 func TestService_AutoMergeIssuesTheSquashMergeOnce(t *testing.T) {
 	h := newServiceHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
-	// The milestone's open agent-work issues.
-	h.stub.On(http.MethodGet, "/repos/acme/widgets/issues", http.StatusOK,
-		`[{"number":12,"state":"open","labels":[{"name":"aep"}]}]`)
-	// Ground truth: open before the merge, merged afterwards.
-	h.stub.OnSequence(http.MethodGet, "/repos/acme/widgets/pulls/42",
-		gittest.Response{Status: http.StatusOK, Body: `{"state":"open","merged":false}`},
-		gittest.Response{Status: http.StatusOK, Body: `{"state":"closed","merged":true,"merge_commit_sha":"abc123def456789"}`},
-	)
-	h.stub.On(http.MethodPut, "/repos/acme/widgets/pulls/42/merge", http.StatusOK, `{"merged":true}`)
+	h.seedMilestones(t, 7)
+	// The milestone's open agent-work issue and the pull request resolving it.
+	issue := h.pod.SeedIssue(widgets, sourcecontrol.IssueInfo{Title: "work", Labels: []string{"aep"}}, 7)
+	pr := h.pod.SeedPullRequest(widgets, []string{"services/order/main.go"})
 
-	payload := prBody("opened", "aep/m7-c1", "Resolves #12", 42, false, false, "")
+	payload := prBody("opened", "aep/m7-c1", fmt.Sprintf("Resolves #%d", issue), pr, false, false, "")
 	for i := 0; i < 2; i++ {
 		if err := h.deliver(t, "pull_request", payload); err != nil {
 			t.Fatalf("dispatch %d: %v", i, err)
 		}
 	}
 
-	if got := h.countRequests(http.MethodPut, "/repos/acme/widgets/pulls/42/merge"); got != 1 {
+	if got := len(h.calls(aestudiotest.OpMergePullRequest)); got != 1 {
 		t.Fatalf("the merge must be issued exactly once across a delivery and its redelivery, got %d", got)
+	}
+	if state, err := h.pod.GetPullRequest(context.Background(), widgets, pr); err != nil || !state.Merged {
+		t.Fatalf("pull request state = %+v err=%v, want merged", state, err)
 	}
 	// The milestone read must be scoped to the milestone and to open issues, or
 	// the predicate would be decided against the wrong population.
-	milestoneRead := false
-	for _, r := range h.stub.Requests() {
-		if r.Method == http.MethodGet && r.Path == "/repos/acme/widgets/issues" {
-			milestoneRead = true
-			for _, want := range []string{"milestone=7", "state=open"} {
-				if !strings.Contains(r.Query, want) {
-					t.Fatalf("milestone read query %q must carry %q", r.Query, want)
-				}
-			}
-			// And it must NOT narrow by label. This endpoint's `labels` is AND, so
-			// any value here excludes some population the policy accepts — it used
-			// to send `labels=aep`, which hid the milestone's validation task (then
-			// unarmed) and left every validation pull request unmerged. Adding a
-			// second label would not have fixed it either: AND demands an issue
-			// carrying both, and matches nothing. The label decision belongs to
-			// decideAutoMerge, over the labels this read returns.
-			if strings.Contains(r.Query, "labels=") {
-				t.Fatalf("milestone read query %q must not narrow by label — that decision is the policy's", r.Query)
-			}
-			break
-		}
+	reads := h.calls(aestudiotest.OpListMilestoneIssues)
+	// Nothing below fails when the read never happened, so a read that moved
+	// elsewhere would leave the label guard — the whole reason these assertions
+	// exist — silently testing nothing.
+	if len(reads) == 0 {
+		t.Fatal("the merge policy must read the milestone's issues; no such call was made")
 	}
-	// Nothing above fails when the read never happened — the loop simply matches
-	// no request and every assertion inside it is skipped. So a read that moved to
-	// another path would leave the label guard, which is the whole reason these
-	// assertions exist, silently testing nothing.
-	if !milestoneRead {
-		t.Fatal("the merge policy must read the milestone's issues; no such request was made")
+	for _, r := range reads {
+		if r.Milestone.Number != 7 || r.Milestone.State != "open" {
+			t.Fatalf("milestone read = %+v, want milestone 7, open", r.Milestone)
+		}
+		// And it must NOT narrow by label. The label filter is AND, so any value
+		// here excludes some population the policy accepts — it used to send
+		// `labels=aep`, which hid the milestone's validation task (then unarmed)
+		// and left every validation pull request unmerged. Adding a second label
+		// would not have fixed it either: AND demands an issue carrying both, and
+		// matches nothing. The label decision belongs to decideAutoMerge, over
+		// the labels this read returns.
+		if len(r.Milestone.Labels) != 0 {
+			t.Fatalf("milestone read labels = %v; it must not narrow by label — that decision is the policy's", r.Milestone.Labels)
+		}
 	}
 }
 
@@ -193,6 +172,7 @@ func TestService_AutoMergeIssuesTheSquashMergeOnce(t *testing.T) {
 // filing another.
 func TestService_FixIssueIsMintedOnce(t *testing.T) {
 	h := newServiceHarness(t, aRun("run-1", 7, delivery.RunStateRunning))
+	h.seedMilestones(t, 7)
 	cycle := aCycle("cycle-1", "run-1")
 	cycle.MergeSHA = testMergeSHA
 	h.cycles.latest = cycle
@@ -202,31 +182,6 @@ func TestService_FixIssueIsMintedOnce(t *testing.T) {
 		{Name: delivery.BuildRunName(testProject, "order-service", testMergeSHA, 2), Completed: true},
 	}
 
-	// The dedupe read, served from what the stub has actually been asked to
-	// create: empty until an issue carrying the queried dedupe label exists,
-	// which is exactly how GitHub answers once one has been filed.
-	h.stub.OnFunc(http.MethodGet, "/repos/acme/widgets/issues", func(w http.ResponseWriter, r *http.Request) {
-		body := "[]"
-		for _, prior := range h.stub.Requests() {
-			if prior.Method != http.MethodPost || prior.Path != "/repos/acme/widgets/issues" {
-				continue
-			}
-			for _, label := range dedupeLabelsIn(prior.Body) {
-				if strings.Contains(r.URL.RawQuery, label) {
-					body = fmt.Sprintf(`[{"number":501,"state":"open","labels":[{"name":%q}]}]`, label)
-				}
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, body)
-	})
-	// Labels are ensured before the issue is created (GitHub silently drops
-	// unknown ones).
-	h.stub.On(http.MethodPost, "/repos/acme/widgets/labels", http.StatusCreated, `{}`)
-	h.stub.On(http.MethodPost, "/repos/acme/widgets/issues", http.StatusCreated,
-		`{"number":501,"html_url":"https://github.com/acme/widgets/issues/501"}`)
-
 	red := terminal("order-service", false, "step docker-build failed: exit 2")
 	for i := 0; i < 2; i++ {
 		if err := h.events.OnBuildTerminal(context.Background(), red); err != nil {
@@ -234,42 +189,20 @@ func TestService_FixIssueIsMintedOnce(t *testing.T) {
 		}
 	}
 
-	if got := h.countRequests(http.MethodPost, "/repos/acme/widgets/issues"); got != 1 {
+	if got := len(h.calls(aestudiotest.OpCreateIssue)); got != 1 {
 		t.Fatalf("the fix issue must be filed exactly once across two terminals, got %d", got)
 	}
-	// The created issue must carry the milestone NUMBER (a title 422s) and the
-	// agent-work label, and must NOT carry the aep-api-only dedupe key.
-	for _, r := range h.stub.Requests() {
-		if r.Method == http.MethodPost && r.Path == "/repos/acme/widgets/issues" {
-			if !strings.Contains(r.Body, `"milestone":7`) {
-				t.Fatalf("the issue must be assigned to milestone 7 at creation, got %s", r.Body)
-			}
-			if strings.Contains(r.Body, "dedupeKey") {
-				t.Fatalf("the dedupe key is aep-api-only and must never reach GitHub, got %s", r.Body)
-			}
-			if !strings.Contains(r.Body, `"aep"`) {
-				t.Fatalf("the fix issue must be labelled agent work, got %s", r.Body)
-			}
-		}
+	// The created issue carries the milestone NUMBER (a title 422s), the
+	// agent-work label and the dedupe label its key became.
+	members, err := h.pod.ListMilestoneIssues(context.Background(), widgets, sourcecontrol.MilestoneIssuesFilter{Number: 7})
+	if err != nil || len(members) != 1 {
+		t.Fatalf("milestone 7 members = %+v err=%v, want the fix issue", members, err)
 	}
-}
-
-// dedupeLabelsIn pulls the derived dedupe labels out of a create-issue request
-// body — the lossy transform of a DedupeKey the issue service files under.
-func dedupeLabelsIn(body string) []string {
-	var out []string
-	rest := body
-	for {
-		i := strings.Index(rest, `"dedupe:`)
-		if i < 0 {
-			return out
-		}
-		rest = rest[i+1:]
-		j := strings.Index(rest, `"`)
-		if j < 0 {
-			return out
-		}
-		out = append(out, rest[:j])
-		rest = rest[j:]
+	labels := members[0].Labels
+	if !slices.Contains(labels, "aep") {
+		t.Fatalf("the fix issue must be labelled agent work, got %v", labels)
+	}
+	if !slices.ContainsFunc(labels, func(l string) bool { return strings.HasPrefix(l, "dedupe:") }) {
+		t.Fatalf("the fix issue must carry its dedupe label, got %v", labels)
 	}
 }

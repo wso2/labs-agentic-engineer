@@ -19,36 +19,11 @@ package organization
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
-
-// fakeGitSecretClient records CreateGitSecret/DeleteGitSecret calls.
-type fakeGitSecretClient struct {
-	created   []openchoreo.CreateGitSecretRequest
-	deleted   []string
-	deleteErr error
-	createErr error
-}
-
-func (f *fakeGitSecretClient) CreateGitSecret(ctx context.Context, orgNS string, req openchoreo.CreateGitSecretRequest) (*openchoreo.GitSecretInfo, error) {
-	f.created = append(f.created, req)
-	if f.createErr != nil {
-		return nil, f.createErr
-	}
-	return &openchoreo.GitSecretInfo{Name: req.Name, Namespace: orgNS}, nil
-}
-func (f *fakeGitSecretClient) DeleteGitSecret(ctx context.Context, orgNS, name string) error {
-	f.deleted = append(f.deleted, name)
-	return f.deleteErr
-}
-func (f *fakeGitSecretClient) ListGitSecrets(ctx context.Context, orgNS string) ([]*openchoreo.GitSecretInfo, error) {
-	return nil, nil
-}
 
 // fakeRepoRepo is a minimal in-memory RepoRepository for the
 // stage-build-secret tests.
@@ -65,12 +40,20 @@ func (f *fakeRepoRepo) GetByOrgAndProjectID(ctx context.Context, ocOrgID, projec
 func (f *fakeRepoRepo) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (f *fakeRepoRepo) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (f *fakeRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (f *fakeRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
 func (f *fakeRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("fakeRepoRepo: ListByOrg not expected in orgcreds tests")
 }
-func (f *fakeRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
+func (f *fakeRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+
 func (f *fakeRepoRepo) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*sourcecontrol.GitRepository, error) {
 	return f.rows[ocOrgID+"/"+repoSlug], nil
 }
@@ -80,173 +63,78 @@ func (f *fakeRepoRepo) Delete(context.Context, string) error                    
 func (f *fakeRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) error { return nil }
 func (f *fakeRepoRepo) DeleteAll(context.Context) error                               { return nil }
 
-// fakeResolver dispatches a fixed Credential or returns a fixed error.
-type fakeResolver struct {
-	cred secrets.Credential
-	err  error
+// memRepoBySlug is a fakeRepoRepo holding one active repo, org/slug.
+func memRepoBySlug(t *testing.T, ocOrgID, repoSlug string) *fakeRepoRepo {
+	t.Helper()
+	return &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
+		ocOrgID + "/" + repoSlug: {OrgID: ocOrgID, ProjectID: "p1", RepoSlug: repoSlug},
+	}}
 }
 
-func (f *fakeResolver) Resolve(ctx context.Context, ocOrgID string) (secrets.Credential, error) {
-	if f.err != nil {
-		return nil, f.err
+// fakeOrgSecrets is an OrgSecretRefReader over "org/secret" → reference
+// name; a missing key is an unset secret.
+type fakeOrgSecrets map[string]string
+
+func (f fakeOrgSecrets) Get(_ context.Context, ocOrgID string, s OrgSecret) (*OrgSecretRef, error) {
+	name, ok := f[ocOrgID+"/"+string(s)]
+	if !ok {
+		return nil, nil
 	}
-	return f.cred, nil
+	return &OrgSecretRef{Secret: s, Name: name}, nil
 }
 
-// fakeCred returns a constant token + expiry.
-type fakeCred struct {
-	token string
-	exp   time.Time
-	err   error
-}
+// failingOrgSecrets fails every row read.
+type failingOrgSecrets struct{ err error }
 
-func (c *fakeCred) Token(context.Context) (string, time.Time, error) {
-	return c.token, c.exp, c.err
-}
-func (c *fakeCred) Identity() secrets.Identity { return secrets.Identity{} }
-func (c *fakeCred) RepoOwner() string          { return "" }
-func (c *fakeCred) WebhookStrategy() secrets.WebhookStrategy {
-	return secrets.WebhookPerRepo
+func (f failingOrgSecrets) Get(context.Context, string, OrgSecret) (*OrgSecretRef, error) {
+	return nil, f.err
 }
 
 const testRunName = "default-greeting-api-1731538100123"
 
-func TestStageBuildSecret_Happy(t *testing.T) {
-	repo := &sourcecontrol.GitRepository{
-		OrgID:     "default",
-		ProjectID: "p1",
-		RepoSlug:  "aep-repos-myrepo",
+func TestStageBuildSecret_ReturnsGitpatRefName(t *testing.T) {
+	svc := NewBuildCredentialsService(memRepoBySlug(t, "default", "acme-greeter"), fakeOrgSecrets{"default/github-pat": "default-github-pat-3f9a"})
+	res, err := svc.StageBuildSecret(context.Background(), "default", "acme-greeter", "run-1")
+	if err != nil || res.SecretRef != "default-github-pat-3f9a" {
+		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{"default/aep-repos-myrepo": repo}}
-	res := &fakeResolver{cred: &fakeCred{token: "ghs_abc123", exp: time.Now().Add(time.Hour)}}
-	gs := &fakeGitSecretClient{}
-
-	svc := NewBuildCredentialsService(repos, res, gs)
-	got, err := svc.StageBuildSecret(context.Background(), "default", "aep-repos-myrepo", testRunName)
-	if err != nil {
-		t.Fatalf("StageBuildSecret: %v", err)
-	}
-	if got.SecretRef != BuildGitSecretName {
-		t.Errorf("SecretRef = %q; want %q", got.SecretRef, BuildGitSecretName)
-	}
-	// Refresh = delete then create with the fresh token.
-	if len(gs.deleted) != 1 || gs.deleted[0] != BuildGitSecretName {
-		t.Errorf("delete calls = %v; want [%s]", gs.deleted, BuildGitSecretName)
-	}
-	if len(gs.created) != 1 {
-		t.Fatalf("create calls = %d; want 1", len(gs.created))
-	}
-	c := gs.created[0]
-	if c.Name != BuildGitSecretName || c.Token != "ghs_abc123" || c.SecretType != openchoreo.GitSecretBasicAuth {
-		t.Errorf("create req = %+v; want name=%s token=ghs_abc123 type=basic-auth", c, BuildGitSecretName)
-	}
-	if c.Username != "git" { // WebhookPerRepo + empty identity → "git"
-		t.Errorf("username = %q; want git", c.Username)
+	_, err = NewBuildCredentialsService(memRepoBySlug(t, "default", "acme-greeter"), fakeOrgSecrets{}).StageBuildSecret(context.Background(), "default", "acme-greeter", "run-1")
+	if !errors.Is(err, ErrOrgDisconnected) {
+		t.Fatalf("err = %v, want ErrOrgDisconnected", err)
 	}
 }
 
-// A 404 on the delete leg (first-ever build for the org) must be tolerated —
-// the create still proceeds.
-func TestStageBuildSecret_DeleteNotFoundTolerated(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
-		"default/slug": {OrgID: "default", RepoSlug: "slug"},
-	}}
-	res := &fakeResolver{cred: &fakeCred{token: "t", exp: time.Now().Add(time.Hour)}}
-	gs := &fakeGitSecretClient{deleteErr: openchoreo.ErrNotFound}
-
-	svc := NewBuildCredentialsService(repos, res, gs)
-	got, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
-	if err != nil {
-		t.Fatalf("StageBuildSecret: %v", err)
-	}
-	if got.SecretRef != BuildGitSecretName || len(gs.created) != 1 {
-		t.Errorf("want create after tolerated 404; SecretRef=%q creates=%d", got.SecretRef, len(gs.created))
+// Another org's github-pat row is never this org's reference.
+func TestStageBuildSecret_ReadsOnlyTheOrgsOwnRow(t *testing.T) {
+	svc := NewBuildCredentialsService(memRepoBySlug(t, "default", "slug"), fakeOrgSecrets{"other/github-pat": "other-github-pat-1"})
+	if _, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName); !errors.Is(err, ErrOrgDisconnected) {
+		t.Fatalf("err = %v, want ErrOrgDisconnected", err)
 	}
 }
 
-// A 409 on the create leg (a concurrent same-org build re-created the secret
-// between our delete and create) must be tolerated — the secret exists with a
-// valid token, so the build proceeds.
-func TestStageBuildSecret_CreateConflictTolerated(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
-		"default/slug": {OrgID: "default", RepoSlug: "slug"},
-	}}
-	res := &fakeResolver{cred: &fakeCred{token: "t", exp: time.Now().Add(time.Hour)}}
-	gs := &fakeGitSecretClient{createErr: openchoreo.ErrConflict}
-
-	svc := NewBuildCredentialsService(repos, res, gs)
-	got, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
-	if err != nil {
-		t.Fatalf("StageBuildSecret should tolerate create-409, got: %v", err)
+// A row read failure is a transient 500-class error, never a disconnect and
+// never an empty reference.
+func TestStageBuildSecret_RowReadFailureIsNotDisconnected(t *testing.T) {
+	svc := NewBuildCredentialsService(memRepoBySlug(t, "default", "slug"), failingOrgSecrets{err: errors.New("db down")})
+	res, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
+	if err == nil || errors.Is(err, ErrOrgDisconnected) || res != nil {
+		t.Fatalf("res=%+v err=%v, want a non-disconnect error", res, err)
 	}
-	if got.SecretRef != BuildGitSecretName {
-		t.Errorf("SecretRef = %q; want %q", got.SecretRef, BuildGitSecretName)
-	}
-}
-
-// A non-tolerated provisioning failure (e.g. the dev-cloud platform-api 404 on
-// CreateGitSecret, surfaced as ErrNotFound) must NOT block the build — it
-// degrades to an empty SecretRef so the build dispatches and clones the
-// (public) repo unauthenticated. Private-repo support is tracked by
-// wso2-enterprise/wso2cloud#319.
-func TestStageBuildSecret_ProvisionFailureDegrades(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
-		"default/slug": {OrgID: "default", RepoSlug: "slug"},
-	}}
-	res := &fakeResolver{cred: &fakeCred{token: "t", exp: time.Now().Add(time.Hour)}}
-	gs := &fakeGitSecretClient{createErr: openchoreo.ErrNotFound}
-
-	svc := NewBuildCredentialsService(repos, res, gs)
-	got, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
-	if err != nil {
-		t.Fatalf("StageBuildSecret should degrade on provision failure, got: %v", err)
-	}
-	if got.SecretRef != "" {
-		t.Errorf("SecretRef = %q; want empty (degraded)", got.SecretRef)
-	}
-}
-
-// With no git-secret client wired (degraded), provisioning is skipped and an
-// empty SecretRef is returned so the build clones unauthenticated.
-func TestStageBuildSecret_NilClientDegraded(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
-		"default/slug": {OrgID: "default", RepoSlug: "slug"},
-	}}
-	res := &fakeResolver{cred: &fakeCred{token: "t", exp: time.Now().Add(time.Hour)}}
-
-	svc := NewBuildCredentialsService(repos, res, nil)
-	got, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
-	if err != nil {
-		t.Fatalf("StageBuildSecret: %v", err)
-	}
-	if got.SecretRef != "" {
-		t.Errorf("SecretRef = %q; want empty (degraded)", got.SecretRef)
+	if !strings.Contains(err.Error(), "db down") {
+		t.Fatalf("err = %v, want the read failure wrapped", err)
 	}
 }
 
 func TestStageBuildSecret_RepoNotInOrg(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{}}
-	svc := NewBuildCredentialsService(repos, &fakeResolver{}, nil)
+	svc := NewBuildCredentialsService(&fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{}}, fakeOrgSecrets{"default/github-pat": "default-github-pat-3f9a"})
 	_, err := svc.StageBuildSecret(context.Background(), "default", "missing-slug", testRunName)
 	if !errors.Is(err, ErrRepoNotInOrg) {
 		t.Errorf("got %v; want ErrRepoNotInOrg", err)
 	}
 }
 
-func TestStageBuildSecret_OrgDisconnected(t *testing.T) {
-	repos := &fakeRepoRepo{rows: map[string]*sourcecontrol.GitRepository{
-		"default/slug": {OrgID: "default", RepoSlug: "slug"},
-	}}
-	res := &fakeResolver{err: &secrets.OrgNotActiveError{OcOrgID: "default", Status: "disconnected"}}
-	svc := NewBuildCredentialsService(repos, res, nil)
-	_, err := svc.StageBuildSecret(context.Background(), "default", "slug", testRunName)
-	if !errors.Is(err, ErrOrgDisconnected) {
-		t.Errorf("got %v; want ErrOrgDisconnected", err)
-	}
-}
-
 func TestStageBuildSecret_MissingArgs(t *testing.T) {
-	svc := NewBuildCredentialsService(&fakeRepoRepo{}, &fakeResolver{}, nil)
+	svc := NewBuildCredentialsService(&fakeRepoRepo{}, fakeOrgSecrets{})
 	for _, tc := range []struct{ org, slug, wrn string }{
 		{"", "slug", testRunName},
 		{"default", "", testRunName},

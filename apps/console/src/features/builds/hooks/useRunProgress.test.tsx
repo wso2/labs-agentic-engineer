@@ -18,7 +18,7 @@
 
 // @vitest-environment jsdom
 
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // One SSE body per attach. The hook reconnects on EOF-without-[DONE], so a
@@ -263,5 +263,27 @@ describe("runEventKey", () => {
     // and a fallback here would key two attempts' first events the same.
     expect(runEventKey({ ...base, seq: 0 })).toBe("c1:1:0");
     expect(runEventKey({ ...base, seq: 0, attempt: 2 })).toBe("c1:2:0");
+  });
+
+  // "Try again" on an unavailable log: attach afresh now rather than waiting
+  // for a drop. The stream replays idempotently, so the cycle comes back with
+  // whatever recording state the server now reports.
+  it("reconnect() re-attaches and picks up the cycle's new recording state", async () => {
+    const unavailable = { ...cycle("c1", "coding").cycle, recording: "unavailable" };
+    const kept = { ...cycle("c1", "coding").cycle, recording: "kept" };
+    bodies = [
+      frames({ type: "cycle", cycle: unavailable }, { type: "done", state: "succeeded" }) + DONE,
+      frames({ type: "cycle", cycle: kept }, { type: "done", state: "succeeded" }) + DONE,
+    ];
+    const { result } = renderHook(() => useRunProgress("acme", "run-1"));
+    await waitFor(() => expect(result.current.phase).toBe("ended"));
+    expect(result.current.cycles[0]?.cycle.recording).toBe("unavailable");
+    expect(GET).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.reconnect();
+    });
+    await waitFor(() => expect(result.current.cycles[0]?.cycle.recording).toBe("kept"));
+    expect(GET).toHaveBeenCalledTimes(2);
   });
 });

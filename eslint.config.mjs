@@ -23,7 +23,7 @@ export default tseslint.config(
       // server is started from inside an app directory.
       "**/.vite/**",
       // chat_playground — generated app source from playground runs
-      // (services/agents), not repo code.
+      // (components/dataplane/ae-system-project/ae-studio/ae-design-agent), not repo code.
       "**/chat_playground/**",
       // Playground project homes: generated app source, not repo code.
       "playground/.projects/**",

@@ -16,9 +16,10 @@
 # under the License.
 
 # Run the coding-agent runner as a local one-shot container, standing in
-# for the platform dispatch flow (BFF -> Argo -> pod). A loopback token
-# stub (token-stub.mjs) plays the git-service credentials/refresh
-# endpoint; everything else is the same code path as a cluster run.
+# for the platform dispatch flow. A loopback stub (token-stub.mjs) plays the
+# publisher token endpoint and the validation-context callback. Git uses the
+# GITHUB_TOKEN from the env file, exactly as a cluster Job does with the org's
+# gitpat; everything else is the same code path as a cluster run.
 #
 # Usage:
 #   cp env.local.example .env.local    # then fill in
@@ -45,7 +46,7 @@ set -a
 . "$ENV_FILE"
 set +a
 
-for v in ANTHROPIC_API_KEY GITHUB_PAT AEP_REPO_URL AEP_PROMPT; do
+for v in ANTHROPIC_API_KEY GITHUB_TOKEN AEP_REPO_URL AEP_PROMPT; do
   if [ -z "${!v:-}" ]; then
     echo "missing required var in $ENV_FILE: $v" >&2
     exit 2
@@ -54,8 +55,7 @@ done
 
 # node (required by the stub anyway) generates UUIDs — uuidgen is not
 # universally present. The bearer defaults to a fresh random value per
-# run; the stub requires it on every refresh call, so the PAT is never
-# handed out unauthenticated even if STUB_BIND is widened.
+# run; the stub requires it on every validation-context call.
 export AEP_TASK_ID="${AEP_TASK_ID:-$(node -e 'console.log(crypto.randomUUID())')}"
 export AEP_ORG_ID="${AEP_ORG_ID:-local-org}"
 export AEP_PROJECT_ID="${AEP_PROJECT_ID:-local-project}"
@@ -64,6 +64,16 @@ export AEP_IDENTITY_NAME="${AEP_IDENTITY_NAME:-AEP Local Agent}"
 export AEP_IDENTITY_EMAIL="${AEP_IDENTITY_EMAIL:-aep-local@users.noreply.github.com}"
 export AEP_BEARER="${AEP_BEARER:-$(node -e 'console.log(crypto.randomUUID())')}"
 export AEP_TASK_KIND="${AEP_TASK_KIND:-implementation}"
+# The org's GitHub account (the remote-git owner guard's reference; the runner
+# exits 2 without it). Default: the owner segment of AEP_REPO_URL.
+if [ -z "${AEP_GITHUB_OWNER:-}" ]; then
+  AEP_GITHUB_OWNER="$(printf '%s' "$AEP_REPO_URL" | sed -E 's#^https://github\.com/([^/]+)/.*#\1#')"
+  if [ "$AEP_GITHUB_OWNER" = "$AEP_REPO_URL" ] || [ -z "$AEP_GITHUB_OWNER" ]; then
+    echo "cannot derive AEP_GITHUB_OWNER from AEP_REPO_URL ($AEP_REPO_URL); set it in $ENV_FILE" >&2
+    exit 2
+  fi
+fi
+export AEP_GITHUB_OWNER
 export PUBLISHER_CLIENT_ID="${PUBLISHER_CLIENT_ID:-local-publisher}"
 export PUBLISHER_CLIENT_SECRET="${PUBLISHER_CLIENT_SECRET:-local-publisher-secret}"
 STUB_PORT="${STUB_PORT:-8377}"
@@ -74,13 +84,10 @@ IMAGE_TAG="${IMAGE_TAG:-aep-remote-worker:local}"
 # each other.
 DOCKERFILE="${DOCKERFILE:-$WORKER_DIR/Dockerfile}"
 # The container reaches the host-side stub via host.docker.internal.
-export AEP_GIT_SERVICE_URL="http://host.docker.internal:${STUB_PORT}"
 export PUBLISHER_TOKEN_URL="http://host.docker.internal:${STUB_PORT}/oauth2/token"
-# AEP_PLATFORM_URL: for an implementation run it stays unset (oneshot.ts skips
-# the per-task skills pull; credhelper/gh fall back to AEP_GIT_SERVICE_URL). A
-# validation run points it at the same stub so the validation-task skill can
-# fetch its validation-context; the stub answers that path too. The skills-pull
-# to the stub 404s and is a harmless best-effort warning.
+# AEP_PLATFORM_URL: for an implementation run it stays unset. A validation run
+# points it at the same stub so the runner can fetch its validation-context; the
+# stub answers that path.
 if [ "${AEP_TASK_KIND}" = "validation" ]; then
   export AEP_PLATFORM_URL="${AEP_PLATFORM_URL:-http://host.docker.internal:${STUB_PORT}}"
 else
@@ -93,7 +100,7 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 echo ">> starting token stub on ${STUB_BIND}:${STUB_PORT}"
-GITHUB_PAT="$GITHUB_PAT" STUB_PORT="$STUB_PORT" STUB_BIND="$STUB_BIND" \
+STUB_PORT="$STUB_PORT" STUB_BIND="$STUB_BIND" \
   STUB_BEARER="$AEP_BEARER" \
   STUB_CLIENT_ID="$PUBLISHER_CLIENT_ID" STUB_CLIENT_SECRET="$PUBLISHER_CLIENT_SECRET" \
   node "$SCRIPT_DIR/token-stub.mjs" &
@@ -119,7 +126,9 @@ echo ">> building runner image ${IMAGE_TAG} (${DOCKERFILE##*/})"
 # The tool stage resolves `org.ballerinalang:ballerina-cli` from ballerina-platform's
 # GitHub Packages, so it needs a token with `read:packages` — as a secret mount,
 # never a build arg. See ADR-0008.
-export PACKAGE_PAT="${packagePAT:-${GITHUB_TOKEN:-$(gh auth token 2>/dev/null || true)}}"
+# GITHUB_TOKEN is the run's (throwaway, repo-scoped) git token, so it is not a
+# candidate here: ask gh for its own login instead.
+export PACKAGE_PAT="${packagePAT:-$(env -u GITHUB_TOKEN -u GH_TOKEN gh auth token 2>/dev/null || true)}"
 if [ -z "$PACKAGE_PAT" ]; then
   echo "no token to read ballerina-platform's GitHub Packages." >&2
   echo "  gh auth refresh -h github.com -s read:packages   # then re-run" >&2
@@ -147,8 +156,8 @@ docker run --rm \
   -e AEP_EVAL_MODEL_API_KEY -e AEP_EVAL_MODEL_FORMAT -e AEP_EVAL_MODEL_BASE_URL \
   -e AEP_EVAL_MODEL_NAME -e AEP_EVAL_MODEL_AUTH_SCHEME \
   -e AEP_TASK_ID -e AEP_ORG_ID -e AEP_PROJECT_ID -e AEP_COMPONENT_NAME \
-  -e AEP_REPO_URL -e AEP_PROMPT -e AEP_BEARER -e AEP_GIT_SERVICE_URL \
-  -e AEP_IDENTITY_NAME -e AEP_IDENTITY_EMAIL -e AEP_TASK_KIND -e AEP_PLATFORM_URL \
+  -e AEP_REPO_URL -e AEP_PROMPT -e AEP_BEARER -e GITHUB_TOKEN \
+  -e AEP_IDENTITY_NAME -e AEP_IDENTITY_EMAIL -e AEP_GITHUB_OWNER -e AEP_TASK_KIND -e AEP_PLATFORM_URL \
   -e PUBLISHER_CLIENT_ID -e PUBLISHER_CLIENT_SECRET -e PUBLISHER_TOKEN_URL \
   "$IMAGE_TAG" || EXIT_CODE=$?
 

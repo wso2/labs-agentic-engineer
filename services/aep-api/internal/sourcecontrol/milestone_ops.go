@@ -21,7 +21,7 @@ package sourcecontrol
 // writes: mint at plan, list to project, count to decide dispatch, close at
 // settle.
 //
-// Every method routes through resolveRepoAndCredential like its issue
+// Every method routes through resolveRef like its issue
 // siblings, so the multi-tenant invariant holds at the same single place. The
 // host adapter owns milestone idempotency and the case-insensitive title rule
 // (see the IssueOps port contract) — nothing is re-implemented here.
@@ -37,57 +37,57 @@ func (s *issueService) CreateMilestone(ctx context.Context, orgID, projectID str
 	if req.Title == "" {
 		return nil, fmt.Errorf("milestone title is required")
 	}
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.CreateMilestone(ctx, owner, repoName, cred, req)
+	return s.github.CreateMilestone(ctx, ref, req)
 }
 
 func (s *issueService) CloseMilestone(ctx context.Context, orgID, projectID string, number int) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.CloseMilestone(ctx, owner, repoName, cred, number)
+	return s.github.CloseMilestone(ctx, ref, number)
 }
 
 func (s *issueService) ReopenMilestone(ctx context.Context, orgID, projectID string, number int) error {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return err
 	}
-	return s.github.ReopenMilestone(ctx, owner, repoName, cred, number)
+	return s.github.ReopenMilestone(ctx, ref, number)
 }
 
 func (s *issueService) ListMilestones(ctx context.Context, orgID, projectID, state string) ([]Milestone, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListMilestones(ctx, owner, repoName, cred, state)
+	return s.github.ListMilestones(ctx, ref, state)
 }
 
 func (s *issueService) ListMilestoneIssues(ctx context.Context, orgID, projectID string, filter MilestoneIssuesFilter) ([]IssueInfo, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListMilestoneIssues(ctx, owner, repoName, cred, filter)
+	return s.github.ListMilestoneIssues(ctx, ref, filter)
 }
 
 func (s *issueService) MilestoneIssueCounts(ctx context.Context, orgID, projectID string, number int) (*MilestoneIssueCounts, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.MilestoneIssueCounts(ctx, owner, repoName, cred, number)
+	return s.github.MilestoneIssueCounts(ctx, ref, number)
 }
 
 func (s *issueService) ListMilestoneIssueComments(ctx context.Context, orgID, projectID string, number, perIssue int) (map[int][]IssueComment, error) {
-	owner, repoName, cred, err := s.resolveRepoAndCredential(ctx, orgID, projectID)
+	ref, err := s.resolveRef(ctx, orgID, projectID)
 	if err != nil {
 		return nil, err
 	}
-	return s.github.ListMilestoneIssueComments(ctx, owner, repoName, cred, number, perIssue)
+	return s.github.ListMilestoneIssueComments(ctx, ref, number, perIssue)
 }

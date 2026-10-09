@@ -33,6 +33,7 @@ import {
 import { Bot } from "@wso2/oxygen-ui-icons-react";
 import type { components } from "../../../generated/aep-api";
 import {
+  SUBSCRIPTION_ACTIVE,
   SUBSCRIPTION_TOKEN_PREFIX,
   formatRuns,
   formatsRunning,
@@ -40,7 +41,7 @@ import {
   runtimeAvailable,
 } from "../aiSettings";
 import { useAiSettings } from "../hooks/useAiSettings";
-import { MaskedCredential, SecretField } from "./CredentialField";
+import { CredentialField, SecretField } from "./CredentialField";
 import { ModelConnectionRow } from "./ModelConnectionRow";
 
 type ConfigProjection = components["schemas"]["ConfigProjection"];
@@ -163,11 +164,9 @@ export function AiAgentsCard({
                 )}
                 {r.value === "claude-code" && selected && (
                   <SubscriptionControl
-                    key={
-                      saved.subscription
-                        ? `${saved.subscription.keyPrefix}${saved.subscription.keyLast4}`
-                        : "none"
-                    }
+                    key={saved.subscription
+                        ? `${saved.subscription.connectedAt}${saved.subscription.lastValidatedAt ?? ""}`
+                        : "none"}
                     ai={ai}
                   />
                 )}
@@ -323,20 +322,29 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
   const tokenError =
     serverError ?? (ai.problem?.field === "subscription" ? ai.problem.message : undefined);
   const showStored = stored !== null && !replacing && !draft.removeToken;
+  const tokenLabel = (
+    <>
+      Claude subscription token{" "}
+      <Typography component="span" variant="body2" color="text.secondary">
+        (optional)
+      </Typography>
+    </>
+  );
 
   return (
     <Box sx={frame}>
-      <Typography variant="body2" fontWeight={500}>
-        Claude subscription token{" "}
-        <Typography component="span" variant="body2" color="text.secondary">
-          (optional)
+      {stored === null && <CredentialField label={tokenLabel} set={false} />}
+      {stored !== null && !showStored && (
+        <Typography variant="body2" fontWeight={500}>
+          {tokenLabel}
         </Typography>
-      </Typography>
+      )}
 
       {showStored && (
         <>
-          <MaskedCredential
-            preview={`${stored.keyPrefix}••••••${stored.keyLast4}`}
+          <CredentialField
+            label={tokenLabel}
+            set
             onReplace={() => setReplacing(true)}
             disabled={busy}
           >
@@ -348,11 +356,29 @@ function SubscriptionControl({ ai }: { ai: ReturnType<typeof useAiSettings> }) {
             >
               Remove
             </Button>
-          </MaskedCredential>
-          <Typography variant="body2" color="text.secondary">
-            Coding bills your Claude plan. Other agents use the API key.
-          </Typography>
-          {stored.validationError && (
+          </CredentialField>
+          {/* A subscription that is not active: dispatch refuses it, so
+              coding bills neither the plan nor the key until it is replaced
+              or removed. A token never recorded in the vault (the server
+              flags only an active one): dispatch cannot mount it, so coding
+              bills the connection's key until it is replaced. */}
+          {stored.status !== SUBSCRIPTION_ACTIVE ? (
+            <Alert severity="warning">
+              {stored.validationError ??
+                `This subscription is ${stored.status}: replace its token or remove it.`}
+            </Alert>
+          ) : stored.tokenMissing ? (
+            <Alert severity="warning">
+              The Claude subscription token was never saved, so coding uses the
+              API key. Replace the token to bill your Claude plan, or remove the
+              subscription.
+            </Alert>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Coding bills your Claude plan. Other agents use the API key.
+            </Typography>
+          )}
+          {stored.status === SUBSCRIPTION_ACTIVE && stored.validationError && (
             <Alert severity="warning">{stored.validationError}</Alert>
           )}
         </>

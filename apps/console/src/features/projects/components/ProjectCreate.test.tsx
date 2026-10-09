@@ -316,6 +316,64 @@ describe("ProjectCreate copy (#561)", () => {
     expect(screen.queryByText("server wording")).not.toBeInTheDocument();
   });
 
+  // A create the platform could not clear of an earlier delete is not a
+  // taken name; it says to wait, and leaves the name field alone.
+  it("says an earlier delete is still finishing, not that the name is taken", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "project_delete_pending", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "An earlier delete of this project is still finishing. Try again in a minute.",
+    );
+    expect(screen.queryByText(/already exists/)).not.toBeInTheDocument();
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+  });
+
+  // Not connected is the user's to fix in Settings, not a failure to
+  // read out; the server's wording is replaced by the console's.
+  it("sends a create refused for no GitHub connection to Settings' GitHub section", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "github_not_connected", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent("Connect GitHub to continue");
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Connect GitHub" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings", search: { section: "github" } });
+  });
+
+  it("offers Try again while AE Studio restarts, and it creates again", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "ae_studio_unavailable", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent("AE Studio is restarting — try again");
+    createProject.mutate.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(createProject.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the operator, not the server, when AE Studio is misconfigured", () => {
+    createProject.isError = true;
+    createProject.error = new ApiRequestError(
+      { code: "ae_studio_misconfigured", message: "server wording" },
+      "fallback",
+    );
+    reachNameStep();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "AE Studio is misconfigured — contact your administrator",
+    );
+    expect(screen.queryByText("server wording")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
   it("still shows an Alert for a failure the user cannot fix in the form", () => {
     createProject.isError = true;
     createProject.error = new ApiRequestError({ code: "internal_error", message: "boom" }, "fallback");

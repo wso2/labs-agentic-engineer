@@ -24,11 +24,9 @@ import (
 )
 
 // RunPhase14DropSMAPIColumns drops leftover sm_api_* columns from the
-// credential tables. secret_ref_* stay. This binary stamps secret_ref_*
-// only; phase11 already copied leftover sm_api_* values into secret_ref_*
-// where secret_ref_name was empty. After this step a pre-drop binary
-// cannot connect/rotate/delete against the migrated database (it still
-// writes sm_api_* keys).
+// credential tables. No value is copied first (phase11 is a tombstone), and
+// the secret_ref_* columns they sat beside are dropped later by
+// RunPhase29SecretsRefsOnly; references live only in org_secrets rows.
 //
 // Idempotent — DROP COLUMN IF EXISTS.
 func RunPhase14DropSMAPIColumns(ctx context.Context, db *gorm.DB) error {

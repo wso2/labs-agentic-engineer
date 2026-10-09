@@ -29,7 +29,7 @@ import (
 func catalogGovernor(t *testing.T, amp *fakeAMP, conns *fakeConnections) *Governor {
 	t.Helper()
 	amp.catalog = testCatalog(t)
-	amp.providerUUID = "prov-uuid"
+	amp.providers[ProviderID("acme")] = agentmanager.ProviderRef{UUID: "prov-uuid", Handle: ProviderID("acme")}
 	return New(Deps{Endpoints: &fakeEndpoints{}, AMP: amp, Keys: &fakeKeyStore{}, Bindings: fakeBindings{}, Connections: conns})
 }
 
@@ -45,11 +45,15 @@ func catalogNames(c []CatalogGuardrail) []string {
 // will accept — the same filter, so a policy it is offered never comes back
 // unavailable or uncheckable.
 func TestGuardrailCatalog_OffersOnlyGuardrailsTheDeployCanApply(t *testing.T) {
-	g := catalogGovernor(t, newFakeAMP(), &fakeConnections{})
+	amp := newFakeAMP()
+	g := catalogGovernor(t, amp, &fakeConnections{})
 
 	got, err := g.GuardrailCatalog(context.Background(), "acme", "development")
 	if err != nil {
 		t.Fatalf("GuardrailCatalog: %v", err)
+	}
+	if amp.catalogOf != "prov-uuid" {
+		t.Errorf("catalog read for provider %q; want the org's provider prov-uuid", amp.catalogOf)
 	}
 	names := catalogNames(got)
 	for _, want := range []string{"pii-masking-regex", "regex-guardrail", "word-count-guardrail"} {
@@ -109,7 +113,7 @@ func TestGuardrailCatalog_NothingToGovernIsAnEmptyList(t *testing.T) {
 		"no provider yet": func() *Governor {
 			amp := newFakeAMP()
 			g := catalogGovernor(t, amp, &fakeConnections{})
-			amp.providerUUID = ""
+			amp.providers = map[string]agentmanager.ProviderRef{}
 			return g
 		}(),
 		"a non-Anthropic connection": func() *Governor {

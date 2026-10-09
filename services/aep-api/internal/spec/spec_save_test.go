@@ -18,17 +18,20 @@ package spec
 
 // SaveSpec = whole-spec hard gate (requirements + design) → one annotated tag
 // covering the specs/ tree, named by the user or suggested. These run over the
-// real gitfs Workspace engine.
+// in-memory AE Studio pod.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
@@ -336,6 +339,27 @@ func TestSaveSpec_InvalidCommitSHA(t *testing.T) {
 	}
 }
 
+// A caller's commit sha must be the pod's shape (40 lowercase hex): an
+// abbreviated or upper-case one is refused here, before any pod call.
+func TestCommitSHA_OnlyAFullLowercaseShaReachesThePod(t *testing.T) {
+	t.Parallel()
+	f := aestudiotest.New()
+	svc := NewArtifactService(memRepos(t, "default", "p", "https://github.com/acme/greeter"), f, f)
+	ctx := context.Background()
+	full := strings.Repeat("a", 40)
+	for _, sha := range []string{full[:7], strings.ToUpper(full), full + "aa"} {
+		if _, err := svc.SaveSpec(ctx, "default", "p", SaveRequest{CommitSHA: sha}); !errors.Is(err, ErrArtifactPathInvalid) {
+			t.Errorf("SaveSpec(%q) err = %v, want ErrArtifactPathInvalid", sha, err)
+		}
+		if _, err := svc.GetDesignAtCommit(ctx, "default", "p", sha); !errors.Is(err, ErrArtifactPathInvalid) {
+			t.Errorf("GetDesignAtCommit(%q) err = %v, want ErrArtifactPathInvalid", sha, err)
+		}
+	}
+	if calls := f.Calls(); len(calls) != 0 {
+		t.Fatalf("pod calls = %+v, want none", calls)
+	}
+}
+
 // A well-formed but UNKNOWN pinned sha fails the gate read with the engine's
 // ref-not-found: the pinned bundle read runs first, so no tag is ever attempted.
 func TestSaveSpec_UnknownPinnedSha_RefNotFound(t *testing.T) {
@@ -351,9 +375,9 @@ func TestSaveSpec_UnknownPinnedSha_RefNotFound(t *testing.T) {
 	}
 }
 
-// The tag the save reports is the same object origin and the mirror resolve,
-// and it is HEAD — a save commits nothing.
-func TestSaveSpec_TagShaConsistency_OriginAndMirror(t *testing.T) {
+// The tag the save reports is the commit the tag resolves to, and it is HEAD —
+// a save commits nothing.
+func TestSaveSpec_TagShaConsistency(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 
@@ -361,11 +385,8 @@ func TestSaveSpec_TagShaConsistency_OriginAndMirror(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveSpec: %v", err)
 	}
-	if origin := r.originRevParse("v1^{commit}"); res.CommitHash != origin {
-		t.Errorf("CommitHash %s != origin peeled v1 %s", res.CommitHash, origin)
-	}
-	if mirror := r.mirrorRevParse("v1^{commit}"); res.CommitHash != mirror {
-		t.Errorf("CommitHash %s != mirror peeled v1 %s", res.CommitHash, mirror)
+	if tagged := r.tagCommit("v1"); res.CommitHash != tagged {
+		t.Errorf("CommitHash %s != v1's commit %s", res.CommitHash, tagged)
 	}
 	if head := r.headSHA(); res.CommitHash != head {
 		t.Errorf("CommitHash %s != origin tip %s (save must tag HEAD)", res.CommitHash, head)
@@ -398,19 +419,23 @@ func TestSaveSpec_SuggestedNameCollision_RecomputesToNextName(t *testing.T) {
 }
 
 // A true external-pusher collision in the window between the save's fresh
-// tag-list read and its Tag push, forced via the harness BeforeTag hook: the
-// engine's fetch+precheck surfaces ErrTagAlreadyExists, and the recompute loop
-// must refresh the tag list and land v2.
+// tag-list read and its Tag, forced via the pod's BeforeTag hook: the pod
+// answers ErrTagAlreadyExists, and the recompute loop must refresh the tag
+// list and land v2.
 func TestSaveSpec_SuggestedNameCollision_InWindowClaim(t *testing.T) {
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 
 	var tagAttempts int32
 	var once sync.Once
-	r.ws.BeforeTag = func(sourcecontrol.TagSpec) {
+	r.pod.BeforeTag(func(sourcecontrol.TagSpec) {
 		atomic.AddInt32(&tagAttempts, 1)
-		once.Do(func() { r.tag("v1", specTagSubject+"v1") })
-	}
+		once.Do(func() {
+			r.pod.BeforeTag(nil)
+			r.tag("v1", specTagSubject+"v1")
+			r.pod.BeforeTag(func(sourcecontrol.TagSpec) { atomic.AddInt32(&tagAttempts, 1) })
+		})
+	})
 
 	res, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
 	if err != nil {
@@ -438,7 +463,6 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 	t.Parallel()
 	r := newRig(t, validSpecSeed())
 	s := r.svc.(*artifactService)
-	ref := r.workspaceRef()
 	head := r.headSHA()
 
 	type outcome struct {
@@ -453,7 +477,7 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 			defer wg.Done()
 			tags := []sourcecontrol.TagInfo{} // both believe no tags exist yet
 			name := suggestedVersionName(tags)
-			err := s.createVersionTag(context.Background(), ref, &tags, &name,
+			err := s.createVersionTag(context.Background(), r.repoRef(), &tags, &name,
 				"race", head, true)
 			results[i] = outcome{name: name, err: err}
 		}(i)
@@ -470,8 +494,8 @@ func TestCreateVersionTag_ConcurrentSameSuggestion_LoserRecomputesToNext(t *test
 		t.Fatalf("tag names = %s/%s, want exactly {v1, v2}", results[0].name, results[1].name)
 	}
 	for _, tag := range []string{"v1", "v2"} {
-		if peeled := r.originRevParse(tag + "^{commit}"); peeled != head {
-			t.Errorf("%s peels to %s on origin, want the pinned commit %s", tag, peeled, head)
+		if peeled := r.tagCommit(tag); peeled != head {
+			t.Errorf("%s points at %s, want the pinned commit %s", tag, peeled, head)
 		}
 	}
 }
@@ -536,18 +560,23 @@ func TestSaveSpec_DesignOutOfDatePerFeature(t *testing.T) {
 	}
 }
 
+// A design turn's ledger Summary holds the feature IDs it designed ("F1 F2").
+// Rows the in-process engine wrote hold the `/design F1 F2` line instead, which
+// reads the same. No IDs is nil: every feature designable at the run's commit.
 func TestDesignedFeatures(t *testing.T) {
-	for line, want := range map[string][]string{
+	for summary, want := range map[string][]string{
+		"":                        nil,
+		"F1 F2":                   {"F1", "F2"},
+		"F2 F10 F2":               {"F2", "F10"},
+		"  F3  ":                  {"F3"},
 		"/design":                 nil,
 		"/design F1 F2":           {"F1", "F2"},
 		"/design F2, F10 and F2":  {"F2", "F10"},
 		"/design the whole thing": nil,
-		"/interview F2":           nil,
-		"Design 2 features":       nil,
-		"  /design F3  ":          {"F3"},
+		"F1x Fo":                  nil,
 	} {
-		if got := DesignedFeatures(line); !reflect.DeepEqual(got, want) {
-			t.Errorf("DesignedFeatures(%q) = %v, want %v", line, got, want)
+		if got := DesignedFeatures(summary); !reflect.DeepEqual(got, want) {
+			t.Errorf("DesignedFeatures(%q) = %v, want %v", summary, got, want)
 		}
 	}
 }
@@ -636,5 +665,45 @@ func TestScopeBodyRoundTrips(t *testing.T) {
 	}
 	if _, ok := parseScope("Build"); ok {
 		t.Fatal("a body with no scope parsed as one")
+	}
+}
+
+// The save gate reads the acceptance oracle through the pod (API-7): one
+// read-bundle of the Gherkin files under specs/validation/acceptance/, kept
+// flat. A rule set that leaves a story uncovered refuses the build; a
+// nested or non-Gherkin file in that directory is not the oracle.
+func TestSaveSpec_ReadsTheAcceptanceOracleThroughThePod(t *testing.T) {
+	t.Parallel()
+	seed := validSpecSeed()
+	seed["specs/requirements/features/F1-core.md"] = "# Core\n\n## User Stories\n\n" +
+		"- F1.1 As a user, I want the thing, so that value.\n- F1.2 As a user, I want more, so that value.\n"
+	seed["specs/validation/acceptance/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F1.1\n  Rule: a\n"
+	seed["specs/validation/acceptance/old/F1-core.feature"] = "Feature: F1 Core\n\n  @story-F9.9\n  Rule: x\n"
+	seed["specs/validation/acceptance/notes.md"] = "@story-F7.1\n"
+	r := newRig(t, seed)
+
+	_, err := r.svc.SaveSpec(context.Background(), r.org, r.proj, SaveRequest{})
+	var ve *SpecValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want the uncovered story refused", err)
+	}
+	var got []string
+	for _, f := range ve.Files {
+		if strings.HasPrefix(f.Code, "ACCEPTANCE_") {
+			got = append(got, f.Path+" "+f.Code)
+		}
+	}
+	if want := []string{"specs/validation/acceptance/F1-core.feature " + codeAcceptanceUncoveredStory}; !slices.Equal(got, want) {
+		t.Fatalf("findings = %v, want %v (only the flat Gherkin file is the oracle)", got, want)
+	}
+
+	var reads []sourcecontrol.BundleFilter
+	for _, c := range r.pod.Calls() {
+		if c.Op == aestudiotest.OpReadBundle && c.Filter.Prefix == "specs/validation/acceptance/" {
+			reads = append(reads, c.Filter)
+		}
+	}
+	if len(reads) != 1 || !slices.Equal(reads[0].Exts, []string{".feature"}) || len(reads[0].Paths) != 0 {
+		t.Fatalf("acceptance reads = %+v, want one read of .feature under the acceptance prefix", reads)
 	}
 }

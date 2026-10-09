@@ -18,7 +18,7 @@
 
 /**
  * The compile-time drift-guard primitive shared by every schema ⇄ wire-type
- * check (here and in the agents service): `Equal<A, B>` resolves to `true` only
+ * check (here and in the design agent): `Equal<A, B>` resolves to `true` only
  * when the two types are identical, so a guard site asserts
  * `const _drift: Equal<z.infer<typeof schema>, WireType> = true` and a diverging
  * schema stops compiling. Type-level only — no runtime footprint.

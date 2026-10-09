@@ -105,29 +105,6 @@ type CreateComponentRequest struct {
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
-// InternalComponent is one aep-internal Component as the retention reaper and
-// the cancel path see it: enough to decide whether it may be deleted, and by
-// which name. Never served over HTTP.
-type InternalComponent struct {
-	// Name is the FRIENDLY name (project prefix stripped) — the argument
-	// DeleteComponent takes, and the `ca-…` run name a cycle records as its
-	// JobRef.
-	Name string
-	// TypeName is `spec.componentType.name` (e.g. "job/coding-agent"), so a
-	// caller can act on one kind of internal component without touching
-	// another's.
-	TypeName string
-	// CycleID is the `aep.wso2.com/cycle` marker: the run cycle that dispatched
-	// this component, and the key that decides whether it is still live.
-	CycleID string
-	// RunName is the `aep.wso2.com/run-name` marker. Equal to Name in normal
-	// operation; carried separately so a mismatch is observable rather than
-	// assumed away.
-	RunName string
-	// CreatedAt is the CR's creation timestamp — the LRU order.
-	CreatedAt time.Time
-}
-
 // WorkloadInput is the BFF-side payload for EnsureWorkload: image + env
 // (plain values and secretKeyRef entries — never secret values).
 type WorkloadInput struct {

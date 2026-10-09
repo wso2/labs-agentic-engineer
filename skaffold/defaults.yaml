@@ -1,16 +1,8 @@
-platform:
-  workspaces:
-    # PVC access mode for the shared git workspaces volume.
-    # Leave empty to use the chart default (ReadWriteOnce).
-    # Set to ReadWriteMany only if your storage class supports it and pods
-    # run across multiple nodes — most cloud storage classes do not.
-    access_mode: ""
-
 # The platform's browser-facing origins. Each is routed by Host header on the
 # same gateway port, so they are separate hostnames rather than paths, and
 # re-domaining an install means moving all of them together. Leave them as
-# they are for local k3d; `--console-url`, `--tryit-url` and `--api-url`
-# override one run.
+# they are for local k3d; `--console-url` and `--tryit-url` override
+# one run.
 console:
   # What users open, and the origin the console's OAuth redirect URIs are
   # registered against during install.
@@ -24,13 +16,6 @@ tryit:
   # so moving the console without moving this one gives you a link that opens
   # and a sign-in that is then refused as an unregistered redirect.
   public_url: "http://tryit.ae.localhost:8080"
-
-aep_api:
-  # Public base aep-api builds user-facing links on (GitHub App redirect, the
-  # Settings page). Empty falls back to console.public_url, whose origin
-  # proxies the API — set this only where the two are genuinely separate
-  # origins.
-  public_url: ""
 
 oc:
   # In-cluster URL of the OpenChoreo platform API.
@@ -86,7 +71,7 @@ oc:
 
 codingagent:
   openbao_direct:
-    # Injects OPENBAO_ADDR/TOKEN into aep-api so it can write user secrets
+    # Injects OPENBAO_ADDR into aep-api (Kubernetes auth, no token) so it can write user secrets
     # (e.g. Anthropic API keys) directly into OpenBao. Required for local/OSS
     # installs. Production overlays inject a managed SecretsProvider instead
     # and must leave this false.
@@ -96,7 +81,7 @@ openbao:
   # In-cluster URL of the OpenBao service — used when openbao_direct.enabled=true.
   # Override if OpenBao is deployed under a different namespace or service name.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
-  # token is intentionally absent — prompted interactively during install, or set via AEP_OPENBAO_TOKEN env var
+  # No token: aep-api logs in by Kubernetes auth (deployments/scripts/openbao-aep-api-auth.sh).
 
 gateway:
   # External hostname used for component HTTP endpoints (HTTPRoute hosts).
@@ -144,18 +129,12 @@ environment:
 tls:
   enabled: false
 
-webhook:
-  # Public URL registered on each GitHub repo's webhook.
-  # GitHub posts pull_request/push/issues events here so aep-api can advance
-  # task state (e.g. merged PR ends a coding task and triggers a build).
-  # Local: set to your smee.io channel URL.
-  # Production: set to the public HTTPS URL of aep-api's /api/v1/webhooks/github.
-  delivery_url: "https://smee.io/woTo6w45shQo21QQ"
-
-  local_smee:
-    # Deploys an in-cluster smee-client that subscribes to the smee.io channel
-    # in delivery_url and forwards GitHub events to aep-api. Needed for local
-    # k3d installs that have no public ingress. Never true in production.
+ae_studio:
+  webhook_relay:
+    # Gives each org's AE Studio pod a webhook-relay container on its own
+    # smee.io channel (derived from the OpenBao seed aep/webhook-relay-seed),
+    # so GitHub reaches a local k3d install's repo hooks. smee.io is a
+    # third-party public relay: never true in production (absent = false).
     enabled: true
 
 thunder:

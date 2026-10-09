@@ -20,10 +20,8 @@
 // This file holds CredentialService's core: the type, constructor, With*
 // wiring, shared error/request/projection shapes, and row/crypto helpers.
 // The behavior lives in sibling files, one per concern: credential_connect.go
-// (connect/replace), credential_lifecycle.go (status/disconnect/uninstall),
+// (connect/replace), credential_lifecycle.go (status/disconnect),
 // credential_identity.go (identity view + validator support),
-// credential_webhook_secrets.go (HMAC secret rotation),
-// credential_installations.go (App-installation lifecycle + webhook routing),
 // credential_github_probe.go (raw GitHub REST probes for the PAT path).
 package organization
 
@@ -36,98 +34,37 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // CredentialService is the orchestration layer behind /internal/credentials/orgs/...
 //
-// It owns: validation of new PATs against GitHub, App-mode connect via
-// installation lookup, status projection, disconnect Phase D, webhook-secret
-// rotation, lookup helpers used by the BFF's webhook routing.
+// It owns: validation of new PATs against GitHub, PAT connect, status
+// projection, the org's GitHub owner (GitHubOwner),
+// disconnect Phase D, webhook-secret rotation, lookup helpers used by the
+// BFF's webhook routing.
 //
-// The Resolver (used at runtime by every git operation) doesn't change at
-// connect time — it just reads whatever this service has persisted.
-// BuildSecretCleaner cleans up the per-org build-credential Secret in the
-// org's workflow-plane namespace. Implemented by BuildCredentialsService;
-// kept as an interface here so CredentialService doesn't import a
-// concrete struct from a sibling file (no real circular import today,
-// but keeps the seam minimal and testable).
-//
-// Each WP-Secret-cleanup concern (build, anthropic, future providers)
-// has its own narrowly-typed interface so cred services only depend on
-// what they own.
-type BuildSecretCleaner interface {
-	DeleteBuildSecretsForOrg(ctx context.Context, ocOrgID string) error
-}
-
+// The PAT itself is never read back here: it lives only in the vault, behind
+// the org's github-pat reference (org_secrets), and a run or git operation
+// takes it from its mounted Secret. This service persists the connection
+// state and writes the reference.
 type CredentialService struct {
 	repo      OrgCredentialRepository
-	store     secrets.CredentialStore
-	minter    *secrets.AppTokenMinter
 	githubAPI string // "https://api.github.com" by default; overridden in tests.
-
-	// buildSecretCleaner is invoked from the Disconnect cascade so a
-	// disconnected org's WP build Secret doesn't outlive its credential
-	// row. nil is a graceful no-op (tests, off-cluster runs).
-	buildSecretCleaner BuildSecretCleaner
 
 	// secretRefWriter mirrors the PAT into SM-API on Connect and clears it on
 	// Disconnect. nil-safe — no-op when the writer isn't configured
 	// (composition-root behavior when SecretsProvider is nil).
 	secretRefWriter *SecretRefWriter
 
-	// envWebhookSecret is the platform-wide GITHUB_WEBHOOK_SECRET. The PAT
-	// connect path uses this value when seeding `webhook_secrets[0]` on a
-	// fresh or cross-mode-reseeded row so the per-repo webhook (which the
-	// webhook feature registers with the same env value) verifies
-	// against it. Rotation lands by appending a new entry via the
-	// AppendWebhookSecret route. Empty in tests.
-	envWebhookSecret string
-
-	// App OAuth client_id/secret used by the discover-then-bind path
-	// (BindAppInstallation). Empty values disable that path; the discover
-	// endpoint surfaces 503 in that mode.
-	appClientID     string
-	appClientSecret string
-
-	// githubClient is the git-host App/credential port. CredentialService
-	// uses it for the discover-then-bind path (ListAppInstallations,
-	// ExchangeOAuthCode, GetUserInstallations) and the uninstall cascade
-	// (DeleteInstallation); the rest of CredentialService still uses raw
-	// httpClient. Optional — nil disables the bind path.
-	githubClient sourcecontrol.AppInstallOps
-
 	httpClient *http.Client
 }
 
-// NewCredentialService constructs the service. db, store, minter must be
-// non-nil. githubAPI may be empty (defaults to api.github.com).
-// envWebhookSecret is the GITHUB_WEBHOOK_SECRET — used as the seed value
-// for fresh PAT rows and cross-mode reseeds.
-// appClientID / appClientSecret enable the OAuth bind path; empty values
-// disable it gracefully.
-// githubClient is used by the discover-then-bind path (ListAppInstallations,
-// ExchangeOAuthCode, GetUserInstallations); nil disables the bind path.
-func NewCredentialService(
-	repo OrgCredentialRepository,
-	store secrets.CredentialStore,
-	minter *secrets.AppTokenMinter,
-	envWebhookSecret string,
-	appClientID, appClientSecret string,
-	githubClient sourcecontrol.AppInstallOps,
-) *CredentialService {
+// NewCredentialService constructs the service over the credential rows.
+func NewCredentialService(repo OrgCredentialRepository) *CredentialService {
 	return &CredentialService{
-		repo:             repo,
-		store:            store,
-		minter:           minter,
-		envWebhookSecret: envWebhookSecret,
-		appClientID:      appClientID,
-		appClientSecret:  appClientSecret,
-		githubClient:     githubClient,
-		githubAPI:        "https://api.github.com",
-		httpClient:       &http.Client{Timeout: 30 * time.Second},
+		repo:       repo,
+		githubAPI:  "https://api.github.com",
+		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -178,15 +115,17 @@ func (e *UpstreamError) Error() string { return e.Message }
 // Connect / Replace — POST /internal/credentials/orgs/{ocOrgId}
 // ----------------------------------------------------------------------------
 
-// ConnectRequest is the body for POST /internal/credentials/orgs/{ocOrgId}.
-// Exactly one of {AppInstallation, UserPAT} must be populated; the kind field
-// must match.
+// ConnectRequest is a GitHub connection to record. Kind must be "user-pat"
+// (the GitHub App kind went with App mode).
 type ConnectRequest struct {
-	Kind           string `json:"kind"`
-	InstallationID int64  `json:"installationId,omitempty"`
-	PAT            string `json:"pat,omitempty"`
-	GitHubLogin    string `json:"githubLogin,omitempty"`
+	Kind        string `json:"kind"`
+	PAT         string `json:"pat,omitempty"`
+	GitHubLogin string `json:"githubLogin,omitempty"`
 }
+
+// CredentialStatusActive is an org credential that holds a live GitHub
+// connection (the other statuses are suspended and disconnected).
+const CredentialStatusActive = "active"
 
 // Projection is the JSON shape returned by status / connect / replace. It
 // never contains the token itself.
@@ -225,15 +164,6 @@ func projectionFromRow(r *OrgCredential) *Projection {
 		p.SelectedRepos = []string(r.SelectedRepos)
 	}
 	return p
-}
-
-// WithBuildSecretCleaner injects the post-disconnect cleanup hook for
-// the per-org build-credential Secret. Wired by main after both services
-// are constructed; nil-safe so tests don't have to pass one. Returns the
-// receiver to allow chained construction.
-func (s *CredentialService) WithBuildSecretCleaner(cleaner BuildSecretCleaner) *CredentialService {
-	s.buildSecretCleaner = cleaner
-	return s
 }
 
 // WithSecretRefWriter injects the SM-API writer. When set, the PAT-mode

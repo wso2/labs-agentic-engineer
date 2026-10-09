@@ -116,7 +116,7 @@ export function GitHubSection({ gitProvider }: { gitProvider: GitProviderProject
           }}
         />
       )}
-      {panel === "disconnect" && <DisconnectGitHubPanel appInstalled={gitProvider.mode === "app"} onClose={close} />}
+      {panel === "disconnect" && <DisconnectGitHubPanel onClose={close} />}
     </SettingsPane>
   );
 }

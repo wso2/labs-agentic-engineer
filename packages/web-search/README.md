@@ -17,7 +17,7 @@ and one implementation here.
 
 ## Consumers
 
-- **The agents service** registers a platform-executed `web_search` tool over
+- **The design agent** (`@aep/ae-design-agent`) registers a platform-executed `web_search` tool over
   `searchOllama`, passing its host-guarded fetch.
 - **Coding runs** get the same call as `aep-web`, a stdio MCP server
   (`src/aep-web.ts`, the `./aep-web` export) that both runtimes mount. The

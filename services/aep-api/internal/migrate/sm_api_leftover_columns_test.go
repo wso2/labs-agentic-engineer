@@ -23,7 +23,7 @@ import (
 )
 
 // addLeftoverSMAPIColumns reconstructs the pre-drop schema so a test can
-// exercise phase11 backfill and phase14 DROP against leftover sm_api_*
+// exercise the phase14 DROP against leftover sm_api_*
 // columns. dbtest.New applies every step, so those columns are already gone.
 func addLeftoverSMAPIColumns(t *testing.T, db *gorm.DB) {
 	t.Helper()

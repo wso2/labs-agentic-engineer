@@ -22,9 +22,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 // RepoService manages git repository lifecycle (create, get, delete).
@@ -32,14 +29,15 @@ type RepoService interface {
 	// CreateRepo provisions the project's GitHub repo. repoName == "" derives
 	// the name from projectName (slug); either way the name is used VERBATIM —
 	// a conflict fails with ErrRepoNameConflict (never suffixed away) so the
-	// user can be asked for a different name.
+	// user can be asked for a different name. A ready row of the project is
+	// returned as is; a row still `deleting` is ErrRepoDeletePending.
 	CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*GitRepository, error)
 	// EnsureBareRepo idempotently provisions a private repo with a STABLE name
 	// (no random suffix) and NO local clone — used for the per-org skills repo
-	// (sentinel projectID, e.g. "_skills"). AutoInit gives it a `main` branch +
-	// base tree so the first API commit has a parent. If the GitHub repo already
-	// exists (name conflict), it is adopted (cloneURL derived from owner+name)
-	// so the call stays idempotent across a lost DB row.
+	// (sentinel projectID, e.g. "_skills"). The pod initialises it with a
+	// `main` branch + base tree so the first commit has a parent. If the GitHub
+	// repo already exists, the pod adopts it (AdoptExisting) so the call stays
+	// idempotent across a lost DB row.
 	// See docs/design/skills-repo-storage.md §10.
 	EnsureBareRepo(ctx context.Context, orgID, projectID, repoName string) (*GitRepository, error)
 	GetRepo(ctx context.Context, orgID, projectID string) (*GitRepository, error)
@@ -48,56 +46,54 @@ type RepoService interface {
 	ListByOrg(ctx context.Context, orgID string) ([]GitRepository, error)
 	// SetWebhookID is called by the webhook registration service after a hook
 	// is provisioned for the repo on GitHub. Stored alongside the repo record
-	// so cleanup can deregister.
+	// so cleanup can deregister. Only a `ready` row takes it: a row that is
+	// gone or whose project is being deleted is ErrRepoNotFound.
 	SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error
-	// DeleteRepo drops the repo record and trashes its workspace clone. It
-	// ensures ABSENCE rather than performing a removal, so a project with no
-	// repo row — never provisioned, or a teardown being re-run after it got
-	// this far once — succeeds with nothing to do. The remote is untouched.
+	// BeginDelete marks the project's row `deleting` before its teardown
+	// starts, so no sweep lists it and no hook id lands on it from then on.
+	// No row (or one already marked) is success.
+	BeginDelete(ctx context.Context, orgID, projectID string) error
+	// AbortDelete puts a `deleting` row back to `ready` (a teardown that
+	// stopped before it changed anything).
+	AbortDelete(ctx context.Context, orgID, projectID string) error
+	// DeleteRepo trashes the org pod's mirror and reference documents of the
+	// repository, then drops the repo record. It ensures ABSENCE rather than
+	// performing a removal, so a project with no repo row — never
+	// provisioned, or a teardown being re-run after it got this far once —
+	// succeeds with nothing to do. A trash the pod cannot do is logged and the
+	// row goes anyway. The remote is untouched.
 	DeleteRepo(ctx context.Context, orgID, projectID string) error
 }
 
-type repoService struct {
-	repo     RepoRepository
-	github   RepoAdmin
-	resolver secrets.Resolver
-	repoVis  string
-	// workspaceTrash, when set (from the composition root), renames the
-	// repo's on-disk workspace subtree into trash after the DB row is
-	// deleted — phase 1 of the two-phase disk delete (design §14/D12).
-	// Best-effort by contract: it returns nothing and must never fail the
-	// caller; the reaper's orphan pass is the correctness backstop.
-	workspaceTrash func(ctx context.Context, orgID, projectID, repoSlug string)
+// OwnerLookup answers the GitHub account an org's repositories live under:
+// the login it connected. An org with no GitHub connection is
+// ErrAEStudioAbsent.
+type OwnerLookup interface {
+	GitHubOwner(ctx context.Context, org string) (string, error)
 }
 
-// RepoServiceOption customizes NewRepoService wiring without churning its
-// positional signature.
-type RepoServiceOption func(*repoService)
-
-// WithWorkspaceTrash installs the best-effort disk-trash hook DeleteRepo
-// fires after a successful DB delete. nil-safe (a nil fn leaves the hook
-// unset).
-func WithWorkspaceTrash(fn func(ctx context.Context, orgID, projectID, repoSlug string)) RepoServiceOption {
-	return func(s *repoService) { s.workspaceTrash = fn }
+type repoService struct {
+	repo    RepoRepository
+	github  RepoAdmin
+	trash   TrashOps
+	owners  OwnerLookup
+	repoVis string
 }
 
 func NewRepoService(
 	repo RepoRepository,
 	github RepoAdmin,
-	resolver secrets.Resolver,
+	trash TrashOps,
+	owners OwnerLookup,
 	repoVisibility string,
-	opts ...RepoServiceOption,
 ) RepoService {
-	s := &repoService{
-		repo:     repo,
-		github:   github,
-		resolver: resolver,
-		repoVis:  repoVisibility,
+	return &repoService{
+		repo:    repo,
+		github:  github,
+		trash:   trash,
+		owners:  owners,
+		repoVis: repoVisibility,
 	}
-	for _, opt := range opts {
-		opt(s)
-	}
-	return s
 }
 
 func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*GitRepository, error) {
@@ -115,14 +111,21 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 		return nil, fmt.Errorf("check existing repo: %w", err)
 	}
 	if existing != nil {
+		// A row left `deleting` belongs to a project delete that stopped
+		// midway: adopting it would write the new project into the old
+		// repository while its teardown is still owed.
+		if existing.Status != RepoStatusReady {
+			slog.WarnContext(ctx, "repo.create_refused_delete_pending", "org", orgID, "project", projectID, "status", existing.Status)
+			return nil, ErrRepoDeletePending
+		}
 		slog.InfoContext(ctx, "repo already provisioned for project; returning existing row",
 			"projectId", projectID, "orgId", orgID)
 		return existing, nil
 	}
 
-	cred, err := s.resolver.Resolve(ctx, orgID)
+	owner, err := s.githubOwner(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve credential for org %q: %w", orgID, err)
+		return nil, err
 	}
 
 	description := fmt.Sprintf("WSO2 Labs Agentic Engineer project %s", projectName)
@@ -134,10 +137,8 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	// create form showed. A conflict propagates (ErrRepoNameConflict survives
 	// the wrap) so the caller can ask the user for a different name; suffixing
 	// it away would silently rename the repo behind their back.
-	cloneURL, err := s.github.CreateOrgRepo(ctx, cred, CreateOrgRepoRequest{
-		Name:        repoName,
+	cloneURL, err := s.github.CreateOrgRepo(ctx, RepoRef{Org: orgID, Owner: owner, Repo: repoName, DefaultBranch: defaultBranchFallback}, CreateOrgRepoRequest{
 		Private:     strings.EqualFold(s.repoVis, "private"),
-		AutoInit:    true,
 		Description: description,
 	})
 	if err != nil {
@@ -145,22 +146,21 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	}
 
 	// Compute the per-repo slug from the GitHub clone URL — used by
-	// StageBuildSecret to validate (ocOrgId, repoSlug) ownership. The
-	// build credential itself is now pre-staged per WorkflowRun directly
-	// as a K8s Secret in workflows-<ocOrgID> (see
-	// docs/design/build-credential-injection.md), so no SecretReference
-	// name is computed here; OcSecretRefName is left nil on new rows.
-	repoSlug := naming.SlugForURL(cloneURL)
+	// StageBuildSecret to validate (ocOrgId, repoSlug) ownership. A build
+	// references the org's github-pat SecretReference, not a per-repo one, so
+	// no SecretReference name is computed here; OcSecretRefName is left nil on
+	// new rows.
+	repoSlug := RepoSlugFor(cloneURL)
 
-	// The repo is ready the moment GitHub has it: the shared-volume bare
-	// mirror is created lazily on first gitfs access (ensureMirror), so
-	// there is no "cloning" status to wait through at create time.
+	// The repo is ready the moment GitHub has it: the mirror is created
+	// lazily on first access, so there is no "cloning" status to wait through
+	// at create time.
 	gitRepo := &GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
-		DefaultBranch: "main", // AutoInit gives the repo a main branch + base tree
-		Status:        "ready",
+		DefaultBranch: defaultBranchFallback, // the pod initialises a main branch + base tree
+		Status:        RepoStatusReady,
 		RepoSlug:      repoSlug,
 	}
 
@@ -169,7 +169,7 @@ func (s *repoService) CreateRepo(ctx context.Context, orgID, projectID, projectN
 	}
 
 	slog.InfoContext(ctx, "created platform repo",
-		"owner", cred.RepoOwner(), "name", repoName, "project", projectID, "org", orgID)
+		"owner", owner, "name", repoName, "project", projectID, "org", orgID)
 
 	return gitRepo, nil
 }
@@ -187,33 +187,28 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		return existing, nil
 	}
 
-	cred, err := s.resolver.Resolve(ctx, orgID)
+	owner, err := s.githubOwner(ctx, orgID)
 	if err != nil {
-		return nil, fmt.Errorf("resolve credential for org %q: %w", orgID, err)
+		return nil, err
 	}
 
-	cloneURL, err := s.github.CreateOrgRepo(ctx, cred, CreateOrgRepoRequest{
-		Name:        repoName,
-		Private:     true,
-		AutoInit:    true,
-		Description: "WSO2 Labs Agentic Engineer — org skills (single source of truth)",
+	// A pre-existing repo of the same name under this owner is adopted.
+	cloneURL, err := s.github.CreateOrgRepo(ctx, RepoRef{Org: orgID, Owner: owner, Repo: repoName, DefaultBranch: defaultBranchFallback}, CreateOrgRepoRequest{
+		Private:       true,
+		Description:   "WSO2 Labs Agentic Engineer — org skills (single source of truth)",
+		AdoptExisting: true,
 	})
 	if err != nil {
-		if !IsRepoNameConflict(err) {
-			return nil, fmt.Errorf("create github skills repo: %w", err)
-		}
-		// Adopt a pre-existing repo of the same name under this owner.
-		cloneURL = fmt.Sprintf("https://github.com/%s/%s", cred.RepoOwner(), repoName)
-		slog.InfoContext(ctx, "adopting pre-existing skills repo", "owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+		return nil, fmt.Errorf("create github skills repo: %w", err)
 	}
 
 	gitRepo := &GitRepository{
 		OrgID:         orgID,
 		ProjectID:     projectID,
 		RepoURL:       cloneURL,
-		DefaultBranch: "main",
-		Status:        "ready", // mirror is lazy — ensureMirror on first gitfs access
-		RepoSlug:      naming.SlugForURL(cloneURL),
+		DefaultBranch: defaultBranchFallback,
+		Status:        RepoStatusReady, // the mirror is created lazily on first access
+		RepoSlug:      RepoSlugFor(cloneURL),
 	}
 	if err := s.repo.Create(ctx, gitRepo); err != nil {
 		// A concurrent caller (e.g. the skills list + updates-badge requests
@@ -227,8 +222,17 @@ func (s *repoService) EnsureBareRepo(ctx context.Context, orgID, projectID, repo
 		return nil, fmt.Errorf("create skills repo record: %w", err)
 	}
 	slog.InfoContext(ctx, "provisioned bare skills repo",
-		"owner", cred.RepoOwner(), "name", repoName, "org", orgID)
+		"owner", owner, "name", repoName, "org", orgID)
 	return gitRepo, nil
+}
+
+// githubOwner is the account the org's repositories are created under.
+func (s *repoService) githubOwner(ctx context.Context, orgID string) (string, error) {
+	owner, err := s.owners.GitHubOwner(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("github owner for org %q: %w", orgID, err)
+	}
+	return owner, nil
 }
 
 func (s *repoService) GetRepo(ctx context.Context, orgID, projectID string) (*GitRepository, error) {
@@ -251,16 +255,28 @@ func (s *repoService) ListByOrg(ctx context.Context, orgID string) ([]GitReposit
 }
 
 func (s *repoService) SetWebhookID(ctx context.Context, orgID, projectID string, hookID int64) error {
-	repo, err := s.repo.GetByOrgAndProjectID(ctx, orgID, projectID)
+	took, err := s.repo.SetWebhookIDIfReady(ctx, orgID, projectID, hookID)
 	if err != nil {
-		return fmt.Errorf("get repo: %w", err)
+		return fmt.Errorf("store webhook id: %w", err)
 	}
-	if repo == nil {
+	if !took {
 		return ErrRepoNotFound
 	}
-	id := hookID
-	repo.WebhookID = &id
-	return s.repo.Update(ctx, repo)
+	return nil
+}
+
+func (s *repoService) BeginDelete(ctx context.Context, orgID, projectID string) error {
+	if _, err := s.repo.SetStatusIf(ctx, orgID, projectID, RepoStatusReady, RepoStatusDeleting); err != nil {
+		return fmt.Errorf("mark repo deleting: %w", err)
+	}
+	return nil
+}
+
+func (s *repoService) AbortDelete(ctx context.Context, orgID, projectID string) error {
+	if _, err := s.repo.SetStatusIf(ctx, orgID, projectID, RepoStatusDeleting, RepoStatusReady); err != nil {
+		return fmt.Errorf("unmark repo deleting: %w", err)
+	}
+	return nil
 }
 
 func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) error {
@@ -273,6 +289,18 @@ func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) e
 		// here made the project teardown log an error on every legitimate re-run
 		// and gave callers no way to tell "already clean" from "cleanup broke".
 		return nil
+	}
+
+	// Trash BEFORE the row goes: the row is what names the repository, so
+	// once it is gone nothing can ask the pod to drop its mirror and the
+	// project's reference documents. Best-effort, like the rest of the
+	// teardown: a pod that cannot trash (restarting, or absent after a
+	// disconnect, when its data went with the Resource) must not keep a
+	// deleted project's row alive in every sweep and in the hook repair.
+	if ref, rerr := RefForRow(orgID, repo); rerr != nil {
+		slog.WarnContext(ctx, "repo.trash_failed", "org", orgID, "project", projectID, "error", rerr)
+	} else if terr := s.trash.TrashRepo(ctx, ref); terr != nil {
+		slog.WarnContext(ctx, "repo.trash_failed", "org", orgID, "project", projectID, "error", terr)
 	}
 
 	if err := s.repo.DeleteByOrgAndProjectID(ctx, orgID, projectID); err != nil {
@@ -288,13 +316,6 @@ func (s *repoService) DeleteRepo(ctx context.Context, orgID, projectID string) e
 	// under it is refused with ErrRepoNameConflict until a human intervenes.
 	slog.InfoContext(ctx, "repo record deleted; the remote repository is left in place",
 		"org", orgID, "project", projectID, "repoUrl", repo.RepoURL)
-
-	// Best-effort disk cleanup AFTER the DB delete succeeded: rename the
-	// workspace subtree into trash (O(1); open fds keep working — design
-	// §14). The hook logs its own failures and never fails this call.
-	if s.workspaceTrash != nil {
-		s.workspaceTrash(ctx, orgID, projectID, repo.WorkspaceSlug())
-	}
 	return nil
 }
 

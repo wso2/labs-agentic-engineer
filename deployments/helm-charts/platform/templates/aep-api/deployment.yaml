@@ -28,8 +28,8 @@ spec:
     spec:
       serviceAccountName: aep-api
       securityContext:
-        # Shared workspaces PVC is handed to the pod's fsGroup so the
-        # non-root runtime user (uid 1000) can write it.
+        # Group ownership for the mounted secret volumes, so the non-root
+        # runtime user (uid 1000) can read them.
         fsGroup: 1000
       initContainers:
         - name: wait-for-postgres
@@ -72,30 +72,12 @@ spec:
               value: {{ .Values.aepApi.logLevel | quote }}
             - name: DEPLOYMENT_TIER
               value: {{ .Values.aepApi.deploymentTier | quote }}
-            - name: TEST_MODE
-              value: "false"
-            - name: LOCAL_OPENBAO_REPAIR
-              value: "false"
-            - name: AEP_WORKSPACE_ROOT
-              value: "/workspaces"
-            - name: AEP_WORKSPACE_REAP_INTERVAL
-              value: {{ .Values.workspaces.reapInterval | default "5m" | quote }}
-            - name: AEP_WORKSPACE_SNAPSHOT_MAX_AGE
-              value: {{ .Values.workspaces.snapshotMaxAge | default "1h" | quote }}
-            - name: AEP_WORKSPACE_TRASH_MAX_AGE
-              value: {{ .Values.workspaces.trashMaxAge | default "1h" | quote }}
-            - name: AEP_WORKSPACE_ORG_QUOTA_BYTES
-              value: {{ .Values.workspaces.orgQuotaBytes | default "2147483648" | quote }}
-            - name: AEP_WORKSPACE_DISK_HIGH_PCT
-              value: {{ .Values.workspaces.diskHighPct | default "85" | quote }}
-            - name: AEP_WORKSPACE_DISK_LOW_PCT
-              value: {{ .Values.workspaces.diskLowPct | default "70" | quote }}
-            # aep-* covers the AEP clients (aud = client id, all aep-*).
-            # openchoreo-rca-agent is added so the SRE/RCA agent's token (aud =
-            # its client id) is accepted for issue-create + report publish —
-            # matches setup.sh's BFF_AUDIENCE default.
+            # /api/v1 takes user tokens only, and the console client is the one
+            # that issues them (Thunder sets aud = client id). Machine clients —
+            # publisher, system, SRE — have their own /internal/v1 routes, and the
+            # verifier refuses a client_credentials token here whatever its aud.
             - name: JWT_AUDIENCE
-              value: "aep-*,openchoreo-rca-agent"
+              value: {{ .Values.console.thunder.clientId | quote }}
             - name: SERVICE_AUTH_CLIENT_ID
               value: {{ .Values.aepApi.serviceAuth.clientId | quote }}
             - name: SERVICE_AUTH_TOKEN_URL
@@ -107,17 +89,6 @@ spec:
                   key: AEP_API_CLIENT_SECRET
             - name: SERVICE_AUTH_HOST_HEADER
               value: ""
-            - name: BFF_TASK_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aep-task-signing-key
-                  key: task-signing.pem
-            - name: BFF_TASK_TOKEN_ISSUER
-              value: {{ .Values.taskSigning.issuer | quote }}
-            - name: BFF_TASK_TOKEN_AUDIENCE
-              value: {{ .Values.taskSigning.audience | quote }}
-            - name: BFF_PUBLIC_URL
-              value: {{ .Values.aepApi.publicURL | quote }}
             {{- if (default dict .Values.tryIt).enabled }}
             # Registered as a redirect URI on every project's sign-in client at
             # deploy time, so the test app can complete an OAuth round-trip
@@ -128,13 +99,13 @@ spec:
             - name: TRY_IT_CALLBACK_URL
               value: "{{ .Values.tryIt.publicURL | trimSuffix "/" }}/callback"
             {{- end }}
-            - name: OBSERVER_OAUTH_CLIENT_ID
-              value: {{ .Values.observer.clientId | quote }}
-            - name: OBSERVER_OAUTH_HOST_HEADER
-              value: ""
             {{- if .Values.observer.baseURL }}
             - name: OBSERVER_URL
               value: {{ .Values.observer.baseURL | quote }}
+            {{- end }}
+            {{- if .Values.observer.logRetention }}
+            - name: OBSERVER_LOG_RETENTION
+              value: {{ .Values.observer.logRetention | quote }}
             {{- end }}
             # Without this, aep-api's own default assumes the data-plane
             # gateway terminates TLS and holds every component with an
@@ -185,17 +156,7 @@ spec:
               value: "aep-system-client"
             - name: THUNDER_SYSTEM_RESOURCE_IDENTIFIER
               value: {{ .Values.thunder.systemResourceIdentifier | default (printf "%s/mcp" .Values.console.thunderPublicURL) | quote }}
-            - name: AGENTS_SVC_BASE_URL
-              value: "http://aep-agents.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepAgents.port }}"
             - name: AGENT_PLATFORM_URL
-              value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
-            # Design-turn MCP discovery: the agents service calls back into the
-            # BFF's own /internal/v1/mcp to list the org catalog
-            # (list_external_resources / list_platform_resource_types). Without
-            # it mcpForTurn attaches no `mcp` block, the design agent sees no
-            # catalog at all, and it invents resourceTypes that fail at build.
-            # Same in-cluster address as AGENT_PLATFORM_URL above.
-            - name: AEP_API_INTERNAL_BASE_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
             # The Claude Code runner image, used by both task kinds.
             - name: AGENT_RUNNER_IMAGE
@@ -203,51 +164,127 @@ spec:
             # The OpenCode runner image, used for orgs whose runtime is OpenCode.
             - name: AGENT_RUNNER_IMAGE_OPENCODE
               value: {{ .Values.codingAgentRunner.opencodeImage | quote }}
+            # How long a finished cycle Job (and its pod) is kept (Go duration).
+            - name: CODING_AGENT_JOB_TTL
+              value: {{ .Values.codingAgentRunner.jobTTL | quote }}
+            {{- if .Values.codingAgentRunner.cpuRequest }}
+            - name: CODING_AGENT_CPU_REQUEST
+              value: {{ .Values.codingAgentRunner.cpuRequest | quote }}
+            {{- end }}
+            {{- $ae := default dict .Values.aeStudio }}
+            # AE Studio (all optional at boot; see values.yaml aeStudio).
+            - name: AE_STUDIO_INTERNAL_CLIENT_ID
+              value: {{ (default dict $ae.internalClient).id | default "ae-studio-internal-client" | quote }}
+            - name: AE_STUDIO_INTERNAL_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: aep-ae-studio-internal-secrets
+                  key: AE_STUDIO_INTERNAL_CLIENT_SECRET
+                  optional: true
+            - name: AE_STUDIO_AEP_API_BASE_URL
+              value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
+            {{- with (default dict $ae.images).designAgent }}
+            - name: AE_STUDIO_IMAGE_DESIGN_AGENT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (default dict $ae.images).collab }}
+            - name: AE_STUDIO_IMAGE_COLLAB
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (default dict $ae.images).studioTools }}
+            - name: AE_STUDIO_IMAGE_STUDIO_TOOLS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ae.gatewayHost }}
+            - name: AE_STUDIO_GATEWAY_HOST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ae.publicScheme }}
+            - name: AE_STUDIO_PUBLIC_SCHEME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ae.publicPortSuffix }}
+            - name: AE_STUDIO_PUBLIC_PORT_SUFFIX
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ae.listenerName }}
+            - name: AE_STUDIO_LISTENER_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (default dict $ae.idp).issuer }}
+            - name: AE_STUDIO_IDP_ISSUER
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (default dict $ae.idp).jwksUrl }}
+            - name: AE_STUDIO_IDP_JWKS_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with (default dict $ae.idp).tokenUrl }}
+            - name: AE_STUDIO_IDP_TOKEN_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $ae.runtimeClassName }}
+            - name: AE_STUDIO_RUNTIME_CLASS_NAME
+              value: {{ . | quote }}
+            {{- end }}
+            - name: AE_STUDIO_CONSOLE_ORIGINS
+              value: {{ join "," ($ae.consoleOrigins | default list) | quote }}
+            - name: AE_STUDIO_IDP_USER_AUDIENCES
+              value: {{ join "," ((default dict $ae.idp).userAudiences | default (list .Values.console.thunder.clientId)) | quote }}
+            - name: AE_STUDIO_CILIUM
+              value: {{ $ae.cilium | default false | quote }}
+            - name: AE_STUDIO_EXTRA_EGRESS
+              value: {{ toJson ($ae.extraEgress | default list) | quote }}
+            - name: AE_STUDIO_STORAGE_SIZE_LIMIT
+              value: {{ (default dict $ae.storage).sizeLimit | default "3Gi" | quote }}
+            - name: AE_STUDIO_STORAGE_EPHEMERAL_REQUEST
+              value: {{ (default dict $ae.storage).ephemeralRequest | default "1Gi" | quote }}
+            - name: AE_STUDIO_STORAGE_BUDGET_BYTES
+              value: {{ (default dict $ae.storage).budgetBytes | default "2147483648" | quote }}
+            {{- $cpu := default dict (default dict $ae.resources).cpuRequest }}
+            {{- with $cpu.designAgent }}
+            - name: AE_STUDIO_CPU_REQUEST_DESIGN_AGENT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cpu.collab }}
+            - name: AE_STUDIO_CPU_REQUEST_COLLAB
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $cpu.studioTools }}
+            - name: AE_STUDIO_CPU_REQUEST_STUDIO_TOOLS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- $relay := default dict $ae.webhookRelay }}
+            {{- if $relay.enabled }}
+            # Per-org webhook relay (values.yaml aeStudio.webhookRelay). The seed
+            # is optional: aep-api boots, without a relay, before it is imported.
+            - name: AE_STUDIO_WEBHOOK_RELAY_IMAGE
+              value: {{ required "aeStudio.webhookRelay.image is required when the relay is enabled" $relay.image | quote }}
+            - name: AE_STUDIO_WEBHOOK_RELAY_SEED
+              valueFrom:
+                secretKeyRef:
+                  name: aep-webhook-relay
+                  key: AE_STUDIO_WEBHOOK_RELAY_SEED
+                  optional: true
+            {{- end }}
             # OpenBao-direct secrets delivery (local-only). Cloud injects a
             # different SecretsProvider via the overlay; OPENBAO_* must be
-            # absent there. OPENBAO_TOKEN comes from the ESO-synced
-            # aep-openbao-secrets Secret, same as every other credential below
-            # — never a literal Helm value (it would otherwise sit in plaintext
-            # in the release's values/history and this Deployment's own spec).
+            # absent there. No static token: aep-api logs in by Kubernetes
+            # auth as its own service account (the projected token this pod
+            # mounts), and the role binds it to the write-only aep-api-writer
+            # policy (deployments/scripts/openbao-aep-api-auth.sh).
             {{- if .Values.codingAgentDispatch.openBaoDirect.enabled }}
             - name: OPENBAO_ADDR
               value: {{ .Values.openbao.addr | quote }}
-            - name: OPENBAO_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: aep-openbao-secrets
-                  key: OPENBAO_TOKEN
+            - name: OPENBAO_AUTH_ROLE
+              value: aep-api
             {{- end }}
-            # GitHub webhook delivery URL registered on each repo. Local → smee.io
-            # channel (forwarded in-cluster by the smee-client); prod → the real
-            # public ingress URL. Unset → webhooks not registered (task state won't
-            # advance on PR events).
-            {{- if .Values.webhook.deliveryURL }}
-            - name: GITHUB_WEBHOOK_DELIVERY_URL
-              value: {{ .Values.webhook.deliveryURL | quote }}
-            {{- end }}
-
             # secrets — all values sourced from ESO-synced K8s Secrets (written by aep init)
-            - name: AGENTS_SVC_JWT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: aep-agents-secrets
-                  key: AGENTS_JWT_SECRET
-            - name: GITHUB_WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: aep-webhook-secrets
-                  key: GITHUB_WEBHOOK_SECRET
             - name: THUNDER_SYSTEM_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: aep-thunder-secrets
                   key: THUNDER_SYSTEM_CLIENT_SECRET
-            - name: OAUTH_STATE_SIGNING_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aep-oauth-secrets
-                  key: OAUTH_STATE_SIGNING_KEY
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -295,20 +332,15 @@ spec:
               value: /var/run/dp-kube/ca.crt
             {{- end }}
             {{- end }}
+          {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
           volumeMounts:
-            - name: workspaces
-              mountPath: /workspaces
-            {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
             - name: dp-kube
               mountPath: /var/run/dp-kube
               readOnly: true
-            {{- end }}
+          {{- end }}
+      {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
       volumes:
-        - name: workspaces
-          persistentVolumeClaim:
-            claimName: aep-workspaces
-        {{- if and .Values.aepApi.kubeAPI .Values.aepApi.kubeAPI.tokenSecret }}
         - name: dp-kube
           secret:
             secretName: {{ .Values.aepApi.kubeAPI.tokenSecret | quote }}
-        {{- end }}
+      {{- end }}

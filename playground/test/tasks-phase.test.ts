@@ -21,8 +21,9 @@
  *  - renderTaskContextFile ⇄ parseTaskContextFile round trip, byte-pinned
  *    against the Go `TaskContextFile.Render` fixture;
  *  - the dedupe key recipe pinned against Go `taskmeta.Key` vectors;
- *  - the plan fold via the REAL task-plan toolset (mock model): create +
- *    update-by-title, replan dedupe, and the no-manifest do-not-commit fence.
+ *  - the plan fold via the REAL task-plan toolset (mock model) on the Turn
+ *    socket: create + update-by-title, replan dedupe, and the not-completed
+ *    do-not-commit fence.
  */
 
 import { test } from "node:test";
@@ -31,7 +32,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { parseTaskContextFile } from "@aep/agent-stream";
-import { mockModel, type MockStep } from "@aep/agents/shared/mock-model";
+import { mockModel, type MockStep } from "@aep/ae-design-agent/shared/mock-model";
 import { tasksCommand } from "../src/commands.js";
 import { renderTaskContextFile, taskKey, titleSlug, FsIssueStore } from "../src/ports/issue-store.js";
 
@@ -199,20 +200,20 @@ test("safeAllocator never clobbers an existing issue file (copied project, fresh
   }
 });
 
-test("no terminal manifest → the fold writes nothing (D14 do-not-commit)", () => {
+test("a Plan turn that did not complete → the fold writes nothing (D14 do-not-commit)", () => {
   const projectDir = seedDesignedProject();
   try {
     const store = new FsIssueStore(projectDir, "todo-app");
     const outcome = store.fold(
-      [
-        {
-          type: "tool-result",
-          toolName: "planTask",
-          toolCallId: "p1",
-          output: { ok: true, op: "plan", component: "user-service", title: "T", dependsOn: [], origin: "spec-plan", rationale: "r" },
-        },
-        // no manifest part — severed stream
-      ],
+      {
+        completed: false, // a failed or severed turn
+        taskOps: [
+          {
+            op: "plan",
+            output: { ok: true, op: "plan", component: "user-service", title: "T", dependsOn: [], origin: "spec-plan", rationale: "r" },
+          },
+        ],
+      },
       () => 1,
     );
     assert.equal(outcome.created.length, 0);
@@ -228,28 +229,26 @@ test("updateTask rename collision: only the rename is skipped (surfaced), depend
     const store = new FsIssueStore(projectDir, "todo-app");
     let n = 1;
     const plan = (component: string, title: string) => ({
-      type: "tool-result" as const,
-      toolName: "planTask",
-      toolCallId: `p-${title}`,
+      op: "plan",
       output: { ok: true, op: "plan", component, title, dependsOn: [], origin: "spec-plan", rationale: "r" },
     });
     const outcome = store.fold(
-      [
-        plan("user-service", "Task A"),
-        plan("webapp", "Task B"),
-        {
-          type: "tool-result",
-          toolName: "updateTask",
-          toolCallId: "u1",
-          output: {
-            ok: true,
+      {
+        completed: true,
+        taskOps: [
+          plan("user-service", "Task A"),
+          plan("webapp", "Task B"),
+          {
             op: "update",
-            ref: { title: "Task B" },
-            set: { title: "Task A", dependsOn: ["user-service"], body: "revised scope" },
+            output: {
+              ok: true,
+              op: "update",
+              ref: { title: "Task B" },
+              set: { title: "Task A", dependsOn: ["user-service"], body: "revised scope" },
+            },
           },
-        },
-        { type: "manifest", files: {} },
-      ],
+        ],
+      },
       () => n++,
     );
     assert.deepEqual(outcome.skippedRenames, ['#2 "Task B" → "Task A"']);

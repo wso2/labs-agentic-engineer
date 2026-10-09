@@ -47,7 +47,11 @@ assertions keep seam implementations honest.
 One seam, two providers, no stub:
 
 - **OSS / local** — `NewOSSOptions` constructs the in-process OpenBao-direct
-  provider when `OPENBAO_ADDR` (and `OPENBAO_TOKEN`) are set. The provider writes
+  provider when `OPENBAO_ADDR` is set. It logs in by Kubernetes auth
+  (`OPENBAO_AUTH_*`, role `aep-api`; no static token) through one lazy session
+  per process, which `NewOSSOptions` also hands to `Run` in an unexported
+  `Options` field so the environment Thunder binding reader shares it; an
+  overlay cannot set it and gets no reader. The provider writes
   KV; the high-level client authors `SecretReference` CRs via OpenChoreo when
   `ManagesSecretReferences()` is false. Those CRs go in the Workload's
   control-plane namespace (not the vault `wc-…` path segment). Disconnect

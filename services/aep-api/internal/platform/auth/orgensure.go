@@ -24,7 +24,7 @@
 //
 // Behaviour:
 //   - No claims in context (request did not pass through the JWT verifier
-//     — e.g. /webhooks, /auth/external/jwks.json) → pass through.
+//     — e.g. /webhooks) → pass through.
 //   - Claims present but no ouHandle/ouName/ouId → pass through. Route
 //     handlers that need an org context surface their own 4xx.
 //   - Namespace not yet provisioned → log and pass through so the

@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import type { components } from "../../generated/aep-api";
+import type { components } from "../../generated/ae-design-agent";
 import type { SpecFeature } from "../spec/api/specModel";
 import type { ProjectCard } from "../shell/scope";
 
@@ -63,11 +63,12 @@ export function featureScope(feature: Pick<SpecFeature, "id">): TurnScope {
 }
 
 /**
- * The request body of a turn: the user's words, scoped. `collab` makes it a
- * room turn, as the old console's spec chat is: the agent edits the shared spec.
+ * The request body of a turn: the user's words, scoped. Every turn on the
+ * design agent is a Room turn (the agent edits the shared spec), so there is
+ * no flag for it.
  */
 export function turnBody(instruction: string, scope: TurnScope): TurnBody {
-  const body: TurnBody = { instruction, collab: true };
+  const body: TurnBody = { instruction };
   if (scope.kind === "feature") body.scope = { kind: "feature", feature: scope.featureId };
   if (scope.kind === "design") body.scope = { kind: "design-review" };
   if (scope.kind === "prototype" && scope.feedback) body.prototypeFeedback = scope.feedback;

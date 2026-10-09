@@ -18,7 +18,7 @@
 
 import type { PrototypeFeedback } from "../features/agent-chat/turnScope";
 import type { StreamPart } from "@aep/agent-stream";
-import type { components } from "../generated/aep-api";
+import type { components } from "../generated/ae-design-agent";
 import type { FeatureStage } from "../features/spec/api/specModel";
 import type { DesignEffect } from "./designState";
 

@@ -37,13 +37,15 @@ import (
 //  2. create org_model_connections;
 //  3. backfill one row per ACTIVE default credential: Anthropic's own API, the
 //     key as x-api-key, the model from org_agent_settings.model (the Anthropic
-//     format's default when the org never chose), NULL limits (the runtimes
-//     know Claude), the same key bytes (org_secrets 'anthropic/key') and the
-//     same SM-API reference, so an existing org keeps working with no re-save;
+//     format's default when the org never chose) and NULL limits (the runtimes
+//     know Claude). The key itself is not carried: it lives in the vault
+//     behind the org's default-key reference row, and an org without one
+//     re-enters it on the setup screen;
 //  4. an org whose default credential is NOT active gets no connection: its
 //     llm_disconnected_at is set (onboarding shows the disconnected alert), and
-//     its unreachable key bytes and its Claude subscription — which cannot
-//     outlive the connection — are deleted;
+//     its unreachable key bytes (while org_secrets still has value rows) and
+//     its Claude subscription — which cannot outlive the connection — are
+//     deleted;
 //  5. delete the default rows and restrict org_anthropic_credentials to the
 //     Claude subscription (CHECK role = 'coding');
 //  6. drop org_agent_settings.model.
@@ -95,7 +97,9 @@ func RunPhase19ModelConnection(ctx context.Context, db *gorm.DB) error {
 }
 
 // createOrgModelConnections is the table organization.OrgModelConnection maps.
-// Raw SQL, not AutoMigrate, so the CHECKs on its enums hold.
+// Raw SQL, not AutoMigrate, so the CHECKs on its enums hold. It holds no key,
+// preview or vault path; a table created by an earlier release still carries
+// those columns until phase29 drops them.
 const createOrgModelConnections = `
 	CREATE TABLE IF NOT EXISTS org_model_connections (
 	  oc_org_id           TEXT PRIMARY KEY,
@@ -107,20 +111,17 @@ const createOrgModelConnections = `
 	  context_window      INTEGER,
 	  output_limit        INTEGER,
 	  image_input         TEXT NOT NULL DEFAULT 'unknown' CHECK (image_input IN ('yes', 'no', 'unknown')),
-	  key_preview         TEXT NOT NULL,
 	  connected_at        TIMESTAMPTZ NOT NULL,
 	  updated_at          TIMESTAMPTZ NOT NULL,
-	  updated_by          TEXT,
-	  secret_ref_name     TEXT,
-	  secret_ref_kv_path  TEXT,
-	  secret_ref_property TEXT
+	  updated_by          TEXT
 	)`
 
 // backfillModelConnections writes a connection for every active default
-// credential. The key preview is rebuilt from the stored prefix and last 4
-// (the bytes are encrypted): every Anthropic key is well over 24 characters,
-// so it takes the long form, first 4 + last 4. The model comes from
-// org_agent_settings while that column still exists.
+// credential. It reads no key column: a database that already ran this step
+// has no default row left (the subscription_only CHECK keeps it so), and
+// phase29 drops the preview and triplet columns an earlier release copied
+// here. The model comes from org_agent_settings while that column still
+// exists.
 func backfillModelConnections(tx *gorm.DB) error {
 	var hasModel bool
 	if err := tx.Raw(`SELECT EXISTS (SELECT 1 FROM information_schema.columns
@@ -139,11 +140,9 @@ func backfillModelConnections(tx *gorm.DB) error {
 	sql := fmt.Sprintf(`
 		INSERT INTO org_model_connections
 		  (oc_org_id, format, base_url, host, model, auth_scheme, context_window, output_limit, image_input,
-		   key_preview, connected_at, updated_at, updated_by, secret_ref_name, secret_ref_kv_path, secret_ref_property)
+		   connected_at, updated_at, updated_by)
 		SELECT c.oc_org_id, ?, ?, ?, %s, ?, NULL, NULL, ?,
-		       CASE WHEN length(c.key_prefix) >= 4 THEN left(c.key_prefix, 4) ELSE '' END || '…' || c.key_last4,
-		       c.connected_at, COALESCE(c.last_validated_at, c.connected_at), NULL,
-		       c.secret_ref_name, c.secret_ref_kv_path, c.secret_ref_property
+		       c.connected_at, COALESCE(c.last_validated_at, c.connected_at), NULL
 		  FROM org_anthropic_credentials c %s
 		 WHERE c.role = 'default' AND c.status = 'active'
 		ON CONFLICT (oc_org_id) DO NOTHING`, model, join)
@@ -154,17 +153,21 @@ func backfillModelConnections(tx *gorm.DB) error {
 }
 
 // retireInactiveDefaults handles every org whose default credential is not
-// active (invalid or disconnected): it reads as having no connection.
+// active (invalid or disconnected): it reads as having no connection. The
+// key bytes are deleted only while org_secrets still has its legacy key
+// column; phase29 renames it and deletes every value row.
 func retireInactiveDefaults(tx *gorm.DB) error {
 	const inactive = `SELECT oc_org_id FROM org_anthropic_credentials WHERE role = 'default' AND status <> 'active'`
 	stmts := []string{
 		`UPDATE organizations SET llm_disconnected_at = now()
 		  WHERE llm_disconnected_at IS NULL AND name IN (` + inactive + `)`,
-		`DELETE FROM org_secrets
-		  WHERE key IN ('anthropic/key', 'anthropic/coding-key') AND oc_org_id IN (` + inactive + `)`,
-		`DELETE FROM org_anthropic_credentials
-		  WHERE role = 'coding' AND oc_org_id IN (` + inactive + `)`,
 	}
+	if hasColumn(tx, "org_secrets", "key") {
+		stmts = append(stmts, `DELETE FROM org_secrets
+		  WHERE key IN ('anthropic/key', 'anthropic/coding-key') AND oc_org_id IN (`+inactive+`)`)
+	}
+	stmts = append(stmts, `DELETE FROM org_anthropic_credentials
+		  WHERE role = 'coding' AND oc_org_id IN (`+inactive+`)`)
 	for i, sql := range stmts {
 		if err := tx.Exec(sql).Error; err != nil {
 			return fmt.Errorf("phase19 retire inactive defaults step %d: %w", i+1, err)

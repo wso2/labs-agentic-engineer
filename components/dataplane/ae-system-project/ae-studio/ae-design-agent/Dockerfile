@@ -1,0 +1,95 @@
+# Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+#
+# WSO2 LLC. licenses this file to you under the Apache License,
+# Version 2.0 (the "License"); you may not use this file except
+# in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+# The design agent (components/dataplane/ae-system-project/ae-studio/ae-design-agent). Built from the REPO ROOT
+# context (docker-compose sets `context: ..`) because @aep/ae-design-agent imports the
+# workspace package @aep/agent-stream — pnpm must see the whole workspace to
+# resolve it. @aep/agent-stream in turn depends on @aep/excalidraw-dsl (the
+# wireframes layout write-gate) and @wso2/prototype-kit (the prototype
+# write-gate), so those packages must be installed AND built too.
+# (@aep/design-projection stays a playground/evals-only devDependency —
+# never imported by src/main.ts, so not built here.)
+FROM node:22-bookworm-slim
+
+# Corepack fetches the pnpm release named by the root package.json's
+# packageManager field into COREPACK_HOME, which defaults to the invoking
+# user's home. The build runs as root and the container runs as UID 1000, so
+# the copy fetched below lands in /root/.cache, where the runtime user is
+# denied — and corepack then re-downloads pnpm from registry.npmjs.org on every
+# container start. That makes booting depend on the public registry being
+# reachable and fast, and leaves the package manager unpinned by the image
+# digest even though packageManager names a version. Pointing COREPACK_HOME at
+# a shared path makes the build's download the one the runtime uses.
+ENV COREPACK_HOME=/opt/corepack
+RUN corepack enable
+WORKDIR /repo
+
+# Workspace + package manifests first so the install layer (and the
+# workspace-dep builds below) stay cached when only design-agent source changes; the
+# service source is COPY'd LAST. tsconfig.base.json is the shared base
+# @aep/agent-stream's tsconfig extends — needed for the tsc build below. The
+# pnpm store is a BuildKit cache mount (needs BuildKit; CI's buildx sets it
+# automatically; local builds pass DOCKER_BUILDKIT=1).
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+# The workspace packages @aep/ae-design-agent depends on, plus the design agent's manifest only.
+COPY packages ./packages
+COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent/package.json ./components/dataplane/ae-system-project/ae-studio/ae-design-agent/
+
+# Install @aep/ae-design-agent + its workspace deps. This also installs the workspace ROOT
+# project's devDependencies (pnpm always installs the root's deps) — so `typescript`
+# is present to compile @aep/agent-stream in the next step. (@types/node and tsx
+# ride in via @aep/ae-design-agent's own dependencies.)
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store --filter @aep/ae-design-agent...
+
+# @aep/ae-design-agent runs from TypeScript source via tsx (no build of its own), but it
+# imports @aep/agent-stream, @aep/collab-doc, @aep/web-search and
+# @aep/platform-idp-auth (the pod-mode /v1 gate) as packages whose `exports`
+# resolve to ./dist — all MUST be compiled before the service can start, in
+# either mode: main.ts imports the pod listeners unconditionally.
+# @aep/excalidraw-dsl and @wso2/prototype-kit build FIRST: @aep/agent-stream
+# imports them (the layout and prototype write-gates), so their dist must exist
+# for agent-stream's tsc to resolve them. @aep/ae-design-agent imports the kit's
+# isolated render check (@wso2/prototype-kit/check) and runs it on the Oxygen
+# theme's prebuilt check runtime, which the theme's build writes to
+# dist/check-runtime.js; the theme builds after the kit and @aep/ui-theme (the
+# console's Oxygen theme) it bundles. The render check resolves the theme at
+# import, so an image without it fails to boot.
+# Without this step the container crashes at boot with "Cannot find module
+# .../@aep/agent-stream/dist" (or the collab-doc analog). These depend only on
+# packages/, so a design-agent source edit doesn't rerun them.
+RUN pnpm --filter @aep/excalidraw-dsl build && pnpm --filter @wso2/prototype-kit build \
+    && pnpm --filter @aep/ui-theme build && pnpm --filter @wso2/prototype-theme-oxygen build \
+    && pnpm --filter @aep/agent-stream build && pnpm --filter @aep/collab-doc build \
+    && pnpm --filter @aep/web-search build && pnpm --filter @aep/platform-idp-auth build
+
+# Service source LAST: a design-agent-only change invalidates only this COPY (install
+# + the workspace-dep builds above stay cached). @aep/ae-design-agent runs via tsx, so
+# there is no build step of its own.
+COPY components/dataplane/ae-system-project/ae-studio/ae-design-agent ./components/dataplane/ae-system-project/ae-studio/ae-design-agent
+
+# Readable by the unprivileged runtime user, so corepack resolves pnpm from
+# this cache instead of the network. Without it the ENV above changes only
+# where the build writes, not what UID 1000 can read.
+RUN chmod -R a+rX "$COREPACK_HOME"
+
+WORKDIR /repo/components/dataplane/ae-system-project/ae-studio/ae-design-agent
+
+USER 1000
+EXPOSE 8080 9080
+# The pod's /v1 edge listens on AE_LISTEN_PORT (8080) and /healthz, /readyz on
+# AE_HEALTH_PORT (9080), as src/pod/config.ts defaults them.
+CMD ["pnpm", "start"]

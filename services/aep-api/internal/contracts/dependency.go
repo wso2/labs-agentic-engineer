@@ -169,8 +169,8 @@ type DependencyOperationStatus struct {
 //
 // The variants are EXCLUSIVE — a dependency resolves to a resource or to an
 // endpoint, never both, and Kind already says which. Go cannot express a union,
-// so both live on one struct and exactly-one is enforced by the write gates (the
-// zod union in agent-stream, agentfold.validateDependencyWiring here); the TS
+// so both live on one struct and exactly-one is enforced by the agent's write
+// gate (the zod union in agent-stream's component-design-schema.ts); the TS
 // contract states it as a real union type.
 //
 // Every variant is knowable at design save because every field is a pure function

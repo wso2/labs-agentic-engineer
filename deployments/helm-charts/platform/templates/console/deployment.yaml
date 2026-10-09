@@ -29,12 +29,6 @@ spec:
           env:
             - name: AEP_API_PROXY_URL
               value: "http://aep-api.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.aepApi.port }}"
-            # Upstream for the nginx /collab WebSocket proxy (spec collaboration).
-            # MUST be the FQDN: the /collab block uses a variable proxy_pass, so
-            # nginx resolves it via `resolver` with a raw query (no search-domain
-            # expansion) — a short name fails with "host not found" (502).
-            - name: COLLAB_SERVER_URL
-              value: "collab-server.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.collab.port }}"
             - name: VITE_THUNDER_URL
               value: {{ .Values.console.thunderPublicURL | quote }}
             {{- if (default dict .Values.tryIt).enabled }}

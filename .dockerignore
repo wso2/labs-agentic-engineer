@@ -3,8 +3,10 @@
 # agents-service (deployments/docker-compose.yml) is the one image built with
 # the REPO ROOT as context — it needs sibling workspace packages
 # (packages/excalidraw-dsl, packages/design-projection) alongside
-# services/agents, which live outside services/agents/'s own directory. See
-# services/agents/Dockerfile. Every other image (aep-api, console, the local
+# components/dataplane/ae-system-project/ae-studio/ae-design-agent, which live
+# outside that package's own directory. See
+# components/dataplane/ae-system-project/ae-studio/ae-design-agent/Dockerfile.
+# Every other image (aep-api, console, the local
 # stub services) builds from a narrower per-service context and never sees
 # this file, so entries here only need to keep the root build sane.
 #
@@ -35,6 +37,6 @@ generated
 .env.*
 !.env.example
 
-# Dev-only scratch (services/agents playground threads; not part of the image).
+# Dev-only scratch (components/dataplane/ae-system-project/ae-studio/ae-design-agent playground threads; not part of the image).
 chat_playground
 **/chat_playground

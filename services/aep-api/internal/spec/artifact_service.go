@@ -15,14 +15,12 @@
 // under the License.
 
 // Package artifacts is the requirements + design version store. It holds NO
-// local per-project state: reads are served from the workspace-mounted bare
-// mirror via the sourcecontrol.Workspace port (at the branch tip for the live draft,
-// at a `v*` tag for an approved version), a save is the hard semantic gate
-// followed by an annotated tag via Workspace.Tag (no commit — the accepted
-// draft is already on `main` via the Files API), and a discard is one revert
-// Mutate back to the last tag, pushed under origin's push-CAS. The feature
-// holds no REST Git-Data dependency. Drafts live on the frontend; committed
-// truth is the origin.
+// local per-project state: reads are served by the org's AE Studio pod
+// through the sourcecontrol.Git port (at the branch tip for the live draft,
+// at a version tag for an approved version), and a save is the hard semantic
+// gate followed by an annotated tag (no commit — the accepted draft is already
+// on the default branch), cut through the same port. Drafts live on the
+// frontend; committed truth is the origin.
 package spec
 
 import (
@@ -106,14 +104,15 @@ type SaveRequest struct {
 	Blocked map[string]string `json:"-"`
 }
 
-// commitSHAPattern is the accepted shape of a caller-provided CommitSHA
-// (abbreviated or full hex object name).
-var commitSHAPattern = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
+// commitSHAPattern is the accepted shape of a caller-provided CommitSHA: a
+// full 40-hex lowercase commit sha, the pod's rule for `at`, so a bad sha is
+// refused here rather than by the pod.
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // resolveSaveCommit returns the commit a save operates on: the caller-provided
 // CommitSHA when set (validated, never a ref read), else the current HEAD via
-// the workspace mirror (the engine fetches origin first, so an unpinned save
-// never sees a lagging ref).
+// the pod (which fetches GitHub first, so an unpinned save never sees a
+// lagging ref).
 func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontrol.RepoRef, req SaveRequest) (string, error) {
 	if req.CommitSHA != "" {
 		if !commitSHAPattern.MatchString(req.CommitSHA) {
@@ -121,7 +120,7 @@ func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontr
 		}
 		return req.CommitSHA, nil
 	}
-	head, err := s.git.Workspace().Head(ctx, ref, "")
+	head, err := s.git.Head(ctx, ref, "")
 	if err != nil {
 		return "", fmt.Errorf("get head ref: %w", err)
 	}
@@ -131,8 +130,7 @@ func (s *artifactService) resolveSaveCommit(ctx context.Context, ref sourcecontr
 // ----- Service -----
 
 // ArtifactService is the typed entry-point for the artifact endpoints. Reads
-// are workspace-at-HEAD / at-tag; saves cut tags; discards revert to the last
-// tag.
+// are at the branch tip / a tag / a commit; saves cut tags.
 type ArtifactService interface {
 	// Design bundle at HEAD (recursive; keys relative to specs/design/). Only
 	// consumer: ArtifactStore.ReadDesign, the shared design-read path used
@@ -202,7 +200,10 @@ type ArtifactService interface {
 
 type artifactService struct {
 	repo sourcecontrol.RepoRepository
-	git  GitGateway
+	git  sourcecontrol.Git
+	// refs lists the reference documents the user attached (the pod's
+	// store, outside git).
+	refs sourcecontrol.ReferenceListOps
 	// designRuns lists the project's completed design runs, newest first. The
 	// build gate needs them to refuse a feature whose requirements have moved
 	// past its design (#575, per feature since E1).
@@ -230,11 +231,12 @@ func (s *artifactService) SetDesignRunsResolver(
 	s.designRuns = f
 }
 
-// NewArtifactService builds the workspace-backed ArtifactService. `git` is the
-// git-object surface + credential resolver + save identities (the concrete
-// gitOpsService); `repo` resolves the project's repo row (slug + branch).
-func NewArtifactService(repo sourcecontrol.RepoRepository, git GitGateway) ArtifactService {
-	return &artifactService{repo: repo, git: git}
+// NewArtifactService builds the ArtifactService. `repo` resolves the
+// project's repository row, `git` serves every read and cuts the version tag
+// on save, and `refs` lists the attached reference documents (both the
+// aestudiotools adapter).
+func NewArtifactService(repo sourcecontrol.RepoRepository, git sourcecontrol.Git, refs sourcecontrol.ReferenceListOps) ArtifactService {
+	return &artifactService{repo: repo, git: git, refs: refs}
 }
 
 // ----- Allowed extensions -----
@@ -283,7 +285,7 @@ func (s *artifactService) ListDesignFiles(ctx context.Context, orgID, projectID 
 	if err != nil {
 		return nil, err
 	}
-	return s.readBundleAtHead(ctx, ref, designPrefix, designBundleFilter)
+	return s.readBundleAtHead(ctx, ref, designBundle)
 }
 
 func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectID, commitSHA string) (map[string]string, error) {
@@ -294,7 +296,7 @@ func (s *artifactService) GetDesignAtCommit(ctx context.Context, orgID, projectI
 	if err != nil {
 		return nil, err
 	}
-	return s.readBundleAtCommit(ctx, ref, commitSHA, designPrefix, designBundleFilter)
+	return s.readBundleAtCommit(ctx, ref, commitSHA, designBundle)
 }
 
 // GetDesignAtTag reads the design bundle at a spec version tag.
@@ -313,7 +315,7 @@ func (s *artifactService) GetDesignAtTag(ctx context.Context, orgID, projectID, 
 	if err != nil {
 		return nil, err
 	}
-	return s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
+	return s.readBundleAtTag(ctx, ref, tag, designBundle)
 }
 
 // ----- Internal helpers -----
@@ -332,15 +334,16 @@ func (s *artifactService) requireReadyRepo(ctx context.Context, orgID, projectID
 	return repoRecord, nil
 }
 
-// readyRef resolves the ready repo row + its workspace-mount address in one
-// step — every entrypoint's resolution (reads, saves, discards). orgID is the
-// authenticated org; the mount path is derived from the row alone (design D6).
+// readyRef resolves the ready repo row + the repository it addresses in one
+// step — every entrypoint's resolution (reads and saves). orgID is the
+// authenticated org; the repository comes from the row alone, never from
+// client input (sourcecontrol.RefForRow).
 func (s *artifactService) readyRef(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, sourcecontrol.RepoRef, error) {
 	repo, err := s.requireReadyRepo(ctx, orgID, projectID)
 	if err != nil {
 		return nil, sourcecontrol.RepoRef{}, err
 	}
-	ref, err := sourcecontrol.ResolveWorkspaceRef(ctx, s.git.Resolver(), orgID, repo)
+	ref, err := sourcecontrol.RefForRow(orgID, repo)
 	if err != nil {
 		return nil, sourcecontrol.RepoRef{}, err
 	}

@@ -90,3 +90,13 @@ export function identityFromClaims(...sources: TokenClaims[]): SessionIdentity {
 
   return { name, email, orgHandle };
 }
+
+/**
+ * The session's user id: the `sub` of the token the pods verify, the access
+ * token (the `/v1` bearer), so it matches the author id the design agent
+ * stamps on turns and messages. The ID token's `sub` is the fallback for an
+ * access token without one; `""` when neither carries it.
+ */
+export function sessionUserId(accessClaims: TokenClaims, idClaims: TokenClaims): string {
+  return str(accessClaims["sub"]) ?? str(idClaims["sub"]) ?? "";
+}

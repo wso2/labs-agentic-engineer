@@ -19,7 +19,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { components } from "../../../generated/aep-api";
 import { client } from "../../../api/client";
-import { ApiRequestError } from "../../../api/errors";
+import { ApiRequestError, retryAfterMs } from "../../../api/errors";
 
 // The org's skill library (the org skills repo, read and written through
 // aep-api; there is no table behind it). Copied from the old console's
@@ -41,8 +41,8 @@ export function useSkills() {
   return useQuery({
     queryKey: skillsKeys.list(),
     queryFn: async () => {
-      const { data, error } = await client.GET("/skills");
-      if (error) throw new ApiRequestError(error, "Couldn't load the skills");
+      const { data, error, response } = await client.GET("/skills");
+      if (error) throw new ApiRequestError(error, "Couldn't load the skills", { retryAfterMs: retryAfterMs(response) });
       return { skills: data.skills ?? [], repoUrl: data.repoUrl };
     },
     staleTime: 30_000,
@@ -54,8 +54,8 @@ export function useSkillUpdates() {
   return useQuery({
     queryKey: skillsKeys.updates(),
     queryFn: async () => {
-      const { data, error } = await client.GET("/skills/updates");
-      if (error) throw new ApiRequestError(error, "Couldn't load the platform's skill updates");
+      const { data, error, response } = await client.GET("/skills/updates");
+      if (error) throw new ApiRequestError(error, "Couldn't load the platform's skill updates", { retryAfterMs: retryAfterMs(response) });
       return data.updates ?? [];
     },
     staleTime: 30_000,
@@ -66,8 +66,8 @@ export function useSkill(name: string, enabled = true) {
   return useQuery({
     queryKey: skillsKeys.detail(name),
     queryFn: async () => {
-      const { data, error } = await client.GET("/skills/{name}", { params: { path: { name } } });
-      if (error) throw new ApiRequestError(error, "Couldn't load the skill");
+      const { data, error, response } = await client.GET("/skills/{name}", { params: { path: { name } } });
+      if (error) throw new ApiRequestError(error, "Couldn't load the skill", { retryAfterMs: retryAfterMs(response) });
       return data;
     },
     enabled: enabled && name !== "",

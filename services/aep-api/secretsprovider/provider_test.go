@@ -111,6 +111,13 @@ func TestSecretLocation_SecretRefName(t *testing.T) {
 	}
 }
 
+func TestSecretLocation_SecretRefName_RefNameWins(t *testing.T) {
+	loc := secretsprovider.SecretLocation{EntityName: "github-pat", TaskID: "t-1", RefName: "default-github-pat-0a1b2c3d"}
+	if got := loc.SecretRefName(); got != "default-github-pat-0a1b2c3d" {
+		t.Fatalf("got %q, want the stored RefName", got)
+	}
+}
+
 func TestParseKVPath_RoundTrip(t *testing.T) {
 	loc := secretsprovider.SecretLocation{
 		OrgName:     "acme",

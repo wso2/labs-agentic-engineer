@@ -104,53 +104,22 @@ func TestAnthropicLooksLikeKey(t *testing.T) {
 	}
 }
 
-// --- anthropicKeyPreview -------------------------------------------------------
-
-func TestAnthropicKeyPreview(t *testing.T) {
-	t.Parallel()
-	// The golden (testdata/harvest/golden/get_org_credentials_anthropic.json)
-	// shows keyPrefix "sk-ant-api03-XX" — 15 chars, i.e. "sk-ant-" + the next
-	// 8 — and keyLast4 "XXXX": preview is k[:15] + k[len-4:].
-	prefix, last4 := anthropicKeyPreview(anthropicUnitKey)
-	if prefix != "sk-ant-api03-Ab" {
-		t.Fatalf("prefix: got %q, want the golden-style 15-char %q", prefix, "sk-ant-api03-Ab")
-	}
-	if last4 != "1234" {
-		t.Fatalf("last4: got %q, want %q", last4, "1234")
-	}
-
-	// Under 20 chars the whole key is returned as the "prefix" with no last4.
-	// Unreachable via ValidateKey (looksLikeAnthropicKey gates length first) but
-	// pinned so a refactor can't silently start slicing short strings.
-	prefix, last4 = anthropicKeyPreview("sk-ant-tiny")
-	if prefix != "sk-ant-tiny" || last4 != "" {
-		t.Fatalf("short key: got (%q,%q), want the whole key and empty last4", prefix, last4)
-	}
-}
-
 // --- projectionFromAnthropicRow --------------------------------------------------
 
 func TestAnthropicProjectionFromRow(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 7, 1, 5, 2, 1, 0, time.UTC)
 	valErr := "probe failed"
-	smRef := "must-not-leak"
 	row := &OrgAnthropicCredential{
 		OcOrgID:         "acme",
-		KeyPrefix:       "sk-ant-api03-Ab",
-		KeyLast4:        "1234",
 		Status:          "active",
 		ConnectedAt:     now,
 		LastValidatedAt: &now,
 		ValidationError: &valErr,
-		// The secret-ref triplet is row-internal; the projection must not carry it.
-		SecretRefName:     &smRef,
-		SecretRefKVPath:   &smRef,
-		SecretRefProperty: &smRef,
 	}
 
 	p := projectionFromAnthropicRow(row)
-	if p.OcOrgID != "acme" || p.KeyPrefix != "sk-ant-api03-Ab" || p.KeyLast4 != "1234" || p.Status != "active" {
+	if p.OcOrgID != "acme" || p.Status != "active" {
 		t.Fatalf("projection fields drifted: %+v", p)
 	}
 	if !p.ConnectedAt.Equal(now) || p.LastValidatedAt == nil || !p.LastValidatedAt.Equal(now) {
@@ -161,8 +130,8 @@ func TestAnthropicProjectionFromRow(t *testing.T) {
 	}
 
 	// Wire shape: with no validation error the marshaled field set is EXACTLY
-	// the golden's — {connectedAt, keyLast4, keyPrefix, lastValidatedAt,
-	// ocOrgId, status} plus credentialKind — and never the SM-API triplet.
+	// {connectedAt, credentialKind, lastValidatedAt, ocOrgId, status}: never a
+	// character of the token.
 	p.ValidationError = nil
 	raw, err := json.Marshal(p)
 	if err != nil {
@@ -177,7 +146,7 @@ func TestAnthropicProjectionFromRow(t *testing.T) {
 		got = append(got, k)
 	}
 	sort.Strings(got)
-	want := []string{"connectedAt", "credentialKind", "keyLast4", "keyPrefix", "lastValidatedAt", "ocOrgId", "status"}
+	want := []string{"connectedAt", "credentialKind", "lastValidatedAt", "ocOrgId", "status"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("projection JSON field set drifted from golden:\n got %v\nwant %v", got, want)
 	}
@@ -207,7 +176,7 @@ func TestAnthropicValidateKey_StatusBranches(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			base, rec := anthropicFakeAPI(t, tc.status)
-			svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
+			svc := NewAnthropicCredentialService(nil).WithAnthropicAPIBase(base)
 			err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 			if tc.wantCode == "" {
 				if err != nil {
@@ -234,7 +203,7 @@ func TestAnthropicValidateKey_UpstreamServerErrorIs502(t *testing.T) {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			t.Parallel()
 			base, _ := anthropicFakeAPI(t, status)
-			svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
+			svc := NewAnthropicCredentialService(nil).WithAnthropicAPIBase(base)
 			err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 			var ue *UpstreamError
 			if !errors.As(err, &ue) {
@@ -251,7 +220,7 @@ func TestAnthropicValidateKey_UpstreamServerErrorIs502(t *testing.T) {
 func TestAnthropicValidateKey_ProbeShape(t *testing.T) {
 	t.Parallel()
 	base, rec := anthropicFakeAPI(t, http.StatusOK)
-	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(base)
+	svc := NewAnthropicCredentialService(nil).WithAnthropicAPIBase(base)
 	if err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey); err != nil {
 		t.Fatalf("validate: %v", err)
 	}
@@ -273,7 +242,7 @@ func TestAnthropicValidateKey_NetworkFailureIsUnreachable(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close() // dead endpoint → connection refused
-	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase(srv.URL)
+	svc := NewAnthropicCredentialService(nil).WithAnthropicAPIBase(srv.URL)
 	err := svc.validateAnthropicKey(context.Background(), AnthropicCredentialAPIKey, anthropicUnitKey)
 	if got := anthropicValidationCode(t, err); got != "anthropic_unreachable" {
 		t.Fatalf("code: got %q, want anthropic_unreachable (err %v)", got, err)
@@ -286,7 +255,7 @@ func TestAnthropicValidateKey_NetworkFailureIsUnreachable(t *testing.T) {
 // and an unreachable API base prove no I/O happens on these paths.
 func TestAnthropicValidateKey_ShapeGuardsRejectBeforeAnyIO(t *testing.T) {
 	t.Parallel()
-	svc := NewAnthropicCredentialService(nil, nil).WithAnthropicAPIBase("http://127.0.0.1:0")
+	svc := NewAnthropicCredentialService(nil).WithAnthropicAPIBase("http://127.0.0.1:0")
 	cases := []struct {
 		name     string
 		key      string

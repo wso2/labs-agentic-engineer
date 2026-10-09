@@ -36,8 +36,9 @@ import (
 
 // TestLiveGovernance drives the real Agent Manager on a local cluster.
 //
-// Skipped unless AEP_LIVE_AMP=1, because it writes: it registers an agent,
-// binds it to the org's provider and issues a key. It exists because every
+// Skipped unless AEP_LIVE_AMP=1, because it writes: it writes the org's
+// provider as a key save does, then registers an agent, binds it to that
+// provider and issues a key. It exists because every
 // request shape in the agentmanager client was read out of Agent Manager's
 // console rather than a published spec, and unit tests can only prove we send
 // what we MEANT to send. This proves Agent Manager accepts it.
@@ -59,23 +60,37 @@ func TestLiveGovernance(t *testing.T) {
 	}
 	agentName := envOr("AEP_LIVE_AGENT", "aep-live-check-agent")
 
+	org := envOr("AEP_LIVE_ORG", "default")
+	factory := liveFactory{cfg: agentmanager.Config{
+		TokenURL:     tokenURL,
+		ClientID:     envOr("AMP_CLIENT_ID", "amp-publisher-aep"),
+		ClientSecret: envOr("AMP_CLIENT_SECRET", "amp-publisher-aep-secret"),
+		Resource:     "urn:wso2:amp",
+	}}
+
+	// The key save's write: the governor only binds a provider that exists.
+	binding, _ := liveBinding{base: base}.GetAIGatewayBinding(context.Background(), org, "")
+	conn, _, _ := liveConnection{}.Connection(context.Background(), org)
+	providerIn, err := ProviderInputFor(org, conn, orgKey, binding.GatewayID)
+	if err != nil {
+		t.Fatalf("ProviderInputFor: %v", err)
+	}
+	if _, err := factory.For(base).EnsureProvider(context.Background(), providerIn); err != nil {
+		t.Fatalf("EnsureProvider (the key save's write): %v", err)
+	}
+
 	keys := &liveKeyStore{}
 	g := New(Deps{
-		AMP: liveFactory{cfg: agentmanager.Config{
-			TokenURL:     tokenURL,
-			ClientID:     envOr("AMP_CLIENT_ID", "amp-publisher-aep"),
-			ClientSecret: envOr("AMP_CLIENT_SECRET", "amp-publisher-aep-secret"),
-			Resource:     "urn:wso2:amp",
-		}},
+		AMP:  factory,
 		Keys: keys,
 		// In memory, like the key store: this proves Agent Manager's half.
 		Endpoints:   &fakeEndpoints{},
 		Bindings:    liveBinding{base: base},
-		Connections: liveConnection{key: orgKey},
+		Connections: liveConnection{},
 	})
 
 	out, err := g.GovernAgent(context.Background(), delivery.GovernAgentInput{
-		OrgID:       envOr("AEP_LIVE_ORG", "default"),
+		OrgID:       org,
 		ProjectID:   envOr("AEP_LIVE_PROJECT", "default"),
 		Component:   agentName,
 		Environment: envOr("AEP_LIVE_ENV", "default"),
@@ -128,13 +143,13 @@ func (b liveBinding) GetAIGatewayBinding(context.Context, string, string) (openc
 }
 
 // liveConnection is an org on Anthropic's own API.
-type liveConnection struct{ key string }
+type liveConnection struct{}
 
-func (c liveConnection) Effective(context.Context, string) (modelconn.Connection, string, bool, error) {
+func (liveConnection) Connection(context.Context, string) (modelconn.Connection, bool, error) {
 	return modelconn.Connection{
 		Format: modelconn.FormatAnthropic, BaseURL: modelconn.AnthropicBaseURL,
 		Host: modelconn.AnthropicHost, Model: modelconn.DefaultAnthropicModel, AuthScheme: modelconn.AuthXAPIKey,
-	}, c.key, true, nil
+	}, true, nil
 }
 
 // liveKeyStore keeps the issued key in memory: this test proves Agent Manager's
@@ -212,7 +227,6 @@ func TestLiveOpenAICompatibleProxy(t *testing.T) {
 		return in
 	}
 	providerIn = throwaway(providerIn)
-	providerIn.ReassertCredential = true // a rerun writes the current key onto the provider it left
 	provider, err := amp.EnsureProvider(ctx, providerIn)
 	if err != nil {
 		t.Fatalf("EnsureProvider: %v", err)

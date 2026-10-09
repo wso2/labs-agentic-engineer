@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol/issues"
 )
@@ -84,7 +83,7 @@ func callTool(t *testing.T, h http.Handler, name string, args map[string]any) (s
 
 func TestSREMCPCreateIssueBindsIncidentContext(t *testing.T) {
 	gh := &host{}
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh), alertsOn())
 	text, isErr := callTool(t, h, "create_issue", map[string]any{
 		"namespace": "acme", "project": "shop", "title": "timeout", "body": "rca", "componentName": "checkout",
 		"actionStatuses": []any{nil}, "labels": []string{"BUG"},
@@ -106,7 +105,7 @@ func TestSREMCPCreateIssueBindsIncidentContext(t *testing.T) {
 }
 
 func TestSREMCPCreateIssueRequiresActionStatuses(t *testing.T) {
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}), alertsOn())
 	text, isErr := callTool(t, h, "create_issue", map[string]any{"namespace": "acme", "project": "shop", "title": "timeout", "body": "rca", "componentName": "checkout"})
 	if !isErr || !strings.Contains(text, "actionStatuses") {
 		t.Fatalf("got %q isError=%v", text, isErr)
@@ -123,12 +122,12 @@ func TestSREMCPCreateIssueRequiresActionStatuses(t *testing.T) {
 // closure reason (a human's "duplicate") is not eligible to recur.
 type closedDuplicateHost struct{ host }
 
-func (*closedDuplicateHost) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+func (*closedDuplicateHost) ListIssues(context.Context, sourcecontrol.RepoRef, []string) ([]sourcecontrol.IssueInfo, error) {
 	return []sourcecontrol.IssueInfo{{Number: 7, State: "closed", StateReason: "duplicate", Labels: []string{"bug", "incident"}}}, nil
 }
 
 func TestSREMCPReportsIneligibleClosedIncidentAsConflict(t *testing.T) {
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &closedDuplicateHost{}), alertsOn())
 	text, isErr := callTool(t, h, "create_issue", map[string]any{
 		"namespace": "acme", "project": "shop", "title": "timeout", "body": "rca", "componentName": "checkout", "actionStatuses": []any{},
 	})
@@ -139,7 +138,7 @@ func TestSREMCPReportsIneligibleClosedIncidentAsConflict(t *testing.T) {
 
 type planHost struct{ host }
 
-func (*planHost) ListIssues(context.Context, string, string, secrets.Credential, []string) ([]sourcecontrol.IssueInfo, error) {
+func (*planHost) ListIssues(context.Context, sourcecontrol.RepoRef, []string) ([]sourcecontrol.IssueInfo, error) {
 	return []sourcecontrol.IssueInfo{
 		{Number: 1, Title: "Implement checkout", State: "closed", Labels: []string{"aep", "development"}},
 		{Number: 2, Title: "checkout times out", State: "open", Labels: []string{"aep", "development", "bug"}},
@@ -147,7 +146,7 @@ func (*planHost) ListIssues(context.Context, string, string, secrets.Credential,
 }
 
 func TestSREMCPSearchMarksPlatformPlans(t *testing.T) {
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &planHost{}, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &planHost{}), alertsOn())
 	text, isErr := callTool(t, h, "search_related_issues", map[string]any{"namespace": "acme", "project": "shop", "query": "checkout"})
 	if isErr {
 		t.Fatalf("search failed: %s", text)
@@ -171,7 +170,7 @@ func TestSREMCPSearchMarksPlatformPlans(t *testing.T) {
 }
 
 func TestSREMCPListsOnlyTheHandoffTools(t *testing.T) {
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}), alertsOn())
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
 	var resp struct {
@@ -206,7 +205,7 @@ func TestSREMCPActsOnlyOnAVerifiedIncident(t *testing.T) {
 
 	gh := &host{}
 	alerts := &fakeAlerts{alerted: map[string]bool{"acme/shop/*": true}}
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh, resolver{}), alerts)
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh), alerts)
 	text, isErr := callTool(t, h, "create_issue", create)
 	if !isErr || !strings.HasPrefix(text, "aep-api 403: ") || gh.created.Title != "" {
 		t.Fatalf("an unbacked namespace must file nothing: %q isError=%v created=%+v", text, isErr, gh.created)
@@ -216,7 +215,7 @@ func TestSREMCPActsOnlyOnAVerifiedIncident(t *testing.T) {
 	}
 
 	alerts = &fakeAlerts{err: errors.New("observer down")}
-	h = issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh, resolver{}), alerts)
+	h = issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh), alerts)
 	create["namespace"] = "acme"
 	if text, isErr = callTool(t, h, "create_issue", create); !isErr || !strings.HasPrefix(text, "aep-api 503: ") || gh.created.Title != "" {
 		t.Fatalf("an unreachable observer must fail closed: %q isError=%v", text, isErr)
@@ -226,7 +225,7 @@ func TestSREMCPActsOnlyOnAVerifiedIncident(t *testing.T) {
 func TestSREMCPMatchesTheOpenChoreoComponentName(t *testing.T) {
 	gh := &host{}
 	alerts := &fakeAlerts{alerted: map[string]bool{"acme/shop/shop-checkout": true}}
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh, resolver{}), alerts)
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, gh), alerts)
 	text, isErr := callTool(t, h, "create_issue", map[string]any{
 		"namespace": "acme", "project": "shop", "title": "t", "body": "b", "componentName": "checkout", "actionStatuses": []any{nil},
 	})
@@ -239,7 +238,7 @@ func TestSREMCPMatchesTheOpenChoreoComponentName(t *testing.T) {
 }
 
 func TestSREMCPRequiresNamespaceAndComponent(t *testing.T) {
-	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}, resolver{}), alertsOn())
+	h := issues.NewSREMCPHandler(sourcecontrol.NewIssueService(repo{}, &host{}), alertsOn())
 	if text, isErr := callTool(t, h, "search_related_issues", map[string]any{"project": "shop"}); !isErr || !strings.Contains(text, "namespace") {
 		t.Fatalf("missing namespace: %q isError=%v", text, isErr)
 	}

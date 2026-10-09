@@ -43,7 +43,7 @@ func (h *Handler) ListProjectTags(ctx context.Context, request gen.ListProjectTa
 		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
 			return nil, apierr.NotFound("project repository not found")
 		default:
-			return nil, apierr.Internal("internal error")
+			return nil, apierr.WithCause(apierr.Internal("internal error"), err)
 		}
 	}
 	return gen.ListProjectTags200JSONResponse(gen.TagList{
@@ -63,7 +63,7 @@ func (h *Handler) ListProjectVersions(ctx context.Context, request gen.ListProje
 		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
 			return nil, apierr.NotFound("project repository not found")
 		default:
-			return nil, apierr.Internal("internal error")
+			return nil, apierr.WithCause(apierr.Internal("internal error"), err)
 		}
 	}
 	out := gen.SpecVersionList{Versions: make([]gen.SpecVersion, 0, len(versions))}
@@ -104,7 +104,7 @@ func (h *Handler) GetSpecState(ctx context.Context, request gen.GetSpecStateRequ
 		case errors.Is(err, sourcecontrol.ErrRepoNotFound), errors.Is(err, sourcecontrol.ErrRepoNotReady):
 			return nil, apierr.NotFound("project repository not found")
 		default:
-			return nil, apierr.Internal("internal error")
+			return nil, apierr.WithCause(apierr.Internal("internal error"), err)
 		}
 	}
 	out := gen.SpecState{DesignedFrom: st.DesignedFrom, Documents: make([]gen.SourceDocument, 0, len(st.Documents))}

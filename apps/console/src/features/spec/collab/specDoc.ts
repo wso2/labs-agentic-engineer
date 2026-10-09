@@ -23,21 +23,21 @@ import { setDocFile } from "@aep/collab-doc";
 import { useSession } from "../../../auth/SessionContext";
 import { env } from "../../../config/env";
 import { useMockSpecExtras, type MockSpecExtras } from "../api/specModel";
-import { useSpecRoom } from "./specRoom";
+import { useSpecRoom, type FlushWarning } from "./specRoom";
 
 // The project's spec document: ONE Y.Doc per project, every file a share keyed
 // by its repo path (@aep/collab-doc's model). Everything in the app that reads
 // or edits the spec gets the doc from here, and nothing else creates one.
 //
-// ON THE PLATFORM it is the collab room's doc (specRoom.ts): seeded server-side
-// from git, edited by everyone in the project and by the agent, committed back
-// by the collab server. Null until the room has synced.
+// ON THE PLATFORM it is the Room's doc (specRoom.ts, the org's AE Studio):
+// seeded server-side from git, edited by everyone in the project and by the
+// design agent, committed back by the Room. Null until the room has synced.
 //
 // IN MOCK MODE it is a local doc, seeded once from the mock's files and kept
 // for the browser session, so an edit survives moving between files. The
 // agent's file writes in a chat turn are applied to it from the turn's stream
 // (`applyAgentWrite`, agentWrites.ts), marked as the agent's the way the
-// agents service writes into the room, so they land with a fading wash. No one else sees it, and a
+// design agent writes into the room, so they land with a fading wash. No one else sees it, and a
 // reload starts over.
 
 /** Marks the seed's writes, so they are never mistaken for the user's edits. */
@@ -72,6 +72,13 @@ export function useSpecDoc(projectName: string): Y.Doc | null {
   const seed = useMockSpecExtras(projectName).data;
   const local = useMemo(() => (mock && seed ? projectSpecDoc(projectName, seed) : null), [mock, projectName, seed]);
   return mock ? local : room.doc;
+}
+
+/** The warnings the Room's last save reported, and their dismissal; none in mock mode. */
+export function useSpecSaveWarnings(projectName: string): { warnings: FlushWarning[]; dismiss: () => void } {
+  const { orgHandle } = useSession();
+  const room = useSpecRoom(orgHandle, projectName, env.apiMode !== "mock");
+  return { warnings: room.flushWarnings, dismiss: room.dismissFlushWarnings };
 }
 
 /** Commit the room's pending edits to git before a build tags HEAD; nothing to commit in mock mode. */

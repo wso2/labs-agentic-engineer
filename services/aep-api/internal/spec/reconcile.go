@@ -81,11 +81,11 @@ type SkillUpdate struct {
 // The per-org lock is held across the WHOLE function — deliberately, not just
 // the provision branch. EnsureBareRepo creates the repo ROW before the seed
 // commit lands, so a concurrent reader that slipped past the lock could see
-// the row and read a still-empty repo (empty skills on first load). The gitfs
-// flock + push-CAS don't close that window (they arbitrate writes, not
-// first-load ordering), and the GitHub repo creation itself runs under no
-// flock at all — this narrow in-process guard covers exactly that first-time
-// step. In steady state it wraps only a ~1ms GetRepo at design/task QPS.
+// the row and read a still-empty repo (empty skills on first load). The
+// commits' baseSha preconditions don't close that window (they arbitrate
+// writes, not first-load ordering), and the GitHub repo creation itself runs
+// under no lock at all — this narrow in-process guard covers exactly that
+// first-time step. In steady state it wraps only a ~1ms GetRepo at design/task QPS.
 func (s *SkillService) ensureSkillsRepo(ctx context.Context, orgID string) (*sourcecontrol.GitRepository, error) {
 	mu := s.orgLock(orgID)
 	mu.Lock()
@@ -202,10 +202,10 @@ func (s *SkillService) reconcileEmbedded(ctx context.Context, orgID string, repo
 	written, migrated, purged := 0, 0, 0
 	manifestDirty := false
 	// manifestSet/manifestDelete are the manifest DELTA reconcile computes
-	// against the pre-read `manifest`. They are re-applied INSIDE the commit
-	// closure (commitFiles' manifestFn) against the attempt's live base, so a
+	// against the pre-read `manifest`. They are re-applied on every commit
+	// attempt (commitFiles' manifestFn) against that attempt's read, so a
 	// concurrent import/delete that advanced the manifest is merged in rather
-	// than clobbered on a CAS retry. The `manifest` map itself is still mutated
+	// than clobbered on a retry. The `manifest` map itself is still mutated
 	// in place below purely to keep the pre-read decision logic
 	// (entry lookups, dirty accounting) unchanged.
 	manifestSet := map[string]ManifestEntry{}
@@ -344,10 +344,10 @@ func (s *SkillService) reconcileEmbedded(ctx context.Context, orgID string, repo
 		return 0, nil
 	}
 	// The manifest is merged in the SAME commit as the file changes, but via
-	// the closure-scoped delta (commitFiles' manifestFn) so a concurrent
-	// writer's entries survive a CAS retry. Only the manifest is retry-safe;
-	// the file writes/deletes above were planned against the pre-read state
-	// (see commitFiles' scope-boundary note).
+	// the per-attempt delta (commitFiles' manifestFn) so a concurrent writer's
+	// entries survive a retry. Only the manifest is re-merged; the file
+	// writes/deletes above were planned against the pre-read state (see
+	// commitFiles).
 	manifestFn := func(m SkillsManifest) SkillsManifest {
 		for name, entry := range manifestSet {
 			m[name] = entry
@@ -358,7 +358,7 @@ func (s *SkillService) reconcileEmbedded(ctx context.Context, orgID string, repo
 		return m
 	}
 	msg := fmt.Sprintf("chore(skills): reconcile embedded library (%d written, %d migrated, %d retired)", written, migrated, purged)
-	if _, err := s.commitFiles(ctx, orgID, repo, msg, writes, deletes, manifestFn); err != nil {
+	if err := s.commitFiles(ctx, orgID, repo, msg, writes, deletes, manifestFn); err != nil {
 		return 0, err
 	}
 	slog.InfoContext(ctx, "skills: reconciled embedded skills", "org", orgID, "written", written, "migrated", migrated, "purged", purged)

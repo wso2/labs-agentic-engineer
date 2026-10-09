@@ -24,15 +24,15 @@ import (
 	"github.com/wso2/aep/aectl/internal/config"
 )
 
-// clearURLKeys resets the three public-URL keys, so one test's value cannot
+// clearURLKeys resets the public-URL keys, so one test's value cannot
 // leak into the next through viper's global registry.
 func clearURLKeys(t *testing.T) {
 	t.Helper()
-	for _, k := range []string{"console.public_url", "tryit.public_url", "aep_api.public_url"} {
+	for _, k := range []string{"console.public_url", "tryit.public_url"} {
 		viper.Set(k, "")
 	}
 	t.Cleanup(func() {
-		for _, k := range []string{"console.public_url", "tryit.public_url", "aep_api.public_url"} {
+		for _, k := range []string{"console.public_url", "tryit.public_url"} {
 			viper.Set(k, "")
 		}
 	})
@@ -50,39 +50,20 @@ func TestPublicURLsFallBackToLocalDefaults(t *testing.T) {
 	if got := tryItPublicURL(); got != defaultTryItURL {
 		t.Errorf("tryItPublicURL() = %q, want %q", got, defaultTryItURL)
 	}
-	if got := aepAPIPublicURL(); got != defaultConsoleURL {
-		t.Errorf("aepAPIPublicURL() = %q, want the console default %q", got, defaultConsoleURL)
-	}
 }
 
 // TestPublicURLsReadConfig is the re-domained install: the config file names
-// all three origins and nothing else has to be passed on the command line.
+// both origins and nothing else has to be passed on the command line.
 func TestPublicURLsReadConfig(t *testing.T) {
 	clearURLKeys(t)
 	viper.Set("console.public_url", "http://console.ae.example.com:8080")
 	viper.Set("tryit.public_url", "http://tryit.ae.example.com:8080")
-	viper.Set("aep_api.public_url", "http://api.ae.example.com:8080")
 
 	if got, want := consolePublicURL(), "http://console.ae.example.com:8080"; got != want {
 		t.Errorf("consolePublicURL() = %q, want %q", got, want)
 	}
 	if got, want := tryItPublicURL(), "http://tryit.ae.example.com:8080"; got != want {
 		t.Errorf("tryItPublicURL() = %q, want %q", got, want)
-	}
-	if got, want := aepAPIPublicURL(), "http://api.ae.example.com:8080"; got != want {
-		t.Errorf("aepAPIPublicURL() = %q, want %q", got, want)
-	}
-}
-
-// TestAepAPIPublicURLFollowsConsole covers the common case the key exists to
-// make optional: one origin proxies both, so configuring the console is
-// enough and aep-api must not be left on the local default.
-func TestAepAPIPublicURLFollowsConsole(t *testing.T) {
-	clearURLKeys(t)
-	viper.Set("console.public_url", "http://console.ae.example.com:8080")
-
-	if got, want := aepAPIPublicURL(), "http://console.ae.example.com:8080"; got != want {
-		t.Errorf("aepAPIPublicURL() = %q, want the configured console URL %q", got, want)
 	}
 }
 
@@ -91,7 +72,7 @@ func TestAepAPIPublicURLFollowsConsole(t *testing.T) {
 // silently dropped, so the next command reads the default instead of what the
 // file said.
 func TestPublicURLKeysArePersisted(t *testing.T) {
-	for _, want := range []string{"console.public_url", "tryit.public_url", "aep_api.public_url"} {
+	for _, want := range []string{"console.public_url", "tryit.public_url"} {
 		found := false
 		for _, k := range config.ConfigMapKeys {
 			if k == want {

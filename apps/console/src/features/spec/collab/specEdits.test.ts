@@ -240,7 +240,7 @@ describe("the agent's file writes, applied to the local doc", () => {
     output: { ok: true, op: "edit", path: PATH },
   };
 
-  it("applies an edit to the room path, as the agents service matched it", () => {
+  it("applies an edit to the room path, as the design agent matched it", () => {
     const doc = docWith(stub);
     expect(applyAgentToolCall(doc, edit)).toBe(true);
     expect(readDocFile(doc, PATH)).toContain("- Deputies approve on leave. *assumed*");

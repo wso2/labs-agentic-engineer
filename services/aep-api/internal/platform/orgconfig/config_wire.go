@@ -75,13 +75,14 @@ type ConfigProjection struct {
 // them from modelconn.Connection, and the console renders none of them.
 
 // LLMProjection is the org's saved model connection. The key is write-only and
-// projected only as KeyPreview. A stored connection is usable by construction
-// (a save is refused unless its probe passes), so there is no status.
+// lives only in vault: the section's presence says it is set, and no
+// character of it is projected. A stored connection is usable by
+// construction (a save that changes the connection is refused unless its
+// probe passes), so there is no status.
 type LLMProjection struct {
 	Kind        modelconn.Format `json:"kind" enum:"anthropic,openai-compatible"`
 	BaseURL     string           `json:"baseURL"`
 	Model       string           `json:"model"`
-	KeyPreview  string           `json:"keyPreview"`
 	ConnectedAt time.Time        `json:"connectedAt"`
 	UpdatedAt   time.Time        `json:"updatedAt"`
 	// UpdatedBy is nil for a connection carried over by the migration from the
@@ -190,15 +191,20 @@ type AgentsProjection struct {
 	UpdatedBy         *string                 `json:"updatedBy"`
 }
 
-// SubscriptionProjection is a stored Claude subscription token, masked.
+// SubscriptionProjection is a stored Claude subscription token: that it is
+// set, never any character of it (it lives only in vault).
 type SubscriptionProjection struct {
 	Kind            string     `json:"kind" enum:"claude"`
-	KeyPrefix       string     `json:"keyPrefix"`
-	KeyLast4        string     `json:"keyLast4"`
 	Status          string     `json:"status"`
 	ConnectedAt     time.Time  `json:"connectedAt"`
 	LastValidatedAt *time.Time `json:"lastValidatedAt,omitempty"`
 	ValidationError *string    `json:"validationError,omitempty"`
+	// TokenMissing is an active subscription whose token was never recorded
+	// in vault (saved before the token lived there): coding dispatch bills the
+	// connection's key instead until the token is saved again. Omitted (false)
+	// while the token is recorded, and on a non-active subscription (dispatch
+	// errors on it).
+	TokenMissing bool `json:"tokenMissing,omitempty"`
 }
 
 // SubscriptionKindClaude is the only subscription kind: a Claude plan, billed
@@ -291,9 +297,7 @@ type LLMPatch struct {
 }
 
 // GitProviderWrite is the gitProvider section's write shape. Mode is pat-only:
-// App-mode is driven by the connect-sessions action route (OAuth), so it is
-// schema-rejected here (the enum has no "app" value), pointing the client at
-// the right flow.
+// the schema has no "app" value, so anything else is rejected here.
 type GitProviderWrite struct {
 	Kind        string `json:"kind" enum:"github" required:"true"`
 	Mode        string `json:"mode" enum:"pat" required:"true"`

@@ -238,6 +238,7 @@ async function startClaudeCodeSession(prompt: string, policy: RuntimePolicy): Pr
       canRefresh: policy.mcp.invalidate !== undefined,
       onToken: policy.mcp.onToken,
       onFatal: (err) => policy.mcp?.onFatal?.(err),
+      local: policy.mcp.local,
     });
     mcpUrl = mcpProxy.url;
   }

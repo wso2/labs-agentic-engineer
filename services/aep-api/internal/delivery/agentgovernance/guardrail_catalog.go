@@ -60,7 +60,7 @@ func (g *Governor) GuardrailCatalog(ctx context.Context, org, environment string
 	if err != nil {
 		return nil, fmt.Errorf("resolve AI gateway binding: %w", err)
 	}
-	conn, _, ok, err := g.deps.Connections.Effective(ctx, org)
+	conn, ok, err := g.deps.Connections.Connection(ctx, org)
 	if err != nil {
 		return nil, fmt.Errorf("read org model connection: %w", err)
 	}
@@ -68,7 +68,7 @@ func (g *Governor) GuardrailCatalog(ctx context.Context, org, environment string
 		return nil, nil
 	}
 	amp := g.deps.AMP.For(binding.AdminURL)
-	providerUUID, found, err := amp.FindProvider(ctx, org, ProviderID(org))
+	provider, found, err := amp.FindProvider(ctx, org, ProviderID(org))
 	if err != nil {
 		return nil, fmt.Errorf("find LLM provider: %w", err)
 	}
@@ -77,7 +77,7 @@ func (g *Governor) GuardrailCatalog(ctx context.Context, org, environment string
 		// catalog for.
 		return nil, nil
 	}
-	policies, err := amp.ListPolicies(ctx, org, providerUUID)
+	policies, err := amp.ListPolicies(ctx, org, provider.UUID)
 	if err != nil {
 		return nil, fmt.Errorf("read the guardrail catalog: %w", err)
 	}

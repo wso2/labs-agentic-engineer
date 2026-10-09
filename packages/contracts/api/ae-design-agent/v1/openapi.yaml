@@ -1,0 +1,896 @@
+openapi: 3.0.3
+info:
+  title: ae-design-agent v1 API
+  description: |-
+    Browser API of an org's design agent, served from the org's AE Studio pod.
+    Callers present a Platform IdP user JWT of the pod's org; an M2M token is
+    refused with 401 and a user of another org with 403. Errors are RFC 9457
+    problems (application/problem+json), except TurnConflict, a plain JSON 409
+    body the console reads by its code.
+
+    A turn runs in the pod, in memory: its status and its event stream live as
+    long as the replay retention (120 s after the terminal, at most 16384 parts
+    and 16 MiB per turn); the last 20 turns per scope, or one hour of them, keep
+    a TurnStatus. A turn is capped at 30 minutes.
+  version: 1.0.0
+servers:
+- url: /v1
+tags:
+- name: Conversations
+  description: A project's current chat thread and its messages.
+- name: Turns
+  description: Start a turn, read its status, attach to its event stream.
+- name: Marketplace
+  description: The same surface for an org-scoped marketplace conversation (no project).
+security:
+- userJwt: []
+paths:
+  /projects/{projectName}/conversations/current:
+    get:
+      operationId: get-current-conversation
+      summary: The project's current conversation, created on first read
+      tags:
+      - Conversations
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: The current thread
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectConversationView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/conversations:
+    post:
+      operationId: rotate-conversation
+      summary: Start a new conversation for the whole project
+      description: Demotes the current thread and mints a fresh one. Rotation is
+        project-wide, every member sees the new thread. Refused while a turn runs
+        for the project (its save would recreate the demoted thread).
+      tags:
+      - Conversations
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '201':
+          description: The fresh current thread
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectConversationView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A turn is running for the project (TurnConflict turn_in_progress,
+            with activeTurnId).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/conversations/{conversationId}/messages:
+    get:
+      operationId: get-conversation-messages
+      summary: Rehydrate a conversation's messages
+      description: The current id before its first turn answers an empty list;
+        any other unknown id is 404.
+      tags:
+      - Conversations
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: The messages, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessages'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/conversations/{conversationId}/turns:
+    post:
+      operationId: create-turn
+      summary: Start a turn in a project conversation
+      description: |-
+        The instruction is sent verbatim; the pod parses `/<skill>` flow commands.
+        Send JSON, or multipart when the turn carries chat attachments. At most
+        10 files, each at most 5 MiB, 15 MiB of raw bytes in total. A turn
+        carrying `target` (retired by `scope`) is refused in either form. A
+        multipart turn carrying a `prototypeFeedback` part is refused (400):
+        the review batch is JSON only, so send it without attachments.
+      tags:
+      - Turns
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnInputBody'
+          multipart/form-data:
+            encoding:
+              anchor:
+                contentType: application/json
+              files:
+                contentType: application/octet-stream
+              scope:
+                contentType: application/json
+            schema:
+              $ref: '#/components/schemas/TurnInputMultipart'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnOutputBody'
+        '400':
+          description: 'Invalid input (problem codes: invalid_turn, attachment_rejected).
+            Nothing was sent, no turn started.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |-
+            A turn is already running for the project (TurnConflict
+            turn_in_progress, with activeTurnId), the addressed conversation is no
+            longer the project's current thread (TurnConflict
+            conversation_rotated), or the studio has no default model key
+            (problem code no_default_key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/turns/active:
+    get:
+      operationId: get-active-turn
+      summary: The project's running turn, 204 when none
+      tags:
+      - Turns
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      responses:
+        '200':
+          description: The running turn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnStatus'
+        '204':
+          description: No running turn
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/turns/{turnId}:
+    get:
+      operationId: get-turn
+      summary: One turn's status
+      tags:
+      - Turns
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - $ref: '#/components/parameters/TurnId'
+      responses:
+        '200':
+          description: The turn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /projects/{projectName}/turns/{turnId}/stream:
+    get:
+      operationId: stream-turn
+      summary: Attach to a turn's event stream (replay, then live tail)
+      description: |-
+        Server-sent events. Each frame is `id: <index>` and `data: <part>`; the
+        index is the frame's place in the replay buffer. `: keep-alive` is sent
+        every 15 s. The stream ends with `turn-completed {}` or
+        `turn-failed {reason, message?, code?, host?, resetAt?}` (reason
+        agent-error, stream-died, shutdown or internal), then `[DONE]`.
+        Resume with `from=<last id + 1>`; a turn past its retention is 404.
+      tags:
+      - Turns
+      parameters:
+      - $ref: '#/components/parameters/ProjectName'
+      - $ref: '#/components/parameters/TurnId'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          description: The event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ReplayTruncated'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /marketplace/conversations:
+    post:
+      operationId: create-marketplace-conversation
+      summary: Start a marketplace conversation
+      tags:
+      - Marketplace
+      responses:
+        '201':
+          description: The new conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarketplaceConversation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /marketplace/conversations/{conversationId}/messages:
+    get:
+      operationId: get-marketplace-conversation-messages
+      summary: Rehydrate a marketplace conversation's messages
+      tags:
+      - Marketplace
+      parameters:
+      - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: The messages, oldest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationMessages'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /marketplace/conversations/{conversationId}/turns:
+    post:
+      operationId: create-marketplace-turn
+      summary: Start a turn in a marketplace conversation
+      description: Same body and answers as create-turn, without a project.
+      tags:
+      - Marketplace
+      parameters:
+      - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TurnInputBody'
+          multipart/form-data:
+            encoding:
+              anchor:
+                contentType: application/json
+              files:
+                contentType: application/octet-stream
+              scope:
+                contentType: application/json
+            schema:
+              $ref: '#/components/schemas/TurnInputMultipart'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnOutputBody'
+        '400':
+          description: 'Invalid input (problem codes: invalid_turn, attachment_rejected).'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: A turn is already running (TurnConflict turn_in_progress),
+            or the studio has no default model key (problem code no_default_key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnConflict'
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /marketplace/turns/{turnId}:
+    get:
+      operationId: get-marketplace-turn
+      summary: One marketplace turn's status
+      tags:
+      - Marketplace
+      parameters:
+      - $ref: '#/components/parameters/TurnId'
+      responses:
+        '200':
+          description: The turn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /marketplace/turns/{turnId}/stream:
+    get:
+      operationId: stream-marketplace-turn
+      summary: Attach to a marketplace turn's event stream
+      description: Same frames, resume and end frames as stream-turn.
+      tags:
+      - Marketplace
+      parameters:
+      - $ref: '#/components/parameters/TurnId'
+      - $ref: '#/components/parameters/From'
+      - $ref: '#/components/parameters/LastEventId'
+      responses:
+        '200':
+          description: The event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/ReplayTruncated'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    userJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ProjectName:
+      name: projectName
+      in: path
+      required: true
+      description: Project name (DNS-label slug)
+      schema:
+        type: string
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      description: Conversation uuid
+      schema:
+        type: string
+        format: uuid
+    TurnId:
+      name: turnId
+      in: path
+      required: true
+      description: Turn id from the 202 create response
+      schema:
+        type: string
+        format: uuid
+    From:
+      name: from
+      in: query
+      description: Replay from this absolute frame index. Wins over Last-Event-ID.
+      schema:
+        type: integer
+        minimum: 0
+    LastEventId:
+      name: Last-Event-ID
+      in: header
+      description: SSE reconnect cursor, the last frame id the client saw; the
+        stream resumes at the frame after it. Honoured only without `from` (`from`
+        wins when both are sent). A non-numeric value is ignored (full replay).
+      schema:
+        type: string
+  responses:
+    Unauthorized:
+      description: Missing or invalid user JWT, or an M2M token
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Forbidden:
+      description: A user of another org
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    NotFound:
+      description: 'No such resource (problem codes: project_unknown, conversation_unknown,
+        turn_unknown)'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    ReplayTruncated:
+      description: 'The running turn overflowed its replay buffer, so a replay would
+        have a gap (problem code: replay_truncated). Attach again after the turn
+        ends.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    TooLarge:
+      description: 'The request body or an attachment is over its cap (problem code:
+        payload_too_large)'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+    Unavailable:
+      description: 'Not serving right now (problem codes: idp_unavailable, shutting_down;
+        on a turn start also tools_unavailable, when the studio''s tools sidecar does
+        not answer the project or skills lookup)'
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+  schemas:
+    Problem:
+      type: object
+      required:
+      - type
+      - title
+      - status
+      - code
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+    ProjectConversationView:
+      type: object
+      additionalProperties: false
+      description: One project chat thread. The id is server-minted. Exactly one
+        thread per project is current; a turn addressed to a demoted id is refused
+        with 409 conversation_rotated.
+      required:
+      - conversationId
+      - createdAt
+      - current
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        current:
+          type: boolean
+    MarketplaceConversation:
+      type: object
+      additionalProperties: false
+      required:
+      - conversationId
+      properties:
+        conversationId:
+          type: string
+          format: uuid
+    ConversationMessages:
+      type: object
+      additionalProperties: false
+      description: A conversation's history, oldest first. An empty list is a real
+        answer, a known thread with no turns yet.
+      required:
+      - messages
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationMessage'
+    ConversationMessage:
+      type: object
+      additionalProperties: false
+      description: One rehydrated message of a conversation's history. A user
+        message carries the scope it was sent with and, when it sent a prototype
+        review, its `prototypeFeedback`, so a reloaded thread reads as it was sent.
+      required:
+      - role
+      properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
+        attachments:
+          type: array
+          description: File names that went up with this message, never bytes.
+          items:
+            type: string
+        author:
+          $ref: '#/components/schemas/ConversationMessageAuthor'
+        content:
+          description: The message body as recorded. Untyped, it is model-shaped
+            and varies by role.
+        prototypeFeedback:
+          $ref: '#/components/schemas/PrototypeFeedbackInput'
+        role:
+          type: string
+          description: Who the message is from, as recorded.
+        scope:
+          $ref: '#/components/schemas/TurnScope'
+    ConversationMessageAuthor:
+      type: object
+      additionalProperties: false
+      description: Who sent the message. Absent for the agent.
+      required:
+      - id
+      - displayName
+      properties:
+        displayName:
+          type: string
+        id:
+          type: string
+          description: The sender's verified user token `sub`.
+    TurnAnchor:
+      type: object
+      additionalProperties: false
+      description: What the user pointed at when aiming a turn at part of a spec
+        document. It locates, it never carries the selected content; the agent
+        resolves the names against the current document.
+      required:
+      - file
+      - nodes
+      properties:
+        file:
+          type: string
+          description: The authored spec file the selection resolves to.
+        nodes:
+          type: array
+          minItems: 1
+          description: The selected nodes, in document order.
+          items:
+            $ref: '#/components/schemas/TurnAnchorNode'
+    TurnAnchorNode:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - kind
+      properties:
+        context:
+          type: string
+          description: Where the node sits, for a name that cannot stand alone.
+        kind:
+          type: string
+          description: The node's vocabulary word (paragraph, heading, operation, ...).
+        name:
+          type: string
+          maxLength: 200
+          description: What the agent resolves. A bounded excerpt of the rendered
+            text for markdown, the node's own name for a structured view.
+    TurnInputBody:
+      type: object
+      additionalProperties: false
+      required:
+      - instruction
+      properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
+        instruction:
+          type: string
+          description: User message. `/<skill>` flow commands are sent verbatim,
+            the pod parses them.
+        intent:
+          $ref: '#/components/schemas/TurnIntent'
+        prototypeFeedback:
+          allOf:
+          - $ref: '#/components/schemas/PrototypeFeedbackInput'
+          description: A prototype review batch. Valid only when `instruction` is
+            `/prototype`, alone or followed by the batch's own `component`, on a
+            project turn the pod runs in the Room (only the Room's committer saves
+            the revision), and never together with `anchor`/`intent`. JSON only.
+        scope:
+          $ref: '#/components/schemas/TurnScope'
+    TurnInputMultipart:
+      type: object
+      additionalProperties: false
+      description: The turn input of TurnInputBody as multipart, so it can carry
+        chat attachments. The JSON form stays canonical for a message without files.
+      required:
+      - instruction
+      properties:
+        anchor:
+          $ref: '#/components/schemas/TurnAnchor'
+        files:
+          type: array
+          maxItems: 10
+          description: Chat attachments, at most 5 MiB each and 15 MiB in total.
+          items:
+            type: string
+            format: binary
+        instruction:
+          type: string
+        intent:
+          $ref: '#/components/schemas/TurnIntent'
+        scope:
+          $ref: '#/components/schemas/TurnScope'
+    TurnIntent:
+      type: string
+      description: What the user wants done with `anchor`. `change` rewrites the
+        selected nodes, `discuss` opens the selection as a grilling. Absent without
+        an anchor.
+      enum:
+      - change
+      - discuss
+    TurnScope:
+      type: object
+      additionalProperties: false
+      description: What the user was looking at when they sent the message, a
+        feature's file (`feature`, with its ID) or the design review
+        (`design-review`). Absent means the whole product. A scope focuses the
+        turn and fences nothing; the pod composes it into the instruction once
+        the snapshot is read and journals it on the message.
+      required:
+      - kind
+      properties:
+        feature:
+          type: string
+          pattern: ^F[0-9]+$
+          description: The feature's ID (`F2`) when `kind` is `feature`; absent otherwise.
+        kind:
+          type: string
+          enum:
+          - feature
+          - design-review
+    PrototypeFeedbackInput:
+      type: object
+      additionalProperties: false
+      description: A batch of review requests on ONE web-application prototype,
+        revised in a single `/prototype` turn. The shape and limits mirror the
+        prototype kit's feedback submission (`@wso2/prototype-kit/feedback`)
+        plus `component`. Lengths are counted in UTF-16 code units, as the kit
+        counts them.
+      required:
+      - prototypeHash
+      - component
+      - requests
+      properties:
+        component:
+          type: string
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_-]*$
+          description: The web application, as named under `specs/design/components/`.
+        prototypeHash:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: The revision the reviewer looked at, the kit's 64-character
+            lowercase hex hash.
+        requests:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/PrototypeFeedbackRequest'
+    PrototypeFeedbackRequest:
+      type: object
+      additionalProperties: false
+      description: One reviewer request, made on one screen in one role and display state.
+      required:
+      - screenId
+      - roleId
+      - stateId
+      - elementIds
+      - text
+      properties:
+        elementIds:
+          type: array
+          description: The ids of the elements the request is about, in selection
+            order. Empty means the whole screen.
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: \S
+        flowId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+          description: The flow the reviewer was walking; absent for free navigation.
+        roleId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        screenId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        stateId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: \S
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          pattern: \S
+          description: The reviewer's words, verbatim.
+    TurnOutputBody:
+      type: object
+      additionalProperties: false
+      required:
+      - turnId
+      properties:
+        turnId:
+          type: string
+          format: uuid
+    TurnConflict:
+      type: object
+      additionalProperties: false
+      description: 409 body of a turn start.
+      required:
+      - code
+      properties:
+        code:
+          type: string
+          enum:
+          - turn_in_progress
+          - conversation_rotated
+        activeTurnId:
+          type: string
+          format: uuid
+    TurnStatus:
+      type: object
+      additionalProperties: false
+      description: One turn's lifecycle view.
+      required:
+      - turnId
+      - conversationId
+      - kind
+      - flow
+      - status
+      - instruction
+      - authorId
+      - authorDisplayName
+      - createdAt
+      properties:
+        turnId:
+          type: string
+          format: uuid
+        project:
+          type: string
+          description: Absent on a marketplace turn.
+        conversationId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum:
+          - browser
+          - kickoff
+          - plan
+        flow:
+          type: string
+          description: The flow the turn ran (empty for a plain chat turn).
+        status:
+          type: string
+          enum:
+          - running
+          - completed
+          - failed
+        reason:
+          type: string
+          enum:
+          - agent-error
+          - stream-died
+          - shutdown
+          - internal
+        code:
+          type: string
+          description: Why a failed agent-error turn failed, when it could be named
+            (provider_limit, output_truncated).
+        message:
+          type: string
+        host:
+          type: string
+          description: 'With code provider_limit: the host of the model endpoint
+            whose limit stopped the turn.'
+        resetAt:
+          type: string
+          format: date-time
+          description: 'With code provider_limit: when the provider said its limit
+            resets.'
+        instruction:
+          type: string
+          description: The display line of the message that started the turn.
+        authorId:
+          type: string
+          description: Who started the turn, the verified user token's `sub`; empty
+            when no human can be named.
+        authorDisplayName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time

@@ -455,6 +455,8 @@ func (l *loop) work(ctx workflow.Context, ends bookends) (RunResult, error) {
 			return l.settle(ctx, delivery.RunStateCancelled, "")
 		case cycleAgentDead:
 			return l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonRedispatchBudget)
+		case cycleAgentStartFailed:
+			return l.settle(ctx, delivery.RunStateFailed, delivery.RunReasonAgentStartFailed)
 		case cycleQuotaBlocked:
 			return l.settle(ctx, delivery.RunStateBlocked, delivery.RunReasonAgentQuotaBlocked)
 		case cyclePublisherCredentials:
@@ -974,7 +976,7 @@ func (l *loop) setState(ctx workflow.Context, state string) error {
 
 func (l *loop) settleRun(ctx workflow.Context, state, reason string) error {
 	return workflow.ExecuteActivity(activityCtx(ctx), (*Activities).SettleRun,
-		SettleRunInput{RunID: l.in.RunID, State: state, Reason: reason, OrgID: l.in.OrgID}).Get(ctx, nil)
+		SettleRunInput{RunID: l.in.RunID, State: state, Reason: reason}).Get(ctx, nil)
 }
 
 func (l *loop) bump(ctx workflow.Context, counter delivery.RunBudget) error {

@@ -18,18 +18,19 @@
 
 import { describe, expect, it, vi } from "vitest";
 import type { StreamPart } from "@aep/agent-stream";
-import { TurnStreamAttachError } from "./api/turns";
+import { TurnStreamAttachError, type TurnStatus } from "./api/turns";
 import { foldTurn, type TurnSink, type TurnStreamApi } from "./foldTurn";
 
 // After the old console's runTurn.test.ts: the frames the fold turns into chat
 // rows, and how a turn's end is observed (its terminal frame, or the status
 // read that settles a stream cut short). Streams are real SSE bytes.
 
-function sse(parts: StreamPart[]): ReadableStream<Uint8Array> {
+/** The pod's frames from `from` on, each with its index as its id; `[DONE]` only after a terminal. */
+function sse(parts: StreamPart[], from = 0): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
     start(c) {
-      for (const p of parts) c.enqueue(encoder.encode(`id: 0\ndata: ${JSON.stringify(p)}\n\n`));
+      parts.forEach((p, i) => c.enqueue(encoder.encode(`id: ${from + i}\ndata: ${JSON.stringify(p)}\n\n`)));
       c.enqueue(encoder.encode("data: [DONE]\n\n"));
       c.close();
     },
@@ -73,7 +74,7 @@ describe("foldTurn", () => {
       { type: "tool-input-delta", id: "w1", delta: input.slice(20) },
       { type: "tool-input-end", id: "w1" },
       { type: "tool-result", toolName: "editFile", toolCallId: "w1", input: JSON.parse(input), output: { ok: true, op: "edit", path: PATH } },
-      { type: "turn-committed" },
+      { type: "turn-completed" },
     ]);
     expect(of("activity")).toEqual([
       { toolCallId: "w1", op: "edit", path: "specs/requirements/features/F4-spending-reports.md", state: "writing" },
@@ -108,7 +109,7 @@ describe("foldTurn", () => {
       { type: "tool-input-delta", id: "q1", delta: json.slice(0, firstClose) },
       { type: "tool-input-delta", id: "q1", delta: json.slice(firstClose) },
       { type: "tool-call", toolCallId: "q1", toolName: "ask_questions", input },
-      { type: "turn-committed" },
+      { type: "turn-completed" },
     ]);
     expect(of("question")).toEqual([
       { toolCallId: "q1", questions: [{ question: "A?", options: [] }], streaming: true },
@@ -152,12 +153,132 @@ describe("foldTurn", () => {
       const openStream = vi
         .fn<TurnStreamApi["openStream"]>()
         .mockRejectedValueOnce(new TurnStreamAttachError(404))
-        .mockResolvedValueOnce(sse([{ type: "turn-committed" }]));
+        .mockResolvedValueOnce(sse([{ type: "turn-completed" }]));
       const done = fold([], { openStream });
       await vi.runAllTimersAsync();
       const { of } = await done;
       expect(openStream).toHaveBeenCalledTimes(2);
       expect(of("ended")).toEqual(["completed"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// On the pod: frames carry their index in the turn's replay buffer, a stream
+// cut short resumes after the last frame folded, and a running turn whose
+// replay overflowed is waited out through its status.
+describe("foldTurn on the design agent's stream", () => {
+  const done = (status: "completed" | "failed") => ({ status }) as TurnStatus;
+
+  it("ends on the pod's turn-completed", async () => {
+    const { of } = await fold([{ type: "text-delta", delta: "Done." }, { type: "turn-completed" } as StreamPart]);
+    expect(of("text")).toEqual(["Done."]);
+    expect(of("ended")).toEqual(["completed"]);
+  });
+
+  it("attaches from the start, and resumes a severed stream after the last frame it folded", async () => {
+    const openStream = vi
+      .fn<TurnStreamApi["openStream"]>()
+      .mockResolvedValueOnce(sse([{ type: "text-delta", delta: "One " }, { type: "text-delta", delta: "two " }]))
+      .mockResolvedValueOnce(sse([{ type: "text-delta", delta: "three." }, { type: "turn-completed" } as StreamPart], 2));
+    const turn = vi.fn<TurnStreamApi["turn"]>();
+    const { of } = await fold([], { openStream, turn });
+    expect(openStream.mock.calls.map((c) => c[2])).toEqual([0, 2]);
+    expect(of("text")).toEqual(["One ", "two ", "three."]);
+    expect(of("ended")).toEqual(["completed"]);
+    expect(turn).not.toHaveBeenCalled();
+  });
+
+  it("folds no frame twice when a resumed stream replays one it already had", async () => {
+    const openStream = vi
+      .fn<TurnStreamApi["openStream"]>()
+      .mockResolvedValueOnce(sse([{ type: "text-delta", delta: "One " }]))
+      .mockResolvedValueOnce(sse([{ type: "text-delta", delta: "One " }, { type: "turn-completed" } as StreamPart]));
+    const { of } = await fold([], { openStream });
+    expect(of("text")).toEqual(["One "]);
+    expect(of("ended")).toEqual(["completed"]);
+  });
+
+  it("gives up resuming after attaches that bring nothing new, and settles from the status", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi.fn<TurnStreamApi["openStream"]>().mockImplementation(async () => sse([]));
+      const turn = vi.fn<TurnStreamApi["turn"]>().mockResolvedValue(done("completed"));
+      const folding = fold([], { openStream, turn });
+      await vi.runAllTimersAsync();
+      const { of } = await folding;
+      expect(openStream.mock.calls.length).toBeGreaterThan(1);
+      expect(openStream.mock.calls.length).toBeLessThanOrEqual(5);
+      expect(of("ended")).toEqual(["completed"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says the stream is lost when, after attaches that bring nothing new, the pod no longer holds the turn", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi.fn<TurnStreamApi["openStream"]>().mockImplementation(async () => sse([]));
+      const turn = vi.fn<TurnStreamApi["turn"]>().mockResolvedValue("gone");
+      const folding = fold([], { openStream, turn });
+      const settled = expect(folding).rejects.toBeInstanceOf(TurnStreamAttachError);
+      await vi.runAllTimersAsync();
+      await settled;
+      expect(turn).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the turn for the next attach when the final status read gets no answer", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi.fn<TurnStreamApi["openStream"]>().mockImplementation(async () => sse([]));
+      const folding = fold([], { openStream, turn: async () => null });
+      await vi.runAllTimersAsync();
+      const { of } = await folding;
+      expect(of("ended")).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("waits out a replay refused as truncated, through failed status reads, then settles from the status", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi
+        .fn<TurnStreamApi["openStream"]>()
+        .mockRejectedValue(new TurnStreamAttachError(409, "replay_truncated"));
+      const turn = vi
+        .fn<TurnStreamApi["turn"]>()
+        .mockResolvedValueOnce({ status: "running" } as TurnStatus)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ status: "failed", reason: "agent-error", message: "boom" } as TurnStatus);
+      const folding = fold([], { openStream, turn });
+      await vi.runAllTimersAsync();
+      const { of } = await folding;
+      expect(openStream).toHaveBeenCalledTimes(1);
+      expect(turn).toHaveBeenCalledTimes(3);
+      expect(of("ended")).toEqual(["failed"]);
+      expect(of("error")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops waiting on a truncated replay once the pod no longer holds the turn, and says the stream is lost", async () => {
+    vi.useFakeTimers();
+    try {
+      const openStream = vi
+        .fn<TurnStreamApi["openStream"]>()
+        .mockRejectedValue(new TurnStreamAttachError(409, "replay_truncated"));
+      const turn = vi.fn<TurnStreamApi["turn"]>().mockResolvedValue("gone");
+      const folding = fold([], { openStream, turn });
+      const settled = expect(folding).rejects.toBeInstanceOf(TurnStreamAttachError);
+      await vi.runAllTimersAsync();
+      await settled;
+      expect(turn).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }

@@ -28,25 +28,25 @@ import { deleteDocFile, isMarkdownPath, listDocPaths, readDocFile, setDocFile, s
 /** Marks the agent's file writes, applied here while the room is not wired. */
 const AGENT_ORIGIN = "console:agent-write";
 
-/** The writer the agents service names on its marks (services/agents room-peer.ts). */
+/** The writer the design agent names on its marks (ae-design-agent src/collab/room-peer.ts). */
 const AGENT_NAME = "Spec Agent";
 
 /**
  * Apply one of the agent's accepted file writes (a file tool's `tool-result`,
  * which carries the call's input) to the doc, through @aep/agent-stream's own
- * applier, so an `editFile` matches exactly as the agents service matched it.
+ * applier, so an `editFile` matches exactly as the design agent matched it.
  * False when the part is not a file write or changed nothing. An edit is not
  * idempotent (its new text can contain its old), so the caller applies each
  * write once.
  *
- * An existing markdown file takes the write as the agents service writes into
+ * An existing markdown file takes the write as the design agent writes into
  * the room (setDocFileAsAgent): character-exact, so the user's text is
  * untouched, and what the agent inserts carries its mark with the time it
  * wrote it, which draws the fading wash (specLinesPlugin.ts).
  *
  * The stand-in for the room: today no peer writes the agent's changes into
  * this local doc, so the chat's turn stream does. Once the Hocuspocus provider
- * is wired the agents service writes them into the room itself, and this and
+ * is wired the design agent writes them into the room itself, and this and
  * `applyAgentWrite` are deleted.
  */
 export function applyAgentToolCall(doc: Y.Doc, part: StreamPart): boolean {
@@ -57,7 +57,7 @@ export function applyAgentToolCall(doc: Y.Doc, part: StreamPart): boolean {
   const before = readDocFile(doc, path);
   // The whole doc, as the agent's bundle holds the whole workspace: a gate
   // that reads another file (a prototype's source needs its manifest) judges
-  // the write as the agents service did.
+  // the write as the design agent did.
   const files: Record<string, string> = {};
   for (const p of listDocPaths(doc)) {
     const text = readDocFile(doc, p);

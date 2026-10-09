@@ -20,14 +20,20 @@
 // The card is two /config sections: `llm` (the org's model connection: format,
 // URL, key and model, one for every agent) and `agents` (the coding agent's
 // runtime and an optional Claude subscription it bills instead of the
-// connection's key). One save of it is one transaction under the card's
-// per-org lock, covering the connection row, the subscription row, the
-// setting row and the encrypted secret bytes — see repository_agents_card.go.
-// What a save does is decided by agents_rule.go; the connection is probed
-// (model_probe.go) before the transaction opens, so no save holds the lock
-// across a probe. The copies outside Postgres (the SM-API mirrors, the Agent
-// Manager provider) follow the commit under the same lock, so they land in
-// save order.
+// connection's key). What a save does is decided by agents_rule.go; the
+// connection is probed with the key the save carries (model_probe.go) before
+// the card's per-org lock is taken, so no save holds the lock across a probe.
+//
+// Under the lock a save writes each key it carries to vault first, as a new
+// reference (the org secrets default-key and coding-agent-key), from the
+// request: no key is ever stored in or read from Postgres. Inside the last
+// write, the rows (connection, subscription, setting) commit as one
+// transaction (repository_agents_card.go). A failed vault write saves
+// nothing; a failed transaction undoes the new references. After the commit,
+// still under the lock, the key's path consumers move to the new reference,
+// a deleted credential's reference goes, Agent Manager's provider gets the
+// request's key, the AE Studio pod converges when the save changed what it
+// reads, and the replaced references are retired.
 //
 // The runtime is read by coding dispatch, which copies it (with the
 // connection) onto the run it launches, so a run in flight keeps what it
@@ -37,6 +43,7 @@ package organization
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -44,23 +51,6 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 )
-
-// cardLockPrefixes are the card's per-org advisory lock names, taken in this
-// order by everything that writes the card's rows or their copies: a save, its
-// copies after commit, and ModelKeyRename. `org_anthropic:` is the name the
-// previous release takes; holding it too keeps a replica of that release,
-// saving during a rolling deploy, serialized with this one.
-var cardLockPrefixes = []string{"org_anthropic:", "org_model:"}
-
-// lockCard takes the card's per-org locks, in cardLockPrefixes order.
-func lockCard(lock func(key string) error, ocOrgID string) error {
-	for _, prefix := range cardLockPrefixes {
-		if err := lock(prefix + ocOrgID); err != nil {
-			return fmt.Errorf("agents card: lock: %w", err)
-		}
-	}
-	return nil
-}
 
 // AgentSettingsService owns the AI agents card. See the file doc.
 type AgentSettingsService struct {
@@ -71,11 +61,15 @@ type AgentSettingsService struct {
 	card     AgentsCardRepository
 	runtimes []orgconfig.AgentRuntime
 	now      func() time.Time
+	// converger rolls the org's AE Studio after a save changes what its pod
+	// reads (the Default key, the connection's non-secret fields). nil:
+	// nothing to roll.
+	converger StudioConverger
 }
 
-// NewAgentSettingsService wires the service. creds validates, reads and mirrors
-// the Claude subscription; conns probes, writes and mirrors the connection;
-// card is the unit of work the saves run in; runtimes are the runtimes this
+// NewAgentSettingsService wires the service. creds validates, writes and
+// projects the Claude subscription; conns probes, writes and projects the
+// connection; card is the lock and the unit of work the saves run in; runtimes are the runtimes this
 // installation can run (a runner image for each), the only ones a save may
 // choose.
 func NewAgentSettingsService(
@@ -89,9 +83,17 @@ func NewAgentSettingsService(
 	return &AgentSettingsService{settings: settings, orgs: orgs, creds: creds, conns: conns, card: card, runtimes: runtimes, now: time.Now}
 }
 
+// WithStudioConverger attaches the AE Studio converger a save triggers when
+// it changes what the pod reads; chainable. nil leaves the pod alone.
+func (s *AgentSettingsService) WithStudioConverger(c StudioConverger) *AgentSettingsService {
+	s.converger = c
+	return s
+}
+
 // Effective returns how the org's agents run: its chosen runtime (or the
 // platform default when nobody chose), the runtimes this installation can run,
-// and its Claude subscription, masked, when it has one. Never an error for
+// and its Claude subscription, masked, when it has one (flagged TokenMissing
+// when its token was never recorded in vault). Never an error for
 // "not set": the default IS the answer. A chosen runtime the installation can
 // no longer run is returned as chosen, never substituted: dispatch fails naming
 // the missing image, and the projection is what lets a client say why.
@@ -107,13 +109,25 @@ func (s *AgentSettingsService) Effective(ctx context.Context, ocOrgID string) (o
 		out.Runtime = row.Runtime
 		out.UpdatedAt, out.UpdatedBy = &updatedAt, &updatedBy
 	}
+	// The credential row is the subscription, the same predicate coding
+	// dispatch keys on (ResolveCodingCredential). One whose coding-agent-key
+	// reference row is missing (saved before the token lived in vault) is
+	// still projected, flagged TokenMissing: dispatch bills the connection's
+	// key instead, so the card offers it for Replace or Remove. Only an active
+	// one: dispatch errors on any other status before it reads the reference.
 	sub, err := s.creds.Status(ctx, ocOrgID, AnthropicRoleCoding)
 	switch {
-	case err == nil:
-		out.Subscription = subscriptionProjectionFrom(sub)
-	case !isNotFound(err):
+	case isNotFound(err):
+		return out, nil
+	case err != nil:
 		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
 	}
+	set, err := s.conns.CodingKeySet(ctx, ocOrgID)
+	if err != nil {
+		return orgconfig.AgentsProjection{}, fmt.Errorf("agent settings: subscription: %w", err)
+	}
+	out.Subscription = subscriptionProjectionFrom(sub)
+	out.Subscription.TokenMissing = sub.Status == "active" && !set
 	return out, nil
 }
 
@@ -180,14 +194,29 @@ func (s *AgentSettingsService) probe(ctx context.Context, ocOrgID string, p orgc
 	if err != nil {
 		return cardProbe{}, err
 	}
+	// A key lives only in vault: with no secret store there is nowhere to
+	// keep one, so the save is refused before anything is probed or written.
+	if eff.writeConn != nil && eff.writeConn.Key != "" && !s.conns.canWriteKey() {
+		return cardProbe{}, sectionErrorFrom("llm", ErrSecretsDeliveryUnavailable)
+	}
+	if eff.writeToken != "" && !s.creds.canWriteKey() {
+		return cardProbe{}, sectionErrorFrom("agents", ErrSecretsDeliveryUnavailable)
+	}
 	out := cardProbe{basis: state.conn}
-	if eff.writeConn != nil {
-		res, err := s.conns.probe(ctx, ocOrgID, *eff.writeConn)
-		if err != nil {
-			return cardProbe{}, sectionErrorFrom("llm", err)
+	if d := eff.writeConn; d != nil {
+		if d.Key == "" {
+			// A model-only edit (draftConnection refuses any other edit
+			// without a key): there is no key to probe with, so it saves
+			// unprobed, keeping what the host decides.
+			out.draft, out.result = d, unprobed(state.conn, *d)
+		} else {
+			res, err := s.conns.probe(ctx, ocOrgID, *d)
+			if err != nil {
+				return cardProbe{}, sectionErrorFrom("llm", err)
+			}
+			check := s.conns.check(*d, res)
+			out.draft, out.result, out.check = d, res, &check
 		}
-		check := s.conns.check(*eff.writeConn, res)
-		out.draft, out.result, out.check = eff.writeConn, res, &check
 	}
 	if eff.writeToken != "" {
 		if err := s.creds.ValidateKey(ctx, eff.writeToken); err != nil {
@@ -199,8 +228,8 @@ func (s *AgentSettingsService) probe(ctx context.Context, ocOrgID string, p orgc
 
 // testConnection probes the connection w describes, merged over the saved one,
 // without writing anything: POST /config/llm/test. The same merge and refusals
-// as a save's llm section; a body that changes nothing tests the saved
-// connection with its stored key.
+// as a save's llm section, and it always needs the key in the body: a stored
+// key is never read back to probe with.
 func (s *AgentSettingsService) testConnection(ctx context.Context, ocOrgID string, w orgconfig.LLMPatch) (orgconfig.LLMCheck, error) {
 	stored, err := s.conns.stored(ctx, ocOrgID)
 	if err != nil {
@@ -209,6 +238,9 @@ func (s *AgentSettingsService) testConnection(ctx context.Context, ocOrgID strin
 	draft, _, err := draftConnection(stored, w)
 	if err != nil {
 		return orgconfig.LLMCheck{}, sectionErrorFrom("llm", err)
+	}
+	if draft.Key == "" {
+		return orgconfig.LLMCheck{}, sectionErrorFrom("llm", errKeyRequired("Test connection needs the apiKey; a stored key is never read back"))
 	}
 	slog.InfoContext(ctx, "model connection test", "org", ocOrgID, "host", draft.Host, "format", draft.Format)
 	if len(runtimesFor(draft.Format, s.runtimes)) == 0 {
@@ -221,65 +253,126 @@ func (s *AgentSettingsService) testConnection(ctx context.Context, ocOrgID strin
 	return s.conns.check(draft, res), nil
 }
 
-// apply saves the card's part of p as ONE transaction under the org's card
-// lock. The patch is judged again inside it, against the rows it is about to
-// write over, so a concurrent save cannot slip a state between probe and write
-// that the rule would refuse; a connection that changed since it was probed
-// is a conflict, never a write of an unprobed connection. The copies outside
-// Postgres follow the commit (syncCopies), best-effort, and never decide
-// whether the save happened.
+// apply saves the card's part of p under the org's card lock (see the file
+// doc). The patch is judged again under the lock, against the rows it is about
+// to write over, so a concurrent save cannot slip a state between probe and
+// write that the rule would refuse; a connection that changed since it was
+// probed is a conflict, never a write of an unprobed connection.
+//
+// The keys the patch carries are written to vault first, each as a new
+// reference, connection key outside, subscription token inside (lock order:
+// card, then default-key, then coding-agent-key); the row transaction runs
+// inside the last write. Whatever fails before the commit returns with nothing
+// saved and the new references undone. After the commit the copies follow
+// (afterCommit); only the Agent Manager push can still fail the request, as
+// *AgentManagerNotUpdatedError (502, the save standing).
 func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string, p orgconfig.ConfigPatch, probed cardProbe) error {
-	var (
-		eff           cardEffects
-		before, after *modelconn.Connection // the org's connection either side of the save
-		forgotToken   string                // SM-API ref name of a deleted subscription
-		forgotKey     string                // SM-API ref name of a deleted connection key
-	)
-	err := s.card.Tx(ctx, func(tx AgentsCardTx) error {
-		if err := lockCard(tx.AdvisoryLock, ocOrgID); err != nil {
+	unlock, err := s.card.Lock(ctx, ocOrgID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, err := s.currentState(ctx, ocOrgID)
+	if err != nil {
+		return err
+	}
+	eff, err := judgeCard(state, s.runtimes, p)
+	if err != nil {
+		return err
+	}
+	if eff.writeConn != nil && !probed.covers(*eff.writeConn, state.conn) {
+		return sectionErrorFrom("llm", &ConflictError{Reason: "the model connection changed while this save was being tested; save again"})
+	}
+	var saved cardCopies
+	commit := func() (err error) {
+		saved, err = s.commit(ctx, ocOrgID, actor, state, eff, probed)
+		return err
+	}
+	var tokenWrite *OrgSecretWrite
+	withToken := commit
+	if eff.writeToken != "" {
+		withToken = func() error {
+			w, err := s.creds.writeKey(ctx, ocOrgID, AnthropicRoleCoding, eff.writeToken, commit)
+			tokenWrite = &w
 			return err
 		}
-		state, err := stateInTx(tx, ocOrgID)
+	}
+	var key *keyWrite
+	if eff.writeConn != nil && eff.writeConn.Key != "" {
+		w, ref, err := s.conns.writeKey(ctx, ocOrgID, eff.writeConn.Key, withToken)
 		if err != nil {
-			return err
+			return storeRefusal(err)
 		}
-		if eff, err = judgeCard(state, s.runtimes, p); err != nil {
-			return err
-		}
-		if eff.writeConn != nil && !probed.covers(*eff.writeConn, state.conn) {
-			return sectionErrorFrom("llm", &ConflictError{Reason: "the model connection changed while this save was being tested; save again"})
-		}
+		key = &keyWrite{value: eff.writeConn.Key, write: w, ref: ref}
+	} else if err := withToken(); err != nil {
+		return storeRefusal(err)
+	}
+	saved.key, saved.tokenWrite = key, tokenWrite
+	return s.afterCommit(ctx, ocOrgID, saved)
+}
+
+// storeRefusal answers a key the secret store did not accept as the coded 502
+// on the section the key belongs to (default-key: llm, coding-agent-key:
+// agents); any other error is returned as it is.
+func storeRefusal(err error) error {
+	var store *SecretStoreWriteError
+	if !errors.As(err, &store) {
+		return err
+	}
+	section := "llm"
+	if store.Secret == OrgSecretCodingAgentKey {
+		section = "agents"
+	}
+	return sectionErrorFrom(section, store)
+}
+
+// keyWrite is the connection key a save wrote to vault: the request's value
+// (the only key Agent Manager's provider is ever given), the write whose
+// previous reference is retired after commit, and the new reference with its
+// vault path, which the key's path consumers move onto.
+type keyWrite struct {
+	value string
+	write OrgSecretWrite
+	ref   SecretRefTriplet
+}
+
+// commit writes the card's rows as one transaction: deletes first (the token
+// goes before the connection it sits beside), then the connection, the
+// subscription row and the setting. It returns what the copies after commit
+// follow.
+func (s *AgentSettingsService) commit(ctx context.Context, ocOrgID, actor string, state cardState, eff cardEffects, probed cardProbe) (cardCopies, error) {
+	var out cardCopies
+	err := s.card.Tx(ctx, func(tx AgentsCardTx) error {
 		now := s.now().UTC()
-		// Deletes first: the token goes before the connection it sits beside.
 		if eff.deleteToken {
-			ref, existed, err := s.creds.deleteKeyTx(ctx, tx, ocOrgID, AnthropicRoleCoding)
+			existed, err := s.creds.deleteKeyTx(tx, ocOrgID, AnthropicRoleCoding)
 			if err != nil {
 				return err
 			}
-			if existed {
-				forgotToken = ref
-			}
+			out.forgotToken = existed
 		}
 		var written *OrgModelConnection
 		switch {
 		case eff.deleteConn:
-			if forgotKey, err = s.conns.deleteTx(ctx, tx, ocOrgID); err != nil {
+			if err := s.conns.deleteTx(tx, ocOrgID); err != nil {
 				return err
 			}
+			out.forgotKey = true
 			if err := tx.SetKeyDisconnectedAt(ocOrgID, &now); err != nil {
 				return fmt.Errorf("agents card: record disconnect: %w", err)
 			}
 		case eff.writeConn != nil:
-			if written, err = s.conns.writeTx(ctx, tx, ocOrgID, actor, *eff.writeConn, probed.result, state.conn, now); err != nil {
+			var err error
+			if written, err = s.conns.writeTx(tx, ocOrgID, actor, *eff.writeConn, probed.result, state.conn, now); err != nil {
 				return err
 			}
 			if err := tx.SetKeyDisconnectedAt(ocOrgID, nil); err != nil {
 				return fmt.Errorf("agents card: clear disconnect: %w", err)
 			}
 		}
-		before, after = connectionsAround(state, eff, written)
+		out.before, out.after = connectionsAround(state, eff, written)
 		if eff.writeToken != "" {
-			if err := s.creds.writeKeyTx(ctx, tx, ocOrgID, AnthropicRoleCoding, eff.writeToken); err != nil {
+			if err := s.creds.writeKeyTx(tx, ocOrgID, AnthropicRoleCoding, eff.writeToken); err != nil {
 				return err
 			}
 		}
@@ -297,70 +390,93 @@ func (s *AgentSettingsService) apply(ctx context.Context, ocOrgID, actor string,
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	s.syncCopies(ctx, ocOrgID, cardCopies{
-		forgotToken:  forgotToken,
-		forgotKey:    forgotKey,
-		keyWritten:   eff.writeConn != nil && eff.writeConn.Key != "",
-		tokenWritten: eff.writeToken != "",
-		before:       before,
-		after:        after,
-	})
-	return nil
+	return out, err
 }
 
 // cardCopies is what a committed save changed that the card's copies outside
-// Postgres follow: the SM-API mirrors and the Agent Manager provider.
+// Postgres follow: the key references, the Agent Manager provider and the AE
+// Studio pod.
 type cardCopies struct {
-	forgotToken, forgotKey   string // SM-API ref names of deleted credentials
-	keyWritten, tokenWritten bool
-	before, after            *modelconn.Connection // the org's connection either side of the save
+	forgotToken, forgotKey bool                  // a deleted subscription / connection
+	before, after          *modelconn.Connection // the org's connection either side of the save
+	key                    *keyWrite             // the connection key written; nil for none
+	tokenWrite             *OrgSecretWrite       // the subscription token written; nil for none
 }
 
-// none reports a save that changed nothing the copies hold (a runtime-only or
-// model-only save).
-func (c cardCopies) none() bool {
-	return c.forgotToken == "" && c.forgotKey == "" && !c.keyWritten && !c.tokenWritten &&
-		modelProviderStepFor(c.before, c.after, c.keyWritten) == modelProviderLeave
+// rollsStudio reports a save that changed what the AE Studio pod reads: the
+// Default key (written, or gone with its connection) or a non-secret field of
+// the connection it gets as AE_MODEL_CONNECTION. The subscription token
+// reaches no pod: the next coding Job reads its row.
+func (c cardCopies) rollsStudio() bool {
+	return c.key != nil || c.forgotKey || connectionFieldsChanged(c.before, c.after)
 }
 
-// syncCopies brings the copies in line with a committed save, best-effort, in
-// a second transaction under the card's locks. Each copy is made from the rows
-// as they stand, not as the save left them: the SM-API paths are fixed per
-// org, so two saves' copies finishing out of order would otherwise leave the
-// earlier key in the vault beside the later host, and a stored key never
-// follows the host (ADR-0038). Under the lock, whichever copy runs last copies
-// the last save. A failure is logged and never undoes the save.
-func (s *AgentSettingsService) syncCopies(ctx context.Context, ocOrgID string, c cardCopies) {
-	if c.none() {
-		return
+// connectionFieldsChanged reports whether a save changed the connection's
+// non-secret fields, appearing or disappearing included.
+func connectionFieldsChanged(before, after *modelconn.Connection) bool {
+	if before == nil || after == nil {
+		return before != after
 	}
-	err := s.card.Tx(ctx, func(tx AgentsCardTx) error {
-		if err := lockCard(tx.AdvisoryLock, ocOrgID); err != nil {
-			return err
-		}
-		s.creds.forgetKey(ctx, tx, ocOrgID, AnthropicRoleCoding, c.forgotToken)
-		s.conns.forgetKey(ctx, tx, ocOrgID, c.forgotKey)
-		if c.keyWritten {
-			s.conns.mirrorKey(ctx, tx, ocOrgID)
-		}
-		s.creds.syncModelProvider(ctx, tx, ocOrgID, c.before, c.after, c.keyWritten)
-		if c.tokenWritten {
-			s.creds.mirrorKey(ctx, tx, ocOrgID, AnthropicRoleCoding)
-		}
-		return nil
-	})
-	if err != nil {
-		slog.WarnContext(ctx, "agents card: the saved card's copies were not brought in line (org_secrets still authoritative)",
-			"ocOrgId", ocOrgID, "error", err)
+	return before.Format != after.Format || before.BaseURL != after.BaseURL || before.Host != after.Host ||
+		before.Model != after.Model || before.AuthScheme != after.AuthScheme || before.ImageInput != after.ImageInput ||
+		!equalLimit(before.ContextWindow, after.ContextWindow) || !equalLimit(before.OutputLimit, after.OutputLimit)
+}
+
+// equalLimit compares two optional limits by value.
+func equalLimit(a, b *int) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
+	return *a == *b
+}
+
+// afterCommit brings the copies outside Postgres in line with a committed
+// save, still under the card's lock, so they land in save order: the key's
+// path consumers move onto its new reference, a deleted credential's
+// reference goes, Agent Manager's provider gets the request's key, the AE
+// Studio pod converges when the save changed what it reads, and then the
+// replaced references are retired. A replaced reference is retired only
+// after the commit that moved its row off it, and the default-key one only
+// once its consumers moved too.
+//
+// Nothing between the commit and the push can skip the push: a committed key
+// save always reaches Agent Manager or answers 502. The one failure it
+// returns is that push, as *AgentManagerNotUpdatedError: the save and every
+// other copy stand, but the user must save the key again.
+func (s *AgentSettingsService) afterCommit(ctx context.Context, ocOrgID string, c cardCopies) error {
+	var retire []OrgSecretWrite
+	if c.tokenWrite != nil {
+		retire = append(retire, *c.tokenWrite)
+	}
+	key := ""
+	if c.key != nil {
+		key = c.key.value
+		if s.conns.repointConsumers(ctx, ocOrgID, c.key.ref) {
+			retire = append(retire, c.key.write)
+		}
+	}
+	if c.forgotToken {
+		s.creds.forgetKey(ctx, ocOrgID, AnthropicRoleCoding)
+	}
+	if c.forgotKey {
+		s.conns.forgetKey(ctx, ocOrgID)
+	}
+	pushErr := s.creds.syncModelProvider(ctx, ocOrgID, c.before, c.after, key)
+	if c.rollsStudio() && s.converger != nil {
+		s.converger.Trigger(ctx, ocOrgID)
+	}
+	for _, w := range retire {
+		w.Retire(ctx)
+	}
+	if pushErr != nil {
+		return &AgentManagerNotUpdatedError{Err: pushErr}
+	}
+	return nil
 }
 
 // covers reports whether this probe vouches for writing draft over stored: it
-// probed the same draft, against the same stored connection (the same key on
-// the same host, last saved at the same moment).
+// probed the same draft (key included), against the same stored connection
+// (the same host, last saved at the same moment).
 func (p cardProbe) covers(draft connectionDraft, stored *OrgModelConnection) bool {
 	if p.draft == nil || *p.draft != draft {
 		return false
@@ -368,11 +484,11 @@ func (p cardProbe) covers(draft connectionDraft, stored *OrgModelConnection) boo
 	if (p.basis == nil) != (stored == nil) {
 		return false
 	}
-	return stored == nil || (p.basis.Host == stored.Host && p.basis.KeyPreview == stored.KeyPreview &&
-		p.basis.UpdatedAt.Equal(stored.UpdatedAt))
+	return stored == nil || (p.basis.Host == stored.Host && p.basis.UpdatedAt.Equal(stored.UpdatedAt))
 }
 
-// currentState reads the card's state from the pool, for the probe phase.
+// currentState reads the card's state from the pool: for the probe phase,
+// and again under the card's lock, where no other save can move it.
 func (s *AgentSettingsService) currentState(ctx context.Context, ocOrgID string) (cardState, error) {
 	return readCardState(
 		func() (*OrgAgentSettings, error) { return s.settings.GetByOrg(ctx, ocOrgID) },
@@ -381,20 +497,7 @@ func (s *AgentSettingsService) currentState(ctx context.Context, ocOrgID string)
 	)
 }
 
-// stateInTx reads the same state through the card's transaction.
-func stateInTx(tx AgentsCardTx, ocOrgID string) (cardState, error) {
-	return readCardState(
-		func() (*OrgAgentSettings, error) { return tx.GetSettings(ocOrgID) },
-		func() (*OrgModelConnection, error) { return tx.GetConnection(ocOrgID) },
-		func() (bool, error) {
-			row, err := tx.GetCredential(ocOrgID, AnthropicRoleCoding)
-			return row != nil, err
-		},
-	)
-}
-
-// readCardState assembles a cardState from one source's reads, so the probe
-// phase and the transaction judge the patch against the same shape of state.
+// readCardState assembles a cardState from one source's reads.
 func readCardState(settings func() (*OrgAgentSettings, error), conn func() (*OrgModelConnection, error), holdsToken func() (bool, error)) (cardState, error) {
 	row, err := settings()
 	if err != nil {
@@ -414,8 +517,6 @@ func readCardState(settings func() (*OrgAgentSettings, error), conn func() (*Org
 func subscriptionProjectionFrom(p *AnthropicProjection) *orgconfig.SubscriptionProjection {
 	return &orgconfig.SubscriptionProjection{
 		Kind:            orgconfig.SubscriptionKindClaude,
-		KeyPrefix:       p.KeyPrefix,
-		KeyLast4:        p.KeyLast4,
 		Status:          p.Status,
 		ConnectedAt:     p.ConnectedAt,
 		LastValidatedAt: p.LastValidatedAt,

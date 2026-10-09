@@ -354,10 +354,15 @@ function newVitals(): Vitals {
  * clocks, and the repainting kinds the grouping drops — `work_item` among them,
  * which is the agent's own plan and therefore belongs to the agent rather than
  * to whichever surface happened to fold it first.
+ *
+ * `endedWith` is the outcome the RUN ended with, for a cycle whose events never
+ * carried its own `run_settled`: the stream said the run is over, so nothing in
+ * this cycle is still running. The cycle's own `run_settled` outranks it.
  */
 export function buildCrew<E extends RunEventView>(
   events: readonly E[],
   now: number,
+  endedWith?: string,
 ): Crew<E> {
   const tree = groupByAgent(events);
 
@@ -493,6 +498,8 @@ export function buildCrew<E extends RunEventView>(
         v.otherAt = at;
     }
   });
+
+  outcome ??= endedWith;
 
   const members: CrewMember<E>[] = [];
 

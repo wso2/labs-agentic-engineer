@@ -23,10 +23,6 @@ aepApi:
       memory: "512Mi"
   serviceAuth:
     clientId: "aep-api-client"
-  # The user-facing base aep-api builds links on (BFF_PUBLIC_URL): the GitHub
-  # App connect redirect and the Settings page it returns to. That is the
-  # console's origin, which reverse-proxies the API (/aep-api-service/).
-  publicURL: "http://console.ae.localhost:8080"
   # Kubernetes API used to LIST ThunderApplication CRs after OpenChoreo Ready.
   # Empty baseURL uses the in-cluster apiserver (single-cluster). On a split
   # control-plane / data-plane install the CRD lives on the dataplane; set
@@ -35,49 +31,6 @@ aepApi:
   kubeAPI:
     baseURL: ""
     tokenSecret: ""
-
-aepAgents:
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/agents
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 9090
-  logLevel: "info"
-  model: "claude-sonnet-5-5"
-  # A runaway guard, not a budget: a design turn that hits it still commits
-  # its half-written design as complete. Matches the agents service's own
-  # default; the reasoning is in services/agents/src/shared/config.ts.
-  maxSteps: 60
-  bodyLimit: "10mb"
-  resources:
-    requests:
-      cpu: "100m"
-      memory: "256Mi"
-    limits:
-      cpu: "1"
-      memory: "512Mi"
-
-
-# Yjs/Hocuspocus collaboration server for the spec workspace. aep-agents joins
-# rooms as a live peer (AGENT_COLLAB_WS_URL) and the console proxies /collab to
-# it; it calls aep-api for room auth + spec seeding. Without it, agents spec
-# generation returns 503 ("collab is not configured on this deployment").
-collab:
-  # mandatory: in-memory rooms Map; 2nd replica silently overwrites commits (doc-wins)
-  replicas: 1
-  image:
-    repository: ghcr.io/wso2/aep/collab
-    tag: latest
-    pullPolicy: IfNotPresent
-  port: 3400
-  resources:
-    requests:
-      cpu: "50m"
-      memory: "128Mi"
-    limits:
-      cpu: "500m"
-      memory: "512Mi"
 
 console:
   replicas: 1
@@ -111,6 +64,53 @@ console:
 #     redirect URI on every project's sign-in client at deploy time
 # Two of the three agreeing is the failure that looks like a working install:
 # the link opens and the sign-in is then refused as an unregistered redirect.
+# AE Studio: the per-org design-agent / collab / studio-tools pod aep-api
+# converges. Every value is optional at boot; an empty image or IdP value makes
+# the AE Studio Ensure report "not configured" instead of failing aep-api.
+# aectl derives the endpoint values from its config (aeStudioOverrides).
+aeStudio:
+  internalClient:
+    id: "ae-studio-internal-client"
+  images:
+    designAgent: ""
+    collab: ""
+    studioTools: ""
+  gatewayHost: ""
+  publicScheme: "https"
+  publicPortSuffix: ""
+  listenerName: "https"
+  consoleOrigins: []
+  idp:
+    issuer: ""
+    jwksUrl: ""
+    tokenUrl: ""
+    # Empty falls back to console.thunder.clientId (== JWT_AUDIENCE), the
+    # audience user tokens are minted for.
+    userAudiences: []
+  runtimeClassName: ""
+  cilium: false
+  extraEgress: []
+  storage:
+    sizeLimit: "3Gi"
+    ephemeralRequest: "1Gi"
+    budgetBytes: "2147483648"
+  # CPU requests of the AE Studio pod's containers. Unset keeps the template's
+  # 100m / 50m / 100m; lower them on a CPU-starved dataplane (each up to 2000m).
+  resources:
+    cpuRequest: {}
+    #  designAgent: 100m
+    #  collab: 50m
+    #  studioTools: 100m
+  # Per-org webhook relay, for installs GitHub cannot reach (local
+  # k3d). When enabled, aep-api reads the seed aep/webhook-relay-seed (ESO
+  # Secret aep-webhook-relay) and gives each org's AE Studio pod a webhook-relay
+  # container on its own smee.io channel, derived from the seed; the pod's repo
+  # hooks deliver there. smee.io is a third-party public relay: never enable it
+  # in production. aectl sets enabled from ae_studio.webhook_relay.enabled.
+  webhookRelay:
+    enabled: false
+    image: "ghcr.io/chmouel/gosmee@sha256:60b8db1f68cc4b72366fff941fb2db9a53c3b7a94f23a5e45bd10a777cf7be2f"  # v0.32.0
+
 tryIt:
   enabled: true
   replicas: 1
@@ -150,6 +150,16 @@ codingAgentRunner:
   # it fails each dispatch naming AGENT_RUNNER_IMAGE_OPENCODE. Claude Code orgs
   # are unaffected.
   opencodeImage: ""
+  # How long a finished cycle Job (and its pod) is kept before Kubernetes
+  # deletes it, as a Go duration (CODING_AGENT_JOB_TTL; rendered as the Job's
+  # ttlSecondsAfterFinished). The cycle's binding is suspended once the run is
+  # over, so the Job OpenChoreo re-creates after the TTL never runs again. At
+  # most 17m: aep-api refuses to boot with a longer one.
+  jobTTL: 600s
+  # CPU each cycle Job requests (CODING_AGENT_CPU_REQUEST): a positive CPU
+  # quantity such as 250m or 0.5, at most 3. Empty keeps the ComponentType's
+  # 500m. Lower it on a CPU-starved dataplane. Memory is not tunable.
+  cpuRequest: ""
 
 # Coding-agent dispatch wiring.
 #
@@ -158,30 +168,11 @@ codingAgentRunner:
 # switch left here is the local-dev stub toggle below.
 codingAgentDispatch:
   openBaoDirect:
-    # LOCAL DEV ONLY. Sets OPENBAO_ADDR/TOKEN on aep-api for in-process secrets
-    # delivery. NEVER set true in production — prod injects a real
-    # SecretsProvider. `aectl platform install` sets this true for local installs.
+    # LOCAL DEV ONLY. Sets OPENBAO_ADDR and OPENBAO_AUTH_ROLE on aep-api for
+    # in-process secrets delivery (Kubernetes auth, no token). NEVER set true
+    # in production — prod injects a real SecretsProvider. `aectl platform
+    # install` sets this true for local installs.
     enabled: false
-
-# GitHub webhook delivery. GitHub delivers pull_request/push/issues events to
-# deliveryURL, which aep-api registers on each repo; the events drive task state
-# (a merged PR ends the coding execution and spawns the build). The HMAC secret
-# is generated by aectl init into OpenBao and synced via ESO (never a plaintext
-# value here).
-webhook:
-  # deliveryURL: the URL registered on each repo's webhook.
-  #   local  → your smee.io channel (localSmee.enabled forwards it into the cluster).
-  #   prod   → the real public HTTPS URL of aep-api's /api/v1/webhooks/github
-  #            (behind your ingress). NO smee in prod.
-  deliveryURL: ""
-  localSmee:
-    # LOCAL DEV ONLY. Deploys an in-cluster smee-client that subscribes to the
-    # smee.io channel in deliveryURL and forwards events to aep-api. smee.io is a
-    # third-party public relay (payloads transit it; channel URL is an
-    # unauthenticated bearer link), so it must NEVER run in production — set false
-    # and use a real ingress + public deliveryURL instead.
-    enabled: false
-    image: "docker.io/deltaprojects/smee-client:latest"
 
 # Local stand-in for cloud platform-api ProvisionOrgUnit / the org bootstrap.
 # aep-api references a per-org NAMESPACED ComponentType (kind=ComponentType) for
@@ -202,17 +193,15 @@ localOrgProvisioning:
   # control-plane namespace ("default"), NOT the platform release namespace.
   orgNamespace: "default"
 
-taskSigning:
-  issuer: "aep-bff"
-  audience: "git-service"
-
 observer:
-  clientId: "openchoreo-observer-resource-reader-client"
   # In-cluster URL of the OpenChoreo Observer. aectl init passes this from
   # oc.observability_api_url in ~/.aectl/config.yaml. Empty disables build-log
   # reading and coding-cycle log archiving (both degrade gracefully — see
   # computeDegradations in aep-api's app.go).
   baseURL: "http://observer.openchoreo-observability-plane.svc.cluster.local:8080"
+  # How long the observability plane keeps pod logs; aep-api treats archived
+  # logs older than this as expired. Matches the plane's OpenSearch retention.
+  logRetention: 720h
 
 platformAPI:
   # In-cluster URL for the OpenChoreo platform API. aectl init passes this from oc.api_url in ~/.aectl/config.yaml.
@@ -250,19 +239,6 @@ thunder:
 openbao:
   # Address of OpenChoreo's built-in OpenBao service.
   addr: "http://openbao.openbao.svc.cluster.local:8200"
-
-# Shared git workspaces (RWO PVC + co-located pods). aep-api writes; agents mounts RO.
-# See services/aep-api/design/shared-workspace-volume.md.
-workspaces:
-  storage: "10Gi"
-  storageClassName: ""
-  accessMode: "ReadWriteOnce"
-  snapshotMaxAge: "1h"
-  trashMaxAge: "1h"
-  orgQuotaBytes: "2147483648"
-  diskHighPct: "85"
-  diskLowPct: "70"
-  reapInterval: "5m"
 
 postgres:
   version: "16"

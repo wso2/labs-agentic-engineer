@@ -51,7 +51,7 @@ function childEnv() {
 test("authz/core: the pure authorization rules", () => {
   const child = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", "--test", path.join(here, "core.cases.mjs")],
+    ["--experimental-strip-types", "--no-warnings", "--test", "--test-reporter=tap", path.join(here, "core.cases.mjs")],
     { encoding: "utf8", env: childEnv() },
   );
   const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;

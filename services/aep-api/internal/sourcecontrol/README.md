@@ -3,23 +3,22 @@
 > **L2 · a domain.** Part of the [aep-api architecture](../../README.md).
 
 The git-host integration substrate every other domain builds on: per-project
-repo/issue/milestone/PR/webhook lifecycle over a provider-neutral `Host` port, and the bare-mirror
-workspace behind `platform/gitfs`.
+repo/issue/milestone/PR/webhook lifecycle over the GitHub capability ports (`RepoAdmin`, `IssueOps`,
+`WebhookOps`), and repository content through the `Git` port, all served by the org's AE Studio pod.
+aep-api holds no clone.
 
 ```mermaid
 flowchart LR
   API(["/api/v1"]) --> SL
   subgraph sourcecontrol
     SL["slices — issues"]
-    CORE["repo · issue · workspace core"]
-    GH["githubhost<br/>(the Host adapter)"]
+    CORE["repo · issue · git core"]
     SL --> CORE
-    CORE --> GH
     CORE --> DB[("git_repositories")]
   end
-  GH -->|REST + GraphQL| GITHUB(["GitHub"])
-  CORE -->|Credential| SEC[[platform/secrets]]
-  CORE -->|mirrors| GITFS[[platform/gitfs]]
+  CORE -->|RepoRef ports| AET[[clients/aestudiotools]]
+  AET -->|/internal/v1| POD(["org's ae-studio-tools"])
+  POD -->|REST + GraphQL + git| GITHUB(["GitHub"])
 ```
 
 ## Slices
@@ -27,14 +26,17 @@ flowchart LR
 |---|---|---|
 | `issues` | file / search a project's issues | `POST`+`GET /projects/{projectName}/issues` |
 
-*In the domain root rather than a slice: repo lifecycle, workspace, webhook register/receive (including
-the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
+*In the domain root rather than a slice: repo lifecycle, the Git port, and webhook register/receive
+(including the delivery ledger and its `webhook.Replayer`).*
 
 ## Ports
 | Port | Dir | Peer · contract |
 |---|---|---|
-| `Host` | needs | the git host — implemented by `githubhost` (the domain's own adapter; it lives here, not in `platform/clients`, because an adapter for a domain's port cannot sit in a domain-free kernel) |
-| `secrets.Credential` | needs | `platform/secrets` — App-installation / per-org PAT |
+| `RepoAdmin` · `IssueOps` · `WebhookOps` | needs | GitHub through the org's AE Studio pod (`ports.go`), every call addressed by a `RepoRef` built from the project's row — served by `clients/aestudiotools`, and by `aestudiotest.Fake` in tests. The pod owns the gitpat, the hook's delivery URL and signing secret; GitHub's wire rules (pagination, the milestone 422 recovery, the counts query) are its client's (`ae-studio-tools/internal/github`) |
+| `OwnerLookup` | needs | `organization.CredentialService.GitHubOwner` — the login new repositories are created under; no connection is `ErrAEStudioAbsent` |
+| `Git` · `TrashOps` · `SkillsMirrorOps` · `ReferencesOps` · `ReferenceListOps` · `IdentityOps` | needs | the org's AE Studio pod (`git.go`, `ports.go`) — served by `clients/aestudiotools`, and by `aestudiotest.Fake` in tests; its answers are this domain's sentinels (`ErrAEStudioAbsent/Unavailable/Misconfigured`, `ErrOwnerNotAllowed`, `ErrReferenceRejected`, `ErrRefInvalid` (a 400 validation_failed on get-head / list-tree, the ref refused), `*CommitConflictError`, `*RateLimitedError`), which `IsPermanent` classifies (with any adapter error whose `Permanent()` says so: the pod's other 4xx refusals) |
+| `RepoRefFor` · `RefForRow` | offers | the one rule from a `git_repositories` row to the `RepoRef` {org, owner, repo, default branch} the pod is addressed by (`repo_ref.go`); no row in the org is `ErrRepoNotFound` |
+| `CommitRetrying` | offers | `git.go`: a writer's plan → `Commit`, re-planned from a fresh read on `ErrCommitConflict`, `CommitAttempts` (3) in all. aep-api's writes name no author, committer or tagger: the pod uses its gitpat identity |
 | `IssueService`, `RepoService` | offers | every domain that needs repos, issues or milestones |
 | `IssueAdopter` | needs | delivery admission for newly filed or reopened SRE work; refusal is returned as `adoptionError` |
 | `IncidentRecurrence` | needs | durable recurrence evidence before reopening; defaults to the GitHub-body ledger writer |
@@ -44,7 +46,6 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   domain (`repository_repo.go` · `repository_webhook_delivery.go` over `repository_entity.go` /
   `webhook_delivery.go`), single write-authority. `GitRepository` is not `x-go-type`-aliased, so it needs
   no wire split.
-- The bare-mirror workspace handle, and the GitHub host connection state.
 
 ## Invariants — don't break
 - **SRE creation owns incident identity and outcomes.** A trusted transport binds the opaque incident
@@ -76,14 +77,14 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   or disarmed, without blocking further attempts. Completed and ordinary non-SRE issues have no
   attention reason. Human edits to the body ledger affect the recurrence history.
 - **The issue list is issues only, and bounded.** GitHub's issues endpoint also answers pull requests;
-  `githubhost.ListIssues` drops them and walks pages until a short one or `issueListMaxPages` (10, so
+  the pod's `ListIssues` drops them and walks pages until a short one or its page cap (10, so
   1000 items). The bell polls the unfiltered list per alerting project every minute, so the cap bounds
   that poll's rate cost. Past it the oldest issues are missing from the list (logged); `GetIssue` still
   reads any issue by number. Paging the API contract itself is the follow-up if repositories outgrow it.
-- **`Host` is provider-neutral.** GitHub specifics live in `githubhost`; nothing above it names GitHub
-  — including whether an op rides REST or GraphQL.
+- **No GitHub specifics above the ports.** Whether an op rides REST or GraphQL, and every GitHub
+  wire rule, is the pod's; this domain addresses a repository only by its `RepoRef`.
 - **A milestone is addressed by NUMBER, never by title.** Titles are renamable, and the host enforces
-  title uniqueness case-sensitively while filtering on it case-insensitively, so the adapter enforces
+  title uniqueness case-sensitively while filtering on it case-insensitively, so the pod enforces
   case-insensitive uniqueness at create and callers key on the number. Issue counts come from the
   GraphQL predicate; a milestone's `open_issues` counts pull requests and is never read.
 - **`MilestoneIssueCounts` is ONE call, and every alias filters on ONE label.** The dispatch predicate
@@ -108,6 +109,18 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   exactly the statement "the platform wrote this" and no call site can forget it. Branding is
   idempotent; a comment written BEFORE this shipped carries no marker and reads as human, which is an
   accepted gap (the alternative was pattern-matching five writers' openers).
+- **No hook outlives the row that names it.** `WebhookService.Register` installs the hook only for a
+  `ready` row and stores its id as a column update that only a `ready` row takes
+  (`SetWebhookIDIfReady`, never re-inserting a dropped row); a row that went, or whose project's delete
+  started (`BeginDelete` marks it `deleting`), meanwhile gets the installed hook deleted again.
+  `Unregister` deletes the stored hook (never one found by scanning); `UnregisterOrg` does it for every
+  row of an org and `ForgetOrg` clears the org's ids once its pod is gone (the gitpat disconnect deletes the org's AE Studio).
+  A ready project row with no hook id is what the eventcore sweep's hook repair ensures a hook for;
+  platform repos (`IsPlatformRepo`: project ids starting with `_`, the skills and resource-docs repos)
+  carry none.
+- **`DeleteRepo` trashes before it drops.** The pod's mirror and reference documents go first
+  (`TrashOps`), because the row is what names the repository; a trash the pod cannot do is logged
+  (`repo.trash_failed`) and the row goes anyway. The GitHub repository is never deleted.
 - **A webhook is acknowledged before its handlers run, and the delivery ledger is what retries it.**
   GitHub closes a delivery's connection at 10 seconds and never redelivers on its own, so a handler
   running on the request's context lost its work to the timeout for good (a merged cycle's build
@@ -122,7 +135,14 @@ the delivery ledger and its `webhook.Replayer`), and installation lifecycle.*
   What a delivery past its window was for is `eventcore`'s reconcile sweeps' to heal
   (`webhook.ReplayHorizon` sets their grace). Every handler must stay idempotent: a replay re-runs
   whatever the failed attempt got through. A routing failure is answered before anything is
-  persisted, so nothing replays it.
+  persisted, so nothing replays it. The persist/claim/dispatch tail is `webhook.Ingestor`, shared by
+  `webhook.Receive` and the AE Studio tools pod's `ingest-webhook-event` (`Ingestor.Ingest`).
+- **A delivery acts only on its own org's repositories.** `Ingestor.Ingest` refuses
+  (`ErrRepositoryUnknown`, nothing stored) a delivery whose `repository.full_name` is not one of the
+  caller's org's repositories (`RepoRepository.FindInOrgByFullName`), and every handler run, the
+  `Replayer`'s included, carries the delivery's org on its context (`webhook.DeliveryOrg`): the
+  full-name lookups the handlers use (`app`'s `repoLocator`, `repoNamer`) then resolve only in that
+  org (`LookupOrgProjectByRepoURLInOrg`), so a payload naming another org's repository finds nothing.
 - **A stored delivery never carries a published credential.** Every verified webhook delivery's
   body is persisted to `webhook_payloads` — for audit, and as what the `Replayer` re-runs — so a comment the
   platform posts *on purpose* carrying credentials would land in the database in cleartext, the one

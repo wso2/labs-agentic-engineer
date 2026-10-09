@@ -29,17 +29,35 @@ import (
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/dbtest"
 	"github.com/wso2/aep/aep-api/internal/platform/modelconn"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-const phase19AESKey = "0123456789abcdef0123456789abcdef"
+// legacySecrets writes and reads org_secrets value rows the way the earlier
+// releases' sealed store did (one row per (org, key), the value as stored):
+// the steps under test copy or delete those rows and never read a value, so
+// the tests seed opaque text and compare it as stored.
+type legacySecrets struct{ db *gorm.DB }
+
+func (s legacySecrets) Put(ctx context.Context, org, key string, value []byte) error {
+	return s.db.WithContext(ctx).Exec(`
+		INSERT INTO org_secrets (oc_org_id, key, value, updated_at) VALUES (?, ?, ?, now())
+		ON CONFLICT (oc_org_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+		org, key, "sealed:"+string(value)).Error
+}
+
+func (s legacySecrets) Get(ctx context.Context, org, key string) ([]byte, error) {
+	var value string
+	err := s.db.WithContext(ctx).Raw(`SELECT value FROM org_secrets WHERE oc_org_id = ? AND key = ?`, org, key).Row().Scan(&value)
+	return []byte(strings.TrimPrefix(value, "sealed:")), err
+}
 
 // preModelConnectionShape rebuilds the schema phase19 starts from on a
-// migrated test database: org_anthropic_credentials may hold a default row,
-// org_agent_settings has its model column, and org_model_connections does not
-// exist. Tests of earlier steps call it so their pre-state seeds are legal.
+// migrated test database: the secret columns of the releases before phase29,
+// org_anthropic_credentials may hold a default row, org_agent_settings has
+// its model column, and org_model_connections does not exist. Tests of
+// earlier steps call it so their pre-state seeds are legal.
 func preModelConnectionShape(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	prePhase29Shape(t, db)
 	for _, stmt := range []string{
 		`ALTER TABLE org_anthropic_credentials DROP CONSTRAINT IF EXISTS org_anthropic_credentials_subscription_only`,
 		`ALTER TABLE org_agent_settings ADD COLUMN IF NOT EXISTS model TEXT NOT NULL DEFAULT 'claude-sonnet-5'`,
@@ -57,7 +75,7 @@ type phase19Fixture struct {
 	disconnectedAt time.Time
 }
 
-func seedPhase19(t *testing.T, db *gorm.DB, store secrets.CredentialStore) phase19Fixture {
+func seedPhase19(t *testing.T, db *gorm.DB, store legacySecrets) phase19Fixture {
 	t.Helper()
 	ctx := context.Background()
 	disconnectedAt := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
@@ -116,10 +134,7 @@ func seedPhase19(t *testing.T, db *gorm.DB, store secrets.CredentialStore) phase
 func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	db := dbtest.New(t)
 	ctx := context.Background()
-	store, err := secrets.NewDBStore(db, []byte(phase19AESKey))
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
+	store := legacySecrets{db: db}
 	preModelConnectionShape(t, db)
 	fx := seedPhase19(t, db, store)
 
@@ -127,7 +142,7 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 
 	conns := organization.NewOrgModelConnectionRepository(db)
 	// The active org: one connection on Anthropic's API with its model, NULL
-	// limits, a preview, the same vault reference and no author.
+	// limits and no author. No key, preview or vault path is carried.
 	active, err := conns.GetByOrg(ctx, "active")
 	if err != nil || active == nil {
 		t.Fatalf("active org's connection: %+v (%v)", active, err)
@@ -135,9 +150,7 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	want := organization.OrgModelConnection{
 		OcOrgID: "active", Format: modelconn.FormatAnthropic, BaseURL: modelconn.AnthropicBaseURL,
 		Host: modelconn.AnthropicHost, Model: "claude-haiku-4-5", AuthScheme: modelconn.AuthXAPIKey,
-		ImageInput: modelconn.Yes, KeyPreview: "sk-a…1234",
-		SecretRefName: ptr("active-anthropic"), SecretRefKVPath: ptr("user-app-secrets/wc-active/active-anthropic"),
-		SecretRefProperty: ptr("api-key"),
+		ImageInput: modelconn.Yes,
 	}
 	got := *active
 	if !got.ConnectedAt.Equal(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)) || !got.UpdatedAt.Equal(time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)) {
@@ -147,13 +160,10 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("active connection:\n got %+v\nwant %+v", got, want)
 	}
-	// The same key bytes serve it, and every reader sees the connection.
-	reader := organization.NewModelConnectionService(conns, organization.NewOrgAnthropicRepository(db), store, nil)
-	if conn, key, ok, err := reader.Effective(ctx, "active"); err != nil || !ok || key != "sk-ant-api03-AbActiveKeyBytes-1234" || conn.Model != "claude-haiku-4-5" {
-		t.Fatalf("effective after the step: %+v ok=%v err=%v", conn, ok, err)
-	}
-	if _, ref, err := reader.KeyRef(ctx, "active"); err != nil || ref.Name != "active-anthropic" {
-		t.Fatalf("key ref after the step: %+v (%v)", ref, err)
+	// The key's sealed bytes go with the same boot: they name no reference,
+	// so phase29 deletes them.
+	if n := count(t, db, `SELECT count(*) FROM org_secrets WHERE oc_org_id = 'active'`); n != 0 {
+		t.Fatalf("active org's key bytes = %d rows, want 0", n)
 	}
 	// An org that never chose a model gets the format's default.
 	if d, err := conns.GetByOrg(ctx, "defaults"); err != nil || d == nil || d.Model != modelconn.DefaultAnthropicModel {
@@ -198,8 +208,8 @@ func TestPhase19ModelConnection_UpgradesAPopulatedDatabase(t *testing.T) {
 	if columnExists(t, db, "org_agent_settings", "model") {
 		t.Fatal("org_agent_settings.model survived")
 	}
-	if err := db.Exec(`INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, key_prefix, key_last4, status)
-		VALUES ('late', 'default', 'api_key', 'sk-ant-x', 'wxyz', 'active')`).Error; err == nil ||
+	if err := db.Exec(`INSERT INTO org_anthropic_credentials (oc_org_id, role, credential_kind, status)
+		VALUES ('late', 'default', 'api_key', 'active')`).Error; err == nil ||
 		!strings.Contains(err.Error(), "subscription_only") {
 		t.Fatalf("a default row is still accepted: %v", err)
 	}
@@ -227,7 +237,7 @@ func TestPhase19ModelConnection_FreshSchema(t *testing.T) {
 	if columnExists(t, db, "org_agent_settings", "model") {
 		t.Fatal("a fresh schema carries org_agent_settings.model")
 	}
-	if !columnExists(t, db, "org_model_connections", "key_preview") {
+	if !columnExists(t, db, "org_model_connections", "model") {
 		t.Fatal("a fresh schema has no org_model_connections")
 	}
 	before := phase19RowVersions(t, db)
@@ -343,15 +353,13 @@ func count(t *testing.T, db *gorm.DB, sql string) int64 {
 	return n
 }
 
-func ptr[T any](v T) *T { return &v }
-
 // phase19RowVersions reads every row's xmin in the tables the step touches.
 func phase19RowVersions(t *testing.T, db *gorm.DB) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, q := range []struct{ table, key string }{
 		{"org_model_connections", "oc_org_id"}, {"org_anthropic_credentials", "oc_org_id || '/' || role"},
-		{"org_agent_settings", "oc_org_id"}, {"organizations", "name"}, {"org_secrets", "oc_org_id || '/' || key"},
+		{"org_agent_settings", "oc_org_id"}, {"organizations", "name"}, {"org_secrets", "oc_org_id || '/' || secret"},
 	} {
 		var rows []struct{ Key, Xmin string }
 		if err := db.Raw(`SELECT ` + q.key + ` AS key, xmin::text AS xmin FROM ` + q.table).Scan(&rows).Error; err != nil {

@@ -40,7 +40,7 @@ function childEnv() {
 test("mock/wired.ts: the gateway stand-in refuses, and signs what it forwards", () => {
   const child = spawnSync(
     process.execPath,
-    ["--experimental-strip-types", "--no-warnings", "--test", path.join(here, "mock-wired.cases.mjs")],
+    ["--experimental-strip-types", "--no-warnings", "--test", "--test-reporter=tap", path.join(here, "mock-wired.cases.mjs")],
     { encoding: "utf8", env: childEnv() },
   );
   const output = `${child.stdout ?? ""}${child.stderr ?? ""}`;

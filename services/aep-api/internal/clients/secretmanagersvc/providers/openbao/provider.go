@@ -41,6 +41,7 @@ var (
 	_ secretsprovider.Provider               = (*Provider)(nil)
 	_ secretsprovider.SecretReferenceManager = (*Provider)(nil)
 	_ secretsprovider.SecretsClient          = (*Client)(nil)
+	_ secretsprovider.SecretPathResolver     = (*Client)(nil)
 )
 
 // Provider implements secretsprovider.Provider for direct OpenBao KV writes.
@@ -48,23 +49,21 @@ type Provider struct {
 	kv *secrets.DeliveryKV
 }
 
-// NewProvider builds an OpenBao provider from StoreConfig.OpenBao fields.
-// Never logs the token.
-func NewProvider(cfg *secretsprovider.OpenBaoConfig) (*Provider, error) {
+// NewProvider builds an OpenBao provider from StoreConfig.OpenBao fields,
+// authenticated by auth (the process's one OpenBao session; there is no static
+// token). It performs no I/O: the first write logs in.
+func NewProvider(cfg *secretsprovider.OpenBaoConfig, auth secrets.VaultAuth) (*Provider, error) {
 	if cfg == nil {
 		return nil, errors.New("openbao: config is required")
 	}
 	if cfg.Server == "" {
 		return nil, errors.New("openbao: server is required")
 	}
-	if cfg.Auth == nil || cfg.Auth.Token == "" {
-		return nil, errors.New("openbao: auth token is required")
-	}
 	mount := cfg.Path
 	if mount == "" {
 		mount = "secret"
 	}
-	kv, err := secrets.NewDeliveryKV(cfg.Server, cfg.Auth.Token, mount)
+	kv, err := secrets.NewDeliveryKV(cfg.Server, mount, auth)
 	if err != nil {
 		return nil, fmt.Errorf("openbao: %w", err)
 	}
@@ -102,9 +101,6 @@ func (p *Provider) ValidateConfig(config *secretsprovider.StoreConfig) error {
 	ob := config.OpenBao
 	if ob.Server == "" {
 		return errors.New("openbao: server is required")
-	}
-	if ob.Auth == nil || ob.Auth.Token == "" {
-		return errors.New("openbao: auth token is required")
 	}
 	return nil
 }

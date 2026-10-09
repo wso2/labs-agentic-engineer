@@ -23,3 +23,8 @@ output-options:
   prefer-skip-optional-pointer: true
   # Match hand-written Go names (UUID, RepoURL, …), not Uuid/RepoUrl.
   name-normalizer: ToCamelCaseWithInitialisms
+compatibility:
+  # Enum constants are always type-prefixed (AeStudioStateReady, not Ready):
+  # the bare form is exported only while names don't collide, so a new enum
+  # could silently rename an existing constant.
+  always-prefix-enum-values: true

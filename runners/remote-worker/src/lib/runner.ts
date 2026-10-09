@@ -52,6 +52,7 @@ import { createRunWatchdog } from "./progress/watchdog.js";
 import { stagedSecretValues, WEBSEARCH_DENIAL_MESSAGE, webSearchDenial } from "./websearch_dlp.js";
 import { allowsWriteOutsideProject } from "./workspace_guard.js";
 import { staticTokenSource, type AccessTokenSource } from "./auth_retry.js";
+import { createRemoteGitTools } from "./remote_git.js";
 import { webFetchDenial } from "./webfetch_guard.js";
 import { readModelConnection } from "./model_connection.js";
 import { mountAepWeb } from "./aep_web.js";
@@ -100,8 +101,10 @@ const TERMINATE_FLUSH_MS = 50;
  *
  * BARE names: how a runtime namespaces an MCP tool is its own convention (Claude
  * Code renders `mcp__<server>__<tool>`), so the platform states what the server
- * has and the adapter states what to call it. Source of truth:
- * `services/aep-api/internal/feature/dependencies/mcp_tools.go`.
+ * has and the adapter states what to call it. `list_org_component_endpoints` is
+ * served by aep-api (`services/aep-api/internal/dependencies/mcpdiscovery/
+ * mcp_tools.go`); the two remote-git reads are answered in-process
+ * (`lib/remote_git.ts`, see buildMcpPolicy).
  */
 const MCP_TOOL_NAMES = [
   "list_org_component_endpoints",
@@ -302,10 +305,10 @@ export async function startCodingRun(
   // the controls sit on the way OUT rather than on concealment: the fail-closed
   // WebSearch/WebFetch DLP hooks below, and the progress scrubber primed from
   // credential_env.ts before this process logs anything.
-  // F3c — surface AEP_TASK_ID and AEP_PLATFORM_URL to the agent's
-  // child env so the aep skill's verification-failed shell snippet can
-  // hit POST $AEP_PLATFORM_URL/api/v1/tasks/$AEP_TASK_ID/verification-failed.
-  // The curl snippet reads AEP_BEARER_FILE at call time.
+  // The agent's child env also names its run cycle (AEP_TASK_ID), the
+  // platform's URL (AEP_PLATFORM_URL) and the bearer's file path: a shell step
+  // that calls aep-api reads AEP_BEARER_FILE at call time, so it always gets
+  // the token the loop below last refreshed.
   const childEnv: Record<string, string> = {
     ...(process.env as Record<string, string>),
     PATH: `${layout.aepDir}:${process.env.PATH ?? ""}`,
@@ -313,7 +316,6 @@ export async function startCodingRun(
     AEP_BEARER_FILE: layout.bearerFile,
     AEP_TASK_ID: req.taskId,
     AEP_PLATFORM_URL: process.env.AEP_PLATFORM_URL ?? "",
-    AEP_GIT_SERVICE_URL: req.gitServiceUrl,
     AEP_CORRELATION_ID: req.correlationId ?? "",
     // A runtime's own default is typically 120s, which is under what this
     // platform's longest legitimate command takes: driving a scenario is a
@@ -517,10 +519,20 @@ export function buildMcpPolicy(
   const source = mcpAuth?.source ?? staticTokenSource(req.mcpToken);
   const canRefresh = mcpAuth?.canRefresh ?? false;
   let lastBearer = req.mcpToken;
+  // The remote-git reads are answered in-process with the Job's mounted PAT,
+  // held to the org's own GitHub account. They ride the MCP clause on purpose:
+  // they are MCP tools, offered exactly when the platform's MCP server is (the
+  // early return above), so a dispatch without it gets none of them. No owner
+  // or no token: no guard reference or nothing to read with, so this run
+  // answers none of them itself.
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+  const local =
+    req.githubOwner && githubToken ? createRemoteGitTools({ token: githubToken, owner: req.githubOwner }) : undefined;
   return {
     mcp: {
       url: req.mcpUrl,
       tools: MCP_TOOL_NAMES,
+      ...(local ? { local } : {}),
       token: () => source.getToken(),
       // Present only when this run can actually remint — see McpPolicy.
       ...(canRefresh ? { invalidate: () => source.invalidate() } : {}),

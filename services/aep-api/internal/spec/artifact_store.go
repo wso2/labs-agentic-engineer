@@ -148,9 +148,7 @@ const componentDirPrefix = "components/"
 
 // agentAFMFileName is the sibling AFM document name inside an ai-agent
 // component's directory (components/<name>/agent.afm.md) — mirrors the path
-// agentfold's write-gate matches (agentAfmRe in
-// internal/platform/agentfold/designgate.go), a different package this one
-// cannot reference.
+// the agent's write gate matches (packages/agent-stream agent-afm-schema.ts).
 const agentAFMFileName = "agent.afm.md"
 
 // dependencyDirPrefix is the path prefix under specs/design/ for per-dependency

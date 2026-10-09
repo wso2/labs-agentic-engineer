@@ -22,8 +22,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
 type recurrenceHost struct {
@@ -31,7 +29,7 @@ type recurrenceHost struct {
 	writeErr, reopenErr error
 }
 
-func (h *recurrenceHost) EditIssueBody(_ context.Context, _, _ string, _ secrets.Credential, number int, body string) error {
+func (h *recurrenceHost) EditIssueBody(_ context.Context, _ RepoRef, number int, body string) error {
 	if h.writeErr != nil {
 		return h.writeErr
 	}
@@ -44,7 +42,7 @@ func (h *recurrenceHost) EditIssueBody(_ context.Context, _, _ string, _ secrets
 	return ErrIssueNotFound
 }
 
-func (h *recurrenceHost) GetIssue(_ context.Context, _, _ string, _ secrets.Credential, number int) (*IssueInfo, error) {
+func (h *recurrenceHost) GetIssue(_ context.Context, _ RepoRef, number int) (*IssueInfo, error) {
 	for _, issue := range h.issues {
 		if issue.Number == number {
 			return &issue, nil
@@ -53,11 +51,11 @@ func (h *recurrenceHost) GetIssue(_ context.Context, _, _ string, _ secrets.Cred
 	return nil, ErrIssueNotFound
 }
 
-func (h *recurrenceHost) ReopenIssue(ctx context.Context, owner, repo string, cred secrets.Credential, number int) error {
+func (h *recurrenceHost) ReopenIssue(ctx context.Context, ref RepoRef, number int) error {
 	if h.reopenErr != nil {
 		return h.reopenErr
 	}
-	if err := h.fakeGitHub.ReopenIssue(ctx, owner, repo, cred, number); err != nil {
+	if err := h.fakeGitHub.ReopenIssue(ctx, ref, number); err != nil {
 		return err
 	}
 	for i := range h.issues {
@@ -72,7 +70,7 @@ func (h *recurrenceHost) ReopenIssue(ctx context.Context, owner, repo string, cr
 func TestRecurrenceCompletedPreservesEvidenceAndEscalates(t *testing.T) {
 	host := &recurrenceHost{fakeGitHub: &fakeGitHub{}}
 	adopter := &incidentAdopter{}
-	svc := NewIssueService(fakeRepoRepo{}, host, fakeResolver{}, IncidentPorts{Adopter: adopter})
+	svc := NewIssueService(fakeRepoRepo{}, host, IncidentPorts{Adopter: adopter})
 	ctx := WithIncidentContext(context.Background(), "alert-123")
 	req := CreateIssueRequest{Title: "timeout", Body: "new handoff evidence", ComponentName: "checkout"}
 	first, err := svc.CreateIssue(ctx, "org", "proj", req)
@@ -126,7 +124,7 @@ func TestRecurrenceEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			host := &recurrenceHost{fakeGitHub: &fakeGitHub{}}
-			svc := NewIssueService(fakeRepoRepo{}, host, fakeResolver{})
+			svc := NewIssueService(fakeRepoRepo{}, host)
 			ctx := WithIncidentContext(context.Background(), "alert-123")
 			req := CreateIssueRequest{Title: "timeout", Body: "evidence", ComponentName: "checkout"}
 			_, err := svc.CreateIssue(ctx, "org", "proj", req)
@@ -156,7 +154,7 @@ func TestRecurrenceEligibility(t *testing.T) {
 // must not hide a completed match that can recur.
 func TestRecurrenceSkipsIneligibleClosedMatchForEligibleOne(t *testing.T) {
 	host := &recurrenceHost{fakeGitHub: &fakeGitHub{}}
-	svc := NewIssueService(fakeRepoRepo{}, host, fakeResolver{})
+	svc := NewIssueService(fakeRepoRepo{}, host)
 	ctx := WithIncidentContext(context.Background(), "alert-123")
 	req := CreateIssueRequest{Title: "timeout", Body: "evidence", ComponentName: "checkout"}
 	if _, err := svc.CreateIssue(ctx, "org", "proj", req); err != nil {
@@ -183,7 +181,7 @@ func TestRecurrenceRetryAfterWriteOrReopenFailure(t *testing.T) {
 	for _, stage := range []string{"write", "reopen"} {
 		t.Run(stage, func(t *testing.T) {
 			host := &recurrenceHost{fakeGitHub: &fakeGitHub{}}
-			svc := NewIssueService(fakeRepoRepo{}, host, fakeResolver{})
+			svc := NewIssueService(fakeRepoRepo{}, host)
 			ctx := WithIncidentContext(context.Background(), "alert-123")
 			req := CreateIssueRequest{Title: "timeout", Body: "handoff", ComponentName: "checkout"}
 			_, err := svc.CreateIssue(ctx, "org", "proj", req)
@@ -204,7 +202,7 @@ func TestRecurrenceRetryAfterWriteOrReopenFailure(t *testing.T) {
 			}
 			host.writeErr, host.reopenErr = nil, nil
 			// Reconstruct the service: retry safety must survive process restart.
-			svc = NewIssueService(fakeRepoRepo{}, host, fakeResolver{})
+			svc = NewIssueService(fakeRepoRepo{}, host)
 			result, err := svc.CreateIssue(ctx, "org", "proj", req)
 			if err != nil {
 				t.Fatal(err)

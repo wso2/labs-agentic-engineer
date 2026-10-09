@@ -1,0 +1,789 @@
+// Copyright (c) 2026, WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package aestudiotest_test
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha1" //nolint:gosec // git object ids are sha1 by definition
+	"encoding/hex"
+	"errors"
+	"io"
+	"maps"
+	"mime/multipart"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
+)
+
+var ref = sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
+
+var (
+	_ sourcecontrol.RepoAdmin        = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.IssueOps         = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.WebhookOps       = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.Git              = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.TrashOps         = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.SkillsMirrorOps  = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.ReferencesOps    = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.ReferenceListOps = (*aestudiotest.Fake)(nil)
+	_ sourcecontrol.IdentityOps      = (*aestudiotest.Fake)(nil)
+	_ aestudiotools.Turns            = (*aestudiotest.Fake)(nil)
+)
+
+func blobSHA(content string) string {
+	h := sha1.New() //nolint:gosec // git object ids are sha1 by definition
+	_, _ = io.WriteString(h, "blob "+strconv.Itoa(len(content))+"\x00"+content)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func TestFake_CommitConflictAndShas(t *testing.T) {
+	f := aestudiotest.New()
+	ref := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter"}
+	f.SeedRepo(ref, map[string]string{"specs/a.md": "1"})
+	_, sha, _ := f.ReadFile(context.Background(), ref, "", "specs/a.md")
+	res, err := f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "2", BaseSHA: sha}}})
+	if err != nil || !res.Changed || len(res.CommitSHA) != 40 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	_, err = f.Commit(context.Background(), ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "specs/a.md", Content: "3", BaseSHA: sha}}})
+	var cc *sourcecontrol.CommitConflictError
+	if !errors.As(err, &cc) || !errors.Is(err, sourcecontrol.ErrCommitConflict) || cc.Conflicts[0].Path != "specs/a.md" {
+		t.Fatalf("err = %v, want a CommitConflictError", err)
+	}
+}
+
+func TestFake_InjectsAbsentAndPermanence(t *testing.T) {
+	f := aestudiotest.New()
+	f.FailOrg("default", sourcecontrol.ErrAEStudioAbsent)
+	_, err := f.Head(context.Background(), sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "g"}, "")
+	if !errors.Is(err, sourcecontrol.ErrAEStudioAbsent) || !sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v", err)
+	}
+	f.FailOrg("default", sourcecontrol.ErrAEStudioUnavailable)
+	_, err = f.Head(context.Background(), sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "g"}, "")
+	if sourcecontrol.IsPermanent(err) {
+		t.Fatal("Unavailable must stay retryable")
+	}
+	f.FailOrg("default", sourcecontrol.ErrAEStudioMisconfigured)
+	_, err = f.Head(context.Background(), sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "g"}, "")
+	if !sourcecontrol.IsPermanent(err) {
+		t.Fatal("Misconfigured is a permanent config error (C3)")
+	}
+}
+
+// A commit answers the written files' blob shas (git's own), a no-op commit
+// keeps the tip, and the commit sha changes with the tree.
+func TestFake_CommitResultIsGitShaped(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, map[string]string{"a.md": "1", "b.md": "x"})
+	tip, err := f.Head(ctx, ref, "")
+	if err != nil || len(tip) != 40 {
+		t.Fatalf("head=%q err=%v", tip, err)
+	}
+	_, aSHA, _ := f.ReadFile(ctx, ref, "", "a.md")
+	if aSHA != blobSHA("1") {
+		t.Fatalf("blob sha = %s, want git's %s", aSHA, blobSHA("1"))
+	}
+	_, bSHA, _ := f.ReadFile(ctx, ref, "", "b.md")
+
+	same, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1", BaseSHA: aSHA}}})
+	if err != nil || same.Changed || same.CommitSHA != tip {
+		t.Fatalf("a no-op commit = %+v err=%v, want unchanged at %s", same, err, tip)
+	}
+
+	res, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{
+		Writes:  []sourcecontrol.FileWrite{{Path: "c.md", Content: "new"}},
+		Deletes: []sourcecontrol.FileDelete{{Path: "b.md", BaseSHA: bSHA}},
+		Message: "m",
+	})
+	if err != nil || !res.Changed || res.CommitSHA == tip {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if !slices.Equal(res.Files, []sourcecontrol.CommittedFile{{Path: "c.md", SHA: blobSHA("new")}}) {
+		t.Fatalf("files = %+v", res.Files)
+	}
+	if _, _, err := f.ReadFile(ctx, ref, "", "b.md"); !errors.Is(err, sourcecontrol.ErrPathNotFound) {
+		t.Fatalf("deleted path: err = %v", err)
+	}
+	// The old tip still reads the old tree.
+	if got, _, err := f.ReadFile(ctx, ref, tip, "b.md"); err != nil || string(got) != "x" {
+		t.Fatalf("read at the old tip = %q err=%v", got, err)
+	}
+
+	// "" BaseSHA means the path must not exist; a delete must name the
+	// current blob. Every conflicting path is reported.
+	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{
+		Writes:  []sourcecontrol.FileWrite{{Path: "a.md", Content: "2"}},
+		Deletes: []sourcecontrol.FileDelete{{Path: "c.md", BaseSHA: blobSHA("old")}},
+		Message: "m",
+	})
+	var cc *sourcecontrol.CommitConflictError
+	if !errors.As(err, &cc) || len(cc.Conflicts) != 2 ||
+		cc.Conflicts[0] != (sourcecontrol.Conflict{Path: "a.md", CurrentSHA: aSHA}) ||
+		cc.Conflicts[1] != (sourcecontrol.Conflict{Path: "c.md", BaseSHA: blobSHA("old"), CurrentSHA: blobSHA("new")}) {
+		t.Fatalf("err = %v (%+v)", err, cc)
+	}
+	if after, _ := f.Head(ctx, ref, ""); after != res.CommitSHA {
+		t.Fatal("a refused commit moved the tip")
+	}
+}
+
+func TestFake_ReadsListBundleAndTags(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, map[string]string{
+		"specs/requirements.md":            "r",
+		"specs/design/components/a.json":   "{}",
+		"specs/design/components/b.yaml":   "b: 1",
+		"specs/design/components/x/c.json": "[]",
+	})
+	entries, sha, err := f.List(ctx, ref, "", sourcecontrol.Local())
+	if err != nil || len(sha) != 40 || len(entries) != 4 || entries[0].Path != "specs/design/components/a.json" || entries[0].Size != 2 {
+		t.Fatalf("entries=%+v sha=%s err=%v", entries, sha, err)
+	}
+
+	files, _, err := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "specs/design/components/", Exts: []string{".json"}})
+	if err != nil || !maps.Equal(files, map[string]string{"specs/design/components/a.json": "{}", "specs/design/components/x/c.json": "[]"}) {
+		t.Fatalf("bundle=%v err=%v", files, err)
+	}
+	files, _, _ = f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "nope/", Paths: []string{"specs/requirements.md", "missing.md"}})
+	if !maps.Equal(files, map[string]string{"specs/requirements.md": "r"}) {
+		t.Fatalf("exact-path bundle = %v", files)
+	}
+
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "v1"}); !errors.Is(err, sourcecontrol.ErrTagAlreadyExists) {
+		t.Fatalf("retag: err = %v", err)
+	}
+	_ = f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "w1", Target: sha})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Message: "m", Name: "z", Target: "tags/missing"}); !errors.Is(err, sourcecontrol.ErrRefNotFound) {
+		t.Fatalf("tag at an unknown ref: err = %v", err)
+	}
+	tags, err := f.ListTags(ctx, ref, "v")
+	if err != nil || len(tags) != 1 || tags[0].Name != "v1" || tags[0].CommitHash != sha || tags[0].Message != "first" || tags[0].CreatedAt.IsZero() {
+		t.Fatalf("tags=%+v err=%v", tags, err)
+	}
+	if tags[0].Body != "" {
+		t.Fatalf("a subject-only annotation has body %q", tags[0].Body)
+	}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "n.md", Content: "n"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := f.Head(ctx, ref, "tags/v1"); got != sha {
+		t.Fatalf("head at tags/v1 = %s, want %s", got, sha)
+	}
+	if _, _, err := f.ReadFile(ctx, ref, "tags/v1", "n.md"); !errors.Is(err, sourcecontrol.ErrPathNotFound) {
+		t.Fatalf("a file added after the tag: err = %v", err)
+	}
+	if _, err := f.Head(ctx, ref, "0000000000000000000000000000000000000000"); !errors.Is(err, sourcecontrol.ErrRefNotFound) {
+		t.Fatalf("unknown sha: err = %v", err)
+	}
+	if _, err := f.Head(ctx, sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "other"}, ""); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("unknown repo: err = %v", err)
+	}
+}
+
+// list-tags answers an annotation as git's for-each-ref splits it: message is
+// the subject (the first paragraph, its lines joined by a space), body the
+// rest, trimmed.
+func TestFake_ListTagsSplitsTheAnnotation(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "\nSpec v1\n\nFeatures: F1 F2\nHeld back: F2.4\n\n"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v2", Message: "Spec v2\nsecond line"}); err != nil {
+		t.Fatal(err)
+	}
+	tags, err := f.ListTags(ctx, ref, "")
+	if err != nil || len(tags) != 2 {
+		t.Fatalf("tags=%+v err=%v", tags, err)
+	}
+	if tags[0].Message != "Spec v1" || tags[0].Body != "Features: F1 F2\nHeld back: F2.4" {
+		t.Errorf("v1 = %q / %q", tags[0].Message, tags[0].Body)
+	}
+	if tags[1].Message != "Spec v2 second line" || tags[1].Body != "" {
+		t.Errorf("v2 = %q / %q", tags[1].Message, tags[1].Body)
+	}
+}
+
+// Calls records each port call in order with its at and Local; BeforeCommit
+// runs outside the Fake's lock, so the hook can read and commit itself.
+func TestFake_CallsAndBeforeCommit(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	sha, _ := f.Head(ctx, ref, "", sourcecontrol.Local())
+	_, _ = f.ListTags(ctx, ref, "", sourcecontrol.Local())
+	_, _, _ = f.ReadBundle(ctx, ref, sha, sourcecontrol.BundleFilter{Exts: []string{".md"}})
+
+	raced := false
+	f.BeforeCommit(func() {
+		if raced {
+			return
+		}
+		raced = true
+		_, cur, _ := f.ReadFile(ctx, ref, "", "a.md")
+		if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "other", BaseSHA: cur}}}); err != nil {
+			t.Errorf("the racing commit: %v", err)
+		}
+	})
+	_, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "mine", BaseSHA: blobSHA("1")}}})
+	if !errors.Is(err, sourcecontrol.ErrCommitConflict) {
+		t.Fatalf("err = %v, want the race to conflict", err)
+	}
+
+	calls := f.Calls()
+	ops := make([]string, len(calls))
+	for i, c := range calls {
+		ops[i] = c.Op
+	}
+	want := []string{aestudiotest.OpHead, aestudiotest.OpListTags, aestudiotest.OpReadBundle, aestudiotest.OpCommit, aestudiotest.OpReadFile, aestudiotest.OpCommit}
+	if !slices.Equal(ops, want) {
+		t.Fatalf("ops = %v, want %v", ops, want)
+	}
+	if !calls[0].Local || !calls[1].Local || calls[2].Local || calls[2].At != sha || calls[2].Filter.Exts[0] != ".md" || calls[0].Ref != ref {
+		t.Fatalf("calls = %+v", calls)
+	}
+	// A ref's DefaultBranch never splits state, so Calls is where it is asserted.
+	branched := sourcecontrol.RepoRef{Org: ref.Org, Owner: ref.Owner, Repo: ref.Repo, DefaultBranch: "trunk"}
+	if got, err := f.Head(ctx, branched, ""); err != nil || got == "" {
+		t.Fatalf("head via a branch-carrying ref: %q %v", got, err)
+	}
+	if last := f.Calls()[len(f.Calls())-1]; last.Ref.DefaultBranch != "trunk" {
+		t.Fatalf("the call lost the ref's DefaultBranch: %+v", last.Ref)
+	}
+}
+
+func TestFake_FailOpAndRateLimit(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, nil)
+	f.FailOp(aestudiotest.OpCreateIssue, &sourcecontrol.RateLimitedError{RetryAfter: 30})
+	_, err := f.CreateIssue(ctx, ref, sourcecontrol.CreateIssueRequest{Title: "t"})
+	var rl *sourcecontrol.RateLimitedError
+	if !errors.As(err, &rl) || sourcecontrol.IsPermanent(err) {
+		t.Fatalf("err = %v, want a retryable rate limit", err)
+	}
+	f.FailOp(aestudiotest.OpCreateIssue, nil)
+	if _, err := f.CreateIssue(ctx, ref, sourcecontrol.CreateIssueRequest{Title: "t"}); err != nil {
+		t.Fatalf("cleared: err = %v", err)
+	}
+	f.FailOrg("default", sourcecontrol.ErrAEStudioUnavailable)
+	f.FailOrg("default", nil)
+	if _, err := f.Head(ctx, ref, ""); err != nil {
+		t.Fatalf("org cleared: err = %v", err)
+	}
+}
+
+func TestFake_IssuesMilestonesAndPulls(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, nil)
+
+	ms, err := f.CreateMilestone(ctx, ref, sourcecontrol.CreateMilestoneRequest{Title: "v1"})
+	if err != nil || !ms.Created {
+		t.Fatalf("ms=%+v err=%v", ms, err)
+	}
+	again, _ := f.CreateMilestone(ctx, ref, sourcecontrol.CreateMilestoneRequest{Title: "V1"})
+	if again.Created || again.Number != ms.Number {
+		t.Fatalf("case-twin milestone = %+v, want the existing one", again)
+	}
+
+	gate, _ := f.CreateIssue(ctx, ref, sourcecontrol.CreateIssueRequest{Title: "gate", Labels: []string{"provision"}, Milestone: &ms.Number})
+	work, _ := f.CreateIssue(ctx, ref, sourcecontrol.CreateIssueRequest{Title: "work", Labels: []string{"aep", "development"}})
+	if err := f.SetIssueMilestone(ctx, ref, work.Number, ms.Number); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.AddIssueLabels(ctx, ref, work.Number, []string{"aep", "aep:status/ready"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.RemoveIssueLabel(ctx, ref, work.Number, "absent"); err != nil {
+		t.Fatalf("removing an absent label: %v", err)
+	}
+	if err := f.CommentIssue(ctx, ref, work.Number, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.EditIssueBody(ctx, ref, work.Number, "body"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _ := f.GetIssue(ctx, ref, work.Number)
+	if got.Body != "body" || !slices.Equal(got.Labels, []string{"aep", "development", "aep:status/ready"}) || got.State != "open" {
+		t.Fatalf("issue = %+v", got)
+	}
+	if _, err := f.GetIssue(ctx, ref, 999); !errors.Is(err, sourcecontrol.ErrIssueNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	listed, _ := f.ListIssues(ctx, ref, []string{"aep"})
+	if len(listed) != 1 || listed[0].Number != work.Number {
+		t.Fatalf("label filter = %+v", listed)
+	}
+	if all := f.Issues(ref); len(all) != 2 || all[0].Number != gate.Number {
+		t.Fatalf("Issues = %+v", all)
+	}
+
+	counts, err := f.MilestoneIssueCounts(ctx, ref, ms.Number)
+	if err != nil || *counts != (sourcecontrol.MilestoneIssueCounts{OpenProvision: 1, OpenTotal: 2, OpenAgentWork: 1, OpenDevelopment: 1}) {
+		t.Fatalf("counts=%+v err=%v", counts, err)
+	}
+	if _, err := f.MilestoneIssueCounts(ctx, ref, 99); !errors.Is(err, sourcecontrol.ErrMilestoneNotFound) {
+		t.Fatalf("err = %v", err)
+	}
+	comments, _ := f.ListMilestoneIssueComments(ctx, ref, ms.Number, 5)
+	if len(comments) != 1 || comments[work.Number][0].Body != "hello" {
+		t.Fatalf("comments = %+v", comments)
+	}
+	if none, _ := f.ListMilestoneIssueComments(ctx, ref, ms.Number, 0); len(none) != 0 {
+		t.Fatalf("perIssue 0 answers none, got %+v", none)
+	}
+	if none, _ := f.ListIssueComments(ctx, ref, work.Number, 0); none != nil {
+		t.Fatalf("limit 0 answers none, got %+v", none)
+	}
+	if one, _ := f.ListIssueComments(ctx, ref, work.Number, 1); len(one) != 1 {
+		t.Fatalf("limit 1 = %+v", one)
+	}
+	if err := f.CloseIssue(ctx, ref, gate.Number); err != nil {
+		t.Fatal(err)
+	}
+	open, _ := f.ListMilestoneIssues(ctx, ref, sourcecontrol.MilestoneIssuesFilter{Number: ms.Number})
+	if len(open) != 1 || open[0].Number != work.Number {
+		t.Fatalf("open milestone issues = %+v", open)
+	}
+
+	pr := f.SeedPullRequest(ref, []string{"src/a.go"})
+	if pr == work.Number || pr == gate.Number {
+		t.Fatal("pull requests share the issue numbering")
+	}
+	if err := f.MergePullRequest(ctx, ref, pr); err != nil {
+		t.Fatal(err)
+	}
+	st, _ := f.GetPullRequest(ctx, ref, pr)
+	if st.State != "closed" || !st.Merged || len(st.MergeCommitSHA) != 40 {
+		t.Fatalf("pr = %+v", st)
+	}
+	if files, _ := f.ListPullRequestFiles(ctx, ref, pr); !slices.Equal(files, []string{"src/a.go"}) {
+		t.Fatalf("pr files = %v", files)
+	}
+	if len(f.Issues(ref)) != 2 {
+		t.Fatal("a pull request is not an issue")
+	}
+}
+
+func TestFake_ReposHooksAndIdentity(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	newRef := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "fresh"}
+	url, err := f.CreateOrgRepo(ctx, newRef, sourcecontrol.CreateOrgRepoRequest{Private: true})
+	if err != nil || url != "https://github.com/acme/fresh.git" {
+		t.Fatalf("url=%q err=%v", url, err)
+	}
+	if _, err := f.Head(ctx, newRef, ""); err != nil {
+		t.Fatalf("a created repo has an initial commit: %v", err)
+	}
+	if _, err := f.CreateOrgRepo(ctx, newRef, sourcecontrol.CreateOrgRepoRequest{}); !sourcecontrol.IsRepoNameConflict(err) {
+		t.Fatalf("err = %v, want a name conflict", err)
+	}
+	if _, err := f.CreateOrgRepo(ctx, newRef, sourcecontrol.CreateOrgRepoRequest{AdoptExisting: true}); err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+
+	id, err := f.RegisterWebhook(ctx, newRef, []string{"push"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := f.HookEvents(newRef); !slices.Equal(got[id], []string{"push"}) {
+		t.Fatalf("hooks = %v", got)
+	}
+	// Register is an ensure: the pod's hook is answered with its events replaced.
+	if again, err := f.RegisterWebhook(ctx, newRef, []string{"push", "issues"}); err != nil || again != id {
+		t.Fatalf("re-register = (%d, %v), want the existing hook %d", again, err, id)
+	}
+	if got := f.HookEvents(newRef); len(got) != 1 || !slices.Equal(got[id], []string{"push", "issues"}) {
+		t.Fatalf("hooks after re-register = %v", got)
+	}
+	if err := f.DeleteWebhook(ctx, newRef, id); err != nil || len(f.HookEvents(newRef)) != 0 {
+		t.Fatalf("delete: err=%v hooks=%v", err, f.HookEvents(newRef))
+	}
+	if err := f.DeleteWebhook(ctx, newRef, id); err != nil {
+		t.Fatalf("a gone hook is success: %v", err)
+	}
+
+	if err := f.TrashRepo(ctx, newRef); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Head(ctx, newRef, ""); !errors.Is(err, sourcecontrol.ErrRepoNotFound) {
+		t.Fatalf("trashed repo: err = %v", err)
+	}
+
+	if _, err := f.GitHubIdentity(ctx, "default"); !sourcecontrol.IsHTTPStatus(err, 502) {
+		t.Fatalf("no identity: err = %v, want a github_error", err)
+	}
+	f.SetIdentity("default", &sourcecontrol.GitHubUser{Login: "acme-bot", ID: 1})
+	if u, err := f.GitHubIdentity(ctx, "default"); err != nil || u.Login != "acme-bot" {
+		t.Fatalf("user=%+v err=%v", u, err)
+	}
+}
+
+// MirrorSkills is recorded, not simulated: the pod owns the catalog rule.
+func TestFake_MirrorSkillsRecordsTheCall(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	project := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "trunk"}
+	skills := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "org-skills", DefaultBranch: "main"}
+	f.SeedRepo(skills, map[string]string{"lint/SKILL.md": "lint"})
+	f.SeedRepo(project, map[string]string{"README.md": "r"})
+	tip, _ := f.Head(ctx, project, "")
+
+	res, err := f.MirrorSkills(ctx, project, skills, []string{"lint"})
+	if err != nil || res.Changed || res.CommitSHA != tip {
+		t.Fatalf("res=%+v err=%v, want the tip unchanged", res, err)
+	}
+	if files, _, _ := f.ReadBundle(ctx, project, "", sourcecontrol.BundleFilter{}); !maps.Equal(files, map[string]string{"README.md": "r"}) {
+		t.Fatalf("the Fake copied skill content: %v", files)
+	}
+	calls := f.Calls()
+	c := calls[1]
+	if c.Op != aestudiotest.OpMirrorSkills || c.Ref != project || c.Skills != skills || !slices.Equal(c.Pinned, []string{"lint"}) {
+		t.Fatalf("call = %+v", c)
+	}
+	f.FailOp(aestudiotest.OpMirrorSkills, &sourcecontrol.CommitConflictError{})
+	if _, err := f.MirrorSkills(ctx, project, skills, nil); !errors.Is(err, sourcecontrol.ErrCommitConflict) {
+		t.Fatalf("injected: err = %v", err)
+	}
+}
+
+// Commit records the author and the committer; an omitted committer is the
+// author, as the pod defaults it.
+func TestFake_CommitRecordsAuthorAndCommitter(t *testing.T) {
+	f := aestudiotest.New()
+	ctx := context.Background()
+	f.SeedRepo(ref, nil)
+	author := &sourcecontrol.GitIdentity{Name: "Ada", Email: "ada@example.com"}
+	bot := &sourcecontrol.GitIdentity{Name: "AEP", Email: "aep@example.com"}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "a.md", Content: "1"}}, Author: author, Committer: bot}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m", Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "1"}}, Author: author}); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.Calls()
+	if calls[0].Author != author || calls[0].Committer != bot {
+		t.Fatalf("explicit committer: %+v", calls[0])
+	}
+	if calls[1].Author != author || calls[1].Committer != author {
+		t.Fatalf("omitted committer must default to the author: %+v", calls[1])
+	}
+}
+
+func TestFake_Turns(t *testing.T) {
+	f := aestudiotest.New()
+	f.ScriptTurn(
+		aestudiotools.TurnEvent{Type: aestudiotools.EventTaskOp, Op: "plan"},
+		aestudiotools.TurnEvent{Type: aestudiotools.EventKeepAlive},
+	)
+	seq, err := f.StartTurn(context.Background(), ref, aestudiotools.TurnRequest{TurnID: turnID, Kind: aestudiotools.TurnKindPlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for ev, err := range seq {
+		if err != nil {
+			t.Fatal(err)
+		}
+		types = append(types, ev.Type)
+	}
+	if !slices.Equal(types, []string{"task-op", "keep-alive", "result"}) {
+		t.Fatalf("events = %v, want the script then a completed result", types)
+	}
+	if calls := f.TurnCalls(); len(calls) != 1 || calls[0].Ref != ref || calls[0].Request.TurnID != turnID {
+		t.Fatalf("calls = %+v", calls)
+	}
+	f.FailOp(aestudiotest.OpStartTurn, aestudiotools.ErrTurnInProgress)
+	if _, err := f.StartTurn(context.Background(), ref, aestudiotools.TurnRequest{}); !errors.Is(err, aestudiotools.ErrTurnInProgress) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.TurnCalls()) != 1 {
+		t.Fatal("a failed start is not recorded")
+	}
+}
+
+// turnID is a start-repo-turn turnId (the contract's format: uuid).
+const turnID = "0d1f8a8e-1f2a-4c1e-9a51-7a1d0e5a6b10"
+
+// StartTurn refuses what start-repo-turn's validator refuses (a permanent
+// 400 validation_failed): an `at` outside tags/<name> | sha or on a start
+// turn, a scope tag outside the ref-name characters, and story, feature and
+// product-wide IDs off their patterns. A turnId that is not a UUID or an
+// unknown kind is refused before any call, as the adapter does. A refused
+// start is not recorded.
+func TestFake_StartTurnRefusesWhatThePodRefuses(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "Spec v1"}); err != nil {
+		t.Fatal(err)
+	}
+	valid := func() aestudiotools.TurnRequest {
+		return aestudiotools.TurnRequest{
+			TurnID: turnID, Project: "greeter", Kind: aestudiotools.TurnKindPlan, At: "tags/v1",
+			Scope: &aestudiotools.PlanScope{
+				Tag:         "v1",
+				Stories:     []aestudiotools.PlanStory{{ID: "F1.1"}, {ID: "F12.30", Covered: true}},
+				Features:    []aestudiotools.PlanFeature{{ID: "F1"}, {ID: "F12", Needs: []string{"F1"}}},
+				ProductWide: []aestudiotools.PlanItem{{ID: "P1", AppliesTo: []string{"all"}}, {ID: "P2", AppliesTo: []string{"F1", "F12"}}},
+			},
+		}
+	}
+	if _, err := f.StartTurn(ctx, ref, valid()); err != nil {
+		t.Fatalf("a valid plan turn: %v", err)
+	}
+	start := aestudiotools.TurnRequest{TurnID: turnID, Project: "greeter", Kind: aestudiotools.TurnKindStart, Text: "idea"}
+	if _, err := f.StartTurn(ctx, ref, start); err != nil {
+		t.Fatalf("a valid start turn: %v", err)
+	}
+	for name, mutate := range map[string]func(*aestudiotools.TurnRequest){
+		"at a branch":         func(r *aestudiotools.TurnRequest) { r.At = "main" },
+		"at a short sha":      func(r *aestudiotools.TurnRequest) { r.At = "abc1234" },
+		"at on a start turn":  func(r *aestudiotools.TurnRequest) { r.Kind, r.Scope = aestudiotools.TurnKindStart, nil },
+		"scope tag with glob": func(r *aestudiotools.TurnRequest) { r.Scope.Tag = "v*" },
+		"empty scope tag":     func(r *aestudiotools.TurnRequest) { r.Scope.Tag = "" },
+		"story number":        func(r *aestudiotools.TurnRequest) { r.Scope.Stories[0].ID = "3" },
+		"story lower case":    func(r *aestudiotools.TurnRequest) { r.Scope.Stories[0].ID = "f1.1" },
+		"feature as story":    func(r *aestudiotools.TurnRequest) { r.Scope.Features[0].ID = "F1.1" },
+		"needs lower case":    func(r *aestudiotools.TurnRequest) { r.Scope.Features[1].Needs = []string{"f1"} },
+		"product-wide id":     func(r *aestudiotools.TurnRequest) { r.Scope.ProductWide[0].ID = "F1" },
+		"applies to All":      func(r *aestudiotools.TurnRequest) { r.Scope.ProductWide[0].AppliesTo = []string{"All"} },
+	} {
+		req := valid()
+		mutate(&req)
+		_, err := f.StartTurn(ctx, ref, req)
+		wantPod400(t, name, err)
+	}
+	for name, req := range map[string]aestudiotools.TurnRequest{
+		"turnId not a uuid": {TurnID: "t-1", Kind: aestudiotools.TurnKindPlan},
+		"unknown kind":      {TurnID: turnID, Kind: "chat"},
+	} {
+		if _, err := f.StartTurn(ctx, ref, req); err == nil || sourcecontrol.IsPermanent(err) {
+			t.Errorf("%s: err = %v, want the adapter's plain refusal", name, err)
+		}
+	}
+	// The pod resolves `at` before the turn starts: a tag or sha the
+	// repository lacks is 404 ref_not_found, permanent, and starts nothing.
+	for _, at := range []string{"tags/v9", "0000000000000000000000000000000000000000"} {
+		req := valid()
+		req.At = at
+		_, err := f.StartTurn(ctx, ref, req)
+		var se *aestudiotools.StatusError
+		if !errors.Is(err, sourcecontrol.ErrRefNotFound) || !errors.As(err, &se) || se.Status != 404 ||
+			se.Code != "ref_not_found" || !sourcecontrol.IsPermanent(err) {
+			t.Errorf("at %s: err = %v, want the adapter's permanent 404 ref_not_found", at, err)
+		}
+	}
+	if n := len(f.TurnCalls()); n != 2 {
+		t.Fatalf("%d turns recorded, want the 2 valid ones", n)
+	}
+}
+
+// ListReferences answers the names as the pod stores them: bare, lower-case,
+// sorted; none stored is an empty list.
+func TestFake_ListReferences(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	if names, err := f.ListReferences(ctx, ref); err != nil || names == nil || len(names) != 0 {
+		t.Fatalf("none stored: %#v, %v", names, err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, n := range []string{"Sketch One.PNG", `C:\docs\brief.pdf`} {
+		w, _ := mw.CreateFormFile("files", n)
+		_, _ = io.WriteString(w, n)
+	}
+	_ = mw.Close()
+	if err := f.PutReferences(ctx, ref, mw.FormDataContentType(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	names, err := f.ListReferences(ctx, sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "main"})
+	if err != nil || !slices.Equal(names, []string{"brief.pdf", "sketch-one.png"}) {
+		t.Fatalf("names = %v, %v", names, err)
+	}
+	f.FailOp(aestudiotest.OpListReferences, sourcecontrol.ErrOwnerNotAllowed)
+	if _, err := f.ListReferences(ctx, ref); !errors.Is(err, sourcecontrol.ErrOwnerNotAllowed) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestFake_References(t *testing.T) {
+	f := aestudiotest.New()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for _, n := range []string{"sketch.png", "brief.pdf"} {
+		w, _ := mw.CreateFormFile("files", n)
+		_, _ = io.WriteString(w, n)
+	}
+	_ = mw.Close()
+	if err := f.PutReferences(context.Background(), ref, mw.FormDataContentType(), &buf); err != nil {
+		t.Fatal(err)
+	}
+	// Stored per repository, whatever DefaultBranch the caller's ref carries.
+	if got := f.References(sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "greeter", DefaultBranch: "main"}); !slices.Equal(got, []string{"sketch.png", "brief.pdf"}) {
+		t.Fatalf("references = %v", got)
+	}
+	f.FailOp(aestudiotest.OpPutReferences, sourcecontrol.ErrReferenceRejected)
+	if err := f.PutReferences(context.Background(), ref, mw.FormDataContentType(), &bytes.Buffer{}); !errors.Is(err, sourcecontrol.ErrReferenceRejected) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := f.References(ref); len(got) != 2 {
+		t.Fatalf("a refused upload changed the set: %v", got)
+	}
+}
+
+// Like the pod, the fake refuses a type the models cannot read (an Office
+// document reaches the pod only as the markdown aep-api converts it to) and a
+// document over the per-document limit, and then keeps the stored set.
+func TestFake_PutReferences_EnforcesThePodsRules(t *testing.T) {
+	for name, content := range map[string][]byte{
+		"policy.docx": []byte("PK"),
+		"big.pdf":     bytes.Repeat([]byte("a"), sourcecontrol.MaxReferenceBytes+1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := aestudiotest.New()
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			w, _ := mw.CreateFormFile("files", name)
+			_, _ = w.Write(content)
+			_ = mw.Close()
+			if err := f.PutReferences(context.Background(), ref, mw.FormDataContentType(), &buf); !errors.Is(err, sourcecontrol.ErrReferenceRejected) {
+				t.Fatalf("err = %v, want ErrReferenceRejected", err)
+			}
+			if got := f.References(ref); got != nil {
+				t.Fatalf("stored %v from a refused upload", got)
+			}
+		})
+	}
+}
+
+// ReadBundle refuses an ext the contract pattern rejects, or more than 20, as
+// the pod's validator does (before any repo resolution, a permanent 400); a
+// valid filter reads.
+func TestFake_ReadBundleValidatesExts(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"specs/a.json": "1", "specs/b.md": "2"})
+	tooMany := make([]string, 21)
+	for i := range tooMany {
+		tooMany[i] = ".json"
+	}
+	for name, exts := range map[string][]string{
+		"path suffix": {"/design.json"},
+		"no dot":      {"json"},
+		"empty":       {""},
+		"too many":    tooMany,
+	} {
+		_, _, err := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "specs/", Exts: exts})
+		var se *aestudiotools.StatusError
+		if !errors.As(err, &se) || se.Status != 400 || se.Code != "validation_failed" || !sourcecontrol.IsPermanent(err) {
+			t.Errorf("%s: err = %v, want a permanent 400 validation_failed", name, err)
+		}
+	}
+	missing := sourcecontrol.RepoRef{Org: "default", Owner: "acme", Repo: "absent"}
+	if _, _, err := f.ReadBundle(ctx, missing, "", sourcecontrol.BundleFilter{Exts: []string{"x"}}); !sourcecontrol.IsPermanent(err) {
+		t.Errorf("invalid filter on a missing repo: err = %v, want the 400 before resolution", err)
+	}
+	files, _, err := f.ReadBundle(ctx, ref, "", sourcecontrol.BundleFilter{Prefix: "specs/", Exts: []string{".json"}})
+	if err != nil || len(files) != 1 || files["specs/a.json"] != "1" {
+		t.Fatalf("valid filter: files=%v err=%v", files, err)
+	}
+}
+
+// wantPod400 asserts err is the permanent StatusError a pod 400
+// validation_failed becomes in the adapter.
+func wantPod400(t *testing.T, what string, err error) {
+	t.Helper()
+	var se *aestudiotools.StatusError
+	if !errors.As(err, &se) || se.Status != 400 || se.Code != "validation_failed" || !sourcecontrol.IsPermanent(err) {
+		t.Errorf("%s: err = %v, want a permanent 400 validation_failed", what, err)
+	}
+}
+
+// wantRefInvalid asserts err is the refused ref the adapter makes of a pod
+// 400 validation_failed on get-head / list-tree.
+func wantRefInvalid(t *testing.T, what string, err error) {
+	t.Helper()
+	if !errors.Is(err, sourcecontrol.ErrRefInvalid) {
+		t.Errorf("%s: err = %v, want ErrRefInvalid", what, err)
+	}
+}
+
+// The Fake refuses what the pod refuses, in the adapter's shape: an `at`
+// outside tags/<name> | 40 lowercase hex, a Local read with an `at`, and a
+// commit or tag with an empty message.
+func TestFake_RefusesWhatThePodRefuses(t *testing.T) {
+	ctx := context.Background()
+	f := aestudiotest.New()
+	f.SeedRepo(ref, map[string]string{"a.md": "1"})
+	tip, err := f.Head(ctx, ref, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v1", Message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, at := range []string{"main", "HEAD", tip[:7], strings.ToUpper(tip), "v1", "tags/", "tags/a b"} {
+		_, err := f.Head(ctx, ref, at)
+		wantPod400(t, "head at "+at, err)
+		wantRefInvalid(t, "head at "+at, err)
+		_, _, err = f.List(ctx, ref, at)
+		wantPod400(t, "list at "+at, err)
+		wantRefInvalid(t, "list at "+at, err)
+		_, _, err = f.ReadFile(ctx, ref, at, "a.md")
+		wantPod400(t, "read-file at "+at, err)
+		_, _, err = f.ReadBundle(ctx, ref, at, sourcecontrol.BundleFilter{Prefix: "a"})
+		wantPod400(t, "read-bundle at "+at, err)
+		wantPod400(t, "tag target "+at, f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "x-" + strconv.Itoa(len(at)), Message: "m", Target: at}))
+	}
+	for _, at := range []string{"", tip, "tags/v1"} {
+		if _, err := f.Head(ctx, ref, at); err != nil {
+			t.Errorf("head at %q: %v", at, err)
+		}
+	}
+
+	_, err = f.Head(ctx, ref, tip, sourcecontrol.Local())
+	wantPod400(t, "local head with at", err)
+	_, _, err = f.List(ctx, ref, "tags/v1", sourcecontrol.Local())
+	wantPod400(t, "local list with at", err)
+	if _, _, err := f.List(ctx, ref, "", sourcecontrol.Local()); err != nil {
+		t.Errorf("local list at the tip: %v", err)
+	}
+
+	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: " ", Writes: []sourcecontrol.FileWrite{{Path: "b.md", Content: "2"}}})
+	wantPod400(t, "empty commit message", err)
+	_, err = f.Commit(ctx, ref, sourcecontrol.CommitRequest{Message: "m"})
+	wantPod400(t, "commit with no change", err)
+	wantPod400(t, "empty tag message", f.Tag(ctx, ref, sourcecontrol.TagSpec{Name: "v2", Message: ""}))
+}

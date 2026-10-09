@@ -22,7 +22,12 @@ import { createContext, useContext } from "react";
 // in thunder mode, the fixed dev identity in mock mode. Everything under
 // AuthGuard can rely on it existing.
 export interface Session {
-  user: { name: string; email: string; role?: string };
+  /**
+   * `id` is the token's `sub`: the id the design agent stamps a turn's and a
+   * message's author with, so the chat can tell the user's own from a
+   * teammate's. `""` when the token carries none.
+   */
+  user: { id: string; name: string; email: string; role?: string };
   /** Active org, resolved with the BFF's precedence (ouHandle > ouName > ouId). */
   orgHandle: string | null;
   signOut: () => void;

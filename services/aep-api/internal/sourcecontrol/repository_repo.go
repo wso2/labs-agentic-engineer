@@ -30,22 +30,30 @@ import (
 type RepoRepository interface {
 	GetByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) (*GitRepository, error)
 	GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug string) (*GitRepository, error)
+	// FindInOrgByFullName returns the org's repo row whose clone URL is the
+	// GitHub repository fullName ("owner/name"), or nil. The webhook ingest
+	// checks a delivery's repository with it, so a repository another org
+	// owns is never found.
+	FindInOrgByFullName(ctx context.Context, ocOrgID, fullName string) (*GitRepository, error)
 	// ListAllReady returns every repo in `ready` status across all orgs.
 	// Used by cross-org sweeps (eventcore) and org-filtered project listing
 	// (provisioning) — not a clone pre-warm. Bounded by the table size; not
 	// paginated because the caller bounds concurrency separately.
 	ListAllReady(ctx context.Context) ([]GitRepository, error)
-	// ListAll returns every repo row across all orgs and ALL statuses. The
-	// disk reaper's orphan reconciliation set-differences the on-disk mirror
-	// tree against this — pending/error rows must be included so their dirs
-	// are not misread as orphans. Bounded by the table size, like
-	// ListAllReady.
-	ListAll(ctx context.Context) ([]GitRepository, error)
 	// ListByOrg returns the org's repo rows (all statuses). Feeds the
 	// project-list repoUrl annotation (#108); one indexed query per page.
 	ListByOrg(ctx context.Context, ocOrgID string) ([]GitRepository, error)
 	Create(ctx context.Context, repo *GitRepository) error
 	Update(ctx context.Context, repo *GitRepository) error
+	// SetWebhookIDIfReady stores hookID on the (org, project) row only while
+	// it is `ready`, as a column update (never re-inserting a row a
+	// concurrent delete dropped). It reports whether a row took it.
+	SetWebhookIDIfReady(ctx context.Context, ocOrgID, projectID string, hookID int64) (bool, error)
+	// ClearWebhookIDs forgets the hook id of every row of the org.
+	ClearWebhookIDs(ctx context.Context, ocOrgID string) error
+	// SetStatusIf moves the (org, project) row from status `from` to `to` as
+	// a column update, and reports whether it did.
+	SetStatusIf(ctx context.Context, ocOrgID, projectID, from, to string) (bool, error)
 	// DeleteByOrgAndProjectID deletes the repo row scoped to (ocOrgID,
 	// projectID). Org-scoped because project_id is only composite-unique with
 	// org_id — an org-less delete could remove another org's row.
@@ -94,19 +102,27 @@ func (r *repoRepository) GetByOrgAndSlug(ctx context.Context, ocOrgID, repoSlug 
 	return &repo, nil
 }
 
+func (r *repoRepository) FindInOrgByFullName(ctx context.Context, ocOrgID, fullName string) (*GitRepository, error) {
+	if ocOrgID == "" || fullName == "" {
+		return nil, nil
+	}
+	var rows []GitRepository
+	if err := r.db.WithContext(ctx).
+		Where("org_id = ? AND repo_url IN ?", ocOrgID, githubRepoURLs(fullName)).
+		Limit(1).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	return &rows[0], nil
+}
+
 func (r *repoRepository) ListAllReady(ctx context.Context) ([]GitRepository, error) {
 	var rows []GitRepository
 	if err := r.db.WithContext(ctx).
-		Where("status = ?", "ready").
+		Where("status = ?", RepoStatusReady).
 		Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return rows, nil
-}
-
-func (r *repoRepository) ListAll(ctx context.Context) ([]GitRepository, error) {
-	var rows []GitRepository
-	if err := r.db.WithContext(ctx).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil
@@ -128,6 +144,26 @@ func (r *repoRepository) Create(ctx context.Context, repo *GitRepository) error 
 
 func (r *repoRepository) Update(ctx context.Context, repo *GitRepository) error {
 	return r.db.WithContext(ctx).Save(repo).Error
+}
+
+func (r *repoRepository) SetWebhookIDIfReady(ctx context.Context, ocOrgID, projectID string, hookID int64) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&GitRepository{}).
+		Where("org_id = ? AND project_id = ? AND status = ?", ocOrgID, projectID, RepoStatusReady).
+		Update("webhook_id", hookID)
+	return res.RowsAffected > 0, res.Error
+}
+
+func (r *repoRepository) ClearWebhookIDs(ctx context.Context, ocOrgID string) error {
+	return r.db.WithContext(ctx).Model(&GitRepository{}).
+		Where("org_id = ? AND webhook_id IS NOT NULL", ocOrgID).
+		Update("webhook_id", nil).Error
+}
+
+func (r *repoRepository) SetStatusIf(ctx context.Context, ocOrgID, projectID, from, to string) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&GitRepository{}).
+		Where("org_id = ? AND project_id = ? AND status = ?", ocOrgID, projectID, from).
+		Update("status", to)
+	return res.RowsAffected > 0, res.Error
 }
 
 func (r *repoRepository) DeleteByOrgAndProjectID(ctx context.Context, ocOrgID, projectID string) error {
@@ -156,15 +192,46 @@ func LookupOrgProjectByRepoURL(db *gorm.DB, repoFullName string) (orgID, project
 	// unanchored `ILIKE '%'+fullName` whose leading wildcard matched any host
 	// and any path suffix — a payload could otherwise resolve another org's
 	// repo. Anchored on host+owner+repo; both `.git` and bare shapes.
-	canonical := "https://github.com/" + repoFullName
 	err = db.Raw(`
 		SELECT org_id, project_id
 		FROM git_repositories
-		WHERE repo_url = ? OR repo_url = ?
+		WHERE repo_url IN ?
 		LIMIT 1
-	`, canonical, canonical+".git").Scan(&r).Error
+	`, githubRepoURLs(repoFullName)).Scan(&r).Error
 	if err != nil {
 		return "", "", err
 	}
 	return r.OrgID, r.ProjectID, nil
+}
+
+// LookupOrgProjectByRepoURLInOrg is LookupOrgProjectByRepoURL restricted to
+// orgID's rows: a webhook handler running under a delivery org resolves a
+// repository only there, so a payload naming another org's repository yields
+// ("", "", nil), the same as an unknown one.
+func LookupOrgProjectByRepoURLInOrg(db *gorm.DB, orgID, repoFullName string) (string, string, error) {
+	if orgID == "" || repoFullName == "" {
+		return "", "", nil
+	}
+	var r struct {
+		OrgID     string
+		ProjectID string
+	}
+	err := db.Raw(`
+		SELECT org_id, project_id
+		FROM git_repositories
+		WHERE org_id = ? AND repo_url IN ?
+		LIMIT 1
+	`, orgID, githubRepoURLs(repoFullName)).Scan(&r).Error
+	if err != nil {
+		return "", "", err
+	}
+	return r.OrgID, r.ProjectID, nil
+}
+
+// githubRepoURLs are the clone URLs a repo row stores for a GitHub full name:
+// the canonical URL, bare and with ".git". Matched exactly (INT-2), never as a
+// pattern.
+func githubRepoURLs(fullName string) []string {
+	canonical := "https://github.com/" + fullName
+	return []string{canonical, canonical + ".git"}
 }

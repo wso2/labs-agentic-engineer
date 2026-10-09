@@ -119,7 +119,9 @@ go run . sre install --platform-chart ../../deployments/helm-charts/platform
 `--platform-chart` (or `--platform-version`) is required: it pins the
 platform-chart release this command upgrades in-process (`sreAgent.*`
 values), so a re-run can never silently drift the platform release to
-whatever is latest.
+whatever is latest. That in-process update also re-applies the AE Studio values
+(`aeStudio.*`) from the aectl platform config, so the command refuses to start
+without a valid one (`make dev-env` imports it).
 
 The command requires OC ≥ 1.2.5 (`--skip-oc-version-check` to bypass) and
 picks its plane mode from the cluster:

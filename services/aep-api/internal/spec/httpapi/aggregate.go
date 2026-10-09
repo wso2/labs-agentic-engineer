@@ -18,10 +18,8 @@ package httpapi
 
 import (
 	"github.com/wso2/aep/aep-api/internal/spec"
-	"github.com/wso2/aep/aep-api/internal/spec/collab"
 	"github.com/wso2/aep/aep-api/internal/spec/designdeps"
 	"github.com/wso2/aep/aep-api/internal/spec/files"
-	"github.com/wso2/aep/aep-api/internal/spec/genaiturns"
 	"github.com/wso2/aep/aep-api/internal/spec/skills"
 	"github.com/wso2/aep/aep-api/internal/spec/tags"
 )
@@ -29,22 +27,18 @@ import (
 // Every slice names its type Handler, so embedding them directly would be
 // "Handler redeclared". Local aliases give distinct field names (§6).
 type (
-	genaiturnsHandler = genaiturns.Handler
 	filesHandler      = files.Handler
 	tagsHandler       = tags.Handler
 	skillsHandler     = skills.Handler
-	collabHandler     = collab.Handler
 	designdepsHandler = designdeps.Handler
 )
 
 // Handlers is the spec domain's slice handlers, embedded so Go promotes each
 // operation exactly once into the edge's composite. It declares nothing.
 type Handlers struct {
-	*genaiturnsHandler
 	*filesHandler
 	*tagsHandler
 	*skillsHandler
-	*collabHandler
 	*designdepsHandler
 }
 
@@ -54,15 +48,19 @@ type Handlers struct {
 // unwired collaborator panics exactly as it did before (the edge assigns each
 // dep directly, no OrEmpty helper).
 func New(d spec.Deps) (*Handlers, error) {
+	// The references upload releases a kickoff that project creation held
+	// (#562). Passed only when wired: a nil *KickoffService in the port
+	// would not read as "no kickoff".
+	var filesHandler *files.Handler
+	if d.Kickoff != nil {
+		filesHandler = files.NewHandler(d.References, d.Repos, d.Kickoff)
+	} else {
+		filesHandler = files.NewHandler(d.References, d.Repos, nil)
+	}
 	return &Handlers{
-		genaiturnsHandler: genaiturns.New(d.GenAI),
-		// The references upload releases a kickoff that project creation held
-		// (#562) — the turn engine is what fires it, so the slice gets it as
-		// a narrow port rather than growing a genai import.
-		filesHandler:  files.New(d.Files, d.FilesActivity).WithKickoffStarter(d.GenAI),
+		filesHandler:  filesHandler,
 		tagsHandler:   tags.New(d.Artifacts),
 		skillsHandler: skills.New(d.Skills, d.SkillMut, d.SkillImport),
-		collabHandler: collab.New(d.CollabRepo),
 		// The dependency definition view's two writes (provide a contract, accept an
 		// assumption) — the one slice that touches a dependency's directory
 		// on the user's behalf rather than the agent's.

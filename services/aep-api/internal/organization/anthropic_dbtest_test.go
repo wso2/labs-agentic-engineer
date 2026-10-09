@@ -18,9 +18,10 @@ package organization_test
 
 // DBTEST tier (skips under -short; `make test-db` runs it): the AI agents card
 // writing the model connection and the Claude subscription, over a pristine
-// per-test Postgres (dbtest.New) with the REAL AES-256-GCM secrets.NewDBStore
-// and the REAL prober against a fake endpoint — the SQL-shaped behavior under
-// pin: the connection row and its org_secrets bytes, org scoping, the
+// per-test Postgres (dbtest.New) with the REAL org secret writer, repository
+// and lock, a fake vault at the writer's port, and the REAL prober against a
+// fake endpoint — the SQL-shaped behavior under pin: the connection row, the
+// key's default-key reference (the only place the key goes), org scoping, the
 // disconnect's delete and org isolation. What ModelConnectionService reads
 // back from these rows is pinned in model_connection_dbtest_test.go.
 //
@@ -47,48 +48,66 @@ import (
 	"github.com/wso2/aep/aep-api/internal/platform/modelcost"
 	"github.com/wso2/aep/aep-api/internal/platform/orgconfig"
 	"github.com/wso2/aep/aep-api/internal/platform/patch"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
-
-// anthropicDBAESKey is the 32-byte AES-256 key for the real DBStore.
-const anthropicDBAESKey = "0123456789abcdef0123456789abcdef"
 
 // anthropicDBKey2 is a second well-formed key for the replace/isolation pins.
 const anthropicDBKey2 = "sk-ant-api03-ZyXwVuTsRqPoNmLkJiHgFe-second-9876"
 
 // cardDB is the real services, the card that writes them and the /config
-// orchestrator over one per-test Postgres.
+// orchestrator over one per-test Postgres, with the keys written to a fake
+// vault through the real org secret writer. ctx carries the user's ouId
+// claim every vault write needs.
 type cardDB struct {
-	db       *gorm.DB
-	svc      *organization.AnthropicCredentialService
-	conns    *organization.ModelConnectionService
-	config   *organization.Service
-	store    secrets.CredentialStore
-	repo     organization.OrgAnthropicRepository
-	connRepo organization.OrgModelConnectionRepository
-	endpoint *modelEndpoint
+	db        *gorm.DB
+	svc       *organization.AnthropicCredentialService
+	conns     *organization.ModelConnectionService
+	settings  *organization.AgentSettingsService
+	config    *organization.Service
+	repo      organization.OrgAnthropicRepository
+	connRepo  organization.OrgModelConnectionRepository
+	refs      organization.OrgSecretRepository
+	vault     *fakeVault
+	consumers *pathConsumers
+	endpoint  *modelEndpoint
+	ctx       context.Context
 }
 
 // newCardDB wires cardDB with a fake model endpoint and a fake Anthropic
-// subscription probe, both answering apiStatus.
-func newCardDB(t *testing.T, apiStatus int) *cardDB {
+// subscription probe, both answering apiStatus. existing are vault
+// references that exist before the test.
+func newCardDB(t *testing.T, apiStatus int, existing ...string) *cardDB {
 	t.Helper()
 	db := dbtest.New(t)
-	store, err := secrets.NewDBStore(db, []byte(anthropicDBAESKey))
-	if err != nil {
-		t.Fatalf("real DBStore: %v", err)
-	}
 	subsBase, _ := anthropicFakeAPI(t, apiStatus)
 	endpoint := newModelEndpoint(t, apiStatus)
 	repo := organization.NewOrgAnthropicRepository(db)
 	connRepo := organization.NewOrgModelConnectionRepository(db)
-	svc := organization.NewAnthropicCredentialService(repo, store).WithAnthropicAPIBase(subsBase)
-	conns := organization.NewModelConnectionService(connRepo, repo, store, sonnetRates()).WithProbeClient(endpoint.client())
+	refs := organization.NewOrgSecretRepository(db)
+	vault := newFakeVault(existing...)
+	sm := mintingSM{fakeSMClient: &fakeSMClient{}, vault: vault}
+	consumers := &pathConsumers{}
+	writer := organization.NewSecretRefWriter(sm, organization.NewIDPRepository(db)).
+		WithOrgSecretWriter(organization.NewOrgSecretWriter(sm, refs, organization.NewOrgSecretLock(db), fixedClock)).
+		WithModelKeyConsumers(consumers)
+	svc := organization.NewAnthropicCredentialService(repo).WithAnthropicAPIBase(subsBase).WithSecretRefWriter(writer)
+	conns := organization.NewModelConnectionService(connRepo, repo, refs, sonnetRates()).WithProbeClient(endpoint.client()).
+		WithSecretRefWriter(writer)
 	settings := organization.NewAgentSettingsService(organization.NewOrgAgentSettingsRepository(db),
-		organization.NewOrganizationRepository(db), svc, conns, organization.NewAgentsCardRepository(db, store), orgconfig.AgentRuntimes)
-	config := organization.NewService(nil, nil, nil, nil, organization.PlatformIDPConfig{}, "", "").
-		WithAgentSettings(settings)
-	return &cardDB{db: db, svc: svc, conns: conns, config: config, store: store, repo: repo, connRepo: connRepo, endpoint: endpoint}
+		organization.NewOrganizationRepository(db), svc, conns, organization.NewAgentsCardRepository(db), orgconfig.AgentRuntimes)
+	config := organization.NewService(nil, nil, nil, organization.PlatformIDPConfig{}).
+		WithOrgSecretRefs(refs).WithAgentSettings(settings)
+	return &cardDB{db: db, svc: svc, conns: conns, settings: settings, config: config, repo: repo, connRepo: connRepo,
+		refs: refs, vault: vault, consumers: consumers, endpoint: endpoint, ctx: claimsCtx(uuid.NewString())}
+}
+
+// ref is the org secret's reference row, nil when unset.
+func (c *cardDB) ref(t *testing.T, org string, s organization.OrgSecret) *organization.OrgSecretRef {
+	t.Helper()
+	ref, err := c.refs.Get(context.Background(), org, s)
+	if err != nil {
+		t.Fatalf("org secret %s/%s: %v", org, s, err)
+	}
+	return ref
 }
 
 func sonnetRates() *modelcost.Stamper {
@@ -115,7 +134,7 @@ func subscriptionPatch(token string) orgconfig.ConfigPatch {
 
 func (c *cardDB) patch(t *testing.T, org string, p orgconfig.ConfigPatch) *orgconfig.ConfigProjection {
 	t.Helper()
-	out, err := c.config.Patch(context.Background(), org, "ada", p)
+	out, err := c.config.Patch(c.ctx, org, "ada", p)
 	if err != nil {
 		t.Fatalf("patch %s: %v", org, err)
 	}
@@ -152,7 +171,6 @@ func cardErrCode(t *testing.T, err error) string {
 func TestModelConnectionConnect_HappyPath_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	ctx := context.Background()
 	start := time.Now().UTC().Add(-time.Second)
 
 	// The key arrives padded — the card must trim before shape-check + store.
@@ -162,17 +180,18 @@ func TestModelConnectionConnect_HappyPath_DB(t *testing.T) {
 		row.AuthScheme != "x-api-key" || row.ContextWindow != nil || row.OutputLimit != nil || row.ImageInput != "yes" {
 		t.Fatalf("row = %+v, want Anthropic's API with its defaults and NULL limits", row)
 	}
-	if row.KeyPreview != "sk-a…1234" || row.UpdatedBy == nil || *row.UpdatedBy != "ada" || row.ConnectedAt.Before(start) {
-		t.Fatalf("row = %+v, want the preview, the actor and a fresh connectedAt", row)
+	if row.UpdatedBy == nil || *row.UpdatedBy != "ada" || row.ConnectedAt.Before(start) {
+		t.Fatalf("row = %+v, want the actor and a fresh connectedAt", row)
 	}
 	// The probe's findings ride the response.
 	if out.LLMCheck == nil || out.LLMCheck.ModelListed != "yes" || !out.LLMCheck.Priced {
 		t.Fatalf("llmCheck = %+v, want a listed, priced model", out.LLMCheck)
 	}
-	// The TRIMMED key round-trips through the real AES-GCM org_secrets store.
-	got, err := c.store.Get(ctx, "acme", "model/key")
-	if err != nil || string(got) != anthropicUnitKey {
-		t.Fatalf("stored key: got %q (%v), want the trimmed key", string(got), err)
+	// The TRIMMED key went to the vault alone, under its default-key
+	// reference; Postgres holds the reference's name and no value.
+	ref := c.ref(t, "acme", organization.OrgSecretDefaultKey)
+	if ref == nil || !c.vault.refs[ref.Name] || c.vault.lastData["api-key"] != anthropicUnitKey {
+		t.Fatalf("default-key %+v, vault %v: want the trimmed key under the recorded reference", ref, c.vault.live())
 	}
 }
 
@@ -181,15 +200,15 @@ func TestModelConnectionConnect_RejectedKeyLeavesNoTrace_DB(t *testing.T) {
 	c := newCardDB(t, http.StatusUnauthorized)
 	ctx := context.Background()
 
-	_, err := c.config.Patch(ctx, "acme", "ada", keyPatch(anthropicUnitKey))
+	_, err := c.config.Patch(c.ctx, "acme", "ada", keyPatch(anthropicUnitKey))
 	if got := cardErrCode(t, err); got != "llm_key_rejected" {
 		t.Fatalf("code: got %q, want llm_key_rejected", got)
 	}
 	if row, err := c.connRepo.GetByOrg(ctx, "acme"); err != nil || row != nil {
 		t.Fatalf("row after rejected connect: %+v (%v), want none", row, err)
 	}
-	if _, err := c.store.Get(ctx, "acme", "model/key"); !errors.Is(err, secrets.ErrSecretNotFound) {
-		t.Fatalf("store after rejected connect: want ErrSecretNotFound, got %v", err)
+	if c.ref(t, "acme", organization.OrgSecretDefaultKey) != nil || c.vault.creates != 0 {
+		t.Fatalf("a rejected key reached the vault (%d writes)", c.vault.creates)
 	}
 }
 
@@ -197,18 +216,16 @@ func TestModelConnectionConnect_RejectedKeyLeavesNoTrace_DB(t *testing.T) {
 func TestModelConnectionConnect_ReplaceUpserts_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	ctx := context.Background()
 
 	first := c.connect(t, "acme", anthropicUnitKey)
 	time.Sleep(25 * time.Millisecond) // make the two saves' clocks distinguishable
 	second := c.connect(t, "acme", anthropicDBKey2)
 
-	if second.KeyPreview != "sk-a…9876" || !second.ConnectedAt.Equal(first.ConnectedAt) || !second.UpdatedAt.After(first.UpdatedAt) {
+	if !second.ConnectedAt.Equal(first.ConnectedAt) || !second.UpdatedAt.After(first.UpdatedAt) {
 		t.Fatalf("rotation: first %+v, second %+v", first, second)
 	}
-	got, err := c.store.Get(ctx, "acme", "model/key")
-	if err != nil || string(got) != anthropicDBKey2 {
-		t.Fatalf("stored key after replace: got %q err %v, want key2", string(got), err)
+	if c.vault.lastData["api-key"] != anthropicDBKey2 {
+		t.Fatal("the rotation's vault write holds key2")
 	}
 
 	c.patch(t, "acme", orgconfig.ConfigPatch{
@@ -233,19 +250,14 @@ func TestModelConnectionDisconnect_RemovesRowAndBytes_Idempotent_DB(t *testing.T
 		t.Fatalf("seed org: %v", err)
 	}
 	c.connect(t, "acme", anthropicUnitKey)
-	// An org the rename has not finished still holds its Anthropic-era copy.
-	if err := c.store.Put(ctx, "acme", "anthropic/key", []byte(anthropicUnitKey)); err != nil {
-		t.Fatalf("seed anthropic/key: %v", err)
-	}
+	key := c.ref(t, "acme", organization.OrgSecretDefaultKey)
 
 	out := c.patch(t, "acme", disconnectPatch())
 	if row, err := c.connRepo.GetByOrg(ctx, "acme"); err != nil || row != nil {
 		t.Fatalf("row after disconnect: %+v (%v)", row, err)
 	}
-	for _, key := range []string{"model/key", "anthropic/key"} {
-		if _, err := c.store.Get(ctx, "acme", key); !errors.Is(err, secrets.ErrSecretNotFound) {
-			t.Fatalf("%s must go with the row, got %v", key, err)
-		}
+	if c.ref(t, "acme", organization.OrgSecretDefaultKey) != nil || c.vault.refs[key.Name] {
+		t.Fatalf("the default-key row and its reference must go with the connection (vault %v)", c.vault.live())
 	}
 	if out.LLM != nil || out.LLMDisconnectedAt == nil {
 		t.Fatalf("projection after disconnect: llm=%+v disconnectedAt=%v", out.LLM, out.LLMDisconnectedAt)
@@ -262,88 +274,54 @@ func TestModelConnectionOrgIsolation_DB(t *testing.T) {
 	c.connect(t, "acme", anthropicUnitKey)
 	c.connect(t, "globex", anthropicDBKey2)
 
-	if _, key, ok, err := c.conns.Effective(ctx, "acme"); err != nil || !ok || key != anthropicUnitKey {
-		t.Fatalf("acme effective key: ok=%v err %v", ok, err)
+	_, acme, err := c.conns.KeyRef(ctx, "acme")
+	if err != nil {
+		t.Fatalf("acme key ref: %v", err)
 	}
-	if _, key, ok, err := c.conns.Effective(ctx, "globex"); err != nil || !ok || key != anthropicDBKey2 {
-		t.Fatalf("globex effective key: ok=%v err %v", ok, err)
+	_, globex, err := c.conns.KeyRef(ctx, "globex")
+	if err != nil || globex.Name == acme.Name {
+		t.Fatalf("globex key ref %+v (%v): each org its own reference", globex, err)
 	}
-	if _, _, ok, err := c.conns.Effective(ctx, "intruder"); err != nil || ok {
+	if _, ok, err := c.conns.Connection(ctx, "intruder"); err != nil || ok {
 		t.Fatalf("intruder must have no connection, got ok=%v (%v)", ok, err)
 	}
-	// Disconnecting one org must not touch the other's row or bytes.
+	// Disconnecting one org must not touch the other's row or reference.
 	c.patch(t, "acme", disconnectPatch())
 	c.row(t, "globex")
-	if got, err := c.store.Get(ctx, "globex", "model/key"); err != nil || string(got) != anthropicDBKey2 {
-		t.Fatalf("globex bytes must survive acme's disconnect: %q err %v", string(got), err)
+	if ref := c.ref(t, "globex", organization.OrgSecretDefaultKey); ref == nil || ref.Name != globex.Name || !c.vault.refs[globex.Name] {
+		t.Fatalf("globex's reference must survive acme's disconnect: %+v", ref)
 	}
 }
 
-func TestModelConnectionResyncSecretRef_NoopCases_DB(t *testing.T) {
+// --- the keys in vault -------------------------------------------------------
+
+// Each saved key and token is written to the vault from the request, as a new
+// reference its org_secrets row records, and a disconnect deletes the key's
+// reference and the token's.
+func TestAgentsCardSave_WritesTheRequestKeysToVault_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
-	ctx := context.Background()
 
-	if wrote, err := c.conns.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("absent org: want (false,nil), got (%v,%v)", wrote, err)
-	}
-	c.connect(t, "acme", anthropicUnitKey)
-	if wrote, err := c.conns.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("no writer wired: want (false,nil), got (%v,%v)", wrote, err)
-	}
-	if wrote, err := c.svc.ResyncSecretRef(ctx, "acme"); wrote || err != nil {
-		t.Fatalf("no subscription: want (false,nil), got (%v,%v)", wrote, err)
-	}
-}
-
-// --- the key's SM-API copy ------------------------------------------------------
-
-// The copies follow the commit under the card's lock: each saved key and
-// token is uploaded and its row stamped with where it lives, and a
-// disconnect deletes the connection key's copy and the token's.
-func TestAgentsCardSave_MirrorsAndStampsTheCopies_DB(t *testing.T) {
-	t.Parallel()
-	c := newCardDB(t, http.StatusOK)
-	sm := &fakeSMClient{createRef: "model-connection-secrets"}
-	writer := organization.NewSecretRefWriter(sm, organization.NewOrgCredentialRepository(c.db, nil), c.repo,
-		organization.NewIDPRepository(c.db, nil), c.connRepo)
-	c.conns.WithSecretRefWriter(writer)
-	c.svc.WithSecretRefWriter(writer)
-	ctx := claimsCtx(uuid.NewString())
-	patch := func(p orgconfig.ConfigPatch) {
-		t.Helper()
-		if _, err := c.config.Patch(ctx, "acme", "ada", p); err != nil {
-			t.Fatalf("patch: %v", err)
-		}
-	}
-	lastUpload := func() string {
-		t.Helper()
-		if len(sm.createCalls) == 0 {
-			t.Fatal("nothing was uploaded")
-		}
-		return sm.createCalls[len(sm.createCalls)-1].data[secretmanagersvc.SecretKeyAPIKey]
+	c.patch(t, "acme", keyPatch(anthropicUnitKey))
+	key := c.ref(t, "acme", organization.OrgSecretDefaultKey)
+	if c.vault.lastData[secretmanagersvc.SecretKeyAPIKey] != anthropicUnitKey || key == nil || !c.vault.refs[key.Name] {
+		t.Fatalf("default-key %+v, vault %v: want the saved key under a recorded reference", key, c.vault.live())
 	}
 
-	patch(keyPatch(anthropicUnitKey))
-	if got := lastUpload(); got != anthropicUnitKey {
-		t.Fatalf("uploaded %q, want the saved key", got)
-	}
-	if row := c.row(t, "acme"); derefStr(row.SecretRefName) != "model-connection-secrets" || derefStr(row.SecretRefKVPath) == "" {
-		t.Fatalf("connection triplet = %v %v, want the uploaded copy", row.SecretRefName, row.SecretRefKVPath)
-	}
-
-	patch(subscriptionPatch(anthropicDBOAuthToken))
-	if got := lastUpload(); got != anthropicDBOAuthToken {
-		t.Fatalf("uploaded %q, want the subscription token", got)
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+	token := c.ref(t, "acme", organization.OrgSecretCodingAgentKey)
+	if c.vault.lastData[secretmanagersvc.SecretKeyAPIKey] != anthropicDBOAuthToken || token == nil || !c.vault.refs[token.Name] {
+		t.Fatalf("coding-agent-key %+v: want the subscription token under a recorded reference", token)
 	}
 	sub, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding)
-	if err != nil || sub == nil || derefStr(sub.SecretRefName) == "" || derefStr(sub.SecretRefKVPath) == "" {
-		t.Fatalf("subscription row = %+v (%v), want its triplet stamped", sub, err)
+	if err != nil || sub == nil {
+		t.Fatalf("subscription row = %+v (%v), want one", sub, err)
 	}
 
-	patch(disconnectPatch())
-	if len(sm.deleteCalls) != 2 {
-		t.Fatalf("SM-API deletes = %d, want the key's copy and the token's", len(sm.deleteCalls))
+	c.patch(t, "acme", disconnectPatch())
+	if c.vault.refs[key.Name] || c.vault.refs[token.Name] ||
+		c.ref(t, "acme", organization.OrgSecretDefaultKey) != nil || c.ref(t, "acme", organization.OrgSecretCodingAgentKey) != nil {
+		t.Fatalf("a disconnect deletes the key's reference and the token's (vault %v)", c.vault.live())
 	}
 }
 
@@ -400,22 +378,23 @@ func TestModelConnectionSave_PublishesTheConnectionToTheModelProvider_DB(t *test
 	}
 }
 
-// A save that moves the URL and keeps the key (allowed on the stored host)
-// still changes what the provider holds, so it publishes — with the stored
-// key, since the save carried none.
-func TestModelConnectionSave_AURLChangeKeepingTheKeyPublishesTheStoredKey_DB(t *testing.T) {
+// A save that moves the URL rewrites the provider, so it needs the key: the
+// stored one is never read back. Without one it is refused and publishes
+// nothing; with one it publishes the request's key on the new URL.
+func TestModelConnectionSave_AURLChangeNeedsTheKeyAndPublishesIt_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	pub := &fakeModelProviderPublisher{}
 	c.svc.WithModelProvider(pub)
 
 	c.patch(t, "acme", ollamaPatch())
-	c.patch(t, "acme", llmPatch(orgconfig.LLMPatch{Kind: "openai-compatible", BaseURL: "https://ollama.com/api/v1"}))
-	if pub.calls != 2 {
-		t.Fatalf("publishes = %d, want the URL change published", pub.calls)
+	_, err := c.config.Patch(c.ctx, "acme", "ada", llmPatch(orgconfig.LLMPatch{Kind: "openai-compatible", BaseURL: "https://ollama.com/api/v1"}))
+	if got := cardErrCode(t, err); got != "llm_key_required" || pub.calls != 1 {
+		t.Fatalf("a keyless URL change: code %q, publishes %d; want llm_key_required and none", got, pub.calls)
 	}
-	if pub.published != "ollama-db-key-0123456789" || pub.conn.BaseURL != "https://ollama.com/api/v1" {
-		t.Fatalf("published %q on %q, want the stored key on the new URL", pub.published, pub.conn.BaseURL)
+	c.patch(t, "acme", llmPatch(orgconfig.LLMPatch{Kind: "openai-compatible", BaseURL: "https://ollama.com/api/v1", APIKey: "ollama-db-key-rotated-0123"}))
+	if pub.calls != 2 || pub.published != "ollama-db-key-rotated-0123" || pub.conn.BaseURL != "https://ollama.com/api/v1" {
+		t.Fatalf("published %q on %q (%d calls), want the request's key on the new URL", pub.published, pub.conn.BaseURL, pub.calls)
 	}
 }
 
@@ -473,7 +452,7 @@ func TestModelConnectionDisconnect_SurvivesAClearFailure_DB(t *testing.T) {
 	pub := &fakeModelProviderPublisher{err: errors.New("amp unreachable")}
 	c.svc.WithModelProvider(pub)
 
-	if _, err := c.config.Patch(context.Background(), "acme", "ada", disconnectPatch()); err != nil {
+	if _, err := c.config.Patch(c.ctx, "acme", "ada", disconnectPatch()); err != nil {
 		t.Fatalf("the disconnect must succeed even when the provider clear fails: %v", err)
 	}
 	if pub.cleared != 1 {
@@ -484,15 +463,21 @@ func TestModelConnectionDisconnect_SurvivesAClearFailure_DB(t *testing.T) {
 	}
 }
 
-// A publisher failure must not fail the user's Settings action: the key IS
-// stored, and the next governed deploy re-asserts it on the provider.
-func TestModelConnectionSave_SurvivesAPublisherFailure_DB(t *testing.T) {
+// A publisher failure fails the save with agent_manager_not_updated (502), and
+// the key stays stored: a governed deploy fails closed without the provider,
+// so the user is told to save the key again rather than told "Saved".
+func TestModelConnectionSave_APublisherFailureIsAgentManagerNotUpdated_DB(t *testing.T) {
 	t.Parallel()
 	c := newCardDB(t, http.StatusOK)
 	c.svc.WithModelProvider(&fakeModelProviderPublisher{err: errors.New("amp unreachable")})
 
-	if _, err := c.config.Patch(context.Background(), "acme", "ada", keyPatch(anthropicDBKey2)); err != nil {
-		t.Fatalf("the save must succeed even when the provider push fails: %v", err)
+	_, err := c.config.Patch(c.ctx, "acme", "ada", keyPatch(anthropicDBKey2))
+	var se *organization.SectionError
+	if !errors.As(err, &se) || se.Status != http.StatusBadGateway || se.Code != "agent_manager_not_updated" || se.Section != "llm" {
+		t.Fatalf("err = %v, want a 502 agent_manager_not_updated on llm", err)
+	}
+	if se.Message != "Key saved; Agent Manager was not updated. Save the key again." {
+		t.Fatalf("message = %q", se.Message)
 	}
 	c.row(t, "acme")
 }
@@ -510,5 +495,126 @@ func TestModelConnectionSave_DoesNotPublishTheSubscription_DB(t *testing.T) {
 	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
 	if pub.calls != 1 {
 		t.Errorf("publisher called %d time(s); the subscription must not publish", pub.calls)
+	}
+}
+
+// --- one predicate: the credential row ------------------------------------------
+
+// removeSubscriptionPatch is the card's Remove: agents.subscription null.
+func removeSubscriptionPatch() orgconfig.ConfigPatch {
+	return orgconfig.ConfigPatch{Agents: patch.Field[orgconfig.AgentsWrite]{Sent: true, Value: orgconfig.AgentsWrite{
+		Subscription: patch.Field[orgconfig.SubscriptionWrite]{Sent: true, Null: true},
+	}}}
+}
+
+// legacySubscription leaves acme with a connection and the legacy subscription
+// shape: the credential row stays, its coding-agent-key reference row is gone
+// (saved before the token lived in vault).
+func legacySubscription(t *testing.T, c *cardDB) {
+	t.Helper()
+	c.patch(t, "acme", keyPatch(anthropicUnitKey))
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if c.ref(t, "acme", organization.OrgSecretCodingAgentKey) != nil {
+		t.Fatal("test setup: the coding-agent-key row is still there")
+	}
+	if row, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding); err != nil || row == nil {
+		t.Fatalf("test setup: the credential row must remain: %+v (%v)", row, err)
+	}
+}
+
+// GET /config and coding dispatch answer "does the org have a Claude
+// subscription" with the same predicate, the credential row: dispatch bills
+// the connection's key for a subscription whose token was never recorded, so
+// Settings must show that subscription (to replace or remove), flagged
+// tokenMissing.
+func TestAgentSettings_SubscriptionWithoutItsReferenceRow_ProjectsTokenMissing_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+
+	c.patch(t, "acme", keyPatch(anthropicUnitKey))
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil || got.Subscription.TokenMissing {
+		t.Fatalf("with its reference row: subscription = %+v (%v), want projected, token recorded", got.Subscription, err)
+	}
+
+	if err := c.db.Exec(`DELETE FROM org_secrets WHERE oc_org_id = 'acme' AND secret = 'coding-agent-key'`).Error; err != nil {
+		t.Fatal(err)
+	}
+	got, err = c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil {
+		t.Fatalf("without its reference row: subscription = %+v (%v), want projected", got.Subscription, err)
+	}
+	if !got.Subscription.TokenMissing {
+		t.Fatalf("without its reference row: tokenMissing = false, want true (%+v)", got.Subscription)
+	}
+}
+
+// tokenMissing means "coding bills the connection's key", which holds only for
+// an active subscription: dispatch errors on a non-active one before it reads
+// the reference row, so such a row is projected with its status and without
+// the flag, recorded token or not.
+func TestAgentSettings_InactiveSubscriptionIsNotTokenMissing_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+	if err := c.db.Exec(`UPDATE org_anthropic_credentials SET status = 'invalid' WHERE oc_org_id = 'acme' AND role = ?`,
+		string(organization.AnthropicRoleCoding)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil {
+		t.Fatalf("an inactive subscription = %+v (%v), want projected", got.Subscription, err)
+	}
+	if got.Subscription.Status != "invalid" || got.Subscription.TokenMissing {
+		t.Fatalf("an inactive subscription = %+v, want status invalid and tokenMissing false", got.Subscription)
+	}
+	if cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode); err == nil {
+		t.Fatalf("dispatch on an inactive subscription resolved %+v, want an error", cred)
+	}
+}
+
+// The card's Remove clears the legacy shape: the credential row goes, so the
+// subscription reads as none and a Claude Code run bills the connection's key.
+func TestAgentSettings_RemoveClearsASubscriptionWithoutItsReferenceRow_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+
+	c.patch(t, "acme", removeSubscriptionPatch())
+
+	if row, err := c.repo.GetByOrg(context.Background(), "acme", organization.AnthropicRoleCoding); err != nil || row != nil {
+		t.Fatalf("Remove must delete the credential row: %+v (%v)", row, err)
+	}
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription != nil {
+		t.Fatalf("after Remove: subscription = %+v (%v), want null", got.Subscription, err)
+	}
+	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err != nil || cred.Kind != organization.CodingCredentialConnectionKey {
+		t.Fatalf("after Remove a Claude Code run must bill the connection's key: cred=%+v err=%v", cred, err)
+	}
+}
+
+// Saving the token again over the legacy shape records its reference: the
+// projection is clean and dispatch mounts the subscription.
+func TestAgentSettings_ReplaceRecordsAMissingSubscriptionToken_DB(t *testing.T) {
+	t.Parallel()
+	c := newCardDB(t, http.StatusOK)
+	legacySubscription(t, c)
+
+	c.patch(t, "acme", subscriptionPatch(anthropicDBOAuthToken))
+
+	got, err := c.settings.Effective(context.Background(), "acme")
+	if err != nil || got.Subscription == nil || got.Subscription.TokenMissing {
+		t.Fatalf("after Replace: subscription = %+v (%v), want projected, token recorded", got.Subscription, err)
+	}
+	cred, err := c.conns.ResolveCodingCredential(context.Background(), "acme", orgconfig.AgentRuntimeClaudeCode)
+	if err != nil || cred.Kind != organization.CodingCredentialClaudeSubscription {
+		t.Fatalf("after Replace a Claude Code run must mount the subscription: cred=%+v err=%v", cred, err)
 	}
 }

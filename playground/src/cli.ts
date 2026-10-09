@@ -37,10 +37,7 @@ import { stdout as output } from "node:process";
 import { isTurnScope, type TurnScope } from "@aep/agent-stream";
 import * as clack from "@clack/prompts";
 import { loadRepoSkills } from "./kit/skills.js";
-import { parseStartCommand, parseFlowCommand } from "@aep/contracts/commands";
-import { chatSpec, flowSpec, startSpec } from "./engine/turn-spec.js";
-import { readReferences } from "./state/references.js";
-import { loadDotenv } from "@aep/agents/shared/env";
+import { loadDotenv } from "@aep/ae-design-agent/shared/env";
 import {
   chatTurn,
   codeCommand,
@@ -240,21 +237,11 @@ async function runHeadless(
       }
       const session = await openSession(projectDir, opts);
       try {
-        // Same `/<skill>` shortcut as the interactive chat loop (e.g.
-        // `play <dir> chat "/spec an expense app"`); a plain message rides
-        // through verbatim. No reserved control words in the one-shot verb.
-        //
-        // `/start` is resolved HERE rather than sent verbatim: production
-        // relies on aep-api to attach the captured idea, but the playground
-        // talks to the agents service directly, so it does the server's job.
-        const start = parseStartCommand(commandArg);
-        const flow = !start ? parseFlowCommand(commandArg) : null;
-        const turn = start
-          ? startSpec(start.inlineIdea || readIdea(projectDir), readReferences(projectDir))
-          : flow
-            ? flowSpec(flow.skill, flow.text, readReferences(projectDir))
-            : chatSpec(commandArg);
-        outcome = await chatTurn(session, turn, opts);
+        // Sent verbatim, as the interactive chat loop sends a line: the
+        // design agent parses `/<skill>` (e.g. `play <dir> chat "/spec an
+        // expense app"`) and resolves `/start`'s captured idea. No reserved
+        // control words in the one-shot verb.
+        outcome = await chatTurn(session, commandArg, opts);
       } finally {
         await session.close();
       }

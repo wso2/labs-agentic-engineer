@@ -16,45 +16,33 @@
 
 package spec
 
-// Shared harness for the artifact tests. The gittest tier runs the REAL code
-// paths, not mocked git:
+// Shared harness for the artifact tests: the REAL ArtifactService over the
+// in-memory AE Studio pod (aestudiotest.Fake), whose default branch tip IS
+// the draft "working tree" (arranged with r.seed / r.tag). Only the
+// repository row is faked besides: a single in-memory GitRepository naming a
+// GitHub repository (RefForRow needs owner/repo). save→tag and the reads at
+// HEAD / at a tag / at a sha therefore run end-to-end over git's object
+// semantics (blob and commit shas, annotated tags), offline.
 //
-//   - a real bare repo whose `main` tip IS the draft "working tree"
-//     (gittest.NewRemote; arranged with r.seed / r.tag),
-//   - the REAL gitfs Workspace engine mirroring that repo over file://
-//     (workspacetest.NewEngine + production NewGitOpsService) — every read,
-//     the save tag, AND the discard revert run through the mount plumbing;
-//     the Git-Data fake is gone with the REST write path,
-//   - the REAL artifacts.ArtifactService over all of the above.
-//
-// Only the two edges the flow doesn't own are faked: the RepoRepository row (a
-// single in-memory GitRepository, RepoSlug pinned — SlugForURL can't parse
-// file:// URLs) and the credential Resolver (a static token + identity).
-// save→tag / discard→revert-commit / read-at-HEAD / read-at-tag therefore run
-// end-to-end over genuine git object-store semantics, offline.
-//
-// hookedWorkspace replaces the retired Git-Data server's ref-move/tag-create
-// race-injection hooks: it wraps the real engine and lets a test act right
-// before a Tag push attempt or inside each Mutate fn attempt (post-fetch,
-// pre-push) — the deterministic windows for CAS / tag-collision races.
+// The Fake's BeforeTag / BeforeCommit hooks are the race-injection seams: a
+// test acts right before a Tag or Commit lands (the tag-collision and
+// baseSha windows).
 
 import (
 	"context"
-	"os"
-	"os/exec"
+	"crypto/sha1" //nolint:gosec // git object names are SHA-1 by definition
+	"encoding/hex"
+	"fmt"
+	"maps"
 	"regexp"
-	"strings"
+	"slices"
 	"testing"
-	"time"
 
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs"
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/workspacetest"
-	"github.com/wso2/aep/aep-api/internal/platform/gittest"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
+	"github.com/wso2/aep/aep-api/internal/clients/aestudiotools/aestudiotest"
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// ----- faked edges: RepoRepository row + credential resolver -----
+// ----- faked edge: the RepoRepository row -----
 
 // stubRepoRepo returns one fixed GitRepository row.
 type stubRepoRepo struct{ rec *sourcecontrol.GitRepository }
@@ -64,17 +52,25 @@ var _ sourcecontrol.RepoRepository = (*stubRepoRepo)(nil)
 func (s *stubRepoRepo) GetByOrgAndProjectID(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return s.rec, nil
 }
+func (s *stubRepoRepo) FindInOrgByFullName(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
+	return nil, nil
+}
+
 func (s *stubRepoRepo) GetByOrgAndSlug(context.Context, string, string) (*sourcecontrol.GitRepository, error) {
 	return nil, sourcecontrol.ErrRepoNotFound
 }
 func (s *stubRepoRepo) ListAllReady(context.Context) ([]sourcecontrol.GitRepository, error) {
 	return nil, nil
 }
+func (s *stubRepoRepo) SetWebhookIDIfReady(context.Context, string, string, int64) (bool, error) {
+	panic("not used")
+}
+func (s *stubRepoRepo) ClearWebhookIDs(context.Context, string) error { panic("not used") }
+func (s *stubRepoRepo) SetStatusIf(context.Context, string, string, string, string) (bool, error) {
+	panic("not used")
+}
 func (s *stubRepoRepo) ListByOrg(context.Context, string) ([]sourcecontrol.GitRepository, error) {
 	panic("stubRepoRepo: ListByOrg not expected in artifacts tests")
-}
-func (s *stubRepoRepo) ListAll(context.Context) ([]sourcecontrol.GitRepository, error) {
-	return nil, nil
 }
 func (s *stubRepoRepo) Create(context.Context, *sourcecontrol.GitRepository) error { return nil }
 func (s *stubRepoRepo) Update(context.Context, *sourcecontrol.GitRepository) error { return nil }
@@ -82,160 +78,149 @@ func (s *stubRepoRepo) DeleteByOrgAndProjectID(context.Context, string, string) 
 	return nil
 }
 
-// stubCred / stubResolver hand the save flow a static token + committer
-// identity. ResolveSaveIdentities reads Identity(); the Git Data API fake
-// accepts any Authorization header, so the token is never checked.
-type stubCred struct{}
-
-func (stubCred) Token(context.Context) (string, time.Time, error) {
-	return "test-token", time.Time{}, nil
-}
-func (stubCred) Identity() secrets.Identity {
-	return secrets.Identity{Name: "Bot", Email: "bot@aep.dev", Login: "bot"}
-}
-func (stubCred) RepoOwner() string                        { return "acme" }
-func (stubCred) WebhookStrategy() secrets.WebhookStrategy { return secrets.WebhookPlatform }
-
-type stubResolver struct{}
-
-func (stubResolver) Resolve(context.Context, string) (secrets.Credential, error) {
-	return stubCred{}, nil
-}
-
-// ----- race-injection seam (the ex-Git-Data-server hooks' successor) -----
-
-// hookedWorkspace delegates to the real engine, exposing two deterministic
-// injection points: BeforeTag fires before every Tag push attempt (the
-// tag-collision window), and BeforeMutateFn fires inside every Mutate fn
-// attempt with its 1-based attempt number — fn runs AFTER the engine's fetch
-// and BEFORE its push, so seeding the origin there makes that attempt's push a
-// genuine non-fast-forward.
-type hookedWorkspace struct {
-	sourcecontrol.Workspace
-	BeforeTag      func(spec sourcecontrol.TagSpec)
-	BeforeMutateFn func(attempt int)
-}
-
-func (h *hookedWorkspace) Tag(ctx context.Context, ref sourcecontrol.RepoRef, spec sourcecontrol.TagSpec) error {
-	if h.BeforeTag != nil {
-		h.BeforeTag(spec)
-	}
-	return h.Workspace.Tag(ctx, ref, spec)
-}
-
-func (h *hookedWorkspace) Mutate(ctx context.Context, ref sourcecontrol.RepoRef, fn func(sourcecontrol.Tx) error, opts sourcecontrol.CommitOpts) (sourcecontrol.CommitResult, error) {
-	if h.BeforeMutateFn == nil {
-		return h.Workspace.Mutate(ctx, ref, fn, opts)
-	}
-	attempt := 0
-	return h.Workspace.Mutate(ctx, ref, func(tx sourcecontrol.Tx) error {
-		attempt++
-		h.BeforeMutateFn(attempt)
-		return fn(tx)
-	}, opts)
-}
-
 // ----- rig -----
 
 type rig struct {
-	t      *testing.T
-	svc    ArtifactService
-	remote *gittest.Remote
-	engine *gitfs.Engine
-	ws     *hookedWorkspace
-	rec    *sourcecontrol.GitRepository
-	org    string
-	proj   string
+	t    *testing.T
+	svc  ArtifactService
+	pod  *aestudiotest.Fake
+	rec  *sourcecontrol.GitRepository
+	org  string
+	proj string
 }
 
 var idSanitize = regexp.MustCompile(`[^A-Za-z0-9_-]`)
 
-// idsFor derives a unique (orgID, projectID) from the test name so parallel
-// tests never share a mount path key.
+// idsFor derives a unique (orgID, projectID) from the test name.
 func idsFor(t *testing.T) (string, string) {
 	safe := idSanitize.ReplaceAllString(t.Name(), "-")
 	return "org-" + safe, "proj-" + safe
 }
 
-// newRig seeds a bare origin's `main` with `seed` (repo-relative path →
-// content) as the initial draft, stands up a real workspace engine over it,
-// and wires the production gitOps GitGateway + artifact service. Reads AND
-// writes (tag, revert) all run through the engine.
+// newRig seeds the repository's default branch with `seed` (repo-relative
+// path → content) as the initial draft and wires the artifact service over
+// the pod.
 func newRig(t *testing.T, seed map[string]string) *rig {
 	t.Helper()
 	org, proj := idsFor(t)
-	remote := gittest.NewRemote(t, gittest.WithSeed(seed, "seed"))
-
 	rec := &sourcecontrol.GitRepository{
 		OrgID:         org,
 		ProjectID:     proj,
-		RepoURL:       remote.URL(),
-		RepoSlug:      "acme-widgets", // pinned — SlugForURL can't parse file:// URLs
+		RepoURL:       "https://github.com/acme/widgets",
+		RepoSlug:      "acme-widgets",
 		DefaultBranch: "main",
 		Status:        "ready",
 	}
-	repoRepo := &stubRepoRepo{rec: rec}
-	engine := workspacetest.NewEngine(t)
-	ws := &hookedWorkspace{Workspace: engine}
-	gitOps := sourcecontrol.NewGitOpsService(stubResolver{}, ws)
-	svc := NewArtifactService(repoRepo, gitOps)
-
-	return &rig{t: t, svc: svc, remote: remote, engine: engine, ws: ws, rec: rec, org: org, proj: proj}
+	pod := aestudiotest.New()
+	r := &rig{t: t, pod: pod, rec: rec, org: org, proj: proj}
+	pod.SeedRepo(r.repoRef(), seed)
+	r.svc = NewArtifactService(&stubRepoRepo{rec: rec}, pod, pod)
+	return r
 }
 
-// workspaceRef derives the same mount RepoRef production resolves for the row.
-func (r *rig) workspaceRef() sourcecontrol.RepoRef {
-	return sourcecontrol.WorkspaceRefFor(r.org, r.rec, stubCred{})
-}
+// ----- arrange / assert helpers (against the branch tip = the draft) -----
 
-// mirrorRevParse resolves rev inside the ENGINE's bare mirror (not the origin)
-// — the C8 sha-consistency probe.
-func (r *rig) mirrorRevParse(rev string) string {
-	r.t.Helper()
-	repoDir, err := gitfs.RepoDir(r.engine.Root(), gitfs.RepoRef{
-		OrgID: r.org, ProjectID: r.proj, RepoSlug: r.rec.RepoSlug,
-	})
+// commitAtTip commits writes and deletes on ref's tip in one commit, each
+// under the path's current blob sha (an external writer's commit), and
+// answers the new tip.
+func commitAtTip(t *testing.T, pod *aestudiotest.Fake, ref sourcecontrol.RepoRef, writes map[string]string, deletes []string, msg string) string {
+	t.Helper()
+	ctx := context.Background()
+	entries, _, err := pod.List(ctx, ref, "")
 	if err != nil {
-		r.t.Fatalf("mirror git dir: %v", err)
+		t.Fatalf("commit %q: %v", msg, err)
 	}
-	gitDir := gitfs.GitSubdir(repoDir)
-	c := exec.Command("git", "--git-dir", gitDir, "rev-parse", "--verify", rev)
-	c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
-	out, err := c.CombinedOutput()
+	current := map[string]string{}
+	for _, e := range entries {
+		current[e.Path] = e.SHA
+	}
+	req := sourcecontrol.CommitRequest{Message: msg}
+	for _, p := range slices.Sorted(maps.Keys(writes)) {
+		req.Writes = append(req.Writes, sourcecontrol.FileWrite{Path: p, Content: writes[p], BaseSHA: current[p]})
+	}
+	for _, p := range deletes {
+		req.Deletes = append(req.Deletes, sourcecontrol.FileDelete{Path: p, BaseSHA: current[p]})
+	}
+	res, err := pod.Commit(ctx, ref, req)
 	if err != nil {
-		r.t.Fatalf("mirror rev-parse %s: %v\n%s", rev, err, out)
+		t.Fatalf("commit %q: %v", msg, err)
 	}
-	return strings.TrimSpace(string(out))
+	return res.CommitSHA
 }
 
-// originRevParse resolves rev on the bare ORIGIN.
-func (r *rig) originRevParse(rev string) string {
-	r.t.Helper()
-	c := exec.Command("git", "--git-dir="+r.remote.Dir(), "rev-parse", "--verify", rev)
-	c.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_SYSTEM="+os.DevNull)
-	out, err := c.CombinedOutput()
-	if err != nil {
-		r.t.Fatalf("origin rev-parse %s: %v\n%s", rev, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// ----- arrange / assert helpers (against the bare origin = the draft) -----
-
-// seed advances `main` with the given files (a new draft commit).
+// seed advances the default branch with the given files (a new draft
+// commit) and answers the new tip.
 func (r *rig) seed(files map[string]string, msg string) string {
 	r.t.Helper()
-	return r.remote.Seed(r.t, files, msg)
+	return commitAtTip(r.t, r.pod, r.repoRef(), files, nil, msg)
 }
 
-// tag creates an annotated tag on the current `main` tip.
+// remove deletes paths from the default branch in one commit.
+func (r *rig) remove(msg string, paths ...string) {
+	r.t.Helper()
+	commitAtTip(r.t, r.pod, r.repoRef(), nil, paths, msg)
+}
+
+// tag creates an annotated tag on the current tip.
 func (r *rig) tag(name, msg string) {
 	r.t.Helper()
-	r.remote.Tag(r.t, name, msg)
+	if err := r.pod.Tag(context.Background(), r.repoRef(), sourcecontrol.TagSpec{Name: name, Message: msg}); err != nil {
+		r.t.Fatalf("tag %s: %v", name, err)
+	}
 }
 
-func (r *rig) tags() []string  { return r.remote.Tags(r.t) }
-func (r *rig) headSHA() string { return r.remote.HeadSHA(r.t) }
+// tags lists the repository's tag names, sorted.
+func (r *rig) tags() []string {
+	r.t.Helper()
+	infos, err := r.pod.ListTags(context.Background(), r.repoRef(), "")
+	if err != nil {
+		r.t.Fatalf("tags: %v", err)
+	}
+	names := make([]string, 0, len(infos))
+	for _, ti := range infos {
+		names = append(names, ti.Name)
+	}
+	return names
+}
+
+// tagCommit is the commit tag name points at.
+func (r *rig) tagCommit(name string) string {
+	r.t.Helper()
+	sha, err := r.pod.Head(context.Background(), r.repoRef(), "tags/"+name)
+	if err != nil {
+		r.t.Fatalf("tag %s: %v", name, err)
+	}
+	return sha
+}
+
+// headSHA is the default branch tip.
+func (r *rig) headSHA() string {
+	r.t.Helper()
+	sha, err := r.pod.Head(context.Background(), r.repoRef(), "")
+	if err != nil {
+		r.t.Fatalf("head: %v", err)
+	}
+	return sha
+}
+
+// fileAt is path's content at the default branch tip.
+func (r *rig) fileAt(path string) string {
+	r.t.Helper()
+	content, _, err := r.pod.ReadFile(context.Background(), r.repoRef(), "", path)
+	if err != nil {
+		r.t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
+}
+
+// blobSHA is git's blob object name of content — what the pod reports as a
+// file's sha.
+func blobSHA(content []byte) string {
+	h := sha1.New() //nolint:gosec // git object names are SHA-1 by definition
+	fmt.Fprintf(h, "blob %d\x00", len(content))
+	h.Write(content)
+	return hex.EncodeToString(h.Sum(nil))
+}
 
 // validComponentDesignJSON is a component design.json that satisfies the design
 // schema gate — the shared seed for every save/read test.
@@ -243,4 +228,29 @@ func validComponentDesignJSON(name string) string {
 	return `{"name":"` + name + `","type":"service","version":"1.0.0","language":"go",` +
 		`"buildpack":"go","appPath":".","entrypoint":"main.go","exposure":"internet",` +
 		`"stories":["F1.1"],"dependencies":[],"description":"a service"}`
+}
+
+// memRepos is a project-repository table holding one ready row: org's
+// project p, at repository url. Any other org or project has no row.
+func memRepos(t *testing.T, org, project, url string) sourcecontrol.RepoRepository {
+	t.Helper()
+	return &orgScopedRepoRepo{stubRepoRepo: stubRepoRepo{rec: &sourcecontrol.GitRepository{
+		OrgID: org, ProjectID: project, RepoURL: url, DefaultBranch: "main", Status: "ready",
+	}}}
+}
+
+// orgScopedRepoRepo answers its row only for the row's own org and project.
+type orgScopedRepoRepo struct{ stubRepoRepo }
+
+func (s *orgScopedRepoRepo) GetByOrgAndProjectID(_ context.Context, org, project string) (*sourcecontrol.GitRepository, error) {
+	if org != s.rec.OrgID || project != s.rec.ProjectID {
+		return nil, nil
+	}
+	return s.rec, nil
+}
+
+// repoRef is the repository the service addresses for the row.
+func (r *rig) repoRef() sourcecontrol.RepoRef {
+	r.t.Helper()
+	return rowRef(r.t, r.org, r.rec)
 }

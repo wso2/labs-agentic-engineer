@@ -124,3 +124,29 @@ func TestBasis_SharedFixture(t *testing.T) {
 		}
 	}
 }
+
+// The console reads a line from the collab room, where inline markup is a
+// mark on the text, not characters in it: `name` is the word name. The basis
+// must read the file the same way, or a feature whose file has any inline
+// markup reads as out of date forever. A closing *assumed* is still a tag.
+// How each kind of markup reads is held on both sides by the shared
+// inline-markup-cases.json (inline_test.go); this is the basis end to end.
+func TestBasis_InlineMarkupReadsAsItsWords(t *testing.T) {
+	feature := func(line string) map[string]string {
+		return map[string]string{
+			"features/F1-greeting.md": "# Greeting\n\n## User Stories\n\n- " + line + "\n",
+		}
+	}
+	marked := feature("F1.1 Greet **every** caller with a `name`, as the [guide](u) says. [Brief · p.2]")
+	if got, want := Basis(marked, "F1"), "Greeting\nUser Stories\nF1.1 Greet every caller with a name, as the guide says."; got != want {
+		t.Errorf("basis\n%q\nwant\n%q", got, want)
+	}
+
+	tagged := feature("F1.1 Greet with a *friendly* `name`. *assumed*")
+	if got, want := Basis(tagged, "F1"), "Greeting\nUser Stories\nF1.1 Greet with a friendly name."; got != want {
+		t.Errorf("tagged basis\n%q\nwant\n%q", got, want)
+	}
+	if story := Parse(tagged).Features[0].Stories[0]; !story.Assumed || story.Text != "Greet with a friendly name." {
+		t.Errorf("tagged story = %+v, want assumed with its words", story)
+	}
+}

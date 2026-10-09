@@ -24,26 +24,18 @@ import (
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
-// ValidatorProbes is the production secrets.ValidatorProbes that
-// wraps the resolver, the GitHub client, the AppTokenMinter, and the
+// ValidatorProbes is the production secrets.ValidatorProbes: the org's
+// GitHub identity read through its AE Studio pod, and the
 // CredentialService's identity-update helpers.
 type ValidatorProbes struct {
-	credSvc      *CredentialService
-	githubClient sourcecontrol.AppInstallOps
-	resolver     secrets.Resolver
-	minter       *secrets.AppTokenMinter
+	credSvc  *CredentialService
+	identity sourcecontrol.IdentityOps
 }
 
-// NewValidatorProbes constructs the probes adapter. All four
-// dependencies must be non-nil; nil short-circuits the validator at
-// construction so we don't half-fire later.
-func NewValidatorProbes(credSvc *CredentialService, githubClient sourcecontrol.AppInstallOps, resolver secrets.Resolver, minter *secrets.AppTokenMinter) *ValidatorProbes {
-	return &ValidatorProbes{
-		credSvc:      credSvc,
-		githubClient: githubClient,
-		resolver:     resolver,
-		minter:       minter,
-	}
+// NewValidatorProbes constructs the probes adapter. Both dependencies must
+// be non-nil.
+func NewValidatorProbes(credSvc *CredentialService, identity sourcecontrol.IdentityOps) *ValidatorProbes {
+	return &ValidatorProbes{credSvc: credSvc, identity: identity}
 }
 
 // ListActiveRows projects org_credentials rows into the validator's
@@ -57,34 +49,31 @@ func (p *ValidatorProbes) ListActiveRows(ctx context.Context) ([]secrets.ActiveR
 	for i := range rows {
 		r := rows[i]
 		out = append(out, secrets.ActiveRow{
-			OcOrgID:        r.OcOrgID,
-			Kind:           r.Kind,
-			GitHubLogin:    r.GitHubLogin,
-			IdentityLogin:  r.IdentityLogin,
-			InstallationID: r.InstallationID,
-			Status:         r.Status,
+			OcOrgID:       r.OcOrgID,
+			Kind:          r.Kind,
+			GitHubLogin:   r.GitHubLogin,
+			IdentityLogin: r.IdentityLogin,
+			Status:        r.Status,
 		})
 	}
 	return out, nil
 }
 
-// ProbePAT performs GET /user using the row's resolved credential.
-// Translates GitHub's HTTP status into the validator's signal vocabulary
-// (Unauthorized triggers cascade; Transient defers to the next tick).
+// ProbePAT reads the GitHub user the org's gitpat belongs to through the
+// org's pod (get-github-identity) and translates the answer into the
+// validator's signal vocabulary: GitHub refusing the token (401/403/404)
+// is ErrCredentialUnauthorized and triggers the cascade; anything else —
+// the pod absent, unavailable or refusing aep-api's AE-only token, a rate
+// limit, a GitHub 5xx — is ErrCredentialTransient and skips the tick. The
+// AE-only token is not the user's PAT, so a refusal of it says nothing
+// about the PAT (C3).
 func (p *ValidatorProbes) ProbePAT(ctx context.Context, row secrets.ActiveRow) (login, name, email string, err error) {
-	cred, err := p.resolver.Resolve(ctx, row.OcOrgID)
+	user, err := p.identity.GitHubIdentity(ctx, row.OcOrgID)
 	if err != nil {
-		return "", "", "", err
-	}
-	user, err := p.githubClient.GetUser(ctx, cred)
-	if err != nil {
-		switch {
-		case sourcecontrol.IsHTTPStatus(err, 401), sourcecontrol.IsHTTPStatus(err, 403):
-			return "", "", "", secrets.ErrCredentialUnauthorized
-		case sourcecontrol.IsHTTPStatus(err, 404):
+		if gitHubRefusedToken(err) {
 			return "", "", "", secrets.ErrCredentialUnauthorized
 		}
-		return "", "", "", secrets.ErrCredentialTransient
+		return "", "", "", errors.Join(secrets.ErrCredentialTransient, err)
 	}
 	if user.Email == "" {
 		user.Email = user.Login + "@users.noreply.github.com"
@@ -95,34 +84,14 @@ func (p *ValidatorProbes) ProbePAT(ctx context.Context, row secrets.ActiveRow) (
 	return user.Login, user.Name, user.Email, nil
 }
 
-// ProbeApp calls GET /app/installations/{installationId}. Only valid for
-// app-installation rows; PAT rows would carry InstallationID=nil and we
-// skip them at the caller layer.
-func (p *ValidatorProbes) ProbeApp(ctx context.Context, row secrets.ActiveRow) (string, error) {
-	if row.InstallationID == nil {
-		return "", errors.New("validator: app row missing installation_id")
-	}
-	info, err := p.githubClient.GetAppInstallation(ctx, p.minter, *row.InstallationID)
-	if err != nil {
-		switch {
-		case sourcecontrol.IsHTTPStatus(err, 401), sourcecontrol.IsHTTPStatus(err, 404), sourcecontrol.IsHTTPStatus(err, 410):
-			return "", secrets.ErrCredentialUnauthorized
-		}
-		return "", secrets.ErrCredentialTransient
-	}
-	return info.Account.Login, nil
+// gitHubRefusedToken reports whether GitHub itself refused the org's token
+// (the pod's github_error with GitHub's status).
+func gitHubRefusedToken(err error) bool {
+	return sourcecontrol.IsHTTPStatus(err, 401) || sourcecontrol.IsHTTPStatus(err, 403) || sourcecontrol.IsHTTPStatus(err, 404)
 }
 
 // RecordIdentityFromGitHub delegates to the credential service so the
 // drift columns are written under the row's database connection.
 func (p *ValidatorProbes) RecordIdentityFromGitHub(ctx context.Context, ocOrgID, login, name, email string) (bool, error) {
 	return p.credSvc.RecordIdentityFromGitHub(ctx, ocOrgID, login, name, email)
-}
-
-func (p *ValidatorProbes) UpdateGitHubLogin(ctx context.Context, ocOrgID, login string) error {
-	return p.credSvc.UpdateGitHubLogin(ctx, ocOrgID, login)
-}
-
-func (p *ValidatorProbes) TouchValidatedAt(ctx context.Context, ocOrgID string) error {
-	return p.credSvc.TouchValidatedAt(ctx, ocOrgID)
 }

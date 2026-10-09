@@ -24,16 +24,14 @@
  */
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { stdout as output } from "node:process";
 import { renderPart, renderSummary } from "./kit/render.js";
-import type { StreamPart, TurnScope, TurnSpec } from "@aep/agent-stream";
-import { flowSpec, planSpec, startSpec } from "./engine/turn-spec.js";
-import { readReferences } from "./state/references.js";
+import type { StreamPart, TurnScope } from "@aep/agent-stream";
 import { designGate, requirementsGate, tasksGate, type GateResult } from "./engine/gates.js";
 import { openSession, type OpenOptions, type PlaygroundSession } from "./engine/session.js";
 import { pendingQuestions, type PendingQuestions } from "./engine/questions.js";
 import { runSpecTurn, type SpecTurnResult } from "./engine/turn.js";
+import { runPlanTurn } from "./engine/plan-turn.js";
 import { runCodingAgent } from "./engine/coding-run.js";
 import { deriveDesign, type DeriveOutcome } from "./engine/design-derive.js";
 import { renderLogView, resolveRunDir, type LogView } from "./engine/log-read.js";
@@ -68,7 +66,6 @@ function report(result: SpecTurnResult, opts: PhaseOptions): PhaseOutcome {
     output.write("\n");
     renderSummary(result.changes, false);
     for (const n of result.derivedNotes) output.write(n.ok ? `  ⚙ ${n.message}\n` : `  ✗ ${n.message}\n`);
-    for (const p of result.manifestMismatches) output.write(`  ⚠ manifest mismatch: ${p} (fold drift — please report)\n`);
   }
   if (result.error) return { ok: false, detail: result.error };
   return { ok: true };
@@ -78,15 +75,14 @@ function gateFail(gate: GateResult): PhaseOutcome {
   return { ok: false, detail: gate.reason ?? "blocked" };
 }
 
-/** Run one composed spec turn inside a fresh session (open → turn → close). */
-async function runPhaseTurn(projectDir: string, turn: TurnSpec, opts: PhaseOptions): Promise<PhaseOutcome> {
-  const session = await openSession(projectDir, opts);
+/** Run one spec turn inside a fresh session (open → turn → close). */
+async function runPhaseTurn(projectDir: string, instruction: string, opts: PhaseOptions): Promise<PhaseOutcome> {
+  // One-shot phase run — no human answers questions here, so the channel says
+  // so explicitly (#373: posture is channel state, not skill prose).
+  const session = await openSession(projectDir, { ...opts, headless: true });
   try {
     const onPart = onPartFor(opts);
-    // One-shot phase run — no human answers questions here, so the channel says
-    // so explicitly (#373: posture is channel state, not skill prose).
-    const result = await runSpecTurn(session, turn, {
-      headless: true,
+    const result = await runSpecTurn(session, instruction, {
       ...(opts.scope ? { scope: opts.scope } : {}),
       ...(onPart ? { onPart } : {}),
     });
@@ -100,8 +96,9 @@ async function runPhaseTurn(projectDir: string, turn: TurnSpec, opts: PhaseOptio
  * Phase 1 — requirements, the headless twin of chat's `/start`. The idea comes
  * from `--idea` or the descriptor written at project creation
  * (`specs/.agentic-engineer.toml`); a TUI caller may ask for one when neither
- * has it. The instruction is the console's "Generate spec" CTA wrapping it
- * (§5 phase 1) — one-shot by design, where `/start` runs the interview.
+ * has it. The turn is a headless `/start` (§5 phase 1): the design agent
+ * resolves the idea from the descriptor through the project lookup, and the
+ * session tells the agent no interview is possible.
  *
  * An `--idea` given here is CAPTURED, not just used: it becomes the project's
  * descriptor, so a later `/start` carries the same idea.
@@ -121,21 +118,22 @@ export async function requirementsCommand(
   // and rewriting it would churn createdAt for nothing.
   if (idea && idea !== readIdea(projectDir)) writeDescriptor(projectDir, projectSlug(projectDir), idea);
 
-  return runPhaseTurn(projectDir, startSpec(idea, readReferences(projectDir)), opts);
+  // `/start` resolves the idea from the descriptor (the project lookup reads it).
+  return runPhaseTurn(projectDir, "/start", opts);
 }
 
 /** Phase 2 — design, derived from the current requirements (§5 phase 2). */
 export async function designCommand(projectDir: string, opts: PhaseOptions): Promise<PhaseOutcome> {
   const gate = designGate(projectDir);
   if (!gate.ok) return gateFail(gate);
-  return runPhaseTurn(projectDir, flowSpec("design", undefined, readReferences(projectDir)), opts);
+  return runPhaseTurn(projectDir, "/design", opts);
 }
 
 /**
- * Phase 3 — tasks (§5 phase 3): a fresh one-shot `task-plan` conversation on
- * the task-plan toolset; existing issues ride the INSTRUCTION (production
- * channel); OK tool-results fold into `issues/<n>.md` only after the terminal
- * manifest arrived.
+ * Phase 3 — tasks (§5 phase 3): a Plan turn on the Turn socket (a throwaway
+ * conversation on the task-plan toolset); existing issues ride as its task
+ * context (production channel); its task operations fold into
+ * `issues/<n>.md` only when the turn completed.
  */
 export async function tasksCommand(projectDir: string, opts: PhaseOptions): Promise<PhaseOutcome & { fold?: FoldOutcome }> {
   const gate = tasksGate(projectDir);
@@ -145,14 +143,9 @@ export async function tasksCommand(projectDir: string, opts: PhaseOptions): Prom
   try {
     const store = new FsIssueStore(projectDir, session.state.slug);
     const onPart = onPartFor(opts);
-    const result = await runSpecTurn(session, planSpec(store.planContextFiles()), {
-      useCase: "task-plan",
-      conversationUuid: randomUUID(), // one-shot per plan turn (plan.go)
-      foldToDisk: false,
-      ...(onPart ? { onPart } : {}),
-    });
+    const result = await runPlanTurn(session, store.planContext(), onPart ? { onPart } : {});
     const fold = store.fold(
-      result.parts,
+      result,
       store.safeAllocator(
         () => session.state.nextIssueNumber,
         (advancedTo) => {
@@ -312,18 +305,19 @@ export function evalSaveCommand(projectDir: string, name: string): Promise<numbe
 }
 
 /**
- * One free-chat turn in the project's `general` conversation (shared session).
+ * One chat turn on the project's current thread (shared session), sent
+ * verbatim: a `/<command>` line runs that flow.
  * When the agent ends the turn on a HITL question tool-call (console ADR-0012 /
  * #270), `pending` carries the structured questions so the caller (the chat
  * screen) can prompt for an answer and continue with it.
  */
 export async function chatTurn(
   session: PlaygroundSession,
-  turn: TurnSpec,
+  instruction: string,
   opts: PhaseOptions,
 ): Promise<PhaseOutcome & { pending?: PendingQuestions }> {
   const onPart = onPartFor(opts);
-  const result = await runSpecTurn(session, turn, {
+  const result = await runSpecTurn(session, instruction, {
     ...(opts.scope ? { scope: opts.scope } : {}),
     ...(onPart ? { onPart } : {}),
   });

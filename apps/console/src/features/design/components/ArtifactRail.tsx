@@ -45,7 +45,7 @@ export interface RailProps {
   artifacts: DesignArtifact[];
   blocking: DesignDependency[];
   comments: DesignComment[];
-  revision: number;
+  revision: number | null;
   outOfDate: string[];
   /** The open artifact's or dependency's key. */
   current: string | null;

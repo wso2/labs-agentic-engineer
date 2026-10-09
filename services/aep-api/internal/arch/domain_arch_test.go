@@ -71,7 +71,6 @@ var nonDomainPkgs = map[string]bool{
 	"clients":   true, // outbound adapters (folds into platform/clients)
 	"config":    true,
 	"contracts": true,
-	"seed":      true,
 }
 
 // plannedPkgs are classified names that do not exist YET. They are listed

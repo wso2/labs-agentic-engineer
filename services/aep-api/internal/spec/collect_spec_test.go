@@ -21,6 +21,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/platform/auth"
 )
 
 // CollectSpec / CollectDependencyContract. The route resolves the external
@@ -267,6 +269,23 @@ func TestAcceptDependencyAssumption_RecordsTheUsersPermission(t *testing.T) {
 	// fakeCommitter reads "design.json"/"design.cell" as existing; the
 	// dependency file is new to it, so the CAS is a create — fine for the
 	// fake, and the real committer sees the sha it read.
+}
+
+// The record names the person by the caller's VERIFIED display identity,
+// not the subject the handler passes.
+func TestAcceptDependencyAssumption_CreditsTheVerifiedCaller(t *testing.T) {
+	t.Parallel()
+	fc := &fakeCommitter{}
+	svc := newService(readsFor(t, acceptFiles(true)))
+	svc.fileCommitter = fc
+
+	ctx := auth.WithClaims(context.Background(), &auth.Claims{Subject: "u-7", Name: "Ada Lovelace", Email: "ada@acme.io"})
+	if err := svc.AcceptDependencyAssumption(ctx, "acme", "web", "stripe", "u-7", ""); err != nil {
+		t.Fatalf("AcceptDependencyAssumption: %v", err)
+	}
+	if len(fc.writes) != 1 || !strings.Contains(fc.writes[0].Content, `"by": "Ada Lovelace"`) {
+		t.Fatalf("writes = %+v, want the record by Ada Lovelace", fc.writes)
+	}
 }
 
 // The record may precede the interface (the user answered "proceed on your

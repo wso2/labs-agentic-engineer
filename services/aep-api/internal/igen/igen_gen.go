@@ -7,19 +7,230 @@ package igen
 
 import (
 	"bytes"
+	"compress/flate"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"path"
+	"strings"
 	"time"
 
+	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
 const (
+	AeStudioCCScopes  aeStudioCCContextKey  = "aeStudioCC.Scopes"
 	PublisherCCScopes publisherCCContextKey = "publisherCC.Scopes"
-	TaskJWTScopes     taskJWTContextKey     = "taskJWT.Scopes"
 )
+
+// Defines values for AEStudioTurnRecordKind.
+const (
+	AEStudioTurnRecordKindBrowser AEStudioTurnRecordKind = "browser"
+	AEStudioTurnRecordKindKickoff AEStudioTurnRecordKind = "kickoff"
+	AEStudioTurnRecordKindPlan    AEStudioTurnRecordKind = "plan"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordKind enum.
+func (e AEStudioTurnRecordKind) Valid() bool {
+	switch e {
+	case AEStudioTurnRecordKindBrowser:
+		return true
+	case AEStudioTurnRecordKindKickoff:
+		return true
+	case AEStudioTurnRecordKindPlan:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AEStudioTurnRecordReason.
+const (
+	AEStudioTurnRecordReasonAgentError AEStudioTurnRecordReason = "agent-error"
+	AEStudioTurnRecordReasonInternal   AEStudioTurnRecordReason = "internal"
+	AEStudioTurnRecordReasonShutdown   AEStudioTurnRecordReason = "shutdown"
+	AEStudioTurnRecordReasonStreamDied AEStudioTurnRecordReason = "stream-died"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordReason enum.
+func (e AEStudioTurnRecordReason) Valid() bool {
+	switch e {
+	case AEStudioTurnRecordReasonAgentError:
+		return true
+	case AEStudioTurnRecordReasonInternal:
+		return true
+	case AEStudioTurnRecordReasonShutdown:
+		return true
+	case AEStudioTurnRecordReasonStreamDied:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AEStudioTurnRecordStatus.
+const (
+	AEStudioTurnRecordStatusCompleted AEStudioTurnRecordStatus = "completed"
+	AEStudioTurnRecordStatusFailed    AEStudioTurnRecordStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioTurnRecordStatus enum.
+func (e AEStudioTurnRecordStatus) Valid() bool {
+	switch e {
+	case AEStudioTurnRecordStatusCompleted:
+		return true
+	case AEStudioTurnRecordStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AEStudioWebhookEventResultResult.
+const (
+	AEStudioWebhookEventResultResultDispatched AEStudioWebhookEventResultResult = "dispatched"
+	AEStudioWebhookEventResultResultDuplicate  AEStudioWebhookEventResultResult = "duplicate"
+	AEStudioWebhookEventResultResultHeld       AEStudioWebhookEventResultResult = "held"
+)
+
+// Valid indicates whether the value is a known member of the AEStudioWebhookEventResultResult enum.
+func (e AEStudioWebhookEventResultResult) Valid() bool {
+	switch e {
+	case AEStudioWebhookEventResultResultDispatched:
+		return true
+	case AEStudioWebhookEventResultResultDuplicate:
+		return true
+	case AEStudioWebhookEventResultResultHeld:
+		return true
+	default:
+		return false
+	}
+}
+
+// AEStudioCompletedDependency One completed stub. `definition` replaces the stub's dependency.json content; `files` land beside it in the same commit.
+type AEStudioCompletedDependency struct {
+	Definition string         `json:"definition"`
+	Files      []AEStudioFile `json:"files"`
+
+	// Path The stub's dependency.json path, as sent.
+	Path string `json:"path"`
+}
+
+// AEStudioDependencyCompletions The stubs aep-api completed, and the warnings for every stub it touched (completed or not).
+type AEStudioDependencyCompletions struct {
+	Completed []AEStudioCompletedDependency `json:"completed"`
+	Warnings  []AEStudioWarning             `json:"warnings"`
+}
+
+// AEStudioDependencyCompletionsRequest The dependency stub writes of one save to a project.
+type AEStudioDependencyCompletionsRequest struct {
+	// Project The project the save is for. It must belong to the token's org, else 404 (the same answer as an unknown project).
+	Project string `json:"project"`
+
+	// Writes At most 64 stubs, bounding the outbound registry reads and fetches one call can cause.
+	Writes []AEStudioFile `json:"writes"`
+}
+
+// AEStudioFile A repo-relative file path and its UTF-8 content.
+type AEStudioFile struct {
+	Content string `json:"content"`
+	Path    string `json:"path"`
+}
+
+// AEStudioProjectRepository A project's GitHub repository, as the AE Studio tools pod clones it.
+type AEStudioProjectRepository struct {
+	CloneURL      string `json:"cloneUrl"`
+	DefaultBranch string `json:"defaultBranch"`
+
+	// Owner GitHub owner (user or organization) of the repo.
+	Owner string `json:"owner"`
+
+	// Repo GitHub repository name.
+	Repo string `json:"repo"`
+}
+
+// AEStudioTurnRecord One finished turn, as the ledger stores it. Idempotent on turnId.
+type AEStudioTurnRecord struct {
+	Author *AEStudioTurnRecordAuthor `json:"author,omitempty"`
+
+	// BaseRef The repo snapshot sha the turn read.
+	BaseRef             string             `json:"baseRef"`
+	CacheCreationTokens int64              `json:"cacheCreationTokens"`
+	CacheReadTokens     int64              `json:"cacheReadTokens"`
+	Code                string             `json:"code,omitempty"`
+	ContextTokens       int64              `json:"contextTokens,omitempty"`
+	ConversationID      openapi_types.UUID `json:"conversationId"`
+
+	// DesignFeatures The features a `design` turn designed, as the `/design F1 F2`
+	// line named them. Absent or empty means every feature designable
+	// at baseRef (a bare `/design`). Send it only on a `design` turn:
+	// on any other flow it is ignored, not refused, so one record never
+	// costs the batch. The ledger stores the IDs only, never the line.
+	DesignFeatures []string               `json:"designFeatures,omitempty"`
+	FinishedAt     time.Time              `json:"finishedAt"`
+	Flow           string                 `json:"flow"`
+	InputTokens    int64                  `json:"inputTokens"`
+	Kind           AEStudioTurnRecordKind `json:"kind"`
+	Model          string                 `json:"model"`
+	ModelHost      string                 `json:"modelHost"`
+	OutputTokens   int64                  `json:"outputTokens"`
+
+	// Project Absent on a marketplace turn.
+	Project string                   `json:"project,omitempty"`
+	Reason  AEStudioTurnRecordReason `json:"reason,omitempty"`
+
+	// SkillsRef The Org skills snapshot sha the turn read.
+	SkillsRef string                   `json:"skillsRef"`
+	StartedAt time.Time                `json:"startedAt"`
+	Status    AEStudioTurnRecordStatus `json:"status"`
+	TurnID    openapi_types.UUID       `json:"turnId"`
+}
+
+// AEStudioTurnRecordKind defines model for AEStudioTurnRecord.Kind.
+type AEStudioTurnRecordKind string
+
+// AEStudioTurnRecordReason defines model for AEStudioTurnRecord.Reason.
+type AEStudioTurnRecordReason string
+
+// AEStudioTurnRecordStatus defines model for AEStudioTurnRecord.Status.
+type AEStudioTurnRecordStatus string
+
+// AEStudioTurnRecordAuthor defines model for AEStudioTurnRecordAuthor.
+type AEStudioTurnRecordAuthor struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// AEStudioTurnUsageRequest The records of finished turns.
+type AEStudioTurnUsageRequest struct {
+	Records []AEStudioTurnRecord `json:"records"`
+}
+
+// AEStudioWarning A non-fatal note on one path (registry-copied, registry-miss, registry-unreachable, provider-document-fetched, provider-document-unavailable).
+type AEStudioWarning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path"`
+}
+
+// AEStudioWebhookEvent A GitHub webhook payload, exactly as GitHub sent it. Declares no
+// properties or defaults, so validation never rewrites it, and is
+// generated as json.RawMessage so the handler gets the bytes as they
+// arrived.
+type AEStudioWebhookEvent = json.RawMessage
+
+// AEStudioWebhookEventResult What became of an ingested delivery.
+type AEStudioWebhookEventResult struct {
+	Result AEStudioWebhookEventResultResult `json:"result"`
+}
+
+// AEStudioWebhookEventResultResult defines model for AEStudioWebhookEventResult.Result.
+type AEStudioWebhookEventResultResult string
 
 // ComponentEndpoint defines model for ComponentEndpoint.
 type ComponentEndpoint struct {
@@ -45,42 +256,58 @@ type ErrorDetail struct {
 	Message string `json:"message"`
 }
 
-// Identity Git commit identity. Field names are CAPITALIZED on the wire (historical lockstep — changing them needs a coordinated runner release). KNOWN GAP: the runner's credhelper currently reads lowercase keys, so its identity-drift rewrite never fires; fix belongs runner-side (case-tolerant parse), not here.
-type Identity struct {
-	Email string `json:"Email"`
-	Login string `json:"Login"`
-	Name  string `json:"Name"`
-}
-
-// RefreshResponse Fresh GitHub token + commit identity for the execution.
-type RefreshResponse struct {
-	ExpiresAt time.Time `json:"expiresAt"`
-
-	// Identity Git commit identity. Field names are CAPITALIZED on the wire (historical lockstep — changing them needs a coordinated runner release). KNOWN GAP: the runner's credhelper currently reads lowercase keys, so its identity-drift rewrite never fires; fix belongs runner-side (case-tolerant parse), not here.
-	Identity Identity `json:"identity"`
-	TaskID   string   `json:"taskId"`
-	Token    string   `json:"token"`
-}
-
-// ValidationContextResponse The deployed endpoints a validation run drives. Generated as igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf, so the edge's internal handler projects the delivery domain's own struct onto this wire shape (the same decoupling as RefreshResponse).
+// ValidationContextResponse The deployed endpoints a validation run drives. Generated as igen.ValidationContextResponse (no x-go-type) — igen must stay a leaf, so the edge's internal handler projects the delivery domain's own struct onto this wire shape (the same decoupling as every wire projection here).
 // It carries no oracle path; the runner already knows where the oracle is.
 type ValidationContextResponse struct {
 	Endpoints []ComponentEndpoint `json:"endpoints"`
 }
 
+// aeStudioCCContextKey is the context key for aeStudioCC security scheme
+type aeStudioCCContextKey string
+
 // publisherCCContextKey is the context key for publisherCC security scheme
 type publisherCCContextKey string
 
-// taskJWTContextKey is the context key for taskJWT security scheme
-type taskJWTContextKey string
+// sreHandoffKeyContextKey is the context key for sreHandoffKey security scheme
+type sreHandoffKeyContextKey string
+
+// IngestWebhookEventParams defines parameters for IngestWebhookEvent.
+type IngestWebhookEventParams struct {
+	// XGitHubDelivery GitHub's delivery id (X-GitHub-Delivery), the dedup key.
+	XGitHubDelivery string `json:"X-GitHub-Delivery"`
+
+	// XGitHubEvent GitHub's event name (X-GitHub-Event).
+	XGitHubEvent string `json:"X-GitHub-Event"`
+}
+
+// CompleteAeStudioDependenciesJSONRequestBody defines body for CompleteAeStudioDependencies for application/json ContentType.
+type CompleteAeStudioDependenciesJSONRequestBody = AEStudioDependencyCompletionsRequest
+
+// RecordTurnUsageJSONRequestBody defines body for RecordTurnUsage for application/json ContentType.
+type RecordTurnUsageJSONRequestBody = AEStudioTurnUsageRequest
+
+// IngestWebhookEventJSONRequestBody defines body for IngestWebhookEvent for application/json ContentType.
+type IngestWebhookEventJSONRequestBody = AEStudioWebhookEvent
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
-	// Refresh an execution's git credentials (runner callback)
-	// (POST /executions/{executionId}/credentials/refresh)
-	RunnerRefreshCredentials(w http.ResponseWriter, r *http.Request, executionID string)
+	// Complete dependency stubs from a save (AE Studio tools pod)
+	// (POST /ae-studio/dependency-completions)
+	CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request)
+	// Resolve a project to its GitHub repository (AE Studio tools pod)
+	// (GET /ae-studio/projects/{projectName}/repository)
+	GetAeStudioProjectRepository(w http.ResponseWriter, r *http.Request, projectName string)
+	// Resolve the org's skills repository (AE Studio tools pod)
+	// (GET /ae-studio/skills/repository)
+	GetAeStudioSkillsRepository(w http.ResponseWriter, r *http.Request)
+	// Record finished turns (AE Studio tools pod)
+	// (POST /ae-studio/turn-usage)
+	RecordTurnUsage(w http.ResponseWriter, r *http.Request)
+	// Ingest one verified GitHub webhook delivery (AE Studio tools pod)
+	// (POST /ae-studio/webhook-events)
+	IngestWebhookEvent(w http.ResponseWriter, r *http.Request, params IngestWebhookEventParams)
 	// Fetch a validation run's deployed endpoints (runner callback)
-	// (GET /validation/{cycleId}/context)
+	// (GET /runs/{cycleId}/validation-context)
 	RunnerValidationContext(w http.ResponseWriter, r *http.Request, cycleID string)
 }
 
@@ -93,31 +320,163 @@ type ServerInterfaceWrapper struct {
 
 type MiddlewareFunc func(http.Handler) http.Handler
 
-// RunnerRefreshCredentials operation middleware
-func (siw *ServerInterfaceWrapper) RunnerRefreshCredentials(w http.ResponseWriter, r *http.Request) {
+// CompleteAeStudioDependencies operation middleware
+func (siw *ServerInterfaceWrapper) CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeStudioCCScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.CompleteAeStudioDependencies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAeStudioProjectRepository operation middleware
+func (siw *ServerInterfaceWrapper) GetAeStudioProjectRepository(w http.ResponseWriter, r *http.Request) {
 
 	var err error
 	_ = err
 
-	// ------------- Path parameter "executionId" -------------
-	var executionID string
+	// ------------- Path parameter "projectName" -------------
+	var projectName string
 
-	err = runtime.BindStyledParameterWithOptions("simple", "executionId", r.PathValue("executionId"), &executionID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "projectName", r.PathValue("projectName"), &projectName, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "executionId", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "projectName", Err: err})
 		return
 	}
 
 	ctx := r.Context()
 
-	ctx = context.WithValue(ctx, TaskJWTScopes, []string{})
-
-	ctx = context.WithValue(ctx, PublisherCCScopes, []string{})
+	ctx = context.WithValue(ctx, AeStudioCCScopes, []string{})
 
 	r = r.WithContext(ctx)
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.RunnerRefreshCredentials(w, r, executionID)
+		siw.Handler.GetAeStudioProjectRepository(w, r, projectName)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAeStudioSkillsRepository operation middleware
+func (siw *ServerInterfaceWrapper) GetAeStudioSkillsRepository(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeStudioCCScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAeStudioSkillsRepository(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// RecordTurnUsage operation middleware
+func (siw *ServerInterfaceWrapper) RecordTurnUsage(w http.ResponseWriter, r *http.Request) {
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeStudioCCScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.RecordTurnUsage(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// IngestWebhookEvent operation middleware
+func (siw *ServerInterfaceWrapper) IngestWebhookEvent(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	ctx := r.Context()
+
+	ctx = context.WithValue(ctx, AeStudioCCScopes, []string{})
+
+	r = r.WithContext(ctx)
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params IngestWebhookEventParams
+
+	headers := r.Header
+
+	// ------------- Required header parameter "X-GitHub-Delivery" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-GitHub-Delivery")]; found {
+		var XGitHubDelivery string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-GitHub-Delivery", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-GitHub-Delivery", valueList[0], &XGitHubDelivery, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-GitHub-Delivery", Err: err})
+			return
+		}
+
+		params.XGitHubDelivery = XGitHubDelivery
+
+	} else {
+		err := fmt.Errorf("Header parameter X-GitHub-Delivery is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-GitHub-Delivery", Err: err})
+		return
+	}
+
+	// ------------- Required header parameter "X-GitHub-Event" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-GitHub-Event")]; found {
+		var XGitHubEvent string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-GitHub-Event", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-GitHub-Event", valueList[0], &XGitHubEvent, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-GitHub-Event", Err: err})
+			return
+		}
+
+		params.XGitHubEvent = XGitHubEvent
+
+	} else {
+		err := fmt.Errorf("Header parameter X-GitHub-Event is required, but not found")
+		siw.ErrorHandlerFunc(w, r, &RequiredHeaderError{ParamName: "X-GitHub-Event", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.IngestWebhookEvent(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -143,8 +502,6 @@ func (siw *ServerInterfaceWrapper) RunnerValidationContext(w http.ResponseWriter
 	}
 
 	ctx := r.Context()
-
-	ctx = context.WithValue(ctx, TaskJWTScopes, []string{})
 
 	ctx = context.WithValue(ctx, PublisherCCScopes, []string{})
 
@@ -281,23 +638,27 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/executions/{executionId}/credentials/refresh", wrapper.RunnerRefreshCredentials)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/validation/{cycleId}/context", wrapper.RunnerValidationContext)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/dependency-completions", wrapper.CompleteAeStudioDependencies)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/ae-studio/projects/{projectName}/repository", wrapper.GetAeStudioProjectRepository)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/ae-studio/skills/repository", wrapper.GetAeStudioSkillsRepository)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/turn-usage", wrapper.RecordTurnUsage)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/ae-studio/webhook-events", wrapper.IngestWebhookEvent)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/runs/{cycleId}/validation-context", wrapper.RunnerValidationContext)
 
 	return m
 }
 
-type RunnerRefreshCredentialsRequestObject struct {
-	ExecutionID string `json:"executionId"`
+type CompleteAeStudioDependenciesRequestObject struct {
+	Body *CompleteAeStudioDependenciesJSONRequestBody
 }
 
-type RunnerRefreshCredentialsResponseObject interface {
-	VisitRunnerRefreshCredentialsResponse(w http.ResponseWriter) error
+type CompleteAeStudioDependenciesResponseObject interface {
+	VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error
 }
 
-type RunnerRefreshCredentials200JSONResponse RefreshResponse
+type CompleteAeStudioDependencies200JSONResponse AEStudioDependencyCompletions
 
-func (response RunnerRefreshCredentials200JSONResponse) VisitRunnerRefreshCredentialsResponse(w http.ResponseWriter) error {
+func (response CompleteAeStudioDependencies200JSONResponse) VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -309,12 +670,218 @@ func (response RunnerRefreshCredentials200JSONResponse) VisitRunnerRefreshCreden
 	return err
 }
 
-type RunnerRefreshCredentialsdefaultJSONResponse struct {
+type CompleteAeStudioDependenciesdefaultJSONResponse struct {
 	Body       Error
 	StatusCode int
 }
 
-func (response RunnerRefreshCredentialsdefaultJSONResponse) VisitRunnerRefreshCredentialsResponse(w http.ResponseWriter) error {
+func (response CompleteAeStudioDependenciesdefaultJSONResponse) VisitCompleteAeStudioDependenciesResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAeStudioProjectRepositoryRequestObject struct {
+	ProjectName string `json:"projectName"`
+}
+
+type GetAeStudioProjectRepositoryResponseObject interface {
+	VisitGetAeStudioProjectRepositoryResponse(w http.ResponseWriter) error
+}
+
+type GetAeStudioProjectRepository200JSONResponse AEStudioProjectRepository
+
+func (response GetAeStudioProjectRepository200JSONResponse) VisitGetAeStudioProjectRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAeStudioProjectRepositorydefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetAeStudioProjectRepositorydefaultJSONResponse) VisitGetAeStudioProjectRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAeStudioSkillsRepositoryRequestObject struct {
+}
+
+type GetAeStudioSkillsRepositoryResponseObject interface {
+	VisitGetAeStudioSkillsRepositoryResponse(w http.ResponseWriter) error
+}
+
+type GetAeStudioSkillsRepository200JSONResponse AEStudioProjectRepository
+
+func (response GetAeStudioSkillsRepository200JSONResponse) VisitGetAeStudioSkillsRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAeStudioSkillsRepository404JSONResponse Error
+
+func (response GetAeStudioSkillsRepository404JSONResponse) VisitGetAeStudioSkillsRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetAeStudioSkillsRepositorydefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response GetAeStudioSkillsRepositorydefaultJSONResponse) VisitGetAeStudioSkillsRepositoryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RecordTurnUsageRequestObject struct {
+	Body *RecordTurnUsageJSONRequestBody
+}
+
+type RecordTurnUsageResponseObject interface {
+	VisitRecordTurnUsageResponse(w http.ResponseWriter) error
+}
+
+type RecordTurnUsage202Response struct {
+}
+
+func (response RecordTurnUsage202Response) VisitRecordTurnUsageResponse(w http.ResponseWriter) error {
+	w.WriteHeader(202)
+	return nil
+}
+
+type RecordTurnUsage404JSONResponse Error
+
+func (response RecordTurnUsage404JSONResponse) VisitRecordTurnUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RecordTurnUsagedefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response RecordTurnUsagedefaultJSONResponse) VisitRecordTurnUsageResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type IngestWebhookEventRequestObject struct {
+	Params IngestWebhookEventParams
+	Body   *IngestWebhookEventJSONRequestBody
+}
+
+type IngestWebhookEventResponseObject interface {
+	VisitIngestWebhookEventResponse(w http.ResponseWriter) error
+}
+
+type IngestWebhookEvent200JSONResponse AEStudioWebhookEventResult
+
+func (response IngestWebhookEvent200JSONResponse) VisitIngestWebhookEventResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type IngestWebhookEvent202JSONResponse AEStudioWebhookEventResult
+
+func (response IngestWebhookEvent202JSONResponse) VisitIngestWebhookEventResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type IngestWebhookEvent404JSONResponse Error
+
+func (response IngestWebhookEvent404JSONResponse) VisitIngestWebhookEventResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type IngestWebhookEventdefaultJSONResponse struct {
+	Body       Error
+	StatusCode int
+}
+
+func (response IngestWebhookEventdefaultJSONResponse) VisitIngestWebhookEventResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
@@ -367,11 +934,23 @@ func (response RunnerValidationContextdefaultJSONResponse) VisitRunnerValidation
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
-	// Refresh an execution's git credentials (runner callback)
-	// (POST /executions/{executionId}/credentials/refresh)
-	RunnerRefreshCredentials(ctx context.Context, request RunnerRefreshCredentialsRequestObject) (RunnerRefreshCredentialsResponseObject, error)
+	// Complete dependency stubs from a save (AE Studio tools pod)
+	// (POST /ae-studio/dependency-completions)
+	CompleteAeStudioDependencies(ctx context.Context, request CompleteAeStudioDependenciesRequestObject) (CompleteAeStudioDependenciesResponseObject, error)
+	// Resolve a project to its GitHub repository (AE Studio tools pod)
+	// (GET /ae-studio/projects/{projectName}/repository)
+	GetAeStudioProjectRepository(ctx context.Context, request GetAeStudioProjectRepositoryRequestObject) (GetAeStudioProjectRepositoryResponseObject, error)
+	// Resolve the org's skills repository (AE Studio tools pod)
+	// (GET /ae-studio/skills/repository)
+	GetAeStudioSkillsRepository(ctx context.Context, request GetAeStudioSkillsRepositoryRequestObject) (GetAeStudioSkillsRepositoryResponseObject, error)
+	// Record finished turns (AE Studio tools pod)
+	// (POST /ae-studio/turn-usage)
+	RecordTurnUsage(ctx context.Context, request RecordTurnUsageRequestObject) (RecordTurnUsageResponseObject, error)
+	// Ingest one verified GitHub webhook delivery (AE Studio tools pod)
+	// (POST /ae-studio/webhook-events)
+	IngestWebhookEvent(ctx context.Context, request IngestWebhookEventRequestObject) (IngestWebhookEventResponseObject, error)
 	// Fetch a validation run's deployed endpoints (runner callback)
-	// (GET /validation/{cycleId}/context)
+	// (GET /runs/{cycleId}/validation-context)
 	RunnerValidationContext(ctx context.Context, request RunnerValidationContextRequestObject) (RunnerValidationContextResponseObject, error)
 }
 
@@ -404,25 +983,144 @@ type strictHandler struct {
 	options     StrictHTTPServerOptions
 }
 
-// RunnerRefreshCredentials operation middleware
-func (sh *strictHandler) RunnerRefreshCredentials(w http.ResponseWriter, r *http.Request, executionID string) {
-	var request RunnerRefreshCredentialsRequestObject
+// CompleteAeStudioDependencies operation middleware
+func (sh *strictHandler) CompleteAeStudioDependencies(w http.ResponseWriter, r *http.Request) {
+	var request CompleteAeStudioDependenciesRequestObject
 
-	request.ExecutionID = executionID
+	var body CompleteAeStudioDependenciesJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
 
 	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
-		return sh.ssi.RunnerRefreshCredentials(ctx, request.(RunnerRefreshCredentialsRequestObject))
+		return sh.ssi.CompleteAeStudioDependencies(ctx, request.(CompleteAeStudioDependenciesRequestObject))
 	}
 	for _, middleware := range sh.middlewares {
-		handler = middleware(handler, "RunnerRefreshCredentials")
+		handler = middleware(handler, "CompleteAeStudioDependencies")
 	}
 
 	response, err := handler(r.Context(), w, r, request)
 
 	if err != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, err)
-	} else if validResponse, ok := response.(RunnerRefreshCredentialsResponseObject); ok {
-		if err := validResponse.VisitRunnerRefreshCredentialsResponse(w); err != nil {
+	} else if validResponse, ok := response.(CompleteAeStudioDependenciesResponseObject); ok {
+		if err := validResponse.VisitCompleteAeStudioDependenciesResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAeStudioProjectRepository operation middleware
+func (sh *strictHandler) GetAeStudioProjectRepository(w http.ResponseWriter, r *http.Request, projectName string) {
+	var request GetAeStudioProjectRepositoryRequestObject
+
+	request.ProjectName = projectName
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAeStudioProjectRepository(ctx, request.(GetAeStudioProjectRepositoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAeStudioProjectRepository")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAeStudioProjectRepositoryResponseObject); ok {
+		if err := validResponse.VisitGetAeStudioProjectRepositoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetAeStudioSkillsRepository operation middleware
+func (sh *strictHandler) GetAeStudioSkillsRepository(w http.ResponseWriter, r *http.Request) {
+	var request GetAeStudioSkillsRepositoryRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetAeStudioSkillsRepository(ctx, request.(GetAeStudioSkillsRepositoryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetAeStudioSkillsRepository")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetAeStudioSkillsRepositoryResponseObject); ok {
+		if err := validResponse.VisitGetAeStudioSkillsRepositoryResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RecordTurnUsage operation middleware
+func (sh *strictHandler) RecordTurnUsage(w http.ResponseWriter, r *http.Request) {
+	var request RecordTurnUsageRequestObject
+
+	var body RecordTurnUsageJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.RecordTurnUsage(ctx, request.(RecordTurnUsageRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RecordTurnUsage")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(RecordTurnUsageResponseObject); ok {
+		if err := validResponse.VisitRecordTurnUsageResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// IngestWebhookEvent operation middleware
+func (sh *strictHandler) IngestWebhookEvent(w http.ResponseWriter, r *http.Request, params IngestWebhookEventParams) {
+	var request IngestWebhookEventRequestObject
+
+	request.Params = params
+
+	var body IngestWebhookEventJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.IngestWebhookEvent(ctx, request.(IngestWebhookEventRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "IngestWebhookEvent")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(IngestWebhookEventResponseObject); ok {
+		if err := validResponse.VisitIngestWebhookEventResponse(w); err != nil {
 			sh.options.ResponseErrorHandlerFunc(w, r, err)
 		}
 	} else if response != nil {
@@ -454,4 +1152,178 @@ func (sh *strictHandler) RunnerValidationContext(w http.ResponseWriter, r *http.
 	} else if response != nil {
 		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
 	}
+}
+
+// Base64 encoded, compressed with deflate, json marshaled OpenAPI spec.
+// Stored as a slice of fixed-width chunks rather than one concatenated
+// const string: with thousands of chunks the chained `+` fold is several
+// times slower for the Go compiler than parsing a slice literal.
+var swaggerSpec = []string{
+	"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",
+}
+
+// decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,
+// after base64-decoding and flate-decompressing the embedded blob.
+func decodeSpec() ([]byte, error) {
+	encoded := strings.Join(swaggerSpec, "")
+	compressed, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("error base64 decoding spec: %w", err)
+	}
+	zr := flate.NewReader(bytes.NewReader(compressed))
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(zr); err != nil {
+		return nil, fmt.Errorf("read flate: %w", err)
+	}
+	if err := zr.Close(); err != nil {
+		return nil, fmt.Errorf("close flate reader: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+var rawSpec = decodeSpecCached()
+
+// a naive cache of the decoded OpenAPI spec
+func decodeSpecCached() func() ([]byte, error) {
+	data, err := decodeSpec()
+	return func() ([]byte, error) {
+		return data, err
+	}
+}
+
+// Constructs a synthetic filesystem for resolving external references when loading openapi specifications.
+func PathToRawSpec(pathToFile string) map[string]func() ([]byte, error) {
+	res := make(map[string]func() ([]byte, error))
+	if len(pathToFile) > 0 {
+		res[pathToFile] = rawSpec
+	}
+
+	return res
+}
+
+// GetSpec returns the OpenAPI specification corresponding to the generated
+// code in this file. External references in the spec are resolved through
+// PathToRawSpec; externally-referenced files must be embedded in their
+// corresponding Go packages (via the import-mapping feature). URL-based
+// external refs are not supported.
+func GetSpec() (swagger *openapi3.T, err error) {
+	resolvePath := PathToRawSpec("")
+
+	loader := openapi3.NewLoader()
+	loader.IsExternalRefsAllowed = true
+	loader.ReadFromURIFunc = func(loader *openapi3.Loader, url *url.URL) ([]byte, error) {
+		pathToFile := url.String()
+		pathToFile = path.Clean(pathToFile)
+		getSpec, ok := resolvePath[pathToFile]
+		if !ok {
+			err1 := fmt.Errorf("path not found: %s", pathToFile)
+			return nil, err1
+		}
+		return getSpec()
+	}
+	var specData []byte
+	specData, err = rawSpec()
+	if err != nil {
+		return
+	}
+	swagger, err = loader.LoadFromData(specData)
+	if err != nil {
+		return
+	}
+	return
+}
+
+// GetSpecJSON returns the raw JSON bytes of the embedded OpenAPI
+// specification: decompressed but not unmarshaled. External references
+// are not resolved here; the bytes are the spec exactly as embedded by
+// codegen. The result is cached at package init time, so repeated calls
+// are cheap.
+func GetSpecJSON() ([]byte, error) {
+	return rawSpec()
+}
+
+// GetSwagger returns the OpenAPI specification corresponding to the
+// generated code in this file.
+//
+// Deprecated: GetSwagger predates kin-openapi renaming openapi3.Swagger
+// to openapi3.T. Use [GetSpec] instead. This wrapper is retained for
+// backwards compatibility.
+func GetSwagger() (*openapi3.T, error) {
+	return GetSpec()
 }

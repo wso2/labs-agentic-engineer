@@ -19,11 +19,12 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { client } from "../../../api/client";
-import { apiErrorMessage } from "../../../api/errors";
+import { ApiRequestError, apiErrorMessage, retryAfterMs } from "../../../api/errors";
 import type { components } from "../../../generated/aep-api";
 import { useSpecFlush } from "../../spec/collab/specDoc";
 import { buildBody, fixBody, type BuildSelection } from "../buildSelection";
 import { runKeys, useVersionLedger } from "./runs";
+import { refetchWhileAeStudioRestarts } from "../../ae-studio/model/unavailable";
 
 // The builds so far, as the picker, the track and the Builds card read them:
 // each version, what it built (list-project-versions: the features it
@@ -101,13 +102,15 @@ export function useBuilds(projectName: string) {
   const versions = useQuery({
     queryKey: buildsKey(projectName),
     queryFn: async (): Promise<SpecVersion[]> => {
-      const { data, error } = await client.GET("/projects/{projectName}/versions", {
+      const { data, error, response } = await client.GET("/projects/{projectName}/versions", {
         params: { path: { projectName } },
       });
-      if (error || data === undefined) throw new Error(apiErrorMessage(error, "Couldn't load the builds"));
+      if (error || data === undefined) throw new ApiRequestError(error, "Couldn't load the builds", { retryAfterMs: retryAfterMs(response) });
       return data.versions;
     },
     staleTime: Infinity,
+    // aep-api reads the tags through AE Studio: "retrying…" while AE Studio restarts.
+    refetchInterval: (query) => refetchWhileAeStudioRestarts(query.state.error),
   });
   const ledger = useVersionLedger(projectName);
   const data = useMemo(

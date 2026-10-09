@@ -18,31 +18,28 @@ package edge
 
 import (
 	"net/http"
-
-	"gorm.io/gorm"
 )
 
 // NewHandlerForTest assembles the REAL production handler graph for the
 // in-process component tier. It is the exported seam the componenttest
 // harness calls: the same NewHandler /
-// mountSurfaces assembly production uses, with exactly two substitutions —
+// mountRoutes assembly production uses, with exactly two substitutions —
 //
 //   - inboundAuth REPLACES the JWKS-backed jwt.Middleware on the /api/ edge
 //     (a claims-injector, so the real tenant gate runs in ENFORCE with no
 //     Thunder/JWKS — §8.2). Pass nil to keep the production verifier.
-//   - the raw-handler controllers (webhook, connect-callback) are left nil;
-//     mountSurfaces already nil-guards them, so the handler degrades cleanly to
+//   - the raw-handler controller (webhook) is left nil;
+//     mountRoutes already nil-guards it, so the handler degrades cleanly to
 //     discovery + the /api/ chain + the global middleware stack.
 //
 // deps carries the feature services under test (real services + mocked
-// clients); db may be nil (orgensure then no-ops). This lives in a
-// non-_test.go file on purpose so packages outside api (the componenttest
-// harness) can call it — it adds a seam, no production behavior.
-func NewHandlerForTest(deps Deps, inboundAuth func(http.Handler) http.Handler, db *gorm.DB) http.Handler {
+// clients). This lives in a non-_test.go file on purpose so packages outside
+// api (the componenttest harness) can call it — it adds a seam, no
+// production behavior.
+func NewHandlerForTest(deps Deps, inboundAuth func(http.Handler) http.Handler) http.Handler {
 	return NewHandler(AppParams{
 		Deps:        deps,
 		InboundAuth: inboundAuth,
-		DB:          db,
 		// Config left zero: TenantGateMode "" → tenant.ParseGateMode defaults to
 		// ENFORCE, which is exactly what the component tier wants. Controllers,
 		// OrganizationService, ThunderJWKS all nil (nil-guarded downstream).

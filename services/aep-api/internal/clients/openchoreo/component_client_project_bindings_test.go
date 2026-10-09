@@ -128,7 +128,7 @@ func TestListProjectReleaseBindings_AgentOnlyProjectIsEmpty(t *testing.T) {
 }
 
 // Bindings created before the marker existed carry no label, so they are still
-// counted. Deliberate, not an oversight: they age out with the retention pass,
+// counted. Deliberate, not an oversight: they go when the settler deletes them,
 // and the alternative (matching the agent's run-name convention) would infer
 // identity from a naming scheme. Pinned so the limitation is a decision on
 // record rather than a surprise in the field.

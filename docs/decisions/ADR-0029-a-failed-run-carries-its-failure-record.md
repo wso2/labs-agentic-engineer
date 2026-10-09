@@ -1,7 +1,13 @@
+> **Superseded in part (2026-10).** The activity feed and its `activity_events`
+> table were removed, so no `run_failed` activity event is emitted any more
+> (the console's feed went first, console
+> [ADR-0022](../../apps/console/design/decisions/ADR-0022-the-overview-is-a-track-of-links.md)).
+> The failure record, the codes and the console's sentences stand.
+
 # ADR-0029 — A failed run carries its failure record; the console owns the words
 
 **Status:** Accepted · **Exposed by:** `RunFailure`, `BuildSummary.failureCode`,
-`BuildStage.failureCode`, `ActivityEvent.run_failed` in
+`BuildStage.failureCode` in
 `packages/contracts/api/v1/openapi.yaml` · **Detail:**
 [`services/aep-api/design/run-failure-record.md`](../../services/aep-api/design/run-failure-record.md),
 console [ADR-0031](https://github.com/wso2/labs-agentic-engineer/blob/classic-console/apps/console/design/decisions/ADR-0031-a-failed-run-explains-itself.md) (at the `classic-console` tag)

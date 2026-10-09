@@ -47,41 +47,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLUSTER_NAME="${CLUSTER_NAME:-openchoreo}"
 
-# pin_node_image <repo:tag> labels an imported local-only tag
-# io.cri-containerd.pinned=pinned on every server/agent node, so kubelet's image
-# GC never evicts it (it has no registry to be pulled back from). An import
-# replaces the containerd record, so this runs after every import.
-#   0 — on every node and pinned; 1 — on every node, not pinned everywhere;
-#   2 — missing from a node: `k3d image import` can flake and still exit 0.
-pin_node_image() {
-    local image="$1" nodes eligible=0 found=0 pinned=0 node ref
-    nodes="$(k3d node list --no-headers 2>/dev/null \
-        | awk -v c="$CLUSTER_NAME" '$3 == c && ($2 == "server" || $2 == "agent") { print $1 }')"
-    for node in $nodes; do
-        eligible=$((eligible + 1))
-        # A local tag lands as docker.io/library/<repo>:<tag>; match the whole ref.
-        ref="$(docker exec "$node" ctr -n k8s.io images ls -q 2>/dev/null \
-            | grep -m1 -Fx -e "$image" -e "docker.io/library/$image" || true)"
-        [ -n "$ref" ] || continue
-        found=$((found + 1))
-        docker exec "$node" ctr -n k8s.io images label \
-            "$ref" io.cri-containerd.pinned=pinned >/dev/null 2>&1 && pinned=$((pinned + 1))
-    done
-    if [ "$eligible" -eq 0 ]; then
-        echo "⚠️  no server/agent node found for cluster '$CLUSTER_NAME' — cannot pin $image"
-        return 2
-    fi
-    if [ "$found" -lt "$eligible" ]; then
-        echo "⚠️  $image is missing from $((eligible - found))/$eligible node(s) — the import did not land"
-        return 2
-    fi
-    if [ "$pinned" -lt "$found" ]; then
-        echo "⚠️  could not pin $image on $((found - pinned))/$found node(s) — kubelet image GC may evict this local-only tag"
-        return 1
-    fi
-    echo "📌 pinned $image against kubelet image GC ($pinned/$eligible node(s))"
-    return 0
-}
+# shellcheck source=lib/pin-image.sh
+. "$SCRIPT_DIR/lib/pin-image.sh"
 
 IMAGE="${AGENT_RUNNER_IMAGE:-aep-runner:dev}"
 IMAGE_OPENCODE="${AGENT_RUNNER_IMAGE_OPENCODE:-aep-runner-opencode:dev}"

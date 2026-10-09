@@ -35,10 +35,10 @@ import (
 // services; component tests fill only what the feature under test needs
 // (untouched fields nil-guard or 503 in their handlers).
 type Deps struct {
-	TaskTokens *auth.TaskTokenManager
-
-	// PublisherTokens verifies Thunder publisher CC JWTs on the MCP mount
-	// (AgentsScopedVerifier fallback). Nil keeps MCP BFF-only (local/tests).
+	// PublisherTokens verifies an org's Thunder publisher client token
+	// (aep-publisher-<org>), the coding runner's credential on POST
+	// /internal/v1/mcp (auth.MCPGate, beside InternalDeps.StudioClients).
+	// With both nil the MCP route is unmounted.
 	PublisherTokens *auth.PublisherTokenVerifier
 
 	// DesignSvc is the narrow design-dependency reader backing the edge's own

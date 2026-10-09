@@ -24,7 +24,9 @@ import (
 	"testing"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
+	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // statusOf casts a transport error to its wire status, failing the test if the
@@ -80,6 +82,20 @@ func TestMapComponentError(t *testing.T) {
 	}
 }
 
+// A manual build in an org with no GitHub connection is a state conflict the
+// caller can fix by connecting, not a server fault: 409, not 500.
+func TestMapComponentError_DisconnectedOrgIsConflict(t *testing.T) {
+	t.Parallel()
+	err := MapComponentError(fmt.Errorf("trigger-build: stage-build-secret: %w", organization.ErrOrgDisconnected), "failed to trigger build")
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
+	}
+	if ae.Status != http.StatusConflict || ae.Code != apierr.CodeConflict {
+		t.Fatalf("got status=%d code=%q, want 409 conflict", ae.Status, ae.Code)
+	}
+}
+
 func TestMapProjectError_PaymentRequiredForwardsPlatformMessage(t *testing.T) {
 	t.Parallel()
 	platform := "Quota limit reached for projects. Upgrade your subscription to continue."
@@ -130,5 +146,21 @@ func TestMapProjectError_ProjectTypeNotFoundIsUnprocessable(t *testing.T) {
 	}
 	if ae.Message != cause.Error() {
 		t.Fatalf("message = %q, want %q", ae.Message, cause.Error())
+	}
+}
+
+// A create whose leftover delete could not be finished (the create already
+// tried, twice) is a 409 with its own code, so the console does not read it as
+// a taken repository name, and copy the user can act on: wait, then retry.
+func TestMapProjectError_RepoDeletePendingIsConflict(t *testing.T) {
+	t.Parallel()
+	err := MapProjectError(fmt.Errorf("create repo: %w", sourcecontrol.ErrRepoDeletePending))
+	var ae *apierr.Error
+	if !errors.As(err, &ae) {
+		t.Fatalf("want *apierr.Error, got %T (%v)", err, err)
+	}
+	const want = "An earlier delete of this project is still finishing. Try again in a minute."
+	if ae.Status != http.StatusConflict || ae.Code != codeProjectDeletePending || ae.Message != want {
+		t.Fatalf("got status=%d code=%q message=%q, want 409 %s %q", ae.Status, ae.Code, ae.Message, codeProjectDeletePending, want)
 	}
 }

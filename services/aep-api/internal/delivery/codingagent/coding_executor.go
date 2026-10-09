@@ -45,27 +45,34 @@ import (
 // writes no secret material — the ComponentType's template renders the cycle's
 // ExternalSecrets from the org's secret store.
 type CodingExecutor struct {
-	oc            openchoreo.ComponentClient
-	repos         ProjectRepos
-	identities    Identities
-	execRows      delivery.ExecutionRepository
-	gitServiceURL string
-	platformURL   string
+	oc          openchoreo.ComponentClient
+	repos       ProjectRepos
+	identities  Identities
+	execRows    delivery.ExecutionRepository
+	platformURL string
 
 	// ocJobs is the OpenChoreo Component dispatch path — one Component per run
 	// cycle in the milestone's own project.
 	ocJobs *OCDispatcher
 
-	// Org-scoped reads, always wired at the composition root: the per-org
-	// GitHub SM-API triplet + IDP publisher profile the Workload's secret-env
-	// refs are built from, and the org lookup for the data-plane UUID. The
-	// Anthropic side goes through a resolver rather than a repository because
-	// WHICH of the org's two possible keys a run bills is a domain decision,
-	// not a row lookup.
+	// Org-scoped reads, always wired at the composition root: the org lookup
+	// for the data-plane UUID and the org secret rows the Workload's
+	// secret-env refs are built from. The model key goes through a resolver
+	// rather than a repository because WHICH of the org's two possible keys a
+	// run bills is a domain decision, not a row lookup.
 	orgs         organization.OrganizationRepository
 	anthropicKey CodingKeyResolver
-	githubCreds  organization.OrgCredentialRepository
-	idpProfiles  organization.IDPRepository
+
+	// orgSecrets reads the github-pat row, the reference every run mounts
+	// Required: the PAT lives only in vault, and the row is the only
+	// record of its reference.
+	orgSecrets organization.OrgSecretRefReader
+
+	// githubOwners answers the GitHub account the org's repositories live
+	// under: the reference the runner's in-process remote-git tools hold every
+	// requested owner against (AEP_GITHUB_OWNER). Nil, or an org it cannot
+	// answer for, fails the dispatch: a runner without it cannot guard them.
+	githubOwners sourcecontrol.OwnerLookup
 
 	// codingAgent answers which runtime and model this org's runs use. Nil is
 	// the platform defaults, which is exactly what every dispatch carried before
@@ -81,7 +88,7 @@ type CodingExecutor struct {
 	// Build-secret staging (nil → unauthenticated clone, correct for public
 	// repos). buildSecrets pre-stages the org's build git credential so a build's
 	// checkout-source step can clone a private repo; authRetryBudget bounds the
-	// git-clone-auth re-mint retries (§7).
+	// git-clone-auth re-mint retries.
 	buildSecrets    BuildSecretStager
 	authRetryBudget int
 
@@ -97,28 +104,39 @@ type CodingExecutor struct {
 
 // NewCodingExecutor wires the coding executor. Every dispatch goes through the
 // OpenChoreo component path; there is no alternative path to enable.
+// orgSecrets must be non-nil: there is no reading the GitHub PAT's reference
+// without its row.
 func NewCodingExecutor(
 	oc openchoreo.ComponentClient,
 	repos ProjectRepos,
 	identities Identities,
 	execRows delivery.ExecutionRepository,
-	gitServiceURL, platformURL string,
+	platformURL string,
 	orgs organization.OrganizationRepository,
 	anthropicKey CodingKeyResolver,
-	githubCreds organization.OrgCredentialRepository,
-	idpProfiles organization.IDPRepository,
+	orgSecrets organization.OrgSecretRefReader,
 ) *CodingExecutor {
+	if orgSecrets == nil {
+		panic("codingagent: NewCodingExecutor needs the org secret rows")
+	}
 	return &CodingExecutor{
 		oc: oc, repos: repos, identities: identities,
-		execRows: execRows, gitServiceURL: gitServiceURL, platformURL: platformURL,
-		orgs: orgs, anthropicKey: anthropicKey, githubCreds: githubCreds, idpProfiles: idpProfiles,
+		execRows: execRows, platformURL: platformURL,
+		orgs: orgs, anthropicKey: anthropicKey, orgSecrets: orgSecrets,
 	}
 }
 
-// WithOCDispatch enables the OpenChoreo Component dispatch path (phase 08).
+// WithOCDispatch enables the OpenChoreo Component dispatch path.
 // Returns the receiver for chained construction.
 func (e *CodingExecutor) WithOCDispatch(d *OCDispatcher) *CodingExecutor {
 	e.ocJobs = d
+	return e
+}
+
+// WithGitHubOwners attaches the org GitHub-owner lookup every dispatch stamps
+// as AEP_GITHUB_OWNER. Returns the receiver for chained construction.
+func (e *CodingExecutor) WithGitHubOwners(o sourcecontrol.OwnerLookup) *CodingExecutor {
+	e.githubOwners = o
 	return e
 }
 
@@ -241,7 +259,7 @@ func (e *CodingExecutor) launchAgent(ctx context.Context, in agentLaunch) (deliv
 // dispatchViaOC launches one cycle through the OpenChoreo Component chain.
 //
 // The executor's job here is credential and identity resolution — the org's
-// refs-only secret triplets and the publisher SecretReference — and the
+// secret references (names the org_secrets rows record) — and the
 // dispatcher's job is the OC chain. The run name is derived from the CYCLE id,
 // deterministically within a dispatch attempt, so a crashed dispatch resumes
 // over the same Component instead of orphaning it.
@@ -273,18 +291,21 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 	disp := in.shape
 	platform := strings.TrimRight(e.platformURL, "/")
 	env := map[string]string{
-		"AEP_TASK_ID":         in.correlationID,
-		"AEP_ORG_ID":          in.orgID,
-		"AEP_PROJECT_ID":      in.projectID,
-		"AEP_COMPONENT_NAME":  disp.componentName,
-		"AEP_REPO_URL":        repo.RepoURL,
-		"AEP_PROMPT":          disp.prompt,
-		"AEP_GIT_SERVICE_URL": e.gitServiceURL,
-		"AEP_PLATFORM_URL":    e.platformURL,
-		"AEP_MCP_URL":         platform + "/internal/v1/mcp",
-		"AEP_IDENTITY_NAME":   name,
-		"AEP_IDENTITY_EMAIL":  email,
-		"AEP_IDENTITY_LOGIN":  login,
+		"AEP_TASK_ID":        in.correlationID,
+		"AEP_ORG_ID":         in.orgID,
+		"AEP_PROJECT_ID":     in.projectID,
+		"AEP_COMPONENT_NAME": disp.componentName,
+		"AEP_REPO_URL":       repo.RepoURL,
+		"AEP_PROMPT":         disp.prompt,
+		"AEP_PLATFORM_URL":   e.platformURL,
+		"AEP_MCP_URL":        platform + "/internal/v1/mcp",
+		"AEP_IDENTITY_NAME":  name,
+		"AEP_IDENTITY_EMAIL": email,
+		"AEP_IDENTITY_LOGIN": login,
+		// The owner-must-match-org guard's reference for the runner's
+		// in-process remote-git tools — the org's GitHub account, the same
+		// value its AE Studio pod is given as AE_GITHUB_OWNER.
+		"AEP_GITHUB_OWNER":    creds.githubOwner,
 		"AEP_CORRELATION_ID":  in.correlationID,
 		"AEP_TASK_KIND":       taskKindOrDefault(disp.taskKind),
 		envSpecTag:            disp.specTag,
@@ -354,7 +375,7 @@ func (e *CodingExecutor) dispatchViaOC(ctx context.Context, in agentLaunch, repo
 	if err != nil {
 		return delivery.AgentLaunch{}, err
 	}
-	return delivery.AgentLaunch{JobRef: res.RunName, ModelHost: creds.model.Conn.Host, Environment: res.Environment}, nil
+	return delivery.AgentLaunch{JobRef: res.RunName, ModelHost: creds.model.Conn.Host, Environment: res.Environment, ComponentUID: res.ComponentUID}, nil
 }
 
 // stageBuildSecret pre-stages the org's build git credential and returns the
@@ -413,10 +434,12 @@ func (e *CodingExecutor) RetryAuthFailedBuild(ctx context.Context, row *delivery
 }
 
 // runnerCredentials is what every coding run mounts: the model credential,
-// with the connection it is for and its kind, and the org's GitHub credential.
+// with the connection it is for and its kind, and the org's GitHub credential
+// with the account it is for.
 type runnerCredentials struct {
-	model  organization.CodingCredential
-	github SecretRef
+	model       organization.CodingCredential
+	github      SecretRef
+	githubOwner string
 }
 
 // resolveRunnerSecretRefs resolves the two credentials every coding run mounts.
@@ -425,31 +448,59 @@ type runnerCredentials struct {
 // runtime bills — its Claude subscription when it has one and the runtime is
 // Claude Code, the connection's key otherwise — and which connection it is
 // for. The domain answers in its own terms (a kind, never a variable name);
-// modelEnv maps that to the runner's env contract. The resolver fails closed
-// on a configured-but-unusable subscription, so a run never silently bills API
-// credits an org chose to replace with its plan.
+// modelEnv maps that to the runner's env contract. A subscription whose token
+// was never recorded resolves to the connection's key (logged); one that is not
+// active is an error.
+//
+// The GitHub side is the github-pat reference (githubSecretRef) and the org's
+// GitHub owner (githubOwner).
 func (e *CodingExecutor) resolveRunnerSecretRefs(ctx context.Context, orgID string, runtime orgconfig.AgentRuntime) (runnerCredentials, error) {
 	cred, err := e.anthropicKey.ResolveCodingCredential(ctx, orgID, runtime)
 	if err != nil {
 		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
-
-	githubRow, err := e.githubCreds.GetByOrg(ctx, orgID)
+	githubSR, err := e.githubSecretRef(ctx, orgID)
 	if err != nil {
-		return runnerCredentials{}, fmt.Errorf("coding dispatch: github credentials for org %q: %w", orgID, err)
-	}
-	if githubRow == nil {
-		return runnerCredentials{}, fmt.Errorf("coding dispatch: github secret reference missing for org %q: org_credentials row not found", orgID)
-	}
-	githubSR := SecretRef{
-		SecretRefName: derefStr(githubRow.SecretRefName),
-		KVPath:        derefStr(githubRow.SecretRefKVPath),
-		Property:      derefStr(githubRow.SecretRefProperty),
-	}
-	if err := validateSecretRefTriplet("github", orgID, githubSR); err != nil {
 		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
 	}
-	return runnerCredentials{model: cred, github: githubSR}, nil
+	owner, err := e.githubOwner(ctx, orgID)
+	if err != nil {
+		return runnerCredentials{}, fmt.Errorf("coding dispatch: %w", err)
+	}
+	return runnerCredentials{model: cred, github: githubSR, githubOwner: owner}, nil
+}
+
+// githubOwner is the GitHub account the org's repositories live under, the
+// one the runner's remote-git tools may read. No answer is no dispatch.
+func (e *CodingExecutor) githubOwner(ctx context.Context, orgID string) (string, error) {
+	if e.githubOwners == nil {
+		return "", fmt.Errorf("github owner for org %q: no owner lookup configured", orgID)
+	}
+	owner, err := e.githubOwners.GitHubOwner(ctx, orgID)
+	if err != nil {
+		return "", fmt.Errorf("github owner for org %q: %w", orgID, err)
+	}
+	if owner == "" {
+		return "", fmt.Errorf("github owner for org %q: empty", orgID)
+	}
+	return owner, nil
+}
+
+// githubSecretRef is the org's GitHub PAT reference: the name its github-pat
+// row records, with the token key, so a rotation never leaves a Job
+// mounting the reference the write already deleted. The Job carries only
+// SecretKeyRef{Name, Key}; OpenChoreo resolves the reference itself.
+// No row: the org has no PAT reference (the PAT lives only in vault), and the
+// dispatch fails.
+func (e *CodingExecutor) githubSecretRef(ctx context.Context, orgID string) (SecretRef, error) {
+	name, ok, err := organization.RecordedOrgSecretRef(ctx, e.orgSecrets, orgID, organization.OrgSecretGitHubPAT)
+	if err != nil {
+		return SecretRef{}, fmt.Errorf("github secret reference for org %q: %w", orgID, err)
+	}
+	if !ok {
+		return SecretRef{}, fmt.Errorf("github secret reference missing for org %q: no %s row (reconnect GitHub)", orgID, organization.OrgSecretGitHubPAT)
+	}
+	return SecretRef{SecretRefName: name, Property: organization.OrgSecretGitHubPAT.ValueKey()}, nil
 }
 
 // evaluationKeyRef resolves the org's connection key as the build's
@@ -507,19 +558,6 @@ func (e *CodingExecutor) codingAgentEnv(ctx context.Context, orgID string) (orgc
 	return proj, nil
 }
 
-func validateSecretRefTriplet(credential, orgID string, ref SecretRef) error {
-	if ref.SecretRefName == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_name not populated", credential, orgID)
-	}
-	if ref.KVPath == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_kv_path not populated", credential, orgID)
-	}
-	if ref.Property == "" {
-		return fmt.Errorf("%s secret reference missing for org %q: secret_ref_property not populated", credential, orgID)
-	}
-	return nil
-}
-
 // codingAgentRunPrefix marks a run name as a coding-agent cycle run (owned by
 // the cycle watcher) rather than an OpenChoreo build WorkflowRun. It is the ONE
 // discriminator both watchers key on so they never poll each other's runs.
@@ -542,14 +580,7 @@ func codingAgentRunNameFor(projectID, cycleID string) string {
 	return openchoreo.NewCodingAgentRunName(projectID, cycleID)
 }
 
-func derefStr(s *string) string {
-	if s == nil {
-		return ""
-	}
-	return *s
-}
-
-// buildPrompt is the coding-agent directive (§9): a MILESTONE REFERENCE and
+// buildPrompt is the coding-agent directive: a MILESTONE REFERENCE and
 // nothing else. The agent discovers its own working set from the live issues
 // API and follows the versioned `aep` skill for ordering, fan-out, branch
 // identity, verification and the PR contract — the platform deliberately

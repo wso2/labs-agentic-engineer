@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/wso2/aep/aep-api/internal/delivery"
 	"github.com/wso2/aep/aep-api/internal/gen"
 	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/reqspec"
@@ -44,47 +45,44 @@ import (
 type Handler struct {
 	svc       *Service
 	preflight *PreflightService
-	activity  SpecPublishedRecorder
-	publisher PublisherProvisioner
+	publisher PublisherGate
 }
 
-// PublisherProvisioner ensures the org's Thunder publisher client_credentials
-// SecretReference exists before a coding-agent build starts. Wired on Handler
-// (never on Service) because POST /projects/{name}/build is the sole request
-// path that still carries the console JWT ProvisionPublisherForBuild needs —
-// Temporal dispatch and the StartProjectBuild auto-kick trigger run with no
-// such JWT and must stay read-only with respect to publisher credentials.
-type PublisherProvisioner interface {
-	ProvisionPublisherForBuild(ctx context.Context, orgID string) error
-}
-
-// SpecPublishedRecorder appends the spec_published activity line (issue #239)
-// when a build start succeeds: the user published spec v<tag> and kicked off
-// the build. Best-effort and optional (nil = no feed): recording never fails
-// the request. Satisfied by an app-root adapter that resolves the signed-in
-// user's identity from ctx and appends via the projects activity service
-// (build must not import projects — projects already imports delivery).
-type SpecPublishedRecorder interface {
-	RecordSpecPublished(ctx context.Context, orgID, projectName, tag string)
+// PublisherGate refuses a build whose org has no publisher credentials (its
+// ae-publisher-client reference) before the tag is cut. It only reads: the
+// gitpat submit is the one writer of those credentials, so a missing
+// row is delivery.ErrPublisherCredentialsMissing, which sends the user to
+// reconnect GitHub. Wired on Handler (never on Service): the StartProjectBuild
+// auto-kick trigger reaches dispatch, which refuses on its own.
+type PublisherGate interface {
+	RequirePublisherForBuild(ctx context.Context, orgID string) error
 }
 
 // NewHandler returns the slice's handler.
-func NewHandler(svc *Service, preflight *PreflightService, activity SpecPublishedRecorder) *Handler {
-	return &Handler{svc: svc, preflight: preflight, activity: activity}
+func NewHandler(svc *Service, preflight *PreflightService) *Handler {
+	return &Handler{svc: svc, preflight: preflight}
 }
 
-// WithPublisherProvisioner wires the publisher provisioner. Optional: nil
-// skips provisioning (tests that do not care).
-func (h *Handler) WithPublisherProvisioner(p PublisherProvisioner) *Handler {
+// WithPublisherGate wires the publisher gate. Optional: nil skips it (tests
+// that do not care).
+func (h *Handler) WithPublisherGate(p PublisherGate) *Handler {
 	h.publisher = p
 	return h
 }
 
+// codePublisherCredentialsMissing is the error code of a build refused for
+// want of the org's publisher credentials.
+const codePublisherCredentialsMissing = "publisher_credentials_missing"
+
 func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequestObject) (gen.BuildProjectResponseObject, error) {
 	org := tenant.BoundOrgFromContext(ctx)
 	if h.publisher != nil {
-		if err := h.publisher.ProvisionPublisherForBuild(ctx, org); err != nil {
-			slog.ErrorContext(ctx, "publisher provision for build failed", "error", err)
+		if err := h.publisher.RequirePublisherForBuild(ctx, org); err != nil {
+			if errors.Is(err, delivery.ErrPublisherCredentialsMissing) {
+				slog.InfoContext(ctx, "build refused: no publisher credentials", "org", org)
+				return nil, apierr.New(http.StatusConflict, codePublisherCredentialsMissing, delivery.PublisherReconnectMessage, nil)
+			}
+			slog.ErrorContext(ctx, "publisher gate for build failed", "org", org, "error", err)
 			return nil, apierr.ServiceUnavailable("publisher credentials unavailable")
 		}
 	}
@@ -92,9 +90,6 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 		tag, err := h.svc.Repair(ctx, org, request.ProjectName, strings.TrimSpace(request.Body.Repair.Of))
 		if err != nil {
 			return nil, mapBuildRunError(err)
-		}
-		if h.activity != nil {
-			h.activity.RecordSpecPublished(ctx, org, request.ProjectName, tag)
 		}
 		return gen.BuildProject200JSONResponse(gen.BuildResponse{Tag: tag}), nil
 	}
@@ -121,9 +116,6 @@ func (h *Handler) BuildProject(ctx context.Context, request gen.BuildProjectRequ
 	if len(failures) > 0 {
 		return gen.BuildProject200JSONResponse(gen.BuildResponse{Failures: toInputFailures(failures)}), nil
 	}
-	if h.activity != nil && tag != "" {
-		h.activity.RecordSpecPublished(ctx, org, request.ProjectName, tag)
-	}
 	return gen.BuildProject200JSONResponse(gen.BuildResponse{Tag: tag}), nil
 }
 
@@ -131,7 +123,7 @@ func (h *Handler) ListProjectBuilds(ctx context.Context, request gen.ListProject
 	org := tenant.BoundOrgFromContext(ctx)
 	list, err := h.svc.List(ctx, org, request.ProjectName)
 	if err != nil {
-		return nil, apierr.Internal("list builds")
+		return nil, apierr.WithCause(apierr.Internal("list builds"), err)
 	}
 	return gen.ListProjectBuilds200JSONResponse(toBuildList(list)), nil
 }
@@ -146,7 +138,7 @@ func (h *Handler) GetBuildPreflight(ctx context.Context, request gen.GetBuildPre
 	}
 	pf, err := h.preflight.Preflight(ctx, org, request.ProjectName)
 	if err != nil {
-		return nil, apierr.Internal("compute build preflight: " + err.Error())
+		return nil, apierr.WithCause(apierr.Internal("compute build preflight: "+err.Error()), err)
 	}
 	return gen.GetBuildPreflight200JSONResponse(toBuildPreflight(pf)), nil
 }
@@ -165,19 +157,21 @@ func mapBuildRunError(err error) error {
 	if errors.Is(err, ErrValidationRunLive) {
 		return apierr.Conflict(ErrValidationRunLive.Error())
 	}
+	// A server-side answer keeps err as its cause (apierr.WithCause): the edge
+	// speaks for an AE Studio failure behind it.
 	var ee *EdgeError
 	if !errors.As(err, &ee) {
-		return apierr.Internal("internal error")
+		return apierr.WithCause(apierr.Internal("internal error"), err)
 	}
 	switch ee.Status {
 	case http.StatusBadRequest:
 		return apierr.New(http.StatusBadRequest, "validation_failed", ee.Message, ee.Details)
 	case http.StatusServiceUnavailable:
-		return apierr.ServiceUnavailable(ee.Message)
+		return apierr.WithCause(apierr.ServiceUnavailable(ee.Message), err)
 	case http.StatusBadGateway:
-		return apierr.BadGateway(ee.Message)
+		return apierr.WithCause(apierr.BadGateway(ee.Message), err)
 	default:
-		return errFromStatus(ee.Status, ee.Message)
+		return apierr.WithCause(errFromStatus(ee.Status, ee.Message), err)
 	}
 }
 

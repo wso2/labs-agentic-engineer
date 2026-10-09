@@ -16,6 +16,48 @@ const (
 	UserJWTScopes userJWTContextKey = "userJWT.Scopes"
 )
 
+// Defines values for AeStudioReason.
+const (
+	AeStudioReasonError   AeStudioReason = "error"
+	AeStudioReasonTimeout AeStudioReason = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the AeStudioReason enum.
+func (e AeStudioReason) Valid() bool {
+	switch e {
+	case AeStudioReasonError:
+		return true
+	case AeStudioReasonTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AeStudioState.
+const (
+	AeStudioStateAbsent       AeStudioState = "absent"
+	AeStudioStateFailed       AeStudioState = "failed"
+	AeStudioStateProvisioning AeStudioState = "provisioning"
+	AeStudioStateReady        AeStudioState = "ready"
+)
+
+// Valid indicates whether the value is a known member of the AeStudioState enum.
+func (e AeStudioState) Valid() bool {
+	switch e {
+	case AeStudioStateAbsent:
+		return true
+	case AeStudioStateFailed:
+		return true
+	case AeStudioStateProvisioning:
+		return true
+	case AeStudioStateReady:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AgentRuntime.
 const (
 	AgentRuntimeClaudeCode AgentRuntime = "claude-code"
@@ -81,19 +123,19 @@ func (e BuildChangeKind) Valid() bool {
 
 // Defines values for BuildChangeState.
 const (
-	Changed BuildChangeState = "changed"
-	New     BuildChangeState = "new"
-	Removed BuildChangeState = "removed"
+	BuildChangeStateChanged BuildChangeState = "changed"
+	BuildChangeStateNew     BuildChangeState = "new"
+	BuildChangeStateRemoved BuildChangeState = "removed"
 )
 
 // Valid indicates whether the value is a known member of the BuildChangeState enum.
 func (e BuildChangeState) Valid() bool {
 	switch e {
-	case Changed:
+	case BuildChangeStateChanged:
 		return true
-	case New:
+	case BuildChangeStateNew:
 		return true
-	case Removed:
+	case BuildChangeStateRemoved:
 		return true
 	default:
 		return false
@@ -225,31 +267,31 @@ func (e BuildSummaryWaitingReason) Valid() bool {
 
 // Defines values for DeploymentGuardrailStatus.
 const (
-	GuardrailApplied     DeploymentGuardrailStatus = "applied"
-	GuardrailConflict    DeploymentGuardrailStatus = "conflict"
-	GuardrailFailed      DeploymentGuardrailStatus = "failed"
-	GuardrailInvalid     DeploymentGuardrailStatus = "invalid"
-	GuardrailPartial     DeploymentGuardrailStatus = "partial"
-	GuardrailUnavailable DeploymentGuardrailStatus = "unavailable"
-	GuardrailUnsupported DeploymentGuardrailStatus = "unsupported"
+	DeploymentGuardrailStatusGuardrailApplied     DeploymentGuardrailStatus = "applied"
+	DeploymentGuardrailStatusGuardrailConflict    DeploymentGuardrailStatus = "conflict"
+	DeploymentGuardrailStatusGuardrailFailed      DeploymentGuardrailStatus = "failed"
+	DeploymentGuardrailStatusGuardrailInvalid     DeploymentGuardrailStatus = "invalid"
+	DeploymentGuardrailStatusGuardrailPartial     DeploymentGuardrailStatus = "partial"
+	DeploymentGuardrailStatusGuardrailUnavailable DeploymentGuardrailStatus = "unavailable"
+	DeploymentGuardrailStatusGuardrailUnsupported DeploymentGuardrailStatus = "unsupported"
 )
 
 // Valid indicates whether the value is a known member of the DeploymentGuardrailStatus enum.
 func (e DeploymentGuardrailStatus) Valid() bool {
 	switch e {
-	case GuardrailApplied:
+	case DeploymentGuardrailStatusGuardrailApplied:
 		return true
-	case GuardrailConflict:
+	case DeploymentGuardrailStatusGuardrailConflict:
 		return true
-	case GuardrailFailed:
+	case DeploymentGuardrailStatusGuardrailFailed:
 		return true
-	case GuardrailInvalid:
+	case DeploymentGuardrailStatusGuardrailInvalid:
 		return true
-	case GuardrailPartial:
+	case DeploymentGuardrailStatusGuardrailPartial:
 		return true
-	case GuardrailUnavailable:
+	case DeploymentGuardrailStatusGuardrailUnavailable:
 		return true
-	case GuardrailUnsupported:
+	case DeploymentGuardrailStatusGuardrailUnsupported:
 		return true
 	default:
 		return false
@@ -276,16 +318,16 @@ func (e EnvValueCellDTOStatus) Valid() bool {
 
 // Defines values for EnvironmentDTOValidation.
 const (
-	Off EnvironmentDTOValidation = "off"
-	On  EnvironmentDTOValidation = "on"
+	EnvironmentDTOValidationOff EnvironmentDTOValidation = "off"
+	EnvironmentDTOValidationOn  EnvironmentDTOValidation = "on"
 )
 
 // Valid indicates whether the value is a known member of the EnvironmentDTOValidation enum.
 func (e EnvironmentDTOValidation) Valid() bool {
 	switch e {
-	case Off:
+	case EnvironmentDTOValidationOff:
 		return true
-	case On:
+	case EnvironmentDTOValidationOn:
 		return true
 	default:
 		return false
@@ -333,19 +375,19 @@ func (e ExternalResourceDTOScope) Valid() bool {
 
 // Defines values for IssueInfoAttentionReason.
 const (
-	Escalated       IssueInfoAttentionReason = "escalated"
-	NoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
-	UnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
+	IssueInfoAttentionReasonEscalated       IssueInfoAttentionReason = "escalated"
+	IssueInfoAttentionReasonNoChangeVerdict IssueInfoAttentionReason = "no_change_verdict"
+	IssueInfoAttentionReasonUnverifiedFix   IssueInfoAttentionReason = "unverified_fix"
 )
 
 // Valid indicates whether the value is a known member of the IssueInfoAttentionReason enum.
 func (e IssueInfoAttentionReason) Valid() bool {
 	switch e {
-	case Escalated:
+	case IssueInfoAttentionReasonEscalated:
 		return true
-	case NoChangeVerdict:
+	case IssueInfoAttentionReasonNoChangeVerdict:
 		return true
-	case UnverifiedFix:
+	case IssueInfoAttentionReasonUnverifiedFix:
 		return true
 	default:
 		return false
@@ -375,19 +417,19 @@ func (e MilestoneRunViewKind) Valid() bool {
 
 // Defines values for MilestoneRunViewOrigin.
 const (
-	IncidentAdoption MilestoneRunViewOrigin = "incident-adoption"
-	Revalidate       MilestoneRunViewOrigin = "revalidate"
-	SpecBuild        MilestoneRunViewOrigin = "spec-build"
+	MilestoneRunViewOriginIncidentAdoption MilestoneRunViewOrigin = "incident-adoption"
+	MilestoneRunViewOriginRevalidate       MilestoneRunViewOrigin = "revalidate"
+	MilestoneRunViewOriginSpecBuild        MilestoneRunViewOrigin = "spec-build"
 )
 
 // Valid indicates whether the value is a known member of the MilestoneRunViewOrigin enum.
 func (e MilestoneRunViewOrigin) Valid() bool {
 	switch e {
-	case IncidentAdoption:
+	case MilestoneRunViewOriginIncidentAdoption:
 		return true
-	case Revalidate:
+	case MilestoneRunViewOriginRevalidate:
 		return true
-	case SpecBuild:
+	case MilestoneRunViewOriginSpecBuild:
 		return true
 	default:
 		return false
@@ -444,28 +486,28 @@ func (e MilestoneRunViewWaitingReason) Valid() bool {
 
 // Defines values for OrgEndpointDTOType.
 const (
-	GRPC      OrgEndpointDTOType = "gRPC"
-	GraphQL   OrgEndpointDTOType = "GraphQL"
-	HTTP      OrgEndpointDTOType = "HTTP"
-	TCP       OrgEndpointDTOType = "TCP"
-	UDP       OrgEndpointDTOType = "UDP"
-	Websocket OrgEndpointDTOType = "Websocket"
+	OrgEndpointDTOTypeGRPC      OrgEndpointDTOType = "gRPC"
+	OrgEndpointDTOTypeGraphQL   OrgEndpointDTOType = "GraphQL"
+	OrgEndpointDTOTypeHTTP      OrgEndpointDTOType = "HTTP"
+	OrgEndpointDTOTypeTCP       OrgEndpointDTOType = "TCP"
+	OrgEndpointDTOTypeUDP       OrgEndpointDTOType = "UDP"
+	OrgEndpointDTOTypeWebsocket OrgEndpointDTOType = "Websocket"
 )
 
 // Valid indicates whether the value is a known member of the OrgEndpointDTOType enum.
 func (e OrgEndpointDTOType) Valid() bool {
 	switch e {
-	case GRPC:
+	case OrgEndpointDTOTypeGRPC:
 		return true
-	case GraphQL:
+	case OrgEndpointDTOTypeGraphQL:
 		return true
-	case HTTP:
+	case OrgEndpointDTOTypeHTTP:
 		return true
-	case TCP:
+	case OrgEndpointDTOTypeTCP:
 		return true
-	case UDP:
+	case OrgEndpointDTOTypeUDP:
 		return true
-	case Websocket:
+	case OrgEndpointDTOTypeWebsocket:
 		return true
 	default:
 		return false
@@ -627,16 +669,16 @@ func (e RunCycleViewKind) Valid() bool {
 
 // Defines values for RunCycleViewMergeVerdict.
 const (
-	Declined RunCycleViewMergeVerdict = "declined"
-	Refused  RunCycleViewMergeVerdict = "refused"
+	RunCycleViewMergeVerdictDeclined RunCycleViewMergeVerdict = "declined"
+	RunCycleViewMergeVerdictRefused  RunCycleViewMergeVerdict = "refused"
 )
 
 // Valid indicates whether the value is a known member of the RunCycleViewMergeVerdict enum.
 func (e RunCycleViewMergeVerdict) Valid() bool {
 	switch e {
-	case Declined:
+	case RunCycleViewMergeVerdictDeclined:
 		return true
-	case Refused:
+	case RunCycleViewMergeVerdictRefused:
 		return true
 	default:
 		return false
@@ -645,25 +687,22 @@ func (e RunCycleViewMergeVerdict) Valid() bool {
 
 // Defines values for RunCycleViewRecording.
 const (
-	RunCycleViewRecordingComplete  RunCycleViewRecording = "complete"
-	RunCycleViewRecordingGaps      RunCycleViewRecording = "gaps"
-	RunCycleViewRecordingLost      RunCycleViewRecording = "lost"
-	RunCycleViewRecordingNone      RunCycleViewRecording = "none"
-	RunCycleViewRecordingRecording RunCycleViewRecording = "recording"
+	RunCycleViewRecordingExpired     RunCycleViewRecording = "expired"
+	RunCycleViewRecordingKept        RunCycleViewRecording = "kept"
+	RunCycleViewRecordingLive        RunCycleViewRecording = "live"
+	RunCycleViewRecordingUnavailable RunCycleViewRecording = "unavailable"
 )
 
 // Valid indicates whether the value is a known member of the RunCycleViewRecording enum.
 func (e RunCycleViewRecording) Valid() bool {
 	switch e {
-	case RunCycleViewRecordingComplete:
+	case RunCycleViewRecordingExpired:
 		return true
-	case RunCycleViewRecordingGaps:
+	case RunCycleViewRecordingKept:
 		return true
-	case RunCycleViewRecordingLost:
+	case RunCycleViewRecordingLive:
 		return true
-	case RunCycleViewRecordingNone:
-		return true
-	case RunCycleViewRecordingRecording:
+	case RunCycleViewRecordingUnavailable:
 		return true
 	default:
 		return false
@@ -909,13 +948,13 @@ func (e RunEventTaskKind) Valid() bool {
 
 // Defines values for RunEventV.
 const (
-	RunEventV2 RunEventV = 2
+	RunEventVTwo RunEventV = 2
 )
 
 // Valid indicates whether the value is a known member of the RunEventV enum.
 func (e RunEventV) Valid() bool {
 	switch e {
-	case RunEventV2:
+	case RunEventVTwo:
 		return true
 	default:
 		return false
@@ -1096,6 +1135,45 @@ func (e SkillUpdateState) Valid() bool {
 	}
 }
 
+// Defines values for SpecStageAvailability.
+const (
+	SpecStageAvailabilityAvailable   SpecStageAvailability = "available"
+	SpecStageAvailabilityUnavailable SpecStageAvailability = "unavailable"
+)
+
+// Valid indicates whether the value is a known member of the SpecStageAvailability enum.
+func (e SpecStageAvailability) Valid() bool {
+	switch e {
+	case SpecStageAvailabilityAvailable:
+		return true
+	case SpecStageAvailabilityUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SpecStageUnavailableReason.
+const (
+	SpecStageUnavailableReasonAeStudioMisconfigured SpecStageUnavailableReason = "ae_studio_misconfigured"
+	SpecStageUnavailableReasonAeStudioUnavailable   SpecStageUnavailableReason = "ae_studio_unavailable"
+	SpecStageUnavailableReasonGithubNotConnected    SpecStageUnavailableReason = "github_not_connected"
+)
+
+// Valid indicates whether the value is a known member of the SpecStageUnavailableReason enum.
+func (e SpecStageUnavailableReason) Valid() bool {
+	switch e {
+	case SpecStageUnavailableReasonAeStudioMisconfigured:
+		return true
+	case SpecStageUnavailableReasonAeStudioUnavailable:
+		return true
+	case SpecStageUnavailableReasonGithubNotConnected:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for TaskDetailExecutorClass.
 const (
 	TaskDetailExecutorClassCoding     TaskDetailExecutorClass = "coding"
@@ -1186,99 +1264,6 @@ func (e TimelineEventEmitter) Valid() bool {
 	}
 }
 
-// Defines values for TurnConflictCode.
-const (
-	ConversationRotated TurnConflictCode = "conversation_rotated"
-	RequirementsMissing TurnConflictCode = "requirements_missing"
-	TurnInProgress      TurnConflictCode = "turn_in_progress"
-)
-
-// Valid indicates whether the value is a known member of the TurnConflictCode enum.
-func (e TurnConflictCode) Valid() bool {
-	switch e {
-	case ConversationRotated:
-		return true
-	case RequirementsMissing:
-		return true
-	case TurnInProgress:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnInputBodyIntent.
-const (
-	TurnInputBodyIntentChange  TurnInputBodyIntent = "change"
-	TurnInputBodyIntentDiscuss TurnInputBodyIntent = "discuss"
-)
-
-// Valid indicates whether the value is a known member of the TurnInputBodyIntent enum.
-func (e TurnInputBodyIntent) Valid() bool {
-	switch e {
-	case TurnInputBodyIntentChange:
-		return true
-	case TurnInputBodyIntentDiscuss:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnInputMultipartIntent.
-const (
-	TurnInputMultipartIntentChange  TurnInputMultipartIntent = "change"
-	TurnInputMultipartIntentDiscuss TurnInputMultipartIntent = "discuss"
-)
-
-// Valid indicates whether the value is a known member of the TurnInputMultipartIntent enum.
-func (e TurnInputMultipartIntent) Valid() bool {
-	switch e {
-	case TurnInputMultipartIntentChange:
-		return true
-	case TurnInputMultipartIntentDiscuss:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnScopeKind.
-const (
-	DesignReview TurnScopeKind = "design-review"
-	Feature      TurnScopeKind = "feature"
-)
-
-// Valid indicates whether the value is a known member of the TurnScopeKind enum.
-func (e TurnScopeKind) Valid() bool {
-	switch e {
-	case DesignReview:
-		return true
-	case Feature:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for TurnStatusCode.
-const (
-	TurnStatusCodeOutputTruncated TurnStatusCode = "output_truncated"
-	TurnStatusCodeProviderLimit   TurnStatusCode = "provider_limit"
-)
-
-// Valid indicates whether the value is a known member of the TurnStatusCode enum.
-func (e TurnStatusCode) Valid() bool {
-	switch e {
-	case TurnStatusCodeOutputTruncated:
-		return true
-	case TurnStatusCodeProviderLimit:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for ValidationState.
 const (
 	ValidationStateAwaitingFix  ValidationState = "awaiting-fix"
@@ -1341,16 +1326,16 @@ func (e WorkloadDependencyDTOKind) Valid() bool {
 
 // Defines values for WorkloadDependencyDTOTag.
 const (
-	External WorkloadDependencyDTOTag = "external"
-	Platform WorkloadDependencyDTOTag = "platform"
+	WorkloadDependencyDTOTagExternal WorkloadDependencyDTOTag = "external"
+	WorkloadDependencyDTOTagPlatform WorkloadDependencyDTOTag = "platform"
 )
 
 // Valid indicates whether the value is a known member of the WorkloadDependencyDTOTag enum.
 func (e WorkloadDependencyDTOTag) Valid() bool {
 	switch e {
-	case External:
+	case WorkloadDependencyDTOTagExternal:
 		return true
-	case Platform:
+	case WorkloadDependencyDTOTagPlatform:
 		return true
 	default:
 		return false
@@ -1359,19 +1344,19 @@ func (e WorkloadDependencyDTOTag) Valid() bool {
 
 // Defines values for ListTasksParamsState.
 const (
-	All    ListTasksParamsState = "all"
-	Closed ListTasksParamsState = "closed"
-	Open   ListTasksParamsState = "open"
+	ListTasksParamsStateAll    ListTasksParamsState = "all"
+	ListTasksParamsStateClosed ListTasksParamsState = "closed"
+	ListTasksParamsStateOpen   ListTasksParamsState = "open"
 )
 
 // Valid indicates whether the value is a known member of the ListTasksParamsState enum.
 func (e ListTasksParamsState) Valid() bool {
 	switch e {
-	case All:
+	case ListTasksParamsStateAll:
 		return true
-	case Closed:
+	case ListTasksParamsStateClosed:
 		return true
-	case Open:
+	case ListTasksParamsStateOpen:
 		return true
 	default:
 		return false
@@ -1409,33 +1394,30 @@ type AccessRequest struct {
 	UpdatedAt             time.Time `json:"updatedAt"`
 }
 
-// ActivityEvent One project activity event (issue
-type ActivityEvent struct {
-	ActorID     string    `json:"actorId,omitempty"`
-	ActorKind   string    `json:"actorKind"`
-	ActorName   string    `json:"actorName"`
-	Component   string    `json:"component,omitempty"`
-	Environment string    `json:"environment,omitempty"`
-	ID          string    `json:"id"`
-	Issue       int64     `json:"issue,omitempty"`
-	OccurredAt  time.Time `json:"occurredAt"`
+// AeStudio defines model for AeStudio.
+type AeStudio struct {
+	// Reason Why AE Studio failed; set only when the state is failed. timeout: it is still starting past the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release OpenChoreo cannot render, own or apply).
+	Reason AeStudioReason `json:"reason,omitempty"`
 
-	// Reason `run_failed` only: the run's failure code (RunFailure.code) when the platform recorded one, else its terminal reason. A code, never prose — the console owns the sentence, the same rule RunEvent.notice follows.
-	Reason string `json:"reason,omitempty"`
-	Tag    string `json:"tag,omitempty"`
-	Title  string `json:"title,omitempty"`
-	Type   string `json:"type"`
+	// State absent (no GitHub token yet), provisioning, ready, or failed.
+	State AeStudioState `json:"state"`
+
+	// Urls Public URLs of a ready AE Studio's three services; set only when ready.
+	Urls *AeStudioUrls `json:"urls,omitempty"`
 }
 
-// ActivityFeed A page of activity events plus the cursor for the next (older) page.
-type ActivityFeed struct {
-	Items []ActivityEvent `json:"items"`
+// AeStudioReason Why AE Studio failed; set only when the state is failed. timeout: it is still starting past the bound; the platform cannot see why (commonly too little room in the cluster), it keeps trying, and a later read may answer ready. error: any other failure (not configured, a failed install, a release OpenChoreo cannot render, own or apply).
+type AeStudioReason string
 
-	// NextBefore occurredAt cursor for the next page; absent when there are no older events.
-	NextBefore string `json:"nextBefore,omitempty"`
+// AeStudioState absent (no GitHub token yet), provisioning, ready, or failed.
+type AeStudioState string
 
-	// NextBeforeID id cursor tiebreak for the next page.
-	NextBeforeID string `json:"nextBeforeId,omitempty"`
+// AeStudioUrls Public URLs of a ready AE Studio's three services; set only when ready.
+type AeStudioUrls struct {
+	// Collab The collaboration WebSocket origin (ws or wss).
+	Collab      string `json:"collab"`
+	DesignAgent string `json:"designAgent"`
+	Tools       string `json:"tools"`
 }
 
 // AgentRuntime Which coding-agent runtime an organization's builds run on.
@@ -1455,32 +1437,6 @@ type AgentStatus string
 //
 // A coding run copies the runtime (and the connection) when it is dispatched, so a run in flight keeps what it was launched with.
 type AgentsProjection = orgconfig.AgentsProjection
-
-// ApplyConflict One file whose baseSha no longer matches HEAD.
-type ApplyConflict struct {
-	BaseSha    string `json:"baseSha"`
-	CurrentSha string `json:"currentSha"`
-	Path       string `json:"path"`
-}
-
-// ApplyConflicts apply-files 409 body — the full conflict set; nothing was applied.
-type ApplyConflicts struct {
-	Conflicts []ApplyConflict `json:"conflicts"`
-}
-
-// ApplyRequest defines model for ApplyRequest.
-type ApplyRequest struct {
-	Deletes []DeleteOp `json:"deletes,omitempty"`
-	Message string     `json:"message,omitempty"`
-	Writes  []WriteOp  `json:"writes,omitempty"`
-}
-
-// ApplyResult defines model for ApplyResult.
-type ApplyResult struct {
-	CommitSha string     `json:"commitSha"`
-	Files     []FileMeta `json:"files"`
-	Warnings  []Warning  `json:"warnings,omitempty"`
-}
 
 // BuildChange One thing this version changes, compared with the newest version — the row the Start build dialog lists. Every row names something that EXISTS once the version is built, which is why the requirements are not one of them — they are the input, not the output. `removed` is a statement rather than an action — a build deprovisions nothing, so a removed dependency's resource stays.
 type BuildChange struct {
@@ -1668,6 +1624,7 @@ type BuildSummary struct {
 	StartedAt   time.Time `json:"startedAt"`
 
 	// Status What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
+	// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. A dev run's row keeps its own ending.
 	Status BuildSummaryStatus `json:"status"`
 	Tag    string             `json:"tag"`
 
@@ -1676,32 +1633,11 @@ type BuildSummary struct {
 }
 
 // BuildSummaryStatus What became of this version. `cancelled` is its own value rather than a flavour of `failed`, because the two are different facts and a reader acts on them differently — a failure is the platform reporting it could not deliver the increment, while a cancel is a person deciding not to. Folding them lost that; a build somebody deliberately stopped rendered as Failed, with no reason beside it to say why, while the same page's run row said Cancelled two lines below.
+// A validation run that ended on judging the version — `validation-failed`, `validation-unreported`, or `agent-start-failed` (its validation agent never started) — does not fail the version's row: the version was built and deployed, so the row reads `completed` with no reason, and the validation board carries the failure. A dev run's row keeps its own ending.
 type BuildSummaryStatus string
 
 // BuildSummaryWaitingReason Why an in-progress version is waiting rather than moving. Empty for the ordinary between-cycles park, which needs no explanation. `external-values` is the deploy gate — the run is built and ready to deploy, and every remaining blocker is a value only a human can supply. It is carried here so a ledger row can say the version is waiting on the reader instead of reading as a run an agent is still working; the dependency NAMES stay on MilestoneRunView, where the run read that has them is already being made.
 type BuildSummaryWaitingReason string
-
-// ClientSecretOutputBody defines model for ClientSecretOutputBody.
-type ClientSecretOutputBody struct {
-	ClientSecret string `json:"clientSecret"`
-}
-
-// CollabSessionOutputBody defines model for CollabSessionOutputBody.
-type CollabSessionOutputBody struct {
-	Email    string `json:"email"`
-	RoomID   string `json:"roomId"`
-	UserName string `json:"userName"`
-	WsURL    string `json:"wsUrl"`
-}
-
-// CollabValidateOutputBody defines model for CollabValidateOutputBody.
-type CollabValidateOutputBody struct {
-	Email string `json:"email"`
-	Name  string `json:"name"`
-
-	// ProjectName The room's project, resolved by the oracle from `spec-<org>-<project>`; the collab service uses it for the seed read (#114).
-	ProjectName string `json:"projectName"`
-}
 
 // Component defines model for Component.
 type Component struct {
@@ -1787,42 +1723,6 @@ type ConsumerDTO struct {
 	ProjectID     string `json:"projectId"`
 }
 
-// ConversationMessage One rehydrated message from a conversation's server-side history, sourced from the turn journal. The console's local chat log is display state; this is the durable record, and it is what makes a chip survive a reload. A user message that sent a prototype review carries its `prototypeFeedback`, so a reloaded thread, and every teammate's, reads it as the requests it carried.
-type ConversationMessage struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Attachments File NAMES that went up with this message (#428) — never bytes, which are conversation-scoped model content the platform does not store (console ADR-0019). Absent for every message without attachments.
-	Attachments []string `json:"attachments,omitempty"`
-
-	// Author Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
-	Author ConversationMessageAuthor `json:"author,omitempty"`
-
-	// Content The message body as the journal recorded it. Deliberately untyped — a turn's content is model-shaped and varies by role, and this endpoint's job is to replay it, not to interpret it.
-	Content interface{} `json:"content,omitempty"`
-
-	// PrototypeFeedback A batch of review requests on ONE web-application prototype, sent as a single `/prototype` turn so the agent revises it once rather than once per note. The BFF validates the batch and forwards it unchanged; it never renders it into prose. The shape mirrors the prototype kit's feedback submission (`@wso2/prototype-kit/feedback`) plus `component`, and so do its limits. Lengths are counted in UTF-16 code units, as the kit counts them, so a character outside the Basic Multilingual Plane counts two.
-	PrototypeFeedback PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
-
-	// Role Who the message is from, as the journal recorded it.
-	Role string `json:"role"`
-
-	// Scope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
-	//
-	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
-	Scope TurnScope `json:"scope,omitempty"`
-}
-
-// ConversationMessageAuthor Who sent this message (#130 multi-user threads). Absent for the agent, and for history written before attribution existed.
-type ConversationMessageAuthor struct {
-	DisplayName string `json:"displayName"`
-	ID          string `json:"id"`
-}
-
 // CreateIssueRequest Issue to file on the project's repo. dedupeKey makes creation idempotent per open issue (label-encoded), for concurrent alert handlers. componentName and actionStatuses carry the SRE incident handoff context; they do not declare issue-create outcomes.
 type CreateIssueRequest struct {
 	// ActionStatuses Ordered per-action statuses from the incident handoff. A null entry is meaningful and preserves the action's position when it has no status.
@@ -1853,26 +1753,6 @@ type CreateProjectRequest struct {
 	RepoName string `json:"repoName,omitempty"`
 }
 
-// CreateRcaAgentReportRequest Write-side request for a new RCA-agent alert report (issue
-type CreateRcaAgentReportRequest struct {
-	// Classification code-level, config-level, mixed, or none — set by the handoff agent
-	Classification string     `json:"classification"`
-	Component      string     `json:"component,omitempty"`
-	Deployed       bool       `json:"deployed,omitempty"`
-	DeployedAt     *time.Time `json:"deployedAt,omitempty"`
-
-	// Diagnosis Full RCA diagnosis + remediation content (markdown)
-	Diagnosis    string `json:"diagnosis"`
-	Dispatched   bool   `json:"dispatched,omitempty"`
-	IssueExcerpt string `json:"issueExcerpt,omitempty"`
-	IssueNumber  *int64 `json:"issueNumber,omitempty"`
-	IssueTitle   string `json:"issueTitle,omitempty"`
-	IssueURL     string `json:"issueUrl,omitempty"`
-	Project      string `json:"project"`
-	Summary      string `json:"summary"`
-	Title        string `json:"title"`
-}
-
 // CreateSkillInput defines model for CreateSkillInput.
 type CreateSkillInput struct {
 	Name       string            `json:"name"`
@@ -1898,12 +1778,6 @@ type CycleBuild struct {
 // CycleBuildList defines model for CycleBuildList.
 type CycleBuildList struct {
 	Items []CycleBuild `json:"items"`
-}
-
-// DeleteOp defines model for DeleteOp.
-type DeleteOp struct {
-	BaseSha string `json:"baseSha,omitempty"`
-	Path    string `json:"path"`
 }
 
 // Dependency A component's unified, kind-discriminated dependency entry. status/reason/flags are read-time computed by spec.ComputeDependencyStatus — never authored, never persisted (Design.json write-gate rejects them). An external dependency is HYDRATED from its own file, specs/design/dependencies/<name>/dependency.json — one dependency, one definition, holding a full `resource` block (a copy from the org registry when resourceRef is set, else one the project defined). style, contractAssumed and contractDerived are COMPUTED from the contract's type and origin; nothing here is stored as such.
@@ -2113,31 +1987,6 @@ type ExternalResourceDTO struct {
 // ExternalResourceDTOScope org — a Registered External resource, held by the organization; project — a project's own resource, listed with its project so the organization can promote it. Org-only readers (the design agent's catalog, Register's uniqueness check) never see project rows.
 type ExternalResourceDTOScope string
 
-// FileBundle A set of files read at ONE commit. commitSha names that commit; every entry's sha is a blob of that same tree.
-type FileBundle struct {
-	CommitSha string        `json:"commitSha"`
-	Files     []FileContent `json:"files"`
-}
-
-// FileContent defines model for FileContent.
-type FileContent struct {
-	Content string `json:"content"`
-	Path    string `json:"path"`
-	Sha     string `json:"sha"`
-}
-
-// FileMeta defines model for FileMeta.
-type FileMeta struct {
-	Path string `json:"path"`
-	Sha  string `json:"sha"`
-	Size int64  `json:"size,omitempty"`
-}
-
-// GetConversationOutputBody A conversation's history, oldest first. An empty list is a real answer — a known thread with no turns yet — never an error.
-type GetConversationOutputBody struct {
-	Messages []ConversationMessage `json:"messages"`
-}
-
 // GitProviderProjection defines model for GitProviderProjection.
 type GitProviderProjection = orgconfig.GitProviderProjection
 
@@ -2232,7 +2081,7 @@ type LLMFormatOption = orgconfig.LLMFormatOption
 // LLMPatch A model connection, field by field: an absent field keeps the saved value (or, on first connect, the format's default). Any public https endpoint speaking one of the formats; private, cluster and plain-http hosts are refused.
 type LLMPatch = orgconfig.LLMPatch
 
-// LLMProjection The organization's model connection, as every agent uses it. A stored connection is usable by construction: a save is refused unless the probe passes.
+// LLMProjection The organization's model connection, as every agent uses it. Its key is write-only and lives only in the vault: the section's presence says the key is set, and no character of it is projected. The section is null while the key's vault reference is not recorded. A stored connection is usable by construction: a save that changes the connection is refused unless its probe passes.
 type LLMProjection = orgconfig.LLMProjection
 
 // Lineage defines model for Lineage.
@@ -2272,7 +2121,7 @@ type MilestoneRunView struct {
 	// State planning is the fill window — the version's milestone is still being written (gates minted, then issues planned in). waiting is the unbounded wait between cycles, where something outside the platform is needed. blocked is terminal and is NOT a failure — the org has no agent concurrency slot left, so the cycle was never launched (see terminalReason agent-quota-blocked), or the model provider's usage limit stopped the coding agent (terminalReason model-provider-limit); either way a person starts the run again.
 	State MilestoneRunViewState `json:"state"`
 
-	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked, publisher-credentials-missing and model-provider-limit explain state=blocked. no-write-target is a failed run whose project's deployment pipeline names no environment to deploy into, met at coding-agent dispatch or at any deploy step (the gate, the version read, a promote or a readiness poll); it files no fix work and dispatches no agent.
+	// TerminalReason Why a non-succeeded run stopped. Each value names exactly one failure class; empty while the run is non-terminal and on a succeeded run. agent-quota-blocked, publisher-credentials-missing and model-provider-limit explain state=blocked. no-write-target is a failed run whose project's deployment pipeline names no environment to deploy into, met at coding-agent dispatch or at any deploy step (the gate, the version read, a promote or a readiness poll); it files no fix work and dispatches no agent. agent-start-failed is a failed run whose agent never started (its pod did not reach Running within the startup grace, e.g. no room in the cluster); nothing ran, no pull request was opened, and the cycle's Job was suspended.
 	TerminalReason string `json:"terminalReason,omitempty"`
 
 	// Validation The run's validation outcome. The verdict is a RUN property, not a per-issue one, and this is where the deployment surface reads it.
@@ -2436,19 +2285,6 @@ type Project struct {
 	UID     string `json:"uid,omitempty"`
 }
 
-// ProjectConversationList The project's chat threads, newest first. One element today — the current thread; the array shape is the multi-conversation future's contract, so it grows without a rename.
-type ProjectConversationList struct {
-	Conversations []ProjectConversationView `json:"conversations"`
-}
-
-// ProjectConversationView One project chat thread (#430). The id is server-minted and stored against the project — the client never chooses it. Exactly one thread per project is current; turns addressed to a demoted id are refused with 409 conversation_rotated.
-type ProjectConversationView struct {
-	ConversationID string    `json:"conversationId"`
-	CreatedAt      time.Time `json:"createdAt"`
-	CreatedBy      string    `json:"createdBy,omitempty"`
-	Current        bool      `json:"current"`
-}
-
 // ProjectDependencyReadiness defines model for ProjectDependencyReadiness.
 type ProjectDependencyReadiness struct {
 	Configured   bool                          `json:"configured"`
@@ -2546,7 +2382,7 @@ type ProjectStatus struct {
 	HasSpec   bool        `json:"hasSpec"`
 	HasTasks  bool        `json:"hasTasks"`
 
-	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec.
+	// Phase Repo and artifact rungs only: no-repo, repo-cloning, repo-error, prompt (no spec), spec (spec, no design), tasks (both). "tasks" is terminal — delivery state lives in the build and deploy aggregates, which is what a caller should render past the spec. "" on a ready repo whose spec facts are unavailable (spec.availability).
 	Phase string `json:"phase"`
 
 	// RepoErrorMessage Set when phase is repo-error.
@@ -2627,31 +2463,6 @@ type PromoteExternalResourceRequest struct {
 type PromoteFromIssueRequest struct {
 	// ComponentName Component this issue is about
 	ComponentName string `json:"componentName"`
-}
-
-// PrototypeFeedbackInput A batch of review requests on ONE web-application prototype, sent as a single `/prototype` turn so the agent revises it once rather than once per note. The BFF validates the batch and forwards it unchanged; it never renders it into prose. The shape mirrors the prototype kit's feedback submission (`@wso2/prototype-kit/feedback`) plus `component`, and so do its limits. Lengths are counted in UTF-16 code units, as the kit counts them, so a character outside the Basic Multilingual Plane counts two.
-type PrototypeFeedbackInput struct {
-	// Component The web-application the batch is about, as named under `specs/design/components/`. Its `prototype.json` and `prototype.tsx` are the only files the turn may change.
-	Component string `json:"component"`
-
-	// PrototypeHash The revision of the prototype the reviewer looked at, as the kit's 64-character lowercase hex hash.
-	PrototypeHash string                     `json:"prototypeHash"`
-	Requests      []PrototypeFeedbackRequest `json:"requests"`
-}
-
-// PrototypeFeedbackRequest One reviewer request, made on one screen in one role and display state.
-type PrototypeFeedbackRequest struct {
-	// ElementIds The ids of the elements the request is about, in selection order. Empty means the whole screen.
-	ElementIds []string `json:"elementIds"`
-
-	// FlowID The flow the reviewer was walking; absent for free navigation.
-	FlowID   string `json:"flowId,omitempty"`
-	RoleID   string `json:"roleId"`
-	ScreenID string `json:"screenId"`
-	StateID  string `json:"stateId"`
-
-	// Text The reviewer's words, verbatim.
-	Text string `json:"text"`
 }
 
 // ProvisionBody defines model for ProvisionBody.
@@ -2801,9 +2612,21 @@ type RunBudgets struct {
 	ValidationCycles int64 `json:"validationCycles"`
 }
 
+// RunCycleStartupWait Why an OPEN cycle's agent has not started yet: the platform has not applied its Job yet, or its pod is stuck before Running, as the platform's pod-truth watcher last saw it. Present only while the cycle is open and its current attempt waits so; absent once the pod runs or is merely starting, and once the cycle has ended (an agent that never started then ends the cycle with an `agentReason` of `startup_failed:<reason>`, `startup_failed:not_applied` when the Job was never applied). Derived from the cycle record alone; no cluster read answers it.
+type RunCycleStartupWait struct {
+	// FailsAt When the platform gives up on this attempt if the pod has still not started: the startup grace (10 min) from when the attempt's Job or pod was first seen to exist, or, while the Job has not been applied, the apply cap (30 min) from the attempt's dispatch. The cycle then closes `startup_failed:<reason>`, its Job is suspended, and the run fails `agent-start-failed`.
+	FailsAt time.Time `json:"failsAt"`
+
+	// Reason `NotYetApplied` (the platform's own: its Job has not been applied yet, so there is no pod), or else the pod's own waiting reason, verbatim from Kubernetes: `Unschedulable` (the cluster has no room for the pod), `ImagePullBackOff` / `ErrImagePull` (the image does not pull), `CreateContainerConfigError` (a secret or config the pod needs is not there yet), or another kubelet reason. A client maps the ones it knows to plain words and shows any other as is.
+	Reason string `json:"reason"`
+
+	// Since When the watcher first saw this attempt waiting: its Job not yet applied, or its pod stuck. Kept when one wait turns into another within the attempt.
+	Since time.Time `json:"since"`
+}
+
 // RunCycleView One dispatch within a run. Branch, pull request (number and URL) and merge SHA are LEARNED FROM WEBHOOKS — the agent derives its own branch identity — so they stay empty on a cycle whose agent died before opening a pull request.
 type RunCycleView struct {
-	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, or a secret that had not materialised) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
+	// AgentReason Why this cycle's agent stopped without opening a pull request, as the platform's pod-truth watcher classified it — `timed_out` (the run deadline), `agent_failed[:<reason>]` (a non-zero exit or a killed container), `startup_failed:<reason>: <message>` (the runner never started: image pull, scheduling, a secret that had not materialised, or `not_applied`, a Job the platform never applied for the attempt; the cycle's Job is then suspended, so its pod cannot start later, and the run settles `agent-start-failed`) or `job_not_found` (the runner's workload disappeared). Absent on every cycle that opened a pull request: there the pull request is the outcome.
 	AgentReason string `json:"agentReason,omitempty"`
 
 	// Attempts Dispatches of THIS cycle (the per-cycle re-dispatch budget, which resets at every cycle boundary).
@@ -2831,13 +2654,16 @@ type RunCycleView struct {
 	// PrURL The pull request's own page on the host, as the webhook reported it — never composed from a repo URL and a number, so a console link either is the host's own or is absent. Empty until a pull request is seen.
 	PrURL string `json:"prUrl,omitempty"`
 
-	// Recording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
-	// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
-	// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+	// Recording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle. Derived from the cycle row alone; no log is read to answer it.
+	// `live` — the cycle is running: its feed is read from the pod's log and a reader should expect it to grow. `kept` — the cycle is over and its feed is still readable: from the pod's log while the pod exists, then from the observability plane by the cycle's Component UID. `expired` — the platform no longer keeps this cycle's log: it ended longer ago than the observability plane's log retention, or it predates Component UID capture. `unavailable` — the log should exist but cannot be read right now (no observability plane, or the last read of it failed).
+	// Losses inside a feed are not a state: each hole is a `notice` with `code: gap` at the point it happened.
 	Recording RunCycleViewRecording `json:"recording,omitempty"`
 
 	// Resolves The milestone agent-work issues this cycle's pull request claims — the merge policy's matched set, which is what the merge closes. Recorded so a cycle's working set survives its issues being closed; empty until a pull request is seen.
 	Resolves []int64 `json:"resolves,omitempty"`
+
+	// StartupWait Why this open cycle's agent has not started yet. Absent while nothing holds it up, and on an ended cycle.
+	StartupWait *RunCycleStartupWait `json:"startupWait,omitempty"`
 
 	// ValidationIssue The validation issue this cycle was dispatched at. Set on validation cycles only, and recorded per cycle rather than only on the run so a repeated validation stays navigable to the issue that framed each attempt.
 	ValidationIssue int64 `json:"validationIssue,omitempty"`
@@ -2852,9 +2678,9 @@ type RunCycleViewKind string
 // RunCycleViewMergeVerdict Why this cycle's pull request did NOT merge, when something decided so: `declined` is the auto-merge policy saying the pull request is not this run's work, `refused` is the host declining an open pull request (a conflict — a conflict issue is minted and the next cycle works it). Absent on a cycle whose merge was never decided against, which includes every cycle that merged: a merge is recorded by `mergeSha`, and each fresh decision overwrites this field, so a declined pull request that later merges does not keep the verdict.
 type RunCycleViewMergeVerdict string
 
-// RunCycleViewRecording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle.
-// `none` — the platform has no record of this cycle's feed at all: a v1 cycle, or one whose recorder never started. `recording` — one is being written right now, so a reader should expect it to grow. `complete` — the attempt's events were recorded end to end. `gaps` — a record is being served that the platform KNOWS is incomplete, because events were dropped or arrived outside their attempt's sequence. `lost` — the platform had a record and cannot serve it.
-// The last two exist so a partial feed is never presented as the whole of it, and so "there is nothing to show" (`none`) stays distinguishable from "something was here and is gone" (`lost`) — which are the same empty screen and very different bugs.
+// RunCycleViewRecording What the platform can serve of this cycle's RunEvent feed — a different question from what the cycle did, and one a client has to ask before it presents a feed as the story of the cycle. Derived from the cycle row alone; no log is read to answer it.
+// `live` — the cycle is running: its feed is read from the pod's log and a reader should expect it to grow. `kept` — the cycle is over and its feed is still readable: from the pod's log while the pod exists, then from the observability plane by the cycle's Component UID. `expired` — the platform no longer keeps this cycle's log: it ended longer ago than the observability plane's log retention, or it predates Component UID capture. `unavailable` — the log should exist but cannot be read right now (no observability plane, or the last read of it failed).
+// Losses inside a feed are not a state: each hole is a `notice` with `code: gap` at the point it happened.
 type RunCycleViewRecording string
 
 // RunCycleViewValidationVerdict What THIS validation attempt concluded, from the report at its own `mergeSha`. Set on validation cycles only, and only once the attempt settles. The run carries the latest attempt's verdict; this is how a self-healed run shows that an earlier attempt failed.
@@ -2875,7 +2701,7 @@ type RunEvent struct {
 	Branch string `json:"branch,omitempty"`
 
 	// Code `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
-	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+	// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (a hole in the producer's seqs, or a log the platform can no longer read); `artifact_failed` something the run produced that could not be stored.
 	// Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
 	// `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 	Code RunEventCode `json:"code,omitempty"`
@@ -2967,7 +2793,7 @@ type RunEvent struct {
 	// Runtime `run_started` only: which coding runtime executed this attempt. Recorded on the event rather than looked up from the run, because a feed is read back long after the org's runtime setting may have moved on, and the two runtimes emit different agent ids, model names and tool names — a reader that guesses wrong misreads all three.
 	Runtime RunEventRuntime `json:"runtime,omitempty"`
 
-	// Seq Position of this event within its attempt, monotonic from the attempt's first event. This is what the recorder dedupes on: a producer that retries a flush, or a client that reconnects and replays, sends the same `seq` again and the second write is a no-op. It is NOT unique across a cycle — a re-dispatch starts a new attempt at the beginning — so anything that orders or dedupes needs RunProgressEvent.attempt alongside it.
+	// Seq Position of this event within its attempt, monotonic from the attempt's first event. It is the producer's own number, so the same event carries the same `seq` whichever source the platform read it from (the pod's log or the observability plane), and a client that reconnects and replays receives the same `seq` again and dedupes it. Platform notices take negative seqs, stable for the state or the position they describe. It is NOT unique across a cycle — a re-dispatch starts a new attempt at the beginning — so anything that orders or dedupes needs RunProgressEvent.attempt alongside it.
 	Seq int64 `json:"seq"`
 
 	// Sha `git_commit` and `git_push`: the commit.
@@ -3020,7 +2846,7 @@ type RunEvent struct {
 }
 
 // RunEventCode `notice`, and `run_settled`'s one code below: WHICH condition, as a closed set. Closed on purpose, twice over — a consumer can react to one condition without parsing prose, and no free text (a prompt, a credential, a path) can ride a notice into a user-visible build log. It is also where the WORDING comes from: a surface renders a code's own sentence (`@aep/progress-view` owns those), so the same condition cannot read one way in the console and another in the playground, which is exactly what happened while each producer wrote its own prose.
-// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (which also shows up as RunCycleView.recording `gaps`); `artifact_failed` something the run produced that could not be stored.
+// Nine conditions the RUN can hit. `api_retry` a retryable model failure the runtime is re-attempting; `compaction` the session's context being compacted; `refusal` the model declining to answer; `rate_limit` the provider throttling; `permission_denied` a tool call the harness refused; `terminated` the run being killed from outside; `workspace_guard` a write denied outside the workspace; `gap` the feed itself losing events (a hole in the producer's seqs, or a log the platform can no longer read); `artifact_failed` something the run produced that could not be stored.
 // Eight more describe the stretch BEFORE the first model turn — the dark zone, which is the slowest part of a run and used to show as a dead "waiting…". Six are the platform's reading of pod truth: `runner_scheduling` no runner has a node yet; `runner_unschedulable` the cluster has no room for one; `runner_pulling_image` the image is being fetched and the container prepared; `runner_image_pull_backoff` that fetch is failing and retrying; `runner_config_error` the container cannot start because its configuration or secrets are wrong; `runner_starting` the container is up and the agent is booting. Two are the runner's own, once it has a process but no session: `workspace_provisioning` it is cloning the repo, mirroring skills and installing credentials; `workspace_ready` that finished and the agent is about to start. They are notices rather than agent events for the same reason throughout: a pod that has not started is not an agent, and there is no session to report a phrase about.
 // `run_settled` carries one code of its own: `provider_limit`, the model provider refused the run's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total). The run stopped rather than retry until its deadline; `host` and, when the provider gave one, `resetAt` say whose limit and until when. No other code appears on `run_settled`, and `provider_limit` appears nowhere else.
 type RunEventCode string
@@ -3187,7 +3013,7 @@ type RunValidation struct {
 	// Issue The validation issue this run worked, so a SETTLED run stays navigable to the criteria behind its verdict. 0 before the validation cycle mints it, and on incident runs.
 	Issue int64 `json:"issue,omitempty"`
 
-	// ReportPath Repository path of the validation runner's committed report. Present when a report can actually be there, and ABSENT for `skipped` and `unreported` — the first never ran a validation cycle and the second is precisely the verdict meaning nothing was committed, so advertising a path for either would send the client to a 404 and make a known-absent report look like a read failure. Fetch it through read-file with `ref` set to the validation cycle's mergeSha (RunCycleView.mergeSha) — the report lives at a fixed path that every run overwrites, so reading it at the branch tip returns the NEWEST run's results whichever run you asked about.
+	// ReportPath Repository path of the validation runner's committed report. Present when a report can actually be there, and ABSENT for `skipped` and `unreported` — the first never ran a validation cycle and the second is precisely the verdict meaning nothing was committed, so advertising a path for either would send the client to a 404 and make a known-absent report look like a read failure. Read it from the AE Studio pod's `/v1` file read with `ref` set to the validation cycle's mergeSha (RunCycleView.mergeSha) — the report lives at a fixed path that every run overwrites, so reading it at the branch tip returns the NEWEST run's results whichever run you asked about.
 	ReportPath string `json:"reportPath,omitempty"`
 
 	// Verdict What the run learned about the deployed system. Empty until the validation cycle settles.
@@ -3301,13 +3127,11 @@ type SourceDocumentRow struct {
 
 // SpecStage Spec-stage aggregate on ProjectStatus (#184). Approved/draft is derived, not stored — version set and not dirty = approved (vN); dirty = draft changes (vN+); no version = unpublished draft; exists false = no spec yet.
 type SpecStage struct {
-	// Agent Whether an agent is working on this project's spec right now, and how the last attempt ended (#562). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `working` — a turn is in flight; `failed` — the newest turn ended in failure and none has run since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Derived from the newest `agent_turns` row for the project, which is what `exists`/`version`/`dirty` cannot say: all three read committed git, and a kickoff writes nothing until it lands. The overview's spec card needs it to say *Writing requirements* while the platform-fired `/start` runs, and the spec view needs it to explain an empty workspace instead of offering a file picker.
+	// Agent How the project's agent history stands (#562), derived from the newest finished `agent_turns` row (the finished-turn ledger). `never-started` — no turn has EVER run for this project; `""` — a turn has run and the newest one completed; `failed` — the newest turn ended in failure and none has finished since. `never-started` is distinct from `""` because the two need opposite treatment: one means the journey has not begun and the user needs a way to begin it, the other means it is under way between turns and offering to restart it would supersede a live interview. Whether a turn is running right now is the org's AE Studio pod's to say (its active-turn read), not this field's.
 	Agent string `json:"agent"`
 
-	// AgentFlow WHICH work the running turn is doing — the `/<skill>` token it runs under (`start`, `design`, `settle`, `amend`, …); `""` for plain chat or when nothing is running (#575). `agent` says an agent is working; this says on what, which the spec rail needs to pulse the right section.
-	// Without it the rail could only guess from which sections were still empty, and guessed wrongly in both directions: settling an assumption lit Design (the first empty section, though the work was requirements), and the moment a design run wrote its first file the pulse jumped to Validation while the rest of the design was still being written.
-	// Reported for the RUNNING turn only. A finished turn's flow says nothing about what is happening now, and the section states are derived from committed files from then on.
-	AgentFlow string `json:"agentFlow,omitempty"`
+	// Availability Whether the git-derived facts below could be read. `unavailable` — the org's AE Studio could not answer for the repository (GitHub not connected, AE Studio restarting or misconfigured): exists, version, dirty, design and designOutdated are then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus / phase fields are left unset. The build and deploy stages and `agent` are unaffected, and the poll still answers 200. The console renders the spec leg as "Spec status unavailable".
+	Availability SpecStageAvailability `json:"availability"`
 
 	// Design Design files exist for the spec (gates the Spec view's design button).
 	Design bool `json:"design"`
@@ -3323,9 +3147,18 @@ type SpecStage struct {
 	// Exists Any spec file created; false renders the Generate-spec CTA.
 	Exists bool `json:"exists"`
 
+	// UnavailableReason Why the spec facts are unavailable; present only when `availability` is `unavailable`, and named after the edge's error codes. `github_not_connected` — the org has no GitHub connection (a person connects it in Settings → Credentials); `ae_studio_unavailable` — AE Studio is coming up or rolling and the poll recovers on its own; `ae_studio_misconfigured` — aep-api's own AE Studio client is refused (an operator fixes it).
+	UnavailableReason SpecStageUnavailableReason `json:"unavailableReason,omitempty"`
+
 	// Version The newest spec version's name; "" if never published.
 	Version string `json:"version"`
 }
+
+// SpecStageAvailability Whether the git-derived facts below could be read. `unavailable` — the org's AE Studio could not answer for the repository (GitHub not connected, AE Studio restarting or misconfigured): exists, version, dirty, design and designOutdated are then zero values that say nothing, and the flat hasSpec / hasDesign / specStatus / phase fields are left unset. The build and deploy stages and `agent` are unaffected, and the poll still answers 200. The console renders the spec leg as "Spec status unavailable".
+type SpecStageAvailability string
+
+// SpecStageUnavailableReason Why the spec facts are unavailable; present only when `availability` is `unavailable`, and named after the edge's error codes. `github_not_connected` — the org has no GitHub connection (a person connects it in Settings → Credentials); `ae_studio_unavailable` — AE Studio is coming up or rolling and the poll recovers on its own; `ae_studio_misconfigured` — aep-api's own AE Studio client is refused (an operator fixes it).
+type SpecStageUnavailableReason string
 
 // SpecState defines model for SpecState.
 type SpecState struct {
@@ -3360,23 +3193,12 @@ type SpecVersionList struct {
 	Versions []SpecVersion `json:"versions"`
 }
 
-// StartConnectInputBody defines model for StartConnectInputBody.
-type StartConnectInputBody struct {
-	// InstallationID Optional installation to pin (set when the user picks a candidate from the 2+ picker)
-	InstallationID int64 `json:"installationId,omitempty"`
-}
-
-// StartConnectOutputBody defines model for StartConnectOutputBody.
-type StartConnectOutputBody struct {
-	AuthorizeURL string `json:"authorizeUrl"`
-}
-
 // StatusMsg defines model for StatusMsg.
 type StatusMsg struct {
 	Status string `json:"status"`
 }
 
-// SubscriptionProjection A stored Claude subscription token, masked. It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
+// SubscriptionProjection A stored Claude subscription token: the section says it is set, and no character of it is projected (it lives only in the vault). It bills the coding agent's runs to a Claude plan instead of the organization's API key, and only Claude Code can present it.
 type SubscriptionProjection = orgconfig.SubscriptionProjection
 
 // TagList defines model for TagList.
@@ -3549,175 +3371,6 @@ type TimelineEvent struct {
 // TimelineEventEmitter Who produced the line — `subagent` for work the main agent fanned out with the Task tool, absent for the main agent itself. Absence is a positive fact, not an unknown.
 type TimelineEventEmitter string
 
-// TurnAnchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-//
-// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-//
-// Absent for an ordinary chat turn.
-type TurnAnchor struct {
-	// File The authored spec file the selection resolves to. Always present — one view renders exactly one file, so a selection never spans two.
-	File string `json:"file"`
-
-	// Nodes The selected nodes, in document order. A list because both surfaces multi-select — a drag across three paragraphs, a shift-click across three operations.
-	Nodes []TurnAnchorNode `json:"nodes"`
-}
-
-// TurnAnchorNode One selected node — the name the agent resolves, and the name the transcript shows back to a user who can no longer see what they clicked.
-type TurnAnchorNode struct {
-	// Context Where the node sits, for a name that cannot stand alone. Markdown — the heading path, root-first (`Solution > Slack integration`). A structured view — the parent (`lunch-api`). Optional; a name that stands alone needs none.
-	Context string `json:"context,omitempty"`
-
-	// Kind The node's vocabulary word. It carries the whole difference between a name authored AS a name and a sentence pressed into service as one, which is what lets prose and structured views share this schema.
-	//
-	// Markdown uses structural terms — `paragraph`, `heading`, `list item` — deliberately NOT document-specific readings like `open question`, so an arbitrary `.md` produces the same shape as the PRD. A structured view uses its own terms (`operation`, `external dependency`). Kept as a raw string rather than a closed enum so a view can name its nodes without a contract change.
-	Kind string `json:"kind"`
-
-	// Name What the agent resolves and the transcript shows. A structured view supplies the node's own name (`POST /rounds`, `slack`). Markdown has none, so it supplies a BOUNDED excerpt of the block's RENDERED text — at most 80 characters, cut at a word boundary.
-	//
-	// The bound is the load-bearing part, not the number: an excerpt that grows with the selection is the carried content this schema exists to avoid. It only has to be unique enough to locate — the model receives the full block regardless, because the agent read it from the file.
-	//
-	// RENDERED, not source: the source carries `**bold**`, `*assumed*`, links and hard wraps the reader never saw, so a source-exact excerpt fails to match for most blocks. The agent matches on prose, tolerantly, and asks when a name is genuinely ambiguous rather than guessing. `maxLength` is the contract's ceiling against carry; the 80-character rule is the markdown client's.
-	Name string `json:"name"`
-}
-
-// TurnConflict create-turn 409 body. turn_in_progress carries the active turn's id; requirements_missing means the design use-case has no requirements to work from; conversation_rotated means the addressed thread is no longer the project's current one — re-resolve via list-conversations and retry.
-type TurnConflict struct {
-	ActiveTurnID string           `json:"activeTurnId,omitempty"`
-	Code         TurnConflictCode `json:"code"`
-}
-
-// TurnConflictCode defines model for TurnConflict.Code.
-type TurnConflictCode string
-
-// TurnInputBody defines model for TurnInputBody.
-type TurnInputBody struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Collab Room-scoped turn (#86 phase 4): the agent joins the project's spec collab room as a live peer, reads and edits the shared doc, and commits nothing to git.
-	Collab bool `json:"collab,omitempty"`
-
-	// Instruction User message / generation directive. `/<skill>` flow commands (`/start`, `/design`, …) are sent VERBATIM — the server expands them, attaches the flow's eager skills, and enriches `/start` with the captured project idea.
-	Instruction string `json:"instruction"`
-
-	// Intent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-	//
-	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-	Intent TurnInputBodyIntent `json:"intent,omitempty"`
-
-	// PrototypeFeedback A prototype review batch. Valid only when `instruction` is the `/prototype` command and `collab` is true, and never together with `anchor`/`intent`: a batch aims at stable prototype ids, not at a selection in a document. Room turns only, because the room's committer is the one path an agent's revision reaches git by. When set, `instruction` is `/prototype` alone or followed by the batch's own `component`. Absent for every other turn. JSON-only: a review batch carries no attachments, so the multipart form has no such part.
-	PrototypeFeedback *PrototypeFeedbackInput `json:"prototypeFeedback,omitempty"`
-
-	// Scope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
-	//
-	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
-	Scope TurnScope `json:"scope,omitempty"`
-}
-
-// TurnInputBodyIntent What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-//
-// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-type TurnInputBodyIntent string
-
-// TurnInputMultipart The same turn input as `TurnInputBody`, sent as multipart so it can carry chat attachments (#428). The JSON form stays the canonical one — a message with no attachments MUST use it, and every existing caller is unaffected.
-//
-// Attachments are CONVERSATION-SCOPED MODEL CONTENT (console ADR-0019): the platform never writes them to disk and never commits them. They ride this request into the turn and are durable only as parts of the conversation's history, which is also what makes re-sending one free — the agents service dedupes by file name.
-//
-// Deliberately NOT the reference-document channel: `POST /projects/{name}/references` REPLACES a project's whole stored set, and the create view is the only door to it. A file attached here never becomes a project reference, even when the instruction is `/start`.
-type TurnInputMultipart struct {
-	// Anchor What the user pointed at when they aimed this turn at part of a spec document (#666; console ADR-0024). It LOCATES — it never carries the selected content.
-	//
-	// The agent joins the spec collab room as a live peer, so between the selection and the turn starting the user may keep typing and a teammate may edit too: content captured at selection time is a photograph of a document that has since moved. The agent resolves these names against the CURRENT document instead. The same reasoning already reversed an embedded copy once — #252 Task 17 stripped a dependency's full JSON entry back to its name, because the agent reads the live entry in its own turn snapshot.
-	//
-	// Absent for an ordinary chat turn.
-	Anchor TurnAnchor `json:"anchor,omitempty"`
-
-	// Collab As `TurnInputBody.collab`.
-	Collab bool `json:"collab,omitempty"`
-
-	// Files Chat attachments, two groups and the split matters downstream. Read NATIVELY as file parts: `.pdf`, and the four image media types the Messages API accepts — `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`. Read AS TEXT (sent as `text/plain`, the only text document type the Anthropic provider maps): `.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`. Office formats are not accepted — the models do not read them natively.
-	//
-	// Three caps, and all of them restate ONE number: the agents service already enforces a 20 MiB base64-ENCODED per-turn attachment budget (#384), past which it warns and skips. So at most 10 files, each at most 5 MiB, and at most 15 MiB of raw bytes in TOTAL — 15 MiB raw is 20 MiB encoded. The total is the load- bearing one: a per-file cap alone cannot hold the line, since ten 5 MiB files each pass it and together overrun the budget by 3x.
-	Files []openapi_types.File `json:"files,omitempty"`
-
-	// Instruction As `TurnInputBody.instruction`. Required — an attachment alone cannot start a turn, and the shared TurnSpec validator rejects an empty chat text.
-	Instruction string `json:"instruction"`
-
-	// Intent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-	//
-	// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-	Intent TurnInputMultipartIntent `json:"intent,omitempty"`
-
-	// Scope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
-	//
-	// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
-	Scope TurnScope `json:"scope,omitempty"`
-}
-
-// TurnInputMultipartIntent As `TurnInputBody.intent`. What the user wants done with `anchor` — `change` rewrites the selected nodes in place, `discuss` opens the same selection as a grilling. Read by the agents service when it renders the anchor into the prompt; the two differ only in how that preamble is phrased.
-//
-// Deliberately a field and NOT a `/command` prefix on `instruction`: a command IS the user's message (the console adds nothing to a line they typed), and an anchored turn carries prose they wrote in their own words, so a prefix would put machinery in their voice. Mirrors the console's own resolve/reconsider intent, whose only job is the same. Absent for a turn with no anchor.
-type TurnInputMultipartIntent string
-
-// TurnOutputBody defines model for TurnOutputBody.
-type TurnOutputBody struct {
-	// TurnID The started turn's id — poll/attach with it
-	TurnID string `json:"turnId"`
-}
-
-// TurnScope What the user was looking at when they sent this message, so the agent reads it in that light: a feature's file open in the spec (`feature`, with its ID), or the design review (`design-review`). Absent means the whole product — the product page, any other spec file, or anywhere else in the project — and such a turn reads exactly as it did before scopes existed.
-//
-// A scope FOCUSES the turn; it fences nothing. The agent reads `prd.md` and the feature's file first, and may still change any file the message implies, saying in its reply which other files it touched. Every edit lands directly: what the agent decided on its own is tagged `*assumed*` in the requirements, and that tag is the user's review.
-type TurnScope struct {
-	// Feature The feature's ID (`F2`) when `kind` is `feature`; absent otherwise.
-	Feature string        `json:"feature,omitempty"`
-	Kind    TurnScopeKind `json:"kind"`
-}
-
-// TurnScopeKind defines model for TurnScope.Kind.
-type TurnScopeKind string
-
-// TurnStatus One turn's lifecycle view (create-turn 202 → poll/attach).
-type TurnStatus struct {
-	// AuthorDisplayName The acting user's display name, paired with authorId.
-	AuthorDisplayName string `json:"authorDisplayName,omitempty"`
-
-	// AuthorID Who started this turn — EMAIL-anchored, matching the console's live author identity, which is what lets a client tell its own turn from a teammate's. Empty when no attributable human sent it (an M2M token, a minimal user token, or a turn dispatched before the display record was stored). Flat rather than a nested object so "absent" is one convention across this schema: the empty string, exactly as `instruction` uses it.
-	AuthorID string `json:"authorId,omitempty"`
-
-	// Code Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
-	Code           TurnStatusCode `json:"code,omitempty"`
-	CommitSha      string         `json:"commitSha,omitempty"`
-	ConversationID string         `json:"conversationId"`
-	CreatedAt      time.Time      `json:"createdAt"`
-
-	// Host `code: provider_limit` only: the host of the model endpoint whose limit stopped the turn (`ollama.com`), as the turn's connection named it. Display only — what the reader's sentence names.
-	Host string `json:"host,omitempty"`
-
-	// Instruction What this turn's DISPLAY record says — the transcript line for the message that started it. Present so a client attaching to a turn it did not send can render the sender's message immediately, instead of narration under a blank space: the conversation store persists a turn's transcript only when the turn ENDS, so a history read mid-turn cannot supply it. Empty on turns dispatched before this field existed. Not the model's prompt — the agents service composes that from the turn spec and it never crosses this boundary.
-	Instruction string   `json:"instruction,omitempty"`
-	Message     string   `json:"message,omitempty"`
-	NoChanges   bool     `json:"noChanges,omitempty"`
-	Paths       []string `json:"paths,omitempty"`
-	Reason      string   `json:"reason,omitempty"`
-
-	// ResetAt `code: provider_limit` only: when the provider said its limit resets. Absent when it stated no reset, so a reader is told to try again later rather than given a time nobody promised.
-	ResetAt *time.Time `json:"resetAt,omitempty"`
-
-	// Status running, completed, failed
-	Status    string    `json:"status"`
-	TurnID    string    `json:"turnId"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	UseCase   string    `json:"useCase"`
-}
-
-// TurnStatusCode Why a failed turn failed, when the agents service could name it (reason `agent-error`): `provider_limit`, the model provider refused the turn's calls with HTTP 429 for longer than a wait (a `retry-after` of five minutes or more, or five minutes of 429 retries in total); `output_truncated`, the connection's output limit cut a file write off before it finished, so nothing was written. `message` carries the agents service's sentence for it. Absent on every other turn.
-type TurnStatusCode string
-
 // TurnUsage The token usage RunEvent carries: the folded aggregate every reader already consumes, plus the per-model split the platform prices against its rate table. It is Usage with one field added, rather than Usage itself, because `models` is meaningful only on a producer's own report of what it just spent — the project and cycle roll-ups that Usage serves sum already-stamped rows and have nothing to break down.
 // The split is not a nicety. Cost is stamped per model, from that model's own rate row, so an aggregate whose `model` is "" (see below) cannot be priced at all — and a real coding run regularly touches a second model, both because the runtime reaches for small-model helpers of its own and because a lead is expected to pick the model for the job. Without `models` those runs are simply unpriceable, which is the defect this schema exists to close (#291).
 // TWO facts a consumer will otherwise get wrong. First, `model: ""` means a MIXED-MODEL aggregate, never "unknown" — the producer folded several models into one total and refuses to name one of them as the run's; `models` is where the answer is. Second, the runtime reports usage CUMULATIVELY across a session, so `turn_ended.usage` is the run's total AS OF that turn rather than that turn's own spend: summing several of them multiplies the bill. `run_settled` carries the last and largest one, and that is the figure to price. (Measured: a two-turn session reports 20 input tokens on its first result and 48 — 20 + 28 — on its second.)
@@ -3869,13 +3522,6 @@ type VersionLine struct {
 	Words string `json:"words"`
 }
 
-// Warning defines model for Warning.
-type Warning struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Path    string `json:"path"`
-}
-
 // WorkflowRun defines model for WorkflowRun.
 type WorkflowRun struct {
 	Completed     bool              `json:"completed,omitempty"`
@@ -3922,30 +3568,8 @@ type WorkloadDependencyDTOKind string
 // WorkloadDependencyDTOTag defines model for WorkloadDependencyDTO.Tag.
 type WorkloadDependencyDTOTag string
 
-// WriteOp defines model for WriteOp.
-type WriteOp struct {
-	BaseSha string `json:"baseSha,omitempty"`
-	Content string `json:"content"`
-	Path    string `json:"path"`
-}
-
 // userJWTContextKey is the context key for userJWT security scheme
 type userJWTContextKey string
-
-// ValidateCollabAccessParams defines parameters for ValidateCollabAccess.
-type ValidateCollabAccessParams struct {
-	// XRoomID Collaboration room ID (spec-<org>-<project>)
-	XRoomID string `json:"X-Room-Id,omitempty"`
-
-	// Authorization Bearer token; the display identity is decoded from it
-	Authorization string `json:"Authorization,omitempty"`
-}
-
-// DisconnectGitProviderParams defines parameters for DisconnectGitProvider.
-type DisconnectGitProviderParams struct {
-	// Uninstall App-mode only: when false, leave the install on GitHub for later re-adoption (defaults true)
-	Uninstall *bool `form:"uninstall,omitempty" json:"uninstall,omitempty"`
-}
 
 // DiscoverIdpParams defines parameters for DiscoverIdp.
 type DiscoverIdpParams struct {
@@ -3963,24 +3587,6 @@ type ListProjectsParams struct {
 
 	// Limit Maximum number of items to return (server default when absent)
 	Limit int `form:"limit,omitempty" json:"limit,omitempty"`
-}
-
-// ListActivityParams defines parameters for ListActivity.
-type ListActivityParams struct {
-	// Limit Max events to return (default 50, max 200).
-	Limit int64 `form:"limit,omitempty" json:"limit,omitempty"`
-
-	// Before Keyset cursor: return events strictly older than this occurredAt (RFC3339); pair with beforeId.
-	Before string `form:"before,omitempty" json:"before,omitempty"`
-
-	// BeforeID Keyset cursor tiebreak: the id of the last event seen (pair with before).
-	BeforeID string `form:"beforeId,omitempty" json:"beforeId,omitempty"`
-}
-
-// StreamActivityParams defines parameters for StreamActivity.
-type StreamActivityParams struct {
-	// LastEventID SSE resume cursor: the last frame id seen (occurredAt|id). Replay resumes after it.
-	LastEventID string `json:"Last-Event-ID,omitempty"`
 }
 
 // GetBuildLogsParams defines parameters for GetBuildLogs.
@@ -4001,29 +3607,6 @@ type GetProjectDependencyReadinessParams struct {
 	Environment string `form:"environment,omitempty" json:"environment,omitempty"`
 }
 
-// ListFilesParams defines parameters for ListFiles.
-type ListFilesParams struct {
-	// Prefix Only list paths under this prefix (e.g. specs/design/)
-	Prefix string `form:"prefix,omitempty" json:"prefix,omitempty"`
-}
-
-// ReadFileBundleParams defines parameters for ReadFileBundle.
-type ReadFileBundleParams struct {
-	// Prefix Only include paths under this prefix (e.g. specs/design/). Empty includes everything the read gate admits.
-	Prefix string `form:"prefix,omitempty" json:"prefix,omitempty"`
-
-	// Ref Commit to read at (a hex object name). Empty reads the branch tip. Same gate as read-file's ref: an object name, never a revision expression.
-	Ref string `form:"ref,omitempty" json:"ref,omitempty"`
-}
-
-// ReadFileParams defines parameters for ReadFile.
-type ReadFileParams struct {
-	// Ref Commit to read the file AT. Omitted reads the default-branch tip.
-	// It exists because an artifact at a fixed path is otherwise unaddressable: the validation report is overwritten by every run, so reading the tip returns the newest run's results whichever run you asked about. Pin it to that run's validation-cycle mergeSha (RunCycleView.mergeSha) to get the report that run actually produced.
-	// A hex object name only — deliberately not a revision expression, so this cannot become a browser over the repo's history. The path allow-list still decides what is readable at all.
-	Ref string `form:"ref,omitempty" json:"ref,omitempty"`
-}
-
 // ListIssuesParams defines parameters for ListIssues.
 type ListIssuesParams struct {
 	// Labels Comma-separated GitHub labels to filter by
@@ -4037,12 +3620,6 @@ type ListIssuesParams struct {
 type PutProjectReferencesMultipartBody struct {
 	// Files Reference documents. Two groups, both readable by the models: binary read natively as file parts (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`), and text read as workspace files (`.md`, `.txt`, `.csv`, `.tsv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.rst`). At most 10 documents, each at most 5 MiB measured on the raw bytes. Office documents (`.docx`, `.xlsx`, `.pptx`) are converted to markdown on upload — the models do not read them natively — and stored as `<name>.md`: a Word document's headings, paragraphs and tables, a workbook's sheets as tables, a deck's slides. One that cannot be read is refused with 400.
 	Files []openapi_types.File `json:"files"`
-}
-
-// GetSpecCollabSessionParams defines parameters for GetSpecCollabSession.
-type GetSpecCollabSessionParams struct {
-	// Authorization Bearer token; the display identity is decoded from it
-	Authorization string `json:"Authorization,omitempty"`
 }
 
 // ListTasksParams defines parameters for ListTasks.
@@ -4059,15 +3636,6 @@ type ListTasksParams struct {
 
 // ListTasksParamsState defines parameters for ListTasks.
 type ListTasksParamsState string
-
-// StreamTurnParams defines parameters for StreamTurn.
-type StreamTurnParams struct {
-	// From Replay from this absolute event index (wins over Last-Event-ID)
-	From *int `form:"from,omitempty" json:"from,omitempty"`
-
-	// LastEventID SSE auto-reconnect resume cursor: the last frame id the client saw; replay resumes after it. Opaque per the SSE spec — non-numeric values are ignored (full replay). The from query param wins when both are present.
-	LastEventID string `json:"Last-Event-ID,omitempty"`
-}
 
 // ListRcaAgentReportsParams defines parameters for ListRcaAgentReports.
 type ListRcaAgentReportsParams struct {
@@ -4092,9 +3660,6 @@ type SetSkillEnabledJSONBody struct {
 // UpdateConfigJSONRequestBody defines body for UpdateConfig for application/json ContentType.
 type UpdateConfigJSONRequestBody = ConfigPatch
 
-// StartGitProviderConnectJSONRequestBody defines body for StartGitProviderConnect for application/json ContentType.
-type StartGitProviderConnectJSONRequestBody = StartConnectInputBody
-
 // TestLlmConnectionJSONRequestBody defines body for TestLlmConnection for application/json ContentType.
 type TestLlmConnectionJSONRequestBody = LLMPatch
 
@@ -4106,12 +3671,6 @@ type UpdateExternalResourceJSONRequestBody = RegisterExternalResourceRequest
 
 // CreateProjectJSONRequestBody defines body for CreateProject for application/json ContentType.
 type CreateProjectJSONRequestBody = CreateProjectRequest
-
-// CreateTurnJSONRequestBody defines body for CreateTurn for application/json ContentType.
-type CreateTurnJSONRequestBody = TurnInputBody
-
-// CreateTurnMultipartRequestBody defines body for CreateTurn for multipart/form-data ContentType.
-type CreateTurnMultipartRequestBody = TurnInputMultipart
 
 // BuildProjectJSONRequestBody defines body for BuildProject for application/json ContentType.
 type BuildProjectJSONRequestBody = BuildRequest
@@ -4137,9 +3696,6 @@ type AcceptDependencyAssumptionJSONRequestBody = AcceptAssumptionBody
 // ProvideDependencyContractJSONRequestBody defines body for ProvideDependencyContract for application/json ContentType.
 type ProvideDependencyContractJSONRequestBody = DependencyContractBody
 
-// ApplyFilesJSONRequestBody defines body for ApplyFiles for application/json ContentType.
-type ApplyFilesJSONRequestBody = ApplyRequest
-
 // CreateIssueJSONRequestBody defines body for CreateIssue for application/json ContentType.
 type CreateIssueJSONRequestBody = CreateIssueRequest
 
@@ -4148,9 +3704,6 @@ type PutProjectReferencesMultipartRequestBody PutProjectReferencesMultipartBody
 
 // PromoteTaskFromIssueJSONRequestBody defines body for PromoteTaskFromIssue for application/json ContentType.
 type PromoteTaskFromIssueJSONRequestBody = PromoteFromIssueRequest
-
-// CreateRcaAgentReportJSONRequestBody defines body for CreateRcaAgentReport for application/json ContentType.
-type CreateRcaAgentReportJSONRequestBody = CreateRcaAgentReportRequest
 
 // CreateSkillJSONRequestBody defines body for CreateSkill for application/json ContentType.
 type CreateSkillJSONRequestBody = CreateSkillInput

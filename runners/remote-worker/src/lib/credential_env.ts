@@ -44,13 +44,8 @@ import { MIN_LITERAL_LEN } from "./progress/scrubber.js";
 // to be set would leave the other unredacted. PUBLISHER_CLIENT_ID is absent on
 // purpose — it is an identifier, not a secret, and websearch_dlp.ts treats it as
 // safe for the same reason.
-// KNOWN LIMIT — this list covers the credentials the dispatch MOUNTS, which is
-// every credential on the env-token git path. It cannot cover the credhelper
-// path (`GITHUB_TOKEN` unset): that token is minted inside bash by
-// credhelper.sh and never enters this process, so there is no value to enroll.
-// Its at-rest copy in `.gh-config/hosts.yml` is caught by shape only (the
-// `oauth_token:` pattern in progress/scrubber.ts). Closing it properly means
-// giving the helper a way to hand the runner what it minted.
+// This list covers every credential the dispatch MOUNTS, which is every git
+// credential there is: the runner has no other path to one.
 export const CREDENTIAL_ENV_KEYS = [
   "GITHUB_TOKEN",
   "GH_TOKEN",

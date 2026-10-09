@@ -19,8 +19,9 @@
 /**
  * `FsIssueStore` — tasks as files (docs/design/playground.md §3/§5/§6):
  * `issues/<n>.md` in the production plan-context format
- * (`taskplan/context_file.go` ⇄ `parseTaskContextFile`), folded from the plan
- * turn's OK tool-results with `plan_tap.go` semantics:
+ * (`taskplan/context_file.go` ⇄ `parseTaskContextFile`), folded from the Plan
+ * turn's task operations (the Turn socket's `task-op` lines: OK `planTask` /
+ * `updateTask` results) with `plan_tap.go` semantics:
  *
  *  - existing issues preload before the turn (dedupe keys + `updateTask`
  *    {issueNumber} fencing, mirroring the frozen preloaded-context fence);
@@ -29,8 +30,8 @@
  *    title, write the file;
  *  - `updateTask` ok → resolve by title (a Task planned THIS run) or by
  *    preloaded issueNumber, patch the file;
- *  - nothing is written unless the turn carried its terminal manifest
- *    (a severed stream is unambiguously "do not commit" — D14).
+ *  - nothing is written unless the turn's result was `completed` (a failed
+ *    or severed turn is unambiguously "do not commit" — D14).
  *
  * `renderTaskContextFile` mirrors the Go `TaskContextFile.Render` byte-for-byte
  * (field order, quoting) so files round-trip through `parseTaskContextFile`.
@@ -39,7 +40,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseTaskContextFile, type StreamPart, type TaskContextFile } from "@aep/agent-stream";
+import { parseTaskContextFile, type PlanContextFile, type TaskContextFile } from "@aep/agent-stream";
 
 // --- Rendering (mirror of taskplan/context_file.go) --------------------------
 
@@ -150,12 +151,24 @@ interface UpdateTaskOkOutput {
   set: { title?: string; dependsOn?: string[]; rationale?: string; body?: string };
 }
 
-function asOkOutput(part: StreamPart): PlanTaskOkOutput | UpdateTaskOkOutput | null {
-  if (part.type !== "tool-result") return null;
-  const out = part.output as { ok?: unknown; op?: unknown } | undefined;
-  if (!out || out.ok !== true) return null;
-  if (part.toolName === "planTask" && out.op === "plan") return out as PlanTaskOkOutput;
-  if (part.toolName === "updateTask" && out.op === "update") return out as UpdateTaskOkOutput;
+/** One task operation of a Plan turn (a Turn socket `task-op` line). */
+export interface TaskOperation {
+  op: string;
+  output: unknown;
+}
+
+/** A finished Plan turn, as the fold takes it. */
+export interface PlanTurnOps {
+  /** The turn's result was `completed`. */
+  completed: boolean;
+  taskOps: readonly TaskOperation[];
+}
+
+function asOkOutput(taskOp: TaskOperation): PlanTaskOkOutput | UpdateTaskOkOutput | null {
+  const out = taskOp.output as { ok?: unknown; op?: unknown } | undefined;
+  if (!out || out.ok !== true || out.op !== taskOp.op) return null;
+  if (out.op === "plan") return out as PlanTaskOkOutput;
+  if (out.op === "update") return out as UpdateTaskOkOutput;
   return null;
 }
 
@@ -188,32 +201,31 @@ export class FsIssueStore {
   }
 
   /**
-   * The plan turn's instruction context: a straight copy of each issue file
-   * under its production `tasks/<n>.md` name (§6 — the file IS the context
-   * render).
+   * The Plan turn's task context: a straight copy of each issue file under
+   * its production `tasks/<n>.md` name (§6 — the file IS the context render),
+   * sorted by path, as aep-api sends it (`planContextFor`).
    */
-  planContextFiles(): Record<string, string> {
-    const files: Record<string, string> = {};
-    if (!existsSync(this.dir)) return files;
+  planContext(): PlanContextFile[] {
+    if (!existsSync(this.dir)) return [];
+    const files: PlanContextFile[] = [];
     for (const e of readdirSync(this.dir, { withFileTypes: true })) {
       const m = /^(\d+)\.md$/.exec(e.name);
       if (!e.isFile() || !m) continue;
-      files[`tasks/${m[1]}.md`] = readFileSync(join(this.dir, e.name), "utf8");
+      files.push({ path: `tasks/${m[1]}.md`, body: readFileSync(join(this.dir, e.name), "utf8") });
     }
-    return files;
+    return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   }
 
   /**
-   * Fold one finished plan turn. `parts` must contain the terminal manifest
-   * (severed stream → nothing written). `nextIssueNumber` is read+advanced via
+   * Fold one finished Plan turn; a turn that did not complete writes nothing. `nextIssueNumber` is read+advanced via
    * the callbacks so the caller's project state stays the single counter owner.
    */
   fold(
-    parts: StreamPart[],
+    turn: PlanTurnOps,
     allocateIssueNumber: () => number,
   ): FoldOutcome {
     const outcome: FoldOutcome = { created: [], updated: [], skippedDuplicates: [], skippedRenames: [] };
-    if (!parts.some((p) => p.type === "manifest")) return outcome; // no manifest → do not commit (D14)
+    if (!turn.completed) return outcome; // not completed → do not commit (D14)
 
     // Frozen preload — the anti-hallucination fence plan_tap enforces.
     const preloaded = new Map<number, Issue>();
@@ -226,8 +238,8 @@ export class FsIssueStore {
     }
     const createdByTitle = new Map<string, Issue>();
 
-    for (const part of parts) {
-      const op = asOkOutput(part);
+    for (const taskOp of turn.taskOps) {
+      const op = asOkOutput(taskOp);
       if (!op) continue;
 
       if (op.op === "plan") {

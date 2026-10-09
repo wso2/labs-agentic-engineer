@@ -416,6 +416,10 @@ spec:
             namespace: "openbao"
 EOF
 
+# aep-api's write-only policy and Kubernetes-auth role (no static token). Its
+# own script because `make dev-update` and the OpenBao wipe recovery re-run it.
+bash "${SCRIPT_DIR}/openbao-aep-api-auth.sh"
+
 echo "   CoreDNS rewrite"
 # The guide's own coredns-custom.yaml, with the suffix taken from AE_DOMAIN.
 # Applied from here rather than fetched because upstream's copy hardcodes
@@ -1763,6 +1767,7 @@ if [ "$WITH_OBSERVABILITY" = "1" ]; then
     kubectl create configmap cluster-gateway-ca --from-literal=ca.crt="$CA_CRT" \
         -n openchoreo-observability-plane --dry-run=client -o yaml | kubectl apply -f -
 
+    # observer-secret starts on OpenChoreo's default; aectl owns the observer client wiring and repoints it (observer_client_secret.go).
     kubectl apply -f - <<EOF
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret

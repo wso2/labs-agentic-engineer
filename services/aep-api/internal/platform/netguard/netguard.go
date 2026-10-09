@@ -47,7 +47,7 @@ import (
 var ErrNonPublicAddress = errors.New("refusing to fetch from non-public address")
 
 // nonPublicNets are the non-public prefixes net.IP.IsGlobalUnicast admits. The
-// agents service refuses the same set (services/agents/src/shared/guarded-fetch.ts).
+// agents service refuses the same set (components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/guarded-fetch.ts).
 //
 // The NAT64 prefixes matter in a NAT64/DNS64 cluster: a DNS64 resolver can
 // synthesize an AAAA for an attacker domain that NAT64 then routes to an

@@ -23,8 +23,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunOrgSecretsMigration creates the org_secrets table that stores per-org
-// credentials (GitHub PATs, build tokens) in git-service's own Postgres DB.
+// RunOrgSecretsMigration creates org_secrets in its legacy (value-column)
+// shape. RunPhase29SecretsRefsOnly converges it to reference names only, so a
+// fresh database and an upgraded one meet the same schema at every step; no
+// secret value is ever stored here at HEAD.
 //
 // Idempotent: safe to re-run on an already-migrated database.
 func RunOrgSecretsMigration(ctx context.Context, db *gorm.DB) error {

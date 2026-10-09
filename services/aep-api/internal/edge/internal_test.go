@@ -21,6 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
 )
 
 // TestInternalContract asserts the committed internal contract describes
@@ -34,20 +37,13 @@ func TestInternalContract(t *testing.T) {
 	yaml := string(out)
 
 	for _, want := range []string{
-		"runner-refresh-credentials",
-		// Token refresh is every runner's, not validation's, so it keeps its path.
-		// The id it names is the dispatched CYCLE — the parameter's spelling is the
-		// same wire-compat debt AEP_TASK_ID carries. The version root lives in
-		// `servers`, so the path is server-relative.
-		"/executions/{executionId}/credentials/refresh",
-		// The validation runner callback, grouped under the feature that owns it
-		// and keyed by the cycle id the runner actually carries. It used to sit
+		// The validation runner callback, under the runner's runs/ group and
+		// keyed by the cycle id the runner actually carries. It used to sit
 		// under /executions/{executionId}, resolved against a table the milestone
 		// supervisor never writes — so every validation runner was told its own
 		// dispatch did not exist.
 		"runner-validation-context",
-		"/validation/{cycleId}/context",
-		"taskJWT",
+		"/runs/{cycleId}/validation-context",
 		"publisherCC",
 	} {
 		if !strings.Contains(yaml, want) {
@@ -57,9 +53,11 @@ func TestInternalContract(t *testing.T) {
 
 	// The runner skills-pull S2S endpoint is retired — the runner clones
 	// `org-skills` and resolves applied skills locally. Its route/op must not
-	// reappear in the internal surface.
+	// reappear in the internal route group.
 	for _, gone := range []string{
 		"runner-skills",
+		"runner-refresh-credentials",
+		"credentials/refresh",
 		"/internal/v1/executions/{executionId}/skills",
 	} {
 		if strings.Contains(yaml, gone) {
@@ -67,9 +65,20 @@ func TestInternalContract(t *testing.T) {
 		}
 	}
 
-	// The internal surface must NOT leak the public user-JWT scheme — each
-	// surface declares only its own auth.
+	// The internal route group must NOT leak the public user-JWT scheme — each
+	// route group declares only its own auth.
 	if strings.Contains(yaml, "userJWT") {
 		t.Error("internal spec must not declare userJWT")
+	}
+}
+
+// sourcecontrol owns the attentionReason closed set the IssueInfo projection
+// filters through; it must be exactly the contract's enum.
+func TestAttentionReasonSetMatchesContracts(t *testing.T) {
+	for _, v := range []string{"unverified_fix", "no_change_verdict", "escalated", "bogus", ""} {
+		inSet := sourcecontrol.IsContractAttentionReason(v)
+		if pub := gen.IssueInfoAttentionReason(v).Valid(); pub != inSet {
+			t.Errorf("%q: sourcecontrol set %v, public enum %v", v, inSet, pub)
+		}
 	}
 }

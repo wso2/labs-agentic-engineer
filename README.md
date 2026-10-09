@@ -53,7 +53,7 @@ https://github.com/user-attachments/assets/9723e5a5-c187-49b5-886e-50c217da6c28
 ```mermaid
 flowchart LR
   IDEA([idea]) --> SPEC
-  subgraph DESIGN["design time — console · agents · collab"]
+  subgraph DESIGN["design time — console · AE Studio (per org)"]
     SPEC["spec — requirements · design · validation criteria<br/>committed truth in git"]
     DEP["dependencies — declared, approved, provisioned"]
     SPEC --- DEP
@@ -86,7 +86,7 @@ live in [`deployments/`](deployments/README.md).
 **Container runtime.** Docker Desktop or Colima, sized generously — the cluster
 runs the OpenChoreo control/data/workflow planes, Thunder, and every AEP
 service, all in-cluster. Colima wants at least `--cpu 7 --memory 8`, plus
-several GB of free disk for the coding-agent runner image and the five service
+several GB of free disk for the coding-agent runner image and the seven service
 images. Nothing else is needed on the host: every service image builds inside
 Docker, toolchains included.
 
@@ -115,11 +115,13 @@ deployments/helm-charts/platform` against it. Expect it to take a while on a
 cold machine — chart installs and image pulls. It's idempotent, so if a step
 fails you fix the cause and re-run it.
 
-`make dev-update` (`skaffold run`) is one-shot, not a watch loop: it rebuilds
-only the service images (console, BFF, agents runtime, collab, MCP server)
-whose dependencies changed, loads them into the cluster, and re-points the
-already-installed platform release at them. Run it again after every edit you
-want live.
+`make dev-update` is one-shot, not a watch loop: it rebuilds with `skaffold
+build` only the service images whose dependencies changed (console, tryit,
+BFF, and the AE Studio's design agent, collab and tools), loads
+them into the cluster, then runs `aectl platform update` (helm) to re-point
+the installed platform release at them and `aectl platform sync-clients`. The
+AE Studio pod rolls on the org's next console visit. Run it again after every
+edit you want live.
 
 Coding agents don't run as long-lived containers at all, locally or otherwise:
 each one is dispatched into the cluster as a one-shot pod, as it is in a real
@@ -158,11 +160,12 @@ Tear down with `k3d cluster delete openchoreo`, which drops all OpenChoreo state
 
 | Path | What it is |
 |---|---|
-| [`apps/console`](apps/console/README.md) | the human surface: React SPA over the BFF, its only backend |
+| [`apps/console`](apps/console/README.md) | the human surface: React SPA over the BFF and the org's AE Studio (the design agent's turns and the spec Room, called from the browser) |
 | [`apps/tryit`](apps/tryit/AGENTS.md) | the test app: a static SPA the console opens to sign in as a project's test user and talk to a deployed agent; no backend of its own |
-| [`services/aep-api`](services/aep-api/README.md) | the Go BFF — seven domains behind one tenant-gated edge; owns spec git, the milestone run supervisor (Temporal), provisioning, and the GitHub webhook plane |
-| [`services/agents`](services/agents/AGENTS.md) | design-time agent runtime (Vercel AI SDK). One turn = one POST, streamed as SSE; writes no files itself |
-| [`services/collab`](services/collab/AGENTS.md) | Yjs server hosting the live spec document, one room per project |
+| [`services/aep-api`](services/aep-api/README.md) | the Go BFF — seven domains behind one tenant-gated edge; owns the milestone run supervisor (Temporal), provisioning, and the webhook ledger; every git operation goes through the org's `ae-studio-tools` |
+| [`components/dataplane/ae-system-project/ae-studio/ae-design-agent`](components/dataplane/ae-system-project/ae-studio/ae-design-agent/AGENTS.md) | design-time agent runtime (Vercel AI SDK) in the org's AE Studio pod. a turn starts with one POST and is watched over a replayable SSE stream; writes no files itself |
+| [`components/dataplane/ae-system-project/ae-studio/ae-collab`](components/dataplane/ae-system-project/ae-studio/ae-collab/AGENTS.md) | Yjs server hosting the live spec document, one room per project, in the org's AE Studio pod |
+| [`components/dataplane/ae-system-project/ae-studio/ae-studio-tools`](components/dataplane/ae-system-project/ae-studio/ae-studio-tools/AGENTS.md) | Go container of the org's AE Studio pod: git, GitHub, the skills mirror, and the webhook route that verifies and forwards deliveries to the BFF |
 | [`runners/`](runners/AGENTS.md) | `remote-worker`, the coding agent: a one-shot pod running the Claude Agent SDK. One image serves implementation and validation; its ADRs are in `runners/remote-worker/design/decisions/` |
 | [`skills/`](skills/AGENTS.md) | the one authored skill library, seeded and reconciled into every org's own repo |
 | [`packages/`](packages/contracts/AGENTS.md) | shared libraries. `packages/contracts` holds the hand-authored OpenAPI every client and server is generated from |

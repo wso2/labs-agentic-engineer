@@ -30,7 +30,7 @@ type Commands struct {
 	record     CancelRequester
 	cancel     RunCanceller
 	revalidate Revalidator
-	// reaper stops the cancelled cycle's agent pod by deleting its Component.
+	// reaper stops the cancelled cycle's agent pod by suspending its Job.
 	// nil → the run still settles, nothing is reaped.
 	reaper CycleReaper
 }
@@ -41,7 +41,7 @@ func NewCommands(runs RunReader, record CancelRequester, cancel RunCanceller, re
 	return &Commands{runs: runs, record: record, cancel: cancel, revalidate: revalidate}
 }
 
-// WithCycleReaper enables reaping the cancelled run's agent Component. Returns
+// WithCycleReaper enables stopping the cancelled run's agent Job. Returns
 // the receiver for chained construction.
 func (c *Commands) WithCycleReaper(r CycleReaper) *Commands {
 	c.reaper = r
@@ -61,8 +61,11 @@ func (c *Commands) WithCycleReaper(r CycleReaper) *Commands {
 //	        workflow — so it is given the same shape as every other fact the loop
 //	        acts on: durable state the loop re-reads, with the signal as the
 //	        wake-up rather than the evidence.
+//	        A dispatch already in flight re-reads it after resuming its Job,
+//	        so the reap's suspend cannot be undone by it.
 //	signal  the run stops at its next safe point instead of at its next poll.
-//	reap    the agent's Component goes, best-effort.
+//	reap    the cycle closes as cancelled and its Job is suspended,
+//	        best-effort; the Component goes at settle.
 //
 // It resolves the run through the org-scoped read FIRST, so a run in another org
 // or another project is a 404 before anything is written. The run still settles
@@ -94,12 +97,11 @@ func (c *Commands) Cancel(ctx context.Context, orgID, projectID, runID string) e
 	// so killing the agent first would abandon a run that is about to carry on.
 	//
 	// A failed reap does NOT fail the cancel: the run is already stopping, and
-	// the only cost is a component that keeps holding a billing slot until it
-	// is swept — answering "cancel failed" would invite a retry that changes
-	// nothing.
+	// the cost is a pod that runs on until the settler's backstop suspends it —
+	// answering "cancel failed" would invite a retry that changes nothing.
 	if c.reaper != nil {
 		if err := c.reaper.ReapRunCycle(ctx, orgID, row.ProjectID, row.ID); err != nil {
-			slog.WarnContext(ctx, "cancel: could not delete the cycle's agent component; the run is still cancelled",
+			slog.WarnContext(ctx, "cancel: could not suspend the cycle's agent job; the run is still cancelled",
 				"org", orgID, "project", row.ProjectID, "run", row.ID, "error", err)
 		}
 	}

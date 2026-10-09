@@ -27,7 +27,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/oidc"
@@ -38,27 +37,35 @@ import (
 // Mapped to 429 llm_test_rate_limited at the HTTP edge.
 var ErrLLMTestRateLimited = errors.New("orgconfig: too many connection tests")
 
-// ErrGitHubAppNotConfigured is returned by StartGitHubConnect when the GitHub
-// App OAuth client isn't wired on this deployment (the App-mode connect path is
-// unavailable). Mapped to 503 at the HTTP edge.
-var ErrGitHubAppNotConfigured = errors.New("orgconfig: github app oauth client not configured")
-
 // SectionError is a per-section failure carrying the RFC-9457 location pointer
 // (body.<section>) the console uses to highlight the offending form section. It
 // is produced by PATCH probe/persist failures; the HTTP layer maps Status +
 // Section into a problem response.
 type SectionError struct {
 	Section string // "llm" | "agents" | "gitProvider" | "idp"
-	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream)
+	Status  int    // 422 (validation) | 409 (conflict) | 502 (upstream) | 503 (no secret store)
 	Code    string // the stable reason slug, when the refusal has one (e.g. agents_subscription_requires_claude_code)
 	Message string
 }
 
 func (e *SectionError) Error() string { return "body." + e.Section + ": " + e.Message }
 
+// SecretsDeliveryUnavailableCode is the section error code of a save that
+// needs the secret store on an installation that has none (503).
+const SecretsDeliveryUnavailableCode = "secrets_delivery_unavailable"
+
+// SecretStoreWriteFailedCode and secretStoreWriteFailedMessage are the 502 a
+// key save answers when the secret store did not accept the key (nothing is
+// saved).
+const (
+	SecretStoreWriteFailedCode    = "secret_store_write_failed"
+	secretStoreWriteFailedMessage = "Key not saved; the secret store did not accept it. Try again."
+)
+
 // sectionErrorFrom classifies a reused-service error into a SectionError with
 // the right status: a section-field validation failure is a 422 pointing at the
-// section, a cross-mode conflict a 409, an upstream 5xx a 502. An unclassified
+// section, a cross-mode conflict a 409, an upstream 5xx, a key the secret store
+// refused or a key save Agent Manager missed a 502, no secret store a 503. An unclassified
 // error is returned verbatim (the caller maps it to an opaque 500).
 func sectionErrorFrom(section string, err error) error {
 	var se *SectionError
@@ -73,6 +80,20 @@ func sectionErrorFrom(section string, err error) error {
 	if errors.As(err, &ce) {
 		return &SectionError{Section: section, Status: http.StatusConflict, Message: ce.Error()}
 	}
+	var am *AgentManagerNotUpdatedError
+	if errors.As(err, &am) {
+		return &SectionError{Section: section, Status: http.StatusBadGateway, Code: AgentManagerNotUpdatedCode,
+			Message: agentManagerNotUpdatedMessage}
+	}
+	if errors.Is(err, ErrSecretsDeliveryUnavailable) {
+		return &SectionError{Section: section, Status: http.StatusServiceUnavailable, Code: SecretsDeliveryUnavailableCode,
+			Message: "This installation has no secret store configured, so the token cannot be saved. An operator must configure secrets delivery."}
+	}
+	var store *SecretStoreWriteError
+	if errors.As(err, &store) {
+		return &SectionError{Section: section, Status: http.StatusBadGateway, Code: SecretStoreWriteFailedCode,
+			Message: secretStoreWriteFailedMessage}
+	}
 	var ue *UpstreamError
 	if errors.As(err, &ue) {
 		return &SectionError{Section: section, Status: http.StatusBadGateway, Code: ue.Code, Message: ue.Error()}
@@ -82,44 +103,34 @@ func sectionErrorFrom(section string, err error) error {
 
 // Service is the /config orchestrator. It holds the reused services + the
 // platform IDP defaults (used to synthesize a not-yet-persisted idp section on
-// GET) + the GitHub App connect parameters.
+// GET).
 type Service struct {
 	credentialSvc *CredentialService
 	disconnectSvc *OrgDisconnectService
-	bearerSvc     *BearerService
 	idpSvc        IDPService
 	agentSettings *AgentSettingsService
 	llmTests      *llmTestLimiter
 	platformIDP   PlatformIDPConfig
-
-	publicURL   string
-	appClientID string
+	orgSecrets    *OrgSecretWriter
+	secretRefs    OrgSecretRefReader
+	converger     StudioConverger
 }
 
-// NewService wires the orchestrator. The defaulting for publicURL mirrors the
-// legacy NewOrgGitHubController so the connect-session redirect_uri is
-// identical. Any dependency may be nil in narrow test harnesses that exercise
-// only a subset of sections; each handler nil-guards what it needs.
+// NewService wires the orchestrator. Any dependency may be nil in narrow test
+// harnesses that exercise only a subset of sections; each handler nil-guards
+// what it needs.
 func NewService(
 	credentialSvc *CredentialService,
 	disconnectSvc *OrgDisconnectService,
-	bearerSvc *BearerService,
 	idpSvc IDPService,
 	platformIDP PlatformIDPConfig,
-	publicURL, appClientID string,
 ) *Service {
-	if publicURL == "" {
-		publicURL = "http://localhost:8090"
-	}
 	return &Service{
 		credentialSvc: credentialSvc,
 		disconnectSvc: disconnectSvc,
-		bearerSvc:     bearerSvc,
 		idpSvc:        idpSvc,
 		llmTests:      newLLMTestLimiter(time.Now),
 		platformIDP:   platformIDP,
-		publicURL:     publicURL,
-		appClientID:   appClientID,
 	}
 }
 
@@ -136,10 +147,20 @@ func (s *Service) WithAgentSettings(svc *AgentSettingsService) *Service {
 	return s
 }
 
+// WithOrgSecretRefs attaches the org secrets' reference rows, which decide
+// whether a section reads as configured: a secret lives only in vault, and
+// its row is the record that it was written. Unwired, no section that needs
+// a row reads as configured.
+func (s *Service) WithOrgSecretRefs(refs OrgSecretRefReader) *Service {
+	s.secretRefs = refs
+	return s
+}
+
 // --- GET /config ------------------------------------------------------------
 
-// Get assembles the full config projection for org. A missing llm/gitProvider
-// row maps to a null section (not an error); idp is always present, synthesized
+// Get assembles the full config projection for org. A missing llm row, or a
+// gitProvider without its credential and github-pat rows, maps to a null
+// section (not an error); idp is always present, synthesized
 // from the platform defaults when no row exists yet so GET stays side-effect
 // free (no row is created on read).
 func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProjection, error) {
@@ -153,21 +174,11 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 		out.LLM = llm
 	}
 
-	if s.credentialSvc != nil {
-		proj, err := s.credentialSvc.Status(ctx, org)
-		switch {
-		// A disconnected row is retained by the disconnect cascade (audit trail,
-		// app re-adoption) but the config contract says null = not connected —
-		// projecting it would keep the console's onboarding gate (ADR-0009) and
-		// settings card treating the org as connected.
-		case err == nil && proj.Status != "disconnected":
-			out.GitProvider = gitProviderProjectionFrom(proj)
-		case err == nil || isNotFound(err):
-			out.GitProvider = nil
-		default:
-			return nil, fmt.Errorf("orgconfig get gitProvider: %w", err)
-		}
+	gitProvider, err := s.gitProviderSection(ctx, org)
+	if err != nil {
+		return nil, err
 	}
+	out.GitProvider = gitProvider
 
 	// Always present, even with no service wired: every org has an effective
 	// runtime, and the default IS the answer for one that has never chosen.
@@ -196,23 +207,75 @@ func (s *Service) Get(ctx context.Context, org string) (*orgconfig.ConfigProject
 	return out, nil
 }
 
+// gitProviderSection is the gitProvider section, or nil when the org is not
+// connected. Connected takes both a live credential row and the github-pat
+// reference row: the PAT lives only in vault, so an org whose row predates
+// the reference rows has no usable token and gets the onboarding wizard to
+// enter it again. A disconnected row is retained by the disconnect cascade
+// (audit trail) but projecting it would keep the console's onboarding gate
+// (ADR-0009) and settings card treating the org as connected.
+func (s *Service) gitProviderSection(ctx context.Context, org string) (*orgconfig.GitProviderProjection, error) {
+	if s.credentialSvc == nil {
+		return nil, nil
+	}
+	proj, err := s.credentialSvc.Status(ctx, org)
+	if isNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("orgconfig get gitProvider: %w", err)
+	}
+	if proj.Status == "disconnected" || s.secretRefs == nil {
+		return nil, nil
+	}
+	ref, err := s.secretRefs.Get(ctx, org, OrgSecretGitHubPAT)
+	if err != nil {
+		return nil, fmt.Errorf("orgconfig get gitProvider: read the github-pat row: %w", err)
+	}
+	if ref == nil {
+		return nil, nil
+	}
+	return gitProviderProjectionFrom(proj), nil
+}
+
 // idpProjection returns the org's persisted IDP profile, or the platform
 // default (kind=platform + cluster issuer/jwks) when none exists yet. Read-only
 // — unlike UpdateProfile's GetOrCreateProfile, it never persists on GET.
+// hasClientSecret is whether the org's ae-publisher-client row exists: the
+// publisher's secret lives only in vault, and the row is the record that it
+// was written.
 func (s *Service) idpProjection(ctx context.Context, org string) orgconfig.IDPProjection {
+	out := orgconfig.IDPProjection{
+		Kind:    "platform",
+		Issuer:  s.platformIDP.Issuer,
+		JWKSURL: s.platformIDP.JWKSURL,
+	}
 	if s.idpSvc != nil {
 		if profile, err := s.idpSvc.GetProfile(ctx, org); err == nil && profile != nil {
-			return idpProjectionFrom(profile)
+			out = idpProjectionFrom(profile)
 		} else if err != nil {
 			slog.WarnContext(ctx, "orgconfig: idp GetProfile failed; falling back to platform default",
 				"org", org, "error", err)
 		}
 	}
-	return orgconfig.IDPProjection{
-		Kind:    "platform",
-		Issuer:  s.platformIDP.Issuer,
-		JWKSURL: s.platformIDP.JWKSURL,
+	out.HasClientSecret = s.publisherSecretRecorded(ctx, org)
+	return out
+}
+
+// publisherSecretRecorded reports whether the org's ae-publisher-client row
+// exists. A failed read projects false and is logged: GET /config does not
+// fail on it.
+func (s *Service) publisherSecretRecorded(ctx context.Context, org string) bool {
+	if s.secretRefs == nil {
+		return false
 	}
+	ref, err := s.secretRefs.Get(ctx, org, OrgSecretPublisherClient)
+	if err != nil {
+		slog.WarnContext(ctx, "orgconfig: read the ae-publisher-client row failed; hasClientSecret projects false",
+			"org", org, "error", err)
+		return false
+	}
+	return ref != nil && ref.Name != ""
 }
 
 // --- PATCH /config ----------------------------------------------------------
@@ -241,6 +304,13 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 			Message: `an org always has an IDP; reset it with {"kind":"platform"}`,
 		}
 	}
+	// SetProfile checks this too; checked here as well so a refused idp
+	// leaves the sections persisted before it unwritten.
+	if p.IDP.Sent && !p.IDP.Null {
+		if err := validateIDPIssuer(p.IDP.Value.Kind, p.IDP.Value.Issuer); err != nil {
+			return nil, sectionErrorFrom("idp", err)
+		}
+	}
 	card := p.LLM.Sent || p.Agents.Sent
 	if card && s.agentSettings == nil {
 		return nil, fmt.Errorf("orgconfig patch llm/agents: service not configured")
@@ -258,6 +328,11 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 		if s.credentialSvc == nil {
 			return nil, fmt.Errorf("orgconfig patch gitProvider: service not configured")
 		}
+		// The PAT lives only in vault: with no secret store the save is
+		// refused here, before any section is written.
+		if err := s.credentialSvc.RequireSecretsDelivery(); err != nil {
+			return nil, sectionErrorFrom("gitProvider", err)
+		}
 		if err := s.credentialSvc.ValidatePAT(ctx, p.GitProvider.Value.PAT, p.GitProvider.Value.GitHubLogin); err != nil {
 			return nil, sectionErrorFrom("gitProvider", err)
 		}
@@ -265,9 +340,17 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 	// 3. Persist phase — probes already passed, so these are writes over
 	//    freshly-validated inputs. Ordered card → gitProvider → idp.
 	sections := []string{}
+	// notPushed is a committed card save whose Agent Manager push failed. The
+	// remaining sections still persist — the card is saved and stopping here
+	// would only add a partial save — and the request answers 502 after them.
+	var notPushed error
 	if card {
 		if err := s.agentSettings.apply(ctx, org, actor, p, probed); err != nil {
-			return nil, err
+			var am *AgentManagerNotUpdatedError
+			if !errors.As(err, &am) {
+				return nil, err
+			}
+			notPushed = err
 		}
 		if p.LLM.Sent {
 			sections = append(sections, "llm")
@@ -295,10 +378,21 @@ func (s *Service) Patch(ctx context.Context, org, actor string, p orgconfig.Conf
 		}
 		sections = append(sections, "idp")
 	}
+	// The gitpat submit's setup runs after every section, so an idp kind
+	// switch in the same patch (which revokes the publisher app) cannot
+	// undo the clients it ensures.
+	if p.GitProvider.Sent && !p.GitProvider.Null {
+		if err := s.submitGitPAT(ctx, org, p.GitProvider.Value.PAT); err != nil {
+			return nil, err
+		}
+	}
 
 	// Audit which sections were carried — never the secret values (Decision:
 	// coarser RBAC compensated by section-level audit logging).
 	slog.InfoContext(ctx, "orgconfig.patched", "org", org, "sections", sections)
+	if notPushed != nil {
+		return nil, sectionErrorFrom("llm", notPushed)
+	}
 
 	out, err := s.Get(ctx, org)
 	if err != nil {
@@ -331,39 +425,16 @@ func (s *Service) TestLLM(ctx context.Context, org string, w orgconfig.LLMPatch)
 
 // --- Action routes ----------------------------------------------------------
 
-// StartGitHubConnect mints a connect-state JWT and returns the GitHub App OAuth
-// authorize URL. Mirrors the legacy start-github-connect handler exactly (same
-// state issuance, same redirect_uri built from the unchanged callback path).
-func (s *Service) StartGitHubConnect(ctx context.Context, org, actor string, installationID int64) (string, error) {
-	if s.appClientID == "" {
-		return "", ErrGitHubAppNotConfigured
-	}
-	state, err := s.bearerSvc.IssueConnectState(org, actor, installationID, 15*time.Minute)
-	if err != nil {
-		return "", fmt.Errorf("orgconfig start connect: %w", err)
-	}
-	redirectURI := s.publicURL + ConnectCallbackPath
-	authorizeURL := "https://github.com/login/oauth/authorize?client_id=" + url.QueryEscape(s.appClientID) +
-		"&redirect_uri=" + url.QueryEscape(redirectURI) +
-		"&state=" + url.QueryEscape(state)
-	return authorizeURL, nil
-}
-
 // DisconnectGitProvider runs the disconnect cascade. It returns whether a
 // connection existed (false → the caller reports an idempotent not_connected).
-func (s *Service) DisconnectGitProvider(ctx context.Context, org string, uninstall bool) (bool, error) {
-	if err := s.disconnectSvc.Disconnect(ctx, org, "manual.disconnect", uninstall); err != nil {
+func (s *Service) DisconnectGitProvider(ctx context.Context, org string) (bool, error) {
+	if err := s.disconnectSvc.Disconnect(ctx, org, "manual.disconnect"); err != nil {
 		if errors.Is(err, ErrOrgNotFound) {
 			return false, nil
 		}
 		return false, fmt.Errorf("orgconfig disconnect: %w", err)
 	}
 	return true, nil
-}
-
-// RotateIDPClientSecret mints a fresh publisher client secret (returned once).
-func (s *Service) RotateIDPClientSecret(ctx context.Context, org, actor string) (string, error) {
-	return s.idpSvc.RegenerateClientSecret(ctx, org, actor)
 }
 
 // DiscoverIDP resolves an OIDC issuer's discovery document.
@@ -417,7 +488,6 @@ func idpProjectionFrom(p *OrganizationIDPProfile) orgconfig.IDPProjection {
 		Issuer:            p.Issuer,
 		JWKSURL:           p.JWKSURL,
 		PublisherClientID: p.PublisherClientID,
-		HasClientSecret:   p.PublisherClientSecret != "",
 	}
 }
 

@@ -80,6 +80,12 @@ const (
 	// configuration fault: the run settles failed, with no fix issue and no
 	// further dispatch, since no code change repairs a pipeline.
 	cycleNoWriteTarget
+	// cycleAgentStartFailed — the agent never started: its pod did not reach
+	// Running within the startup grace, so the watcher closed the cycle
+	// startup_failed (and suspended its Job). Not cycleAgentDead: nothing ran,
+	// one dispatch was made, and the remedy is room in the cluster, not the
+	// agent. Appended last so the values before it keep their numbers.
+	cycleAgentStartFailed
 )
 
 // landing is how one dispatch attempt ended.
@@ -267,13 +273,17 @@ func (l *loop) dispatchUntilLanded(ctx workflow.Context, kind string, anchorIssu
 			// loop into this same check. Checked last so a cycle the event plane
 			// closed on a merge is read as the merge it was.
 			//
-			// One closing reason is not a death: the runner stopping on its model
-			// provider's limit. It is read off the same record, so it costs the
-			// signal nothing either.
+			// Two closing reasons are not a death, read off the same record so
+			// they cost the signal nothing either: the runner stopping on its
+			// model provider's limit, and an agent that never started (the
+			// watcher's startup_failed close, past the startup grace).
 			if facts.Ended {
 				stopDeadline()
-				if facts.AgentReason == delivery.CycleReasonModelProviderLimit {
+				switch {
+				case facts.AgentReason == delivery.CycleReasonModelProviderLimit:
 					return false, cycleProviderLimit, nil
+				case delivery.IsStartupFailure(facts.AgentReason):
+					return false, cycleAgentStartFailed, nil
 				}
 				return false, cycleAgentDead, nil
 			}

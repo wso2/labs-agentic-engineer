@@ -106,20 +106,20 @@ func (s *artifactService) SaveSpec(ctx context.Context, orgID, projectID string,
 	if err != nil {
 		return nil, err
 	}
-	reqFiles, err := s.readBundleAtCommit(ctx, ref, commit, requirementsPrefix, requirementsBundleFilter)
+	reqFiles, err := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
 	if err != nil {
 		return nil, err
 	}
-	designFiles, err := s.readBundleAtCommit(ctx, ref, commit, designPrefix, designBundleFilter)
+	designFiles, err := s.readBundleAtCommit(ctx, ref, commit, designBundle)
 	if err != nil {
 		return nil, err
 	}
-	acceptanceFiles, err := s.readBundleAtCommit(ctx, ref, commit, acceptancePrefix, acceptanceBundleFilter)
+	acceptanceFiles, err := s.readBundleAtCommit(ctx, ref, commit, acceptanceBundle)
 	if err != nil {
 		return nil, err
 	}
 	slog.InfoContext(ctx, "spec save: commit read",
-		"project", projectID, "repo", ref.OrgID+"/"+ref.ProjectID+"/"+ref.RepoSlug, "commit", commit,
+		"project", projectID, "repo", ref.Owner+"/"+ref.Repo, "commit", commit,
 		"pinned", req.CommitSHA != "", "requirementsFiles", len(reqFiles), "designFiles", len(designFiles))
 
 	tags, err := s.listVersionTags(ctx, ref)
@@ -310,7 +310,7 @@ func (s *artifactService) staleFeatures(
 		if files, ok := read[commit]; ok {
 			return files
 		}
-		files, err := s.readBundleAtCommit(ctx, ref, commit, requirementsPrefix, requirementsBundleFilter)
+		files, err := s.readBundleAtCommit(ctx, ref, commit, requirementsBundle)
 		if err != nil {
 			slog.WarnContext(ctx, "spec save: a design run's commit is unreadable; its features' staleness unchecked",
 				"project", projectID, "base", commit, "error", err)
@@ -360,13 +360,13 @@ func designedFrom(runs []DesignRun, featureID string, filesAt func(commit string
 }
 
 // specTreeUnchanged reports whether the specs/ subtrees at the two commits are
-// content-identical (path→blob-sha comparison, sha-addressed local reads).
+// content-identical (path→blob-sha comparison, sha-addressed cacheable reads).
 func (s *artifactService) specTreeUnchanged(ctx context.Context, ref sourcecontrol.RepoRef, commit, tagCommit string) (bool, error) {
-	headEntries, _, err := s.git.Workspace().List(ctx, ref, commit)
+	headEntries, _, err := s.git.List(ctx, ref, commit)
 	if err != nil {
 		return false, fmt.Errorf("list tree at %s: %w", commit, err)
 	}
-	tagEntries, _, err := s.git.Workspace().List(ctx, ref, tagCommit)
+	tagEntries, _, err := s.git.List(ctx, ref, tagCommit)
 	if err != nil {
 		return false, fmt.Errorf("list tree at %s: %w", tagCommit, err)
 	}

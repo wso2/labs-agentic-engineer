@@ -14,9 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package disconnectgithub tears down the org's GitHub App connection.
+// Package disconnectgithub tears down the org's git-provider connection.
 //
 // Trigger: POST /config/git-provider/disconnect (disconnect-git-provider).
-// In→out:  bound org + uninstall flag (default true) → the resulting status.
+// In→out:  bound org → the resulting status.
 // Ports:   organization.Service.
 package disconnectgithub

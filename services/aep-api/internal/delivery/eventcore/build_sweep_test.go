@@ -225,7 +225,7 @@ func TestBuildSweep_ObservesOnlyWhatTheCycleTriggered(t *testing.T) {
 // ---- the reconcile: a merged cycle whose builds were never triggered -------
 //
 // The merge fan-out is a webhook's work, and a delivery can be lost past every
-// replay (ticket 13: GitHub's 10-second timeout cancelled the fan-out, and
+// replay (GitHub's 10-second timeout cancelled the fan-out, and
 // GitHub never redelivers). The run then waits in its build stage forever,
 // because awaitBuilds has no deadline. The sweep that already watches that
 // cycle's builds is what notices a component with NO build at all.

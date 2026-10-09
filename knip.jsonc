@@ -1,25 +1,29 @@
 {
   "$schema": "https://unpkg.com/knip@5/schema.json",
-  // Dead-code report for the agents runtime, the playground that consumes it,
-  // the console and the prototype kit, themes and CLI, and the console's theme.
+  // Dead-code report for the AE Studio TS containers, the playground, the
+  // console, the prototype kit, themes and CLI, the console's theme, and two
+  // shared packages (scope below).
   // The TS counterpart of services/aep-api/scripts/deadcode.sh. Run via
   // `--production` so *.test.ts never count as consumers (the Go "no -test").
   //
-  // Scope: @aep/agents and the playground, plus @aep/web-search (web search for
-  // the agents service and the runner's `aep-web` MCP server), @aep/console
-  // (gated since its first commit, as console-next) and the prototype packages
+  // Scope: @aep/ae-design-agent, @aep/ae-collab and @aep/playground; @aep/console
+  // (gated since its first commit, as console-next); the prototype packages
   // (@wso2/prototype-kit, -theme-default, -theme-oxygen, -cli) with the theme they
-  // share with the console (@aep/ui-theme); every other pnpm
-  // workspace is ignored. knip AUTO-DETECTS entries (agents via its package.json
-  // `exports` map, the playground via its `play: tsx src/cli.ts` script) — do
-  // NOT add a per-workspace `entry`/`project` override for those two, it
-  // silently breaks detection. The workspaces that do carry one say why below.
+  // share with the console (@aep/ui-theme); and two shared packages:
+  // @aep/web-search (web search for the design agent and the runner's `aep-web`
+  // MCP server) and @aep/platform-idp-auth (the Platform IdP token check of the
+  // AE Studio pod's TS containers). Every other pnpm workspace is ignored.
+  // knip AUTO-DETECTS entries (the design agent via its package.json `exports`
+  // map, the playground via its `play: tsx src/cli.ts` script) — do NOT add a
+  // per-workspace `entry`/`project` override for those two, it silently breaks
+  // detection. The workspaces that do carry one say why below.
   "ignoreWorkspaces": [
     "apps/*",
     "!apps/console",
     "evals/*",
     "packages/*",
     "!packages/web-search",
+    "!packages/platform-idp-auth",
     "!packages/prototype-kit",
     "!packages/prototype-theme-default",
     "!packages/prototype-theme-oxygen",
@@ -27,16 +31,17 @@
     "packages/ui/*",
     "!packages/ui/theme",
     "runners/*",
-    "services/aep-api",
-    "services/collab"
+    "services/aep-api"
   ],
   // Each package keeps tests + shared fixtures in its own `test/` dir (never in
   // the shipped `src/` tree). knip strips the *.test.ts files under
   // --production, but not the helpers and fixtures they import; those
   // directories are listed below where a package has them.
   // Root stray files are out of scope. mock-model is a published test seam
-  // (`@aep/agents` package.json exports); only *.test.ts / playground tests
-  // import it, which --production strips — retain deliberately. `skills/` is the
+  // (`@aep/ae-design-agent` package.json exports); only *.test.ts / playground tests
+  // import it, which --production strips — retain deliberately. So is
+  // ae-design-agent's `tools-socket/fake.ts` (the in-process ToolsSocket the
+  // tests drive turns with). `skills/` is the
   // authored skill library: prose plus payload the AGENT consumes at run time
   // (templates it copies into a project, a report generator it invokes through
   // $AEP_SKILLS_DIR). Nothing in this repo imports those files, and nothing
@@ -45,7 +50,8 @@
   "ignore": [
     "deployments/**",
     "scripts/**",
-    "services/agents/src/shared/mock-model.ts",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/shared/mock-model.ts",
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/src/tools-socket/fake.ts",
     "skills/**",
     // The prototype CLI's and the Oxygen theme's test harnesses (spawned bin,
     // browser-lane commands) and fixtures are reached only from *.test.ts
@@ -54,14 +60,14 @@
     // imports.
     "packages/prototype-cli/test/**",
     "packages/prototype-theme-oxygen/test/**",
-    // The kit's shared feedback table reader, imported by its own and
-    // @aep/agent-stream's feedback tests (Go reads the same fixture).
+    // The kit's shared feedback table reader, imported by its own,
+    // @aep/agent-stream's and the design agent's turn-input feedback tests.
     "packages/prototype-kit/test/feedback-cases.ts",
     "packages/prototype-*/scripts/**",
-    // The agents `gen` script (package.json) pastes the kit reference into the
-    // prototype skill; the freshness test imports the same module, which
-    // --production strips.
-    "services/agents/scripts/**"
+    // The design agent's `gen` script (package.json) pastes the kit reference
+    // into the prototype skill; the freshness test imports the same module,
+    // which --production strips.
+    "components/dataplane/ae-system-project/ae-studio/ae-design-agent/scripts/**"
   ],
   "workspaces": {
     // @wso2/prototype-cli: the host app (src/host) is reached by no import;
@@ -97,7 +103,7 @@
   // The CLI resolves its default theme by name at run time
   // (createRequire(...).resolve("@wso2/prototype-theme-default/check-runtime.js")),
   // so no import names it; the dependency is what makes it installed.
-  // The agents service resolves the Oxygen theme's check runtime by name too
+  // The design agent resolves the Oxygen theme's check runtime by name too
   // (resolveTheme("@wso2/prototype-theme-oxygen", ...) in the prototype render
   // check), and the image builds the package because of this dependency.
   "ignoreDependencies": ["@wso2/prototype-theme-default", "@wso2/prototype-theme-oxygen"]

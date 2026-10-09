@@ -344,7 +344,12 @@ export function ProjectCreate() {
             </Box>
           )}
           {createProject.isError && !repoConflict && (
-            <Alert severity="error">{createProject.error.message}</Alert>
+            <CreateFailure
+              error={createProject.error}
+              onConnectGitHub={() => void navigate({ to: "/settings", search: { section: "github" } })}
+              onRetry={create}
+              retryDisabled={pending}
+            />
           )}
           {uploadFailed && (
             <Alert severity="error">
@@ -379,5 +384,67 @@ export function ProjectCreate() {
         </Stack>
       </CenterPage>
     </BasePage>
+  );
+}
+
+/**
+ * A create the platform refused. Three refusals are states rather than failures
+ * and say what to do: GitHub not connected goes to Settings' GitHub
+ * section, AE Studio restarting offers Try again (the platform took the
+ * half-made project away, so a retry is a clean create), and AE Studio
+ * misconfigured names the administrator (no retry fixes it). An earlier delete
+ * of the same project the platform could not finish says to wait. Anything else
+ * is read out in the server's words.
+ */
+function CreateFailure({
+  error,
+  onConnectGitHub,
+  onRetry,
+  retryDisabled,
+}: {
+  error: unknown;
+  onConnectGitHub: () => void;
+  onRetry: () => void;
+  retryDisabled: boolean;
+}) {
+  const code = error instanceof ApiRequestError ? error.code : undefined;
+  if (code === "github_not_connected") {
+    return (
+      <Alert
+        severity="warning"
+        action={<Button onClick={onConnectGitHub}>Connect GitHub</Button>}
+      >
+        Connect GitHub to continue
+      </Alert>
+    );
+  }
+  if (code === "ae_studio_unavailable") {
+    return (
+      <Alert
+        severity="info"
+        action={
+          <Button onClick={onRetry} disabled={retryDisabled}>
+            Try again
+          </Button>
+        }
+      >
+        AE Studio is restarting — try again
+      </Alert>
+    );
+  }
+  if (code === "ae_studio_misconfigured") {
+    return <Alert severity="error">AE Studio is misconfigured — contact your administrator</Alert>;
+  }
+  if (code === "project_delete_pending") {
+    return (
+      <Alert severity="info">
+        An earlier delete of this project is still finishing. Try again in a minute.
+      </Alert>
+    );
+  }
+  return (
+    <Alert severity="error">
+      {error instanceof Error ? error.message : "Failed to create project"}
+    </Alert>
   );
 }

@@ -20,7 +20,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -78,17 +80,19 @@ var (
 	initReuseSecrets        bool
 	initAddons              string
 	initImageTag            string
+	// AE Studio data-plane images (the three containers of the ae-studio pod),
+	// full refs: aep-api hands them to the Resource it provisions.
+	initAEStudioImageDesignAgent string
+	initAEStudioImageCollab      string
+	initAEStudioImageStudioTools string
 )
 
 // platformServiceChartKeys are the values.yaml keys of the services whose
 // image the platform chart pins — the ones --image-tag re-points. They are
-// chart value keys, not Deployment names (aepAgents is Deployment
-// aep-agents, collab is collab-server), so they follow values.yaml rather
-// than the cluster.
+// chart value keys, not Deployment names (tryIt is Deployment
+// aep-tryit), so they follow values.yaml rather than the cluster.
 var platformServiceChartKeys = []string{
 	"aepApi",
-	"aepAgents",
-	"collab",
 	"console",
 	"tryIt",
 }
@@ -101,8 +105,8 @@ const (
 	defaultTryItURL   = "http://tryit.ae.localhost:8080"
 )
 
-// consolePublicURL, tryItPublicURL and aepAPIPublicURL are the platform's
-// browser-facing origins, resolved the way every other setting here is:
+// consolePublicURL and tryItPublicURL are the platform's browser-facing
+// origins, resolved the way every other setting here is:
 // config file, overridden by the flag bound to it, with the local default
 // underneath. Reading them through viper rather than a flag variable is what
 // makes the config file reachable at all — a bound flag's own default is the
@@ -120,16 +124,6 @@ func tryItPublicURL() string {
 		return u
 	}
 	return defaultTryItURL
-}
-
-// aepAPIPublicURL falls back to the console's origin, which proxies the API.
-// The key exists for the deployment where the two are genuinely separate
-// origins; on every other one, setting the console URL is enough.
-func aepAPIPublicURL() string {
-	if u := viper.GetString("aep_api.public_url"); u != "" {
-		return u
-	}
-	return consolePublicURL()
 }
 
 // tryItOverrides returns the helm --set pairs for the Try-it app's two
@@ -161,6 +155,108 @@ func tryItOverrides(publicURL, gatewayHostname string) []string {
 		args = append(args, "--set", "tryIt.gatewayHosts="+gatewayHostname)
 	}
 	return args
+}
+
+// aeStudioOverrides returns the helm pairs for the chart's aeStudio.* values
+// from aectl config. Everything is derived: the public scheme, listener and
+// port come from tls.enabled alone (the dataplane gateway listens on 19080
+// plain or 19443 TLS locally). tls.enabled and oc.data_plane_gateway_tls
+// describe the same gateway listener and must agree. The image refs are not set here; an empty
+// image keeps aep-api booting and makes the AE Studio Ensure fail loudly.
+//
+// Shared by `platform install` and `platform update` (so `make dev-update`
+// too): an install made before these values existed converges on its next
+// upgrade. It carries config only, never a secret.
+func aeStudioOverrides(platformNamespace string) []string {
+	scheme, listener, port := "http", "http", ":19080"
+	if viper.GetBool("tls.enabled") {
+		scheme, listener, port = "https", "https", ":19443"
+	}
+	args := []string{
+		"--set", "aeStudio.publicScheme=" + scheme,
+		"--set", "aeStudio.listenerName=" + listener,
+		"--set", "aeStudio.publicPortSuffix=" + port,
+		"--set", "aeStudio.consoleOrigins={" + consolePublicURL() + ",http://localhost:8090}",
+	}
+	// An unset gateway.hostname is omitted, not set empty: update reuses the
+	// previous release's values, and an empty --set would wipe one the install made.
+	if h := viper.GetString("gateway.hostname"); h != "" {
+		args = append(args, "--set", "aeStudio.gatewayHost="+h)
+	}
+	if u := viper.GetString("thunder.public_url"); u != "" {
+		args = append(args, "--set", "aeStudio.idp.issuer="+u)
+	}
+	// An unset thunder.url leaves the IdP URLs absent so aep-api's
+	// not-configured check names them, instead of a half-built URL.
+	if thunderURL := viper.GetString("thunder.url"); thunderURL != "" {
+		args = append(args,
+			"--set", "aeStudio.idp.jwksUrl="+thunderURL+"/oauth2/jwks",
+			"--set", "aeStudio.idp.tokenUrl="+thunderURL+"/oauth2/token",
+		)
+	}
+	// Always set, so update (which reuses the previous release's values)
+	// follows the config both ways. The relay image is the chart's own default.
+	args = append(args, "--set", fmt.Sprintf("aeStudio.webhookRelay.enabled=%t", webhookRelayEnabled()))
+	return append(args, "--set-json", "aeStudio.extraEgress="+aeStudioExtraEgress(platformNamespace))
+}
+
+// portOfURL is the TCP port a URL connects to: the explicit one, else the
+// scheme's default (80/443), else fallback for an unparsable or schemeless URL.
+func portOfURL(raw string, fallback int) int {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fallback
+	}
+	if u.Port() != "" {
+		if p, err := strconv.Atoi(u.Port()); err == nil {
+			return p
+		}
+		return fallback
+	}
+	switch u.Scheme {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	}
+	return fallback
+}
+
+// aeStudioImageOverrides returns the helm pairs for aeStudio.images.*, one
+// per non-empty ref. An empty ref is left to the chart default, which keeps
+// aep-api booting and makes the AE Studio Ensure fail loudly.
+func aeStudioImageOverrides(designAgent, collab, studioTools string) []string {
+	var args []string
+	for _, kv := range []struct{ key, ref string }{
+		{"designAgent", designAgent}, {"collab", collab}, {"studioTools", studioTools},
+	} {
+		if kv.ref != "" {
+			args = append(args, "--set", "aeStudio.images."+kv.key+"="+kv.ref)
+		}
+	}
+	return args
+}
+
+// aeStudioExtraEgress is the pod's egress to the in-cluster IdP (Thunder's
+// namespace and port, from thunder.namespace / thunder.url) and to aep-api.
+func aeStudioExtraEgress(platformNamespace string) string {
+	thunderNS := viper.GetString("thunder.namespace")
+	thunderPort := portOfURL(viper.GetString("thunder.url"), 8090)
+	rules := []map[string]any{
+		{
+			"to":    []any{map[string]any{"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": thunderNS}}}},
+			"ports": []any{map[string]any{"protocol": "TCP", "port": thunderPort}},
+		},
+		{
+			"to": []any{map[string]any{
+				"namespaceSelector": map[string]any{"matchLabels": map[string]string{"kubernetes.io/metadata.name": platformNamespace}},
+				"podSelector":       map[string]any{"matchLabels": map[string]string{"app": "aep-api"}},
+			}},
+			"ports": []any{map[string]any{"protocol": "TCP", "port": 9090}},
+		},
+	}
+	b, _ := json.Marshal(rules)
+	return string(b)
 }
 
 // imageTagOverrides returns the helm --set pairs that re-point every platform
@@ -208,8 +304,6 @@ func init() {
 	initCmd.Flags().StringVar(&initPlatformNamespace, "namespace", "wso2-aep", "Kubernetes namespace")
 	initCmd.Flags().String("console-url", defaultConsoleURL, "Public URL of the AEP console (overrides config)")
 	_ = viper.BindPFlag("console.public_url", initCmd.Flags().Lookup("console-url"))
-	initCmd.Flags().String("api-url", "", "Public base aep-api builds user-facing links on (GitHub App redirect, Settings page) (overrides config); empty defaults to the console URL, whose origin proxies the API")
-	_ = viper.BindPFlag("aep_api.public_url", initCmd.Flags().Lookup("api-url"))
 	initCmd.Flags().String("tryit-url", defaultTryItURL, "Public URL of the Try-it app (overrides config). It is served on its OWN hostname, not a path under the console's, so re-domaining an install means moving both")
 	_ = viper.BindPFlag("tryit.public_url", initCmd.Flags().Lookup("tryit-url"))
 	initCmd.Flags().StringVar(&initBuildPlaneNamespace, "build-plane-namespace", "openchoreo-workflow-plane", "Namespace of the OpenChoreo build/workflow plane (must already exist, incl. its image registry)")
@@ -223,14 +317,15 @@ func init() {
 	_ = viper.BindPFlag("oc.observability_api_url", initCmd.Flags().Lookup("oc-observability-api-url"))
 	initCmd.Flags().Bool("data-plane-gateway-tls", false, "Whether the data-plane gateway terminates TLS (overrides config; false is correct for aectl's own plain-HTTP gateway setup, set true only against a gateway that genuinely fronts TLS)")
 	_ = viper.BindPFlag("oc.data_plane_gateway_tls", initCmd.Flags().Lookup("data-plane-gateway-tls"))
-	initCmd.Flags().String("webhook-delivery-url", "", "Public URL registered on each repo's webhook (overrides config)")
-	_ = viper.BindPFlag("webhook.delivery_url", initCmd.Flags().Lookup("webhook-delivery-url"))
 	initCmd.Flags().BoolVar(&initOpenBaoDirect, "openbao-direct", false, "Enable OpenBao-direct secrets delivery — injects OPENBAO_ADDR/TOKEN into aep-api (required for local/OSS installs)")
 	_ = viper.BindPFlag("codingagent.openbao_direct.enabled", initCmd.Flags().Lookup("openbao-direct"))
 	initCmd.Flags().String("openbao-addr", "", "In-cluster URL of the OpenBao service (overrides config)")
 	_ = viper.BindPFlag("openbao.addr", initCmd.Flags().Lookup("openbao-addr"))
 	initCmd.Flags().BoolVar(&initReuseSecrets, "reuse-secrets", false, "Skip secret prompts and reuse secrets already seeded in OpenBao (for reinstall or upgrade)")
 	initCmd.Flags().StringVar(&initAddons, "addons", "", `Comma-separated addon IDs to install without prompting (e.g. "thunder-app,postgres-cnpg"). Use "none" to skip addons, "all" to install everything. Omit for interactive selection.`)
+	initCmd.Flags().StringVar(&initAEStudioImageDesignAgent, "ae-studio-image-design-agent", "", "Full image ref of the ae-studio pod's design-agent container (aeStudio.images.designAgent)")
+	initCmd.Flags().StringVar(&initAEStudioImageCollab, "ae-studio-image-collab", "", "Full image ref of the ae-studio pod's collab container (aeStudio.images.collab)")
+	initCmd.Flags().StringVar(&initAEStudioImageStudioTools, "ae-studio-image-studio-tools", "", "Full image ref of the ae-studio pod's studio-tools container (aeStudio.images.studioTools)")
 	initCmd.Flags().StringVar(&initImageTag, "image-tag", "", "Tag to use for every platform service image instead of the chart's released default. Repositories are unchanged, so the images must already be loaded into the cluster under those names (local dev — see 'make dev-env')")
 	registerThunderFlags(initCmd)
 }
@@ -286,7 +381,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		sp := ui.NewSpinner("Verifying existing OpenBao secrets")
 		sp.Start()
-		if err := verifyOpenBaoSecrets(ctx); err != nil {
+		if err := reconcileReusedOpenBaoSecrets(ctx); err != nil {
 			sp.Fail("Secret verification failed")
 			return fmt.Errorf("reuse-secrets verification failed: %w\nRemove --reuse-secrets to run a fresh install", err)
 		}
@@ -331,19 +426,8 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("thunder.admin_client_secret is not set — set it via AEP_THUNDER_ADMIN_CLIENT_SECRET or re-run without --reuse-secrets")
 		}
 
-		// The value aep-api authenticates to OpenBao with at runtime (see
-		// aep-openbao-secrets in the chart). Not interactive: aectl's own
-		// write access to OpenBao (below) goes through the cluster's
-		// Kubernetes-auth login (GetSAToken + KubernetesLogin), never this
-		// value, so there is nothing to prompt for here — only aep-api reads
-		// it, later, from the ESO-synced Secret this seeds.
-		openBaoToken := os.Getenv("AEP_OPENBAO_TOKEN")
-		if openBaoToken == "" {
-			openBaoToken = "root"
-		}
-
 		fmt.Println()
-		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret, openBaoToken); err != nil {
+		if err := provisionOpenBao(ctx, anthropicKey, adminClientID, adminClientSecret); err != nil {
 			return fmt.Errorf("provision OpenBao: %w", err)
 		}
 	}
@@ -360,7 +444,6 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		"-n", initPlatformNamespace,
 		"--create-namespace",
 		"--set", "console.publicURL=" + consoleURL,
-		"--set", "aepApi.publicURL=" + aepAPIPublicURL(),
 		"--set", "console.thunderPublicURL=" + viper.GetString("thunder.public_url"),
 		"--set", "thunder.adminURL=" + thunderURL,
 		"--set", "thunder.jwksURL=" + thunderURL + "/oauth2/jwks",
@@ -381,25 +464,18 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 		}
 	}
 	helmArgs = append(helmArgs, tryItOverrides(tryItPublicURL(), viper.GetString("gateway.hostname"))...)
+	helmArgs = append(helmArgs, aeStudioOverrides(initPlatformNamespace)...)
 	helmArgs = append(helmArgs, imageTagOverrides(initImageTag)...)
-	if mode := viper.GetString("platform.workspaces.access_mode"); mode != "" {
-		helmArgs = append(helmArgs, "--set", "workspaces.accessMode="+mode)
-	}
+	helmArgs = append(helmArgs, aeStudioImageOverrides(initAEStudioImageDesignAgent, initAEStudioImageCollab, initAEStudioImageStudioTools)...)
 	if u := viper.GetString("oc.observability_api_url"); u != "" {
 		helmArgs = append(helmArgs, "--set", "observer.baseURL="+u)
 	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("codingAgentDispatch.openBaoDirect.enabled=%t", openBaoDirect))
 	if openBaoDirect {
-		// OPENBAO_TOKEN is NOT set here — aep-api reads it from the
-		// ESO-synced aep-openbao-secrets Secret (provisionOpenBao seeds
-		// aep/openbao-token), never a literal Helm value.
+		// No token: aep-api logs in to OpenBao by Kubernetes auth as its own
+		// service account (role aep-api, deployments/scripts/openbao-aep-api-auth.sh).
 		helmArgs = append(helmArgs, "--set", "openbao.addr="+viper.GetString("openbao.addr"))
-	}
-	helmArgs = append(helmArgs, "--set",
-		fmt.Sprintf("webhook.localSmee.enabled=%t", viper.GetBool("webhook.local_smee.enabled")))
-	if u := viper.GetString("webhook.delivery_url"); u != "" {
-		helmArgs = append(helmArgs, "--set", "webhook.deliveryURL="+u)
 	}
 	helmArgs = append(helmArgs, "--set",
 		fmt.Sprintf("localOrgProvisioning.enabled=%t", viper.GetBool("oc.local_org_provisioning.enabled")),
@@ -432,7 +508,7 @@ func runAEPInit(cmd *cobra.Command, args []string) error {
 	ui.Step("Registering Thunder OAuth clients")
 	if err := doThunderSetup(ctx, k8sClient, initPlatformNamespace,
 		viper.GetString("thunder.namespace"),
-		consoleURL,
+		consoleURL, nil,
 	); err != nil {
 		return err
 	}
@@ -789,97 +865,229 @@ func shortToolVersion(name string, args ...string) string {
 	return strings.TrimSpace(line)
 }
 
-// verifyOpenBaoSecrets confirms all required secret paths exist in OpenBao.
-// Used by --reuse-secrets to ensure a previous install seeded everything before
-// skipping the provisioning step.
-func verifyOpenBaoSecrets(ctx context.Context) error {
+// openBaoSession is an authenticated port-forward to OC's OpenBao. stop
+// tears the port-forward down.
+type openBaoSession struct {
+	baseURL, token string
+	stop           func()
+}
+
+// openOpenBaoSession port-forwards to OpenBao and logs in with the cluster's
+// Kubernetes auth, the same way provisionOpenBao does.
+func openOpenBaoSession(ctx context.Context) (*openBaoSession, error) {
 	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer func() { _ = pfCmd.Process.Kill() }()
+	stop := func() { _ = pfCmd.Process.Kill() }
 
 	baseURL := "http://localhost:" + openbao.LocalPort
 	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		return fmt.Errorf("OpenBao not reachable: %w", err)
+		stop()
+		return nil, fmt.Errorf("OpenBao not reachable: %w", err)
 	}
-
 	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
 	if err != nil {
-		return err
+		stop()
+		return nil, err
 	}
 	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
 	if err != nil {
+		stop()
+		return nil, err
+	}
+	return &openBaoSession{baseURL: baseURL, token: token, stop: stop}, nil
+}
+
+// seedMissingThunderClientSecrets writes the generated aep/thunder-clients/*
+// keys that are absent and leaves existing ones untouched, so a store seeded
+// before a client existed is topped up rather than refused. It returns the
+// secrets it wrote. The write is a KV v2 create-only (cas 0), so the store
+// itself refuses to overwrite an existing key.
+func (s *openBaoSession) seedMissingThunderClientSecrets(ctx context.Context) ([]seededSecret, error) {
+	exists := func(path string) (bool, error) {
+		return s.pathExists(ctx, path)
+	}
+	put := func(path, value string) error {
+		return s.putCreateOnly(ctx, path, value)
+	}
+	return seedMissingGeneratedSecrets(exists, put)
+}
+
+// putCreateOnly writes value at path as a KV v2 create-only (cas 0): the store
+// refuses to overwrite an existing key, which comes back as errSecretExists.
+func (s *openBaoSession) putCreateOnly(ctx context.Context, path, value string) error {
+	result, status, err := openbao.Req(ctx, "PUT", s.baseURL, s.token, "/v1/secret/data/"+path, map[string]interface{}{
+		"options": map[string]interface{}{"cas": 0},
+		"data":    map[string]interface{}{"value": value},
+	})
+	if err != nil {
 		return err
 	}
-
-	required := []string{
-		"aep/anthropic-api-key",
-		"aep/openbao-token",
-		"aep/postgres-password",
-		"aep/task-signing-key",
-		"aep/oauth-state-key",
-		"aep/agents-jwt-secret",
-		"aep/webhook-secret",
-		"aep/opensearch-username",
-		"aep/opensearch-password",
-		"aep/thunder-admin/client-id",
-		"aep/thunder-admin/client-secret",
-		"aep/thunder-clients/oc-workload-publisher",
-		"aep/thunder-clients/oc-observer-reader",
-		"aep/thunder-clients/aep-api-client",
-		"aep/thunder-clients/bff-git-service",
-		"aep/thunder-clients/bff-remote-worker",
-		"aep/thunder-clients/local-dev-seeder",
-		"aep/thunder-clients/system-client",
-		"aep/thunder-clients/openchoreo-rca-agent",
+	// A cas-0 conflict means another writer created the key between our
+	// existence check and this write. We keep theirs and do NOT wait for it
+	// to reach the cluster Secret: it was not seeded by us, so the caller
+	// has no value to verify against.
+	if status == 400 && strings.Contains(fmt.Sprint(result), "check-and-set") {
+		return errSecretExists
 	}
-
-	var missing []string
-	for _, path := range required {
-		_, status, err := openbao.Req(ctx, "GET", baseURL, token, "/v1/secret/data/"+path, nil)
-		if err != nil {
-			return fmt.Errorf("check secret %s: %w", path, err)
-		}
-		if status == 404 {
-			missing = append(missing, path)
-		}
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
+	if status >= 300 {
+		// Status and the store's error field only; never the request body.
+		return fmt.Errorf("OpenBao PUT %s returned %d: %v", path, status, result["errors"])
 	}
 	return nil
 }
 
+// reconcileReusedOpenBaoSecrets backs --reuse-secrets: it requires every
+// non-generated secret path to exist in OpenBao (a previous install seeded
+// them) and tops up, create-only, the generated secrets a store from an older
+// install may lack: the Thunder client secrets and, with the relay on, the
+// webhook relay seed. Those are the only things it writes.
+func reconcileReusedOpenBaoSecrets(ctx context.Context) error {
+	s, err := openOpenBaoSession(ctx)
+	if err != nil {
+		return err
+	}
+	defer s.stop()
+
+	missing, err := s.missingRequiredPaths(ctx)
+	if err != nil {
+		return err
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the following secrets are not in OpenBao:\n  %s", strings.Join(missing, "\n  "))
+	}
+
+	if _, err := s.seedMissingThunderClientSecrets(ctx); err != nil {
+		return err
+	}
+	return topUpWebhookRelaySeed(
+		func(path string) (bool, error) { return s.pathExists(ctx, path) },
+		func(path, value string) error { return s.putCreateOnly(ctx, path, value) })
+}
+
+// requiredOpenBaoPaths are the secrets an install seeds that aectl does not
+// generate on top-up. Missing any of them means the store was wiped (or never
+// installed), not that it predates one Thunder client.
+var requiredOpenBaoPaths = []string{
+	"aep/anthropic-api-key",
+	"aep/postgres-password",
+	"aep/opensearch-username",
+	"aep/opensearch-password",
+	"aep/thunder-admin/client-id",
+	"aep/thunder-admin/client-secret",
+}
+
+// missingRequiredPaths returns the requiredOpenBaoPaths absent from the store.
+func (s *openBaoSession) missingRequiredPaths(ctx context.Context) ([]string, error) {
+	var missing []string
+	for _, path := range requiredOpenBaoPaths {
+		ok, err := s.pathExists(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			missing = append(missing, path)
+		}
+	}
+	return missing, nil
+}
+
+// pathExists is true on 200 and false on 404. Any other status (403, 5xx,
+// a sealed store) is an error: guessing "missing" would let a seed or a wipe
+// verdict stand on a failed read, so this fails closed.
+func (s *openBaoSession) pathExists(ctx context.Context, path string) (bool, error) {
+	result, status, err := openbao.Req(ctx, "GET", s.baseURL, s.token, "/v1/secret/data/"+path, nil)
+	if err != nil {
+		return false, fmt.Errorf("check secret %s: %w", path, err)
+	}
+	switch status {
+	case 200:
+		return true, nil
+	case 404:
+		return false, nil
+	}
+	return false, fmt.Errorf("check secret %s: OpenBao returned %d: %v", path, status, result["errors"])
+}
+
+// generatedThunderClientNames are the Thunder clients whose secret aectl
+// generates and seeds under aep/thunder-clients/<name>.
+var generatedThunderClientNames = []string{
+	"oc-workload-publisher",
+	"oc-observer-reader",
+	"aep-api-client",
+	"bff-git-service",
+	"bff-remote-worker",
+	"local-dev-seeder",
+	"system-client",
+	"openchoreo-rca-agent",
+	"ae-studio-internal",
+}
+
+// fixedThunderClientSecrets: clients whose secret an OpenChoreo component
+// bakes in as a fixed default and cannot be told a random value.
+var fixedThunderClientSecrets = map[string]string{
+	"oc-workload-publisher": "openchoreo-workload-publisher-secret",
+}
+
+// thunderClientSecretValue returns the fixed secret for name, or a fresh one.
+func thunderClientSecretValue(name string) (string, error) {
+	if fixed, ok := fixedThunderClientSecrets[name]; ok {
+		return fixed, nil
+	}
+	return bootstrap.GeneratePassword(32)
+}
+
+// seededSecret is a vault key seedMissingGeneratedSecrets wrote. value is held
+// only to verify the cluster Secret caught up; it is never logged.
+type seededSecret struct{ path, value string }
+
+// errSecretExists is what a put returns when the store refused to overwrite an
+// existing key (KV v2 check-and-set), which seeding treats as "already there".
+var errSecretExists = errors.New("secret already exists")
+
+// seedMissingGeneratedSecrets writes every generated aep/thunder-clients/*
+// secret that is absent and leaves existing ones untouched: put must refuse to
+// overwrite (errSecretExists), so a key created between the check and the
+// write survives. It returns what it wrote.
+func seedMissingGeneratedSecrets(exists func(path string) (bool, error), put func(path, value string) error) ([]seededSecret, error) {
+	var seeded []seededSecret
+	for _, name := range generatedThunderClientNames {
+		path := "aep/thunder-clients/" + name
+		ok, err := exists(path)
+		if err != nil {
+			return seeded, fmt.Errorf("check secret %s: %w", path, err)
+		}
+		if ok {
+			continue
+		}
+		v, err := thunderClientSecretValue(name)
+		if err != nil {
+			return seeded, fmt.Errorf("generate thunder client secret %s: %w", name, err)
+		}
+		if err := put(path, v); err != nil {
+			if errors.Is(err, errSecretExists) {
+				continue
+			}
+			return seeded, fmt.Errorf("write %s: %w", path, err)
+		}
+		seeded = append(seeded, seededSecret{path: path, value: v})
+	}
+	return seeded, nil
+}
+
 // provisionOpenBao seeds all platform secrets into OC's built-in OpenBao instance.
-func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret, openBaoToken string) error {
+func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, thunderAdminClientSecret string) error {
 	sp := ui.NewSpinner("Connecting to OpenBao")
 	sp.Start()
 
-	pfCmd, err := openbao.PortForward(ctx, ocOpenBaoNamespace, ocOpenBaoRelease, kubeconfig)
+	session, err := openOpenBaoSession(ctx)
 	if err != nil {
-		sp.Fail("Port-forward failed")
+		sp.Fail("Connecting to OpenBao failed")
 		return err
 	}
-	defer func() { _ = pfCmd.Process.Kill() }()
-
-	baseURL := "http://localhost:" + openbao.LocalPort
-	if err := openbao.WaitForReachable(ctx, baseURL, 30*time.Second); err != nil {
-		sp.Fail("OpenBao unreachable")
-		return fmt.Errorf("OpenBao not reachable via port-forward: %w", err)
-	}
-
-	sp.Update("Authenticating")
-	saToken, err := openbao.GetSAToken(ctx, ocOpenBaoNamespace, ocOpenBaoSA, kubeconfig)
-	if err != nil {
-		sp.Fail("Authentication failed")
-		return err
-	}
-	token, err := openbao.KubernetesLogin(ctx, baseURL, ocWriteRole, saToken)
-	if err != nil {
-		sp.Fail("Authentication failed")
-		return err
-	}
+	defer session.stop()
+	baseURL, token := session.baseURL, session.token
 
 	sp.Update("Generating secrets")
 
@@ -888,69 +1096,31 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate postgres password: %w", err)
 	}
-	signingKey, err := bootstrap.GenerateRSAPrivateKey()
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate signing key: %w", err)
-	}
-	oauthStateKey, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate oauth state key: %w", err)
-	}
-	agentsJWTSecret, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate agents JWT secret: %w", err)
-	}
-	webhookSecret, err := bootstrap.GeneratePassword(32)
-	if err != nil {
-		sp.Fail("Secret generation failed")
-		return fmt.Errorf("generate webhook secret: %w", err)
-	}
 	openSearchPassword, err := bootstrap.GeneratePassword(24)
 	if err != nil {
 		sp.Fail("Secret generation failed")
 		return fmt.Errorf("generate opensearch password: %w", err)
 	}
+	relaySeed, err := webhookRelaySeed()
+	if err != nil {
+		sp.Fail("Secret generation failed")
+		return fmt.Errorf("generate webhook relay seed: %w", err)
+	}
 
-	thunderClientNames := []string{
-		"oc-workload-publisher",
-		"oc-observer-reader",
-		"aep-api-client",
-		"bff-git-service",
-		"bff-remote-worker",
-		"local-dev-seeder",
-		"system-client",
-		"openchoreo-rca-agent",
-	}
-	// fixedClientSecrets: clients whose secret an OpenChoreo component bakes in
-	// as a fixed default and cannot be told a random value.
-	fixedClientSecrets := map[string]string{
-		"oc-workload-publisher": "openchoreo-workload-publisher-secret",
-	}
-	thunderClientSecrets := make(map[string]string, len(thunderClientNames))
-	for _, name := range thunderClientNames {
-		if fixed, ok := fixedClientSecrets[name]; ok {
-			thunderClientSecrets[name] = fixed
-			continue
-		}
-		s, err := bootstrap.GeneratePassword(32)
+	thunderClientSecrets := make(map[string]string, len(generatedThunderClientNames))
+	for _, name := range generatedThunderClientNames {
+		v, err := thunderClientSecretValue(name)
 		if err != nil {
 			sp.Fail("Secret generation failed")
 			return fmt.Errorf("generate thunder client secret %s: %w", name, err)
 		}
-		thunderClientSecrets[name] = s
+		thunderClientSecrets[name] = v
 	}
 
 	secrets := []struct{ path, value string }{
 		{"aep/anthropic-api-key", anthropicKey},
-		{"aep/openbao-token", openBaoToken},
 		{"aep/postgres-password", postgresPassword},
-		{"aep/task-signing-key", signingKey},
-		{"aep/oauth-state-key", oauthStateKey},
-		{"aep/agents-jwt-secret", agentsJWTSecret},
-		{"aep/webhook-secret", webhookSecret},
+		{webhookRelaySeedPath, relaySeed},
 		{"aep/opensearch-username", "admin"},
 		{"aep/opensearch-password", openSearchPassword},
 		{"aep/thunder-admin/client-id", thunderAdminClientID},
@@ -959,7 +1129,7 @@ func provisionOpenBao(ctx context.Context, anthropicKey, thunderAdminClientID, t
 		// thunder-app-operator can source both credentials from the same ESO Secret.
 		{"aep/thunder-clients/system-client-id", "aep-system-client"},
 	}
-	for _, name := range thunderClientNames {
+	for _, name := range generatedThunderClientNames {
 		secrets = append(secrets, struct{ path, value string }{
 			"aep/thunder-clients/" + name, thunderClientSecrets[name],
 		})

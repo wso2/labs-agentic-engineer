@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -64,14 +65,6 @@ func TestIsPermanent(t *testing.T) {
 			err:  &sourcecontrol.HTTPStatusError{StatusCode: http.StatusUnauthorized},
 			want: true,
 		},
-		{
-			name: "graphql NOT_FOUND — the 404 of the GraphQL surface",
-			err: &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-				Type:    sourcecontrol.GraphQLTypeNotFound,
-				Message: "Could not resolve to a Repository with the name 'org/proj'.",
-			}}},
-			want: true,
-		},
 
 		{
 			name: "403 — GitHub's secondary rate limit wears this status and clears itself",
@@ -84,18 +77,28 @@ func TestIsPermanent(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "graphql RATE_LIMITED, same reason as 403",
-			err: &sourcecontrol.GraphQLError{Errors: []sourcecontrol.GraphQLErrorDetail{{
-				Type: "RATE_LIMITED", Message: "API rate limit exceeded",
-			}}},
-			want: false,
-		},
-		{
 			name: "repo not ready is a state the mirror heals out of",
 			err:  sourcecontrol.ErrRepoNotReady,
 			want: false,
 		},
 		{name: "transport failure", err: errors.New("dial tcp: connection refused"), want: false},
+
+		{name: "AE Studio absent: GitHub is not connected, an answer", err: fmt.Errorf("head: %w", sourcecontrol.ErrAEStudioAbsent), want: true},
+		{name: "AE-only token refused after a refresh (C3)", err: sourcecontrol.ErrAEStudioMisconfigured, want: true},
+		{name: "repository owner is not the org's", err: sourcecontrol.ErrOwnerNotAllowed, want: true},
+		{name: "reference document rejected", err: sourcecontrol.ErrReferenceRejected, want: true},
+		{name: "AE Studio unavailable is the retry case", err: sourcecontrol.ErrAEStudioUnavailable, want: false},
+		{name: "GitHub rate limit clears on its own", err: &sourcecontrol.RateLimitedError{RetryAfter: time.Minute}, want: false},
+		{name: "GitHub refused the request itself (400)", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusBadRequest}, want: true},
+		{name: "GitHub's validation refused it (422)", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusUnprocessableEntity}, want: true},
+		{name: "405 not mergeable is reconciled by its caller", err: &sourcecontrol.HTTPStatusError{StatusCode: http.StatusMethodNotAllowed}, want: false},
+		{name: "an adapter refusal that calls itself permanent", err: fmt.Errorf("x: %w", selfClassified(true)), want: true},
+		{name: "an adapter refusal that calls itself transient", err: selfClassified(false), want: false},
+		{
+			name: "a commit conflict is re-read and retried by its caller",
+			err:  &sourcecontrol.CommitConflictError{Conflicts: []sourcecontrol.Conflict{{Path: "a.md"}}},
+			want: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -104,3 +107,9 @@ func TestIsPermanent(t *testing.T) {
 		})
 	}
 }
+
+// selfClassified is an adapter error that says whether it is permanent.
+type selfClassified bool
+
+func (s selfClassified) Error() string   { return "adapter refusal" }
+func (s selfClassified) Permanent() bool { return bool(s) }

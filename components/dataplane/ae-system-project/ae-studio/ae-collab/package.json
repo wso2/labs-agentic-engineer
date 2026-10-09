@@ -1,0 +1,30 @@
+{
+  "name": "@aep/ae-collab",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The AE Studio Room: Yjs collaboration over spec files (Hocuspocus), seeded from and committed through the pod's Files socket. Issue #86.",
+  "scripts": {
+    "gen": "openapi-typescript ../../../../../packages/contracts/sockets/ae-studio/files/openapi.yaml -o src/generated/files-socket.d.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "dev": "COLLAB_DEV=1 tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
+  },
+  "dependencies": {
+    "@aep/collab-doc": "workspace:*",
+    "@aep/platform-idp-auth": "workspace:*",
+    "@hocuspocus/server": "^4.3.0",
+    "undici": "^7.29.1",
+    "ws": "^8.18.0",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "@hocuspocus/provider": "^4.3.0",
+    "@types/node": "^25.6.0",
+    "@types/ws": "^8.18.0",
+    "tsx": "^4.21.0"
+  }
+}

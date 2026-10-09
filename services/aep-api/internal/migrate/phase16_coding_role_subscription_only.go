@@ -33,7 +33,9 @@ import (
 //
 //  1. delete the coding-role bytes (org_secrets 'anthropic/coding-key') of
 //     every org whose coding row is not a subscription token, and of every org
-//     that has no coding row at all (unreachable bytes nothing can clean up);
+//     that has no coding row at all (unreachable bytes nothing can clean up).
+//     Only while org_secrets still has its legacy key column: phase29 renames
+//     it and deletes every value row, these bytes included;
 //  2. delete the api_key coding rows;
 //  3. verify no row breaks the new rule (abort otherwise);
 //  4. replace the CHECK: default ⇔ api_key, coding ⇔ oauth_token.
@@ -45,15 +47,17 @@ import (
 // is gone.
 func RunPhase16CodingRoleSubscriptionOnly(ctx context.Context, db *gorm.DB) error {
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`
-			DELETE FROM org_secrets s
-			 WHERE s.key = 'anthropic/coding-key'
-			   AND NOT EXISTS (
-			     SELECT 1 FROM org_anthropic_credentials c
-			      WHERE c.oc_org_id = s.oc_org_id
-			        AND c.role = 'coding'
-			        AND c.credential_kind = 'oauth_token')`).Error; err != nil {
-			return fmt.Errorf("phase16 delete coding api-key bytes: %w", err)
+		if hasColumn(tx, "org_secrets", "key") {
+			if err := tx.Exec(`
+				DELETE FROM org_secrets s
+				 WHERE s.key = 'anthropic/coding-key'
+				   AND NOT EXISTS (
+				     SELECT 1 FROM org_anthropic_credentials c
+				      WHERE c.oc_org_id = s.oc_org_id
+				        AND c.role = 'coding'
+				        AND c.credential_kind = 'oauth_token')`).Error; err != nil {
+				return fmt.Errorf("phase16 delete coding api-key bytes: %w", err)
+			}
 		}
 		if err := tx.Exec(`
 			DELETE FROM org_anthropic_credentials

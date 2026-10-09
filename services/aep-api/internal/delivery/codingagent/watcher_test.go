@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"testing"
 	"time"
@@ -36,6 +37,7 @@ type fakeRuntime struct {
 	pod        openchoreo.RuntimePod
 	podErr     error
 	logs       []openchoreo.PodLogLine
+	logErr     error
 	events     []openchoreo.RuntimeEvent
 
 	// delay runs before every call that precedes a log read. A test sets it to
@@ -74,6 +76,9 @@ func (f *fakeRuntime) PodSnapshot(context.Context, string, string) (openchoreo.R
 func (f *fakeRuntime) PodLogs(_ context.Context, _, _, _ string, sinceSeconds int64) ([]openchoreo.PodLogLine, error) {
 	f.logCalls++
 	f.logSince = sinceSeconds
+	if f.logErr != nil {
+		return nil, f.logErr
+	}
 	return f.logs, nil
 }
 
@@ -82,17 +87,72 @@ func (f *fakeRuntime) PodEvents(context.Context, string, string, string) ([]open
 }
 
 type watchedCycles struct {
-	rows     []delivery.RunCycle
-	finished map[string]string
-	usage    map[string]contracts.CapturedUsage
+	rows      []delivery.RunCycle
+	finished  map[string]string
+	usage     map[string]contracts.CapturedUsage
+	suspended map[string]bool
+	// waits is every NoteStartupWait call, in order; clears counts
+	// ClearStartupWait calls per cycle.
+	waits  []startupWaitNote
+	clears map[string]int
+	// clocks is every NoteStartupClock call that landed, in order; refuseClock
+	// makes the next ones land on no row (another replica or a re-dispatch
+	// moved the row first).
+	clocks      []startupClockNote
+	refuseClock bool
+}
+
+// startupClockNote is one NoteStartupClock call that landed, recorded whole.
+type startupClockNote struct {
+	id      string
+	attempt int
+	at      time.Time
+}
+
+// startupWaitNote is one NoteStartupWait call, recorded whole.
+type startupWaitNote struct {
+	id, reason string
+	at         time.Time
 }
 
 func newWatchedCycles(rows ...delivery.RunCycle) *watchedCycles {
 	return &watchedCycles{
-		rows:     rows,
-		finished: map[string]string{},
-		usage:    map[string]contracts.CapturedUsage{},
+		rows:      rows,
+		finished:  map[string]string{},
+		usage:     map[string]contracts.CapturedUsage{},
+		suspended: map[string]bool{},
+		clears:    map[string]int{},
 	}
+}
+
+func (c *watchedCycles) NoteStartupWait(_ context.Context, id, reason string, at time.Time) error {
+	c.waits = append(c.waits, startupWaitNote{id: id, reason: reason, at: at})
+	return nil
+}
+
+// NoteStartupClock applies the repository's fences — the attempt, the clock not
+// yet written, the cycle open — and writes the row in place, so the next tick
+// lists the clock as the real store would.
+func (c *watchedCycles) NoteStartupClock(_ context.Context, id string, attempt int, at time.Time) (bool, error) {
+	if c.refuseClock {
+		return false, nil
+	}
+	for i := range c.rows {
+		row := &c.rows[i]
+		if row.ID != id || row.Attempts != attempt || row.StartupClockAt != nil || row.EndedAt != nil {
+			continue
+		}
+		at := at
+		row.StartupClockAt = &at
+		c.clocks = append(c.clocks, startupClockNote{id: id, attempt: attempt, at: at})
+		return true, nil
+	}
+	return false, nil
+}
+
+func (c *watchedCycles) ClearStartupWait(_ context.Context, id string) error {
+	c.clears[id]++
+	return nil
 }
 
 func (c *watchedCycles) ListRecentDispatched(context.Context, time.Time) ([]delivery.RunCycle, error) {
@@ -121,6 +181,31 @@ func (c *watchedCycles) FinishAgentFailed(_ context.Context, id, reason string) 
 func (c *watchedCycles) RecordUsage(_ context.Context, id string, u contracts.CapturedUsage) error {
 	c.usage[id] = u
 	return nil
+}
+
+func (c *watchedCycles) MarkJobSuspended(_ context.Context, id string) (bool, error) {
+	if c.suspended[id] {
+		return false, nil
+	}
+	c.suspended[id] = true
+	return true, nil
+}
+
+// fakeJobs records each SuspendJobBinding as component@environment. before,
+// when set, runs inside the call so a test can pin what had (or had not)
+// happened by the time the suspend went out.
+type fakeJobs struct {
+	suspends []string
+	err      error
+	before   func()
+}
+
+func (f *fakeJobs) SuspendJobBinding(_ context.Context, _, _, component, env string) error {
+	if f.before != nil {
+		f.before()
+	}
+	f.suspends = append(f.suspends, component+"@"+env)
+	return f.err
 }
 
 // deathNotice is one AgentDied call, recorded whole so a test can assert the
@@ -154,7 +239,54 @@ func newTestWatcher(rt openchoreo.RuntimeClient, cycles cycleWatchStore) *JobWat
 }
 
 func newTestWatcherWith(rt openchoreo.RuntimeClient, cycles cycleWatchStore, targets writeTargetResolver) *JobWatcher {
-	return NewJobWatcher(rt, cycles, targets, nil).WithIntervals(time.Millisecond, 10*time.Minute)
+	return NewJobWatcher(rt, cycles, targets, &fakeJobs{}, nil).WithPollInterval(time.Millisecond)
+}
+
+// resultLine is the runner's terminal settle line, carrying usage.
+func resultLine(t *testing.T) []openchoreo.PodLogLine {
+	t.Helper()
+	return []openchoreo.PodLogLine{{
+		Timestamp: time.Now().UTC(),
+		Log:       `{"schemaVersion":1,"kind":"result","usage":{"inputTokens":11,"outputTokens":22,"model":"claude-sonnet-5"}}`,
+	}}
+}
+
+// logRecord is one captured slog record: its message and its attributes.
+type logRecord struct {
+	msg   string
+	attrs map[string]string
+}
+
+type recordingHandler struct{ records *[]logRecord }
+
+func (h recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	attrs := map[string]string{}
+	r.Attrs(func(a slog.Attr) bool { attrs[a.Key] = a.Value.String(); return true })
+	*h.records = append(*h.records, logRecord{msg: r.Message, attrs: attrs})
+	return nil
+}
+func (h recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// captureLogs routes the default logger into a slice for the test's duration.
+func captureLogs(t *testing.T) *[]logRecord {
+	t.Helper()
+	var records []logRecord
+	prev := slog.Default()
+	slog.SetDefault(slog.New(recordingHandler{records: &records}))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &records
+}
+
+func logsNamed(records []logRecord, msg string) []logRecord {
+	var out []logRecord
+	for _, r := range records {
+		if r.msg == msg {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // ---- tests -----------------------------------------------------------------
@@ -503,10 +635,11 @@ func TestTick_EmptySnapshotAfterThePodWasSeenIsNoVerdict(t *testing.T) {
 	}
 }
 
-// A pod that was never seen still gets the no-pod verdict past the grace, but
-// only once the empty snapshot has held for as many ticks as a sustained 404.
+// A pod that was never seen, of a Job that was applied, still gets the no-pod
+// verdict past the grace, but only once the empty snapshot has held for as
+// many ticks as a sustained 404.
 func TestTick_NoPodVerdictNeedsSustainedEmptySnapshots(t *testing.T) {
-	rt := &fakeRuntime{pod: openchoreo.RuntimePod{}}
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{JobFound: true, JobCreatedAt: time.Now().UTC().Add(-20 * time.Minute)}}
 	cycles := newWatchedCycles(dispatchedCycle("c11", 20*time.Minute))
 	w := newTestWatcher(rt, cycles)
 
@@ -710,5 +843,348 @@ func TestTick_ProviderLimitRecordFailureStillClosesTheCycle(t *testing.T) {
 
 	if cycles.finished["c12"] != delivery.CycleReasonModelProviderLimit {
 		t.Fatalf("finished = %+v", cycles.finished)
+	}
+}
+
+// ---- suspend at the first terminal pod --------------------------------------
+
+func TestTick_SucceededPodIsSuspendedAfterUsageIsCaptured(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, logs: resultLine(t)}
+	c := dispatchedCycle("c1", time.Minute)
+	c.Environment = "development"
+	cycles := newWatchedCycles(c)
+	usageFirst := false
+	jobs := &fakeJobs{before: func() { _, usageFirst = cycles.usage["c1"] }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
+	if !usageFirst {
+		t.Fatal("usage must be captured before the Job is suspended")
+	}
+	if !reflect.DeepEqual(jobs.suspends, []string{c.JobRef + "@development"}) || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	got := logsNamed(*logs, "codingagent.job_suspended")
+	want := map[string]string{"cycle": "c1", "component": c.JobRef, "cause": "terminal"}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].attrs, want) {
+		t.Fatalf("job_suspended events = %+v, want one with %v", got, want)
+	}
+}
+
+func TestTick_FailedPodIsSuspendedAfterUsageIsCaptured(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed"}, logs: resultLine(t)}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	usageFirst := false
+	jobs := &fakeJobs{before: func() { _, usageFirst = cycles.usage["c1"] }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if !usageFirst || !cycles.suspended["c1"] || cycles.finished["c1"] == "" {
+		t.Fatalf("usageFirst %v, marked %v, finished %v", usageFirst, cycles.suspended, cycles.finished)
+	}
+}
+
+func TestTick_ProviderLimitPodIsSuspendedToo(t *testing.T) {
+	rt := providerLimitedPod(`{"v":2,"seq":8,"ts":"2026-09-26T10:05:00Z","agentId":"lead","kind":"run_settled","outcome":"failure",` +
+		`"error":"limit","code":"provider_limit","host":"ollama.com","resetAt":"2026-09-26T14:00:00Z",` +
+		`"usage":{"inputTokens":5,"outputTokens":1,"model":"gpt-oss:20b"}}`)
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if cycles.finished["c1"] != delivery.CycleReasonModelProviderLimit {
+		t.Fatalf("finished = %v", cycles.finished)
+	}
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+func TestTick_RunningPodIsNotSuspended(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running"}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(dispatchedCycle("c1", time.Minute)), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+func TestTick_AlreadySuspendedCycleIsNotSuspendedAgain(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	c := dispatchedCycle("c1", time.Minute)
+	now := time.Now()
+	c.JobSuspendedAt, c.ModelID = &now, "m"
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 0 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+func TestTick_SuspendedCycleWithNoPodIsNotAStartupFailure(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	c := dispatchedCycle("c1", time.Hour) // far past the startup grace
+	now := time.Now()
+	c.JobSuspendedAt = &now
+	cycles := newWatchedCycles(c)
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), &fakeJobs{}, nil).WithPollInterval(time.Millisecond)
+	for i := 0; i < missingTicksToFail+1; i++ {
+		w.Tick(context.Background())
+	}
+	if len(cycles.finished) != 0 {
+		t.Fatalf("a suspended Job's missing pod is expected, got %v", cycles.finished)
+	}
+}
+
+func TestTick_SuspendFailureIsRetriedNextTick(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed"}}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{err: errors.New("oc 500")}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil)
+	w.Tick(context.Background())
+	if cycles.suspended["c1"] || len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatalf("a failed suspend must not be marked or announced: marked %v", cycles.suspended)
+	}
+	jobs.err = nil
+	w.Tick(context.Background())
+	if len(jobs.suspends) != 2 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// A legacy release has no suspend schema: the Job is left to its TTL, nothing
+// is marked (so the settler treats it as "suspend not applicable"), and the
+// warning carries no value beyond the cycle's identity.
+func TestTick_SuspendUnsupportedIsWarnedAndNotMarked(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	c := dispatchedCycle("c1", time.Minute)
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{err: fmt.Errorf("suspend b: %w", openchoreo.ErrSuspendUnsupported)}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if cycles.suspended["c1"] {
+		t.Fatal("an unsupported suspend must not be marked")
+	}
+	if len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatal("job_suspended must be emitted only when the suspend took effect")
+	}
+	warn := logsNamed(*logs, "codingagent.job_suspend_unsupported")
+	want := map[string]string{"cycle": "c1", "component": c.JobRef}
+	if len(warn) != 1 || !reflect.DeepEqual(warn[0].attrs, want) {
+		t.Fatalf("job_suspend_unsupported = %+v, want one with %v", warn, want)
+	}
+}
+
+// A binding that is already gone has nothing left to suspend: marked, so the
+// watcher stops asking, but not announced as a suspend.
+func TestTick_SuspendOfAGoneBindingIsMarkedNotAnnounced(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}}
+	cycles := newWatchedCycles(dispatchedCycle("c1", time.Minute))
+	jobs := &fakeJobs{err: fmt.Errorf("binding: %w", openchoreo.ErrNotFound)}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if !cycles.suspended["c1"] {
+		t.Fatal("a gone binding must be marked so it is not re-asked")
+	}
+	if len(logsNamed(*logs, "codingagent.job_suspended")) != 0 {
+		t.Fatal("job_suspended must be emitted only when the suspend took effect")
+	}
+}
+
+// redispatched returns c as the repository leaves it after a second
+// NoteDispatch: attempt 2, dispatched `ago`, settle stamps cleared.
+func redispatched(c delivery.RunCycle, ago time.Duration) delivery.RunCycle {
+	at := time.Now().UTC().Add(-ago)
+	c.Attempts, c.DispatchedAt, c.UpdatedAt = 2, &at, at
+	c.JobSuspendedAt, c.PodGoneAt, c.StartupClockAt = nil, nil, nil
+	return c
+}
+
+// The suspend stamp belongs to the ATTEMPT, not the cycle. A landing-timeout
+// re-dispatch reuses the cycle's Component, so attempt 1's finished pod can
+// still be in the tree when attempt 2 is dispatched. That pod predates the
+// attempt: it must not re-suspend the binding (attempt 2 would be born
+// suspended), must not count as attempt 2's pod for the startup grace, and
+// attempt 2's own pod is then watched as usual. Attempt 2 never starting is a
+// startup close, which suspends the Job itself (cause startup_failed) — after
+// the close, never on the leftover's account.
+func TestTick_RedispatchedCycleIsWatchedAsAFreshAttempt(t *testing.T) {
+	logs := captureLogs(t)
+	old := time.Now().UTC().Add(-3 * time.Hour)
+	// The Job is reused across attempts: it stays in the tree with attempt 1's
+	// creation time.
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: old, JobFound: true, JobCreatedAt: old}}
+	c := dispatchedCycle("c1", 3*time.Hour)
+	c.Attempts = 1
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
+
+	// Attempt 1 ends: suspended and stamped (and its pod has been seen).
+	w.Tick(context.Background())
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("attempt 1: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+
+	// Attempt 2 is dispatched past the grace; attempt 1's pod is still there.
+	cycles.rows[0] = redispatched(cycles.rows[0], time.Hour)
+	delete(cycles.suspended, "c1")
+	for i := 0; i < missingTicksToFail-1; i++ {
+		w.Tick(context.Background())
+	}
+	if len(jobs.suspends) != 1 || cycles.suspended["c1"] {
+		t.Fatalf("a pod from before the attempt must not suspend it: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	w.Tick(context.Background()) // the sustained verdict, past the apply cap
+	// Only attempt 1's Job and pod are in the tree: nothing of attempt 2 was
+	// ever applied.
+	if cycles.finished["c1"] != ReasonNotApplied {
+		t.Fatalf("finished = %v: attempt 2 never started, and attempt 1's Job and pod must not hide it", cycles.finished)
+	}
+	causes := []string{}
+	for _, r := range logsNamed(*logs, "codingagent.job_suspended") {
+		causes = append(causes, r.attrs["cause"])
+	}
+	if len(jobs.suspends) != 2 || !reflect.DeepEqual(causes, []string{"terminal", "startup_failed"}) {
+		t.Fatalf("attempt 2's startup close suspends once, as startup_failed: suspends %v, causes %v", jobs.suspends, causes)
+	}
+
+	// Attempt 2's own pod appears and ends: the normal path, suspended again.
+	delete(cycles.finished, "c1")
+	delete(cycles.suspended, "c1")
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded", CreatedAt: time.Now().UTC()}
+	w.Tick(context.Background())
+	if len(jobs.suspends) != 3 || !cycles.suspended["c1"] {
+		t.Fatalf("attempt 2: suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// A leftover terminal pod is not this attempt's: no suspend, no stamp, no
+// usage banked as this attempt's, no verdict inside the grace.
+func TestTick_LeftoverPodFromThePreviousAttemptIsIgnored(t *testing.T) {
+	rt := &fakeRuntime{
+		pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed",
+			CreatedAt: time.Now().UTC().Add(-3 * time.Hour), FinishedAt: time.Now().UTC().Add(-2 * time.Hour)},
+		logs: resultLine(t),
+	}
+	cycles := newWatchedCycles(redispatched(dispatchedCycle("c1", time.Minute), time.Minute))
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
+	if len(jobs.suspends) != 0 || cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+	if _, ok := cycles.usage["c1"]; ok || rt.logCalls != 0 {
+		t.Fatalf("a leftover pod's log is not this attempt's usage (reads %d)", rt.logCalls)
+	}
+	if len(cycles.finished) != 0 {
+		t.Fatalf("finished = %v", cycles.finished)
+	}
+}
+
+// A first dispatch writes its dispatch time AFTER the launch, so its own pod
+// can predate it by seconds: the leftover rule only applies from attempt 2,
+// when the binding is reused.
+func TestTick_FirstAttemptsPodIsNeverALeftover(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: time.Now().UTC().Add(-time.Hour)}}
+	c := dispatchedCycle("c1", time.Minute)
+	at := time.Now().UTC()
+	c.Attempts, c.DispatchedAt = 1, &at
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// Clock skew between the cluster and aep-api must not turn attempt 2's own pod
+// into a leftover.
+func TestTick_PodWithinTheClockSkewIsTheCurrentAttempts(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", time.Minute), 0)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p2", Phase: "Succeeded",
+		CreatedAt: c.DispatchedAt.Add(-dispatchClockSkew / 2)}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// Re-dispatched at the landing timeout while attempt 1's agent is still
+// running (its deadline is longer): the same Job cannot start a second pod, so
+// that Running pod IS the in-flight attempt. It counts as present (no startup
+// verdict), and when it ends it is captured and suspended like any other.
+func TestTick_RunningPodAtRedispatchIsTheCurrentAttempt(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", 3*time.Hour), time.Hour) // past the grace
+	created := time.Now().UTC().Add(-2 * time.Hour)
+	// Attempt 1's Job, still running its pod: older than the dispatch.
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Running", CreatedAt: created,
+		JobFound: true, JobCreatedAt: created.Add(-time.Second)}}
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{}
+	w := NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond)
+	for i := 0; i < missingTicksToFail+1; i++ {
+		w.Tick(context.Background())
+	}
+	if len(cycles.finished) != 0 || len(jobs.suspends) != 0 {
+		t.Fatalf("a running pod is present: finished %v, suspends %v", cycles.finished, jobs.suspends)
+	}
+	// The in-flight pod is this attempt's: it starts the clock (clamped to the
+	// dispatch), and nothing waits NotYetApplied.
+	if len(cycles.clocks) != 1 || !cycles.clocks[0].at.Equal(*c.DispatchedAt) || len(cycles.waits) != 0 {
+		t.Fatalf("clocks %+v, waits %+v", cycles.clocks, cycles.waits)
+	}
+
+	// It finishes after the dispatch: this attempt's terminal pod.
+	rt.pod = openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded", CreatedAt: created, FinishedAt: time.Now().UTC()}
+	rt.logs = resultLine(t)
+	w.Tick(context.Background())
+	if _, ok := cycles.usage["c1"]; !ok {
+		t.Fatal("the in-flight pod's usage must be captured")
+	}
+	if len(jobs.suspends) != 1 || !cycles.suspended["c1"] {
+		t.Fatalf("suspends %v, marked %v", jobs.suspends, cycles.suspended)
+	}
+}
+
+// The same holds for a watcher that restarted (or never saw the pod running):
+// a pre-dispatch pod that FINISHED after the dispatch was in flight at it.
+func TestTick_PodFinishedAfterTheRedispatchIsTheCurrentAttempts(t *testing.T) {
+	c := redispatched(dispatchedCycle("c1", 3*time.Hour), time.Hour)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Failed",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour), FinishedAt: time.Now().UTC().Add(-time.Minute)}}
+	jobs := &fakeJobs{}
+	NewJobWatcher(rt, newWatchedCycles(c), testWriteTargets(), jobs, nil).Tick(context.Background())
+	if len(jobs.suspends) != 1 {
+		t.Fatalf("suspends = %v", jobs.suspends)
+	}
+}
+
+// A cycle whose Component the settler deleted has nothing left to watch: the
+// watcher stops reading its (deleted) binding.
+func TestTick_SkipsACycleWhoseComponentIsDeleted(t *testing.T) {
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: false}}
+	c := dispatchedCycle("c1", time.Hour)
+	ended := time.Now().UTC().Add(-time.Hour)
+	c.EndedAt, c.ComponentDeletedAt = &ended, &ended
+	cycles := newWatchedCycles(c)
+
+	newTestWatcher(rt, cycles).Tick(context.Background())
+
+	if rt.bindingCalls != 0 {
+		t.Fatalf("read the binding of a deleted Component %d times", rt.bindingCalls)
+	}
+}
+
+// The settler's backstop stamped the suspend between this tick's read
+// and its own mark. The watcher's mark changed nothing, so it announces
+// nothing: one job_suspended event per suspend that took effect.
+func TestTick_SuspendStampedByAnotherCallerIsNotAnnouncedAgain(t *testing.T) {
+	logs := captureLogs(t)
+	rt := &fakeRuntime{pod: openchoreo.RuntimePod{Found: true, Name: "p1", Phase: "Succeeded"}, logs: resultLine(t)}
+	c := dispatchedCycle("c1", time.Minute)
+	c.Environment = "development"
+	cycles := newWatchedCycles(c)
+	jobs := &fakeJobs{before: func() { cycles.suspended["c1"] = true }}
+	NewJobWatcher(rt, cycles, testWriteTargets(), jobs, nil).WithPollInterval(time.Millisecond).Tick(context.Background())
+	if got := logsNamed(*logs, "codingagent.job_suspended"); len(got) != 0 {
+		t.Fatalf("job_suspended events = %+v, want none for a stamp another caller made", got)
 	}
 }

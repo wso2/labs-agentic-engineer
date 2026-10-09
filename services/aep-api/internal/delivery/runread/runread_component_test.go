@@ -118,7 +118,7 @@ func (f fakeCycleLogs) CycleProgress(_ context.Context, c *delivery.RunCycle, si
 	}, nil
 }
 
-func (f fakeCycleLogs) CycleEvents(_ context.Context, c *delivery.RunCycle, cursor string) ([]gen.RunEvent, int, string, error) {
+func (f fakeCycleLogs) CycleEvents(_ context.Context, _ *delivery.MilestoneRun, c *delivery.RunCycle, cursor string) ([]gen.RunEvent, int, string, error) {
 	if cursor != "" {
 		return nil, c.Attempts, cursor, nil
 	}
@@ -185,7 +185,7 @@ func line(kind, summary, emitter string) contracts.ProgressEvent {
 // plus whatever the test is about.
 func event(seq int64, kind gen.RunEventKind, agentID string) gen.RunEvent {
 	return gen.RunEvent{
-		V: gen.RunEventV2, Seq: seq, TS: time.Date(2026, 7, 1, 10, 6, 0, 0, time.UTC),
+		V: gen.RunEventVTwo, Seq: seq, TS: time.Date(2026, 7, 1, 10, 6, 0, 0, time.UTC),
 		Kind: kind, AgentID: agentID,
 	}
 }
@@ -238,13 +238,13 @@ func assemble(t *testing.T, rows []delivery.MilestoneRun, cycles map[string][]de
 	t.Helper()
 	runs := fakeRuns{org: "acme", rows: rows}
 	cyc := fakeCycles{byRun: cycles}
-	// Every cycle in this harness has a COMPLETE recording, so the read and the
+	// Every cycle in this harness has a KEPT log, so the read and the
 	// stream both carry a real `recording` — the field a console has to see
 	// before it presents a feed as the story of a cycle.
 	recordings := fakeRecordings{}
 	for _, rows := range cycles {
 		for i := range rows {
-			recordings[rows[i].ID] = gen.RunCycleViewRecordingComplete
+			recordings[rows[i].ID] = gen.RunCycleViewRecordingKept
 		}
 	}
 	handlers, err := deliveryhttpapi.New(deliveryhttpapi.Deps{
@@ -309,8 +309,8 @@ func TestListBuildRuns_ResolvesTheTagThroughRunRows(t *testing.T) {
 	// What the platform can SERVE of each cycle's feed rides the same read. It is
 	// a different question from what the cycle did, and the console has to ask it
 	// before it presents a feed as the whole story.
-	if run.Cycles[0].Recording != gen.RunCycleViewRecordingComplete {
-		t.Errorf("cycle recording = %q, want complete", run.Cycles[0].Recording)
+	if run.Cycles[0].Recording != gen.RunCycleViewRecordingKept {
+		t.Errorf("cycle recording = %q, want kept", run.Cycles[0].Recording)
 	}
 	// The pull request travels as the host's own page, not as a number the
 	// console would have to turn into a link itself.

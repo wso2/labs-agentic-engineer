@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -95,7 +96,7 @@ func (f *fakeTagger) TagSpec(_ context.Context, _, _, version string, pick *reqs
 // planSpy is the whole milestone plan path as one recording fake: the GitHub
 // milestone surface, the run store, the planner, the gates and the supervisor.
 // The plan path's own wire behaviour is proven at the service tier
-// (milestone_plan_test.go, real IssueService on a gittest.Stub); here it only
+// (milestone_plan_test.go, real IssueService on the in-memory pod); here it only
 // has to show that the HTTP click reaches it and that its conflict reaches the
 // edge as a 409.
 type planSpy struct {
@@ -280,25 +281,25 @@ func mustDelivery(h *deliveryhttpapi.Handlers, err error) *deliveryhttpapi.Handl
 	return h
 }
 
-type provisionSpy struct {
+type publisherGateSpy struct {
 	orgs []string
 	err  error
 	seq  *[]string
 }
 
-func (p *provisionSpy) ProvisionPublisherForBuild(_ context.Context, orgID string) error {
+func (p *publisherGateSpy) RequirePublisherForBuild(_ context.Context, orgID string) error {
 	if p.seq != nil {
-		*p.seq = append(*p.seq, "provision")
+		*p.seq = append(*p.seq, "require")
 	}
 	p.orgs = append(p.orgs, orgID)
 	return p.err
 }
 
-func newHarnessWithPublisher(t *testing.T, svc *build.Service, p build.PublisherProvisioner) *componenttest.Harness {
+func newHarnessWithPublisher(t *testing.T, svc *build.Service, p build.PublisherGate) *componenttest.Harness {
 	t.Helper()
 	return componenttest.New(t, componenttest.Options{Deps: edge.Deps{
 		Delivery: mustDelivery(deliveryhttpapi.New(deliveryhttpapi.Deps{
-			BuildSvc: svc, PublisherProvisioner: p,
+			BuildSvc: svc, PublisherGate: p,
 		})),
 	}})
 }
@@ -612,46 +613,70 @@ func TestBuild_NoClaims401(t *testing.T) {
 	}
 }
 
-// ----- POST /build publisher provisioning ------------------------------------
+// ----- POST /build publisher gate ---------------------------------------------
 
-// The publisher provisioner runs before Run cuts the tag — the
-// handler, not the service, calls it, since only the handler still has the
-// console JWT that ProvisionPublisherForBuild needs.
-func TestBuild_PublisherProvisionerRunsBeforeTag(t *testing.T) {
+// The publisher gate runs before Run cuts the tag: a build whose org has no
+// ae-publisher-client reference never starts.
+func TestBuild_PublisherGateRunsBeforeTag(t *testing.T) {
 	var seq []string
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}, seq: &seq}
 	svc := newSvc(fakeRepos{}, tagger)
-	spy := &provisionSpy{seq: &seq}
+	spy := &publisherGateSpy{seq: &seq}
 	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
 	if resp.Code != 200 {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
 	if len(spy.orgs) != 1 || spy.orgs[0] != "acme" {
-		t.Fatalf("provisioner orgs=%v", spy.orgs)
+		t.Fatalf("gate orgs=%v", spy.orgs)
 	}
 	if tagger.called != 1 {
-		t.Fatalf("Run must still tag after provision, called=%d", tagger.called)
+		t.Fatalf("Run must still tag after the gate, called=%d", tagger.called)
 	}
-	if len(seq) != 2 || seq[0] != "provision" || seq[1] != "tag" {
-		t.Fatalf("order=%v want provision then tag", seq)
+	if len(seq) != 2 || seq[0] != "require" || seq[1] != "tag" {
+		t.Fatalf("order=%v want require then tag", seq)
 	}
 }
 
-// A provision failure (e.g. no JWT on ctx, SM-API down) answers 503 and never
-// reaches Run — no tag is cut on unprovisioned publisher credentials.
-func TestBuild_PublisherProvisionErrorDoesNotTag(t *testing.T) {
+// No ae-publisher-client row: 409 publisher_credentials_missing with the
+// "Reconnect GitHub" sentence, and no tag is cut.
+func TestBuild_PublisherCredentialsMissingIs409ReconnectGitHub(t *testing.T) {
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
 	svc := newSvc(fakeRepos{}, tagger)
-	spy := &provisionSpy{err: errors.New("sm-api: no JWT in context")}
+	spy := &publisherGateSpy{err: fmt.Errorf("%w: %s", delivery.ErrPublisherCredentialsMissing, delivery.PublisherReconnectMessage)}
+	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
+	if resp.Code != 409 {
+		t.Fatalf("status=%d want 409 body=%s", resp.Code, resp.Body.String())
+	}
+	var body struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v body=%s", err, resp.Body.String())
+	}
+	if body.Code != "publisher_credentials_missing" || body.Message != "Reconnect GitHub to set up this organization's build credentials" {
+		t.Fatalf("body = %+v", body)
+	}
+	if tagger.called != 0 {
+		t.Fatalf("a missing publisher row must not cut a tag, called=%d", tagger.called)
+	}
+}
+
+// Any other gate failure (the row could not be read) answers 503 and never
+// reaches Run; the body does not echo the cause.
+func TestBuild_PublisherGateErrorDoesNotTag(t *testing.T) {
+	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
+	svc := newSvc(fakeRepos{}, tagger)
+	spy := &publisherGateSpy{err: errors.New("read the ae-publisher-client row: db down")}
 	resp := newHarnessWithPublisher(t, svc, spy).AsOrg("acme").Post("/api/v1/projects/shop/build", `{}`)
 	if resp.Code != 503 {
 		t.Fatalf("status=%d want 503 body=%s", resp.Code, resp.Body.String())
 	}
 	if tagger.called != 0 {
-		t.Fatalf("failed provision must not cut a tag, called=%d", tagger.called)
+		t.Fatalf("a failed gate must not cut a tag, called=%d", tagger.called)
 	}
-	if strings.Contains(resp.Body.String(), "sm-api") || strings.Contains(resp.Body.String(), "JWT") {
-		t.Fatalf("client body must not echo the provisioner error, got %s", resp.Body.String())
+	if strings.Contains(resp.Body.String(), "db down") {
+		t.Fatalf("client body must not echo the gate error, got %s", resp.Body.String())
 	}
 }
 
@@ -675,9 +700,9 @@ func TestStartProjectBuild_HappyPath_ClaimsTheVersion(t *testing.T) {
 }
 
 // StartProjectBuild is the non-HTTP auto-kick trigger, which never has a
-// console JWT — it must not see the handler's publisher provisioner, and
+// console JWT — it must not see the handler's publisher gate, and
 // must keep going through Run exactly as before.
-func TestStartProjectBuild_DoesNotUseHandlerProvisioner(t *testing.T) {
+func TestStartProjectBuild_DoesNotUseHandlerPublisherGate(t *testing.T) {
 	tagger := &fakeTagger{res: &spec.SpecSaveResult{Tag: "v1", Status: "approved"}}
 	svc := newSvc(fakeRepos{}, tagger)
 	if err := svc.StartProjectBuild(context.Background(), "acme", "shop"); err != nil {
@@ -749,6 +774,55 @@ func TestListBuilds_FailedVersionCarriesItsTerminalReason(t *testing.T) {
 	got := decodeBody[gen.BuildList](t, rawBody).Builds[0]
 	if got.Status != "failed" || got.Reason != delivery.RunReasonNoProgress {
 		t.Errorf("failed version = %+v, want failed / %s", got, delivery.RunReasonNoProgress)
+	}
+}
+
+// A VALIDATION run that ended on judging the version — its verdict failed, it
+// never reported, or its agent could not start — leaves the deployed version's
+// row Deployed: the build delivered, and the validation board carries the
+// failure (delivery.EndedInValidation, the overview's rule too). Any other
+// ending of a validation run, and every ending of a DEV run (an agent that
+// could not start there is the coding agent: the build did fail), keeps the
+// row's status as before.
+func TestListBuilds_ValidationEndingLeavesTheVersionDeployed(t *testing.T) {
+	t0 := time.Date(2026, 10, 6, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, kind, reason string
+		wantStatus         string
+		wantReason         string
+	}{
+		{"validation agent could not start", delivery.RunKindValidation, delivery.RunReasonAgentStartFailed, "completed", ""},
+		{"validation failed", delivery.RunKindValidation, delivery.RunReasonValidationFailed, "completed", ""},
+		{"validation unreported", delivery.RunKindValidation, delivery.RunReasonValidationUnreported, "completed", ""},
+		{"validation agent died", delivery.RunKindValidation, delivery.RunReasonRedispatchBudget, "failed", delivery.RunReasonRedispatchBudget},
+		{"coding agent could not start", delivery.RunKindDev, delivery.RunReasonAgentStartFailed, "failed", delivery.RunReasonAgentStartFailed},
+		// The exemption is a VALIDATION run's: a dev run's row keeps its own
+		// ending, as it always has.
+		{"dev run validation failed", delivery.RunKindDev, delivery.RunReasonValidationFailed, "failed", delivery.RunReasonValidationFailed},
+		{"dev run validation unreported", delivery.RunKindDev, delivery.RunReasonValidationUnreported, "failed", delivery.RunReasonValidationUnreported},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ended := t0.Add(2 * time.Hour)
+			spy := newPlanSpy()
+			spy.rows = []delivery.MilestoneRun{
+				{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: c.kind, Origin: delivery.RunOriginSpecBuild,
+					State: delivery.RunStateFailed, TerminalReason: c.reason, CreatedAt: t0.Add(time.Hour), EndedAt: &ended,
+					Failure: &delivery.RunFailure{Code: "some-code"}},
+				{MilestoneNumber: 11, MilestoneTitle: "v1", Kind: delivery.RunKindDev, Origin: delivery.RunOriginSpecBuild,
+					State: delivery.RunStateSucceeded, CreatedAt: t0},
+			}
+			svc := withPlanPath(newSvc(fakeRepos{}, &fakeTagger{}), spy)
+
+			_, rawBody := listBuilds(t, svc, "shop")
+			got := decodeBody[gen.BuildList](t, rawBody).Builds[0]
+			if string(got.Status) != c.wantStatus || got.Reason != c.wantReason {
+				t.Fatalf("row = %s/%q, want %s/%q", got.Status, got.Reason, c.wantStatus, c.wantReason)
+			}
+			if c.wantStatus == "completed" && got.FailureCode != "" {
+				t.Fatalf("a Deployed row carries no failure code, got %q", got.FailureCode)
+			}
+		})
 	}
 }
 

@@ -24,10 +24,10 @@ import (
 )
 
 // RunOrgAnthropicCredentialsMigration creates the org_anthropic_credentials
-// table — metadata-only projection for per-org Anthropic keys. The encrypted
-// key bytes live in `org_secrets(oc_org_id, key="anthropic/key")` (the same
-// generic KV store the GitHub PAT uses). This table holds prefix + last4 for
-// the UI, plus status / connected_at / last_validated_at / validation_error.
+// table in its legacy shape. RunPhase29SecretsRefsOnly drops its key preview
+// and reference columns: the key lives only in the vault, behind the org's
+// default-key / coding-agent-key org_secrets reference rows, and this table
+// keeps status / connected_at / last_validated_at / validation_error.
 //
 // Idempotent: safe to re-run on an already-migrated database.
 func RunOrgAnthropicCredentialsMigration(ctx context.Context, db *gorm.DB) error {

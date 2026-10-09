@@ -22,25 +22,23 @@ import (
 
 	"github.com/wso2/aep/aep-api/internal/projects"
 
-	"gorm.io/gorm"
-
 	"github.com/wso2/aep/aep-api/internal/config"
 	"github.com/wso2/aep/aep-api/internal/dependencies/mcpdiscovery"
 	"github.com/wso2/aep/aep-api/internal/organization"
 	"github.com/wso2/aep/aep-api/internal/platform/auth"
 	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 	"github.com/wso2/aep/aep-api/internal/platform/obs"
-	"github.com/wso2/aep/aep-api/internal/sourcecontrol/webhook"
 )
 
 // internalV1 is the path root for the BFF's internal / server-to-server
-// surface: runner-pod callbacks and dev-only helpers. It is deliberately
+// route group: runner-pod callbacks and dev-only helpers. It is deliberately
 // distinct from the client-facing /api/v1 edge namespace (user-JWT,
 // gateway-advertised, served contract-first from packages/contracts/api/v1)
 // so each prefix tells the truth about its audience and auth regime, with the
 // version in a fixed slot right after the audience root. These routes mount on the outer
 // mux, escaping the /api/ user-JWT wrapper, and authenticate via their own
-// Task-JWT / publisher-cc posture inside the handler. Never gateway-advertised.
+// publisher-cc (or ae-studio client) posture inside the handler. Never
+// gateway-advertised.
 const internalV1 = "/internal/v1"
 
 // AppParams holds all dependencies needed to build the HTTP handler.
@@ -52,20 +50,11 @@ type AppParams struct {
 	// contract, packages/contracts/api/v1). main.go fills it.
 	Deps Deps
 
-	// Controllers still wired as raw handlers: OrgGitHubController (App-mode
-	// connect callback), WebhookController (GitHub webhook HMAC). The runner
-	// callbacks are the internal contract-first surface (InternalDeps).
-	OrgGitHubController organization.OrgGitHubController
-	WebhookController   webhook.WebhookController
-
-	// InternalDeps carries the services + authorizer for the internal S2S
-	// surface (path-scoped runner credentials refresh), served contract-first
-	// from packages/contracts/api/internal/v1 behind runnerAuthGate.
+	// InternalDeps carries the services + authorizers for the internal S2S
+	// route group (runner callbacks, SRE handoff), served contract-first from
+	// packages/contracts/api/internal/v1 behind internalGate. Its MCP
+	// handler is filled by routes() from the MCP fields below.
 	InternalDeps InternalDeps
-
-	// WorkspaceReady, when non-nil, backs GET /readyz (R8b root-health).
-	// Nil means always ready — Fake()/component tests without a workspace volume.
-	WorkspaceReady interface{ Ready() bool }
 
 	ConfigRepo projects.ConfigRepository
 
@@ -80,43 +69,25 @@ type AppParams struct {
 
 	// InboundAuth, when non-nil, REPLACES the JWKS-backed jwt.Middleware on the
 	// public /api/ edge.
-	// Production leaves it nil → mountSurfaces builds the real RS256/JWKS verifier
+	// Production leaves it nil → publicChain builds the real RS256/JWKS verifier
 	// from ThunderJWKS. A component test sets it to a claims-injector so the real
 	// tenant gate runs in ENFORCE with no Thunder/JWKS; ThunderJWKS is then unused
 	// (and may be nil). It only substitutes the verifier — orgensure and the
 	// deny-by-default tenant gate chain are untouched.
 	InboundAuth func(http.Handler) http.Handler
 
-	// SREHandoffAuth guards SREHandoffMCP, the OpenChoreo SRE agent's handoff
-	// tools, with the install-time handoff key. Both nil (the default) leaves
-	// the surface unmounted. See auth.SREHandoffVerifier.
-	SREHandoffAuth *auth.SREHandoffVerifier
-	SREHandoffMCP  http.Handler
-
-	// Runner-facing and agents-facing surfaces. Callers use the gitrepo +
-	// artifacts packages in-process. CredService + AnthropicCredService +
-	// ModelConnections + DB also back the local-dev in-process secret resync
-	// helper (devResyncHandler).
-	DB                   *gorm.DB
-	CredService          *organization.CredentialService
-	AnthropicCredService *organization.AnthropicCredentialService
-	ModelConnections     *organization.ModelConnectionService
-
 	// MCP discovery ports (dependencies feature). The composition root wires
 	// them concretely (external-resource repository / org endpoint catalog /
 	// platform resource-type catalog); the mounted handler nil-guards each —
-	// a nil MCPExternalResources 503s the surface, a nil lister degrades its
-	// one tool to an empty result. The mount itself (surfaces.go) needs
-	// Deps.TaskTokens and optionally Deps.PublisherTokens (Thunder CC fallback).
+	// a nil MCPExternalResources 503s the route group, a nil lister degrades its
+	// one tool to an empty result. The mount itself (mcpRoutes, internal.go)
+	// needs a caller verifier: Deps.PublisherTokens (the coding runner) or
+	// InternalDeps.StudioClients (the AE Studio tools pod).
 	MCPExternalResources mcpdiscovery.ExternalResourceReader
 	MCPOrgEndpoints      mcpdiscovery.OrgEndpointLister
 	MCPResourceTypes     mcpdiscovery.ResourceTypeLister
 	MCPGroupCatalog      mcpdiscovery.GroupCatalogLister
 	MCPGuardrailCatalog  mcpdiscovery.GuardrailCatalogLister
-	// MCPRemoteGit backs the read-only remote-git MCP tools (endpoint spec
-	// discovery). Nil makes get_remote_git_file_contents/search_remote_git_code
-	// return a tool error; it never affects the other tools.
-	MCPRemoteGit mcpdiscovery.RemoteGitReader
 	// MCPSpecValidator/MCPSpecNormalizer/MCPSpecFetcher back the OpenAPI spec
 	// MCP tools (validate_openapi_spec, fetch_openapi_spec). Wired to the
 	// spec package's ValidateOpenAPI/NormalizeOpenAPIYAML/FetchSpecFromURL
@@ -133,10 +104,9 @@ type AppParams struct {
 // The console's nginx proxy strips the /aep-api-service prefix before
 // forwarding, so routes are registered at root level.
 func NewHandler(params AppParams) http.Handler {
-	// Every HTTP surface (public / internal S2S / external / dev + discovery) is
-	// wired in mountSurfaces — the whole request boundary on one screen. See
-	// surfaces.go.
-	mux := mountSurfaces(params)
+	// Every route group (public / internal / dev + health) is a row in
+	// the mount table, routes.go: the whole request boundary on one screen.
+	mux := mountRoutes(params)
 
 	// Global middleware stack (outermost applied last). AddCorrelationID resolves
 	// the correlation ID into the context; the global obs.ContextHandler then

@@ -20,26 +20,23 @@ import (
 	"fmt"
 
 	"github.com/wso2/aep/aep-api/internal/ops"
-	"github.com/wso2/aep/aep-api/internal/ops/createreport"
 	"github.com/wso2/aep/aep-api/internal/ops/getreport"
 	"github.com/wso2/aep/aep-api/internal/ops/listreports"
 )
 
 // An embedded field is named by its UNQUALIFIED type name, so embedding
-// *createreport.Handler beside *getreport.Handler is "Handler redeclared" —
+// *getreport.Handler beside *listreports.Handler is "Handler redeclared" —
 // every slice calls its type Handler. Local aliases give distinct field names
 // while each slice keeps the unstuttering name. (The same trick the edge needs
 // for the domains themselves; §6.)
 type (
-	createReportHandler = createreport.Handler
-	getReportHandler    = getreport.Handler
-	listReportsHandler  = listreports.Handler
+	getReportHandler   = getreport.Handler
+	listReportsHandler = listreports.Handler
 )
 
 // Handlers is the ops domain's slice handlers, embedded so Go promotes each
 // operation exactly once into the edge's composite. It declares nothing itself.
 type Handlers struct {
-	*createReportHandler
 	*getReportHandler
 	*listReportsHandler
 }
@@ -52,8 +49,7 @@ func New(d ops.Deps) (*Handlers, error) {
 		return nil, fmt.Errorf("ops httpapi: %w", err)
 	}
 	return &Handlers{
-		createReportHandler: createreport.New(d.Reports),
-		getReportHandler:    getreport.New(d.Reports, d.Execs),
-		listReportsHandler:  listreports.New(d.Reports),
+		getReportHandler:   getreport.New(d.Reports, d.Execs),
+		listReportsHandler: listreports.New(d.Reports),
 	}, nil
 }

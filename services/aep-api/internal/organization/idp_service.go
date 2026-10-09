@@ -22,28 +22,28 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/thundersvc"
+	"github.com/wso2/aep/aep-api/internal/delivery"
 )
-
-// PublisherBuildActor is the audit actor for
-// IDPService.ProvisionPublisherForBuild — the POST /build request path,
-// distinct from the "deployment" actor EnsureOrgPublisher otherwise uses.
-const PublisherBuildActor = "build-provision"
 
 // IDPService manages per-organisation IDP profiles + the matching
 // Thunder publisher OAuth apps. See
 // docs/design/api-platform-integration.md.
 //
 // Lifecycle:
-//   - First protected-component deploy in an org triggers
-//     EnsureOrgPublisher. Idempotent — repeating returns the existing
-//     row and skips the Thunder create call.
-//   - Org delete (or explicit admin action) triggers RevokeOrgPublisher.
-//   - Credential compromise / scheduled rotation triggers
-//     RegenerateClientSecret.
+//   - The gitpat submit runs EnsureClient for both org clients: the only
+//     writer of the publisher app and of its secret, which lives only in
+//     vault (the org's ae-publisher-client reference).
+//   - POST /build and the deploy only read: RequirePublisherForBuild checks
+//     the ae-publisher-client row, the deploy reads the profile's issuer.
+//   - RevokeOrgPublisher has no production caller yet (org delete does not
+//     reach it); the IdP kind switch deletes the publisher app instead.
+//   - There is no user rotation: a lost reference is healed by the next
+//     gitpat submit (reconnect GitHub).
 //
 // Every mutation appends an audit row to idp_audit_events so the
 // console "Audit" tab and incident-response have a definitive trail.
@@ -51,36 +51,23 @@ type IDPService interface {
 	// GetOrCreateProfile returns the org's IDP profile, creating a
 	// default platform-kind row (kind=platform, issuer/jwksURL from
 	// the platform IDP config) when none exists. The publisher_*
-	// columns stay empty until EnsureOrgPublisher fires.
+	// columns stay empty until the client ensure records them.
 	GetOrCreateProfile(ctx context.Context, orgID string) (*OrganizationIDPProfile, error)
 
 	// GetProfile returns the existing profile, or nil + nil error when
 	// none exists yet.
 	GetProfile(ctx context.Context, orgID string) (*OrganizationIDPProfile, error)
 
-	// EnsureOrgPublisher creates (or returns the existing) Thunder
-	// publisher OAuth app for the org, persists the credentials on
-	// the profile row, and writes an audit-log entry. Returns the
-	// canonical client_id (always present) and the client_secret
-	// (only present on creation — empty when the app already existed
-	// and the secret is already in the DB; use RegenerateClientSecret
-	// to rotate if it was lost).
-	EnsureOrgPublisher(ctx context.Context, orgID, actor string) (clientID, clientSecret string, created bool, err error)
+	// RequirePublisherForBuild is the POST /build gate: it reads the org's
+	// ae-publisher-client row and nothing else (no Thunder call, no heal).
+	// No row is delivery.ErrPublisherCredentialsMissing with the "Reconnect
+	// GitHub" sentence: the gitpat submit is what writes it.
+	RequirePublisherForBuild(ctx context.Context, orgID string) error
 
-	// ProvisionPublisherForBuild is the POST /build provisioner: ensure
-	// Thunder publisher exists and secret_ref_name is stamped. Actor is
-	// PublisherBuildActor. Rotates once if the app exists without a
-	// SecretReference. WritePublisher errors fail the call.
-	ProvisionPublisherForBuild(ctx context.Context, orgID string) error
-
-	// RevokeOrgPublisher deletes the Thunder publisher app + clears
-	// the profile row's publisher_* columns. Idempotent.
+	// RevokeOrgPublisher deletes the Thunder publisher app, clears the
+	// profile row's publisher ids and removes the org's ae-publisher-client
+	// reference. Idempotent.
 	RevokeOrgPublisher(ctx context.Context, orgID, actor string) (bool, error)
-
-	// RegenerateClientSecret issues a fresh client_secret + updates the
-	// profile row + writes an audit entry. Returns the new secret —
-	// rotate any consumer pods after this call.
-	RegenerateClientSecret(ctx context.Context, orgID, actor string) (string, error)
 
 	// UpdateProfile changes the org's IDP kind / issuer / JWKS URL.
 	// Switching kind invalidates any existing publisher app (Thunder is
@@ -105,6 +92,14 @@ type IDPService interface {
 	// are cluster config, not per-org data). A kind switch cascades the same
 	// publisher revoke UpdateProfile does. Audit-logged.
 	SetProfile(ctx context.Context, orgID, actor, kind, issuer, jwksURL string) (*OrganizationIDPProfile, error)
+
+	// EnsureClient makes sure the org's Thunder client of kind exists and
+	// that its secret is in the org's vault reference (ae-publisher-client
+	// or ae-studio-client): an app Thunder creates is stored with the
+	// secret Thunder returns once; an app whose reference row is missing is
+	// healed with a new secret, written to the vault before Thunder is given
+	// it; an app with its row is left alone. See client_ensure.go.
+	EnsureClient(ctx context.Context, orgID string, kind ClientKind) error
 }
 
 // UpdateProfileRequest is the input for IDPService.UpdateProfile.
@@ -128,35 +123,42 @@ type idpService struct {
 	thunder         thundersvc.Client
 	platform        PlatformIDPConfig
 	secretRefWriter *SecretRefWriter
+	// orgSecrets reads the ae-publisher-client row RequirePublisherForBuild
+	// gates on. nil: the gate fails closed.
+	orgSecrets OrgSecretRefReader
 }
 
 // NewIDPService builds the service. `repo` persists the idp tables; `orgRepo`
-// serves the org → Thunder OU lookup the publisher-provisioning path needs
-// (reused, not duplicated). `thunder` may be nil in unit tests — the service
-// rejects EnsureOrgPublisher / RevokeOrgPublisher / RegenerateClientSecret
-// with ErrIDPThunderUnavailable when so. Read methods (GetProfile,
-// GetOrCreateProfile) keep working. Returns the concrete type so
-// WithSecretRefWriter can chain at the composition root; the concrete value still
-// satisfies the IDPService interface for consumers that store it as such.
+// serves the org → Thunder OU lookup the client ensure needs (reused, not
+// duplicated). `thunder` may be nil in unit tests — the service rejects
+// EnsureClient / RevokeOrgPublisher with ErrIDPThunderUnavailable when so.
+// Read methods (GetProfile, GetOrCreateProfile) keep working. Returns the
+// concrete type so the With* setters can chain at the composition root; the
+// concrete value still satisfies the IDPService interface for consumers that
+// store it as such.
 func NewIDPService(repo IDPRepository, orgRepo OrganizationRepository, thunder thundersvc.Client, platform PlatformIDPConfig) *idpService {
 	return &idpService{repo: repo, orgRepo: orgRepo, thunder: thunder, platform: platform}
 }
 
-// WithSecretRefWriter attaches the SM-API writer so EnsureOrgPublisher /
-// RegenerateClientSecret mirror the publisher cc credentials to SM-API
-// (runner pods consume them via per-run ExternalSecret). nil writer or
-// one with Enabled()==false is a no-op; publisher provisioning still
-// works but dispatcher's runner-auth path stays disabled.
+// WithSecretRefWriter attaches the vault writer the client ensure stores the
+// org clients' credentials through (and RevokeOrgPublisher removes them
+// with). nil, or one with Enabled()==false: EnsureClient fails as secrets
+// delivery off.
 func (s *idpService) WithSecretRefWriter(w *SecretRefWriter) *idpService {
 	s.secretRefWriter = w
 	return s
 }
 
+// WithOrgSecretRefs attaches the org secret rows RequirePublisherForBuild
+// reads; chainable.
+func (s *idpService) WithOrgSecretRefs(refs OrgSecretRefReader) *idpService {
+	s.orgSecrets = refs
+	return s
+}
+
 // ErrIDPThunderUnavailable means the Thunder admin client isn't wired
-// (missing system credentials, etc). Callers in the dispatch / design-
-// edit path treat this as
-// non-fatal — protected components still deploy; per-org publisher
-// provisioning is best-effort and the next dispatch tries again.
+// (missing system credentials, etc): the client ensure and the publisher
+// revoke cannot run.
 var ErrIDPThunderUnavailable = errors.New("idp_service: thunder admin client not configured")
 
 func (s *idpService) GetProfile(ctx context.Context, orgID string) (*OrganizationIDPProfile, error) {
@@ -246,64 +248,45 @@ func (s *idpService) lookupOrgOUID(ctx context.Context, orgHandle string) string
 	return org.ThunderOrgUUID.String()
 }
 
-func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string) (string, string, bool, error) {
-	if orgID == "" {
-		return "", "", false, fmt.Errorf("orgID required")
-	}
-	if s.thunder == nil {
-		return "", "", false, ErrIDPThunderUnavailable
-	}
-
+// ensurePublisherApp makes sure the org's Thunder publisher app exists
+// (EnsurePublisherApp, with its OU and claim self-heal) under orgOUID,
+// records its client id and entity id on the profile, and audits the ensure.
+// The returned app carries the secret only when Created; the caller stores
+// it in vault, the only place it is kept.
+func (s *idpService) ensurePublisherApp(ctx context.Context, orgID, actor, orgOUID string) (thundersvc.OrgApp, error) {
 	profile, err := s.GetOrCreateProfile(ctx, orgID)
 	if err != nil {
-		return "", "", false, err
+		return thundersvc.OrgApp{}, err
 	}
 
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	// Resolve the org's Thunder OU id (JWT ouId) so the publisher app is
+	// orgOUID is the org's Thunder OU id (JWT ouId), so the publisher app is
 	// registered under the org's OU — its cc token then carries
 	// ouHandle == orgHandle, which the publisher-token verifier requires.
 	// Empty (org UUID not yet backfilled) falls back to the default OU.
-	orgOUID := s.lookupOrgOUID(ctx, orgID)
 	if orgOUID == "" {
 		slog.WarnContext(ctx, "idp_service: org Thunder OU id unknown — publisher app will use the default OU; runner token ouHandle may not match the org. Ensure the org row has thunder_org_uuid (user must have logged in with an ouId claim).",
 			"orgID", orgID)
 	} else {
 		slog.DebugContext(ctx, "idp_service: provisioning publisher under org OU", "orgID", orgID, "orgOU", orgOUID)
 	}
-	clientID, clientSecret, created, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID)
+	app, terr := s.thunder.EnsurePublisherApp(ctx, orgID, orgOUID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, nil, terr)
-		return "", "", false, fmt.Errorf("idp_service.EnsureOrgPublisher: %w", terr)
+		return thundersvc.OrgApp{}, fmt.Errorf("idp_service.ensurePublisherApp: %w", terr)
 	}
 
-	// Persist clientId always; clientSecret only on creation (Thunder
-	// doesn't expose it on subsequent reads).
+	// Persist clientId and the Thunder entity id (the next lookup reads by
+	// that id). The secret is never persisted here.
 	updates := map[string]interface{}{
-		"publisher_client_id":  clientID,
-		"publisher_secret_ref": secretRefPath(orgID), // logical OpenBao path persisted alongside the secret
-		"updated_at":           time.Now().UTC(),
-	}
-	if created && clientSecret != "" {
-		updates["publisher_client_secret"] = clientSecret
+		"publisher_client_id":      app.ClientID,
+		"publisher_thunder_app_id": app.EntityID,
+		"updated_at":               time.Now().UTC(),
 	}
 	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID, updates); err != nil {
 		s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, nil, err)
-		return "", "", false, fmt.Errorf("idp_service.EnsureOrgPublisher persist: %w", err)
-	}
-
-	// Mirror publisher creds to SM-API so the dispatcher can mint a
-	// per-run ExternalSecret for the runner's cc flow. Only on fresh
-	// create (Thunder doesn't return the secret on subsequent reads); pre-
-	// existing apps without SM-API mirroring recover via an explicit
-	// RegenerateClientSecret. Best-effort: SM-API outage doesn't fail
-	// publisher provisioning.
-	if created && clientSecret != "" && s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, clientID, clientSecret); smerr != nil {
-			slog.WarnContext(ctx, "idp_service: SM-API publisher write failed (continuing)",
-				"orgID", orgID, "error", smerr)
-		}
+		return thundersvc.OrgApp{}, fmt.Errorf("idp_service.ensurePublisherApp persist: %w", err)
 	}
 
 	// Re-read for the audit "after" snapshot.
@@ -311,69 +294,34 @@ func (s *idpService) EnsureOrgPublisher(ctx context.Context, orgID, actor string
 	afterJSON, _ := json.Marshal(profileSummary(after))
 	s.audit(ctx, orgID, IDPAuditEnsurePublisher, actor, beforeJSON, afterJSON, nil)
 
-	slog.InfoContext(ctx, "idp_service: EnsureOrgPublisher",
+	slog.InfoContext(ctx, "idp_service: publisher app ensured",
 		"orgID", orgID,
-		"clientID", clientID,
-		"created", created,
+		"clientID", app.ClientID,
+		"created", app.Created,
 	)
-	return clientID, clientSecret, created, nil
+	return app, nil
 }
 
-// ProvisionPublisherForBuild is the fail-closed counterpart to
-// EnsureOrgPublisher's best-effort SM-API mirror, called from the
-// POST /projects/{projectName}/build handler (user JWT in ctx, so
-// WritePublisher can resolve the SM-API vault key). EnsureOrgPublisher
-// itself already attempts the SM-API write on fresh creation; this method
-// only steps in when that attempt didn't leave a usable secret_ref_name —
-// either because Ensure's write failed/was skipped, or because the app
-// already existed without ever having been mirrored (rotate once to
-// recover a usable triplet). Every failure path here fails the Build.
-func (s *idpService) ProvisionPublisherForBuild(ctx context.Context, orgID string) error {
+// RequirePublisherForBuild is the POST /build gate: the org's
+// ae-publisher-client row, which the gitpat submit's client ensure writes, is
+// the record that the runner's publisher credentials exist. It only reads:
+// no Thunder call, no heal, no write. A failed read is returned as is, so it
+// is never mistaken for a missing row.
+func (s *idpService) RequirePublisherForBuild(ctx context.Context, orgID string) error {
 	if orgID == "" {
 		return fmt.Errorf("orgID required")
 	}
-	// Fail closed BEFORE touching Thunder: a disabled writer can never stamp
-	// secret_ref_name, so letting EnsureOrgPublisher/RegenerateClientSecret
-	// run anyway would rotate the Thunder client secret on every single
-	// Build (each call retries the same never-stamped ref) and report
-	// success in the exact state this method exists to prevent.
-	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
-		return fmt.Errorf("publisher SecretReference requires a SecretsProvider (secrets delivery is off)")
+	if s.orgSecrets == nil {
+		return fmt.Errorf("publisher gate: org secret rows not configured")
 	}
-	clientID, clientSecret, _, err := s.EnsureOrgPublisher(ctx, orgID, PublisherBuildActor)
+	row, err := s.orgSecrets.Get(ctx, orgID, OrgSecretPublisherClient)
 	if err != nil {
-		return err
+		return fmt.Errorf("publisher gate: read the %s row: %w", OrgSecretPublisherClient, err)
 	}
-	row, err := s.GetProfile(ctx, orgID)
-	if err != nil {
-		return err
+	if row == nil || row.Name == "" {
+		return fmt.Errorf("%w: %s", delivery.ErrPublisherCredentialsMissing, delivery.PublisherReconnectMessage)
 	}
-	if HasPublisherSecretRef(row) {
-		return nil
-	}
-	if strings.TrimSpace(clientSecret) != "" {
-		if _, werr := s.secretRefWriter.WritePublisher(ctx, orgID, clientID, clientSecret); werr != nil {
-			return fmt.Errorf("idp_service: SM-API publisher write: %w", werr)
-		}
-		return nil
-	}
-	if row != nil && strings.TrimSpace(row.PublisherClientID) != "" {
-		if _, rerr := s.RegenerateClientSecret(ctx, orgID, PublisherBuildActor); rerr != nil {
-			return rerr
-		}
-		// spec P1 step 4: rotate is a one-shot recovery, not a retry loop —
-		// require the rotated secret actually landed a SecretReference
-		// rather than reporting success while the ref stays null.
-		after, aerr := s.GetProfile(ctx, orgID)
-		if aerr != nil {
-			return aerr
-		}
-		if !HasPublisherSecretRef(after) {
-			return fmt.Errorf("publisher SecretReference still missing after rotate")
-		}
-		return nil
-	}
-	return fmt.Errorf("publisher SecretReference missing after provision")
+	return nil
 }
 
 func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string) (bool, error) {
@@ -393,31 +341,17 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 	}
 	beforeJSON, _ := json.Marshal(profileSummary(profile))
 
-	deleted, terr := s.thunder.DeletePublisherApp(ctx, orgID)
+	deleted, terr := s.thunder.DeletePublisherApp(ctx, orgID, profile.PublisherThunderAppID)
 	if terr != nil {
 		s.audit(ctx, orgID, IDPAuditRevokePublisher, actor, beforeJSON, nil, terr)
 		return false, fmt.Errorf("idp_service.RevokeOrgPublisher: %w", terr)
 	}
 
-	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID,
-		map[string]interface{}{
-			"publisher_client_id":     "",
-			"publisher_client_secret": "",
-			"publisher_secret_ref":    "",
-			"updated_at":              time.Now().UTC(),
-		}); err != nil {
+	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearedPublisherIDs()); err != nil {
 		s.audit(ctx, orgID, IDPAuditRevokePublisher, actor, beforeJSON, nil, err)
 		return deleted, fmt.Errorf("idp_service.RevokeOrgPublisher persist: %w", err)
 	}
-
-	// Drop the SM-API publisher secret + clear the triplet. Best-effort
-	// so a missing SM-API doesn't strand the Thunder revoke.
-	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if smerr := s.secretRefWriter.DeletePublisher(ctx, orgID); smerr != nil {
-			slog.WarnContext(ctx, "idp_service: SM-API publisher delete failed (continuing)",
-				"orgID", orgID, "error", smerr)
-		}
-	}
+	s.forgetPublisherSecret(ctx, orgID)
 
 	after, _ := s.GetProfile(ctx, orgID)
 	afterJSON, _ := json.Marshal(profileSummary(after))
@@ -428,70 +362,35 @@ func (s *idpService) RevokeOrgPublisher(ctx context.Context, orgID, actor string
 	return deleted, nil
 }
 
-func (s *idpService) RegenerateClientSecret(ctx context.Context, orgID, actor string) (string, error) {
-	if orgID == "" {
-		return "", fmt.Errorf("orgID required")
+// clearedPublisherIDs is the profile update that forgets the publisher app:
+// its client id and Thunder entity id.
+func clearedPublisherIDs() map[string]interface{} {
+	return map[string]interface{}{
+		"publisher_client_id":      "",
+		"publisher_thunder_app_id": "",
+		"updated_at":               time.Now().UTC(),
 	}
-	if s.thunder == nil {
-		return "", ErrIDPThunderUnavailable
-	}
-	profile, err := s.GetProfile(ctx, orgID)
-	if err != nil {
-		return "", err
-	}
-	if profile == nil || profile.PublisherClientID == "" {
-		return "", fmt.Errorf("idp_service.RegenerateClientSecret: no publisher app for org %s", orgID)
-	}
-	beforeJSON, _ := json.Marshal(profileSummary(profile))
+}
 
-	newSecret, terr := s.thunder.RegenerateClientSecret(ctx, orgID)
-	if terr != nil {
-		s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, terr)
-		return "", fmt.Errorf("idp_service.RegenerateClientSecret: %w", terr)
+// forgetPublisherSecret removes the org's ae-publisher-client reference (row,
+// then the vault entry) once its Thunder app is gone, so the build gate and
+// dispatch refuse instead of handing out credentials Thunder no longer
+// honours; the next gitpat submit writes a new one. Best-effort, logged
+// value-free: a vault outage does not strand the Thunder delete.
+func (s *idpService) forgetPublisherSecret(ctx context.Context, orgID string) {
+	if s.secretRefWriter == nil || !s.secretRefWriter.Enabled() {
+		return
 	}
-
-	if err := s.repo.UpdateProfileColumns(ctx, profile, orgID,
-		map[string]interface{}{
-			"publisher_client_secret": newSecret,
-			"updated_at":              time.Now().UTC(),
-		}); err != nil {
-		s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, err)
-		return "", fmt.Errorf("idp_service.RegenerateClientSecret persist: %w", err)
+	if err := s.secretRefWriter.DeletePublisher(ctx, orgID); err != nil {
+		slog.WarnContext(ctx, "idp_service: publisher reference delete failed (continuing)",
+			"orgID", orgID, "error", err)
 	}
-
-	// Mirror the rotated secret to SM-API; runner pods picking up from
-	// the next dispatch receive the new secret via ExternalSecret refresh.
-	// Fail-closed: a stale secret_ref_name after rotation would hand a
-	// runner pod credentials Thunder already invalidated, so a write
-	// failure here fails the caller instead of swallowing it.
-	if s.secretRefWriter != nil && s.secretRefWriter.Enabled() {
-		if _, smerr := s.secretRefWriter.WritePublisher(ctx, orgID, profile.PublisherClientID, newSecret); smerr != nil {
-			s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, nil, smerr)
-			// Thunder and the DB row already hold the new secret; the vault
-			// still holds the old one. A non-empty secret_ref_name would look
-			// healthy to ProvisionPublisherForBuild. Clear it so the next
-			// Build re-provisions instead of mounting invalidated credentials.
-			if cerr := s.repo.UpdateProfileColumns(ctx, profile, orgID, clearSecretRefTripletWithWrittenAt()); cerr != nil {
-				slog.ErrorContext(ctx, "idp_service: clear secret_ref after failed SM-API rewrite",
-					"orgID", orgID, "error", cerr)
-			}
-			return "", fmt.Errorf("idp_service: SM-API publisher rewrite: %w", smerr)
-		}
-	}
-
-	after, _ := s.GetProfile(ctx, orgID)
-	afterJSON, _ := json.Marshal(profileSummary(after))
-	s.audit(ctx, orgID, IDPAuditRegenerateSecret, actor, beforeJSON, afterJSON, nil)
-
-	slog.InfoContext(ctx, "idp_service: RegenerateClientSecret", "orgID", orgID)
-	return newSecret, nil
 }
 
 // UpdateProfile changes kind/issuer/JWKS URL for an org. When kind
-// switches, the existing publisher app is revoked (so the next
-// EnsureOrgPublisher creates a fresh one tied to the new IDP). When
-// only issuer/JWKS URL change but kind stays the same, the publisher
-// app is preserved.
+// switches, the existing publisher app is revoked (so the next gitpat
+// submit creates a fresh one tied to the new IDP). When only issuer/JWKS URL
+// change but kind stays the same, the publisher app is preserved.
 func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req UpdateProfileRequest) (*OrganizationIDPProfile, error) {
 	if orgID == "" {
 		return nil, fmt.Errorf("orgID required")
@@ -530,18 +429,8 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 	// app belongs to the previous IDP. Trying to reuse it across IDPs
 	// breaks the trust chain (different issuer, different signing keys).
 	if kindChanged {
-		// Best-effort Thunder cleanup BEFORE clearing — only for the
-		// platform→other transition. We skip the call when thunder
-		// isn't configured (just clear the columns).
-		if existing.Kind == "platform" && existing.PublisherClientID != "" && s.thunder != nil {
-			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID); derr != nil {
-				slog.WarnContext(ctx, "idp_service.UpdateProfile: Thunder publisher cleanup failed (ignored)",
-					"orgID", orgID, "error", derr)
-			}
-		}
-		updates["publisher_client_id"] = ""
-		updates["publisher_client_secret"] = ""
-		updates["publisher_secret_ref"] = ""
+		s.dropPublisherApp(ctx, orgID, existing)
+		maps.Copy(updates, clearedPublisherIDs())
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {
@@ -556,6 +445,17 @@ func (s *idpService) UpdateProfile(ctx context.Context, orgID, actor string, req
 		"orgID", orgID, "kindChanged", kindChanged,
 		"newKind", req.Kind, "newIssuer", req.Issuer)
 	return after, nil
+}
+
+// validateIDPIssuer refuses a BYO IdP (any kind but platform) with no issuer.
+// A deploy pins the org's protected APIs to the profile's issuer; without one
+// they would trust every keymanager registered on the cluster, other tenants'
+// IdPs included. The platform kind takes the cluster's issuer, so it needs none.
+func validateIDPIssuer(kind, issuer string) error {
+	if kind != "platform" && strings.TrimSpace(issuer) == "" {
+		return &ValidationError{Message: "an issuer is required for an IdP of kind " + kind}
+	}
+	return nil
 }
 
 // SetProfile is the wholesale-replace write path behind PATCH /config {idp}.
@@ -573,6 +473,9 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 		// ok
 	default:
 		return nil, fmt.Errorf("invalid kind %q (must be platform|asgardeo|custom)", kind)
+	}
+	if err := validateIDPIssuer(kind, issuer); err != nil {
+		return nil, err
 	}
 	// A platform IDP's issuer/JWKS are cluster config — reset to the
 	// platform defaults regardless of anything the caller sent.
@@ -598,15 +501,8 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 	// Clear publisher state when kind switches — the existing publisher app
 	// belongs to the previous IDP (see UpdateProfile).
 	if kindChanged {
-		if existing.Kind == "platform" && existing.PublisherClientID != "" && s.thunder != nil {
-			if _, derr := s.thunder.DeletePublisherApp(ctx, orgID); derr != nil {
-				slog.WarnContext(ctx, "idp_service.SetProfile: Thunder publisher cleanup failed (ignored)",
-					"orgID", orgID, "error", derr)
-			}
-		}
-		updates["publisher_client_id"] = ""
-		updates["publisher_client_secret"] = ""
-		updates["publisher_secret_ref"] = ""
+		s.dropPublisherApp(ctx, orgID, existing)
+		maps.Copy(updates, clearedPublisherIDs())
 	}
 
 	if err := s.repo.UpdateProfileColumns(ctx, existing, orgID, updates); err != nil {
@@ -620,6 +516,23 @@ func (s *idpService) SetProfile(ctx context.Context, orgID, actor, kind, issuer,
 	slog.InfoContext(ctx, "idp_service: SetProfile",
 		"orgID", orgID, "kindChanged", kindChanged, "newKind", kind)
 	return after, nil
+}
+
+// dropPublisherApp is a kind switch's publisher cleanup, before the caller
+// clears the profile's publisher ids: only for the platform→other transition,
+// best-effort, it deletes the Thunder app and then its ae-publisher-client
+// reference, so the build gate stops passing on credentials of a deleted app.
+// Skipped when thunder isn't configured (the caller just clears the ids).
+func (s *idpService) dropPublisherApp(ctx context.Context, orgID string, existing *OrganizationIDPProfile) {
+	if existing.Kind != "platform" || existing.PublisherClientID == "" || s.thunder == nil {
+		return
+	}
+	if _, err := s.thunder.DeletePublisherApp(ctx, orgID, existing.PublisherThunderAppID); err != nil {
+		slog.WarnContext(ctx, "idp_service: Thunder publisher cleanup on kind switch failed (ignored)",
+			"orgID", orgID, "error", err)
+		return
+	}
+	s.forgetPublisherSecret(ctx, orgID)
 }
 
 // audit writes one row into idp_audit_events. Best-effort — a failed
@@ -652,13 +565,12 @@ func coalesceActor(actor string) string {
 
 // profileSummary projects the row down to the audit-friendly fields —
 // drops timestamps + db-internal id so the diff is purely about
-// publisher state.
+// publisher state. The profile holds no secret to summarise.
 type profileSummaryFields struct {
 	Kind              string `json:"kind"`
 	Issuer            string `json:"issuer"`
 	JWKSURL           string `json:"jwksUrl"`
 	PublisherClientID string `json:"publisherClientId"`
-	HasClientSecret   bool   `json:"hasClientSecret"`
 }
 
 func profileSummary(p *OrganizationIDPProfile) profileSummaryFields {
@@ -670,14 +582,5 @@ func profileSummary(p *OrganizationIDPProfile) profileSummaryFields {
 		Issuer:            p.Issuer,
 		JWKSURL:           p.JWKSURL,
 		PublisherClientID: p.PublisherClientID,
-		HasClientSecret:   p.PublisherClientSecret != "",
 	}
-}
-
-// secretRefPath returns the logical OpenBao path for the publisher
-// secret. The secret itself lives in PostgreSQL; this path is persisted
-// on the profile so a later migration to OpenBao can rewrite the row
-// without schema changes.
-func secretRefPath(orgID string) string {
-	return "secret/aep/" + orgID + "/idp/publisher"
 }

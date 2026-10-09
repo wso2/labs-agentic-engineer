@@ -108,7 +108,7 @@ export const deployHandlers = [
       phase: "tasks",
       repoStatus: "ready",
       repoUrl: "https://github.com/acme/acme-expenses",
-      spec: { agent: "", design: true, dirty: false, exists: true, version: version ?? "" },
+      spec: { agent: "", availability: "available", design: true, dirty: false, exists: true, version: version ?? "" },
       specStatus: "approved",
     });
   }),

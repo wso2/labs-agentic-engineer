@@ -14,31 +14,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// build_credentials_service.go — build secrets.
+// build_credentials_service.go — the build's git credential reference.
 //
-// StageBuildSecret is the BFF entry point for provisioning the git credential
-// a component build's checkout step uses to clone the repo. It mints a fresh
-// token and lands it on the workflow plane via OpenChoreo's GitSecret API
-// (`CreateGitSecret`), which stores the value in OpenBao and creates a
-// per-org SecretReference. The build is then triggered with
-// `repository.secretRef = <BuildGitSecretName>`; the upstream
-// `dockerfile-builder` ClusterWorkflow synthesises the
-// `<workflowRunName>-git-secret` ExternalSecret from that SecretReference and
-// ESO materialises the Secret the checkout step mounts.
+// StageBuildSecret answers which SecretReference a component build's
+// checkout step clones the repo with: the org's `github-pat` reference, read
+// from its org_secrets row (R7). The build is triggered with
+// `repository.secretRef = <that name>`; the upstream `dockerfile-builder`
+// ClusterWorkflow synthesises the `<workflowRunName>-git-secret`
+// ExternalSecret from it and ESO materialises the Secret the checkout step
+// mounts, taking the `password` entry the gitpat write stores beside `token`
+// (the checkout defaults the username to `git`).
 //
-// Why OC and not a direct K8s write: the BFF runs on the control plane and the
-// build runs on a separate workflow plane (CP/WP split in cloud). A direct
-// in-cluster client can't reach the WP. OC owns the cross-plane write, and the
-// same call works on local k3d (single cluster) where OpenBao + ESO + the
-// Vault-backed `default` ClusterSecretStore are also present — so this is one
-// unified path for both environments, no env flag.
-//
-// The git token is a short-lived GitHub App installation token, so the value
-// is refreshed (delete + create — OC has no update) on every build dispatch.
-// The SecretReference is per-org (BuildGitSecretName, isolated by OC's org
-// namespace) and reused across builds; concurrent builds clobber the value
-// benignly because installation tokens are account-scoped and any valid one
-// clones any of the org's repos.
+// No credential value passes through aep-api for a build: nothing is minted,
+// read or written here, only a reference name is returned. The reference is
+// written by the gitpat submit and removed by the gitpat disconnect, so a
+// disconnected org has no row and its builds are refused, never dispatched
+// with an empty secretRef.
 package organization
 
 import (
@@ -48,24 +39,11 @@ import (
 	"log/slog"
 
 	"github.com/wso2/aep/aep-api/internal/sourcecontrol"
-
-	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 )
 
-// BuildGitSecretName is the OC GitSecret / SecretReference name carrying the
-// org's git credential for component builds. Per-org and deterministic: OC
-// scopes it by the org namespace, so the same name is safe across orgs, and
-// both the refresh (delete+create) and the disconnect cleanup target it by
-// name. Passed to the build WorkflowRun as `repository.secretRef`.
-const BuildGitSecretName = "aep-component-build-git-secret"
-
-// StageResult is returned to the BFF. The token never crosses the boundary;
-// only the SecretRef the build WorkflowRun should reference.
+// StageResult is returned to the BFF: the SecretReference the build
+// WorkflowRun sets as repository.secretRef. Never empty on success.
 type StageResult struct {
-	// SecretRef is the OC GitSecret name to set as repository.secretRef on
-	// the build. Empty when the git-secret client is unavailable (degraded:
-	// the build falls back to an unauthenticated clone).
 	SecretRef string `json:"secretRef"`
 }
 
@@ -73,53 +51,35 @@ type StageResult struct {
 //
 //   - ErrRepoNotInOrg    → 404 (the (ocOrgId, repoSlug) tuple doesn't match
 //     an active repo — server-side ownership fence)
-//   - ErrOrgDisconnected → 409 (credential row is suspended or disconnected)
+//   - ErrOrgDisconnected → 409 (the org has no `github-pat` reference: never
+//     connected, or disconnected)
 //
-// Transient OC / credential-store failures fall through as 500-class.
+// A failed row read falls through as 500-class.
 var (
 	ErrRepoNotInOrg    = errors.New("stage-build-secret: repo not in org")
 	ErrOrgDisconnected = errors.New("stage-build-secret: org disconnected")
 )
 
-// BuildCredentialsService provisions the per-org build git secret on the
-// workflow plane via OpenChoreo. It reads the org credential from the
-// resolver, mints a token, and upserts the OC GitSecret.
-//
-// gitSecrets may be nil in tests or when the OC client isn't configured — in
-// that case provisioning is skipped (with a loud warning) and StageBuildSecret
-// returns an empty SecretRef so the build runs unauthenticated and fails at
-// clone with a clearer signal than a silent misroute.
+// BuildCredentialsService resolves the SecretReference a component build
+// clones with.
 type BuildCredentialsService struct {
-	repos      sourcecontrol.RepoRepository
-	resolver   secrets.Resolver
-	gitSecrets openchoreo.GitSecretClient
+	repos sourcecontrol.RepoRepository
+	refs  OrgSecretRefReader
 }
 
-func NewBuildCredentialsService(
-	repos sourcecontrol.RepoRepository,
-	resolver secrets.Resolver,
-	gitSecrets openchoreo.GitSecretClient,
-) *BuildCredentialsService {
-	return &BuildCredentialsService{
-		repos:      repos,
-		resolver:   resolver,
-		gitSecrets: gitSecrets,
-	}
+func NewBuildCredentialsService(repos sourcecontrol.RepoRepository, refs OrgSecretRefReader) *BuildCredentialsService {
+	return &BuildCredentialsService{repos: repos, refs: refs}
 }
 
-// StageBuildSecret provisions the org's build git secret on the workflow plane
-// and returns the SecretRef the caller passes to the build WorkflowRun.
-//
-// Flow:
+// StageBuildSecret returns the SecretRef the caller passes to the build
+// WorkflowRun:
 //
 //  1. Validate (ocOrgId, repoSlug) maps to an active git_repositories row —
 //     server-side ownership fence.
-//  2. Resolve the org's credential. Refuses if status != active.
-//  3. cred.Token(ctx) → fresh token (App: per-installation mint, cached;
-//     PAT: postgres read).
-//  4. Refresh the per-org OC GitSecret (delete + create) with the fresh token.
+//  2. Read the org's `github-pat` reference name from its org_secrets row.
+//     No row → ErrOrgDisconnected.
 //
-// workflowRunName is retained for log correlation only — the OC GitSecret is
+// workflowRunName is retained for log correlation only — the reference is
 // per-org, not per-run.
 func (s *BuildCredentialsService) StageBuildSecret(
 	ctx context.Context, ocOrgID, repoSlug, workflowRunName string,
@@ -136,122 +96,16 @@ func (s *BuildCredentialsService) StageBuildSecret(
 		return nil, ErrRepoNotInOrg
 	}
 
-	cred, err := s.resolver.Resolve(ctx, ocOrgID)
+	name, ok, err := RecordedOrgSecretRef(ctx, s.refs, ocOrgID, OrgSecretGitHubPAT)
 	if err != nil {
-		var notActive *secrets.OrgNotActiveError
-		var notFound *secrets.OrgNotFoundError
-		if errors.As(err, &notActive) || errors.As(err, &notFound) {
-			return nil, fmt.Errorf("%w: %v", ErrOrgDisconnected, err)
-		}
-		return nil, fmt.Errorf("stage-build-secret: resolve credential: %w", err)
+		return nil, fmt.Errorf("stage-build-secret: %w", err)
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: no %s reference", ErrOrgDisconnected, OrgSecretGitHubPAT)
 	}
 
-	token, _, err := cred.Token(ctx)
-	if err != nil {
-		return nil, classifyMintErr(err)
-	}
-
-	if s.gitSecrets == nil {
-		slog.WarnContext(ctx, "stage-build-secret: git-secret client not configured — provisioning skipped (build will fail at clone)",
-			"ocOrgId", ocOrgID, "workflowRunName", workflowRunName)
-		return &StageResult{SecretRef: ""}, nil
-	}
-
-	if err := s.provisionGitSecret(ctx, ocOrgID, usernameForCredential(cred), token); err != nil {
-		// Degrade gracefully instead of blocking the build. On dev cloud the
-		// OpenChoreo GitSecret API is unreachable — the platform-api does not
-		// route /api/v1alpha1/gitsecrets, so CreateGitSecret 404s (cross-plane
-		// private-repo secret delivery is tracked by wso2-enterprise/wso2cloud#319).
-		// Returning an empty SecretRef lets the build dispatch and clone
-		// unauthenticated, which is correct for the public repos aep
-		// creates by default; a private repo would fail later at checkout with a
-		// clear git error rather than a stuck task. Where provisioning DOES work
-		// (local k3d, single cluster), this branch is not taken and the real
-		// SecretRef is returned below.
-		slog.WarnContext(ctx, "stage-build-secret: git secret provisioning failed — dispatching build without a git secret (clones public repos only; see wso2cloud#319)",
-			"ocOrgId", ocOrgID, "repoSlug", repoSlug,
-			"workflowRunName", workflowRunName, "error", err)
-		return &StageResult{SecretRef: ""}, nil
-	}
-
-	slog.InfoContext(ctx, "stage-build-secret: git secret provisioned",
+	slog.InfoContext(ctx, "stage-build-secret: build references the gitpat",
 		"ocOrgId", ocOrgID, "repoSlug", repoSlug,
-		"workflowRunName", workflowRunName, "secretRef", BuildGitSecretName)
-
-	return &StageResult{SecretRef: BuildGitSecretName}, nil
-}
-
-// provisionGitSecret refreshes the per-org build GitSecret with the current
-// token. OC has no update verb and Create 409s on a duplicate name, so we
-// delete (tolerating not-found) then create. Both legs tolerate the benign
-// concurrent state: a not-found delete and a conflicting create both mean
-// another same-org build raced us. The delete window and a conflicting create
-// are safe for in-flight builds — each build has its own ExternalSecret/target
-// Secret, ESO defaults to deletionPolicy=Retain, and installation tokens are
-// account-scoped/interchangeable (the racing build's token clones our repo too).
-func (s *BuildCredentialsService) provisionGitSecret(ctx context.Context, ocOrgID, username, token string) error {
-	if err := s.gitSecrets.DeleteGitSecret(ctx, ocOrgID, BuildGitSecretName); err != nil && !errors.Is(err, openchoreo.ErrNotFound) {
-		return fmt.Errorf("refresh (delete) git secret: %w", err)
-	}
-	// Tolerate ErrConflict (409): a concurrent build re-created the secret
-	// between our delete and create. The secret exists with a valid token, so
-	// the build can proceed — don't fail it on the race.
-	if _, err := s.gitSecrets.CreateGitSecret(ctx, ocOrgID, openchoreo.CreateGitSecretRequest{
-		Name:       BuildGitSecretName,
-		SecretType: openchoreo.GitSecretBasicAuth,
-		Username:   username,
-		Token:      token,
-		// WorkflowPlaneKind/Name left zero — the client defaults them to
-		// ClusterWorkflowPlane/default.
-	}); err != nil && !errors.Is(err, openchoreo.ErrConflict) {
-		return fmt.Errorf("create git secret: %w", err)
-	}
-	return nil
-}
-
-// DeleteBuildSecretsForOrg removes the org's build GitSecret. Called from the
-// org.disconnected cascade so a staged token doesn't linger after the
-// credential row is wiped. Idempotent — a not-found delete is a no-op.
-func (s *BuildCredentialsService) DeleteBuildSecretsForOrg(ctx context.Context, ocOrgID string) error {
-	if s.gitSecrets == nil {
-		return nil
-	}
-	if err := s.gitSecrets.DeleteGitSecret(ctx, ocOrgID, BuildGitSecretName); err != nil && !errors.Is(err, openchoreo.ErrNotFound) {
-		return fmt.Errorf("delete build git secret for org %s: %w", ocOrgID, err)
-	}
-	slog.InfoContext(ctx, "stage-build-secret: deleted org build git secret on disconnect",
-		"ocOrgId", ocOrgID, "secretRef", BuildGitSecretName)
-	return nil
-}
-
-// usernameForCredential derives the HTTPS basic-auth username for git push/pull.
-//
-//   - App-installation: "x-access-token" is GitHub's documented username for
-//     installation-access-token HTTPS auth.
-//   - User-PAT: any non-empty string works; we use the PAT owner's login for
-//     audit clarity, falling back to "git" if the identity is missing.
-//
-// Distinguishes the two without type-switching on Credential (forbidden by
-// the package contract — see pkg/credentials/credential.go §3 rules) by
-// reading the credential's WebhookStrategy: App mode is WebhookPlatform,
-// PAT mode is WebhookPerRepo.
-func usernameForCredential(cred secrets.Credential) string {
-	if cred.WebhookStrategy() == secrets.WebhookPlatform {
-		return "x-access-token"
-	}
-	if login := cred.Identity().Login; login != "" {
-		return login
-	}
-	return "git"
-}
-
-// classifyMintErr maps credential-package errors onto the
-// BuildCredentialsService stable error set. ErrSecretNotFound (credential
-// missing from store) is treated as ErrOrgDisconnected so the BFF can mark
-// the task abandoned.
-func classifyMintErr(err error) error {
-	if errors.Is(err, secrets.ErrSecretNotFound) {
-		return fmt.Errorf("%w: %v", ErrOrgDisconnected, err)
-	}
-	return fmt.Errorf("stage-build-secret: token: %w", err)
+		"workflowRunName", workflowRunName, "secretRef", name)
+	return &StageResult{SecretRef: name}, nil
 }

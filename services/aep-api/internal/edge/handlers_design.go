@@ -21,6 +21,7 @@ import (
 	"errors"
 
 	"github.com/wso2/aep/aep-api/internal/gen"
+	"github.com/wso2/aep/aep-api/internal/platform/apierr"
 	"github.com/wso2/aep/aep-api/internal/platform/tenant"
 	"github.com/wso2/aep/aep-api/internal/spec"
 )
@@ -54,7 +55,7 @@ func (s *apiServer) ListDesignDependencies(ctx context.Context, request gen.List
 		if errors.Is(err, spec.ErrDesignNotFound) {
 			return nil, errNotFound("design not found")
 		}
-		return nil, errInternal("failed to read design dependencies")
+		return nil, apierr.WithCause(errInternal("failed to read design dependencies"), err)
 	}
 	out := make([]gen.ComponentDependencies, 0, len(components))
 	for _, c := range components {

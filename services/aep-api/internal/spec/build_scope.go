@@ -95,11 +95,11 @@ func (s *artifactService) BuildScopeAtTag(ctx context.Context, orgID, projectID,
 	if err != nil {
 		return scope, err
 	}
-	reqFiles, err := s.readBundleAtTag(ctx, ref, tag, requirementsPrefix, requirementsBundleFilter)
+	reqFiles, err := s.readBundleAtTag(ctx, ref, tag, requirementsBundle)
 	if err != nil {
 		return scope, fmt.Errorf("read requirements at %s: %w", tag, err)
 	}
-	designFiles, err := s.readBundleAtTag(ctx, ref, tag, designPrefix, designBundleFilter)
+	designFiles, err := s.readBundleAtTag(ctx, ref, tag, designBundle)
 	if err != nil {
 		return scope, fmt.Errorf("read design at %s: %w", tag, err)
 	}

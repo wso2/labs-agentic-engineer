@@ -70,34 +70,23 @@ const (
 	codeUnknownRoleStory = "UNKNOWN_ROLE_STORY"
 )
 
-// The security design's NON-BLOCKING codes. They ride Warning, which the
-// console renders beside a file, so they are spelled in the same error-code
-// vocabulary as everything above rather than as the message table's key —
-// the key names a SENTENCE, the code names a CHANNEL entry.
-const (
-	// codeSecurityHandleUsedNowhere — a catalog handle no operation and no
-	// screen requires.
-	codeSecurityHandleUsedNowhere = "SECURITY_HANDLE_USED_NOWHERE"
-	// codeSecurityHandleUnreachable — a handle an operation requires that no
-	// role grants.
-	codeSecurityHandleUnreachable = "SECURITY_HANDLE_UNREACHABLE"
-	// codeSecurityAssignToDirectoryChecked — INFO: a role delegates to a group
-	// the org directory already holds, so the platform creates nothing.
-	codeSecurityAssignToDirectoryChecked = "SECURITY_ASSIGN_TO_DIRECTORY_CHECKED"
-	// codeSecurityDesignNotice — the fallback for a non-blocking finding this
-	// file does not yet have a code for. A new securityspec rule reaches the
-	// channel with a readable message rather than being dropped; giving it its
-	// own code here is the follow-up.
-	codeSecurityDesignNotice = "SECURITY_DESIGN_NOTICE"
-)
-
-// securityNoticeCodes maps a securityspec message key to the Warning code that
-// carries it.
-var securityNoticeCodes = map[string]string{
-	securityspec.MsgHandleUsedNowhere:        codeSecurityHandleUsedNowhere,
-	securityspec.MsgHandleUnreachable:        codeSecurityHandleUnreachable,
-	securityspec.MsgAssignToDirectoryChecked: codeSecurityAssignToDirectoryChecked,
+// deployableCellTypes maps a cell node type to the design.json component type
+// it deploys as. Nodes typed otherwise (database, cache, identity-server, …)
+// are dependencies of components, never component directories.
+var deployableCellTypes = map[string]string{
+	"service":         "service",
+	"web-application": "web-application",
+	"web-app":         "web-application",
+	"worker":          "worker",
+	"scheduled-task":  "scheduled-task",
 }
+
+// scaffoldLanguageSentinel is what the AE Studio pod's scaffold writes for
+// `language`: a non-empty value (the schema demands one) that this gate
+// REFUSES. Language is a judgment call the platform never makes — the agent
+// fills it from the organization skill's Tech stack default, else the
+// requirements, else the platform stack default the architecture skill names.
+const scaffoldLanguageSentinel = "TBD"
 
 // scaffoldPlaceholderMarker is how the gate tells a scaffold that was never
 // enriched: the platform-authored description survives verbatim.
@@ -280,7 +269,7 @@ func validateRolesDocument(designFiles map[string]string, spec reqspec.Spec) []F
 	var errs []FileValidationError
 	for _, finding := range securityspec.ReferenceFindings(doc, securityspec.DesignBundle(designFiles)) {
 		if finding.Severity != securityspec.SeverityError {
-			continue // warnings and info ride buildGateWarnings, never a refusal
+			continue // warnings and info never refuse a build
 		}
 		errs = append(errs, FileValidationError{
 			Path: securityspec.BundleKey, Code: codeInvalidRolesDocument, Message: finding.Message,
@@ -301,44 +290,6 @@ func validateRolesDocument(designFiles map[string]string, spec reqspec.Spec) []F
 		}
 	}
 	return errs
-}
-
-// buildGateWarnings are the security design's NON-BLOCKING findings over a
-// whole design bundle — the two coverage warnings the design asks the Security
-// page to render inline ("declared, used nowhere", "unreachable by any role")
-// and the INFO note that a role's assignTo group is one the org directory
-// already holds. None of them refuses anything: the design may legitimately be
-// ahead of the code, and all three are the shape of a typo rather than proof of
-// one. The errors are the gate's business and are excluded here — one defect,
-// one message.
-//
-// They ride the existing soft-warning type rather than a new endpoint: the
-// apply path attaches them to ApplyResult.Warnings, which is the console's
-// channel for them.
-//
-// Paths are BUNDLE-relative (`security.json`), like every other row this file
-// produces; a caller whose channel speaks repo paths prefixes DesignDir.
-func buildGateWarnings(designFiles map[string]string) []Warning {
-	raw, present := designFiles[securityspec.BundleKey]
-	if !present || strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	doc, err := securityspec.Parse([]byte(raw))
-	if err != nil {
-		return nil // a document that does not parse is the gate's business, not a warning's
-	}
-	var out []Warning
-	for _, finding := range securityspec.ReferenceFindings(doc, securityspec.DesignBundle(designFiles)) {
-		if finding.Severity == securityspec.SeverityError {
-			continue
-		}
-		code, ok := securityNoticeCodes[finding.Key]
-		if !ok {
-			code = codeSecurityDesignNotice
-		}
-		out = append(out, Warning{Path: securityspec.BundleKey, Code: code, Message: finding.Message})
-	}
-	return out
 }
 
 // hasEndUserSignIn reports whether any component's design.json carries

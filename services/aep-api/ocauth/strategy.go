@@ -23,9 +23,9 @@ import "context"
 type AuthMode int
 
 const (
-	AuthModeNone AuthMode = iota
-	AuthModeUserJWT    // pass through inbound user JWT; no impersonation header
-	AuthModeServiceM2M // AuthProvider token; impersonation header iff resolver non-nil
+	AuthModeNone       AuthMode = iota
+	AuthModeUserJWT             // pass through inbound user JWT; no impersonation header
+	AuthModeServiceM2M          // AuthProvider token; impersonation header iff resolver non-nil
 )
 
 // RequestAuthStrategy decides which credential class to use for an OC request.

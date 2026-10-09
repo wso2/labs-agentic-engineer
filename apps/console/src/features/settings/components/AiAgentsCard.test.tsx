@@ -53,7 +53,6 @@ const anthropic: LLMProjection = {
   kind: "anthropic",
   baseURL: "https://api.anthropic.com/v1",
   model: "claude-sonnet-5",
-  keyPreview: "sk-a…wxyz",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -71,7 +70,6 @@ const ollama: LLMProjection = {
   kind: "openai-compatible",
   baseURL: "https://ollama.com/v1",
   model: "glm-5.3",
-  keyPreview: "3f9a…c2d1",
   connectedAt: "2026-09-25T13:50:00Z",
   updatedAt: "2026-09-25T13:53:00Z",
   updatedBy: "dev@acme.example",
@@ -85,11 +83,10 @@ const ollama: LLMProjection = {
   },
 };
 
+// "active" is the only status the server writes (writeKeyTx).
 const subscription: SubscriptionProjection = {
   kind: "claude",
-  status: "connected",
-  keyPrefix: "sk-ant-oat01-",
-  keyLast4: "9f2c",
+  status: "active",
   connectedAt: "2026-09-01T10:00:00Z",
 };
 
@@ -173,7 +170,7 @@ describe("AiAgentsCard on Anthropic's API", () => {
     expect(format("Anthropic Messages")).toHaveAttribute("aria-pressed", "true");
     expect(field("Base URL")).toHaveValue("https://api.anthropic.com/v1");
     expect(field("Model")).toHaveValue("claude-sonnet-5");
-    expect(screen.getByText("sk-a…wxyz")).toBeInTheDocument();
+    expect(screen.getByText("Set ••••••••")).toBeInTheDocument();
     expect(radio(/Claude Code/)).toBeChecked();
   });
 
@@ -189,6 +186,18 @@ describe("AiAgentsCard on Anthropic's API", () => {
     expect(screen.getByText(/Claude subscription token/)).toBeInTheDocument();
     expect(field("Subscription token")).toHaveValue("");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("reads Not set beside the token input when there is no subscription token", () => {
+    renderCard();
+    expect(screen.getByText("Not set")).toBeInTheDocument();
+    expect(field("Subscription token")).toHaveValue("");
+  });
+
+  it("asks for the key when only the format changes on the same host", () => {
+    renderCard();
+    fireEvent.click(format("OpenAI-compatible"));
+    expect(field("API key")).toHaveValue("");
   });
 
   it("says who last changed the card", () => {
@@ -213,11 +222,67 @@ describe("AiAgentsCard on Anthropic's API", () => {
 
   it("shows a stored token masked; Remove deletes it on save", () => {
     renderCard(config({ agents: { ...defaultAgents, subscription } }));
-    expect(screen.getByText("sk-ant-oat01-••••••9f2c")).toBeInTheDocument();
+    // The connection key and the stored token each read Set, with no characters.
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
     expect(screen.getByText(/Saving deletes the stored token/)).toBeInTheDocument();
     fireEvent.click(saveButton());
     expect(lastPatch()).toEqual({ agents: { subscription: null } });
+  });
+
+  it("shows a subscription whose token was never recorded as set, with Replace, Remove and a warning", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, tokenMissing: true } } }));
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The Claude subscription token was never saved, so coding uses the API key. Replace the token to bill your Claude plan, or remove the subscription.",
+    );
+    // Not billing the plan while the token is missing, so the card does not say it is.
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Replace" })).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    fireEvent.click(saveButton());
+    expect(lastPatch()).toEqual({ agents: { subscription: null } });
+  });
+
+  it("replaces a subscription whose token was never recorded", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, tokenMissing: true } } }));
+    // The second Replace is the token's (the first is the connection key's).
+    fireEvent.click(screen.getAllByRole("button", { name: "Replace" })[1]!);
+    type("New subscription token", "sk-ant-oat01-new-token-abcd");
+    fireEvent.click(saveButton());
+    expect(lastPatch()).toEqual({ agents: { subscription: { kind: "claude", token: "sk-ant-oat01-new-token-abcd" } } });
+  });
+
+  // Dispatch refuses a subscription that is not active, so the card says
+  // neither "bills your Claude plan" nor "uses the API key": the server's
+  // validation error, or its status, is the one line it shows.
+  it("an inactive subscription shows its validation error, not the uses-the-API-key warning", () => {
+    renderCard(
+      config({
+        agents: {
+          ...defaultAgents,
+          subscription: { ...subscription, status: "invalid", validationError: "The token was revoked." },
+        },
+      }),
+    );
+    expect(screen.getAllByText("Set ••••••••")).toHaveLength(2);
+    expect(screen.getByRole("alert")).toHaveTextContent("The token was revoked.");
+    expect(screen.queryByText(/coding uses the API key/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
+  });
+
+  it("an inactive subscription without a validation error names its status", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription: { ...subscription, status: "invalid" } } }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "This subscription is invalid: replace its token or remove it.",
+    );
+    expect(screen.queryByText(/Coding bills your Claude plan/)).not.toBeInTheDocument();
+  });
+
+  it("does not warn about a recorded token", () => {
+    renderCard(config({ agents: { ...defaultAgents, subscription } }));
+    expect(screen.queryByText(/token was never saved/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Coding bills your Claude plan/)).toBeInTheDocument();
   });
 
   it("disconnects on its own, naming the subscription it takes along", () => {
@@ -265,7 +330,7 @@ describe("switching the format", () => {
     fireEvent.click(format("OpenAI-compatible"));
     type("Base URL", "https://ollama.com/v1");
 
-    expect(screen.getByText("A new host needs its own key: the saved key is never sent to ollama.com.")).toBeInTheDocument();
+    expect(screen.getByText("A different format or URL needs its own key: the saved key is never sent to ollama.com.")).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
     type("API key", "ollama-key-0123456789");
     fireEvent.click(saveButton());
@@ -307,8 +372,22 @@ describe("Test connection", () => {
     expect(info().getByText(/Chat does not accept images/)).toBeInTheDocument();
   });
 
+  it("asks for the key instead of probing without one", () => {
+    renderCard();
+    expect(screen.queryByLabelText(/API key/)).not.toBeInTheDocument();
+    fireEvent.click(testButton());
+    expect(testMutate).not.toHaveBeenCalled();
+    expect(field("New API key")).toHaveValue("");
+    expect(testButton()).toBeDisabled();
+    type("New API key", "sk-ant-api03-typed-key-0123456789");
+    fireEvent.click(testButton());
+    expect(testMutate.mock.calls[0]?.[0]).toMatchObject({ apiKey: "sk-ant-api03-typed-key-0123456789" });
+  });
+
   it("warns on a model the endpoint does not list", () => {
     renderCard();
+    fireEvent.click(testButton());
+    type("New API key", "sk-ant-api03-typed-key-0123456789");
     type("Model", "claude-future");
     testMutate.mockImplementation((_b, opts: { onSuccess: (c: LLMCheck) => void }) =>
       opts.onSuccess({ ...check, kind: "anthropic", baseURL: anthropic.baseURL, model: "claude-future", modelListed: "no", capabilities: anthropic.capabilities }),
@@ -394,6 +473,21 @@ describe("a refused save", () => {
     saveState.error = refused("agents_subscription_requires_anthropic_host", "agents", "a Claude subscription bills only against Anthropic's own API");
     renderCard();
     expect(field("Subscription token")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows a refused key store write on the key field, with the server's message", () => {
+    saveState.isError = true;
+    saveState.error = refused("secret_store_write_failed", "llm", "the secret store did not accept the key; nothing was saved");
+    renderCard(config({ llm: null }));
+    expect(screen.getByText("the secret store did not accept the key; nothing was saved")).toBeInTheDocument();
+    expect(field("API key")).toHaveAttribute("aria-invalid", "true");
+  });
+
+  it("shows a failed Agent Manager push beside the connection, not on a field", () => {
+    saveState.isError = true;
+    saveState.error = refused("agent_manager_not_updated", "llm", "the key is saved, but Agent Manager did not take it; save again");
+    renderCard();
+    expect(screen.getByRole("alert")).toHaveTextContent("the key is saved, but Agent Manager did not take it; save again");
   });
 
   it("disables the controls while a save is in flight", () => {

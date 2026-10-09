@@ -17,10 +17,31 @@
 package sourcecontrol
 
 import (
+	"regexp"
+	"strings"
 	"time"
-
-	"github.com/wso2/aep/aep-api/internal/platform/gitfs/naming"
 )
+
+// SkillsRepoSentinelProjectID is the reserved git_repositories.project_id
+// under which the per-org skills repo row lives (so it is distinguishable
+// from real project repos). See docs/design/skills-repo-storage.md §10.1.
+const SkillsRepoSentinelProjectID = "_skills"
+
+// Repository row statuses this package writes. A `deleting` row belongs to a
+// project whose delete has started: no sweep lists it (ListAllReady) and no
+// hook id is stored on it (SetWebhookIDIfReady).
+const (
+	RepoStatusReady    = "ready"
+	RepoStatusDeleting = "deleting"
+)
+
+// IsPlatformRepo reports whether projectID is a reserved platform repository
+// row (the skills repo, the resource-docs repo) rather than a project's: they
+// live under project ids that start with "_", which an OpenChoreo project
+// name (a DNS label) never does. Platform repos carry no hook.
+func IsPlatformRepo(projectID string) bool {
+	return strings.HasPrefix(projectID, "_")
+}
 
 // GitRepository stores metadata about a platform-provisioned git repository.
 type GitRepository struct {
@@ -39,12 +60,9 @@ type GitRepository struct {
 	// Populated at repo provision. Used to deregister on repo cleanup or
 	// re-register on rotation.
 	WebhookID *int64 `json:"webhookId,omitempty"`
-	// OcSecretRefName is unused on new rows: the build flow
-	// (docs/design/build-credential-injection.md) pre-stages a
-	// per-WorkflowRun K8s Secret named `<workflowRunName>-git-secret`
-	// directly in workflows-<ocOrgID> and passes secretRef="" to the
-	// workflow. Retained for the JSON contract and as a column on
-	// older rows.
+	// OcSecretRefName is unused on new rows: a build references the org's
+	// github-pat SecretReference (BuildCredentialsService), not a per-repo
+	// one. Retained for the JSON contract and as a column on older rows.
 	OcSecretRefName *string `gorm:"column:oc_secret_ref_name" json:"ocSecretRefName,omitempty"`
 	// RepoSlug is the SecretReference slug — `lower(<owner>-<repo>)`. Used
 	// for OpenBao path keying (`secret/aep/{ocOrgId}/git/{repoSlug}`) and
@@ -58,9 +76,17 @@ type GitRepository struct {
 	// migration and no longer modeled.
 }
 
-// WorkspaceSlug returns the on-disk directory leaf for this repo row on the
-// shared workspace volume — a pure function of the row's identity, delegating to
-// the canonical naming.WorkspaceSlug.
-func (r *GitRepository) WorkspaceSlug() string {
-	return naming.WorkspaceSlug(r.ProjectID, r.RepoSlug, r.RepoURL)
+// RepoSlugFor returns the canonical repo slug for a GitHub HTTPS clone URL: the
+// `owner/repo` path lowercased with `/` replaced by `-`, "" when the URL does
+// not match. It is the single entry point for slug derivation from a URL.
+func RepoSlugFor(url string) string {
+	m := repoURLPattern.FindStringSubmatch(url)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.ToLower(strings.ReplaceAll(m[1], "/", "-"))
 }
+
+// repoURLPattern extracts `<owner>/<repo>` from a GitHub HTTPS URL, with or
+// without a `.git` suffix.
+var repoURLPattern = regexp.MustCompile(`github\.com/([^/]+/[^/]+?)(?:\.git)?/?$`)

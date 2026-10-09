@@ -1,0 +1,16 @@
+# Strict server + types + embedded spec for the browser /v1 surface, generated
+# from packages/contracts/api/ae-studio-tools/v1. Run via `make gen-api`. The
+# embedded spec feeds the edge's request validator (same as internal/gen).
+package: v1gen
+generate:
+  std-http-server: true
+  strict-server: true
+  models: true
+  embedded-spec: true
+compatibility:
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output: internal/gen/v1/v1_gen.go
+output-options:
+  skip-prune: true
+  prefer-skip-optional-pointer: true
+  name-normalizer: ToCamelCaseWithInitialisms

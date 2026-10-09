@@ -53,13 +53,11 @@ const HEADER_PATTERNS: ReadonlyArray<RegExp> = [
   /(bearer\s+)([A-Za-z0-9._-]{16,})/gi,
   /(authorization\s*:\s*)(\S+)/gi,
   /(x-api-key\s*:\s*)(\S+)/gi,
-  // `gh`'s own config shape. The credhelper branch writes the GitHub token at
-  // rest as `oauth_token: <token>` into <workspace>/.gh-config/hosts.yml
-  // (credhelper.ts, ghWrapperScript), inside the tree the agent works in — so
-  // `cat`ting that file puts a live credential on the feed. That token is
-  // minted inside bash and never enters this process, so no literal can be
-  // enrolled for it: shape is the only layer available. Not a substitute for
-  // enrollment, which is why the gap is recorded rather than closed here.
+  // `gh`'s own config shape: `gh auth login` run by the agent writes the token
+  // at rest as `oauth_token: <token>` into <workspace>/.gh-config/hosts.yml,
+  // inside the tree the agent works in, so `cat`ting that file would put a live
+  // credential on the feed. The mounted token is enrolled as a literal; this
+  // pattern is the shape-only layer for a copy gh itself wrote.
   /(oauth_token\s*:\s*)(\S+)/gi,
 ];
 

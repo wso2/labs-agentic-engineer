@@ -27,7 +27,6 @@ const connection: LLMProjection = {
   kind: "openai-compatible",
   baseURL: "https://ollama.com/v1",
   model: "glm-5.3",
-  keyPreview: "c2d1",
   connectedAt: "2026-06-01T12:05:00Z",
   updatedAt: "2026-06-01T12:05:00Z",
   updatedBy: null,

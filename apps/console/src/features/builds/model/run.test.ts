@@ -48,6 +48,11 @@ describe("a version's runs, for its Build card", () => {
     expect(isAgentStreaming([run("succeeded", [cycle("c1")])])).toBe(false);
   });
 
+  it("does not call an agent the cluster has not started yet a writing one", () => {
+    const waiting = cycle("c1", { startupWait: { reason: "Unschedulable", since: "2026-10-04T10:00:30Z", failsAt: "2026-10-04T10:10:00Z" } });
+    expect(isAgentStreaming([run("running", [waiting])])).toBe(false);
+  });
+
   it("reads a park at the deploy gate, naming the dependencies when the run does", () => {
     expect(externalValuesPark(run("waiting", [], { waitingReason: "external-values", blockingDependencies: ["xero"] }))).toEqual(["xero"]);
     expect(externalValuesPark(run("waiting", [], { waitingReason: "external-values" }))).toEqual([]);

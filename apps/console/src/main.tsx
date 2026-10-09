@@ -24,12 +24,15 @@ import { CssBaseline, OxygenUIThemeProvider } from "@wso2/oxygen-ui";
 import { AppAuthProvider } from "./auth/AuthProvider";
 import { aepTheme } from "@aep/ui-theme";
 import { router } from "./router";
+import { queryRetry, queryRetryDelay } from "./api/retry";
 
-// Retry 3 for queries (TanStack default, made explicit), no automatic retry
-// for mutations; per-query staleTime is set at the hook.
+// api-guidelines: retry 3 for queries (TanStack default, made explicit),
+// no automatic retry for mutations; per-query staleTime set at the hook. A
+// restarting AE Studio (503 ae_studio_unavailable) gets more tries, paced by
+// its Retry-After (api/retry.ts).
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 3 },
+    queries: { retry: queryRetry, retryDelay: queryRetryDelay },
     mutations: { retry: 0 },
   },
 });

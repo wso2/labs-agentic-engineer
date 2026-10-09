@@ -25,21 +25,32 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2/aep/aep-api/internal/clients/secretmanagersvc"
 	"github.com/wso2/aep/aep-api/internal/config"
+	"github.com/wso2/aep/aep-api/internal/platform/auth/jwtassertion"
 )
 
-// baseCfg is the minimal config that Assemble accepts. GitProvider must be
-// "github" (buildGitHost rejects anything else), and the OpenChoreo clients use
-// a must-construct pattern that panics on an empty BaseURL — so the structurally-
+// baseCfg is the minimal config that Assemble accepts. The OpenChoreo clients
+// use a must-construct pattern that panics on an empty BaseURL — so the structurally-
 // required (non-degradable) fields are set to dummy non-empty values. Everything
 // OPTIONAL is left at its zero value, so the graph assembles in its maximally-
 // degraded mode. Assemble never calls config.Validate, so the required-at-boot
-// fields (JWKSURL, TaskTokenSigningKey) are irrelevant here.
+// field (JWKSURL) is irrelevant here.
 func baseCfg() config.Config {
-	c := config.Config{GitProvider: "github"}
+	c := config.Config{}
 	c.PlatformAPI.BaseURL = "http://openchoreo.test"
 	return c
 }
@@ -84,8 +95,8 @@ func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 	if app.Handler == nil {
 		t.Fatal("assembled app has a nil Handler")
 	}
-	if len(app.Watchers) != 10 {
-		t.Fatalf("minimal watcher count = %d, want 10 (the unconditional watchers; reaper omitted with Fake nil Workspace)", len(app.Watchers))
+	if len(app.Watchers) != 9 {
+		t.Fatalf("minimal watcher count = %d, want 9 (the unconditional watchers; reaper omitted with Fake nil Workspace)", len(app.Watchers))
 	}
 	for i, w := range app.Watchers {
 		if w == nil {
@@ -95,20 +106,20 @@ func TestAssemble_MinimalConfigBuildsTheGraph(t *testing.T) {
 }
 
 // TestAssemble_WatcherRegistration pins the one remaining conditional watcher:
-// the run-supervisor worker rides on TEMPORAL_HOSTPORT. The base is 10 — Fake()
+// the run-supervisor worker rides on TEMPORAL_HOSTPORT. The base is 9 — Fake()
 // omits the disk reaper (nil Workspace); the webhook replayer, the event plane's
-// reconcile AND build sweeps, the OpenChoreo pod-truth watcher and the model key
-// rename are all unconditional.
+// reconcile AND build sweeps, the OpenChoreo pod-truth watcher and the coding
+// Component settler are all unconditional.
 func TestAssemble_WatcherRegistration(t *testing.T) {
 	tests := []struct {
 		name   string
 		mutate func(*config.Config)
 		want   int
 	}{
-		{"base", func(*config.Config) {}, 10},
+		{"base", func(*config.Config) {}, 9},
 		{"+temporal adds the run worker", func(c *config.Config) {
 			c.Temporal.HostPort = "temporal:7233"
-		}, 11},
+		}, 10},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -148,8 +159,8 @@ func TestAssemble_Degradations(t *testing.T) {
 		// path (AGENT_RUNNER_IMAGE unset and no secrets provider).
 		for _, want := range []string{
 			"m2m-service-auth", "build-logs", "secrets-delivery",
-			"mcp-discovery", "idp-mutations", "connect-oauth-state",
-			"coding-dispatch-oc", "run-temporal",
+			"idp-mutations",
+			"coding-dispatch-oc", "run-temporal", "ae-studio-tools",
 		} {
 			if !hasCapability(degs, want) {
 				t.Errorf("minimal config: expected degradation %q, missing from %+v", want, degs)
@@ -182,6 +193,20 @@ func TestAssemble_Degradations(t *testing.T) {
 		}
 	})
 
+	t.Run("the AE-only client clears the ae-studio-tools degradation", func(t *testing.T) {
+		cfg := baseCfg()
+		cfg.AEStudio.IDP.TokenURL = "http://thunder/oauth2/token"
+		cfg.AEStudio.InternalClientID = "ae-studio-internal-client"
+		cfg.AEStudio.InternalClientSecret = "test-secret"
+		app, err := Assemble(cfg, Fake(), Seam{})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if hasCapability(app.Degradations(), "ae-studio-tools") {
+			t.Errorf("with the AE-only client configured, ae-studio-tools must not be degraded")
+		}
+	})
+
 	t.Run("an observer URL clears the archive degradation", func(t *testing.T) {
 		cfg := baseCfg()
 		cfg.Observability.BaseURL = "http://observer"
@@ -198,6 +223,73 @@ func TestAssemble_Degradations(t *testing.T) {
 	})
 }
 
+// The SRE handoff (SRE_HANDOFF_TOKEN) mounts its MCP surface only together
+// with the observer and the service credential its tools verify every call
+// with; a key without them refuses the boot. The key opens that one surface:
+// on /api/v1 it is just another unverifiable bearer.
+func TestAssemble_SREHandoff(t *testing.T) {
+	const key = "sre-handoff-key-for-the-assembly-test"
+	jwksURL, userJWT := userTokens(t)
+	sreCfg := func() config.Config {
+		cfg := baseCfg()
+		cfg.SREHandoff.Token = key
+		cfg.Observability.BaseURL = "http://observer"
+		cfg.JWKSURL, cfg.JWTAllowedIssuer, cfg.JWTAllowedAudience = jwksURL, testUserIssuer, testUserAudience
+		return cfg
+	}
+	serveAs := func(t *testing.T, h http.Handler, bearer, method, path, body string) int {
+		t.Helper()
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w.Code
+	}
+	serve := func(t *testing.T, h http.Handler, method, path, body string) int {
+		t.Helper()
+		return serveAs(t, h, key, method, path, body)
+	}
+	const toolsList = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+
+	t.Run("configured: the key opens sre-handoff/mcp and not /api/v1", func(t *testing.T) {
+		app, err := Assemble(sreCfg(), Fake(), Seam{AuthProvider: staticM2M{}})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if got := serve(t, app.Handler, http.MethodPost, "/internal/v1/sre-handoff/mcp", toolsList); got != http.StatusOK {
+			t.Errorf("sre-handoff/mcp with the key = %d, want 200", got)
+		}
+		if got := serve(t, app.Handler, http.MethodGet, "/api/v1/projects/shop/issues", ""); got != http.StatusUnauthorized {
+			t.Errorf("/api/v1 with the handoff key = %d, want 401", got)
+		}
+		// Control: the same route takes a valid user JWT past authentication,
+		// so the 401 above is the key refused, not a route that is always 401.
+		if got := serveAs(t, app.Handler, userJWT, http.MethodGet, "/api/v1/projects/shop/issues", ""); got == http.StatusUnauthorized {
+			t.Errorf("/api/v1 with a valid user JWT = %d, want it past authentication", got)
+		}
+	})
+	t.Run("unconfigured: not mounted", func(t *testing.T) {
+		app, err := Assemble(baseCfg(), Fake(), Seam{AuthProvider: staticM2M{}})
+		if err != nil {
+			t.Fatalf("Assemble = %v", err)
+		}
+		if got := serve(t, app.Handler, http.MethodPost, "/internal/v1/sre-handoff/mcp", toolsList); got != http.StatusNotFound {
+			t.Errorf("sre-handoff/mcp unconfigured = %d, want 404", got)
+		}
+	})
+	t.Run("the key without the observer or the service credential refuses the boot", func(t *testing.T) {
+		noObserver := sreCfg()
+		noObserver.Observability.BaseURL = ""
+		if _, err := Assemble(noObserver, Fake(), Seam{AuthProvider: staticM2M{}}); err == nil || !strings.Contains(err.Error(), "SRE_HANDOFF_TOKEN") {
+			t.Errorf("without OBSERVER_URL: err = %v, want the SRE handoff boot refusal", err)
+		}
+		if _, err := Assemble(sreCfg(), Fake(), Seam{}); err == nil || !strings.Contains(err.Error(), "SRE_HANDOFF_TOKEN") {
+			t.Errorf("without the service credential: err = %v, want the SRE handoff boot refusal", err)
+		}
+	})
+}
+
 // ResourceLabels are stamped on every OpenChoreo write, so a label the API
 // server would reject must fail the boot rather than every write after it.
 func TestAssemble_RefusesInvalidResourceLabels(t *testing.T) {
@@ -208,4 +300,41 @@ func TestAssemble_RefusesInvalidResourceLabels(t *testing.T) {
 	if _, err := Assemble(baseCfg(), Fake(), Seam{ResourceLabels: map[string]string{"cloud.wso2.com/product-name": "app-factory"}}); err != nil {
 		t.Fatalf("Assemble with a valid resource label = %v, want nil", err)
 	}
+}
+
+const (
+	testUserIssuer   = "thunder"
+	testUserAudience = "aep-console-client"
+)
+
+// userTokens serves a JWKS trusting a fresh key and returns its URL and a user
+// JWT (authorization_code grant, org acme) it verifies, issued by
+// testUserIssuer to testUserAudience.
+func userTokens(t *testing.T) (jwksURL, token string) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(jwtassertion.JWKS{Keys: []jwtassertion.JSONWebKey{{
+			Kty: "RSA", Kid: "k1", Use: "sig", Alg: "RS256",
+			N: base64.RawURLEncoding.EncodeToString(priv.N.Bytes()),
+			E: base64.RawURLEncoding.EncodeToString(big.NewInt(int64(priv.E)).Bytes()),
+		}}})
+	}))
+	t.Cleanup(srv.Close)
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwtassertion.TokenClaims{
+		Sub: "user-1", ClientID: testUserAudience, OuHandle: "acme", GrantType: "authorization_code",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer: testUserIssuer, Audience: jwt.ClaimStrings{testUserAudience},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	tok.Header["kid"] = "k1"
+	signed, err := tok.SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return srv.URL, signed
 }

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -45,6 +46,7 @@ type Activities struct {
 	builds     BuildReader
 	validation ValidationCoordinator
 	dispatcher delivery.MilestoneDispatcher
+	jobs       JobBindings
 	deployer   Deployer
 	deployRead DeploymentReader
 	deployMint DeployIssueMinter
@@ -53,7 +55,6 @@ type Activities struct {
 	gates      Gates
 	planner    Planner
 	deployGate DeployGate
-	failed     RunFailedRecorder
 }
 
 // Deps carries the activity adapters. runs/cycles/milestones are required; the
@@ -67,6 +68,7 @@ type Deps struct {
 	Builds       BuildReader
 	Validation   ValidationCoordinator
 	Dispatcher   delivery.MilestoneDispatcher
+	Jobs         JobBindings
 	Deploy       Deployer
 	Deployments  DeploymentReader
 	DeployIssues DeployIssueMinter
@@ -75,8 +77,6 @@ type Deps struct {
 	Gates        Gates
 	Planner      Planner
 	DeployGate   DeployGate
-	// Failed is told of a failed settle (optional; nil records nothing).
-	Failed RunFailedRecorder
 }
 
 // NewActivities wires the activity adapters.
@@ -90,6 +90,7 @@ func NewActivities(d Deps) *Activities {
 		builds:     d.Builds,
 		validation: d.Validation,
 		dispatcher: d.Dispatcher,
+		jobs:       d.Jobs,
 		deployer:   d.Deploy,
 		deployRead: d.Deployments,
 		deployMint: d.DeployIssues,
@@ -98,7 +99,6 @@ func NewActivities(d Deps) *Activities {
 		gates:      d.Gates,
 		planner:    d.Planner,
 		deployGate: d.DeployGate,
-		failed:     d.Failed,
 	}
 }
 
@@ -132,9 +132,6 @@ type SettleRunInput struct {
 	RunID  string `json:"runId"`
 	State  string `json:"state"`
 	Reason string `json:"reason,omitempty"`
-	// OrgID scopes the failed-settle notification's read of the row. Empty on
-	// an input from before it existed, which records no activity line.
-	OrgID string `json:"orgId,omitempty"`
 }
 
 // SettleRun writes the run's outcome. Guarded in the repository on the run not
@@ -145,11 +142,6 @@ func (a *Activities) SettleRun(ctx context.Context, in SettleRunInput) error {
 	}
 	if err := a.runs.Settle(ctx, in.RunID, in.State, in.Reason); err != nil {
 		return err
-	}
-	// The feed line for a reader who is not on the build page. After the
-	// settle, so the row it reads already says failed and why.
-	if in.State == delivery.RunStateFailed && a.failed != nil && in.OrgID != "" {
-		a.failed.RecordRunFailed(ctx, in.OrgID, in.RunID)
 	}
 	return nil
 }
@@ -254,12 +246,70 @@ type NoteCycleDispatchInput struct {
 }
 
 // NoteCycleDispatch increments the cycle's attempt count and re-points it at
-// the newly launched Job.
+// the newly launched Job, then un-suspends that Job's binding.
+//
+// The un-suspend is HERE, after the fenced write, and not in the launch: only a
+// row the write actually moved is an open cycle. One closed (or cancelled)
+// between the launch and this write is left alone, so its suspended Job stays
+// inert instead of re-running the runner after its TTL.
+//
+// The fence alone does not order the un-suspend against a cancel: the cancel
+// can close and suspend the cycle after the write moved the row but before the
+// un-suspend lands. The run's cancel stamp is therefore re-read AFTER the
+// un-suspend, and a requested cancel suspends the binding again. The cancel
+// stamps the run before it suspends, so whichever write lands last on the
+// binding is a suspend. The same read stops the first attempt's Job when the
+// cancel's reap ran before this cycle had a Job to name.
+//
+// A failed un-suspend, stamp read or re-suspend is logged, not returned.
+// Returning it would retry the activity and count a second attempt for one
+// launch. A Job left suspended runs no pod, and the cycle watcher's startup
+// grace reports the attempt as it reports any pod that never appeared; a
+// cancel missed here is still read by the loop at its next wake-up, and the
+// settler's backstop suspends the closed cycle.
 func (a *Activities) NoteCycleDispatch(ctx context.Context, in NoteCycleDispatchInput) error {
 	if a.cycles == nil {
 		return errNotConfigured
 	}
-	return a.cycles.NoteDispatch(ctx, in.CycleID, in.JobRef)
+	row, err := a.cycles.NoteDispatch(ctx, in.CycleID, in.JobRef)
+	if err != nil || row == nil || a.jobs == nil {
+		return err
+	}
+	if row.Environment == "" {
+		slog.WarnContext(ctx, "run: re-dispatched cycle has no recorded environment; its Job binding was not un-suspended",
+			"cycle", in.CycleID, "job", in.JobRef)
+		return nil
+	}
+	if err := a.jobs.ResumeJobBinding(ctx, row.OrgID, row.ProjectID, in.JobRef, row.Environment); err != nil {
+		slog.WarnContext(ctx, "run: un-suspend of the cycle's Job binding failed; the watcher's startup grace reports the attempt",
+			"cycle", in.CycleID, "job", in.JobRef, "error", err)
+	}
+	a.suspendIfCancelled(ctx, row, in.JobRef)
+	return nil
+}
+
+// suspendIfCancelled suspends the dispatched Job's binding again when the run's
+// cancel stamp is set. See NoteCycleDispatch for why it follows the un-suspend.
+func (a *Activities) suspendIfCancelled(ctx context.Context, row *delivery.RunCycle, jobRef string) {
+	if a.runs == nil {
+		return
+	}
+	cancelled, err := a.runs.CancelRequested(ctx, row.OrgID, row.RunID)
+	if err != nil {
+		slog.WarnContext(ctx, "run: could not re-read the cancel stamp after a dispatch; the loop reads it at its next wake-up",
+			"cycle", row.ID, "job", jobRef, "error", err)
+		return
+	}
+	if !cancelled {
+		return
+	}
+	if err := a.jobs.SuspendJobBinding(ctx, row.OrgID, row.ProjectID, jobRef, row.Environment); err != nil {
+		slog.WarnContext(ctx, "run: a cancel raced the dispatch and the Job binding could not be suspended again; the settler's backstop suspends it",
+			"cycle", row.ID, "job", jobRef, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "run: a cancel raced the dispatch; the cycle's Job binding is suspended again",
+		"cycle", row.ID, "job", jobRef)
 }
 
 // FinishCycleInput closes a cycle record.
@@ -302,8 +352,9 @@ type CycleFacts struct {
 	MergeSHA string `json:"mergeSha,omitempty"`
 	Ended    bool   `json:"ended"`
 	// AgentReason is why the cycle's agent stopped without landing, as the
-	// pod-truth watcher closed it. Read for the one reason that is not agent
-	// death: delivery.CycleReasonModelProviderLimit.
+	// pod-truth watcher closed it. Read for the two reasons that are not agent
+	// death: delivery.CycleReasonModelProviderLimit, and a startup_failed
+	// close (delivery.IsStartupFailure: the agent never started).
 	AgentReason string `json:"agentReason,omitempty"`
 	// CancelRequested is the run row's cancellation stamp, not the signal. The
 	// signal is a wake-up; this is the evidence — which is what stops a reaped
@@ -513,15 +564,24 @@ func (a *Activities) PlanMilestone(ctx context.Context, in PlanMilestoneInput) e
 	}
 	// Heartbeat, for the same reason as ProvisionGates: an agent turn is minutes
 	// long, and a cancel pressed mid-turn should end the turn rather than let it
-	// run on to mint a plan for a version nobody is building.
-	return heartbeating(ctx, func(ctx context.Context) error {
-		err := a.planner.PlanIntoMilestone(ctx, in.OrgID, in.ProjectID, in.MilestoneNumber)
+	// run on to mint a plan for a version nobody is building. On top of the
+	// wrapper's clock, the turn beats per event it sends,
+	// keep-alives included: the beats then say the turn is moving, not only
+	// that the worker is. Every beat also carries the count of provider-limited
+	// tries, which is what bounds them (planBeat).
+	beat := newPlanBeat(ctx)
+	return heartbeatingWith(ctx, beat.beat, func(ctx context.Context) error {
+		err := a.planner.PlanIntoMilestone(beat.withTurnBeats(ctx), in.OrgID, in.ProjectID, in.MilestoneNumber)
+		providerLimits := beat.providerLimitCount()
+		if providerLimited(err) {
+			providerLimits = beat.countProviderLimit()
+		}
 		// Same record as ProvisionGates. This activity retries UNBOUNDED on a
 		// blip, which used to be a silent spinner for as long as it lasted;
 		// the record is what lets the console say "retrying, attempt N".
 		attempt := activityAttempt(ctx)
-		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt), attempt)
-		return planErr(err)
+		a.recordPlanningFault(ctx, in.RunID, planFailure(err, attempt, providerLimits), attempt)
+		return planErr(err, providerLimits, time.Now())
 	})
 }
 
@@ -1110,7 +1170,7 @@ func (a *Activities) DispatchAgent(ctx context.Context, in delivery.MilestoneDis
 	if err != nil {
 		return "", err
 	}
-	if err := a.cycles.NoteLaunch(ctx, in.CycleID, launch.ModelHost, launch.Environment); err != nil {
+	if err := a.cycles.NoteLaunch(ctx, in.CycleID, launch.ModelHost, launch.Environment, launch.ComponentUID); err != nil {
 		slog.WarnContext(ctx, "run: the agent launched but its host and environment were not recorded; the cycle's usage will be unpriced and its readers will resolve the project's write target",
 			"cycle", in.CycleID, "host", launch.ModelHost, "environment", launch.Environment, "error", err)
 	}

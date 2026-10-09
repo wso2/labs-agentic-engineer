@@ -19,7 +19,7 @@
 // tasks-github-native model: sentinel translation, CreateProject's best-effort
 // side-effect chain, the delete cascade (repo cleanup + executions purge — NO
 // component_tasks table any more), and the GetProjectStatus phase ladder (which
-// no longer counts tasks: it stops at "tasks" once a design exists, §8). The
+// no longer counts tasks: it stops at "tasks" once a design exists). The
 // HTTP contract lives in project_component_test.go; the DeleteProject executions
 // purge over real Postgres lives in project_dbtest_test.go; the
 // applyRepoToProjectStatus repo-lifecycle table lives in project_status_test.go.
@@ -52,6 +52,7 @@ type fakeRepoSvc struct {
 	GetRepoFunc    func(ctx context.Context, orgID, projectID string) (*sourcecontrol.GitRepository, error)
 	DeleteRepoFunc func(ctx context.Context, orgID, projectID string) error
 	ListByOrgFunc  func(ctx context.Context, orgID string) ([]sourcecontrol.GitRepository, error)
+	marks          []string
 }
 
 func (f *fakeRepoSvc) CreateRepo(ctx context.Context, orgID, projectID, projectName, repoName string) (*sourcecontrol.GitRepository, error) {
@@ -77,6 +78,18 @@ func (f *fakeRepoSvc) GetRepo(ctx context.Context, orgID, projectID string) (*so
 }
 func (f *fakeRepoSvc) SetWebhookID(context.Context, string, string, int64) error {
 	panic("fakeRepoSvc: SetWebhookID not expected in project tests")
+}
+
+// BeginDelete / AbortDelete record the delete mark; trace, when set, orders
+// them against the other teardown steps.
+func (f *fakeRepoSvc) BeginDelete(context.Context, string, string) error {
+	f.marks = append(f.marks, "begin")
+	return nil
+}
+
+func (f *fakeRepoSvc) AbortDelete(context.Context, string, string) error {
+	f.marks = append(f.marks, "abort")
+	return nil
 }
 func (f *fakeRepoSvc) DeleteRepo(ctx context.Context, orgID, projectID string) error {
 	if f.DeleteRepoFunc == nil {
@@ -471,24 +484,35 @@ func TestCreateProject_OCErrorShortCircuits(t *testing.T) {
 	}
 }
 
-func TestCreateProject_RepoFailureIsBestEffort(t *testing.T) {
+// A failed repo create stops the project create and compensates the OC
+// project, with the repo error unchanged so the edge can speak for an
+// AE Studio answer (409 github_not_connected / 503 ae_studio_unavailable).
+func TestCreateProject_RepoFailureReturnsItsErrorUnchanged(t *testing.T) {
 	t.Parallel()
+	deleted := 0
 	oc := &ocmocks.ProjectClientMock{
 		CreateProjectFunc: func(_ context.Context, _ string, req *gen.CreateProjectRequest) (*gen.Project, error) {
 			return &gen.Project{Name: req.Name}, nil
 		},
+		DeleteProjectFunc: func(context.Context, string, string) error {
+			deleted++
+			return nil
+		},
 	}
 	repoSvc := &fakeRepoSvc{
 		CreateRepoFunc: func(context.Context, string, string, string, string) (*sourcecontrol.GitRepository, error) {
-			return nil, errors.New("github down")
+			return nil, fmt.Errorf("create github repo: %w", sourcecontrol.ErrAEStudioUnavailable)
 		},
 	}
 	webhooks := &fakeWebhookSvc{}
 	svc := NewProjectService(oc, repoSvc, webhooks, nil, nil)
 
 	p, err := svc.CreateProject(context.Background(), "acme", &gen.CreateProjectRequest{Name: "web"})
-	if err != nil || p == nil {
-		t.Fatalf("repo provisioning failure must not fail project creation: p=%v err=%v", p, err)
+	if !errors.Is(err, sourcecontrol.ErrAEStudioUnavailable) || p != nil {
+		t.Fatalf("a failed repo create must fail the project create with its error: p=%v err=%v", p, err)
+	}
+	if deleted != 1 {
+		t.Fatalf("compensations = %d, want 1", deleted)
 	}
 	if webhooks.calls != 0 {
 		t.Fatalf("webhook must not be registered when repo creation failed, got %d calls", webhooks.calls)
@@ -541,7 +565,7 @@ func TestDeleteProject_CleansUpRepoAndPurgesExecutions(t *testing.T) {
 	if !deleted {
 		t.Error("git repo cleanup was not invoked")
 	}
-	// The platform-owned executions rows are purged, org+project scoped (§7).
+	// The platform-owned executions rows are purged, org+project scoped.
 	// The Task issues themselves are GitHub-owned and SURVIVE: the delete leaves
 	// the remote repository standing, and the service never calls an issue-delete
 	// path.
@@ -746,7 +770,7 @@ func TestDeleteProject_UnreachableOCSkipsTheRunTeardown(t *testing.T) {
 // Repo-lifecycle short-circuits (no-repo / cloning / error) are proven per branch
 // in project_status_test.go against applyRepoToProjectStatus; here the ladder is
 // driven end-through with a ready repo. Under tasks-github-native the ladder no
-// longer counts tasks — it stops at "tasks" once a design exists (§8).
+// longer counts tasks — it stops at "tasks" once a design exists.
 
 // fakeRunReader / fakeBindingsReader fake the stage-source ports
 // (status_stages.go) — the build/deploy inputs of the status poll.
@@ -976,11 +1000,13 @@ func TestGetProjectStatus_PhaseLadder(t *testing.T) {
 				Version: tc.fx.snap.SpecVersion,
 				Dirty:   tc.fx.snap.SpecDirty,
 				Design:  tc.fx.snap.HasDesign,
+				// A snapshot that read is the spec facts available.
+				Availability: gen.SpecStageAvailabilityAvailable,
 			}
 			if st.Spec != want {
 				t.Errorf("spec stage = %+v, want %+v", st.Spec, want)
 			}
-			// The tasks-github-native ladder never sets HasTasks (no DB count, §8).
+			// The tasks-github-native ladder never sets HasTasks (no DB count).
 			if st.HasTasks {
 				t.Error("HasTasks must stay false — tasks are counted live from GitHub, not here")
 			}

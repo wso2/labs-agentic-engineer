@@ -20,8 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2/aep/aep-api/internal/clients/openchoreo"
 	"github.com/wso2/aep/aep-api/internal/delivery"
@@ -32,29 +34,30 @@ import (
 type fakeOCSurface struct {
 	mu sync.Mutex
 
-	calls    []string
-	orderLog *[]string // optional shared call-order log (retention tests)
-	create   *openchoreo.CreateComponentRequest
-	load     openchoreo.WorkloadInput
-	rel      string
-	bind     [2]string // environment, releaseName
+	calls  []string
+	create *openchoreo.CreateComponentRequest
+	load   openchoreo.WorkloadInput
+	rel    string
+	bind   [2]string // environment, releaseName
 
 	createErr              error
 	ensureTypeErr          error
 	simulateCreateConflict bool // mirrors ComponentClient 409 → GetComponent
+	componentUID           string
+	ensuredType            map[string]any
 }
 
 func (f *fakeOCSurface) note(op string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, op)
-	if f.orderLog != nil {
-		*f.orderLog = append(*f.orderLog, op)
-	}
 }
 
-func (f *fakeOCSurface) EnsureComponentType(_ context.Context, _ string, _ map[string]any) error {
+func (f *fakeOCSurface) EnsureComponentType(_ context.Context, _ string, body map[string]any) error {
 	f.note("ensure-type")
+	f.mu.Lock()
+	f.ensuredType = body
+	f.mu.Unlock()
 	return f.ensureTypeErr
 }
 
@@ -71,9 +74,9 @@ func (f *fakeOCSurface) CreateComponent(_ context.Context, _, _ string, req *ope
 	if simulateConflict {
 		// ComponentClient.CreateComponent coalesces 409 into a GetComponent refetch.
 		f.note("create-conflict-refetch")
-		return &gen.Component{Name: req.Name, DisplayName: "pre-existing"}, nil
+		return &gen.Component{Name: req.Name, DisplayName: "pre-existing", UID: f.componentUID}, nil
 	}
-	return &gen.Component{Name: req.Name}, nil
+	return &gen.Component{Name: req.Name, UID: f.componentUID}, nil
 }
 
 func (f *fakeOCSurface) EnsureWorkload(_ context.Context, _, _ string, in openchoreo.WorkloadInput) error {
@@ -279,47 +282,58 @@ func TestOCDispatcher_ValidationDisplayName(t *testing.T) {
 	}
 }
 
-func TestOCDispatcher_RetentionErrorContinuesCreate(t *testing.T) {
+// U1: the configured Job TTL is rendered per Component as the ComponentType's
+// ttlSecondsAfterFinished parameter, in whole seconds.
+func TestDispatch_RendersTheConfiguredJobTTL(t *testing.T) {
 	fake := &fakeOCSurface{}
-	ret := &fakeRetention{err: errors.New("list internal components: unavailable")}
-	d := NewOCDispatcher(fake, testWriteTargets()).WithRetention(ret)
-
-	got, err := d.Dispatch(context.Background(), ocDispatchInputs())
-	if err != nil {
-		t.Fatalf("Dispatch: %v", err)
-	}
-	if got.RunName != "ca-11111111-2608061200" {
-		t.Errorf("got %q, want RunName", got.RunName)
-	}
-	want := []string{"ensure-type", "create-component", "ensure-workload", "ensure-release", "ensure-binding"}
-	if fmt.Sprint(fake.calls) != fmt.Sprint(want) {
-		t.Errorf("chain = %v, want full create path after retention error", want)
-	}
-}
-
-func TestOCDispatcher_RetentionCalledBeforeCreate(t *testing.T) {
-	var order []string
-	fake := &fakeOCSurface{orderLog: &order}
-	ret := &fakeRetention{orderLog: &order}
-	d := NewOCDispatcher(fake, testWriteTargets()).WithRetention(ret)
-
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img").WithJobTTL(600 * time.Second)
 	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
-		t.Fatalf("Dispatch: %v", err)
+		t.Fatal(err)
 	}
-	wantPrefix := []string{"ensure-type", "retention", "create-component"}
-	if len(order) < len(wantPrefix) || fmt.Sprint(order[:len(wantPrefix)]) != fmt.Sprint(wantPrefix) {
-		t.Errorf("call order prefix = %v, want %v", order, wantPrefix)
+	if got := fake.create.Parameters["ttlSecondsAfterFinished"]; got != 600 {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want 600 (U1)", got)
 	}
 }
 
-type fakeRetention struct {
-	orderLog *[]string
-	err      error
+// No TTL configured leaves the parameter out, so the schema default applies.
+func TestDispatch_NoJobTTLLeavesTheSchemaDefault(t *testing.T) {
+	fake := &fakeOCSurface{}
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img")
+	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := fake.create.Parameters["ttlSecondsAfterFinished"]; ok {
+		t.Fatalf("ttlSecondsAfterFinished = %v, want unset", got)
+	}
 }
 
-func (f *fakeRetention) Enforce(context.Context, string, string) error {
-	if f.orderLog != nil {
-		*f.orderLog = append(*f.orderLog, "retention")
+// The cycle row stores the Component UID the dispatch minted (or, on the 409
+// path, re-read), so the settler can later delete exactly that Component.
+func TestDispatch_ReportsTheComponentUID(t *testing.T) {
+	for name, conflict := range map[string]bool{"created": false, "conflict re-read": true} {
+		t.Run(name, func(t *testing.T) {
+			fake := &fakeOCSurface{componentUID: "uid-9", simulateCreateConflict: conflict}
+			d := NewOCDispatcher(fake, testWriteTargets())
+			got, err := d.Dispatch(context.Background(), ocDispatchInputs())
+			if err != nil {
+				t.Fatalf("Dispatch: %v", err)
+			}
+			if got.ComponentUID != "uid-9" {
+				t.Errorf("ComponentUID = %q, want uid-9", got.ComponentUID)
+			}
+		})
 	}
-	return f.err
+}
+
+// The configured CPU request reaches the ComponentType ensured on dispatch.
+func TestDispatch_EnsuresTheTypeWithTheConfiguredCPURequest(t *testing.T) {
+	fake := &fakeOCSurface{}
+	d := NewOCDispatcher(fake, testWriteTargets()).WithImage("img").WithCPURequest("100m")
+	if _, err := d.Dispatch(context.Background(), ocDispatchInputs()); err != nil {
+		t.Fatal(err)
+	}
+	want := openchoreo.CodingAgentComponentType(openchoreo.CodingAgentResources{CPURequest: "100m"})
+	if !reflect.DeepEqual(fake.ensuredType, want) {
+		t.Fatal("ensured ComponentType does not carry the configured CPU request")
+	}
 }

@@ -18,8 +18,10 @@ package config
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
@@ -29,9 +31,7 @@ var validKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
 func validConfig() Config {
 	return Config{
 		CredentialEncryptionKey: validKey,
-		GitProvider:             "github",
 		JWKSURL:                 "https://thunder.example/oauth2/jwks",
-		TaskTokenSigningKey:     "-----BEGIN KEY-----\nx\n-----END KEY-----",
 	}
 }
 
@@ -58,31 +58,10 @@ func TestConfigValidate_CredentialEncryptionKey(t *testing.T) {
 	}
 }
 
-func TestConfigValidate_GitProvider(t *testing.T) {
-	tests := []struct {
-		name     string
-		provider string
-		wantErr  bool
-	}{
-		{"github", "github", false},
-		{"empty", "", true},
-		{"gitlab (unsupported)", "gitlab", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := validConfig()
-			c.GitProvider = tt.provider
-			if err := c.Validate(); (err != nil) != tt.wantErr {
-				t.Fatalf("Validate() error = %v, wantErr = %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // TestConfigValidate_RequiredFields pins the fail-fast contract: an empty JWKSURL
-// or TaskTokenSigningKey is a boot error, not a soft-warn that surfaces later.
+// is a boot error, not a soft-warn that surfaces later.
 func TestConfigValidate_RequiredFields(t *testing.T) {
-	t.Run("both set is valid", func(t *testing.T) {
+	t.Run("all required set is valid", func(t *testing.T) {
 		if err := validConfig().Validate(); err != nil {
 			t.Fatalf("Validate() = %v, want nil", err)
 		}
@@ -94,13 +73,115 @@ func TestConfigValidate_RequiredFields(t *testing.T) {
 			t.Fatal("Validate() = nil, want error for empty JWKS_URL")
 		}
 	})
-	t.Run("missing task signing key fails", func(t *testing.T) {
-		c := validConfig()
-		c.TaskTokenSigningKey = ""
-		if err := c.Validate(); err == nil {
-			t.Fatal("Validate() = nil, want error for empty TaskTokenSigningKey")
-		}
-	})
+}
+
+// TestValidate_NoSigningKeyRequired: BFF token minting is gone, so a config
+// with every other required field and no BFF_TASK_SIGNING_KEY boots.
+func TestValidate_NoSigningKeyRequired(t *testing.T) {
+	t.Setenv("BFF_TASK_SIGNING_KEY", "")
+	t.Setenv("BFF_TASK_SIGNING_KEY_PATH", "")
+	if err := validConfig().Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil with no signing key", err)
+	}
+}
+
+// A settled coding Component is deleted only after two no-pod reads at least
+// CODING_AGENT_SETTLE_GRACE apart; 5m unless set.
+func TestLoad_CodingAgentSettleGrace(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_SETTLE_GRACE", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentSettleGrace != 5*time.Minute {
+		t.Fatalf("default CodingAgentSettleGrace = %v, want 5m", cfg.CodingAgentSettleGrace)
+	}
+	t.Setenv("CODING_AGENT_SETTLE_GRACE", "90s")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentSettleGrace != 90*time.Second {
+		t.Fatalf("CodingAgentSettleGrace = %v, want 90s", cfg.CodingAgentSettleGrace)
+	}
+}
+
+// U1: a finished coding-agent Job is kept 600s unless CODING_AGENT_JOB_TTL says
+// otherwise.
+func TestLoad_CodingAgentJobTTL(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_JOB_TTL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentJobTTL != 600*time.Second {
+		t.Fatalf("default CodingAgentJobTTL = %v, want 600s", cfg.CodingAgentJobTTL)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "15m")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentJobTTL != 15*time.Minute {
+		t.Fatalf("CodingAgentJobTTL = %v, want 15m", cfg.CodingAgentJobTTL)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "ten minutes")
+	if _, err := Load(); err == nil {
+		t.Fatal("an unparseable CODING_AGENT_JOB_TTL must fail Load")
+	}
+}
+
+// A TTL that, plus OpenChoreo's re-create lag (up to 13 min on Cloud), passes
+// the 30-min apply cap would fail every re-dispatch `not_applied`: boot refuses
+// it, naming the key and never the value.
+func TestLoad_CodingAgentJobTTLApplyCapCoupling(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_JOB_TTL", "17m")
+	if _, err := Load(); err != nil {
+		t.Fatalf("17m is the largest allowed TTL: %v", err)
+	}
+	t.Setenv("CODING_AGENT_JOB_TTL", "17m1s")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("a TTL past the apply-cap coupling must fail Load")
+	}
+	if !strings.Contains(err.Error(), "CODING_AGENT_JOB_TTL") || strings.Contains(err.Error(), "17m1s") {
+		t.Fatalf("error must name the key, never the value: %v", err)
+	}
+}
+
+// Aep-api holds no static OpenBao token. OPENBAO_TOKEN is read by
+// nothing, and the Kubernetes-auth login defaults to role aep-api on mount
+// kubernetes with the pod's projected service-account token.
+func TestConfig_NoOpenBaoTokenEnv(t *testing.T) {
+	setMinimalEnv(t)
+	const sentinel = "static-openbao-token-sentinel"
+	t.Setenv("OPENBAO_TOKEN", sentinel)
+	for _, k := range []string{"OPENBAO_AUTH_ROLE", "OPENBAO_AUTH_MOUNT", "OPENBAO_AUTH_TOKEN_PATH"} {
+		t.Setenv(k, "")
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", cfg), sentinel) {
+		t.Fatal("OPENBAO_TOKEN reached the config; aep-api must hold no static OpenBao token")
+	}
+	want := OpenBaoAuthConfig{Role: "aep-api", Mount: "kubernetes", TokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token"}
+	if cfg.OpenBaoAuth != want {
+		t.Fatalf("OpenBaoAuth = %+v; want %+v", cfg.OpenBaoAuth, want)
+	}
+
+	t.Setenv("OPENBAO_AUTH_ROLE", "other-role")
+	t.Setenv("OPENBAO_AUTH_MOUNT", "k8s")
+	t.Setenv("OPENBAO_AUTH_TOKEN_PATH", "/tmp/aep-api.token")
+	if cfg, err = Load(); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want = OpenBaoAuthConfig{Role: "other-role", Mount: "k8s", TokenPath: "/tmp/aep-api.token"}
+	if cfg.OpenBaoAuth != want {
+		t.Fatalf("OpenBaoAuth = %+v; want the env overrides %+v", cfg.OpenBaoAuth, want)
+	}
 }
 
 // setRequiredLoadEnv sets the env vars Load() needs to reach cfg.Validate()
@@ -149,4 +230,44 @@ func TestLoad_SREHandoff(t *testing.T) {
 			t.Fatalf("Load() error = %v, want an SRE_HANDOFF_TOKEN error", err)
 		}
 	})
+}
+
+func TestLoad_CodingAgentCPURequest(t *testing.T) {
+	setMinimalEnv(t)
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.CodingAgentCPURequest != "500m" {
+		t.Fatalf("default CodingAgentCPURequest = %q, want 500m", cfg.CodingAgentCPURequest)
+	}
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "250m")
+	if cfg, err = Load(); err != nil || cfg.CodingAgentCPURequest != "250m" {
+		t.Fatalf("Load = %q, %v; want 250m", cfg.CodingAgentCPURequest, err)
+	}
+	for in, want := range map[string]string{"0.5": "500m", "1000m": "1", "0.25": "250m", "1": "1"} {
+		t.Setenv("CODING_AGENT_CPU_REQUEST", in)
+		if cfg, err = Load(); err != nil || cfg.CodingAgentCPURequest != want {
+			t.Fatalf("%q -> %q, %v; want %q", in, cfg.CodingAgentCPURequest, err, want)
+		}
+	}
+	t.Setenv("CODING_AGENT_CPU_REQUEST", "2066035336255469781")
+	if _, err := Load(); err == nil {
+		t.Fatal("an overflowing quantity must fail Load")
+	}
+	const secretish = "bogus-cpu-value-xyz"
+	for _, bad := range []string{secretish, "0", "-1", "4", "3001m", "1.5.2", "0m"} {
+		t.Setenv("CODING_AGENT_CPU_REQUEST", bad)
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("%q must fail Load", bad)
+		}
+		if !strings.Contains(err.Error(), "CODING_AGENT_CPU_REQUEST") {
+			t.Fatalf("%q: error must name the key: %v", bad, err)
+		}
+		if len(bad) > 5 && strings.Contains(err.Error(), bad) {
+			t.Fatalf("%q: error must not echo the value: %v", bad, err)
+		}
+	}
 }

@@ -17,6 +17,7 @@
  */
 
 import type { components } from "../../../generated/aep-api";
+import { isStartupFailure } from "../../builds/model/agentStart";
 
 // A version's validation as the Validation ledger and card read it, copied
 // from the old console (features/validation/lib/, ValidationMilestonePage):
@@ -84,15 +85,30 @@ export function attemptsOf(runs: readonly Pick<MilestoneRunView, "id" | "cycles"
   });
 }
 
-/** An attempt's result: in flight, a verdict, or ended without landing a report. */
-export function attemptResult(cycle: Pick<RunCycleView, "endedAt" | "mergeSha" | "validationVerdict">): {
+/**
+ * An attempt's result: waiting for the cluster to start its agent, in flight,
+ * a verdict, ended with its agent never started, or ended without landing a
+ * report.
+ */
+export function attemptResult(
+  cycle: Pick<RunCycleView, "endedAt" | "mergeSha" | "validationVerdict" | "startupWait" | "agentReason">,
+): {
   label: string;
   tone: VerdictTone;
 } {
-  if (!cycle.endedAt) return { label: "Validating", tone: "primary" };
+  if (!cycle.endedAt) return cycle.startupWait ? { label: "Waiting to start", tone: "warning" } : { label: "Validating", tone: "primary" };
+  if (isStartupFailure(cycle.agentReason)) return { label: "Agent could not start", tone: "error" };
   const verdict = cycle.validationVerdict ? verdictView(cycle.validationVerdict) : null;
   if (verdict) return verdict;
   return cycle.mergeSha ? { label: "No verdict", tone: null } : { label: "Did not land", tone: "error" };
+}
+
+/**
+ * The Validation card's ask-again button: Validate until some attempt has a
+ * verdict, Revalidate after. Copy that names the button reads it from here.
+ */
+export function validateLabel(hasVerdict: boolean): "Validate" | "Revalidate" {
+  return hasVerdict ? "Revalidate" : "Validate";
 }
 
 /**

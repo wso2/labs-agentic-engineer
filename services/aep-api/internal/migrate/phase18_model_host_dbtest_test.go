@@ -20,7 +20,9 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/wso2/aep/aep-api/internal/contracts"
@@ -266,7 +268,7 @@ func populateUsage(t *testing.T, db *gorm.DB, stamper *modelcost.Stamper, org st
 		if err := cycleRepo.Append(ctx, c); err != nil {
 			t.Fatalf("append %s: %v", capture.kind, err)
 		}
-		if _, err := cycleRepo.NoteLaunch(ctx, c.ID, modelconn.AnthropicHost, "development"); err != nil {
+		if _, err := cycleRepo.NoteLaunch(ctx, c.ID, modelconn.AnthropicHost, "development", ""); err != nil {
 			t.Fatalf("note host %s: %v", capture.kind, err)
 		}
 		if err := cycleRepo.RecordUsage(ctx, c.ID, capture.usage); err != nil {
@@ -281,17 +283,14 @@ func populateUsage(t *testing.T, db *gorm.DB, stamper *modelcost.Stamper, org st
 
 	turns := spec.NewTurnRepository(db, stamper)
 	for i, project := range []string{"shop", "billing"} {
-		turn, err := turns.TryStart(ctx, &spec.AgentTurn{
-			OrgID: org, ProjectID: project, ConversationID: "c1", UseCase: "general",
+		now := time.Now().UTC()
+		usage := contracts.TokenUsage{InputTokens: int64(40_000 * (i + 1)), OutputTokens: 7_777, CacheReadTokens: 120_000, Model: "claude-sonnet-5"}
+		if err := turns.RecordFinished(ctx, org, []spec.TurnRecord{{
+			TurnID: uuid.NewString(), Project: project, ConversationID: "c1", Kind: spec.TurnKindBrowser, Status: "completed",
 			BaseRef: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SkillsRef: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-			ModelHost: modelconn.AnthropicHost,
-		})
-		if err != nil {
-			t.Fatalf("start turn: %v", err)
-		}
-		usage := &contracts.TokenUsage{InputTokens: int64(40_000 * (i + 1)), OutputTokens: 7_777, CacheReadTokens: 120_000, Model: "claude-sonnet-5"}
-		if ok, err := turns.Finish(ctx, turn.ID, spec.TurnTerminal{Status: "completed", Usage: usage}); err != nil || !ok {
-			t.Fatalf("finish turn = (%v, %v)", ok, err)
+			ModelHost: modelconn.AnthropicHost, Usage: usage, StartedAt: now, FinishedAt: now,
+		}}); err != nil {
+			t.Fatalf("record turn: %v", err)
 		}
 	}
 
@@ -337,7 +336,7 @@ func bootMigrate(t *testing.T, db *gorm.DB) {
 	if err := db.AutoMigrate(migrate.BaseModels()...); err != nil {
 		t.Fatalf("auto-migrate: %v", err)
 	}
-	if err := migrate.RunAll(context.Background(), db, "dev", make([]byte, 32)); err != nil {
+	if err := migrate.RunAll(context.Background(), db, "dev"); err != nil {
 		t.Fatalf("run migrations: %v", err)
 	}
 	dropIdleConnections(t, db)

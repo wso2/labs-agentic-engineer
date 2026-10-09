@@ -19,7 +19,6 @@ package sourcecontrol
 import (
 	"context"
 	"errors"
-	"github.com/wso2/aep/aep-api/internal/platform/secrets"
 	"strings"
 	"sync"
 	"testing"
@@ -54,7 +53,7 @@ func (r incidentRecurrence) RecordRecurrence(context.Context, string, string, Is
 	return r.count, r.err
 }
 
-func (f *fakeGitHub) ReopenIssue(_ context.Context, _, _ string, _ secrets.Credential, number int) error {
+func (f *fakeGitHub) ReopenIssue(_ context.Context, _ RepoRef, number int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.issues {
@@ -81,7 +80,7 @@ func TestSRESuppressAndRecurrenceOutcomes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			gh := &fakeGitHub{}
 			adopter := &incidentAdopter{}
-			svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{}, IncidentPorts{Adopter: adopter, Recurrence: tc.recurrence})
+			svc := NewIssueService(fakeRepoRepo{}, gh, IncidentPorts{Adopter: adopter, Recurrence: tc.recurrence})
 			ctx := WithIncidentContext(context.Background(), "alert-123")
 			req := CreateIssueRequest{Title: "timeout", ComponentName: "checkout"}
 			first, err := svc.CreateIssue(ctx, "org", "proj", req)
@@ -128,7 +127,7 @@ func (a *incidentAdopter) AdoptIssue(_ context.Context, _, _ string, number int)
 func TestSREDedupUsesTrustedIdentityAndDoesNotDispatchTwice(t *testing.T) {
 	gh := &fakeGitHub{}
 	adopter := &incidentAdopter{}
-	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{}, IncidentPorts{Adopter: adopter})
+	svc := NewIssueService(fakeRepoRepo{}, gh, IncidentPorts{Adopter: adopter})
 	ctx := WithIncidentContext(context.Background(), "alert-123")
 	req := CreateIssueRequest{Title: "timeout", ComponentName: " Checkout ", DedupeKey: "client-first"}
 	first, err := svc.CreateIssue(ctx, "org", "proj", req)
@@ -151,7 +150,7 @@ func TestSREDedupUsesTrustedIdentityAndDoesNotDispatchTwice(t *testing.T) {
 func TestSREConfigNamespaceCannotSuppressCodeWork(t *testing.T) {
 	gh := &fakeGitHub{}
 	adopter := &incidentAdopter{err: errors.New("no deployed milestone")}
-	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{}, IncidentPorts{Adopter: adopter})
+	svc := NewIssueService(fakeRepoRepo{}, gh, IncidentPorts{Adopter: adopter})
 	ctx := WithIncidentContext(context.Background(), "alert-123")
 	status := "applied"
 	req := CreateIssueRequest{Title: "timeout", ComponentName: "checkout", ActionStatuses: []*string{&status}, Labels: []string{"aep", "dedupe:spoof"}}
@@ -223,13 +222,13 @@ type failingIncidentHost struct {
 	listErr, labelErr error
 }
 
-func (h failingIncidentHost) ListIssues(ctx context.Context, owner, repo string, cred secrets.Credential, labels []string) ([]IssueInfo, error) {
+func (h failingIncidentHost) ListIssues(ctx context.Context, ref RepoRef, labels []string) ([]IssueInfo, error) {
 	if h.listErr != nil {
 		return nil, h.listErr
 	}
-	return h.fakeGitHub.ListIssues(ctx, owner, repo, cred, labels)
+	return h.fakeGitHub.ListIssues(ctx, ref, labels)
 }
-func (h failingIncidentHost) EnsureLabel(context.Context, string, string, secrets.Credential, string, string) error {
+func (h failingIncidentHost) EnsureLabel(context.Context, RepoRef, string, string) error {
 	return h.labelErr
 }
 
@@ -243,7 +242,7 @@ func TestSREIdentityFailuresDoNotFileUntrackedIssues(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gh := &fakeGitHub{}
-			svc := NewIssueService(fakeRepoRepo{}, failingIncidentHost{gh, tc.listErr, tc.labelErr}, fakeResolver{})
+			svc := NewIssueService(fakeRepoRepo{}, failingIncidentHost{gh, tc.listErr, tc.labelErr})
 			_, err := svc.CreateIssue(WithIncidentContext(context.Background(), "alert-1"), "org", "proj", CreateIssueRequest{Title: "timeout", ComponentName: "checkout"})
 			if err == nil || gh.createCount != 0 {
 				t.Fatalf("untracked incident created: err=%v creates=%d", err, gh.createCount)
@@ -272,7 +271,7 @@ func TestSREClientCannotSetDeliveryLabels(t *testing.T) {
 func TestSREConcurrentDedupDispatchesOnce(t *testing.T) {
 	gh := &fakeGitHub{}
 	adopter := &incidentAdopter{}
-	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{}, IncidentPorts{Adopter: adopter})
+	svc := NewIssueService(fakeRepoRepo{}, gh, IncidentPorts{Adopter: adopter})
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -300,7 +299,7 @@ func TestSREConcurrentDedupDispatchesOnce(t *testing.T) {
 func TestWithAdopterInjectsAfterConstruction(t *testing.T) {
 	gh := &fakeGitHub{}
 	adopter := &incidentAdopter{}
-	svc := NewIssueService(fakeRepoRepo{}, gh, fakeResolver{})
+	svc := NewIssueService(fakeRepoRepo{}, gh)
 	svc.WithAdopter(adopter)
 
 	result, err := svc.CreateIssue(WithIncidentContext(context.Background(), "sre-handoff"), "org", "proj", CreateIssueRequest{

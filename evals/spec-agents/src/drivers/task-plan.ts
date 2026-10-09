@@ -17,17 +17,15 @@
  */
 
 /**
- * The task-generation driver (#356): the detached one-shot `task-plan` turn,
- * mirroring the playground's `tasksCommand` component-for-component (fresh
- * conversation uuid, `foldToDisk: false`, issues folded via `FsIssueStore`
- * only after the terminal manifest) — but through the eval's tracing capture.
+ * The task-generation driver (#356): the one-shot Plan turn on the Turn
+ * socket, mirroring the playground's `tasksCommand` component-for-component
+ * (issues folded via `FsIssueStore` only when the turn completed) — but
+ * through the eval's tracing capture.
  * No sim user: the section is one-shot by construction.
  */
 
-import { randomUUID } from "node:crypto";
 import { openSession } from "@aep/playground/src/engine/session.js";
-import { runSpecTurn } from "@aep/playground/src/engine/turn.js";
-import { planSpec } from "@aep/playground/src/engine/turn-spec.js";
+import { runPlanTurn } from "@aep/playground/src/engine/plan-turn.js";
 import { tasksGate } from "@aep/playground/src/engine/gates.js";
 import { FsIssueStore, type FoldOutcome, type Issue } from "@aep/playground/src/ports/issue-store.js";
 import { saveProjectState } from "@aep/playground/src/state/project.js";
@@ -54,17 +52,16 @@ export async function runTaskPlanSection(projectDir: string, scope?: PlanScope):
     const store = new FsIssueStore(projectDir, session.state.slug);
     const rec = newTurnRecord("tasks", 1, "task-plan (one-shot)");
     const start = Date.now();
-    const result = await runSpecTurn(session, planSpec(store.planContextFiles(), scope), {
-      useCase: "task-plan",
-      conversationUuid: randomUUID(), // one-shot per plan turn, as production
-      foldToDisk: false,
+    // A Plan turn on the Turn socket, as aep-api starts one in production.
+    const result = await runPlanTurn(session, store.planContext(), {
       onPart: (part) => collectPart(rec, part),
+      ...(scope ? { scope } : {}),
     });
     rec.ms = Date.now() - start;
     reportTurnTrace(rec, start);
 
     const fold = store.fold(
-      result.parts,
+      result,
       store.safeAllocator(
         () => session.state.nextIssueNumber,
         (advancedTo) => {
