@@ -272,8 +272,10 @@ a smee.io channel instead:
   delivery.
 - **Exposure:** the channel URL is a read capability: whoever holds it reads
   that org's deliveries. A forged delivery still fails the HMAC. smee.io
-  buffers nothing, so a delivery during a roll is lost, and `aep-api`'s
-  sweeps recover what it described. smee.io is a third-party relay, so
+  buffers nothing, so a delivery during a roll is lost. `aep-api`'s sweeps
+  recover lost issue events and missing hooks, but not a lost `pull_request`
+  delivery: nothing polls PR state, so that run waits for its 2 h landing timer
+  and the agent is re-dispatched. smee.io is a third-party relay, so
   production installs leave the relay off; while it is on, aep-api logs one
   WARN at boot (`webhook relay ON: …`) naming no channel.
 - **Key changes:** a new seed, or a rotated `CREDENTIAL_ENCRYPTION_KEY` under a

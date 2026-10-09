@@ -93,3 +93,12 @@ ledger, the replay and the sweeps.**
   there.
 - **One smee channel per install.** Rejected: the relay would then need the
   repository → org routing that only `aep-api` has.
+
+## Amendment 2026-10-09 — a lost pull_request delivery is not swept
+
+Item 5 holds for lost issue events and missing hooks: the 60 s and 10 min
+sweeps re-read issues and repair hooks. It does not hold for a coding pull
+request landing. The cycle row records the merge only from the `pull_request`
+webhook, and nothing polls pull request state, so the replay and the sweeps
+cannot recover a lost one. The run waits for its 2 h landing timer, which
+re-dispatches the agent. A polling fallback is a follow-up.
