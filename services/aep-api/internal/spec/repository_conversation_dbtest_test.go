@@ -314,7 +314,8 @@ func TestConversationRepo_CreatedAt(t *testing.T) {
 	}
 	for _, row := range []*spec.ProjectConversation{old, fresh} {
 		got, err := repo.CreatedAt(ctx, "o1", "p1", "general", row.ID)
-		if err != nil || !got.Equal(row.CreatedAt) {
+		// Postgres keeps microseconds; the row in hand carries Go's nanoseconds.
+		if err != nil || got.Sub(row.CreatedAt).Abs() >= time.Microsecond {
 			t.Fatalf("CreatedAt(%s) = (%v, %v), want %v", row.ID, got, err, row.CreatedAt)
 		}
 	}
